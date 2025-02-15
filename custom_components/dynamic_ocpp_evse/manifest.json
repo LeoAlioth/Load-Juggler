@@ -1,0 +1,13 @@
+{
+  "domain": "dynamic_ocpp_evse",
+  "name": "Dynamic OCPP EVSE",
+  "documentation": "https://github.com/LeoAlioth/dynamic_ocpp_evse",
+  "dependencies": [],
+  "codeowners": ["@LeoAlioth"],
+  "version": "0.0.1",
+  "requirements": [],
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "config_flow": true,
+  "single_config_entry": true
+}

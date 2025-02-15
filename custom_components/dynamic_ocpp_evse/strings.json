@@ -1,0 +1,47 @@
+{
+    "config": {
+            "step": {
+                    "user": {
+                            "description": "Setup your Dynamic OCPP EVSE",
+                            "data": {
+                                    "name": "Name",
+                                    "entity_id": "ID of the entity that tracks curernt available to EVSE",
+                                    "phase_a_entity_id": "Sensor that measures site import current for single phase charging",
+                                    "phase_b_entity_id": "Sensor that measures site import current for the second phase when 2 phase charging",
+                                    "phase_c_entity_id": "Sensor that measures site import current for the third phase when 3 phase charging",
+                                    "main_breaker_rating": "Rating of the main braker (per phase)",
+                                    "invert_phases": "Invert current readings if import measures as a negative number"
+                            }
+                    },
+                    "reconfigure": {
+                            "description": "Update your Dynamic OCPP EVSE settings",
+                            "data": {
+                                "name": "Name",
+                                "entity_id": "ID of the entity that tracks curernt available to EVSE",
+                                "phase_a_entity_id": "Site import current for single phase charging",
+                                "phase_b_entity_id": "Site import current for the second phase when 2 phase charging",
+                                "phase_c_entity_id": "Site import current for the third phase when 3 phase charging",
+                                "main_breaker_rating": "Rating of the main braker (per phase)",
+                                "invert_phases": "Invert current readings if import measures as a negative number"
+                            }
+                    }
+            }
+    },
+    "options": {
+            "step": {
+                    "reconfigure": {
+                            "description": "Update your Dynamic OCPP EVSE settings",
+                            "data": {
+                                "name": "Name",
+                                "entity_id": "ID of the entity that tracks curernt available to EVSE",
+                                "phase_a_entity_id": "Sensor that measures site import current for single phase charging",
+                                "phase_b_entity_id": "Sensor that measures site import current for the second phase when 2 phase charging",
+                                "phase_c_entity_id": "Sensor that measures site import current for the third phase when 3 phase charging",
+                                "main_breaker_rating": "Rating of the main braker (per phase)",
+                                "invert_phases": "Invert current readings if import measures as a negative number"
+                            }
+                    }
+            }
+    }
+   
+}
