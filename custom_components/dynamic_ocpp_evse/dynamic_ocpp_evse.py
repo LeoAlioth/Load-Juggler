@@ -13,7 +13,7 @@ def is_number(value):
 
 def get_sensor_data(self, sensor):
     state = self.hass.states.get(sensor)
-    _LOGGER.debug(f"Getting state for sensor: {sensor}  -  {state}")
+    _LOGGER.debug(f"Getting state for sensor: {sensor}  -  {state} ({type(state.state)})")
     if state is None:
         _LOGGER.error(f"Failed to get state for sensor: {sensor}")
         return None
@@ -25,8 +25,7 @@ def get_sensor_data(self, sensor):
 
 def calculate_available_current(self):
     state = {}
-    state[CONF_PHASES] = get_sensor_data(self, 'sensor.evbox_elvi_charging_phases')
-    phases = state[CONF_PHASES]
+    state[CONF_PHASES] = self.config_entry.data.get(CONF_PHASES)
     state[CONF_MAIN_BREAKER_RATING] = self.config_entry.data.get(CONF_MAIN_BREAKER_RATING)
     state[CONF_INVERT_PHASES] = self.config_entry.data.get(CONF_INVERT_PHASES)
     state[CONF_CHARING_MODE] = get_sensor_data(self, self.config_entry.data.get(CONF_CHARGIN_MODE_ENTITY_ID))
@@ -34,14 +33,22 @@ def calculate_available_current(self):
     state[CONF_PHASE_B_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_PHASE_B_CURRENT_ENTITY_ID))
     state[CONF_PHASE_C_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID))
     state[CONF_EVSE_CURRENT_IMPORT] = get_sensor_data(self, self.config_entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID))
+    state[CONF_EVSE_CURRENT_OFFERED] = get_sensor_data(self, self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID))
     state[CONF_MAX_IMPORT_POWER] = get_sensor_data(self, self.config_entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID))
+    
+    if(is_number(state[CONF_EVSE_CURRENT_IMPORT]) and is_number(state[CONF_EVSE_CURRENT_OFFERED])):
+        phases = min(max(round( state[CONF_EVSE_CURRENT_IMPORT] / state[CONF_EVSE_CURRENT_OFFERED], 0), 1), 3)
+    else:
+        phases = 1
+
+
     voltage = 230
 
     for key, value in state.items():
         _LOGGER.debug(f"doe_values: {key} : {value} : {type(value)}")
 
     if state[CONF_INVERT_PHASES]:
-        state[CONF_PHASE_A_CURRENT], state[CONF_PHASE_B_CURRENT], state[CONF_PHASE_C_CURRENT] = -state[CONF_PHASE_A_CURRENT], -state[CONF_PHASE_B_CURRENT], -state[CONF_PHASE_C_CURRENT]
+        state[CONF_PHASE_A_CURRENT], state[CONF_PHASE_B_CURRENT], state[CONF_PHASE_C_CURRENT] = -state[CONF_PHASE_A_CURRENT], - state[CONF_PHASE_B_CURRENT], -state[CONF_PHASE_C_CURRENT]
         
     if state[CONF_CHARING_MODE] == 'Standard':
         target_import_power = state[CONF_MAX_IMPORT_POWER]
@@ -77,15 +84,15 @@ def calculate_available_current(self):
     remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - phase_b_current
     remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - phase_c_current
 
-    if state[CONF_PHASES] == 1:
+    if phases == 1:
         max_evse_available = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_import_current + phase_a_export_current)
         calc_used = "01"
     
-    elif state[CONF_PHASES] == 2:
+    elif phases == 2:
         max_evse_available = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_current_phase_b, (remaining_available_import_current + phase_a_export_current + phase_b_export_current) / 2)
         calc_used = "02"
    
-    elif state[CONF_PHASES] == 3:
+    elif phases == 3:
         max_evse_available = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_current_phase_b, remaining_available_current_phase_c, (remaining_available_import_current + phase_a_export_current + phase_b_export_current + phase_c_export_current) / 3)
         calc_used = "03"
     
@@ -105,15 +112,15 @@ def calculate_available_current(self):
     remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - phase_b_current
     remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - phase_c_current
 
-    if state[CONF_PHASES] == 1:
+    if phases == 1:
         target_evse = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_import_current + phase_a_export_current)
         calc_used = "01"
     
-    elif state[CONF_PHASES] == 2:
+    elif phases == 2:
         target_evse = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_current_phase_b, (remaining_available_import_current + phase_a_export_current + phase_b_export_current) / 2)
         calc_used = "02"
    
-    elif state[CONF_PHASES] == 3:
+    elif phases == 3:
         target_evse = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_current_phase_b, remaining_available_current_phase_c, (remaining_available_import_current + phase_a_export_current + phase_b_export_current + phase_c_export_current) / 3)
         calc_used = "03"
     
@@ -137,7 +144,7 @@ def calculate_available_current(self):
 
     return {
         CONF_AVAILABLE_CURRENT: state[CONF_AVAILABLE_CURRENT],     # Current available based on input parameters
-        CONF_PHASES: state[CONF_PHASES],                 # either a known or estimated number of phases used
+        CONF_PHASES: phases,                 # either a known or estimated number of phases used
         CONF_CHARING_MODE: state[CONF_CHARING_MODE],    # Charging mode selected by the user
         'calc_used': calc_used,
         'max_evse_available': max_evse_available,

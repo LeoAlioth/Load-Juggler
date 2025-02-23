@@ -29,6 +29,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         default_phase_b = next((entity_id for entity_id in entities if re.match(r'sensor\..*m.*ac_current_b.*', entity_id)), None)
         default_phase_c = next((entity_id for entity_id in entities if re.match(r'sensor\..*m.*ac_current_c.*', entity_id)), None)
         default_evse_current_import = next((entity_id for entity_id in entities if re.match(r'sensor\..*current_import.*', entity_id)), None)
+        default_evse_current_offered = next((entity_id for entity_id in entities if re.match(r'sensor\..*current_offered.*', entity_id)), None)
         default_max_import_power = next((entity_id for entity_id in entities if re.match(r'sensor\..*power_limit.*', entity_id)), None)
 
         # Update the schema with the default values
@@ -43,6 +44,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_INVERT_PHASES, default=False): bool,
                 vol.Required(CONF_DEFAULT_CHARGE_CURRENT, default=6): int,
                 vol.Required(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, default=default_evse_current_import): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
+                vol.Required(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, default=default_evse_current_offered): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
                 vol.Required(CONF_MAX_IMPORT_POWER_ENTITY_ID, default=default_max_import_power): selector({"entity": {"domain": "sensor", "device_class": "power"}}),
 
             }
@@ -73,6 +75,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_INVERT_PHASES: entry.data.get(CONF_INVERT_PHASES, False),
                 CONF_DEFAULT_CHARGE_CURRENT: entry.data.get(CONF_DEFAULT_CHARGE_CURRENT, 6),
                 CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID),
+                CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID),
                 CONF_MAX_IMPORT_POWER_ENTITY_ID: entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
 
             }
@@ -88,6 +91,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_INVERT_PHASES, default=initial_data[CONF_INVERT_PHASES]): bool,
                     vol.Required(CONF_DEFAULT_CHARGE_CURRENT, default=initial_data[CONF_DEFAULT_CHARGE_CURRENT]): int,
                     vol.Required(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
+                    vol.Required(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
                     vol.Required(CONF_MAX_IMPORT_POWER_ENTITY_ID, default=initial_data[CONF_MAX_IMPORT_POWER_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "power"}}),
                 }
             )

@@ -10,6 +10,7 @@ CONF_MAIN_BREAKER_RATING = "main_breaker_rating"
 CONF_INVERT_PHASES = "invert_phases"
 CONF_CHARGIN_MODE_ENTITY_ID = "charging_mode_entity_id"
 CONF_EVSE_CURRENT_IMPORT_ENTITY_ID = "evse_current_import_entity_id"
+CONF_EVSE_CURRENT_OFFERED_ENTITY_ID = "evse_current_offered_entity_id"
 CONF_MAX_IMPORT_POWER_ENTITY_ID = "max_import_power_entity_id"
 
 # sensor attributes
@@ -21,4 +22,5 @@ CONF_PHASE_B_CURRENT = "phase_b_current"
 CONF_PHASE_C_CURRENT = "phase_c_current"
 CONF_DEFAULT_CHARGE_CURRENT = "default_charge_current"
 CONF_EVSE_CURRENT_IMPORT = "evse_current_import"
+CONF_EVSE_CURRENT_OFFERED = "evse_current_offered"
 CONF_MAX_IMPORT_POWER = "max_import_power"
