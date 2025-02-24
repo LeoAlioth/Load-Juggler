@@ -141,6 +141,9 @@ def calculate_available_current(self):
     if state[CONF_AVAILABLE_CURRENT] > 16:
         state[CONF_AVAILABLE_CURRENT] = 16
     
+    if state[CONF_AVAILABLE_CURRENT] > 6 and is_number(state[CONF_EVSE_CURRENT_IMPORT]) and  not state[CONF_EVSE_CURRENT_IMPORT] > 0:
+        state[CONF_AVAILABLE_CURRENT] = 6
+    
 
     return {
         CONF_AVAILABLE_CURRENT: state[CONF_AVAILABLE_CURRENT],     # Current available based on input parameters
