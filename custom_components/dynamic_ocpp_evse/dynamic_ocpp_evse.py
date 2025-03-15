@@ -15,17 +15,38 @@ def get_sensor_data(self, sensor):
     state = self.hass.states.get(sensor)
     _LOGGER.debug(f"Getting state for sensor: {sensor}  -  {state} ({type(state.state)})")
     if state is None:
-        _LOGGER.error(f"Failed to get state for sensor: {sensor}")
+        _LOGGER.warning(f"Failed to get state for sensor: {sensor}")
         return None
     value = state.state
     if type(value) == str:
         if is_number(value):
             value = float(value)
+            _LOGGER.debug(f"Sensor: {sensor}  -  {state} is ({type(value)})")
     return value
+
+def get_sensor_attribute(self, sensor, attribute):
+    state = self.hass.states.get(sensor)
+    _LOGGER.debug(f"Getting attribute '{attribute}' for sensor: {sensor}  -  {state}")
+    if state is None:
+        _LOGGER.warning(f"Failed to get state for sensor: {sensor} when getting attribute '{attribute}'")
+        return None
+    value = state.attributes.get(attribute)
+    if value is None:
+        _LOGGER.warning(f"Failed to get attribute '{attribute}' for sensor: {sensor}")
+        return None
+    if type(value) == str:
+        if is_number(value):
+            value = float(value)
+    return value
+
 
 def calculate_available_current(self):
     state = {}
-    state[CONF_PHASES] = self.config_entry.data.get(CONF_PHASES)
+    try:
+        state[CONF_PHASES] = get_sensor_attribute(self, "sensor." + self.config_entry.data.get(CONF_ENTITY_ID), CONF_PHASES)
+    except:
+        state[CONF_PHASES] = None
+
     state[CONF_MAIN_BREAKER_RATING] = self.config_entry.data.get(CONF_MAIN_BREAKER_RATING)
     state[CONF_INVERT_PHASES] = self.config_entry.data.get(CONF_INVERT_PHASES)
     state[CONF_CHARING_MODE] = get_sensor_data(self, self.config_entry.data.get(CONF_CHARGIN_MODE_ENTITY_ID))
@@ -35,14 +56,19 @@ def calculate_available_current(self):
     state[CONF_EVSE_CURRENT_IMPORT] = get_sensor_data(self, self.config_entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID))
     state[CONF_EVSE_CURRENT_OFFERED] = get_sensor_data(self, self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID))
     state[CONF_MAX_IMPORT_POWER] = get_sensor_data(self, self.config_entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID))
+    state[CONF_PHASE_VOLTAGE] = self.config_entry.data.get(CONF_PHASE_VOLTAGE)
     
+    phases = 1
+    if state[CONF_PHASES] is not None and is_number(state[CONF_PHASES]):
+        phases = state[CONF_PHASES]
     if((is_number(state[CONF_EVSE_CURRENT_IMPORT]) and state[CONF_EVSE_CURRENT_IMPORT] > 0 )and( is_number(state[CONF_EVSE_CURRENT_OFFERED]) and state[CONF_EVSE_CURRENT_OFFERED] > 0) ):
-        phases = min(max(round( state[CONF_EVSE_CURRENT_IMPORT] / state[CONF_EVSE_CURRENT_OFFERED], 0), 1), 3)
-    else:
-        phases = 1
+        phases = min(max(round( state[CONF_EVSE_CURRENT_IMPORT] / state[CONF_EVSE_CURRENT_OFFERED], 0), 1), 3)        
 
 
     voltage = 230
+    if state[CONF_PHASE_VOLTAGE] is not None and is_number(state[CONF_PHASE_VOLTAGE]):
+        voltage = state[CONF_PHASE_VOLTAGE]
+
 
     for key, value in state.items():
         _LOGGER.debug(f"doe_values: {key} : {value} : {type(value)}")
@@ -76,7 +102,8 @@ def calculate_available_current(self):
 
 
     # calculate limits
-    max_import_current = state[CONF_MAX_IMPORT_POWER] /voltage
+    max_import_power = state[CONF_MAX_IMPORT_POWER]
+    max_import_current = max_import_power / voltage
 
     remaining_available_import_current = max_import_current - total_import_current
     
@@ -146,7 +173,7 @@ def calculate_available_current(self):
     
 
     return {
-        CONF_AVAILABLE_CURRENT: state[CONF_AVAILABLE_CURRENT],     # Current available based on input parameters
+        CONF_AVAILABLE_CURRENT: round(state[CONF_AVAILABLE_CURRENT], 1),     # Current available based on input parameters
         CONF_PHASES: phases,                 # either a known or estimated number of phases used
         CONF_CHARING_MODE: state[CONF_CHARING_MODE],    # Charging mode selected by the user
         'calc_used': calc_used,

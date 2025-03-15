@@ -12,6 +12,10 @@ CONF_CHARGIN_MODE_ENTITY_ID = "charging_mode_entity_id"
 CONF_EVSE_CURRENT_IMPORT_ENTITY_ID = "evse_current_import_entity_id"
 CONF_EVSE_CURRENT_OFFERED_ENTITY_ID = "evse_current_offered_entity_id"
 CONF_MAX_IMPORT_POWER_ENTITY_ID = "max_import_power_entity_id"
+CONF_PHASE_VOLTAGE = "phase_voltage"
+CONF_UPDATE_FREQUENCY = "update_frequency"
+CONF_OCPP_PROFILE_TIMEOUT = "ocpp_profile_timeout"
+CONF_CHARGE_PAUSE_DURATION = "charge_pause_duration"	
 
 # sensor attributes
 CONF_PHASES = "phases"

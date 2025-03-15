@@ -46,6 +46,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, default=default_evse_current_import): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
                 vol.Required(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, default=default_evse_current_offered): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
                 vol.Required(CONF_MAX_IMPORT_POWER_ENTITY_ID, default=default_max_import_power): selector({"entity": {"domain": "sensor", "device_class": "power"}}),
+                vol.Required(CONF_PHASE_VOLTAGE, default=230): int,
+                vol.Required(CONF_UPDATE_FREQUENCY, default=30): int,
+                vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=35): int,
+                vol.Required(COMF_CHARGE_PAUSE_DURATION, default=180): int,
 
             }
         )
@@ -77,6 +81,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID),
                 CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID),
                 CONF_MAX_IMPORT_POWER_ENTITY_ID: entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
+                CONF_PHASE_VOLTAGE: entry.data.get(CONF_PHASE_VOLTAGE, 230),
+                CONF_UPDATE_FREQUENCY: entry.data.get(CONF_UPDATE_FREQUENCY, 30),
+                CONF_OCPP_PROFILE_TIMEOUT: entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, 35),
+                CONF_CHARGE_PAUSE_DURATION: entry.data.get(CONF_CHARGE_PAUSE_DURATION, 180),
 
             }
             data_schema = vol.Schema(
@@ -93,6 +101,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
                     vol.Required(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
                     vol.Required(CONF_MAX_IMPORT_POWER_ENTITY_ID, default=initial_data[CONF_MAX_IMPORT_POWER_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "power"}}),
+                    vol.Required(CONF_PHASE_VOLTAGE, default=initial_data[CONF_PHASE_VOLTAGE]): int,
+                    vol.Required(CONF_UPDATE_FREQUENCY, default=initial_data[CONF_UPDATE_FREQUENCY]): int,
+                    vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=initial_data[CONF_OCPP_PROFILE_TIMEOUT]): int, 
+                    vol.Required(CONF_CHARGE_PAUSE_DURATION, default=initial_data[CONF_CHARGE_PAUSE_DURATION]): int,
                 }
             )
 

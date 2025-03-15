@@ -2,7 +2,7 @@ import logging
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from datetime import timedelta
+from datetime import timedelta, datetime
 from .dynamic_ocpp_evse import calculate_available_current
 from .const import *
 
@@ -30,6 +30,10 @@ class DynamicOcppEvseSensor(SensorEntity):
         self._charging_mode = None
         self._calc_used = None
         self._max_evse_available = None
+        self._last_update = datetime.min  # Initialize the last update timestamp
+        self._pause_timer_running = False  # Track if the pause timer is running
+        self._last_set_current = 0
+
     @property
     def state(self):
         """Return the state of the sensor."""
@@ -44,6 +48,9 @@ class DynamicOcppEvseSensor(SensorEntity):
             CONF_CHARING_MODE: self._charging_mode,
             "calc_used": self._calc_used,
             "max_evse_available": self._max_evse_available,
+            "last_update": self._last_update,
+            "pause_timer_running": self._pause_timer_running
+            "last_set_current": self._last_set_current
         }
 
     @property
@@ -61,5 +68,58 @@ class DynamicOcppEvseSensor(SensorEntity):
             self._charging_mode = data[CONF_CHARING_MODE]
             self._calc_used = data["calc_used"]
             self._max_evse_available = data["max_evse_available"]
+
+            # Check if the update frequency has passed
+            update_frequency = self.config_entry.data[CONF_UPDATE_FREQUENCY]
+            if (datetime.utcnow() - self._last_update).total_seconds() >= update_frequency:
+                # Check if the state drops below 6
+                if self._state < 6 and not self._pause_timer_running:
+                    # Start the Charge Pause Timer
+                    await self.hass.services.async_call(
+                        "timer",
+                        "start",
+                        {
+                            "entity_id": f"timer.{self._attr_unique_id}_charge_pause_timer",
+                            "duration": self.config_entry.data[CONF_CHARGE_PAUSE_DURATION]
+                        }
+                    )
+                    self._pause_timer_running = True
+
+                # Check if the timer is running
+                timer_state = self.hass.states.get(f"timer.{self._attr_unique_id}_charge_pause_timer")
+                if timer_state and timer_state.state == "active":
+                    limit = 0
+                else:
+                    limit = round(self._state, 1)
+                    self._pause_timer_running = False
+                
+                self._last_set_current = limit
+
+                # Call the OCPP set_charge_rate service
+                await self.hass.services.async_call(
+                    "ocpp",
+                    "set_charge_rate",
+                    {
+                        "custom_profile": {
+                            "chargingProfileId": 11,
+                            "stackLevel": 4,
+                            "chargingProfileKind": "Relative",
+                            "chargingProfilePurpose": "TxDefaultProfile",
+                            "validFrom": (datetime.utcnow()).isoformat(timespec='seconds'),
+                            "validTo": (datetime.utcnow() + timedelta(seconds=40)).isoformat(timespec='seconds'),
+                            "chargingSchedule": {
+                                "chargingRateUnit": "A",
+                                "chargingSchedulePeriod": [
+                                    {
+                                        "startPeriod": 0,
+                                        "limit": limit
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                )
+                # Update the last update timestamp
+                self._last_update = datetime.utcnow()
         except Exception as e:
-            _LOGGER.error(f"Error updating Dynamic OCPP EVSE Sensor: {e}")
+            _LOGGER.error(f"Error updating Dynamic OCPP EVSE Sensor: {e}", exc_info=True)
