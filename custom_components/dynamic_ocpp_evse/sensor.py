@@ -49,7 +49,7 @@ class DynamicOcppEvseSensor(SensorEntity):
             "calc_used": self._calc_used,
             "max_evse_available": self._max_evse_available,
             "last_update": self._last_update,
-            "pause_timer_running": self._pause_timer_running
+            "pause_timer_running": self._pause_timer_running,
             "last_set_current": self._last_set_current
         }
 
@@ -95,28 +95,36 @@ class DynamicOcppEvseSensor(SensorEntity):
                 
                 self._last_set_current = limit
 
+                # Prepare the data for the OCPP set_charge_rate service
+                valid_from = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
+                valid_to = (datetime.utcnow() + timedelta(seconds=40)).isoformat(timespec='seconds') + 'Z'
+                charging_profile = {
+                    "chargingProfileId": 11,
+                    "stackLevel": 4,
+                    "chargingProfileKind": "Relative",
+                    "chargingProfilePurpose": "TxDefaultProfile",
+                    "validFrom": valid_from,
+                    "validTo": valid_to,
+                    "chargingSchedule": {
+                        "chargingRateUnit": "A",
+                        "chargingSchedulePeriod": [
+                            {
+                                "startPeriod": 0,
+                                "limit": limit
+                            }
+                        ]
+                    }
+                }
+
+                # Log the data being sent
+                _LOGGER.debug(f"Sending set_charge_rate with data: {charging_profile}")
+
                 # Call the OCPP set_charge_rate service
                 await self.hass.services.async_call(
                     "ocpp",
                     "set_charge_rate",
                     {
-                        "custom_profile": {
-                            "chargingProfileId": 11,
-                            "stackLevel": 4,
-                            "chargingProfileKind": "Relative",
-                            "chargingProfilePurpose": "TxDefaultProfile",
-                            "validFrom": (datetime.utcnow()).isoformat(timespec='seconds'),
-                            "validTo": (datetime.utcnow() + timedelta(seconds=40)).isoformat(timespec='seconds'),
-                            "chargingSchedule": {
-                                "chargingRateUnit": "A",
-                                "chargingSchedulePeriod": [
-                                    {
-                                        "startPeriod": 0,
-                                        "limit": limit
-                                    }
-                                ]
-                            }
-                        }
+                        "custom_profile": charging_profile
                     }
                 )
                 # Update the last update timestamp
