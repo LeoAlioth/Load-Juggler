@@ -20,7 +20,9 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             user_input[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{user_input[CONF_ENTITY_ID]}_charging_mode"
-            return self.async_create_entry(title=user_input["name"], data=user_input)
+            entry = await self.async_create_entry(title=user_input["name"], data=user_input)
+            await self.hass.services.async_call(DOMAIN, "reset_ocpp_evse", {"entry_id": entry.entry_id})
+            return entry
 
         # Fetch available entities and apply regex match
         entity_registry = async_get_entity_registry(self.hass)
@@ -49,8 +51,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_PHASE_VOLTAGE, default=230): int,
                 vol.Required(CONF_UPDATE_FREQUENCY, default=30): int,
                 vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=35): int,
-                vol.Required(COMF_CHARGE_PAUSE_DURATION, default=180): int,
-
+                vol.Required(CONF_CHARGE_PAUSE_DURATION, default=180): int,
             }
         )
 
@@ -65,6 +66,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             user_input[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{user_input[CONF_ENTITY_ID]}_charging_mode"
             self.hass.config_entries.async_update_entry(entry, data=user_input)
+            await self.hass.services.async_call(DOMAIN, "reset_ocpp_evse", {"entry_id": entry.entry_id})
             return self.async_abort(reason="reconfigure_successful")
 
         if entry:
@@ -85,7 +87,6 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_UPDATE_FREQUENCY: entry.data.get(CONF_UPDATE_FREQUENCY, 30),
                 CONF_OCPP_PROFILE_TIMEOUT: entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, 35),
                 CONF_CHARGE_PAUSE_DURATION: entry.data.get(CONF_CHARGE_PAUSE_DURATION, 180),
-
             }
             data_schema = vol.Schema(
                 {
