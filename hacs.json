@@ -1,5 +1,9 @@
 {
     "name": "Dynamic OCPP EVSE",
+    "content_in_root": false,
+    "domains": ["dynamic_ocpp_evse"],
+    "country": "US",
     "homeassistant": "2023.8.0",
-    "render_readme": true
-}
+    "render_readme": true,
+    "zip_release": true
+  }
