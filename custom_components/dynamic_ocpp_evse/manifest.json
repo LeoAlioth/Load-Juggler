@@ -4,7 +4,7 @@
   "documentation": "https://github.com/LeoAlioth/dynamic_ocpp_evse",
   "dependencies": [],
   "codeowners": ["@LeoAlioth"],
-  "version": "0.0.4",
+  "version": "1.0.0",
   "requirements": [],
   "integration_type": "hub",
   "iot_class": "local_polling",
