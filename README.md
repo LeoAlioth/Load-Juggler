@@ -12,7 +12,7 @@ Following modes are available:
 In case the communication between HA and the EVSE fails, the EVSE will revert back to the default charge profile (6A, but can be set to 0 through configuration)
 ## Installation
 
-**Method 1 _(easiest)_:**
+**Method 1 _(easiest, but currently not working)_:**
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=LeoAlioth&repository=Dynamic_OCPP_EVSE&category=integration)
 
