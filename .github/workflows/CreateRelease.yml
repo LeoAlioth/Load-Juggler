@@ -19,7 +19,7 @@ jobs:
 
       - name: Set up variables
         id: vars
-        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        run: echo "TAG_NAME=${GITHUB_REF##*/}" >> $GITHUB_ENV
 
       - name: Create ZIP archive
         run: |
