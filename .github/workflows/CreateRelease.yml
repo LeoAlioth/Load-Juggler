@@ -24,15 +24,15 @@ jobs:
       - name: Create ZIP archive
         run: |
           mkdir -p release
-          zip -r release/custom_integration.zip custom_components/
+          zip -r release/dynamic-ocpp-evse${{ env.TAG_NAME }}.zip custom_components/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG_NAME }}
-          name: Release ${{ env.TAG_NAME }}
+          name: Dynamic OCPP EVSE ${{ env.TAG_NAME }}
           draft: false
           prerelease: false
-          files: release/custom_integration.zip
+          files: release/dynamic-ocpp-evse${{ env.TAG_NAME }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
