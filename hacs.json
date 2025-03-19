@@ -4,5 +4,6 @@
     "domains": ["dynamic_ocpp_evse"],
     "country": "US",
     "homeassistant": "2023.8.0",
-    "render_readme": true
+    "render_readme": true,
+    "icon": "mdi:ev-station"
   }
