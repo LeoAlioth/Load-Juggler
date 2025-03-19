@@ -24,8 +24,7 @@ jobs:
       - name: Create ZIP archive
         run: |
           mkdir -p release/dynamic-ocpp-evse-${{ env.TAG_NAME }}
-          cp hacs.json release/dynamic-ocpp-evse-${{ env.TAG_NAME }}/
-          cp -r custom_components release/dynamic-ocpp-evse-${{ env.TAG_NAME }}/
+          cp -r * release/dynamic-ocpp-evse-${{ env.TAG_NAME }}/
           cd release
           zip -r dynamic-ocpp-evse-${{ env.TAG_NAME }}.zip dynamic-ocpp-evse-${{ env.TAG_NAME }}
           cd ..
