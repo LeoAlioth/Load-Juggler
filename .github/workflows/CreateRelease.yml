@@ -24,9 +24,11 @@ jobs:
       - name: Create ZIP archive
         run: |
           mkdir -p release
-          cp hacs.json custom_components/
-          zip -r release/dynamic-ocpp-evse-${{ env.TAG_NAME }}.zip custom_components/
-          rm custom_components/hacs.json
+          cp hacs.json release/
+          cp -r custom_components release/
+          cd release
+          zip -r dynamic-ocpp-evse-${{ env.TAG_NAME }}.zip custom_components hacs.json
+          cd ..
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
