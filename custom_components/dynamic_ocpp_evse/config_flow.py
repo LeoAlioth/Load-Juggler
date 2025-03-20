@@ -20,9 +20,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             user_input[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{user_input[CONF_ENTITY_ID]}_charging_mode"
-            entry = await self.async_create_entry(title=user_input["name"], data=user_input)
-            await self.hass.services.async_call(DOMAIN, "reset_ocpp_evse", {"entry_id": entry["entry_id"]})
-            return entry
+            return  self.async_create_entry(title=user_input["name"], data=user_input)
 
         # Fetch available entities and apply regex match
         entity_registry = async_get_entity_registry(self.hass)
@@ -67,7 +65,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{user_input[CONF_ENTITY_ID]}_charging_mode"
             self.hass.config_entries.async_update_entry(entry, data=user_input)
             await self.hass.services.async_call(DOMAIN, "reset_ocpp_evse", {"entry_id": entry.entry_id})
-            return self.async_abort(reason="reconfigure_successful")
+            return self.async_abort(reason="Reconfiguration complete")
 
         if entry:
             initial_data = {

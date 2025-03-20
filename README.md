@@ -29,4 +29,6 @@ In case the communication between HA and the EVSE fails, the EVSE will revert ba
 ## Configuration
 
 After installation, go to Settings -> Add Integration and search for `Dynamic OCPP EVSE`
-Most of the fields should auto populate, but can be changed if needed. If any setting is unclear, please let me know.
+Most of the fields should auto populate, The only thing that will likely be missing/incorrect is the import power limit entity. 
+
+Generally, the EVSE has some charge profiles set, and those might not be compatible with the ones this integaration creates. So after first install, call the reset_ocpp_evse action, via the **Reset OCPP EVSE** button. 
