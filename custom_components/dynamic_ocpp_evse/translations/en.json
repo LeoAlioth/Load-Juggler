@@ -1,47 +1,48 @@
 {
-    "config": {
-            "step": {
-                    "user": {
-                            "description": "Setup your Dynamic OCPP EVSE",
-                            "data": {
-                                    "name": "Name",
-                                    "entity_id": "ID of the entity that tracks curernt available to EVSE",
-                                    "phase_a_entity_id": "Site import current for single phase charging",
-                                    "phase_b_entity_id": "Site import current for the second phase when 2 phase charging",
-                                    "phase_c_entity_id": "Site import current for the third phase when 3 phase charging",
-                                    "main_breaker_rating": "Rating of the main braker (per phase)",
-                                    "invert_phases": "Invert current readings if import measures as a negative number"
-                            }
-                    },
-                    "reconfigure": {
-                            "description": "Update your Dynamic OCPP EVSE settings",
-                            "data": {
-                                "name": "Name",
-                                "entity_id": "ID of the entity that tracks curernt available to EVSE",
-                                "phase_a_entity_id": "Site import current for single phase charging",
-                                "phase_b_entity_id": "Site import current for the second phase when 2 phase charging",
-                                "phase_c_entity_id": "Site import current for the third phase when 3 phase charging",
-                                "main_breaker_rating": "Rating of the main braker (per phase)",
-                                "invert_phases": "Invert current readings if import measures as a negative number"
-                            }
-                    }
-            }
-    },
-    "options": {
-            "step": {
-                    "reconfigure": {
-                            "description": "Update your Dynamic OCPP EVSE settings",
-                            "data": {
-                                "name": "Name",
-                                "entity_id": "ID of the entity that tracks curernt available to EVSE",
-                                "phase_a_entity_id": "Site import current for single phase charging",
-                                "phase_b_entity_id": "Site import current for the second phase when 2 phase charging",
-                                "phase_c_entity_id": "Site import current for the third phase when 3 phase charging",
-                                "main_breaker_rating": "Rating of the main braker (per phase)",
-                                "invert_phases": "Invert current readings if import measures as a negative number"
-                            }
-                    }
-            }
-    }
-   
+        "config": {
+                "step": {
+                        "user": {
+                                "description": "Setup your Dynamic OCPP EVSE",
+                                "data": {
+                                        "name": "Name",
+                                        "entity_id": "ID of the entity that tracks current available to EVSE",
+                                        "phase_a_current_entity_id": "Sensor that measures site import current for single phase charging",
+                                        "phase_b_current_entity_id": "Sensor that measures site import current for the second phase when 2 phase charging",
+                                        "phase_c_current_entity_id": "Sensor that measures site import current for the third phase when 3 phase charging",
+                                        "chargin_mode_entity_id": "Input select entity that sets the charging mode",
+                                        "main_breaker_rating": "Rating of the main breaker (per phase)",
+                                        "invert_phases": "Invert current readings if import measures as a negative number",
+                                        "default_charge_current": "Default charge current in amperes. This is set as the default charge profile on the EVSE",
+                                        "evse_current_import_entity_id": "Sensor that measures the current imported by the EVSE",
+                                        "evse_current_offered_entity_id": "Sensor that measures the current offered by the EVSE",
+                                        "max_import_power_entity_id": "Sensor that measures the maximum import power",
+                                        "phase_voltage": "Voltage per phase in volts",
+                                        "update_frequency": "Frequency in seconds to update the EVSE status",
+                                        "ocpp_profile_timeout": "Timeout in seconds for OCPP profile",
+                                        "charge_pause_duration": "Duration in seconds to pause charging"
+                                }
+                        },
+                        "reconfigure": {
+                                "description": "Update your Dynamic OCPP EVSE settings",
+                                "data": {
+                                        "name": "Name",
+                                        "entity_id": "ID of the entity that tracks current available to EVSE",
+                                        "phase_a_current_entity_id": "Sensor that measures site import current for single phase charging",
+                                        "phase_b_current_entity_id": "Sensor that measures site import current for the second phase when 2 phase charging",
+                                        "phase_c_current_entity_id": "Sensor that measures site import current for the third phase when 3 phase charging",
+                                        "chargin_mode_entity_id": "Input select entity that sets the charging mode",
+                                        "main_breaker_rating": "Rating of the main breaker (per phase)",
+                                        "invert_phases": "Invert current readings if import measures as a negative number",
+                                        "default_charge_current": "Default charge current in amperes. This is set as the default charge profile on the EVSE",
+                                        "evse_current_import_entity_id": "Sensor that measures the current imported by the EVSE",
+                                        "evse_current_offered_entity_id": "Sensor that measures the current offered by the EVSE",
+                                        "max_import_power_entity_id": "Sensor that measures the maximum import power",
+                                        "phase_voltage": "Voltage per phase in volts",
+                                        "update_frequency": "Frequency in seconds to update the EVSE status",
+                                        "ocpp_profile_timeout": "Timeout in seconds for OCPP profile",
+                                        "charge_pause_duration": "Duration in seconds to pause charging"
+                                }
+                        }
+                }
+        }
 }
