@@ -20,7 +20,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             user_input[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{user_input[CONF_ENTITY_ID]}_charging_mode"
-            entry = await self.async_create_entry(title=user_input["name"], data=user_input)
+            entry = self.async_create_entry(title=user_input["name"], data=user_input)
             await self.hass.services.async_call(DOMAIN, "reset_ocpp_evse", {"entry_id": entry.entry_id})
             return entry
 
