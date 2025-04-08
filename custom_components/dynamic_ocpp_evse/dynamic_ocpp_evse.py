@@ -58,23 +58,29 @@ def calculate_available_current(self):
     state[CONF_MAX_IMPORT_POWER] = get_sensor_data(self, self.config_entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID))
     state[CONF_PHASE_VOLTAGE] = self.config_entry.data.get(CONF_PHASE_VOLTAGE)
     
-    phases = 1
-    if state[CONF_PHASES] is not None and is_number(state[CONF_PHASES]):
-        phases = state[CONF_PHASES]
-    if((is_number(state[CONF_EVSE_CURRENT_IMPORT]) and state[CONF_EVSE_CURRENT_IMPORT] > 0 )and( is_number(state[CONF_EVSE_CURRENT_OFFERED]) and state[CONF_EVSE_CURRENT_OFFERED] > 0) ):
-        phases = min(max(round( state[CONF_EVSE_CURRENT_IMPORT] / state[CONF_EVSE_CURRENT_OFFERED], 0), 1), 3)        
+    # Determine the number of phases based on individual phase currents
+    phases = 0
+    if state[CONF_EVSE_CURRENT_OFFERED] is not None:
+        evse_attributes = self.hass.states.get(self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID)).attributes
+        for attr, value in evse_attributes.items():
+            if attr.startswith('L') and is_number(value) and float(value) > 1:
+                phases += 1
 
+    # Fallback to the existing method if individual phase currents are not provided
+    if phases == 0 and state[CONF_PHASES] is not None and is_number(state[CONF_PHASES]):
+        phases = state[CONF_PHASES]
+    if phases == 0 and (is_number(state[CONF_EVSE_CURRENT_IMPORT]) and state[CONF_EVSE_CURRENT_IMPORT] > 0) and (is_number(state[CONF_EVSE_CURRENT_OFFERED]) and state[CONF_EVSE_CURRENT_OFFERED] > 0):
+        phases = min(max(round(state[CONF_EVSE_CURRENT_IMPORT] / state[CONF_EVSE_CURRENT_OFFERED], 0), 1), 3)
 
     voltage = 230
     if state[CONF_PHASE_VOLTAGE] is not None and is_number(state[CONF_PHASE_VOLTAGE]):
         voltage = state[CONF_PHASE_VOLTAGE]
 
-
     for key, value in state.items():
         _LOGGER.debug(f"doe_values: {key} : {value} : {type(value)}")
 
     if state[CONF_INVERT_PHASES]:
-        state[CONF_PHASE_A_CURRENT], state[CONF_PHASE_B_CURRENT], state[CONF_PHASE_C_CURRENT] = -state[CONF_PHASE_A_CURRENT], - state[CONF_PHASE_B_CURRENT], -state[CONF_PHASE_C_CURRENT]
+        state[CONF_PHASE_A_CURRENT], state[CONF_PHASE_B_CURRENT], state[CONF_PHASE_C_CURRENT] = -state[CONF_PHASE_A_CURRENT], -state[CONF_PHASE_B_CURRENT], -state[CONF_PHASE_C_CURRENT]
         
     if state[CONF_CHARING_MODE] == 'Standard':
         target_import_power = state[CONF_MAX_IMPORT_POWER]
