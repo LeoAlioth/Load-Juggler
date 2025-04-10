@@ -1,0 +1,48 @@
+{
+        "config": {
+                "step": {
+                        "user": {
+                                "description": "Nastavitve za Dynamic OCPP EVSE",
+                                "data": {
+                                        "name": "Ime",
+                                        "entity_id": "ID entitete, ki spremlja trenutno razpoložljivost za EVSE",
+                                        "phase_a_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za enofazno polnjenje",
+                                        "phase_b_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za drugo fazo pri dvofaznem polnjenju",
+                                        "phase_c_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za tretjo fazo pri trifaznem polnjenju",
+                                        "charging_mode_entity_id": "Entiteta za izbiro vnosa, ki nastavi način polnjenja",
+                                        "main_breaker_rating": "Nazivna vrednost glavnega odklopnika (na fazo)",
+                                        "invert_phases": "Obrnite meritve toka, če se uvoz meri kot negativna vrednost",
+                                        "default_charge_current": "Privzeti tok polnjenja v amperih. To je nastavljeno kot privzeti profil polnjenja na EVSE",
+                                        "evse_current_import_entity_id": "Senzor, ki meri tok, ki ga uvaža EVSE",
+                                        "evse_current_offered_entity_id": "Senzor, ki meri tok, ki ga ponuja EVSE",
+                                        "max_import_power_entity_id": "Senzor, ki meri največjo moč uvoza",
+                                        "phase_voltage": "Napetost na fazo v voltih",
+                                        "update_frequency": "Pogostost v sekundah za posodobitev stanja EVSE",
+                                        "ocpp_profile_timeout": "Časovna omejitev v sekundah za OCPP profil",
+                                        "charge_pause_duration": "Trajanje v sekundah za prekinitev polnjenja"
+                                }
+                        },
+                        "reconfigure": {
+                                "description": "Posodobite nastavitve za Dynamic OCPP EVSE",
+                                "data": {
+                                        "name": "Ime",
+                                        "entity_id": "ID entitete, ki spremlja trenutno razpoložljivost za EVSE",
+                                        "phase_a_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za enofazno polnjenje",
+                                        "phase_b_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za drugo fazo pri dvofaznem polnjenju",
+                                        "phase_c_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za tretjo fazo pri trifaznem polnjenju",
+                                        "charging_mode_entity_id": "Entiteta za izbiro vnosa, ki nastavi način polnjenja",
+                                        "main_breaker_rating": "Nazivna vrednost glavnega odklopnika (na fazo)",
+                                        "invert_phases": "Obrnite meritve toka, če se uvoz meri kot negativna vrednost",
+                                        "default_charge_current": "Privzeti tok polnjenja v amperih. To je nastavljeno kot privzeti profil polnjenja na EVSE",
+                                        "evse_current_import_entity_id": "Senzor, ki meri tok, ki ga uvaža EVSE",
+                                        "evse_current_offered_entity_id": "Senzor, ki meri tok, ki ga ponuja EVSE",
+                                        "max_import_power_entity_id": "Senzor, ki meri največjo moč uvoza",
+                                        "phase_voltage": "Napetost na fazo v voltih",
+                                        "update_frequency": "Pogostost v sekundah za posodobitev stanja EVSE",
+                                        "ocpp_profile_timeout": "Časovna omejitev v sekundah za OCPP profil",
+                                        "charge_pause_duration": "Trajanje v sekundah za prekinitev polnjenja"
+                                }
+                        }
+                }
+        }
+}
