@@ -60,17 +60,28 @@ def calculate_available_current(self):
     
     # Determine the number of phases based on individual phase currents
     phases = 0
+    calc_used = ""
+
     if state[CONF_EVSE_CURRENT_OFFERED] is not None:
-        evse_attributes = self.hass.states.get(self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID)).attributes
+        evse_attributes = self.hass.states.get(self.config_entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)).attributes
         for attr, value in evse_attributes.items():
             if attr.startswith('L') and is_number(value) and float(value) > 1:
                 phases += 1
+            if phases > 0:
+                calc_used = f"1-{phases}"
 
     # Fallback to the existing method if individual phase currents are not provided
     if phases == 0 and state[CONF_PHASES] is not None and is_number(state[CONF_PHASES]):
         phases = state[CONF_PHASES]
+        calc_used = f"2-{phases}"
+
     if phases == 0 and (is_number(state[CONF_EVSE_CURRENT_IMPORT]) and state[CONF_EVSE_CURRENT_IMPORT] > 0) and (is_number(state[CONF_EVSE_CURRENT_OFFERED]) and state[CONF_EVSE_CURRENT_OFFERED] > 0):
         phases = min(max(round(state[CONF_EVSE_CURRENT_IMPORT] / state[CONF_EVSE_CURRENT_OFFERED], 0), 1), 3)
+        calc_used = f"3-{phases}"
+    # Finaly just assume the safest case of 3 phases
+    if phases == 0:
+        phases = 3
+        calc_used = f"4-{phases}"
 
     voltage = 230
     if state[CONF_PHASE_VOLTAGE] is not None and is_number(state[CONF_PHASE_VOLTAGE]):
@@ -119,19 +130,15 @@ def calculate_available_current(self):
 
     if phases == 1:
         max_evse_available = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_import_current + phase_a_export_current)
-        calc_used = "01"
     
     elif phases == 2:
         max_evse_available = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_current_phase_b, (remaining_available_import_current + phase_a_export_current + phase_b_export_current) / 2)
-        calc_used = "02"
    
     elif phases == 3:
         max_evse_available = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_current_phase_b, remaining_available_current_phase_c, (remaining_available_import_current + phase_a_export_current + phase_b_export_current + phase_c_export_current) / 3)
-        calc_used = "03"
     
     else:
         max_evse_available = self.config_entry.data.get(CONF_DEFAULT_CHARGE_CURRENT)
-        calc_used = "04"
     
     # calculate target current
     if state[CONF_CHARING_MODE] == 'Standard':
@@ -147,19 +154,15 @@ def calculate_available_current(self):
 
     if phases == 1:
         target_evse = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_import_current + phase_a_export_current)
-        calc_used = "01"
     
     elif phases == 2:
         target_evse = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_current_phase_b, (remaining_available_import_current + phase_a_export_current + phase_b_export_current) / 2)
-        calc_used = "02"
    
     elif phases == 3:
         target_evse = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_current_phase_b, remaining_available_current_phase_c, (remaining_available_import_current + phase_a_export_current + phase_b_export_current + phase_c_export_current) / 3)
-        calc_used = "03"
     
     else:
         target_evse = self.config_entry.data.get(CONF_DEFAULT_CHARGE_CURRENT)
-        calc_used = "04"
 
     if state[CONF_CHARING_MODE] == 'Eco':
         target_evse = max(6, target_evse)
@@ -174,8 +177,8 @@ def calculate_available_current(self):
     if state[CONF_AVAILABLE_CURRENT] > 16:
         state[CONF_AVAILABLE_CURRENT] = 16
     
-    if state[CONF_AVAILABLE_CURRENT] > 6 and is_number(state[CONF_EVSE_CURRENT_IMPORT]) and  not state[CONF_EVSE_CURRENT_IMPORT] > 0:
-        state[CONF_AVAILABLE_CURRENT] = 6
+    # if state[CONF_AVAILABLE_CURRENT] > 6 and is_number(state[CONF_EVSE_CURRENT_IMPORT]) and  not state[CONF_EVSE_CURRENT_IMPORT] > 0:
+    #    state[CONF_AVAILABLE_CURRENT] = 6
     
 
     return {
@@ -184,6 +187,7 @@ def calculate_available_current(self):
         CONF_CHARING_MODE: state[CONF_CHARING_MODE],    # Charging mode selected by the user
         'calc_used': calc_used,
         'max_evse_available': max_evse_available,
+        'target_evse': target_evse,
     }
 
 
