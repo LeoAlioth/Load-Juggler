@@ -20,7 +20,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
         if entry is None:
             return
 
-        default_charge_current = entry.data.get(CONF_DEFAULT_CHARGE_CURRENT, 0)  # Default to 0 if not set
+        evse_minimum_charge_current = entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6)  # Default to 6 if not set
 
         sequence = [
             {"service": "ocpp.clear_profile", "data": {}},
@@ -36,7 +36,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
                         "chargingSchedule": {
                             "chargingRateUnit": "A",
                             "chargingSchedulePeriod": [
-                                {"startPeriod": 0, "limit": default_charge_current}
+                                {"startPeriod": 0, "limit": evse_minimum_charge_current}
                             ]
                         }
                     }
@@ -55,13 +55,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = entry
 
-    # Forward the setup to the sensor and select platforms
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "select", "button"])
+    # Forward the setup to the sensor, select, button, and number platforms
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "select", "button", "number"])
 
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Unload a Dynamic OCPP EVSE config entry."""
-    await hass.config_entries.async_forward_entry_unload(entry, ["sensor", "select", "button"])
+    await hass.config_entries.async_forward_entry_unload(entry, ["sensor", "select", "button", "number"])
     hass.data[DOMAIN].pop(entry.entry_id)
     return True

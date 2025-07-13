@@ -12,8 +12,9 @@ def is_number(value):
         return False
 
 def get_sensor_data(self, sensor):
+    _LOGGER.debug(f"Getting state for sensor: {sensor}")
     state = self.hass.states.get(sensor)
-    _LOGGER.debug(f"Getting state for sensor: {sensor}  -  {state} ({type(state.state)})")
+    _LOGGER.debug(f"Got state for sensor: {sensor}  -  {state} ({type(state.state)})")
     if state is None:
         _LOGGER.warning(f"Failed to get state for sensor: {sensor}")
         return None
@@ -57,6 +58,10 @@ def calculate_available_current(self):
     state[CONF_EVSE_CURRENT_OFFERED] = get_sensor_data(self, self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID))
     state[CONF_MAX_IMPORT_POWER] = get_sensor_data(self, self.config_entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID))
     state[CONF_PHASE_VOLTAGE] = self.config_entry.data.get(CONF_PHASE_VOLTAGE)
+    state[CONF_EVSE_MINIMUM_CHARGE_CURRENT] = self.config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6)
+    state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT] = self.config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16)
+    state[CONF_MIN_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_MIN_CURRENT_ENTITY_ID))
+    state[CONF_MAX_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_MAX_CURRENT_ENTITY_ID)) 
     
     # Determine the number of phases based on individual phase currents
     phases = 0
@@ -138,7 +143,7 @@ def calculate_available_current(self):
         max_evse_available = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_current_phase_b, remaining_available_current_phase_c, (remaining_available_import_current + phase_a_export_current + phase_b_export_current + phase_c_export_current) / 3)
     
     else:
-        max_evse_available = self.config_entry.data.get(CONF_DEFAULT_CHARGE_CURRENT)
+        max_evse_available = self.config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
     
     # calculate target current
     if state[CONF_CHARING_MODE] == 'Standard':
@@ -162,20 +167,24 @@ def calculate_available_current(self):
         target_evse = evse_current_per_phase + min(remaining_available_current_phase_a, remaining_available_current_phase_b, remaining_available_current_phase_c, (remaining_available_import_current + phase_a_export_current + phase_b_export_current + phase_c_export_current) / 3)
     
     else:
-        target_evse = self.config_entry.data.get(CONF_DEFAULT_CHARGE_CURRENT)
+        target_evse = self.config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
 
     if state[CONF_CHARING_MODE] == 'Eco':
         target_evse = max(6, target_evse)
-
+    
+    # Clamp target_evse between CONF_MIN_CURRENT and CONF_MAX_CURRENT
+    min_current = state[CONF_MIN_CURRENT] if state[CONF_MIN_CURRENT] is not None else state[CONF_EVSE_MINIMUM_CHARGE_CURRENT]
+    max_current = state[CONF_MAX_CURRENT] if state[CONF_MAX_CURRENT] is not None else state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]
+    target_evse = min(max(target_evse, min_current), max_current, max_evse_available)
 
 
 
     state[CONF_AVAILABLE_CURRENT] = min(max_evse_available, target_evse)
 
-    if state[CONF_AVAILABLE_CURRENT] < 6:
+    if state[CONF_AVAILABLE_CURRENT] < state[CONF_EVSE_MINIMUM_CHARGE_CURRENT]:
         state[CONF_AVAILABLE_CURRENT] = 0
-    if state[CONF_AVAILABLE_CURRENT] > 16:
-        state[CONF_AVAILABLE_CURRENT] = 16
+    if state[CONF_AVAILABLE_CURRENT] > state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]:
+        state[CONF_AVAILABLE_CURRENT] = state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]
     
     # if state[CONF_AVAILABLE_CURRENT] > 6 and is_number(state[CONF_EVSE_CURRENT_IMPORT]) and  not state[CONF_EVSE_CURRENT_IMPORT] > 0:
     #    state[CONF_AVAILABLE_CURRENT] = 6
