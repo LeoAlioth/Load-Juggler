@@ -22,6 +22,12 @@ class ChargeContext:
     min_current: float
     max_current: float
     total_export_power: float
+    # Battery-related fields
+    battery_soc: float = None
+    battery_power: float = None
+    battery_soc_target: float = None
+    battery_max_charge_power: float = None
+    battery_max_discharge_power: float = None
 
 
 def is_number(value):
@@ -270,6 +276,13 @@ def get_state_config(self):
     state[CONF_MIN_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_MIN_CURRENT_ENTITY_ID))
     state[CONF_MAX_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_MAX_CURRENT_ENTITY_ID))
     state[CONF_EXCESS_EXPORT_THRESHOLD] = self.config_entry.data.get(CONF_EXCESS_EXPORT_THRESHOLD, 13600)
+    
+    # Read battery values if entities are set
+    state["battery_soc"] = get_sensor_data(self, state[CONF_BATTERY_SOC_ENTITY_ID]) if self.config_entry.data.get(CONF_BATTERY_SOC_ENTITY_ID) else None
+    state["battery_power"] = get_sensor_data(self, state[CONF_BATTERY_POWER_ENTITY_ID]) if self.config_entry.data.get(CONF_BATTERY_POWER_ENTITY_ID) else None
+    state["battery_soc_target"] = get_sensor_data(self, state[CONF_BATTERY_SOC_TARGET_ENTITY_ID]) if self.config_entry.data.get(CONF_BATTERY_SOC_TARGET_ENTITY_ID) else None
+    state[CONF_BATTERY_MAX_CHARGE_POWER] = self.config_entry.data.get(CONF_BATTERY_MAX_CHARGE_POWER, 5000)
+    state[CONF_BATTERY_MAX_DISCHARGE_POWER] = self.config_entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, 5000)
     return state
 
 def get_charge_context_values(self, state):
@@ -300,6 +313,12 @@ def get_charge_context_values(self, state):
     total_import_current = phase_a_import_current + phase_b_import_current + phase_c_import_current
     evse_current = state[CONF_EVSE_CURRENT_IMPORT]
     evse_current_per_phase = evse_current / phases
+    # Battery values
+    battery_soc = state.get("battery_soc")
+    battery_power = state.get("battery_power")
+    battery_soc_target = state.get("battery_soc_target")
+    battery_max_charge_power = state.get(CONF_BATTERY_MAX_CHARGE_POWER)
+    battery_max_discharge_power = state.get(CONF_BATTERY_MAX_DISCHARGE_POWER)
     return ChargeContext(
         state=state,
         phases=phases,
@@ -316,6 +335,11 @@ def get_charge_context_values(self, state):
         min_current=min_current,
         max_current=max_current,
         total_export_power=total_export_power,
+        battery_soc=battery_soc,
+        battery_power=battery_power,
+        battery_soc_target=battery_soc_target,
+        battery_max_charge_power=battery_max_charge_power,
+        battery_max_discharge_power=battery_max_discharge_power,
     )
 
 # Calculate the available current based on the configuration and sensor data - this is the main function called by the integration

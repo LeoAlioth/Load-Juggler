@@ -61,14 +61,80 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=step_user_data_schema, errors=errors
         )
     
+    async def async_step_battery(self, user_input: dict[str, Any] | None = None):
+        """Handle the battery configuration step."""
+        errors: dict[str, str] = {}
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        if user_input is not None:
+            self.hass.config_entries.async_update_entry(entry, data={**entry.data, **user_input})
+            return await self.async_step_internal_entities()
+
+        if entry:
+            initial_data = {
+                CONF_BATTERY_SOC_ENTITY_ID: entry.data.get(CONF_BATTERY_SOC_ENTITY_ID),
+                CONF_BATTERY_POWER_ENTITY_ID: entry.data.get(CONF_BATTERY_POWER_ENTITY_ID),
+                CONF_BATTERY_SOC_TARGET_ENTITY_ID: entry.data.get(CONF_BATTERY_SOC_TARGET_ENTITY_ID),
+                CONF_BATTERY_MAX_CHARGE_POWER: entry.data.get(CONF_BATTERY_MAX_CHARGE_POWER, 5000),
+                CONF_BATTERY_MAX_DISCHARGE_POWER: entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, 5000),
+            }
+            data_schema = vol.Schema(
+                {
+                    vol.Optional(CONF_BATTERY_SOC_ENTITY_ID, default=initial_data[CONF_BATTERY_SOC_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "battery"}}),
+                    vol.Optional(CONF_BATTERY_POWER_ENTITY_ID, default=initial_data[CONF_BATTERY_POWER_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "power"}}),
+                    vol.Optional(CONF_BATTERY_SOC_TARGET_ENTITY_ID, default=initial_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID]): selector({"entity": {"domain": "input_number"}}),
+                    vol.Optional(CONF_BATTERY_MAX_CHARGE_POWER, default=initial_data[CONF_BATTERY_MAX_CHARGE_POWER]): int,
+                    vol.Optional(CONF_BATTERY_MAX_DISCHARGE_POWER, default=initial_data[CONF_BATTERY_MAX_DISCHARGE_POWER]): int,
+                }
+            )
+            return self.async_show_form(
+                step_id="battery",
+                data_schema=data_schema,
+                errors=errors,
+                last_step=False
+            )
+
+    async def async_step_grid_evse(self, user_input: dict[str, Any] | None = None):
+        """Handle the grid/EVSE configuration step."""
+        errors: dict[str, str] = {}
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        if user_input is not None:
+            self.hass.config_entries.async_update_entry(entry, data={**entry.data, **user_input})
+            return await self.async_step_battery()
+
+        if entry:
+            initial_data = {
+                CONF_EVSE_MINIMUM_CHARGE_CURRENT: entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6),
+                CONF_EVSE_MAXIMUM_CHARGE_CURRENT: entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16),
+                CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID),
+                CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID),
+                CONF_OCPP_PROFILE_TIMEOUT: entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, 90),
+                CONF_CHARGE_PAUSE_DURATION: entry.data.get(CONF_CHARGE_PAUSE_DURATION, 180),
+            }
+            data_schema = vol.Schema(
+                {
+                    vol.Required(CONF_EVSE_MINIMUM_CHARGE_CURRENT, default=initial_data[CONF_EVSE_MINIMUM_CHARGE_CURRENT]): int,
+                    vol.Required(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, default=initial_data[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]): int,
+                    vol.Required(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
+                    vol.Required(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
+                    vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=initial_data[CONF_OCPP_PROFILE_TIMEOUT]): int,
+                    vol.Required(CONF_CHARGE_PAUSE_DURATION, default=initial_data[CONF_CHARGE_PAUSE_DURATION]): int,
+                }
+            )
+            return self.async_show_form(
+                step_id="grid_evse",
+                data_schema=data_schema,
+                errors=errors,
+                last_step=False
+            )
+
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None):
         """Handle the reconfigure step."""
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         if user_input is not None:
-            # Save main config and go to internal entities step
+            # Save main config and go to grid/EVSE step
             self.hass.config_entries.async_update_entry(entry, data={**entry.data, **user_input})
-            return await self.async_step_internal_entities()
+            return await self.async_step_grid_evse()
 
         if entry:
             initial_data = {
@@ -79,16 +145,9 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_PHASE_C_CURRENT_ENTITY_ID: entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID),
                 CONF_MAIN_BREAKER_RATING: entry.data.get(CONF_MAIN_BREAKER_RATING, 25),
                 CONF_INVERT_PHASES: entry.data.get(CONF_INVERT_PHASES, False),
-                CONF_EVSE_MINIMUM_CHARGE_CURRENT: entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6),
-                CONF_EVSE_MAXIMUM_CHARGE_CURRENT: entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16),
-                CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID),
-                CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID),
                 CONF_MAX_IMPORT_POWER_ENTITY_ID: entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
                 CONF_PHASE_VOLTAGE: entry.data.get(CONF_PHASE_VOLTAGE, 230),
-                CONF_UPDATE_FREQUENCY: entry.data.get(CONF_UPDATE_FREQUENCY, 5),
-                CONF_OCPP_PROFILE_TIMEOUT: entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, 90),
-                CONF_CHARGE_PAUSE_DURATION: entry.data.get(CONF_CHARGE_PAUSE_DURATION, 180),
-                CONF_EXCESS_EXPORT_THRESHOLD: entry.data.get(CONF_EXCESS_EXPORT_THRESHOLD, 19),  # Default to 19A
+                CONF_EXCESS_EXPORT_THRESHOLD: entry.data.get(CONF_EXCESS_EXPORT_THRESHOLD, 19),
             }
             data_schema = vol.Schema(
                 {
@@ -99,15 +158,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_PHASE_C_CURRENT_ENTITY_ID, default=initial_data[CONF_PHASE_C_CURRENT_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
                     vol.Required(CONF_MAIN_BREAKER_RATING, default=initial_data[CONF_MAIN_BREAKER_RATING]): int,
                     vol.Required(CONF_INVERT_PHASES, default=initial_data[CONF_INVERT_PHASES]): bool,
-                    vol.Required(CONF_EVSE_MINIMUM_CHARGE_CURRENT, default=initial_data[CONF_EVSE_MINIMUM_CHARGE_CURRENT]): int,
-                    vol.Required(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, default=initial_data[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]): int,
-                    vol.Required(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
-                    vol.Required(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
                     vol.Required(CONF_MAX_IMPORT_POWER_ENTITY_ID, default=initial_data[CONF_MAX_IMPORT_POWER_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "power"}}),
                     vol.Required(CONF_PHASE_VOLTAGE, default=initial_data[CONF_PHASE_VOLTAGE]): int,
-                    vol.Required(CONF_UPDATE_FREQUENCY, default=initial_data[CONF_UPDATE_FREQUENCY]): int,
-                    vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=initial_data[CONF_OCPP_PROFILE_TIMEOUT]): int, 
-                    vol.Required(CONF_CHARGE_PAUSE_DURATION, default=initial_data[CONF_CHARGE_PAUSE_DURATION]): int,
                     vol.Required(CONF_EXCESS_EXPORT_THRESHOLD, default=initial_data[CONF_EXCESS_EXPORT_THRESHOLD]): int,
                 }
             )
@@ -134,12 +186,14 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_CHARGIN_MODE_ENTITY_ID: entry.data.get(CONF_CHARGIN_MODE_ENTITY_ID),
                 CONF_MIN_CURRENT_ENTITY_ID: entry.data.get(CONF_MIN_CURRENT_ENTITY_ID),
                 CONF_MAX_CURRENT_ENTITY_ID: entry.data.get(CONF_MAX_CURRENT_ENTITY_ID),
+                CONF_UPDATE_FREQUENCY: entry.data.get(CONF_UPDATE_FREQUENCY, 5),
             }
             data_schema = vol.Schema(
                 {
                     vol.Required(CONF_CHARGIN_MODE_ENTITY_ID, default=initial_data[CONF_CHARGIN_MODE_ENTITY_ID]): selector({"entity": {"domain": "select"}}),
                     vol.Required(CONF_MIN_CURRENT_ENTITY_ID, default=initial_data[CONF_MIN_CURRENT_ENTITY_ID]): selector({"entity": {"domain": "number"}}),
                     vol.Required(CONF_MAX_CURRENT_ENTITY_ID, default=initial_data[CONF_MAX_CURRENT_ENTITY_ID]): selector({"entity": {"domain": "number"}}),
+                    vol.Required(CONF_UPDATE_FREQUENCY, default=initial_data[CONF_UPDATE_FREQUENCY]): int,
                 }
             )
             return self.async_show_form(

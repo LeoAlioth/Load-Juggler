@@ -23,7 +23,12 @@
                                         "excess_export_threshold": "Prag presežene izvozne moči (W)",
                                         "evse_maximum_charge_current": "Največji polnilni tok EVSE (A)",
                                         "min_current_entity_id": "Entiteta za najmanjši tok (number)",
-                                        "max_current_entity_id": "Entiteta za največji tok (number)"
+                                        "max_current_entity_id": "Entiteta za največji tok (number)",
+                                        "battery_power_entity_id": "Senzor, ki meri moč baterije (pozitivno za praznjenje, negativno za polnjenje)",
+                                        "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
+                                        "battery_soc_target_entity_id": "Vnosno število za ciljni SOC baterije (%) (10-100, korak 5)",
+                                        "battery_max_charge_power": "Največja moč polnjenja baterije (W)",
+                                        "battery_max_discharge_power": "Največja moč praznjenja baterije (W)"
                                 }
                         },
                         "reconfigure": {
@@ -48,7 +53,12 @@
                                         "excess_export_threshold": "Prag presežene izvozne moči (W)",
                                         "evse_maximum_charge_current": "Največji polnilni tok EVSE (A)",
                                         "min_current_entity_id": "Entiteta za najmanjši tok (number)",
-                                        "max_current_entity_id": "Entiteta za največji tok (number)"
+                                        "max_current_entity_id": "Entiteta za največji tok (number)",
+                                        "battery_power_entity_id": "Senzor, ki meri moč baterije (pozitivno za praznjenje, negativno za polnjenje)",
+                                        "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
+                                        "battery_soc_target_entity_id": "Vnosno število za ciljni SOC baterije (%) (10-100, korak 5)",
+                                        "battery_max_charge_power": "Največja moč polnjenja baterije (W)",
+                                        "battery_max_discharge_power": "Največja moč praznjenja baterije (W)"
                                 }
                         },
                         "internal_entities": {

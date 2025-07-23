@@ -23,7 +23,12 @@
                                         "excess_export_threshold": "Excess Export Power Threshold (W)",
                                         "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
                                         "min_current_entity_id": "Entity for minimum current (number)",
-                                        "max_current_entity_id": "Entity for maximum current (number)"
+                                        "max_current_entity_id": "Entity for maximum current (number)",
+                                        "battery_power_entity_id": "Sensor that measures battery power (positive for discharge, negative for charge)",
+                                        "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
+                                        "battery_soc_target_entity_id": "Input number entity for target battery SOC (%) (10-100, step 5)",
+                                        "battery_max_charge_power": "Maximum battery charge power (W)",
+                                        "battery_max_discharge_power": "Maximum battery discharge power (W)"
                                 }
                         },
                         "reconfigure": {
@@ -48,7 +53,12 @@
                                         "excess_export_threshold": "Excess Export Power Threshold (W)",
                                         "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
                                         "min_current_entity_id": "Entity for minimum current (number)",
-                                        "max_current_entity_id": "Entity for maximum current (number)"
+                                        "max_current_entity_id": "Entity for maximum current (number)",
+                                        "battery_power_entity_id": "Sensor that measures battery power (positive for discharge, negative for charge)",
+                                        "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
+                                        "battery_soc_target_entity_id": "Input number entity for target battery SOC (%) (10-100, step 5)",
+                                        "battery_max_charge_power": "Maximum battery charge power (W)",
+                                        "battery_max_discharge_power": "Maximum battery discharge power (W)"
                                 }
                         },
                         "internal_entities": {

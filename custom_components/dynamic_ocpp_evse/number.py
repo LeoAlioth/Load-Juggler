@@ -13,7 +13,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     name = config_entry.data["name"]
     async_add_entities([
         EVSEMinCurrentSlider(hass, config_entry, name),
-        EVSEMaxCurrentSlider(hass, config_entry, name)
+        EVSEMaxCurrentSlider(hass, config_entry, name),
+        BatterySOCTargetSlider(hass, config_entry, name),
     ])
 
 class EVSEMinCurrentSlider(NumberEntity):
@@ -69,5 +70,35 @@ class EVSEMaxCurrentSlider(NumberEntity):
         return self._attr_value
 
     async def async_set_value(self, value: float) -> None:
+        self._attr_value = value
+        self.async_write_ha_state()
+
+class BatterySOCTargetSlider(NumberEntity):
+    """Slider for battery SOC target (10-100%, step 5)."""
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str):
+        self.hass = hass
+        self.config_entry = config_entry
+        self._attr_name = f"{name} Battery SOC Target"
+        self._attr_unique_id = f"{config_entry.entry_id}_battery_soc_target"
+        self._min = 10
+        self._max = 100
+        self._attr_step = 5
+        self._attr_value = 80  # Default SOC target, can be customized
+
+    @property
+    def native_min_value(self) -> float:
+        return self._min
+
+    @property
+    def native_max_value(self) -> float:
+        return self._max
+
+    @property
+    def native_value(self) -> float:
+        return self._attr_value
+
+    async def async_set_value(self, value: float) -> None:
+        # Clamp to step and range
+        value = max(self._min, min(self._max, round(value / self._attr_step) * self._attr_step))
         self._attr_value = value
         self.async_write_ha_state()

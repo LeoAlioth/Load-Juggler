@@ -34,3 +34,10 @@ CONF_MAX_IMPORT_POWER = "max_import_power"
 CONF_MIN_CURRENT = "min_current"
 CONF_MAX_CURRENT = "max_current"
 CONF_EXCESS_EXPORT_THRESHOLD = "excess_export_threshold"  # Maximum allowed export before charging starts in Excess mode
+
+# Battery support configuration constants
+CONF_BATTERY_POWER_ENTITY_ID = "battery_power_entity_id"
+CONF_BATTERY_SOC_ENTITY_ID = "battery_soc_entity_id"
+CONF_BATTERY_SOC_TARGET_ENTITY_ID = "battery_soc_target_entity_id"
+CONF_BATTERY_MAX_CHARGE_POWER = "battery_max_charge_power"  # W
+CONF_BATTERY_MAX_DISCHARGE_POWER = "battery_max_discharge_power"  # W
