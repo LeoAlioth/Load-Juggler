@@ -59,6 +59,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
             user_input[CONF_MIN_CURRENT_ENTITY_ID] = f"number.{entity_id}_min_current"
             user_input[CONF_MAX_CURRENT_ENTITY_ID] = f"number.{entity_id}_max_current"
+            user_input[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
+            user_input[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
             self._data.update(user_input)
             # Per-step config entry update during reconfiguration
             if entry:

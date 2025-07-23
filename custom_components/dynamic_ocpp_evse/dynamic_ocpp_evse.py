@@ -2,6 +2,7 @@ import datetime
 import logging
 from .const import *  # Make sure DOMAIN is defined in const.py
 from dataclasses import dataclass
+import inspect
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def get_sensor_data(self, sensor):
     _LOGGER.debug(f"Getting state for sensor: {sensor}")
     state = self.hass.states.get(sensor)
     if state is None:
-        _LOGGER.warning(f"Failed to get state for sensor: {sensor}")
+        _LOGGER.warning(f"Failed to get state for sensor: {sensor}: {inspect.stack()}")
         return None
     _LOGGER.debug(f"Got state for sensor: {sensor}  -  {state} ({type(state.state)})")
     value = state.state
@@ -82,10 +83,11 @@ def apply_ramping(self, state, target_evse, min_current):
         ramp_enabled = True
         if ramp_enabled:
             # Use last ramped value as base for ramping, fallback to EVSE current if None
-            if self._last_ramp_value is None:
+            if self._last_ramp_value is None or not is_number(self._last_ramp_value):
                 ramped_value = state[CONF_EVSE_CURRENT_OFFERED] or state[CONF_AVAILABLE_CURRENT]
+                self._last_ramp_value = ramped_value
             else:
-                ramped_value = self._last_ramp_value
+                ramped_value = self._last_ramp_value if is_number(self._last_ramp_value) else 0
                 if ramped_value < min_current and target_evse > min_current:
                     ramped_value = min_current
                     self._last_ramp_value = ramped_value
@@ -117,23 +119,37 @@ def calculate_max_evse_available(context: ChargeContext):
     remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.phase_b_current
     remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.phase_c_current
 
+    # Battery discharge logic
+    battery_power = context.battery_power if context.battery_power is not None else 0
+    battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
+    battery_soc = context.battery_soc if context.battery_soc is not None else 100
+    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 0
+
+    # Only allow battery discharge if SOC > SOC target
+    if battery_soc > battery_soc_target:
+        available_battery_power = max(0, battery_max_discharge_power - battery_power)
+    else:
+        # Only allow battery to stop charging (i.e., don't discharge below target)
+        available_battery_power = max(0, -battery_power)  # Only offset if battery is charging
+    available_battery_current = available_battery_power / context.voltage if context.voltage else 0
+
     if context.phases == 1:
         return context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
-            remaining_available_import_current + context.phase_a_export_current
+            remaining_available_import_current + context.phase_a_export_current + available_battery_current
         )
     elif context.phases == 2:
         return context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current) / 2
+            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + available_battery_current) / 2
         )
     elif context.phases == 3:
         return context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
             remaining_available_current_phase_c,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + context.phase_c_export_current) / 3
+            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + context.phase_c_export_current + available_battery_current) / 3
         )
     else:
         return state.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
@@ -172,29 +188,47 @@ def calculate_standard_mode(context: ChargeContext):
     max_import_power = state[CONF_MAX_IMPORT_POWER]
     max_import_current = max_import_power / context.voltage
     target_import_current = max_import_current
-    remaining_available_import_current = target_import_current - context.total_import_current
+    # If grid charging is not allowed, set available import current to 0
+    if not context.allow_grid_charging:
+        remaining_available_import_current = 0
+    else:
+        remaining_available_import_current = target_import_current - context.total_import_current
 
     remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.phase_a_current
     remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.phase_b_current
     remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.phase_c_current
 
+    # Battery discharge logic for standard mode
+    battery_power = context.battery_power if context.battery_power is not None else 0
+    battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
+    battery_soc = context.battery_soc if context.battery_soc is not None else 100
+    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 0
+
+    if battery_soc > battery_soc_target:
+        # Allow battery to discharge at max power
+        available_battery_power = max(0, battery_max_discharge_power)
+    else:
+        # Only allow battery to stop charging (no discharge below target)
+        available_battery_power = max(0, -battery_power)  # Only offset if battery is charging
+    available_battery_current = available_battery_power / context.voltage if context.voltage else 0
+
     if context.phases == 1:
         target_evse = context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
-            remaining_available_import_current + context.phase_a_export_current
+            remaining_available_import_current + context.phase_a_export_current + available_battery_current
         )
     elif context.phases == 2:
         target_evse = context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current) / 2
+            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + available_battery_current) / 2
         )
     elif context.phases == 3:
         target_evse = context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
             remaining_available_current_phase_c,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + context.phase_c_export_current) / 3
+            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + context.phase_c_export_current + available_battery_current) / 3
         )
     else:
         target_evse = state.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
@@ -202,32 +236,50 @@ def calculate_standard_mode(context: ChargeContext):
 
 def calculate_solar_mode(context: ChargeContext, target_import_current=0):
     state = context.state
-    remaining_available_import_current = target_import_current - context.total_import_current
+    # If grid charging is not allowed, set available import current to 0
+    if not context.allow_grid_charging:
+        remaining_available_import_current = 0
+    else:
+        remaining_available_import_current = target_import_current - context.total_import_current
     remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.phase_a_current
     remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.phase_b_current
     remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.phase_c_current
 
+    # Battery discharge logic for solar mode
+    battery_power = context.battery_power if context.battery_power is not None else 0
+    battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
+    battery_soc = context.battery_soc if context.battery_soc is not None else 0
+    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 0
+
+    if battery_soc > battery_soc_target:
+        # Allow battery to discharge at max power
+        available_battery_power = max(0, battery_max_discharge_power)
+    else:
+        # Only allow battery to stop charging (no discharge below target)
+        available_battery_power = max(0, -battery_power)  # Only offset if battery is charging
+    available_battery_current = available_battery_power / context.voltage if context.voltage else 0
+
     if context.phases == 1:
         target_evse = context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
-            remaining_available_import_current + context.phase_a_export_current
+            remaining_available_import_current + context.phase_a_export_current + available_battery_current
         )
     elif context.phases == 2:
         target_evse = context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current) / 2
+            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + available_battery_current) / 2
         )
     elif context.phases == 3:
         target_evse = context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
             remaining_available_current_phase_c,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + context.phase_c_export_current) / 3
+            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + context.phase_c_export_current + available_battery_current) / 3
         )
     else:
         target_evse = state.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
-    return target_evse
+    return max(target_evse, 0) # Ensure non-negative current
 
 def calculate_eco_mode(context: ChargeContext):
     target_evse = calculate_solar_mode(context)
@@ -238,7 +290,13 @@ def calculate_excess_mode(self, context: ChargeContext):
     state = context.state
     voltage = context.voltage
     total_export_power = context.total_export_power
-    threshold = state.get(CONF_EXCESS_EXPORT_THRESHOLD, 13600)
+    base_threshold = state.get(CONF_EXCESS_EXPORT_THRESHOLD, 13600)
+    if context.battery_soc is not None and context.battery_soc < 100:
+        battery_max_charge_power = state.get(CONF_BATTERY_MAX_CHARGE_POWER, 5000)
+    else:
+        battery_max_charge_power = 0
+    # Add battery max charge power to the threshold
+    threshold = base_threshold + (battery_max_charge_power if battery_max_charge_power else 0)
     now = datetime.datetime.now()
     if total_export_power > threshold:
         _LOGGER.info(f"Excess mode: total_export_power {total_export_power}W > threshold {threshold}W, starting charge")
@@ -281,19 +339,19 @@ def get_state_config(self):
     
     # Read battery values if entities are set
     battery_soc_entity_id = self.config_entry.data.get(CONF_BATTERY_SOC_ENTITY_ID)
-    if battery_soc_entity_id:
+    if battery_soc_entity_id != 'None':
         state["battery_soc"] = get_sensor_data(self, battery_soc_entity_id)
     else:
         state["battery_soc"] = None
 
     battery_power_entity_id = self.config_entry.data.get(CONF_BATTERY_POWER_ENTITY_ID)
-    if battery_power_entity_id:
+    if battery_power_entity_id != 'None':
         state["battery_power"] = get_sensor_data(self, battery_power_entity_id)
     else:
         state["battery_power"] = None
 
     battery_soc_target_entity_id = self.config_entry.data.get(CONF_BATTERY_SOC_TARGET_ENTITY_ID)
-    if battery_soc_target_entity_id:
+    if battery_soc_target_entity_id != 'None':
         state["battery_soc_target"] = get_sensor_data(self, battery_soc_target_entity_id)
     else:
         state["battery_soc_target"] = None
@@ -302,8 +360,8 @@ def get_state_config(self):
     state[CONF_BATTERY_MAX_DISCHARGE_POWER] = self.config_entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, 5000)
 
     # Retrieve the allow grid charging switch state using the constant
-    switch_state = self.hass.states.get(self.config_entry.data.get(CONF_ALLOW_GRID_CHARGING_ENTITY_ID))
-    state["allow_grid_charging"] = switch_state.state == "on" if switch_state else True  # Default to True
+    switch_state = get_sensor_data(self, self.config_entry.data.get(CONF_ALLOW_GRID_CHARGING_ENTITY_ID))
+    state["allow_grid_charging"] = switch_state == "on" if switch_state else True  # Default to True
     return state
 
 def get_charge_context_values(self, state):

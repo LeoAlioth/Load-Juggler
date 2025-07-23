@@ -78,7 +78,7 @@ class BatterySOCTargetSlider(NumberEntity):
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str):
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = f"{name} Battery SOC Target"
+        self._attr_name = f"{name} Home Battery SOC Target"
         self._attr_unique_id = f"{config_entry.entry_id}_battery_soc_target"
         self._min = 10
         self._max = 100
