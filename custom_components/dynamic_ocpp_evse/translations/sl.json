@@ -20,7 +20,7 @@
                                         "update_frequency": "Pogostost v sekundah za posodobitev stanja EVSE",
                                         "ocpp_profile_timeout": "Časovna omejitev v sekundah za OCPP profil",
                                         "charge_pause_duration": "Trajanje v sekundah za prekinitev polnjenja",
-                                        "excess_export_threshold": "Prag presežka izvoza (A)",
+                                        "excess_export_threshold": "Prag presežene izvozne moči (W)",
                                         "evse_maximum_charge_current": "Največji polnilni tok EVSE (A)",
                                         "min_current_entity_id": "Entiteta za najmanjši tok (number)",
                                         "max_current_entity_id": "Entiteta za največji tok (number)"
@@ -45,7 +45,7 @@
                                         "update_frequency": "Pogostost v sekundah za posodobitev stanja EVSE",
                                         "ocpp_profile_timeout": "Časovna omejitev v sekundah za OCPP profil",
                                         "charge_pause_duration": "Trajanje v sekundah za prekinitev polnjenja",
-                                        "excess_export_threshold": "Prag presežka izvoza (A)",
+                                        "excess_export_threshold": "Prag presežene izvozne moči (W)",
                                         "evse_maximum_charge_current": "Največji polnilni tok EVSE (A)",
                                         "min_current_entity_id": "Entiteta za najmanjši tok (number)",
                                         "max_current_entity_id": "Entiteta za največji tok (number)"

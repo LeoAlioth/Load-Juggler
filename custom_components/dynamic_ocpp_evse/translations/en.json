@@ -20,7 +20,7 @@
                                         "update_frequency": "Frequency in seconds to update the EVSE status",
                                         "ocpp_profile_timeout": "Timeout in seconds for OCPP profile",
                                         "charge_pause_duration": "Duration in seconds to pause charging",
-                                        "excess_export_threshold": "Excess Export Threshold (A)",
+                                        "excess_export_threshold": "Excess Export Power Threshold (W)",
                                         "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
                                         "min_current_entity_id": "Entity for minimum current (number)",
                                         "max_current_entity_id": "Entity for maximum current (number)"
@@ -45,7 +45,7 @@
                                         "update_frequency": "Frequency in seconds to update the EVSE status",
                                         "ocpp_profile_timeout": "Timeout in seconds for OCPP profile",
                                         "charge_pause_duration": "Duration in seconds to pause charging",
-                                        "excess_export_threshold": "Excess Export Threshold (A)",
+                                        "excess_export_threshold": "Excess Export Power Threshold (W)",
                                         "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
                                         "min_current_entity_id": "Entity for minimum current (number)",
                                         "max_current_entity_id": "Entity for maximum current (number)"

@@ -21,6 +21,7 @@ class ChargeContext:
     max_evse_available: float
     min_current: float
     max_current: float
+    total_export_power: float
 
 
 def is_number(value):
@@ -227,26 +228,22 @@ def calculate_eco_mode(context: ChargeContext):
 
 def calculate_excess_mode(self, context: ChargeContext):
     state = context.state
-    export_currents = [
-        -context.phase_a_current if context.phase_a_current < 0 else 0,
-        -context.phase_b_current if context.phase_b_current < 0 else 0,
-        -context.phase_c_current if context.phase_c_current < 0 else 0
-    ]
-    max_export_current = max(export_currents)
-    threshold = state[CONF_EXCESS_EXPORT_THRESHOLD]
+    voltage = context.voltage
+    total_export_power = context.total_export_power
+    threshold = state.get(CONF_EXCESS_EXPORT_THRESHOLD, 13600)
     now = datetime.datetime.now()
-    if max_export_current > threshold:
-        _LOGGER.info(f"Excess mode: max_export_current {max_export_current} > threshold {threshold}, starting charge")
+    if total_export_power > threshold:
+        _LOGGER.info(f"Excess mode: total_export_power {total_export_power}W > threshold {threshold}W, starting charge")
         self._excess_charge_start_time = now
     keep_charging = False
     if getattr(self, '_excess_charge_start_time', None) is not None and \
        (now - self._excess_charge_start_time).total_seconds() < 15 * 60:
-        if max_export_current + context.min_current > threshold:
+        if total_export_power + context.min_current * voltage > threshold:
             self._excess_charge_start_time = now
         keep_charging = True
     if keep_charging:
-        export_available = max_export_current - threshold + context.evse_current_per_phase
-        target_evse = max(context.min_current, export_available)
+        export_available_current = (total_export_power - threshold) / voltage + context.evse_current_per_phase
+        target_evse = max(context.min_current, export_available_current)
     else:
         target_evse = 0
     target_evse = min(target_evse, context.max_current, context.max_evse_available)
@@ -272,7 +269,7 @@ def get_state_config(self):
     state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT] = self.config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16)
     state[CONF_MIN_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_MIN_CURRENT_ENTITY_ID))
     state[CONF_MAX_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_MAX_CURRENT_ENTITY_ID))
-    state[CONF_EXCESS_EXPORT_THRESHOLD] = self.config_entry.data.get(CONF_EXCESS_EXPORT_THRESHOLD, -19)
+    state[CONF_EXCESS_EXPORT_THRESHOLD] = self.config_entry.data.get(CONF_EXCESS_EXPORT_THRESHOLD, 13600)
     return state
 
 def get_charge_context_values(self, state):
@@ -282,6 +279,13 @@ def get_charge_context_values(self, state):
     voltage = 230
     if state[CONF_PHASE_VOLTAGE] is not None and is_number(state[CONF_PHASE_VOLTAGE]):
         voltage = state[CONF_PHASE_VOLTAGE]
+    # Calculate total export current (sum of negative phase currents)
+    total_export_current = (
+        max(-state[CONF_PHASE_A_CURRENT], 0) +
+        max(-state[CONF_PHASE_B_CURRENT], 0) +
+        max(-state[CONF_PHASE_C_CURRENT], 0)
+    )
+    total_export_power = total_export_current * voltage
     if state[CONF_INVERT_PHASES]:
         state[CONF_PHASE_A_CURRENT], state[CONF_PHASE_B_CURRENT], state[CONF_PHASE_C_CURRENT] = -state[CONF_PHASE_A_CURRENT], -state[CONF_PHASE_B_CURRENT], -state[CONF_PHASE_C_CURRENT]
     phase_a_current = state[CONF_PHASE_A_CURRENT]
@@ -310,7 +314,8 @@ def get_charge_context_values(self, state):
         evse_current_per_phase=evse_current_per_phase,
         max_evse_available=0,  # will be set after calculation
         min_current=min_current,
-        max_current=max_current
+        max_current=max_current,
+        total_export_power=total_export_power,
     )
 
 # Calculate the available current based on the configuration and sensor data - this is the main function called by the integration
