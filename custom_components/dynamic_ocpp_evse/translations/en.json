@@ -1,7 +1,7 @@
 {
         "config": {
                 "step": {
-                        "user": {
+                        "grid": {
                                 "description": "Setup your Dynamic OCPP EVSE",
                                 "data": {
                                         "name": "Name",
@@ -9,51 +9,27 @@
                                         "phase_a_current_entity_id": "Sensor that measures site import current for single phase charging",
                                         "phase_b_current_entity_id": "Sensor that measures site import current for the second phase when 2 phase charging",
                                         "phase_c_current_entity_id": "Sensor that measures site import current for the third phase when 3 phase charging",
-                                        "charging_mode_entity_id": "Input select entity that sets the charging mode",
                                         "main_breaker_rating": "Rating of the main breaker (per phase)",
                                         "invert_phases": "Invert current readings if import measures as a negative number",
-                                        "evse_minimum_charge_current": "Default charge current in amperes. This is set as the default charge profile on the EVSE",
-                                        "evse_current_import_entity_id": "Sensor that measures the current imported by the EVSE",
-                                        "evse_current_offered_entity_id": "Sensor that measures the current offered by the EVSE",
                                         "max_import_power_entity_id": "Sensor that measures the maximum import power",
                                         "phase_voltage": "Voltage per phase in volts",
-                                        "update_frequency": "Frequency in seconds to update the EVSE status",
-                                        "ocpp_profile_timeout": "Timeout in seconds for OCPP profile",
-                                        "charge_pause_duration": "Duration in seconds to pause charging",
-                                        "excess_export_threshold": "Excess Export Power Threshold (W)",
-                                        "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
-                                        "min_current_entity_id": "Entity for minimum current (number)",
-                                        "max_current_entity_id": "Entity for maximum current (number)",
-                                        "battery_power_entity_id": "Sensor that measures battery power (positive for discharge, negative for charge)",
-                                        "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
-                                        "battery_soc_target_entity_id": "Input number entity for target battery SOC (%) (10-100, step 5)",
-                                        "battery_max_charge_power": "Maximum battery charge power (W)",
-                                        "battery_max_discharge_power": "Maximum battery discharge power (W)"
+                                        "excess_export_threshold": "Excess Export Power Threshold (W)"
                                 }
                         },
-                        "reconfigure": {
-                                "description": "Update your Dynamic OCPP EVSE settings",
+                        "evse": {
+                                "description": "Configure EVSE related options",
                                 "data": {
-                                        "name": "Name",
-                                        "entity_id": "ID of the entity that tracks current available to EVSE",
-                                        "phase_a_current_entity_id": "Sensor that measures site import current for single phase charging",
-                                        "phase_b_current_entity_id": "Sensor that measures site import current for the second phase when 2 phase charging",
-                                        "phase_c_current_entity_id": "Sensor that measures site import current for the third phase when 3 phase charging",
-                                        "charging_mode_entity_id": "Input select entity that sets the charging mode",
-                                        "main_breaker_rating": "Rating of the main breaker (per phase)",
-                                        "invert_phases": "Invert current readings if import measures as a negative number",
-                                        "evse_minimum_charge_current": "Default charge current in amperes. This is set as the default charge profile on the EVSE",
+                                        "evse_minimum_charge_current": "EVSE Minimum Charge Current (A)",
+                                        "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
                                         "evse_current_import_entity_id": "Sensor that measures the current imported by the EVSE",
                                         "evse_current_offered_entity_id": "Sensor that measures the current offered by the EVSE",
-                                        "max_import_power_entity_id": "Sensor that measures the maximum import power",
-                                        "phase_voltage": "Voltage per phase in volts",
-                                        "update_frequency": "Frequency in seconds to update the EVSE status",
                                         "ocpp_profile_timeout": "Timeout in seconds for OCPP profile",
-                                        "charge_pause_duration": "Duration in seconds to pause charging",
-                                        "excess_export_threshold": "Excess Export Power Threshold (W)",
-                                        "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
-                                        "min_current_entity_id": "Entity for minimum current (number)",
-                                        "max_current_entity_id": "Entity for maximum current (number)",
+                                        "charge_pause_duration": "Duration in seconds to pause charging"
+                                }
+                        },
+                        "battery": {
+                                "description": "Configure battery related options",
+                                "data": {
                                         "battery_power_entity_id": "Sensor that measures battery power (positive for discharge, negative for charge)",
                                         "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
                                         "battery_soc_target_entity_id": "Input number entity for target battery SOC (%) (10-100, step 5)",
@@ -66,7 +42,8 @@
                                 "data": {
                                         "charging_mode_entity_id": "Input select entity that sets the charging mode",
                                         "min_current_entity_id": "Entity for minimum current (number)",
-                                        "max_current_entity_id": "Entity for maximum current (number)"
+                                        "max_current_entity_id": "Entity for maximum current (number)",
+                                        "update_frequency": "Frequency in seconds to update the EVSE status"
                                 }
                         }
                 }

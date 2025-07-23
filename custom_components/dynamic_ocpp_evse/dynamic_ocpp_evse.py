@@ -40,10 +40,10 @@ def is_number(value):
 def get_sensor_data(self, sensor):
     _LOGGER.debug(f"Getting state for sensor: {sensor}")
     state = self.hass.states.get(sensor)
-    _LOGGER.debug(f"Got state for sensor: {sensor}  -  {state} ({type(state.state)})")
     if state is None:
         _LOGGER.warning(f"Failed to get state for sensor: {sensor}")
         return None
+    _LOGGER.debug(f"Got state for sensor: {sensor}  -  {state} ({type(state.state)})")
     value = state.state
     if type(value) == str:
         if is_number(value):
@@ -278,9 +278,24 @@ def get_state_config(self):
     state[CONF_EXCESS_EXPORT_THRESHOLD] = self.config_entry.data.get(CONF_EXCESS_EXPORT_THRESHOLD, 13600)
     
     # Read battery values if entities are set
-    state["battery_soc"] = get_sensor_data(self, state[CONF_BATTERY_SOC_ENTITY_ID]) if self.config_entry.data.get(CONF_BATTERY_SOC_ENTITY_ID) else None
-    state["battery_power"] = get_sensor_data(self, state[CONF_BATTERY_POWER_ENTITY_ID]) if self.config_entry.data.get(CONF_BATTERY_POWER_ENTITY_ID) else None
-    state["battery_soc_target"] = get_sensor_data(self, state[CONF_BATTERY_SOC_TARGET_ENTITY_ID]) if self.config_entry.data.get(CONF_BATTERY_SOC_TARGET_ENTITY_ID) else None
+    battery_soc_entity_id = self.config_entry.data.get(CONF_BATTERY_SOC_ENTITY_ID)
+    if battery_soc_entity_id:
+        state["battery_soc"] = get_sensor_data(self, battery_soc_entity_id)
+    else:
+        state["battery_soc"] = None
+
+    battery_power_entity_id = self.config_entry.data.get(CONF_BATTERY_POWER_ENTITY_ID)
+    if battery_power_entity_id:
+        state["battery_power"] = get_sensor_data(self, battery_power_entity_id)
+    else:
+        state["battery_power"] = None
+
+    battery_soc_target_entity_id = self.config_entry.data.get(CONF_BATTERY_SOC_TARGET_ENTITY_ID)
+    if battery_soc_target_entity_id:
+        state["battery_soc_target"] = get_sensor_data(self, battery_soc_target_entity_id)
+    else:
+        state["battery_soc_target"] = None
+
     state[CONF_BATTERY_MAX_CHARGE_POWER] = self.config_entry.data.get(CONF_BATTERY_MAX_CHARGE_POWER, 5000)
     state[CONF_BATTERY_MAX_DISCHARGE_POWER] = self.config_entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, 5000)
     return state
@@ -289,9 +304,7 @@ def get_charge_context_values(self, state):
     min_current = state[CONF_MIN_CURRENT] if state[CONF_MIN_CURRENT] is not None else state[CONF_EVSE_MINIMUM_CHARGE_CURRENT]
     max_current = state[CONF_MAX_CURRENT] if state[CONF_MAX_CURRENT] is not None else state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]
     phases, calc_used = determine_phases(self, state)
-    voltage = 230
-    if state[CONF_PHASE_VOLTAGE] is not None and is_number(state[CONF_PHASE_VOLTAGE]):
-        voltage = state[CONF_PHASE_VOLTAGE]
+    voltage = state[CONF_PHASE_VOLTAGE] if state[CONF_PHASE_VOLTAGE] is not None and is_number(state[CONF_PHASE_VOLTAGE]) else 230
     # Calculate total export current (sum of negative phase currents)
     total_export_current = (
         max(-state[CONF_PHASE_A_CURRENT], 0) +
@@ -312,10 +325,13 @@ def get_charge_context_values(self, state):
     phase_c_export_current = max(-phase_c_current, 0)
     total_import_current = phase_a_import_current + phase_b_import_current + phase_c_import_current
     evse_current = state[CONF_EVSE_CURRENT_IMPORT]
+    if evse_current is None or not is_number(evse_current):
+        evse_current = 0
+    # phases is always 1-3 at this point, so no need for additional checks
     evse_current_per_phase = evse_current / phases
     # Battery values
-    battery_soc = state.get("battery_soc")
-    battery_power = state.get("battery_power")
+    battery_soc = state["battery_soc"]
+    battery_power = state["battery_power"]
     battery_soc_target = state.get("battery_soc_target")
     battery_max_charge_power = state.get(CONF_BATTERY_MAX_CHARGE_POWER)
     battery_max_discharge_power = state.get(CONF_BATTERY_MAX_DISCHARGE_POWER)

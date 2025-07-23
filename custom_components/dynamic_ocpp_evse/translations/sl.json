@@ -1,7 +1,7 @@
 {
         "config": {
                 "step": {
-                        "user": {
+                        "grid": {
                                 "description": "Nastavitve za Dynamic OCPP EVSE",
                                 "data": {
                                         "name": "Ime",
@@ -9,51 +9,27 @@
                                         "phase_a_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za enofazno polnjenje",
                                         "phase_b_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za drugo fazo pri dvofaznem polnjenju",
                                         "phase_c_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za tretjo fazo pri trifaznem polnjenju",
-                                        "charging_mode_entity_id": "Entiteta za izbiro vnosa, ki nastavi način polnjenja",
                                         "main_breaker_rating": "Nazivna vrednost glavnega odklopnika (na fazo)",
                                         "invert_phases": "Obrnite meritve toka, če se uvoz meri kot negativna vrednost",
-                                        "evse_minimum_charge_current": "Najmanjši polnilni tok EVSE (A)",
-                                        "evse_current_import_entity_id": "Senzor, ki meri tok, ki ga uvaža EVSE",
-                                        "evse_current_offered_entity_id": "Senzor, ki meri tok, ki ga ponuja EVSE",
                                         "max_import_power_entity_id": "Senzor, ki meri največjo moč uvoza",
                                         "phase_voltage": "Napetost na fazo v voltih",
-                                        "update_frequency": "Pogostost v sekundah za posodobitev stanja EVSE",
-                                        "ocpp_profile_timeout": "Časovna omejitev v sekundah za OCPP profil",
-                                        "charge_pause_duration": "Trajanje v sekundah za prekinitev polnjenja",
-                                        "excess_export_threshold": "Prag presežene izvozne moči (W)",
-                                        "evse_maximum_charge_current": "Največji polnilni tok EVSE (A)",
-                                        "min_current_entity_id": "Entiteta za najmanjši tok (number)",
-                                        "max_current_entity_id": "Entiteta za največji tok (number)",
-                                        "battery_power_entity_id": "Senzor, ki meri moč baterije (pozitivno za praznjenje, negativno za polnjenje)",
-                                        "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
-                                        "battery_soc_target_entity_id": "Vnosno število za ciljni SOC baterije (%) (10-100, korak 5)",
-                                        "battery_max_charge_power": "Največja moč polnjenja baterije (W)",
-                                        "battery_max_discharge_power": "Največja moč praznjenja baterije (W)"
+                                        "excess_export_threshold": "Prag presežene izvozne moči (W)"
                                 }
                         },
-                        "reconfigure": {
-                                "description": "Posodobite nastavitve za Dynamic OCPP EVSE",
+                        "evse": {
+                                "description": "Nastavite možnosti EVSE",
                                 "data": {
-                                        "name": "Ime",
-                                        "entity_id": "ID entitete, ki spremlja trenutno razpoložljivost za EVSE",
-                                        "phase_a_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za enofazno polnjenje",
-                                        "phase_b_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za drugo fazo pri dvofaznem polnjenju",
-                                        "phase_c_current_entity_id": "Senzor, ki meri tok uvoza na lokaciji za tretjo fazo pri trifaznem polnjenju",
-                                        "charging_mode_entity_id": "Entiteta za izbiro vnosa, ki nastavi način polnjenja",
-                                        "main_breaker_rating": "Nazivna vrednost glavnega odklopnika (na fazo)",
-                                        "invert_phases": "Obrnite meritve toka, če se uvoz meri kot negativna vrednost",
                                         "evse_minimum_charge_current": "Najmanjši polnilni tok EVSE (A)",
+                                        "evse_maximum_charge_current": "Največji polnilni tok EVSE (A)",
                                         "evse_current_import_entity_id": "Senzor, ki meri tok, ki ga uvaža EVSE",
                                         "evse_current_offered_entity_id": "Senzor, ki meri tok, ki ga ponuja EVSE",
-                                        "max_import_power_entity_id": "Senzor, ki meri največjo moč uvoza",
-                                        "phase_voltage": "Napetost na fazo v voltih",
-                                        "update_frequency": "Pogostost v sekundah za posodobitev stanja EVSE",
                                         "ocpp_profile_timeout": "Časovna omejitev v sekundah za OCPP profil",
-                                        "charge_pause_duration": "Trajanje v sekundah za prekinitev polnjenja",
-                                        "excess_export_threshold": "Prag presežene izvozne moči (W)",
-                                        "evse_maximum_charge_current": "Največji polnilni tok EVSE (A)",
-                                        "min_current_entity_id": "Entiteta za najmanjši tok (number)",
-                                        "max_current_entity_id": "Entiteta za največji tok (number)",
+                                        "charge_pause_duration": "Trajanje v sekundah za prekinitev polnjenja"
+                                }
+                        },
+                        "battery": {
+                                "description": "Nastavite možnosti baterije",
+                                "data": {
                                         "battery_power_entity_id": "Senzor, ki meri moč baterije (pozitivno za praznjenje, negativno za polnjenje)",
                                         "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
                                         "battery_soc_target_entity_id": "Vnosno število za ciljni SOC baterije (%) (10-100, korak 5)",
@@ -66,7 +42,8 @@
                                 "data": {
                                         "charging_mode_entity_id": "Entiteta za izbiro vnosa, ki nastavi način polnjenja",
                                         "min_current_entity_id": "Entiteta za najmanjši tok (number)",
-                                        "max_current_entity_id": "Entiteta za največji tok (number)"
+                                        "max_current_entity_id": "Entiteta za največji tok (number)",
+                                        "update_frequency": "Pogostost v sekundah za posodobitev stanja EVSE"
                                 }
                         }
                 }
