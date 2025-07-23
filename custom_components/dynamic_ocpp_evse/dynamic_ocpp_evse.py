@@ -28,6 +28,8 @@ class ChargeContext:
     battery_soc_target: float = None
     battery_max_charge_power: float = None
     battery_max_discharge_power: float = None
+    allow_grid_charging: bool = True
+    allow_grid_charging_entity_id: str = None
 
 
 def is_number(value):
@@ -298,6 +300,10 @@ def get_state_config(self):
 
     state[CONF_BATTERY_MAX_CHARGE_POWER] = self.config_entry.data.get(CONF_BATTERY_MAX_CHARGE_POWER, 5000)
     state[CONF_BATTERY_MAX_DISCHARGE_POWER] = self.config_entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, 5000)
+
+    # Retrieve the allow grid charging switch state using the constant
+    switch_state = self.hass.states.get(self.config_entry.data.get(CONF_ALLOW_GRID_CHARGING_ENTITY_ID))
+    state["allow_grid_charging"] = switch_state.state == "on" if switch_state else True  # Default to True
     return state
 
 def get_charge_context_values(self, state):
@@ -335,6 +341,8 @@ def get_charge_context_values(self, state):
     battery_soc_target = state.get("battery_soc_target")
     battery_max_charge_power = state.get(CONF_BATTERY_MAX_CHARGE_POWER)
     battery_max_discharge_power = state.get(CONF_BATTERY_MAX_DISCHARGE_POWER)
+    allow_grid_charging = state.get("allow_grid_charging", True)
+    allow_grid_charging_entity_id = state.get(CONF_ALLOW_GRID_CHARGING_ENTITY_ID)
     return ChargeContext(
         state=state,
         phases=phases,
@@ -356,6 +364,8 @@ def get_charge_context_values(self, state):
         battery_soc_target=battery_soc_target,
         battery_max_charge_power=battery_max_charge_power,
         battery_max_discharge_power=battery_max_discharge_power,
+        allow_grid_charging=allow_grid_charging,
+        allow_grid_charging_entity_id=allow_grid_charging_entity_id,
     )
 
 # Calculate the available current based on the configuration and sensor data - this is the main function called by the integration

@@ -55,15 +55,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = entry
 
-    # Forward the setup to the sensor, select, button, and number platforms
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "select", "button", "number"])
+    # Forward the setup to the sensor, select, button, number, and switch platforms
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "select", "button", "number", "switch"])
 
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Unload a Dynamic OCPP EVSE config entry."""
     # Unload each domain separately
-    for domain in ["sensor", "select", "button", "number"]:
+    for domain in ["sensor", "select", "button", "number", "switch"]:
         await hass.config_entries.async_forward_entry_unload(entry, domain)
     hass.data[DOMAIN].pop(entry.entry_id)
     return True
