@@ -21,7 +21,7 @@ class DynamicOcppEvseSelect(SelectEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Charging Mode"
         self._attr_unique_id = f"{config_entry.entry_id}_charging_mode"
-        self._attr_options = ["Standard", "Eco", "Solar"]
+        self._attr_options = ["Standard", "Eco", "Solar", "Excess"]
         self._attr_current_option = "Eco"
 
     async def async_select_option(self, option: str) -> None:

@@ -19,7 +19,11 @@
                                         "phase_voltage": "Voltage per phase in volts",
                                         "update_frequency": "Frequency in seconds to update the EVSE status",
                                         "ocpp_profile_timeout": "Timeout in seconds for OCPP profile",
-                                        "charge_pause_duration": "Duration in seconds to pause charging"
+                                        "charge_pause_duration": "Duration in seconds to pause charging",
+                                        "excess_export_threshold": "Excess Export Threshold (A)",
+                                        "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
+                                        "min_current_entity_id": "Entity for minimum current (number)",
+                                        "max_current_entity_id": "Entity for maximum current (number)"
                                 }
                         },
                         "reconfigure": {
@@ -40,7 +44,19 @@
                                         "phase_voltage": "Voltage per phase in volts",
                                         "update_frequency": "Frequency in seconds to update the EVSE status",
                                         "ocpp_profile_timeout": "Timeout in seconds for OCPP profile",
-                                        "charge_pause_duration": "Duration in seconds to pause charging"
+                                        "charge_pause_duration": "Duration in seconds to pause charging",
+                                        "excess_export_threshold": "Excess Export Threshold (A)",
+                                        "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
+                                        "min_current_entity_id": "Entity for minimum current (number)",
+                                        "max_current_entity_id": "Entity for maximum current (number)"
+                                }
+                        },
+                        "internal_entities": {
+                                "description": "Configure internal/advanced entities for Dynamic OCPP EVSE",
+                                "data": {
+                                        "charging_mode_entity_id": "Input select entity that sets the charging mode",
+                                        "min_current_entity_id": "Entity for minimum current (number)",
+                                        "max_current_entity_id": "Entity for maximum current (number)"
                                 }
                         }
                 }

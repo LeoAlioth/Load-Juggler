@@ -33,3 +33,4 @@ CONF_EVSE_CURRENT_OFFERED = "evse_current_offered"
 CONF_MAX_IMPORT_POWER = "max_import_power"
 CONF_MIN_CURRENT = "min_current"
 CONF_MAX_CURRENT = "max_current"
+CONF_EXCESS_EXPORT_THRESHOLD = "excess_export_threshold"  # Maximum allowed export before charging starts in Excess mode

@@ -12,14 +12,18 @@
                                         "charging_mode_entity_id": "Entiteta za izbiro vnosa, ki nastavi način polnjenja",
                                         "main_breaker_rating": "Nazivna vrednost glavnega odklopnika (na fazo)",
                                         "invert_phases": "Obrnite meritve toka, če se uvoz meri kot negativna vrednost",
-                                        "evse_minimum_charge_current": "Privzeti tok polnjenja v amperih. To je nastavljeno kot privzeti profil polnjenja na EVSE",
+                                        "evse_minimum_charge_current": "Najmanjši polnilni tok EVSE (A)",
                                         "evse_current_import_entity_id": "Senzor, ki meri tok, ki ga uvaža EVSE",
                                         "evse_current_offered_entity_id": "Senzor, ki meri tok, ki ga ponuja EVSE",
                                         "max_import_power_entity_id": "Senzor, ki meri največjo moč uvoza",
                                         "phase_voltage": "Napetost na fazo v voltih",
                                         "update_frequency": "Pogostost v sekundah za posodobitev stanja EVSE",
                                         "ocpp_profile_timeout": "Časovna omejitev v sekundah za OCPP profil",
-                                        "charge_pause_duration": "Trajanje v sekundah za prekinitev polnjenja"
+                                        "charge_pause_duration": "Trajanje v sekundah za prekinitev polnjenja",
+                                        "excess_export_threshold": "Prag presežka izvoza (A)",
+                                        "evse_maximum_charge_current": "Največji polnilni tok EVSE (A)",
+                                        "min_current_entity_id": "Entiteta za najmanjši tok (number)",
+                                        "max_current_entity_id": "Entiteta za največji tok (number)"
                                 }
                         },
                         "reconfigure": {
@@ -33,14 +37,26 @@
                                         "charging_mode_entity_id": "Entiteta za izbiro vnosa, ki nastavi način polnjenja",
                                         "main_breaker_rating": "Nazivna vrednost glavnega odklopnika (na fazo)",
                                         "invert_phases": "Obrnite meritve toka, če se uvoz meri kot negativna vrednost",
-                                        "evse_minimum_charge_current": "Privzeti tok polnjenja v amperih. To je nastavljeno kot privzeti profil polnjenja na EVSE",
+                                        "evse_minimum_charge_current": "Najmanjši polnilni tok EVSE (A)",
                                         "evse_current_import_entity_id": "Senzor, ki meri tok, ki ga uvaža EVSE",
                                         "evse_current_offered_entity_id": "Senzor, ki meri tok, ki ga ponuja EVSE",
                                         "max_import_power_entity_id": "Senzor, ki meri največjo moč uvoza",
                                         "phase_voltage": "Napetost na fazo v voltih",
                                         "update_frequency": "Pogostost v sekundah za posodobitev stanja EVSE",
                                         "ocpp_profile_timeout": "Časovna omejitev v sekundah za OCPP profil",
-                                        "charge_pause_duration": "Trajanje v sekundah za prekinitev polnjenja"
+                                        "charge_pause_duration": "Trajanje v sekundah za prekinitev polnjenja",
+                                        "excess_export_threshold": "Prag presežka izvoza (A)",
+                                        "evse_maximum_charge_current": "Največji polnilni tok EVSE (A)",
+                                        "min_current_entity_id": "Entiteta za najmanjši tok (number)",
+                                        "max_current_entity_id": "Entiteta za največji tok (number)"
+                                }
+                        },
+                        "internal_entities": {
+                                "description": "Konfigurirajte interne/napredne entitete za Dynamic OCPP EVSE",
+                                "data": {
+                                        "charging_mode_entity_id": "Entiteta za izbiro vnosa, ki nastavi način polnjenja",
+                                        "min_current_entity_id": "Entiteta za najmanjši tok (number)",
+                                        "max_current_entity_id": "Entiteta za največji tok (number)"
                                 }
                         }
                 }

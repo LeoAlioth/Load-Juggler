@@ -93,6 +93,11 @@ class DynamicOcppEvseSensor(SensorEntity):
         self._last_update = datetime.min  # Initialize the last update timestamp
         self._pause_timer_running = False  # Track if the pause timer is running
         self._last_set_current = 0
+        self._target_evse = None  # Initialize target_evse
+        self._target_evse_standard = None
+        self._target_evse_eco = None
+        self._target_evse_solar = None
+        self._target_evse_excess = None
         self.coordinator = coordinator
 
     @property
@@ -103,7 +108,7 @@ class DynamicOcppEvseSensor(SensorEntity):
     @property
     def extra_state_attributes(self):
         """Return the state attributes."""
-        return {
+        attrs = {
             "state_class": "measurement",
             CONF_PHASES: self._phases,
             CONF_CHARING_MODE: self._charging_mode,
@@ -111,8 +116,17 @@ class DynamicOcppEvseSensor(SensorEntity):
             "max_evse_available": self._max_evse_available,
             "last_update": self._last_update,
             "pause_timer_running": self._pause_timer_running,
-            "last_set_current": self._last_set_current
+            "last_set_current": self._last_set_current,
+            "target_evse": self._target_evse,  # Always include target_evse
+            "target_evse_standard": self._target_evse_standard,
+            "target_evse_eco": self._target_evse_eco,
+            "target_evse_solar": self._target_evse_solar,
+            "target_evse_excess": self._target_evse_excess,
         }
+        # Add excess_charge_start_time if available
+        if hasattr(self, '_excess_charge_start_time') and self._excess_charge_start_time is not None:
+            attrs["excess_charge_start_time"] = self._excess_charge_start_time
+        return attrs
 
     @property
     def icon(self):
@@ -129,6 +143,16 @@ class DynamicOcppEvseSensor(SensorEntity):
             self._charging_mode = data[CONF_CHARING_MODE]
             self._calc_used = data["calc_used"]
             self._max_evse_available = data["max_evse_available"]
+            self._target_evse = data["target_evse"]
+            self._target_evse_standard =  data["target_evse_standard"]
+            self._target_evse_eco = data["target_evse_eco"]
+            self._target_evse_solar = data["target_evse_solar"]
+            self._target_evse_excess = data["target_evse_excess"]
+            # Store excess_charge_start_time if present
+            if "excess_charge_start_time" in data:
+                self._excess_charge_start_time = data["excess_charge_start_time"]
+            else:
+                self._excess_charge_start_time = None
 
             # Check if the state drops below 6
             if self._state < 6 and not self._pause_timer_running:
