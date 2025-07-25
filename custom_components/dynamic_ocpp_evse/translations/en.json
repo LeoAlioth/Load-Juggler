@@ -2,18 +2,18 @@
         "config": {
                 "step": {
                         "grid": {
-                                "description": "Setup your Dynamic OCPP EVSE",
+                                "description": "Setup your grid related options",
                                 "data": {
                                         "name": "Name",
                                         "entity_id": "ID of the entity that tracks current available to EVSE",
-                                        "phase_a_current_entity_id": "Sensor that measures site import current for single phase charging",
-                                        "phase_b_current_entity_id": "Sensor that measures site import current for the second phase when 2 phase charging",
-                                        "phase_c_current_entity_id": "Sensor that measures site import current for the third phase when 3 phase charging",
+                                        "phase_a_current_entity_id": "Sensor that measures grid import current for single phase charging",
+                                        "phase_b_current_entity_id": "Sensor that measures grid import current for the second phase when 2 phase charging",
+                                        "phase_c_current_entity_id": "Sensor that measures grid import current for the third phase when 3 phase charging",
                                         "main_breaker_rating": "Rating of the main breaker (per phase)",
                                         "invert_phases": "Invert current readings if import measures as a negative number",
                                         "max_import_power_entity_id": "Sensor that measures the maximum import power",
                                         "phase_voltage": "Voltage per phase in volts",
-                                        "excess_export_threshold": "Excess Export Power Threshold (W)"
+                                        "excess_export_threshold": "Excess Export Power Threshold, at which the car starts charging (W)"
                                 }
                         },
                         "evse": {
@@ -21,8 +21,8 @@
                                 "data": {
                                         "evse_minimum_charge_current": "EVSE Minimum Charge Current (A)",
                                         "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
-                                        "evse_current_import_entity_id": "Sensor that measures the current imported by the EVSE",
-                                        "evse_current_offered_entity_id": "Sensor that measures the current offered by the EVSE",
+                                        "evse_current_import_entity_id": "Sensor that measures the current imported by the EVSE (What car acctually uses, sum of all phases)",
+                                        "evse_current_offered_entity_id": "Sensor that measures the current offered by the EVSE (What the EVSE tells the car it can use, per phase)",
                                         "ocpp_profile_timeout": "Timeout in seconds for OCPP profile",
                                         "charge_pause_duration": "Duration in seconds to pause charging"
                                 }
@@ -33,8 +33,8 @@
                                         "battery_power_entity_id": "Sensor that measures battery power (positive for discharge, negative for charge)",
                                         "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
                                         "battery_soc_target_entity_id": "Input number entity for target battery SOC (%) (10-100, step 5)",
-                                        "battery_max_charge_power": "Maximum battery charge power (W)",
-                                        "battery_max_discharge_power": "Maximum battery discharge power (W)"
+                                        "battery_max_charge_power": "Maximum battery charge power. In excess mode car starts charging when this power is reached (W)",
+                                        "battery_max_discharge_power": "Maximum battery discharge power. Used for ccalculating charge power when battery SOC is above target SOC (W)"
                                 }
                         },
                         "internal_entities": {

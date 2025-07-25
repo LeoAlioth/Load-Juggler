@@ -68,13 +68,67 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_evse()
 
         try:
-            # Fetch available entities and apply regex match
+            # Define pattern sets for different inverter types
+            PHASE_PATTERNS = [
+                {
+                    "name": "SolarEdge",
+                    "patterns": {
+                        "phase_a": r'sensor\..*m.*ac_current_a.*',
+                        "phase_b": r'sensor\..*m.*ac_current_b.*', 
+                        "phase_c": r'sensor\..*m.*ac_current_c.*'
+                    }
+                },
+                {
+                    "name": "Solarman/Deye - external CTs",
+                    "patterns": {
+                        "phase_a": r'sensor\..*_external_ct1_current.*',
+                        "phase_b": r'sensor\..*_external_ct2_current.*',
+                        "phase_c": r'sensor\..*_external_ct3_current.*'
+                    }
+                },
+                {
+                    "name": "Solarman/Deye - internal CTs",
+                    "patterns": {
+                        "phase_a": r'sensor\..*_internal_ct1_current.*',
+                        "phase_b": r'sensor\..*_internal_ct2_current.*',
+                        "phase_c": r'sensor\..*_internal_ct3_current.*'
+                    }
+                }
+            ]
+            
+            # Fetch available entities
             entity_registry = async_get_entity_registry(self.hass)
             entities = entity_registry.entities
             entity_ids = entities.keys()
-            default_phase_a = next((entity_id for entity_id in entity_ids if re.match(r'sensor\..*m.*ac_current_a.*', entity_id)), None)
-            default_phase_b = next((entity_id for entity_id in entity_ids if re.match(r'sensor\..*m.*ac_current_b.*', entity_id)), None)
-            default_phase_c = next((entity_id for entity_id in entity_ids if re.match(r'sensor\..*m.*ac_current_c.*', entity_id)), None)
+            
+            # Try to find a complete set of phases using pattern sets
+            default_phase_a = None
+            default_phase_b = None
+            default_phase_c = None
+            
+            for pattern_set in PHASE_PATTERNS:
+                phase_a_match = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_a"], entity_id)), None)
+                phase_b_match = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_b"], entity_id)), None)
+                phase_c_match = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_c"], entity_id)), None)
+                
+                # If we found all three phases for this pattern set, use them
+                if phase_a_match and phase_b_match and phase_c_match:
+                    default_phase_a = phase_a_match
+                    default_phase_b = phase_b_match
+                    default_phase_c = phase_c_match
+                    break
+            
+            # If no complete set was found, fall back to individual pattern matching (backward compatibility)
+            if not (default_phase_a and default_phase_b and default_phase_c):
+                for pattern_set in PHASE_PATTERNS:
+                    if not default_phase_a:
+                        default_phase_a = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_a"], entity_id)), None)
+                    if not default_phase_b:
+                        default_phase_b = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_b"], entity_id)), None)
+                    if not default_phase_c:
+                        default_phase_c = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_c"], entity_id)), None)
+            
+            # Find other default entities
             default_evse_current_import = next((entity_id for entity_id in entity_ids if re.match(r'sensor\..*current_import.*', entity_id)), None)
             default_evse_current_offered = next((entity_id for entity_id in entity_ids if re.match(r'sensor\..*current_offered.*', entity_id)), None)
             default_max_import_power = next((entity_id for entity_id in entity_ids if re.match(r'sensor\..*power_limit.*', entity_id)), None)
