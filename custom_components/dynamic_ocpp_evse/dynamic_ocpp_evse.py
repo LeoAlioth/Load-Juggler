@@ -324,13 +324,35 @@ def get_state_config(self):
     state[CONF_MAIN_BREAKER_RATING] = self.config_entry.data.get(CONF_MAIN_BREAKER_RATING)
     state[CONF_INVERT_PHASES] = self.config_entry.data.get(CONF_INVERT_PHASES)
     state[CONF_CHARING_MODE] = get_sensor_data(self, self.config_entry.data.get(CONF_CHARGIN_MODE_ENTITY_ID))
-    state[CONF_PHASE_A_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_PHASE_A_CURRENT_ENTITY_ID))
-    state[CONF_PHASE_B_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_PHASE_B_CURRENT_ENTITY_ID))
-    state[CONF_PHASE_C_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID))
+    
+    # Get phase voltage for power-to-current conversion
+    voltage = self.config_entry.data.get(CONF_PHASE_VOLTAGE, 230)
+    
+    # Helper function to convert power to current if needed
+    def get_phase_current(entity_id):
+        if not entity_id:
+            return None
+        value = get_sensor_data(self, entity_id)
+        if value is None:
+            return None
+        
+        # Check if this is a power sensor by looking at the entity's unit_of_measurement
+        entity_state = self.hass.states.get(entity_id)
+        if entity_state and entity_state.attributes.get('unit_of_measurement') == 'W':
+            # Convert power to current: I = P / V
+            return value / voltage if voltage > 0 else 0
+        else:
+            # Assume it's already current
+            return value
+    
+    state[CONF_PHASE_A_CURRENT] = get_phase_current(self.config_entry.data.get(CONF_PHASE_A_CURRENT_ENTITY_ID))
+    state[CONF_PHASE_B_CURRENT] = get_phase_current(self.config_entry.data.get(CONF_PHASE_B_CURRENT_ENTITY_ID))
+    state[CONF_PHASE_C_CURRENT] = get_phase_current(self.config_entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID))
+    
     state[CONF_EVSE_CURRENT_IMPORT] = get_sensor_data(self, self.config_entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID))
     state[CONF_EVSE_CURRENT_OFFERED] = get_sensor_data(self, self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID))
     state[CONF_MAX_IMPORT_POWER] = get_sensor_data(self, self.config_entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID))
-    state[CONF_PHASE_VOLTAGE] = self.config_entry.data.get(CONF_PHASE_VOLTAGE)
+    state[CONF_PHASE_VOLTAGE] = voltage
     state[CONF_EVSE_MINIMUM_CHARGE_CURRENT] = self.config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6)
     state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT] = self.config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16)
     state[CONF_MIN_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_MIN_CURRENT_ENTITY_ID))
@@ -479,5 +501,3 @@ def calculate_available_current(self):
         'target_evse_excess': target_evse_excess,
         'excess_charge_start_time': getattr(self, '_excess_charge_start_time', None),
     }
-
-

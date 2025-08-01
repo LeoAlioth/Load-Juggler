@@ -76,7 +76,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "phase_a": r'sensor\..*m.*ac_current_a.*',
                         "phase_b": r'sensor\..*m.*ac_current_b.*', 
                         "phase_c": r'sensor\..*m.*ac_current_c.*'
-                    }
+                    },
+                    "unit": "A",
                 },
                 {
                     "name": "Solarman/Deye - external CTs",
@@ -84,7 +85,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "phase_a": r'sensor\..*_external_ct1_current.*',
                         "phase_b": r'sensor\..*_external_ct2_current.*',
                         "phase_c": r'sensor\..*_external_ct3_current.*'
-                    }
+                    },
+                    "unit": "A", 
                 },
                 {
                     "name": "Solarman/Deye - internal CTs",
@@ -92,8 +94,19 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "phase_a": r'sensor\..*_internal_ct1_current.*',
                         "phase_b": r'sensor\..*_internal_ct2_current.*',
                         "phase_c": r'sensor\..*_internal_ct3_current.*'
-                    }
+                    },
+                    "unit": "A", 
+                },
+                {
+                    "name": "Solarman - grid power (individual phases)",
+                    "patterns": {
+                        "phase_a": r'sensor\..*grid_(?:1|l1|power_1|power_l1).*',
+                        "phase_b": r'sensor\..*grid_(?:2|l2|power_2|power_l2).*', 
+                        "phase_c": r'sensor\..*grid_(?:3|l3|power_3|power_l3).*'
+                    },
+                    "unit": "W", 
                 }
+
             ]
             
             # Fetch available entities
@@ -136,9 +149,9 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Update the schema with the default values
             step_grid_data_schema = vol.Schema(
                 {
-                    vol.Required(CONF_PHASE_A_CURRENT_ENTITY_ID, default=entry.data.get(CONF_PHASE_A_CURRENT_ENTITY_ID, default_phase_a) if entry else default_phase_a): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
-                    vol.Required(CONF_PHASE_B_CURRENT_ENTITY_ID, default=entry.data.get(CONF_PHASE_B_CURRENT_ENTITY_ID, default_phase_b) if entry else default_phase_b): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
-                    vol.Required(CONF_PHASE_C_CURRENT_ENTITY_ID, default=entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID, default_phase_c) if entry else default_phase_c): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
+                    vol.Required(CONF_PHASE_A_CURRENT_ENTITY_ID, default=entry.data.get(CONF_PHASE_A_CURRENT_ENTITY_ID, default_phase_a) if entry else default_phase_a): selector({"entity": {"domain": "sensor", "device_class": ["current", "power"]}}),
+                    vol.Required(CONF_PHASE_B_CURRENT_ENTITY_ID, default=entry.data.get(CONF_PHASE_B_CURRENT_ENTITY_ID, default_phase_b) if entry else default_phase_b): selector({"entity": {"domain": "sensor", "device_class": ["current", "power"]}}),
+                    vol.Required(CONF_PHASE_C_CURRENT_ENTITY_ID, default=entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID, default_phase_c) if entry else default_phase_c): selector({"entity": {"domain": "sensor", "device_class": ["current", "power"]}}),
                     vol.Required(CONF_MAIN_BREAKER_RATING, default=entry.data.get(CONF_MAIN_BREAKER_RATING, 25) if entry else 25): int,
                     vol.Required(CONF_INVERT_PHASES, default=entry.data.get(CONF_INVERT_PHASES, False) if entry else False): bool,
                     vol.Required(CONF_MAX_IMPORT_POWER_ENTITY_ID, default=entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID, default_max_import_power) if entry else default_max_import_power): selector({"entity": {"domain": "sensor", "device_class": "power"}}),
