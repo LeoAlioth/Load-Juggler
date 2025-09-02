@@ -65,7 +65,7 @@ Battery integration works seamlessly with all charging modes, ensuring optimal e
 
 ## Configuration
 
-Create a helper, that holds the maximum import power in W. You will need it in the configuration steps. I Recommend the name to contain "Power Limit" so it gets auto selected during configuration. This helper can then be set to whatever you want the max pull from the grid to be.
+Create a helper, that holds the maximum import power in W. You will need it in the configuration steps. I Recommend the name to contain "Power Limit" so it gets auto selected during configuration. This helper can then be set to whatever you want the max pull from the grid to be. (The helper should be a template sensor. Using an input_number is not yet possible but planned for future release)
 
 After installation, go to Settings -> Add Integration and search for `Dynamic OCPP EVSE`
 
