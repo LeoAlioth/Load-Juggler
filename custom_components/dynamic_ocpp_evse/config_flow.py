@@ -240,12 +240,20 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         entry = self.hass.config_entries.async_get_entry(self.context["entry_id"]) if hasattr(self, 'context') and self.context.get("entry_id") else None
         
         # Get all battery and power sensors for select options
-        entity_registry = async_get_entity_registry(self.hass)
-        entities = entity_registry.entities
-        battery_entities = [entity_id for entity_id in entities if entity_id.startswith('sensor.') and entities[entity_id].device_class == 'battery']
-        power_entities = [entity_id for entity_id in entities if entity_id.startswith('sensor.') and entities[entity_id].device_class == 'power']
-        battery_soc_options = ['None'] + battery_entities
-        battery_power_options = ['None'] + power_entities
+        # Use states instead of entity registry to match the template behavior
+        battery_entities = []
+        power_entities = []
+        
+        for entity_id, state in self.hass.states.async_all().items():
+            if entity_id.startswith('sensor.'):
+                device_class = state.attributes.get('device_class')
+                if device_class == 'battery':
+                    battery_entities.append(entity_id)
+                elif device_class == 'power':
+                    power_entities.append(entity_id)
+        
+        battery_soc_options = ['None'] + sorted(battery_entities)
+        battery_power_options = ['None'] + sorted(power_entities)
         
         # Set up initial data - use entry data if available (reconfiguration), otherwise use defaults
         initial_data = {
