@@ -11,7 +11,7 @@ If you have a smart meter or PV with consumption monitoring, and an EVSE integra
 - [Battery System Support](#battery-system-support)
 - [Installation](#installation)
 - [Configuration](#configuration)
-- [Supported Inverters](#supported-inverters)
+- [Supported Equipment](#supported-equipment)
 - [Testing and Feedback](#testing-and-feedback)
 
 ## Features
@@ -54,9 +54,10 @@ Battery integration works seamlessly with all charging modes, ensuring optimal e
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=LeoAlioth&repository=Dynamic_OCPP_EVSE&category=integration)
 
 **Method 2:**
+
 1. **Download the Custom Component**
    - Download the files from the repository.
-   
+
 2. **Copy to Your Custom Components Directory**
    - Copy the downloaded folder `dynamic_ocpp_evse` into the `custom_components/dynamic_ocpp_evse` directory in your Home Assistant configuration directory.
 
@@ -66,7 +67,9 @@ Battery integration works seamlessly with all charging modes, ensuring optimal e
 ## Configuration
 
 ### Import power limit helper
-Create a template sensor, that holds the maximum import power. You will need it in the configuration steps. I Recommend the name to contain "Power Limit" so it gets auto selected during configuration. 
+
+Create a template sensor, that holds the maximum import power. You will need it in the configuration steps. I Recommend the name to contain "Power Limit" so it gets auto selected during configuration.
+
 - The template can be whatever you want, for s simple static example of 6 kW: {{ 6000 }}
 - Unit of measurement: W
 - Device class: Power
@@ -75,6 +78,7 @@ Create a template sensor, that holds the maximum import power. You will need it 
 ( Using an input_number is not yet possible but planned for future release)
 
 ### Adding integration
+
 After installation, go to Settings -> Add Integration and search for `Dynamic OCPP EVSE`
 
 The integration will automatically detect and suggest appropriate sensors based on your system:
@@ -94,6 +98,7 @@ Most fields should auto-populate during setup. If they do not, please report tha
 ## Supported equipment
 
 ### power meters / inverters
+
 While technically you can use any home assistant entity, the integration also automatically detects sensors for some setups:
 
 - SolarEdge
@@ -110,12 +115,14 @@ The integration supports both current (A) and power (W) sensors, automatically c
 This integration is actively being developed and improved. I'm looking for users to test it with different setups and provide feedback.
 
 **Especially interested in testing with:**
+
 - Different inverter/meter brands and models
 - Battery systems (different brands and configurations)
 - Multi-phase vs single-phase installations
 - Different grid configurations and power limits
 
 **How to help:**
+
 - Install and test the integration with your setup
 - Report any issues or unexpected behavior via [GitHub Issues](https://github.com/LeoAlioth/Dynamic_OCPP_EVSE/issues)
 - Share your configuration and experiences

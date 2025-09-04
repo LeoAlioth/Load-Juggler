@@ -11,7 +11,7 @@
                                         "phase_c_current_entity_id": "Senzor, ki meri uvoz iz omrežja za tretjo fazo pri trifaznem polnjenju",
                                         "main_breaker_rating": "Nazivna vrednost glavnega odklopnika (na fazo)",
                                         "invert_phases": "Obrnite meritve toka, če se uvoz meri kot negativna vrednost",
-                                        "max_import_power_entity_id": "Senzor, ki meri največjo moč uvoza",
+                                        "max_import_power_entity_id": "Senzor, ki nastavlja največjo moč uvoza (domain: 'sensor' ali 'input_number',  Device class: 'power')",
                                         "phase_voltage": "Napetost na fazo v voltih",
                                         "excess_export_threshold": "Prag presežene izvozne moči (W)"
                                 }
