@@ -244,7 +244,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         battery_entities = []
         power_entities = []
         
-        for entity_id, state in self.hass.states.async_all().items():
+        for state in self.hass.states.async_all():
+            entity_id = state.entity_id
             if entity_id.startswith('sensor.'):
                 device_class = state.attributes.get('device_class')
                 if device_class == 'battery':
