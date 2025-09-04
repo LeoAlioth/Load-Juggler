@@ -185,7 +185,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self.hass.config_entries.async_update_entry(entry, data={**entry.data, **self._data})
             return await self.async_step_battery()
 
-        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"]) if hasattr(self, 'context') and self.context.get("entry_id") else None
         if entry:
             initial_data = {
                 CONF_EVSE_MINIMUM_CHARGE_CURRENT: entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6),
@@ -240,7 +240,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 return self.async_create_entry(title=self._data["name"], data=self._data)
 
-        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"]) if hasattr(self, 'context') and self.context.get("entry_id") else None
         if entry:
             # Get all battery and power sensors for select options
             entity_registry = async_get_entity_registry(self.hass)
