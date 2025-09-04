@@ -74,9 +74,12 @@ Create a template sensor, that holds the maximum import power. You will need it 
 
 ( Using an input_number is not yet possible but planned for future release)
 
+### Adding integration
 After installation, go to Settings -> Add Integration and search for `Dynamic OCPP EVSE`
 
 The integration will automatically detect and suggest appropriate sensors based on your system:
+
+### Configuration options
 
 1. **Phase Current/Power Sensors**: The integration will automatically detect phase sensors from supported inverters
 2. **EVSE Sensors**: Select your EVSE current import and offered sensors from the OCPP integration
