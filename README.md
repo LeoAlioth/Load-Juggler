@@ -71,6 +71,7 @@ Create a template sensor, that holds the maximum import power. You will need it 
 - Unit of measurement: W
 - Device class: Power
 - State class: Measurement
+
 ( Using an input_number is not yet possible but planned for future release)
 
 After installation, go to Settings -> Add Integration and search for `Dynamic OCPP EVSE`
