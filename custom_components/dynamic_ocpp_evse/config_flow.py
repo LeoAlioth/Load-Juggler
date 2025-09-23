@@ -154,7 +154,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_PHASE_C_CURRENT_ENTITY_ID, default=entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID, default_phase_c) if entry else default_phase_c): selector({"entity": {"domain": "sensor", "device_class": ["current", "power"]}}),
                     vol.Required(CONF_MAIN_BREAKER_RATING, default=entry.data.get(CONF_MAIN_BREAKER_RATING, 25) if entry else 25): int,
                     vol.Required(CONF_INVERT_PHASES, default=entry.data.get(CONF_INVERT_PHASES, False) if entry else False): bool,
-                    vol.Required(CONF_MAX_IMPORT_POWER_ENTITY_ID, default=entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID, default_max_import_power) if entry else default_max_import_power): selector({"entity": {"domain": "sensor", "device_class": "power"}}),
+                    vol.Required(CONF_MAX_IMPORT_POWER_ENTITY_ID, default=entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID, default_max_import_power) if entry else default_max_import_power): selector({"entity": {"domain": ["sensor", "input_number"], "device_class": "power"}}),
                     vol.Required(CONF_PHASE_VOLTAGE, default=entry.data.get(CONF_PHASE_VOLTAGE, 230) if entry else 230): int,
                     vol.Required(CONF_UPDATE_FREQUENCY, default=entry.data.get(CONF_UPDATE_FREQUENCY, 5) if entry else 5): int,
                     vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, 90) if entry else 90): int,
@@ -185,40 +185,37 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self.hass.config_entries.async_update_entry(entry, data={**entry.data, **self._data})
             return await self.async_step_battery()
 
-        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-        if entry:
-            initial_data = {
-                CONF_EVSE_MINIMUM_CHARGE_CURRENT: entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6),
-                CONF_EVSE_MAXIMUM_CHARGE_CURRENT: entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16),
-                CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID),
-                CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID),
-                CONF_OCPP_PROFILE_TIMEOUT: entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, 90),
-                CONF_CHARGE_PAUSE_DURATION: entry.data.get(CONF_CHARGE_PAUSE_DURATION, 180),
-                CONF_UPDATE_FREQUENCY: entry.data.get(CONF_UPDATE_FREQUENCY, 5),
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"]) if hasattr(self, 'context') and self.context.get("entry_id") else None
+        
+        # Set up initial data - use entry data if available (reconfiguration), otherwise use defaults
+        initial_data = {
+            CONF_EVSE_MINIMUM_CHARGE_CURRENT: entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6) if entry else 6,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16) if entry else 16,
+            CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID) if entry else None,
+            CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID) if entry else None,
+            CONF_OCPP_PROFILE_TIMEOUT: entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, 90) if entry else 90,
+            CONF_CHARGE_PAUSE_DURATION: entry.data.get(CONF_CHARGE_PAUSE_DURATION, 180) if entry else 180,
+            CONF_UPDATE_FREQUENCY: entry.data.get(CONF_UPDATE_FREQUENCY, 5) if entry else 5,
+        }
+        
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_EVSE_MINIMUM_CHARGE_CURRENT, default=initial_data[CONF_EVSE_MINIMUM_CHARGE_CURRENT]): int,
+                vol.Required(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, default=initial_data[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]): int,
+                vol.Required(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
+                vol.Required(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
+                vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=initial_data[CONF_OCPP_PROFILE_TIMEOUT]): int,
+                vol.Required(CONF_CHARGE_PAUSE_DURATION, default=initial_data[CONF_CHARGE_PAUSE_DURATION]): int,
+                vol.Required(CONF_UPDATE_FREQUENCY, default=initial_data[CONF_UPDATE_FREQUENCY]): int,
             }
-            data_schema = vol.Schema(
-                {
-                    vol.Required(CONF_EVSE_MINIMUM_CHARGE_CURRENT, default=initial_data[CONF_EVSE_MINIMUM_CHARGE_CURRENT]): int,
-                    vol.Required(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, default=initial_data[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]): int,
-                    vol.Required(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
-                    vol.Required(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, default=initial_data[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID]): selector({"entity": {"domain": "sensor", "device_class": "current"}}),
-                    vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=initial_data[CONF_OCPP_PROFILE_TIMEOUT]): int,
-                    vol.Required(CONF_CHARGE_PAUSE_DURATION, default=initial_data[CONF_CHARGE_PAUSE_DURATION]): int,
-                    vol.Required(CONF_UPDATE_FREQUENCY, default=initial_data[CONF_UPDATE_FREQUENCY]): int,
-                }
-            )
-            description = "The integration will create 'Charging Mode', 'Min Current', and 'Max Current' entities for you after setup. You can adjust them later from the entity settings."
-            return self.async_show_form(
-                step_id="evse",
-                data_schema=data_schema,
-                errors=errors,
-                description_placeholders={"info": description},
-                last_step=False
-            )
+        )
+        
+        description = "The integration will create 'Charging Mode', 'Min Current', and 'Max Current' entities for you after setup. You can adjust them later from the entity settings."
         return self.async_show_form(
             step_id="evse",
-            data_schema=vol.Schema({}),
+            data_schema=data_schema,
             errors=errors,
+            description_placeholders={"info": description},
             last_step=False
         )
 
@@ -240,43 +237,49 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 return self.async_create_entry(title=self._data["name"], data=self._data)
 
-        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-        if entry:
-            # Get all battery and power sensors for select options
-            entity_registry = async_get_entity_registry(self.hass)
-            entities = entity_registry.entities
-            battery_entities = [entity_id for entity_id in entities if entity_id.startswith('sensor.') and entities[entity_id].device_class == 'battery']
-            power_entities = [entity_id for entity_id in entities if entity_id.startswith('sensor.') and entities[entity_id].device_class == 'power']
-            battery_soc_options = ['None'] + battery_entities
-            battery_power_options = ['None'] + power_entities
-            initial_data = {
-                CONF_BATTERY_SOC_ENTITY_ID: entry.data.get(CONF_BATTERY_SOC_ENTITY_ID) or 'None',
-                CONF_BATTERY_POWER_ENTITY_ID: entry.data.get(CONF_BATTERY_POWER_ENTITY_ID) or 'None',
-                CONF_BATTERY_MAX_CHARGE_POWER: entry.data.get(CONF_BATTERY_MAX_CHARGE_POWER, 5000),
-                CONF_BATTERY_MAX_DISCHARGE_POWER: entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, 5000),
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"]) if hasattr(self, 'context') and self.context.get("entry_id") else None
+        
+        # Get all battery and power sensors for select options
+        # Use states instead of entity registry to match the template behavior
+        battery_entities = []
+        power_entities = []
+        
+        for state in self.hass.states.async_all():
+            entity_id = state.entity_id
+            if entity_id.startswith('sensor.'):
+                device_class = state.attributes.get('device_class')
+                if device_class == 'battery':
+                    battery_entities.append(entity_id)
+                elif device_class == 'power':
+                    power_entities.append(entity_id)
+        
+        battery_soc_options = ['None'] + sorted(battery_entities)
+        battery_power_options = ['None'] + sorted(power_entities)
+        
+        # Set up initial data - use entry data if available (reconfiguration), otherwise use defaults
+        initial_data = {
+            CONF_BATTERY_SOC_ENTITY_ID: entry.data.get(CONF_BATTERY_SOC_ENTITY_ID) or 'None' if entry else 'None',
+            CONF_BATTERY_POWER_ENTITY_ID: entry.data.get(CONF_BATTERY_POWER_ENTITY_ID) or 'None' if entry else 'None',
+            CONF_BATTERY_MAX_CHARGE_POWER: entry.data.get(CONF_BATTERY_MAX_CHARGE_POWER, 5000) if entry else 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, 5000) if entry else 5000,
+        }
+        
+        _LOGGER.debug("async_step_battery initial_data: %s", initial_data)
+        data_schema = vol.Schema(
+            {
+                vol.Optional(CONF_BATTERY_SOC_ENTITY_ID, default=initial_data[CONF_BATTERY_SOC_ENTITY_ID]): selector({"select": {"options": battery_soc_options}}),
+                vol.Optional(CONF_BATTERY_POWER_ENTITY_ID, default=initial_data[CONF_BATTERY_POWER_ENTITY_ID]): selector({"select": {"options": battery_power_options}}),
+                vol.Optional(CONF_BATTERY_MAX_CHARGE_POWER, default=initial_data[CONF_BATTERY_MAX_CHARGE_POWER]): int,
+                vol.Optional(CONF_BATTERY_MAX_DISCHARGE_POWER, default=initial_data[CONF_BATTERY_MAX_DISCHARGE_POWER]): int,
             }
-            _LOGGER.debug("async_step_battery initial_data: %s", initial_data)
-            data_schema = vol.Schema(
-                {
-                    vol.Optional(CONF_BATTERY_SOC_ENTITY_ID, default=initial_data[CONF_BATTERY_SOC_ENTITY_ID]): selector({"select": {"options": battery_soc_options}}),
-                    vol.Optional(CONF_BATTERY_POWER_ENTITY_ID, default=initial_data[CONF_BATTERY_POWER_ENTITY_ID]): selector({"select": {"options": battery_power_options}}),
-                    vol.Optional(CONF_BATTERY_MAX_CHARGE_POWER, default=initial_data[CONF_BATTERY_MAX_CHARGE_POWER]): int,
-                    vol.Optional(CONF_BATTERY_MAX_DISCHARGE_POWER, default=initial_data[CONF_BATTERY_MAX_DISCHARGE_POWER]): int,
-                }
-            )
-            description = "The integration will create a 'Battery SOC Target' number entity for you after setup. You can adjust it later from the entity settings."
-            return self.async_show_form(
-                step_id="battery",
-                data_schema=data_schema,
-                errors=errors,
-                description_placeholders={"info": description},
-                last_step=True
-            )
-        _LOGGER.debug("async_step_battery: No entry found for context entry_id")
+        )
+        
+        description = "The integration will create a 'Battery SOC Target' number entity for you after setup. You can adjust it later from the entity settings."
         return self.async_show_form(
             step_id="battery",
-            data_schema=vol.Schema({}),
+            data_schema=data_schema,
             errors=errors,
+            description_placeholders={"info": description},
             last_step=True
         )
 

@@ -11,7 +11,7 @@
                                         "phase_c_current_entity_id": "Sensor that measures grid import for the third phase when 3 phase charging",
                                         "main_breaker_rating": "Rating of the main breaker (per phase)",
                                         "invert_phases": "Invert current readings if import measures as a negative number",
-                                        "max_import_power_entity_id": "Sensor that contains the maximum import power allowed. Create a helper sensor to set this value",
+                                        "max_import_power_entity_id": "Sensor that contains the maximum import power allowed. Create a helper sensor to set this value (domain: 'sensor' or 'input_number',  Device class: 'power')",
                                         "phase_voltage": "Voltage per phase in volts",
                                         "excess_export_threshold": "Excess Export Power Threshold, at which the car starts charging (W)"
                                 }
