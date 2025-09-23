@@ -11,11 +11,16 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     """Set up the number entities."""
     name = config_entry.data["name"]
-    async_add_entities([
+    
+    # Always create the entities - they will be registered if they don't exist
+    entities = [
         EVSEMinCurrentSlider(hass, config_entry, name),
         EVSEMaxCurrentSlider(hass, config_entry, name),
         BatterySOCTargetSlider(hass, config_entry, name),
-    ])
+    ]
+    
+    _LOGGER.info(f"Setting up number entities: {[entity.unique_id for entity in entities]}")
+    async_add_entities(entities)
 
 class EVSEMinCurrentSlider(NumberEntity):
     """Slider for minimum current."""

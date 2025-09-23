@@ -10,7 +10,10 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     """Set up the Dynamic OCPP EVSE Select from a config entry."""
     name = config_entry.data["name"]
-    async_add_entities([DynamicOcppEvseSelect(hass, config_entry, name)])
+    
+    entities = [DynamicOcppEvseSelect(hass, config_entry, name)]
+    _LOGGER.info(f"Setting up select entities: {[entity.unique_id for entity in entities]}")
+    async_add_entities(entities)
 
 class DynamicOcppEvseSelect(SelectEntity):
     """Representation of a Dynamic OCPP EVSE Select."""

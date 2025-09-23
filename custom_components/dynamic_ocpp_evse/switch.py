@@ -1,20 +1,25 @@
+import logging
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.helpers.entity import EntityCategory
 from .const import DOMAIN
 
+_LOGGER = logging.getLogger(__name__)
+
 async def async_setup_entry(hass, config_entry, async_add_entities):
     entity_id = config_entry.data.get("entity_id", "dynamic_ocpp_evse")
     name = config_entry.data["name"]
-    async_add_entities([
-        AllowGridChargingSwitch(hass, entity_id, name)
-    ])
+    
+    entities = [AllowGridChargingSwitch(hass, config_entry, entity_id, name)]
+    _LOGGER.info(f"Setting up switch entities: {[entity.unique_id for entity in entities]}")
+    async_add_entities(entities)
 
 class AllowGridChargingSwitch(SwitchEntity):
     _attr_entity_category = EntityCategory.CONFIG
-    def __init__(self, hass, entity_id, name):
+    def __init__(self, hass, config_entry, entity_id, name):
         self.hass = hass
+        self.config_entry = config_entry
         self._attr_name = f"{name} Allow Grid Charging"
-        self._attr_unique_id = f"{entity_id}_allow_grid"
+        self._attr_unique_id = f"{config_entry.entry_id}_allow_grid_charging"
         self._state = True  # Default: allow grid charging
 
     @property

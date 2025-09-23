@@ -113,11 +113,19 @@ def calculate_max_evse_available(context: ChargeContext):
     max_import_power = state[CONF_MAX_IMPORT_POWER]
     max_import_current = max_import_power / context.voltage
 
-    remaining_available_import_current = max_import_current - context.total_import_current
+    # Calculate remaining current without including EVSE current to avoid feedback loop
+    # Subtract EVSE current from total import current to get non-EVSE import current
+    non_evse_import_current = context.total_import_current - (context.evse_current_per_phase * context.phases)
+    remaining_available_import_current = max_import_current - non_evse_import_current
 
-    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.phase_a_current
-    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.phase_b_current
-    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.phase_c_current
+    # Calculate remaining current on each phase without including EVSE current
+    evse_current_phase_a = context.evse_current_per_phase if context.phases >= 1 else 0
+    evse_current_phase_b = context.evse_current_per_phase if context.phases >= 2 else 0
+    evse_current_phase_c = context.evse_current_per_phase if context.phases >= 3 else 0
+    
+    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - (context.phase_a_current - evse_current_phase_a)
+    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - (context.phase_b_current - evse_current_phase_b)
+    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - (context.phase_c_current - evse_current_phase_c)
 
     # Battery discharge logic
     battery_power = context.battery_power if context.battery_power is not None else 0
@@ -134,18 +142,18 @@ def calculate_max_evse_available(context: ChargeContext):
     available_battery_current = available_battery_power / context.voltage if context.voltage else 0
 
     if context.phases == 1:
-        return context.evse_current_per_phase + min(
+        return min(
             remaining_available_current_phase_a,
             remaining_available_import_current + context.phase_a_export_current + available_battery_current
         )
     elif context.phases == 2:
-        return context.evse_current_per_phase + min(
+        return min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
             (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + available_battery_current) / 2
         )
     elif context.phases == 3:
-        return context.evse_current_per_phase + min(
+        return min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
             remaining_available_current_phase_c,
@@ -188,15 +196,23 @@ def calculate_standard_mode(context: ChargeContext):
     max_import_power = state[CONF_MAX_IMPORT_POWER]
     max_import_current = max_import_power / context.voltage
     target_import_current = max_import_current
+    
     # If grid charging is not allowed, set available import current to 0
     if not context.allow_grid_charging:
         remaining_available_import_current = 0
     else:
-        remaining_available_import_current = target_import_current - context.total_import_current
+        # Calculate remaining current without including EVSE current to avoid feedback loop
+        non_evse_import_current = context.total_import_current - (context.evse_current_per_phase * context.phases)
+        remaining_available_import_current = target_import_current - non_evse_import_current
 
-    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.phase_a_current
-    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.phase_b_current
-    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.phase_c_current
+    # Calculate remaining current on each phase without including EVSE current
+    evse_current_phase_a = context.evse_current_per_phase if context.phases >= 1 else 0
+    evse_current_phase_b = context.evse_current_per_phase if context.phases >= 2 else 0
+    evse_current_phase_c = context.evse_current_per_phase if context.phases >= 3 else 0
+    
+    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - (context.phase_a_current - evse_current_phase_a)
+    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - (context.phase_b_current - evse_current_phase_b)
+    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - (context.phase_c_current - evse_current_phase_c)
 
     # Battery discharge logic for standard mode
     battery_power = context.battery_power if context.battery_power is not None else 0
@@ -213,18 +229,18 @@ def calculate_standard_mode(context: ChargeContext):
     available_battery_current = available_battery_power / context.voltage if context.voltage else 0
 
     if context.phases == 1:
-        target_evse = context.evse_current_per_phase + min(
+        target_evse = min(
             remaining_available_current_phase_a,
             remaining_available_import_current + context.phase_a_export_current + available_battery_current
         )
     elif context.phases == 2:
-        target_evse = context.evse_current_per_phase + min(
+        target_evse = min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
             (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + available_battery_current) / 2
         )
     elif context.phases == 3:
-        target_evse = context.evse_current_per_phase + min(
+        target_evse = min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
             remaining_available_current_phase_c,
