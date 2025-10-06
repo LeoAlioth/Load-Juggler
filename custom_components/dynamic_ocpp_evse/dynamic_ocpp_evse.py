@@ -12,9 +12,9 @@ class ChargeContext:
     phases: int
     voltage: float
     total_import_current: float
-    phase_a_current: float
-    phase_b_current: float
-    phase_c_current: float
+    grid_phase_a_current: float
+    grid_phase_b_current: float
+    grid_phase_c_current: float
     phase_a_export_current: float
     phase_b_export_current: float
     phase_c_export_current: float
@@ -112,20 +112,18 @@ def calculate_max_evse_available(context: ChargeContext):
     state = context.state
     max_import_power = state[CONF_MAX_IMPORT_POWER]
     max_import_current = max_import_power / context.voltage
-
-    # Calculate remaining current without including EVSE current to avoid feedback loop
-    # Subtract EVSE current from total import current to get non-EVSE import current
-    non_evse_import_current = context.total_import_current - (context.evse_current_per_phase * context.phases)
-    remaining_available_import_current = max_import_current - non_evse_import_current
-
-    # Calculate remaining current on each phase without including EVSE current
-    evse_current_phase_a = context.evse_current_per_phase if context.phases >= 1 else 0
-    evse_current_phase_b = context.evse_current_per_phase if context.phases >= 2 else 0
-    evse_current_phase_c = context.evse_current_per_phase if context.phases >= 3 else 0
     
-    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - (context.phase_a_current - evse_current_phase_a)
-    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - (context.phase_b_current - evse_current_phase_b)
-    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - (context.phase_c_current - evse_current_phase_c)
+    # Total import current includes EVSE import current across all 3 phases
+    # max import current is total for all phases, so we can directly compare
+    remaining_available_import_current = max_import_current - context.total_import_current
+
+    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_a_current
+    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_b_current
+    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_c_current
+    
+    _LOGGER.debug(f"Calculating max EVSE available current with context: {context}")
+    _LOGGER.debug(f"Max import current: {max_import_current}A, Total import current: {context.total_import_current}A, Remaining available import current: {remaining_available_import_current}A")
+    _LOGGER.debug(f"Remaining available current - Phase A: {remaining_available_current_phase_a}A, Phase B: {remaining_available_current_phase_b}A, Phase C: {remaining_available_current_phase_c}A")
 
     # Battery discharge logic
     battery_power = context.battery_power if context.battery_power is not None else 0
@@ -139,26 +137,32 @@ def calculate_max_evse_available(context: ChargeContext):
     else:
         # Only allow battery to stop charging (i.e., don't discharge below target)
         available_battery_power = max(0, -battery_power)  # Only offset if battery is charging
-    available_battery_current = available_battery_power / context.voltage if context.voltage else 0
-
+    available_battery_current = (available_battery_power / context.voltage) if context.voltage else 0
+    
     if context.phases == 1:
-        return min(
+        max_evse_available = context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_import_current + context.phase_a_export_current + available_battery_current
         )
+        _LOGGER.debug(f"Max EVSE available (1 phase): {max_evse_available}A")
+        return max_evse_available
     elif context.phases == 2:
-        return min(
+        max_evse_available =  context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
             (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + available_battery_current) / 2
         )
+        _LOGGER.debug(f"Max EVSE available (2 phases): {max_evse_available}A")
+        return max_evse_available
     elif context.phases == 3:
-        return min(
+        max_evse_available =  context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
             remaining_available_current_phase_c,
             (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + context.phase_c_export_current + available_battery_current) / 3
         )
+        _LOGGER.debug(f"Max EVSE available (3 phases): {max_evse_available}A")
+        return max_evse_available
     else:
         return state.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
 
@@ -179,13 +183,10 @@ def determine_phases(self, state):
         phases = state[CONF_PHASES]
         calc_used = f"2-{phases}"
 
-    if phases == 0 and (is_number(state[CONF_EVSE_CURRENT_IMPORT]) and state[CONF_EVSE_CURRENT_IMPORT] > 0) and (is_number(state[CONF_EVSE_CURRENT_OFFERED]) and state[CONF_EVSE_CURRENT_OFFERED] > 0):
-        phases = min(max(round(state[CONF_EVSE_CURRENT_IMPORT] / state[CONF_EVSE_CURRENT_OFFERED], 0), 1), 3)
-        calc_used = f"3-{phases}"
     # Finally just assume the safest case of 3 phases
     if phases == 0:
         phases = 3
-        calc_used = f"4-{phases}"
+        calc_used = f"3-{phases}"
     return phases, calc_used
 
 
@@ -196,23 +197,15 @@ def calculate_standard_mode(context: ChargeContext):
     max_import_power = state[CONF_MAX_IMPORT_POWER]
     max_import_current = max_import_power / context.voltage
     target_import_current = max_import_current
-    
     # If grid charging is not allowed, set available import current to 0
     if not context.allow_grid_charging:
         remaining_available_import_current = 0
     else:
-        # Calculate remaining current without including EVSE current to avoid feedback loop
-        non_evse_import_current = context.total_import_current - (context.evse_current_per_phase * context.phases)
-        remaining_available_import_current = target_import_current - non_evse_import_current
+        remaining_available_import_current = target_import_current - context.total_import_current
 
-    # Calculate remaining current on each phase without including EVSE current
-    evse_current_phase_a = context.evse_current_per_phase if context.phases >= 1 else 0
-    evse_current_phase_b = context.evse_current_per_phase if context.phases >= 2 else 0
-    evse_current_phase_c = context.evse_current_per_phase if context.phases >= 3 else 0
-    
-    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - (context.phase_a_current - evse_current_phase_a)
-    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - (context.phase_b_current - evse_current_phase_b)
-    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - (context.phase_c_current - evse_current_phase_c)
+    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_a_current
+    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_b_current
+    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_c_current
 
     # Battery discharge logic for standard mode
     battery_power = context.battery_power if context.battery_power is not None else 0
@@ -229,18 +222,18 @@ def calculate_standard_mode(context: ChargeContext):
     available_battery_current = available_battery_power / context.voltage if context.voltage else 0
 
     if context.phases == 1:
-        target_evse = min(
+        target_evse = context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_import_current + context.phase_a_export_current + available_battery_current
         )
     elif context.phases == 2:
-        target_evse = min(
+        target_evse = context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
             (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + available_battery_current) / 2
         )
     elif context.phases == 3:
-        target_evse = min(
+        target_evse = context.evse_current_per_phase + min(
             remaining_available_current_phase_a,
             remaining_available_current_phase_b,
             remaining_available_current_phase_c,
@@ -257,9 +250,9 @@ def calculate_solar_mode(context: ChargeContext, target_import_current=0):
         remaining_available_import_current = 0
     else:
         remaining_available_import_current = target_import_current - context.total_import_current
-    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.phase_a_current
-    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.phase_b_current
-    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.phase_c_current
+    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_a_current
+    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_b_current
+    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_c_current
 
     # Battery discharge logic for solar mode
     battery_power = context.battery_power if context.battery_power is not None else 0
@@ -416,21 +409,21 @@ def get_charge_context_values(self, state):
     total_export_power = total_export_current * voltage
     if state[CONF_INVERT_PHASES]:
         state[CONF_PHASE_A_CURRENT], state[CONF_PHASE_B_CURRENT], state[CONF_PHASE_C_CURRENT] = -state[CONF_PHASE_A_CURRENT], -state[CONF_PHASE_B_CURRENT], -state[CONF_PHASE_C_CURRENT]
-    phase_a_current = state[CONF_PHASE_A_CURRENT]
-    phase_b_current = state[CONF_PHASE_B_CURRENT]
-    phase_c_current = state[CONF_PHASE_C_CURRENT]
-    phase_a_import_current = max(phase_a_current, 0)
-    phase_b_import_current = max(phase_b_current, 0)
-    phase_c_import_current = max(phase_c_current, 0)
-    phase_a_export_current = max(-phase_a_current, 0)
-    phase_b_export_current = max(-phase_b_current, 0)
-    phase_c_export_current = max(-phase_c_current, 0)
+    grid_phase_a_current = state[CONF_PHASE_A_CURRENT]
+    grid_phase_b_current = state[CONF_PHASE_B_CURRENT]
+    grid_phase_c_current = state[CONF_PHASE_C_CURRENT]
+    phase_a_import_current = max(grid_phase_a_current, 0)
+    phase_b_import_current = max(grid_phase_b_current, 0)
+    phase_c_import_current = max(grid_phase_c_current, 0)
+    phase_a_export_current = max(-grid_phase_a_current, 0)
+    phase_b_export_current = max(-grid_phase_b_current, 0)
+    phase_c_export_current = max(-grid_phase_c_current, 0)
     total_import_current = phase_a_import_current + phase_b_import_current + phase_c_import_current
     evse_current = state[CONF_EVSE_CURRENT_IMPORT]
     if evse_current is None or not is_number(evse_current):
         evse_current = 0
     # phases is always 1-3 at this point, so no need for additional checks
-    evse_current_per_phase = evse_current / phases
+    evse_current_per_phase = evse_current
     # Battery values
     battery_soc = state["battery_soc"]
     battery_power = state["battery_power"]
@@ -444,9 +437,9 @@ def get_charge_context_values(self, state):
         phases=phases,
         voltage=voltage,
         total_import_current=total_import_current,
-        phase_a_current=phase_a_current,
-        phase_b_current=phase_b_current,
-        phase_c_current=phase_c_current,
+        grid_phase_a_current=grid_phase_a_current,
+        grid_phase_b_current=grid_phase_b_current,
+        grid_phase_c_current=grid_phase_c_current,
         phase_a_export_current=phase_a_export_current,
         phase_b_export_current=phase_b_export_current,
         phase_c_export_current=phase_c_export_current,
@@ -469,6 +462,17 @@ def get_charge_context_values(self, state):
 # It also applies ramping logic to smooth out changes in available current
 # and ensures that the current is within the defined limits.
 def calculate_available_current(self):
+    _LOGGER.debug(" Logging in 10")
+    _LOGGER.debug(" Logging in 9")
+    _LOGGER.debug(" Logging in 8")
+    _LOGGER.debug(" Logging in 7")
+    _LOGGER.debug(" Logging in 6")
+    _LOGGER.debug(" Logging in 5")
+    _LOGGER.debug(" Logging in 4")
+    _LOGGER.debug(" Logging in 3")
+    _LOGGER.debug(" Logging in 2")
+    _LOGGER.debug(" Logging in 1")
+
     state = get_state_config(self)
     charge_context = get_charge_context_values(self, state)
 
