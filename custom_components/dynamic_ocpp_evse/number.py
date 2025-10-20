@@ -29,25 +29,13 @@ class EVSEMinCurrentSlider(NumberEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} EVSE Min Current"
         self._attr_unique_id = f"{config_entry.entry_id}_min_current"
-        self._min = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6)
-        self._max = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16)
-        self._attr_step = 1
-        self._attr_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6)
+        self._attr_native_min_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6)
+        self._attr_native_max_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16)
+        self._attr_native_step = 1
+        self._attr_native_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6)
 
-    @property
-    def native_min_value(self) -> float:
-        return self._min
-
-    @property
-    def native_max_value(self) -> float:
-        return self._max
-
-    @property
-    def native_value(self) -> float:
-        return self._attr_value
-
-    async def async_set_value(self, value: float) -> None:
-        self._attr_value = value
+    async def async_set_native_value(self, value: float) -> None:
+        self._attr_native_value = value
         self.async_write_ha_state()
 
 class EVSEMaxCurrentSlider(NumberEntity):
@@ -57,25 +45,13 @@ class EVSEMaxCurrentSlider(NumberEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} EVSE Max Current"
         self._attr_unique_id = f"{config_entry.entry_id}_max_current"
-        self._min = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6)
-        self._max = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16)
-        self._attr_step = 1
-        self._attr_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16)
+        self._attr_native_min_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6)
+        self._attr_native_max_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16)
+        self._attr_native_step = 1
+        self._attr_native_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16)
 
-    @property
-    def native_min_value(self) -> float:
-        return self._min
-
-    @property
-    def native_max_value(self) -> float:
-        return self._max
-
-    @property
-    def native_value(self) -> float:
-        return self._attr_value
-
-    async def async_set_value(self, value: float) -> None:
-        self._attr_value = value
+    async def async_set_native_value(self, value: float) -> None:
+        self._attr_native_value = value
         self.async_write_ha_state()
 
 class BatterySOCTargetSlider(NumberEntity):
@@ -85,25 +61,13 @@ class BatterySOCTargetSlider(NumberEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Home Battery SOC Target"
         self._attr_unique_id = f"{config_entry.entry_id}_battery_soc_target"
-        self._min = 10
-        self._max = 100
-        self._attr_step = 5
-        self._attr_value = 80  # Default SOC target, can be customized
+        self._attr_native_min_value = 10
+        self._attr_native_max_value = 100
+        self._attr_native_step = 5
+        self._attr_native_value = 80  # Default SOC target, can be customized
 
-    @property
-    def native_min_value(self) -> float:
-        return self._min
-
-    @property
-    def native_max_value(self) -> float:
-        return self._max
-
-    @property
-    def native_value(self) -> float:
-        return self._attr_value
-
-    async def async_set_value(self, value: float) -> None:
+    async def async_set_native_value(self, value: float) -> None:
         # Clamp to step and range
-        value = max(self._min, min(self._max, round(value / self._attr_step) * self._attr_step))
-        self._attr_value = value
+        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
+        self._attr_native_value = value
         self.async_write_ha_state()
