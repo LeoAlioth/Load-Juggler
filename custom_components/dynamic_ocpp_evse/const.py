@@ -16,6 +16,7 @@ CONF_PHASE_VOLTAGE = "phase_voltage"
 CONF_UPDATE_FREQUENCY = "update_frequency"
 CONF_OCPP_PROFILE_TIMEOUT = "ocpp_profile_timeout"
 CONF_CHARGE_PAUSE_DURATION = "charge_pause_duration"
+CONF_STACK_LEVEL = "stack_level"
 CONF_MIN_CURRENT_ENTITY_ID = "min_current_entity_id"
 CONF_MAX_CURRENT_ENTITY_ID = "max_current_entity_id"	
 

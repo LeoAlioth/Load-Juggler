@@ -181,9 +181,12 @@ class DynamicOcppEvseSensor(SensorEntity):
             profile_timeout = self.config_entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, 15)  # Default to 15 seconds if not set
             valid_from = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
             valid_to = (datetime.utcnow() + timedelta(seconds=profile_timeout)).isoformat(timespec='seconds') + 'Z'
+            # Get stackLevel from config, default to 2 if not set
+            stack_level = self.config_entry.data.get(CONF_STACK_LEVEL, 2)
+            
             charging_profile = {
                 "chargingProfileId": 11,
-                "stackLevel": 4,
+                "stackLevel": stack_level,
                 "chargingProfileKind": "Relative",
                 "chargingProfilePurpose": "TxDefaultProfile",
                 "validFrom": valid_from,
