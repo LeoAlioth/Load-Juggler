@@ -485,9 +485,6 @@ def calculate_available_current(self):
     target_evse_solar = calculate_solar_mode(charge_context)
     target_evse_excess = calculate_excess_mode(self, charge_context)
 
-    # Initialize target_evse with a default value
-    target_evse = 0
-    
     if state[CONF_CHARING_MODE] == 'Standard':
         target_evse = target_evse_standard
     elif state[CONF_CHARING_MODE] == 'Eco':
