@@ -43,3 +43,5 @@ CONF_BATTERY_SOC_TARGET_ENTITY_ID = "battery_soc_target_entity_id"
 CONF_BATTERY_MAX_CHARGE_POWER = "battery_max_charge_power"  # W
 CONF_BATTERY_MAX_DISCHARGE_POWER = "battery_max_discharge_power"  # W
 CONF_ALLOW_GRID_CHARGING_ENTITY_ID = "allow_grid_charging_entity_id"
+CONF_POWER_BUFFER_ENTITY_ID = "power_buffer_entity_id"
+CONF_POWER_BUFFER = "power_buffer"

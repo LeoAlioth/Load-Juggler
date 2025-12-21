@@ -6,9 +6,9 @@
                                 "data": {
                                         "name": "Name",
                                         "entity_id": "ID of the entity that tracks current available to EVSE",
-                                        "phase_a_current_entity_id": "Sensor that measures grid import for single phase charging",
-                                        "phase_b_current_entity_id": "Sensor that measures grid import for the second phase when 2 phase charging",
-                                        "phase_c_current_entity_id": "Sensor that measures grid import for the third phase when 3 phase charging",
+                                        "phase_a_current_entity_id": "Sensor that measures grid current for phase A (required)",
+                                        "phase_b_current_entity_id": "Sensor for phase B current (optional - set to 'None' for single-phase setups)",
+                                        "phase_c_current_entity_id": "Sensor for phase C current (optional - set to 'None' for single/two-phase setups)",
                                         "main_breaker_rating": "Rating of the main breaker (per phase)",
                                         "invert_phases": "Invert current readings if import measures as a negative number",
                                         "max_import_power_entity_id": "Sensor that contains the maximum import power allowed. Create a helper sensor to set this value (domain: 'sensor' or 'input_number',  Device class: 'power')",

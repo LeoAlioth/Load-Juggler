@@ -6,9 +6,9 @@
                                 "data": {
                                         "name": "Ime",
                                         "entity_id": "ID entitete, ki spremlja trenutno razpoložljivost za EVSE",
-                                        "phase_a_current_entity_id": "Senzor, ki meri uvoz iz omrežja za enofazno polnjenje",
-                                        "phase_b_current_entity_id": "Senzor, ki meri uvoz iz omrežja za drugo fazo pri dvofaznem polnjenju",
-                                        "phase_c_current_entity_id": "Senzor, ki meri uvoz iz omrežja za tretjo fazo pri trifaznem polnjenju",
+                                        "phase_a_current_entity_id": "Senzor za tok faze A (obvezno)",
+                                        "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno - nastavite na 'None' za enofazne namestitve)",
+                                        "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno - nastavite na 'None' za eno/dvofazne namestitve)",
                                         "main_breaker_rating": "Nazivna vrednost glavnega odklopnika (na fazo)",
                                         "invert_phases": "Obrnite meritve toka, če se uvoz meri kot negativna vrednost",
                                         "max_import_power_entity_id": "Senzor, ki nastavlja največjo moč uvoza (domain: 'sensor' ali 'input_number',  Device class: 'power')",

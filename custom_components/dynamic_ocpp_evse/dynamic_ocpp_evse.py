@@ -241,7 +241,27 @@ def calculate_standard_mode(context: ChargeContext):
         )
     else:
         target_evse = state.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
-    return target_evse
+
+    # Apply power buffer logic
+    # Buffer reduces target to prevent frequent charging stops
+    # If buffered target is below minimum, allow up to full target (but never exceed max_evse_available)
+    power_buffer = state.get(CONF_POWER_BUFFER, 0)
+    if power_buffer is None or not is_number(power_buffer):
+        power_buffer = 0
+    buffer_current = power_buffer / context.voltage if context.voltage else 0
+    
+    target_evse_buffered = target_evse - buffer_current
+    
+    # If buffered target is below minimum charge current, allow charging up to full target
+    # This prevents the buffer from causing unnecessary charging stops
+    if target_evse_buffered < context.min_current:
+        # Use full target (no buffer) if it allows charging at minimum rate
+        # This will be clamped by max_evse_available in calculate_available_current
+        _LOGGER.debug(f"Standard mode: buffered target {target_evse_buffered}A < min {context.min_current}A, using full target {target_evse}A")
+        return target_evse
+    else:
+        _LOGGER.debug(f"Standard mode: using buffered target {target_evse_buffered}A (buffer: {power_buffer}W = {buffer_current}A)")
+        return target_evse_buffered
 
 def calculate_solar_mode(context: ChargeContext, target_import_current=0):
     state = context.state
@@ -355,8 +375,19 @@ def get_state_config(self):
             return value
     
     state[CONF_PHASE_A_CURRENT] = get_phase_current(self.config_entry.data.get(CONF_PHASE_A_CURRENT_ENTITY_ID))
-    state[CONF_PHASE_B_CURRENT] = get_phase_current(self.config_entry.data.get(CONF_PHASE_B_CURRENT_ENTITY_ID))
-    state[CONF_PHASE_C_CURRENT] = get_phase_current(self.config_entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID))
+    
+    # Phase B and C are optional for single-phase setups
+    phase_b_entity = self.config_entry.data.get(CONF_PHASE_B_CURRENT_ENTITY_ID)
+    if phase_b_entity and phase_b_entity != 'None':
+        state[CONF_PHASE_B_CURRENT] = get_phase_current(phase_b_entity)
+    else:
+        state[CONF_PHASE_B_CURRENT] = 0  # Default to 0 for single-phase setups
+    
+    phase_c_entity = self.config_entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID)
+    if phase_c_entity and phase_c_entity != 'None':
+        state[CONF_PHASE_C_CURRENT] = get_phase_current(phase_c_entity)
+    else:
+        state[CONF_PHASE_C_CURRENT] = 0  # Default to 0 for single-phase setups
     
     state[CONF_EVSE_CURRENT_IMPORT] = get_sensor_data(self, self.config_entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID))
     state[CONF_EVSE_CURRENT_OFFERED] = get_sensor_data(self, self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID))
@@ -390,6 +421,13 @@ def get_state_config(self):
     state[CONF_BATTERY_MAX_CHARGE_POWER] = self.config_entry.data.get(CONF_BATTERY_MAX_CHARGE_POWER, 5000)
     state[CONF_BATTERY_MAX_DISCHARGE_POWER] = self.config_entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, 5000)
 
+    # Read power buffer value
+    power_buffer_entity_id = self.config_entry.data.get(CONF_POWER_BUFFER_ENTITY_ID)
+    if power_buffer_entity_id and power_buffer_entity_id != 'None':
+        state[CONF_POWER_BUFFER] = get_sensor_data(self, power_buffer_entity_id)
+    else:
+        state[CONF_POWER_BUFFER] = 0
+
     # Retrieve the allow grid charging switch state using the constant
     switch_state = get_sensor_data(self, self.config_entry.data.get(CONF_ALLOW_GRID_CHARGING_ENTITY_ID))
     state["allow_grid_charging"] = switch_state == "on" if switch_state else True  # Default to True
@@ -400,18 +438,24 @@ def get_charge_context_values(self, state):
     max_current = state[CONF_MAX_CURRENT] if state[CONF_MAX_CURRENT] is not None else state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]
     phases, calc_used = determine_phases(self, state)
     voltage = state[CONF_PHASE_VOLTAGE] if state[CONF_PHASE_VOLTAGE] is not None and is_number(state[CONF_PHASE_VOLTAGE]) else 230
+    
+    # Ensure phase current values are numeric (default to 0 if None)
+    phase_a_current = state[CONF_PHASE_A_CURRENT] if state[CONF_PHASE_A_CURRENT] is not None and is_number(state[CONF_PHASE_A_CURRENT]) else 0
+    phase_b_current = state[CONF_PHASE_B_CURRENT] if state[CONF_PHASE_B_CURRENT] is not None and is_number(state[CONF_PHASE_B_CURRENT]) else 0
+    phase_c_current = state[CONF_PHASE_C_CURRENT] if state[CONF_PHASE_C_CURRENT] is not None and is_number(state[CONF_PHASE_C_CURRENT]) else 0
+    
     # Calculate total export current (sum of negative phase currents)
     total_export_current = (
-        max(-state[CONF_PHASE_A_CURRENT], 0) +
-        max(-state[CONF_PHASE_B_CURRENT], 0) +
-        max(-state[CONF_PHASE_C_CURRENT], 0)
+        max(-phase_a_current, 0) +
+        max(-phase_b_current, 0) +
+        max(-phase_c_current, 0)
     )
     total_export_power = total_export_current * voltage
     if state[CONF_INVERT_PHASES]:
-        state[CONF_PHASE_A_CURRENT], state[CONF_PHASE_B_CURRENT], state[CONF_PHASE_C_CURRENT] = -state[CONF_PHASE_A_CURRENT], -state[CONF_PHASE_B_CURRENT], -state[CONF_PHASE_C_CURRENT]
-    grid_phase_a_current = state[CONF_PHASE_A_CURRENT]
-    grid_phase_b_current = state[CONF_PHASE_B_CURRENT]
-    grid_phase_c_current = state[CONF_PHASE_C_CURRENT]
+        phase_a_current, phase_b_current, phase_c_current = -phase_a_current, -phase_b_current, -phase_c_current
+    grid_phase_a_current = phase_a_current
+    grid_phase_b_current = phase_b_current
+    grid_phase_c_current = phase_c_current
     phase_a_import_current = max(grid_phase_a_current, 0)
     phase_b_import_current = max(grid_phase_b_current, 0)
     phase_c_import_current = max(grid_phase_c_current, 0)
