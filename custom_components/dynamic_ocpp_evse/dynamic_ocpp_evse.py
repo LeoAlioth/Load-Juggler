@@ -244,7 +244,7 @@ def calculate_standard_mode(context: ChargeContext):
 
     # Apply power buffer logic
     # Buffer reduces target to prevent frequent charging stops
-    # If buffered target is below minimum, allow up to full target (but never exceed max_evse_available)
+    # If buffered target is below minimum, fall back to minimum current (if available)
     power_buffer = state.get(CONF_POWER_BUFFER, 0)
     if power_buffer is None or not is_number(power_buffer):
         power_buffer = 0
@@ -252,13 +252,17 @@ def calculate_standard_mode(context: ChargeContext):
     
     target_evse_buffered = target_evse - buffer_current
     
-    # If buffered target is below minimum charge current, allow charging up to full target
-    # This prevents the buffer from causing unnecessary charging stops
+    # If buffered target is below minimum charge current, check if we can still charge at minimum
     if target_evse_buffered < context.min_current:
-        # Use full target (no buffer) if it allows charging at minimum rate
-        # This will be clamped by max_evse_available in calculate_available_current
-        _LOGGER.debug(f"Standard mode: buffered target {target_evse_buffered}A < min {context.min_current}A, using full target {target_evse}A")
-        return target_evse
+        if target_evse >= context.min_current:
+            # Buffer would cause stop, but we have enough power for minimum charge
+            # Use minimum current to maintain charging without exceeding available power
+            _LOGGER.debug(f"Standard mode: buffered target {target_evse_buffered}A < min {context.min_current}A, but full target {target_evse}A >= min, using min_current {context.min_current}A")
+            return context.min_current
+        else:
+            # Not enough power even without buffer - will be handled by later logic (set to 0)
+            _LOGGER.debug(f"Standard mode: buffered target {target_evse_buffered}A and full target {target_evse}A both < min {context.min_current}A")
+            return target_evse
     else:
         _LOGGER.debug(f"Standard mode: using buffered target {target_evse_buffered}A (buffer: {power_buffer}W = {buffer_current}A)")
         return target_evse_buffered
@@ -423,8 +427,16 @@ def get_state_config(self):
 
     # Read power buffer value
     power_buffer_entity_id = self.config_entry.data.get(CONF_POWER_BUFFER_ENTITY_ID)
+    # Fallback: construct entity ID dynamically if not in config (for existing installations)
+    if not power_buffer_entity_id or power_buffer_entity_id == 'None':
+        entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
+        if entity_id:
+            power_buffer_entity_id = f"number.{entity_id}_power_buffer"
+    
     if power_buffer_entity_id and power_buffer_entity_id != 'None':
-        state[CONF_POWER_BUFFER] = get_sensor_data(self, power_buffer_entity_id)
+        power_buffer_value = get_sensor_data(self, power_buffer_entity_id)
+        _LOGGER.debug(f"Power buffer entity: {power_buffer_entity_id}, value: {power_buffer_value}")
+        state[CONF_POWER_BUFFER] = power_buffer_value if power_buffer_value is not None else 0
     else:
         state[CONF_POWER_BUFFER] = 0
 
