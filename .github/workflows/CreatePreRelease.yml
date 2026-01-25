@@ -40,11 +40,10 @@ jobs:
 
       - name: Create ZIP archive
         run: |
-          # Create zip with files at root for HACS (content_in_root: true)
-          # HACS expects: __init__.py, manifest.json, etc. directly at zip root
+          # Create zip with full path for HACS (content_in_root: false)
+          # HACS expects: custom_components/dynamic_ocpp_evse/manifest.json
           mkdir -p release
-          cd custom_components/dynamic_ocpp_evse
-          zip -r ../../release/dynamic-ocpp-evse.zip custom_components/dynamic_ocpp_evse/
+          zip -r release/dynamic-ocpp-evse.zip custom_components/dynamic_ocpp_evse
 
       - name: Create GitHub prerelease
         uses: softprops/action-gh-release@v2
