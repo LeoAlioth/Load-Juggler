@@ -23,12 +23,10 @@ jobs:
 
       - name: Create ZIP archive
         run: |
-          mkdir -p release/dynamic-ocpp-evse-${{ env.TAG_NAME }}
-          shopt -s extglob
-          cp -r !(release) release/dynamic-ocpp-evse-${{ env.TAG_NAME }}/
-          cd release
-          zip -r dynamic-ocpp-evse-${{ env.TAG_NAME }}.zip dynamic-ocpp-evse-${{ env.TAG_NAME }}
-          cd ..
+          # Create zip with just the integration folder for HACS
+          mkdir -p release
+          cd custom_components
+          zip -r ../release/dynamic-ocpp-evse.zip dynamic_ocpp_evse/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -37,6 +35,6 @@ jobs:
           name: Dynamic OCPP EVSE ${{ env.TAG_NAME }}
           draft: false
           prerelease: false
-          files: release/dynamic-ocpp-evse-${{ env.TAG_NAME }}.zip
+          files: release/dynamic-ocpp-evse.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
