@@ -1,0 +1,69 @@
+name: Auto Pre-Release (dev / pre-release)
+
+on:
+  push:
+    branches:
+      - dev
+      - pre-release
+
+jobs:
+  release:
+    if: github.ref_name == 'dev' || github.ref_name == 'pre-release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine tag name
+        run: |
+          BRANCH="${GITHUB_REF##*/}"
+
+          if [ "$BRANCH" = "dev" ]; then
+            TAG_NAME="dev-$(git rev-parse --short HEAD)"
+          elif [ "$BRANCH" = "pre-release" ]; then
+            TAG_NAME=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
+          else
+            echo "Unsupported branch"
+            exit 1
+          fi
+
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+
+      - name: Delete previous prereleases for this branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --limit 100 --json tagName,isPrerelease \
+            | jq -r '.[] | select(.isPrerelease == true) | .tagName' \
+            | grep "^${BRANCH}-" || true \
+            | while read tag; do
+                echo "Deleting $tag"
+                gh release delete "$tag" -y || true
+                git tag -d "$tag" || true
+                git push origin ":refs/tags/$tag" || true
+              done
+
+      - name: Create ZIP archive
+        run: |
+          mkdir -p release/dynamic-ocpp-evse-${{ env.TAG_NAME }}
+          shopt -s extglob
+          cp -r !(release) release/dynamic-ocpp-evse-${{ env.TAG_NAME }}/
+          cd release
+          zip -r dynamic-ocpp-evse-${{ env.TAG_NAME }}.zip dynamic-ocpp-evse-${{ env.TAG_NAME }}
+
+      - name: Create GitHub prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: Dynamic OCPP EVSE ${{ env.TAG_NAME }}
+          prerelease: true
+          draft: false
+          files: release/dynamic-ocpp-evse-${{ env.TAG_NAME }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
