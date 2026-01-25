@@ -1,43 +1,71 @@
 import logging
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
-from .const import DOMAIN
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
+from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, CONF_NAME, CONF_ENTITY_ID
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_entry(hass, config_entry, async_add_entities):
-    entity_id = config_entry.data.get("entity_id", "dynamic_ocpp_evse")
-    name = config_entry.data["name"]
+
+async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
+    """Set up switch entities."""
+    # Only set up switch entities for hub entries
+    entry_type = config_entry.data.get(ENTRY_TYPE)
+    if entry_type != ENTRY_TYPE_HUB:
+        _LOGGER.debug("Skipping switch setup for non-hub entry: %s", config_entry.title)
+        return
+    
+    entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+    name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
     
     entities = [AllowGridChargingSwitch(hass, config_entry, entity_id, name)]
-    _LOGGER.info(f"Setting up switch entities: {[entity.unique_id for entity in entities]}")
+    _LOGGER.info(f"Setting up hub switch entities: {[entity.unique_id for entity in entities]}")
     async_add_entities(entities)
 
-class AllowGridChargingSwitch(SwitchEntity):
+
+class AllowGridChargingSwitch(SwitchEntity, RestoreEntity):
+    """Switch to allow/disallow grid charging (hub-level)."""
+    
     _attr_entity_category = EntityCategory.CONFIG
-    def __init__(self, hass, config_entry, entity_id, name):
+    
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, entity_id: str, name: str):
         self.hass = hass
         self.config_entry = config_entry
         self._attr_name = f"{name} Allow Grid Charging"
-        self._attr_unique_id = f"{config_entry.entry_id}_allow_grid_charging"
+        self._attr_unique_id = f"{entity_id}_allow_grid_charging"
         self._state = True  # Default: allow grid charging
+        self._attr_icon = "mdi:transmission-tower"
 
     @property
     def is_on(self):
+        """Return true if grid charging is allowed."""
         return self._state
 
     async def async_turn_on(self, **kwargs):
+        """Turn on grid charging."""
         self._state = True
         self.async_write_ha_state()
+        _LOGGER.info("Grid charging enabled")
 
     async def async_turn_off(self, **kwargs):
+        """Turn off grid charging."""
         self._state = False
         self.async_write_ha_state()
+        _LOGGER.info("Grid charging disabled")
 
     async def async_added_to_hass(self):
-        # Optionally restore previous state
-        # last_state = await self.async_get_last_state()
-        last_state = self._state
-        if last_state is None:
-            self._state = True
+        """Restore previous state when added to hass."""
+        await super().async_added_to_hass()
+        
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            self._state = last_state.state == "on"
+            _LOGGER.debug(f"Restored {self._attr_name} to: {self._state}")
+        else:
+            self._state = True  # Default to enabled
+            _LOGGER.debug(f"No state to restore for {self._attr_name}, using default: True")
+        
         self.async_write_ha_state()
