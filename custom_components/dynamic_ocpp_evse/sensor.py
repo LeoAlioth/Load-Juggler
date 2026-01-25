@@ -240,6 +240,21 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             valid_to = (datetime.utcnow() + timedelta(seconds=profile_timeout)).isoformat(timespec='seconds') + 'Z'
             stack_level = self.config_entry.data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
             
+            # Get charge rate unit from config (A or W)
+            charge_rate_unit = self.config_entry.data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
+            
+            # Convert limit based on charge rate unit
+            if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
+                # Convert Amps to Watts: W = A * V * phases
+                voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+                phases = self._phases if self._phases else 3
+                limit_for_charger = round(limit * voltage * phases, 1)
+                rate_unit = "W"
+            else:
+                # Keep as Amps
+                limit_for_charger = limit
+                rate_unit = "A"
+            
             charging_profile = {
                 "chargingProfileId": 11,
                 "stackLevel": stack_level,
@@ -248,17 +263,17 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 "validFrom": valid_from,
                 "validTo": valid_to,
                 "chargingSchedule": {
-                    "chargingRateUnit": "A",
+                    "chargingRateUnit": rate_unit,
                     "chargingSchedulePeriod": [
                         {
                             "startPeriod": 0,
-                            "limit": limit
+                            "limit": limit_for_charger
                         }
                     ]
                 }
             }
 
-            _LOGGER.debug(f"Sending set_charge_rate for {self._attr_name} with limit: {limit}A")
+            _LOGGER.debug(f"Sending set_charge_rate for {self._attr_name} with limit: {limit_for_charger}{rate_unit} (calculated from {limit}A)")
 
             # Call the OCPP set_charge_rate service
             await self.hass.services.async_call(
