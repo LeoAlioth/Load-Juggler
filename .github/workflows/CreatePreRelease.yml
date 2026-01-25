@@ -35,19 +35,8 @@ jobs:
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
 
-      - name: Delete previous prereleases for this branch
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release list --limit 100 --json tagName,isPrerelease \
-            | jq -r '.[] | select(.isPrerelease == true) | .tagName' \
-            | grep "^${BRANCH}-" || true \
-            | while read tag; do
-                echo "Deleting $tag"
-                gh release delete "$tag" -y || true
-                git tag -d "$tag" || true
-                git push origin ":refs/tags/$tag" || true
-              done
+      # Note: Removed automatic deletion of previous prereleases
+      # Old prereleases are kept to maintain release history
 
       - name: Create ZIP archive
         run: |
