@@ -44,7 +44,7 @@ jobs:
           # HACS expects: __init__.py, manifest.json, etc. directly at zip root
           mkdir -p release
           cd custom_components/dynamic_ocpp_evse
-          zip -r ../../release/dynamic-ocpp-evse.zip .
+          zip -r ../../release/dynamic-ocpp-evse.zip ./custom_components/dynamic_ocpp_evse
 
       - name: Create GitHub prerelease
         uses: softprops/action-gh-release@v2
