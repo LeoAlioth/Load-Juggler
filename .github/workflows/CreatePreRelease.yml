@@ -42,9 +42,8 @@ jobs:
         run: |
           # Create zip with full path for HACS (content_in_root: false)
           # HACS expects: custom_components/dynamic_ocpp_evse/manifest.json
-          cd custom_components/dynamic_ocpp_evse
-          mkdir -p release
-          zip -r release/dynamic-ocpp-evse.zip . -x "release/*"
+          cd custom_components/dynamic_ocpp_evse         
+           zip -r dynamic-ocpp-evse.zip .
 
       - name: Create GitHub prerelease
         uses: softprops/action-gh-release@v2
@@ -53,6 +52,6 @@ jobs:
           name: Dynamic OCPP EVSE ${{ env.TAG_NAME }}
           prerelease: true
           draft: false
-          files: release/dynamic-ocpp-evse.zip
+          files: custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
