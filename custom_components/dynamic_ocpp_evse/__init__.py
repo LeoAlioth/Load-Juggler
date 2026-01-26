@@ -80,6 +80,47 @@ async def async_setup(hass: HomeAssistant, config: dict):
             return
 
         evse_minimum_charge_current = entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+        
+        # Get charge rate unit from charger config
+        charge_rate_unit = entry.data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
+        
+        # If set to auto, detect from sensor
+        if charge_rate_unit == CHARGE_RATE_UNIT_AUTO:
+            current_offered_entity = entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID)
+            if current_offered_entity:
+                sensor_state = hass.states.get(current_offered_entity)
+                if sensor_state:
+                    unit = sensor_state.attributes.get("unit_of_measurement")
+                    charge_rate_unit = CHARGE_RATE_UNIT_WATTS if unit == "W" else CHARGE_RATE_UNIT_AMPS
+                else:
+                    charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+            else:
+                charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+        
+        # Convert limit if using Watts
+        if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
+            # Need to get hub config for voltage/phases
+            hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
+            if hub_entry_id:
+                hub_entry = hass.config_entries.async_get_entry(hub_entry_id)
+                if hub_entry:
+                    voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+                    # Assume 3 phases for reset
+                    limit_for_charger = round(evse_minimum_charge_current * voltage * 3, 1)
+                    rate_unit = "W"
+                else:
+                    limit_for_charger = evse_minimum_charge_current
+                    rate_unit = "A"
+            else:
+                limit_for_charger = evse_minimum_charge_current
+                rate_unit = "A"
+        else:
+            limit_for_charger = evse_minimum_charge_current
+            rate_unit = "A"
+        
+        # Stack level for reset should be 1 lower than regular operation
+        configured_stack_level = entry.data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
+        reset_stack_level = max(1, configured_stack_level - 1)
 
         sequence = [
             {"service": "ocpp.clear_profile", "data": {}},
@@ -89,13 +130,13 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 "data": {
                     "custom_profile": {
                         "chargingProfileId": 10,
-                        "stackLevel": 2,
+                        "stackLevel": reset_stack_level,
                         "chargingProfileKind": "Relative",
                         "chargingProfilePurpose": "TxDefaultProfile",
                         "chargingSchedule": {
-                            "chargingRateUnit": "A",
+                            "chargingRateUnit": rate_unit,
                             "chargingSchedulePeriod": [
-                                {"startPeriod": 0, "limit": evse_minimum_charge_current}
+                                {"startPeriod": 0, "limit": limit_for_charger}
                             ]
                         }
                     }
@@ -267,37 +308,29 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
     }
     
     # Check and update existing entities to be associated with this config entry
+    entities_migrated = []
     for entity_entity_id, unique_id in expected_entities.items():
-        # Try to find entity by entity_id
-        entity_entry = entity_registry.entities.get(entity_entity_id)
+        # Try to find entity by unique_id (this is the key for matching)
+        existing_entity = None
+        for reg_entity_id, reg_entity in entity_registry.entities.items():
+            if reg_entity.unique_id == unique_id and reg_entity.platform == DOMAIN:
+                existing_entity = reg_entity
+                break
         
-        if entity_entry:
-            # Entity exists, ensure it's associated with this config entry
-            if entity_entry.config_entry_id != entry.entry_id:
-                _LOGGER.info(f"Migrating existing entity {entity_entity_id} to hub config entry {entry.entry_id}")
-                entity_registry.async_update_entity(
-                    entity_entity_id,
-                    config_entry_id=entry.entry_id
-                )
-            else:
-                _LOGGER.debug(f"Entity {entity_entity_id} already associated with hub config entry")
-        else:
-            # Entity doesn't exist by entity_id, check if it exists by unique_id
-            # This handles cases where entity_id might have been customized
-            existing_entity = None
-            for reg_entity_id, reg_entity in entity_registry.entities.items():
-                if reg_entity.unique_id == unique_id and reg_entity.platform == DOMAIN:
-                    existing_entity = reg_entity
-                    break
-            
-            if existing_entity:
-                _LOGGER.info(f"Found entity with unique_id {unique_id}, associating with hub config entry")
+        if existing_entity:
+            # Entity exists with this unique_id
+            if existing_entity.config_entry_id != entry.entry_id:
+                _LOGGER.info(f"Migrating existing entity {existing_entity.entity_id} (unique_id: {unique_id}) to hub config entry {entry.entry_id}")
                 entity_registry.async_update_entity(
                     existing_entity.entity_id,
                     config_entry_id=entry.entry_id
                 )
+                entities_migrated.append(unique_id)
             else:
-                _LOGGER.info(f"Entity {entity_entity_id} will be created when the platform is set up")
+                _LOGGER.debug(f"Entity {existing_entity.entity_id} already associated with hub config entry")
+                entities_migrated.append(unique_id)
+        else:
+            _LOGGER.info(f"Entity with unique_id {unique_id} will be created when the platform is set up")
     
     # Update the config entry to ensure it has the required entity IDs
     updated_data = dict(entry.data)
@@ -308,7 +341,7 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
     updated_data["integration_version"] = INTEGRATION_VERSION
     
     hass.config_entries.async_update_entry(entry, data=updated_data)
-    _LOGGER.info("Updated hub config entry with entity IDs")
+    _LOGGER.info(f"Updated hub config entry with entity IDs. Migrated {len(entities_migrated)} entities")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
