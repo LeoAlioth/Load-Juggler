@@ -17,56 +17,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 2
     MINOR_VERSION = 1
 
-    @staticmethod
-    async def async_migrate_entry(hass, config_entry: config_entries.ConfigEntry) -> bool:
-        """Migrate old entry to new version."""
-        _LOGGER.info("Migrating from version %s.%s to version 2.1", 
-                     config_entry.version, 
-                     getattr(config_entry, 'minor_version', 0))
-
-        if config_entry.version < 2:
-            # Migrate from V1 (single config) to V2 (hub + charger architecture)
-            new_data = dict(config_entry.data)
-            
-            # Mark this as a hub entry (legacy entries become hubs)
-            new_data[ENTRY_TYPE] = ENTRY_TYPE_HUB
-            
-            # Generate entity IDs for hub-created entities if not present
-            entity_id = new_data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
-            if CONF_CHARGIN_MODE_ENTITY_ID not in new_data:
-                new_data[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
-            if CONF_BATTERY_SOC_TARGET_ENTITY_ID not in new_data:
-                new_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
-            if CONF_ALLOW_GRID_CHARGING_ENTITY_ID not in new_data:
-                new_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
-            if CONF_POWER_BUFFER_ENTITY_ID not in new_data:
-                new_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
-            
-            # Update the config entry with new version
-            hass.config_entries.async_update_entry(
-                config_entry,
-                data=new_data,
-                version=2,
-                minor_version=1
-            )
-            
-            _LOGGER.info(
-                "Migration to version 2.1 successful. Legacy entry converted to hub. "
-                "You will need to add chargers separately after migration."
-            )
-            
-            return True
-        
-        # Handle minor version updates if version is already 2
-        if config_entry.version == 2 and getattr(config_entry, 'minor_version', 0) < 1:
-            hass.config_entries.async_update_entry(
-                config_entry,
-                minor_version=1
-            )
-            _LOGGER.info("Updated minor version to 1")
-            return True
-        
-        return True
+   
 
     def __init__(self):
         self._data = {}
@@ -336,6 +287,28 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     # ==================== CHARGER CONFIGURATION STEPS ====================
+
+    async def async_step_integration_discovery(
+        self, discovery_info: dict[str, Any]
+    ) -> config_entries.FlowResult:
+        """Handle integration discovery of OCPP chargers."""
+        # Store discovery info
+        self._data[CONF_HUB_ENTRY_ID] = discovery_info["hub_entry_id"]
+        self._selected_charger = {
+            "id": discovery_info["charger_id"],
+            "name": discovery_info["charger_name"],
+            "device_id": discovery_info.get("device_id"),
+            "current_import_entity": discovery_info["current_import_entity"],
+            "current_offered_entity": discovery_info["current_offered_entity"],
+        }
+        
+        # Set unique ID to prevent duplicate discoveries
+        await self.async_set_unique_id(f"{DOMAIN}_charger_{discovery_info['charger_id']}")
+        self._abort_if_unique_id_configured()
+        
+        # Show confirmation form
+        self.context["title_placeholders"] = {"name": self._selected_charger["name"]}
+        return await self.async_step_charger_config()
 
     async def async_step_select_hub(
         self, user_input: dict[str, Any] | None = None

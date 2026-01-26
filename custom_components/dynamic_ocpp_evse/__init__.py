@@ -1,10 +1,11 @@
 from homeassistant.core import HomeAssistant
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, SOURCE_INTEGRATION_DISCOVERY
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.script import Script
 from homeassistant.components.button import ButtonEntity
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 import logging
 from .const import *
 
@@ -17,58 +18,59 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 INTEGRATION_VERSION = "2.0.0"
 
 
-async def async_setup(hass: HomeAssistant, config: dict):
-    """Set up the Dynamic OCPP EVSE component."""
-    
-    async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-        """Migrate old entry to new version."""
-        _LOGGER.info("Migrating from version %s.%s to version 2.1", 
-                     entry.version, 
-                     getattr(entry, 'minor_version', 0))
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate old entry to new version."""
+    _LOGGER.info("Migrating from version %s.%s to version 2.1", 
+                 entry.version, 
+                 getattr(entry, 'minor_version', 0))
 
-        if entry.version < 2:
-            # Migrate from V1 (single config) to V2 (hub + charger architecture)
-            new_data = dict(entry.data)
-            
-            # Mark this as a hub entry (legacy entries become hubs)
-            new_data[ENTRY_TYPE] = ENTRY_TYPE_HUB
-            
-            # Generate entity IDs for hub-created entities if not present
-            entity_id = new_data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
-            if CONF_CHARGIN_MODE_ENTITY_ID not in new_data:
-                new_data[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
-            if CONF_BATTERY_SOC_TARGET_ENTITY_ID not in new_data:
-                new_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
-            if CONF_ALLOW_GRID_CHARGING_ENTITY_ID not in new_data:
-                new_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
-            if CONF_POWER_BUFFER_ENTITY_ID not in new_data:
-                new_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
-            
-            # Update the config entry with new version
-            hass.config_entries.async_update_entry(
-                entry,
-                data=new_data,
-                version=2,
-                minor_version=1
-            )
-            
-            _LOGGER.info(
-                "Migration to version 2.1 successful. Legacy entry converted to hub. "
-                "You will need to add chargers separately after migration."
-            )
-            
-            return True
+    if entry.version < 2:
+        # Migrate from V1 (single config) to V2 (hub + charger architecture)
+        new_data = dict(entry.data)
         
-        # Handle minor version updates if version is already 2
-        if entry.version == 2 and getattr(entry, 'minor_version', 0) < 1:
-            hass.config_entries.async_update_entry(
-                entry,
-                minor_version=1
-            )
-            _LOGGER.info("Updated minor version to 1")
-            return True
+        # Mark this as a hub entry (legacy entries become hubs)
+        new_data[ENTRY_TYPE] = ENTRY_TYPE_HUB
+        
+        # Generate entity IDs for hub-created entities if not present
+        entity_id = new_data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+        if CONF_CHARGIN_MODE_ENTITY_ID not in new_data:
+            new_data[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
+        if CONF_BATTERY_SOC_TARGET_ENTITY_ID not in new_data:
+            new_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
+        if CONF_ALLOW_GRID_CHARGING_ENTITY_ID not in new_data:
+            new_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
+        if CONF_POWER_BUFFER_ENTITY_ID not in new_data:
+            new_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
+        
+        # Update the config entry with new version
+        hass.config_entries.async_update_entry(
+            entry,
+            data=new_data,
+            version=2,
+            minor_version=1
+        )
+        
+        _LOGGER.info(
+            "Migration to version 2.1 successful. Legacy entry converted to hub. "
+            "You will need to add chargers separately after migration."
+        )
         
         return True
+    
+    # Handle minor version updates if version is already 2
+    if entry.version == 2 and getattr(entry, 'minor_version', 0) < 1:
+        hass.config_entries.async_update_entry(
+            entry,
+            minor_version=1
+        )
+        _LOGGER.info("Updated minor version to 1")
+        return True
+    
+    return True
+
+
+async def async_setup(hass: HomeAssistant, config: dict):
+    """Set up the Dynamic OCPP EVSE component."""
     
     async def handle_reset_service(call):
         """Handle the reset service call."""
@@ -150,6 +152,9 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Forward setup to hub platforms (select, number, switch for hub-level entities)
     await hass.config_entries.async_forward_entry_setups(entry, ["select", "number", "switch"])
     
+    # Trigger discovery for unconfigured OCPP chargers
+    await _discover_and_notify_chargers(hass, entry.entry_id)
+    
     return True
 
 
@@ -180,6 +185,68 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "number", "button"])
     
     return True
+
+
+async def _discover_and_notify_chargers(hass: HomeAssistant, hub_entry_id: str):
+    """Discover unconfigured OCPP chargers and create discovery flows."""
+    entity_registry = async_get_entity_registry(hass)
+    device_registry = async_get_device_registry(hass)
+    
+    # Get already configured charger entity IDs
+    configured_charger_imports = set()
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER:
+            configured_charger_imports.add(entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID))
+    
+    # Find unconfigured OCPP chargers
+    discovered_chargers = []
+    for entity_id, entity in entity_registry.entities.items():
+        if entity_id.endswith(OCPP_ENTITY_SUFFIX_CURRENT_IMPORT) and entity_id.startswith("sensor."):
+            # Skip already configured chargers
+            if entity_id in configured_charger_imports:
+                continue
+            
+            # Extract charger base name
+            base_name = entity_id.replace("sensor.", "").replace(OCPP_ENTITY_SUFFIX_CURRENT_IMPORT, "")
+            
+            # Check if corresponding current_offered entity exists
+            current_offered_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_OFFERED}"
+            if current_offered_id in entity_registry.entities:
+                # Get device info if available
+                device_name = base_name.replace("_", " ").title()
+                device_id = None
+                
+                if entity.device_id:
+                    device = device_registry.async_get(entity.device_id)
+                    if device:
+                        device_name = device.name or device_name
+                        device_id = device.id
+                
+                discovered_chargers.append({
+                    "id": base_name,
+                    "name": device_name,
+                    "device_id": device_id,
+                    "current_import_entity": entity_id,
+                    "current_offered_entity": current_offered_id,
+                })
+    
+    # Create discovery flows for each unconfigured charger
+    for charger in discovered_chargers:
+        _LOGGER.info("Discovered OCPP charger: %s (%s)", charger["name"], charger["id"])
+        
+        # Create a discovery flow
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_INTEGRATION_DISCOVERY},
+            data={
+                "charger_id": charger["id"],
+                "charger_name": charger["name"],
+                "device_id": charger["device_id"],
+                "current_import_entity": charger["current_import_entity"],
+                "current_offered_entity": charger["current_offered_entity"],
+                "hub_entry_id": hub_entry_id,
+            },
+        )
 
 
 async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntry):
