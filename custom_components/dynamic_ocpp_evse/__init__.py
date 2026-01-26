@@ -250,7 +250,7 @@ async def _discover_and_notify_chargers(hass: HomeAssistant, hub_entry_id: str):
 
 
 async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntry):
-    """Check if new entities need to be created after an integration update."""
+    """Check if entities need to be migrated to the new hub architecture."""
     entity_registry = async_get_entity_registry(hass)
     entity_id = entry.data.get(CONF_ENTITY_ID)
     
@@ -258,33 +258,57 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
         _LOGGER.warning("No entity_id found in hub config entry, skipping entity migration")
         return
     
-    # Define expected hub entities
-    expected_entities = [
-        f"number.{entity_id}_home_battery_soc_target",
-        f"number.{entity_id}_power_buffer",
-        f"select.{entity_id}_charging_mode",
-        f"switch.{entity_id}_allow_grid_charging"
-    ]
+    # Define expected hub entities with their unique_ids
+    expected_entities = {
+        f"number.{entity_id}_home_battery_soc_target": f"{entity_id}_home_battery_soc_target",
+        f"number.{entity_id}_power_buffer": f"{entity_id}_power_buffer",
+        f"select.{entity_id}_charging_mode": f"{entity_id}_charging_mode",
+        f"switch.{entity_id}_allow_grid_charging": f"{entity_id}_allow_grid_charging"
+    }
     
-    missing_entities = []
-    for expected_entity in expected_entities:
-        if expected_entity not in entity_registry.entities:
-            missing_entities.append(expected_entity)
+    # Check and update existing entities to be associated with this config entry
+    for entity_entity_id, unique_id in expected_entities.items():
+        # Try to find entity by entity_id
+        entity_entry = entity_registry.entities.get(entity_entity_id)
+        
+        if entity_entry:
+            # Entity exists, ensure it's associated with this config entry
+            if entity_entry.config_entry_id != entry.entry_id:
+                _LOGGER.info(f"Migrating existing entity {entity_entity_id} to hub config entry {entry.entry_id}")
+                entity_registry.async_update_entity(
+                    entity_entity_id,
+                    config_entry_id=entry.entry_id
+                )
+            else:
+                _LOGGER.debug(f"Entity {entity_entity_id} already associated with hub config entry")
+        else:
+            # Entity doesn't exist by entity_id, check if it exists by unique_id
+            # This handles cases where entity_id might have been customized
+            existing_entity = None
+            for reg_entity_id, reg_entity in entity_registry.entities.items():
+                if reg_entity.unique_id == unique_id and reg_entity.platform == DOMAIN:
+                    existing_entity = reg_entity
+                    break
+            
+            if existing_entity:
+                _LOGGER.info(f"Found entity with unique_id {unique_id}, associating with hub config entry")
+                entity_registry.async_update_entity(
+                    existing_entity.entity_id,
+                    config_entry_id=entry.entry_id
+                )
+            else:
+                _LOGGER.info(f"Entity {entity_entity_id} will be created when the platform is set up")
     
-    if missing_entities:
-        _LOGGER.info(f"Found missing hub entities after update: {missing_entities}")
-        _LOGGER.info("These entities will be created when the platforms are set up")
-        
-        # Update the config entry to ensure it has the required entity IDs
-        updated_data = dict(entry.data)
-        updated_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
-        updated_data[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
-        updated_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
-        updated_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
-        updated_data["integration_version"] = INTEGRATION_VERSION
-        
-        hass.config_entries.async_update_entry(entry, data=updated_data)
-        _LOGGER.info("Updated hub config entry with missing entity IDs")
+    # Update the config entry to ensure it has the required entity IDs
+    updated_data = dict(entry.data)
+    updated_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
+    updated_data[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
+    updated_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
+    updated_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
+    updated_data["integration_version"] = INTEGRATION_VERSION
+    
+    hass.config_entries.async_update_entry(entry, data=updated_data)
+    _LOGGER.info("Updated hub config entry with entity IDs")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
