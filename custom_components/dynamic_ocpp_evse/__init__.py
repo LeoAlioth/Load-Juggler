@@ -20,6 +20,56 @@ INTEGRATION_VERSION = "2.0.0"
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Dynamic OCPP EVSE component."""
     
+    async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+        """Migrate old entry to new version."""
+        _LOGGER.info("Migrating from version %s.%s to version 2.1", 
+                     entry.version, 
+                     getattr(entry, 'minor_version', 0))
+
+        if entry.version < 2:
+            # Migrate from V1 (single config) to V2 (hub + charger architecture)
+            new_data = dict(entry.data)
+            
+            # Mark this as a hub entry (legacy entries become hubs)
+            new_data[ENTRY_TYPE] = ENTRY_TYPE_HUB
+            
+            # Generate entity IDs for hub-created entities if not present
+            entity_id = new_data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+            if CONF_CHARGIN_MODE_ENTITY_ID not in new_data:
+                new_data[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
+            if CONF_BATTERY_SOC_TARGET_ENTITY_ID not in new_data:
+                new_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
+            if CONF_ALLOW_GRID_CHARGING_ENTITY_ID not in new_data:
+                new_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
+            if CONF_POWER_BUFFER_ENTITY_ID not in new_data:
+                new_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
+            
+            # Update the config entry with new version
+            hass.config_entries.async_update_entry(
+                entry,
+                data=new_data,
+                version=2,
+                minor_version=1
+            )
+            
+            _LOGGER.info(
+                "Migration to version 2.1 successful. Legacy entry converted to hub. "
+                "You will need to add chargers separately after migration."
+            )
+            
+            return True
+        
+        # Handle minor version updates if version is already 2
+        if entry.version == 2 and getattr(entry, 'minor_version', 0) < 1:
+            hass.config_entries.async_update_entry(
+                entry,
+                minor_version=1
+            )
+            _LOGGER.info("Updated minor version to 1")
+            return True
+        
+        return True
+    
     async def handle_reset_service(call):
         """Handle the reset service call."""
         entry_id = call.data.get("entry_id")
