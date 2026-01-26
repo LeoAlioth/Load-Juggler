@@ -61,7 +61,7 @@
                     "charger_priority": "Charger Priority (1 = highest priority)",
                     "evse_minimum_charge_current": "EVSE Minimum Charge Current (A)",
                     "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
-                    "charge_rate_unit": "Charge Rate Unit (A=Amperes, W=Watts)",
+                    "charge_rate_unit": "Charge Rate Unit (Auto-detect recommended)",
                     "update_frequency": "Update frequency in seconds",
                     "ocpp_profile_timeout": "OCPP profile timeout in seconds",
                     "charge_pause_duration": "Charge pause duration in seconds",

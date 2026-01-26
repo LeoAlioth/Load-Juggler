@@ -433,6 +433,41 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         
         return chargers
 
+    def _detect_charge_rate_unit(self, current_offered_entity: str) -> str:
+        """
+        Detect the charge rate unit supported by the OCPP charger.
+        
+        Checks the unit_of_measurement attribute of the current_offered sensor.
+        Falls back to Amperes if detection fails.
+        
+        Args:
+            current_offered_entity: Entity ID of the current_offered sensor
+            
+        Returns:
+            "A" for Amperes, "W" for Watts
+        """
+        try:
+            # Get the current_offered sensor state
+            sensor_state = self.hass.states.get(current_offered_entity)
+            if sensor_state:
+                # Check the unit of measurement
+                unit = sensor_state.attributes.get("unit_of_measurement")
+                _LOGGER.info(f"Detected charge rate unit from {current_offered_entity}: {unit}")
+                
+                if unit == "W":
+                    return CHARGE_RATE_UNIT_WATTS
+                elif unit == "A":
+                    return CHARGE_RATE_UNIT_AMPS
+                else:
+                    _LOGGER.warning(f"Unknown unit '{unit}' for {current_offered_entity}, defaulting to Amperes")
+                    return CHARGE_RATE_UNIT_AMPS
+            else:
+                _LOGGER.warning(f"Could not get state for {current_offered_entity}, defaulting to Amperes")
+                return CHARGE_RATE_UNIT_AMPS
+        except Exception as e:
+            _LOGGER.error(f"Error detecting charge rate unit: {e}, defaulting to Amperes")
+            return CHARGE_RATE_UNIT_AMPS
+
     async def async_step_charger_config(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
@@ -441,6 +476,15 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         
         if user_input is not None:
             self._data.update(user_input)
+            
+            # Auto-detect charge rate unit if set to "auto"
+            if user_input.get(CONF_CHARGE_RATE_UNIT) == CHARGE_RATE_UNIT_AUTO:
+                detected_unit = self._detect_charge_rate_unit(
+                    self._selected_charger["current_offered_entity"]
+                )
+                self._data[CONF_CHARGE_RATE_UNIT] = detected_unit
+                _LOGGER.info(f"Auto-detected charge rate unit: {detected_unit}")
+            
             self._data[ENTRY_TYPE] = ENTRY_TYPE_CHARGER
             self._data[CONF_CHARGER_ID] = self._selected_charger["id"]
             self._data[CONF_OCPP_DEVICE_ID] = self._selected_charger.get("device_id")
@@ -463,17 +507,24 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         existing_chargers = self._get_charger_entries()
         next_priority = len(existing_chargers) + 1
         
+        # Try to auto-detect the default charge rate unit
+        detected_unit = self._detect_charge_rate_unit(
+            self._selected_charger["current_offered_entity"]
+        )
+        unit_hint = f" (detected: {detected_unit})" if detected_unit else ""
+        
         data_schema = vol.Schema({
             vol.Required(CONF_CHARGER_PRIORITY, default=next_priority): selector({
                 "number": {"min": 1, "max": 10, "mode": "box"}
             }),
             vol.Required(CONF_EVSE_MINIMUM_CHARGE_CURRENT, default=DEFAULT_MIN_CHARGE_CURRENT): int,
             vol.Required(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, default=DEFAULT_MAX_CHARGE_CURRENT): int,
-            vol.Required(CONF_CHARGE_RATE_UNIT, default=DEFAULT_CHARGE_RATE_UNIT): selector({
+            vol.Required(CONF_CHARGE_RATE_UNIT, default=CHARGE_RATE_UNIT_AUTO): selector({
                 "select": {
                     "options": [
-                        {"value": CHARGE_RATE_UNIT_AMPS, "label": "Amperes (A)"},
-                        {"value": CHARGE_RATE_UNIT_WATTS, "label": "Watts (W)"},
+                        {"value": CHARGE_RATE_UNIT_AUTO, "label": f"Auto-detect{unit_hint}"},
+                        {"value": CHARGE_RATE_UNIT_AMPS, "label": "Amperes (A) - Manual"},
+                        {"value": CHARGE_RATE_UNIT_WATTS, "label": "Watts (W) - Manual"},
                     ],
                     "mode": "dropdown"
                 }

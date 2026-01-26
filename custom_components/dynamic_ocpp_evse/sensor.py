@@ -243,6 +243,27 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             # Get charge rate unit from config (A or W)
             charge_rate_unit = self.config_entry.data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
             
+            # If set to auto or not recognized, detect from sensor
+            if charge_rate_unit == CHARGE_RATE_UNIT_AUTO or charge_rate_unit not in [CHARGE_RATE_UNIT_AMPS, CHARGE_RATE_UNIT_WATTS]:
+                _LOGGER.debug(f"Auto-detecting charge rate unit for {self._attr_name}")
+                current_offered_entity = self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID)
+                if current_offered_entity:
+                    sensor_state = self.hass.states.get(current_offered_entity)
+                    if sensor_state:
+                        unit = sensor_state.attributes.get("unit_of_measurement")
+                        if unit == "W":
+                            charge_rate_unit = CHARGE_RATE_UNIT_WATTS
+                            _LOGGER.info(f"Auto-detected charge rate unit: Watts (W) for {self._attr_name}")
+                        else:
+                            charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+                            _LOGGER.info(f"Auto-detected charge rate unit: Amperes (A) for {self._attr_name}")
+                    else:
+                        _LOGGER.warning(f"Could not get state for {current_offered_entity}, defaulting to Amperes")
+                        charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+                else:
+                    _LOGGER.warning(f"No current_offered entity configured, defaulting to Amperes")
+                    charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+            
             # Convert limit based on charge rate unit
             if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
                 # Convert Amps to Watts: W = A * V * phases
