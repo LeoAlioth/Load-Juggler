@@ -296,6 +296,27 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
 
             _LOGGER.debug(f"Sending set_charge_rate for {self._attr_name} with limit: {limit_for_charger}{rate_unit} (calculated from {limit}A)")
 
+            # Check if we're resuming from 0 - some chargers need explicit charge_control call
+            previous_limit = getattr(self, '_previous_limit', 0)
+            if previous_limit == 0 and limit > 0:
+                # Construct the charge_control switch entity ID from the charger entity_id
+                charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
+                charge_control_switch = f"switch.{charger_entity_id}_charge_control"
+                _LOGGER.info(f"Resuming charging for {self._attr_name} - turning on {charge_control_switch}")
+                try:
+                    await self.hass.services.async_call(
+                        "switch",
+                        "turn_on",
+                        {
+                            "entity_id": charge_control_switch
+                        }
+                    )
+                except Exception as e:
+                    _LOGGER.warning(f"Failed to turn on charge_control switch {charge_control_switch}: {e}")
+            
+            # Store current limit for next comparison
+            self._previous_limit = limit
+
             # Call the OCPP set_charge_rate service
             await self.hass.services.async_call(
                 "ocpp",
