@@ -329,13 +329,17 @@ def calculate_standard_mode(sensor, context: ChargeContext):
     if target_evse_buffered < context.min_current:
         if target_evse >= context.min_current:
             _LOGGER.debug(f"Standard mode: buffered target {target_evse_buffered}A < min {context.min_current}A, using min_current")
-            return context.min_current
+            result = min(context.min_current, context.max_evse_available, context.max_current)
+            return result
         else:
             _LOGGER.debug(f"Standard mode: both targets below min {context.min_current}A")
-            return target_evse
+            result = min(target_evse, context.max_evse_available, context.max_current)
+            return result
     else:
-        _LOGGER.debug(f"Standard mode: SOC {battery_soc}% >= min {battery_soc_min}%, target {target_evse_buffered}A")
-        return target_evse_buffered
+        # Clamp to max_evse_available
+        result = min(target_evse_buffered, context.max_evse_available, context.max_current)
+        _LOGGER.debug(f"Standard mode: SOC {battery_soc}% >= min {battery_soc_min}%, target {result}A")
+        return result
 
 
 def calculate_solar_mode(sensor, context: ChargeContext):
@@ -416,6 +420,8 @@ def calculate_eco_mode(sensor, context: ChargeContext):
         available_battery_power = max(0, battery_max_discharge_power)
         available_battery_current = available_battery_power / context.voltage if context.voltage else 0
         target_evse = _calculate_base_target_evse(context, available_battery_current, allow_grid_import=True)
+        # Clamp to max_evse_available
+        target_evse = min(target_evse, context.max_evse_available, context.max_current)
         _LOGGER.debug(f"Eco mode: SOC {battery_soc}% > target {battery_soc_target}%, full speed {target_evse}A")
         return target_evse
     
@@ -428,12 +434,16 @@ def calculate_eco_mode(sensor, context: ChargeContext):
         # At target with solar - charge at solar rate
         available_battery_current = max(0, -battery_power / context.voltage) if context.voltage else 0
         target_evse = _calculate_base_target_evse(context, available_battery_current, allow_grid_import=False)
+        target_evse = max(target_evse, context.min_current)
+        # Clamp to max_evse_available
+        target_evse = min(target_evse, context.max_evse_available, context.max_current)
         _LOGGER.debug(f"Eco mode: SOC {battery_soc}% at target with solar, rate {target_evse}A")
-        return max(target_evse, context.min_current)
+        return target_evse
     
-    # Between min_soc and target_soc without solar - minimum rate only
-    _LOGGER.debug(f"Eco mode: SOC {battery_soc}% between min {battery_soc_min}% and target {battery_soc_target}% - min rate {context.min_current}A")
-    return context.min_current
+    # Between min_soc and target_soc without solar - minimum rate only (clamped to available)
+    target_evse = min(context.min_current, context.max_evse_available, context.max_current)
+    _LOGGER.debug(f"Eco mode: SOC {battery_soc}% between min {battery_soc_min}% and target {battery_soc_target}% - min rate {target_evse}A (clamped from {context.min_current}A)")
+    return target_evse
 
 
 def calculate_excess_mode(sensor, context: ChargeContext):
@@ -747,6 +757,27 @@ def calculate_available_current_for_hub(sensor):
     if state[CONF_AVAILABLE_CURRENT] > state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]:
         state[CONF_AVAILABLE_CURRENT] = state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]
 
+    # Calculate available battery power for EV charging
+    battery_soc = charge_context.battery_soc if charge_context.battery_soc is not None else 0
+    battery_soc_min = charge_context.battery_soc_min if charge_context.battery_soc_min is not None else DEFAULT_BATTERY_SOC_MIN
+    battery_soc_target = charge_context.battery_soc_target if charge_context.battery_soc_target is not None else 0
+    battery_power = charge_context.battery_power if charge_context.battery_power is not None else 0
+    battery_max_discharge_power = charge_context.battery_max_discharge_power if charge_context.battery_max_discharge_power is not None else 0
+    
+    # Available battery power depends on SOC level
+    if battery_soc >= battery_soc_min:
+        if battery_soc > battery_soc_target:
+            # Above target - full discharge available
+            available_battery_power = battery_max_discharge_power
+        else:
+            # Between min and target - only current discharge (no additional)
+            available_battery_power = max(0, -battery_power)  # Negative power = charging, so negate
+    else:
+        # Below min - no battery power for EV
+        available_battery_power = 0
+    
+    _LOGGER.info(f"Hub calculation: battery_soc={charge_context.battery_soc}, battery_soc_min={charge_context.battery_soc_min}, target_evse_standard={target_evse_standard}")
+    
     return {
         CONF_AVAILABLE_CURRENT: round(state[CONF_AVAILABLE_CURRENT], 1),
         CONF_PHASES: charge_context.phases,
@@ -759,4 +790,9 @@ def calculate_available_current_for_hub(sensor):
         'target_evse_solar': target_evse_solar,
         'target_evse_excess': target_evse_excess,
         'excess_charge_start_time': getattr(sensor, '_excess_charge_start_time', None),
+        'battery_soc': charge_context.battery_soc,
+        'battery_soc_min': charge_context.battery_soc_min,
+        'battery_soc_target': charge_context.battery_soc_target,
+        'battery_power': charge_context.battery_power,
+        'available_battery_power': round(available_battery_power, 1),
     }
