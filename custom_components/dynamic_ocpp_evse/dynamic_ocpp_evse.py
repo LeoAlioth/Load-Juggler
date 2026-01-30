@@ -776,7 +776,22 @@ def calculate_available_current_for_hub(sensor):
         # Below min - no battery power for EV
         available_battery_power = 0
     
-    _LOGGER.info(f"Hub calculation: battery_soc={charge_context.battery_soc}, battery_soc_min={charge_context.battery_soc_min}, target_evse_standard={target_evse_standard}")
+    _LOGGER.info(
+        f"Hub calculation: battery_soc={charge_context.battery_soc}%, "
+        f"battery_soc_min={charge_context.battery_soc_min}%, "
+        f"battery_soc_target={charge_context.battery_soc_target}%, "
+        f"mode={charging_mode}, "
+        f"target_evse={target_evse}A, "
+        f"max_evse_available={max_evse_available}A, "
+        f"available_battery_power={available_battery_power}W"
+    )
+    
+    # Log reason for target_evse value
+    if target_evse == 0:
+        if battery_soc < battery_soc_min:
+            _LOGGER.warning(f"Target is 0 because battery_soc ({battery_soc}%) < battery_soc_min ({battery_soc_min}%)")
+        elif max_evse_available < charge_context.min_current:
+            _LOGGER.warning(f"Target is 0 because max_evse_available ({max_evse_available}A) < min_current ({charge_context.min_current}A)")
     
     return {
         CONF_AVAILABLE_CURRENT: round(state[CONF_AVAILABLE_CURRENT], 1),

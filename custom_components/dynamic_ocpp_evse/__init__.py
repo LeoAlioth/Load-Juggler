@@ -149,8 +149,8 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Check if entities need migration
     await _migrate_hub_entities_if_needed(hass, entry)
     
-    # Forward setup to hub platforms (select, number, switch for hub-level entities)
-    await hass.config_entries.async_forward_entry_setups(entry, ["select", "number", "switch"])
+    # Forward setup to hub platforms (select, number, switch, sensor for hub-level entities)
+    await hass.config_entries.async_forward_entry_setups(entry, ["select", "number", "switch", "sensor"])
     
     # Trigger discovery for unconfigured OCPP chargers
     await _discover_and_notify_chargers(hass, entry.entry_id)
@@ -317,7 +317,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     
     if entry_type == ENTRY_TYPE_HUB:
         # Unload hub platforms
-        for domain in ["select", "number", "switch"]:
+        for domain in ["select", "number", "switch", "sensor"]:
             await hass.config_entries.async_forward_entry_unload(entry, domain)
         
         # Remove hub from data
