@@ -257,8 +257,6 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
 
             # Prepare the data for the OCPP set_charge_rate service
             profile_timeout = self.config_entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)
-            valid_from = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
-            valid_to = (datetime.utcnow() + timedelta(seconds=profile_timeout)).isoformat(timespec='seconds') + 'Z'
             stack_level = self.config_entry.data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
             
             # Get charge rate unit from config (A or W)
@@ -297,15 +295,17 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 limit_for_charger = limit
                 rate_unit = "A"
             
+            # Use chargingScheduleDuration instead of absolute validFrom/validTo timestamps
+            # This makes the profile valid for a duration (in seconds) from when the charger receives it
+            # rather than tied to HA's clock which may be out of sync with the charger
             charging_profile = {
                 "chargingProfileId": 11,
                 "stackLevel": stack_level,
                 "chargingProfileKind": "Relative",
                 "chargingProfilePurpose": "TxDefaultProfile",
-                "validFrom": valid_from,
-                "validTo": valid_to,
                 "chargingSchedule": {
                     "chargingRateUnit": rate_unit,
+                    "duration": profile_timeout,  # Duration in seconds the schedule is valid for
                     "chargingSchedulePeriod": [
                         {
                             "startPeriod": 0,
@@ -390,25 +390,30 @@ class DynamicOcppEvseHubSensor(SensorEntity):
     @property
     def state(self):
         """Return the state of the sensor (max available current for site)."""
-        return self._max_evse_available
+        if self._max_evse_available is not None:
+            return round(self._max_evse_available, 1)
+        return None
 
     @property
     def extra_state_attributes(self):
         """Return the state attributes - site-level data."""
+        def round_value(val, decimals=1):
+            return round(val, decimals) if val is not None else None
+        
         return {
             "state_class": "measurement",
             "charging_mode": self._charging_mode,
-            "max_evse_available": self._max_evse_available,
-            "target_evse": self._target_evse,
-            "target_evse_standard": self._target_evse_standard,
-            "target_evse_eco": self._target_evse_eco,
-            "target_evse_solar": self._target_evse_solar,
-            "target_evse_excess": self._target_evse_excess,
-            "battery_soc": self._battery_soc,
-            "battery_soc_min": self._battery_soc_min,
-            "battery_soc_target": self._battery_soc_target,
-            "battery_power": self._battery_power,
-            "available_battery_power": self._available_battery_power,
+            "max_evse_available": round_value(self._max_evse_available),
+            "target_evse": round_value(self._target_evse),
+            "target_evse_standard": round_value(self._target_evse_standard),
+            "target_evse_eco": round_value(self._target_evse_eco),
+            "target_evse_solar": round_value(self._target_evse_solar),
+            "target_evse_excess": round_value(self._target_evse_excess),
+            "battery_soc": round_value(self._battery_soc),
+            "battery_soc_min": round_value(self._battery_soc_min),
+            "battery_soc_target": round_value(self._battery_soc_target),
+            "battery_power": round_value(self._battery_power),
+            "available_battery_power": round_value(self._available_battery_power),
             "last_update": self._last_update,
         }
 

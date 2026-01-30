@@ -19,7 +19,7 @@ def calculate_solar_mode(sensor, context: ChargeContext):
     stops when SOC drops below target_soc - hysteresis.
     """
     battery_soc = context.battery_soc if context.battery_soc is not None else 100
-    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 50
+    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 80  # Default to 80%
     hysteresis = context.battery_soc_hysteresis if context.battery_soc_hysteresis is not None else DEFAULT_BATTERY_SOC_HYSTERESIS
     battery_power = context.battery_power if context.battery_power is not None else 0
     

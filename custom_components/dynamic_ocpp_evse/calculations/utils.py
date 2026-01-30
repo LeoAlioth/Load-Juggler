@@ -48,14 +48,19 @@ def get_sensor_attribute(hass, sensor, attribute):
 
 
 def apply_ramping(sensor, state, target_evse, min_current, conf_evse_current_offered, conf_available_current):
-    """Apply ramping logic to smooth current changes."""
+    """Apply ramping logic to smooth current changes and prevent oscillations."""
     if not hasattr(sensor, '_last_ramp_value'):
         sensor._last_ramp_value = None
     if not hasattr(sensor, '_last_ramp_time'):
         sensor._last_ramp_time = None
 
-    ramp_limit_up = 0.05   # Amps per second (ramp up)
-    ramp_limit_down = 0.2  # Amps per second (ramp down, faster)
+    # Ramping rates
+    ramp_limit_up = 0.1    # Amps per second (ramp up) - slightly faster to reduce lag
+    ramp_limit_down = 0.2  # Amps per second (ramp down, faster for safety)
+    
+    # Deadband to prevent oscillations - don't change if target is within this range of current value
+    deadband = 0.5  # Amps - changes smaller than this are ignored
+    
     now = datetime.datetime.now()
     
     ramp_enabled = True
@@ -72,15 +77,27 @@ def apply_ramping(sensor, state, target_evse, min_current, conf_evse_current_off
         if sensor._last_ramp_value is not None and sensor._last_ramp_time is not None:
             dt = (now - sensor._last_ramp_time).total_seconds()
             delta = state[conf_available_current] - sensor._last_ramp_value
-            if delta > 0:
+            
+            # Apply deadband - don't change if within deadband unless it's a significant change
+            if abs(delta) < deadband:
+                # Keep current value unchanged to prevent oscillations
+                ramped_value = sensor._last_ramp_value
+                _LOGGER.debug(f"Deadband applied: staying at {ramped_value}A (target {state[conf_available_current]}A, delta {delta}A)")
+            elif delta > 0:
                 max_delta = ramp_limit_up * max(dt, 0.1)
+                if delta > max_delta:
+                    ramped_value = sensor._last_ramp_value + max_delta
+                    _LOGGER.debug(f"Ramping up: {sensor._last_ramp_value} -> {ramped_value} (requested {state[conf_available_current]})")
+                else:
+                    ramped_value = state[conf_available_current]
             else:
                 max_delta = ramp_limit_down * max(dt, 0.1)
-            if abs(delta) > max_delta:
-                ramped_value = sensor._last_ramp_value + max_delta * (1 if delta > 0 else -1)
-                _LOGGER.debug(f"Ramping limited: {sensor._last_ramp_value} -> {ramped_value} (requested {state[conf_available_current]})")
-            else:
-                ramped_value = state[conf_available_current]
+                if abs(delta) > max_delta:
+                    ramped_value = sensor._last_ramp_value - max_delta
+                    _LOGGER.debug(f"Ramping down: {sensor._last_ramp_value} -> {ramped_value} (requested {state[conf_available_current]})")
+                else:
+                    ramped_value = state[conf_available_current]
+                    
         sensor._last_ramp_value = ramped_value
         sensor._last_ramp_time = now
         state[conf_available_current] = ramped_value

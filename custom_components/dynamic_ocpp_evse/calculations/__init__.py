@@ -59,6 +59,13 @@ def calculate_available_current_for_hub(sensor):
     apply_ramping(sensor, state, target_evse, charge_context.min_current, 
                   CONF_EVSE_CURRENT_OFFERED, CONF_AVAILABLE_CURRENT)
     
+    # IMPORTANT: Re-clamp to max_evse_available after ramping (ramping can exceed if previous value was higher)
+    if state[CONF_AVAILABLE_CURRENT] > max_evse_available:
+        _LOGGER.debug(f"Re-clamping after ramping: {state[CONF_AVAILABLE_CURRENT]}A -> {max_evse_available}A")
+        state[CONF_AVAILABLE_CURRENT] = max_evse_available
+        # Also update the ramping stored value so next iteration doesn't start from the old high value
+        sensor._last_ramp_value = max_evse_available
+    
     if state[CONF_AVAILABLE_CURRENT] < state[CONF_EVSE_MINIMUM_CHARGE_CURRENT]:
         state[CONF_AVAILABLE_CURRENT] = 0
     if state[CONF_AVAILABLE_CURRENT] > state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]:
@@ -67,7 +74,7 @@ def calculate_available_current_for_hub(sensor):
     # Calculate available battery power for EV charging
     battery_soc = charge_context.battery_soc if charge_context.battery_soc is not None else 0
     battery_soc_min = charge_context.battery_soc_min if charge_context.battery_soc_min is not None else DEFAULT_BATTERY_SOC_MIN
-    battery_soc_target = charge_context.battery_soc_target if charge_context.battery_soc_target is not None else 0
+    battery_soc_target = charge_context.battery_soc_target if charge_context.battery_soc_target is not None else 80  # Default to 80%
     battery_power = charge_context.battery_power if charge_context.battery_power is not None else 0
     battery_max_discharge_power = charge_context.battery_max_discharge_power if charge_context.battery_max_discharge_power is not None else DEFAULT_BATTERY_MAX_POWER
     
