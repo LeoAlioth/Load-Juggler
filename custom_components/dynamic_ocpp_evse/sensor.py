@@ -297,12 +297,19 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             _LOGGER.debug(f"Sending set_charge_rate for {self._attr_name} with limit: {limit_for_charger}{rate_unit} (calculated from {limit}A)")
 
             # Check if charge_control switch is off and we have available current - turn it on
+            # But only if a car is actually plugged in (connector status is not "Available")
             charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
             charge_control_switch = f"switch.{charger_entity_id}_charge_control"
             charge_control_state = self.hass.states.get(charge_control_switch)
             
-            if charge_control_state and charge_control_state.state == "off" and limit > 0:
-                _LOGGER.info(f"Charge control switch {charge_control_switch} is off but limit is {limit}A - turning on")
+            # Check connector status - only turn on if car is plugged in
+            connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
+            connector_status_state = self.hass.states.get(connector_status_entity)
+            connector_status = connector_status_state.state if connector_status_state else "unknown"
+            car_plugged_in = connector_status != "Available"
+            
+            if charge_control_state and charge_control_state.state == "off" and limit > 0 and car_plugged_in:
+                _LOGGER.info(f"Charge control switch {charge_control_switch} is off but limit is {limit}A and car is plugged in (connector: {connector_status}) - turning on")
                 try:
                     await self.hass.services.async_call(
                         "switch",
@@ -313,6 +320,8 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                     )
                 except Exception as e:
                     _LOGGER.warning(f"Failed to turn on charge_control switch {charge_control_switch}: {e}")
+            elif charge_control_state and charge_control_state.state == "off" and limit > 0 and not car_plugged_in:
+                _LOGGER.debug(f"Charge control switch {charge_control_switch} is off with limit {limit}A, but no car plugged in (connector: {connector_status}) - not turning on")
 
             # Call the OCPP set_charge_rate service
             await self.hass.services.async_call(

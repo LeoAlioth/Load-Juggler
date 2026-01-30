@@ -23,6 +23,8 @@ CONF_EXCESS_EXPORT_THRESHOLD = "excess_export_threshold"  # Maximum allowed expo
 CONF_BATTERY_POWER_ENTITY_ID = "battery_power_entity_id"
 CONF_BATTERY_SOC_ENTITY_ID = "battery_soc_entity_id"
 CONF_BATTERY_SOC_TARGET_ENTITY_ID = "battery_soc_target_entity_id"
+CONF_BATTERY_SOC_MIN = "battery_soc_min"  # Minimum SOC below which EV should not charge
+CONF_BATTERY_SOC_HYSTERESIS = "battery_soc_hysteresis"  # Hysteresis percentage for SOC thresholds
 CONF_BATTERY_MAX_CHARGE_POWER = "battery_max_charge_power"  # W
 CONF_BATTERY_MAX_DISCHARGE_POWER = "battery_max_discharge_power"  # W
 CONF_ALLOW_GRID_CHARGING_ENTITY_ID = "allow_grid_charging_entity_id"
@@ -79,6 +81,8 @@ DEFAULT_STACK_LEVEL = 2
 DEFAULT_CHARGER_PRIORITY = 1
 DEFAULT_EXCESS_EXPORT_THRESHOLD = 13000
 DEFAULT_BATTERY_MAX_POWER = 5000
+DEFAULT_BATTERY_SOC_MIN = 20  # Default minimum SOC (20%)
+DEFAULT_BATTERY_SOC_HYSTERESIS = 3  # Default hysteresis (3%)
 
 # Charge rate unit configuration (per charger)
 CONF_CHARGE_RATE_UNIT = "charge_rate_unit"

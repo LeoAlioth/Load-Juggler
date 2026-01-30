@@ -28,6 +28,8 @@ class ChargeContext:
     battery_soc: float = None
     battery_power: float = None
     battery_soc_target: float = None
+    battery_soc_min: float = None
+    battery_soc_hysteresis: float = None
     battery_max_charge_power: float = None
     battery_max_discharge_power: float = None
     allow_grid_charging: bool = True
@@ -198,33 +200,67 @@ def determine_phases(sensor, state):
 
 # ==================== CHARGING MODE CALCULATIONS ====================
 
-def calculate_standard_mode(context: ChargeContext):
-    """Calculate target current for Standard mode."""
+def _check_soc_threshold_with_hysteresis(sensor, threshold_name, battery_soc, threshold, hysteresis, is_above_check=True):
+    """
+    Check if SOC is above/below a threshold with hysteresis.
+    
+    Args:
+        sensor: Sensor object to store state
+        threshold_name: Name of threshold for state tracking (e.g., "min_soc", "target_soc")
+        battery_soc: Current battery SOC
+        threshold: The SOC threshold to check against
+        hysteresis: Hysteresis percentage
+        is_above_check: If True, returns True when SOC is above threshold. If False, returns True when below.
+    
+    Returns:
+        bool: Whether the condition is met (with hysteresis applied)
+    """
+    state_attr = f"_soc_above_{threshold_name}"
+    was_above = getattr(sensor, state_attr, None)
+    
+    if is_above_check:
+        # Check if SOC is above threshold
+        if was_above is None:
+            # First check - use simple comparison
+            is_above = battery_soc >= threshold
+        elif was_above:
+            # Was above - stay above until we drop below threshold - hysteresis
+            is_above = battery_soc >= (threshold - hysteresis)
+        else:
+            # Was below - stay below until we rise above threshold
+            is_above = battery_soc >= threshold
+        
+        setattr(sensor, state_attr, is_above)
+        return is_above
+    else:
+        # Check if SOC is below threshold (inverse logic)
+        if was_above is None:
+            is_below = battery_soc < threshold
+        elif not was_above:  # was_below
+            # Was below - stay below until we rise above threshold + hysteresis
+            is_below = battery_soc < (threshold + hysteresis)
+        else:
+            # Was above - stay above until we drop below threshold
+            is_below = battery_soc < threshold
+        
+        setattr(sensor, state_attr, not is_below)
+        return is_below
+
+
+def _calculate_base_target_evse(context: ChargeContext, available_battery_current: float, allow_grid_import: bool = True):
+    """Calculate base target EVSE current from available power sources."""
     state = context.state
     max_import_power = state[CONF_MAX_IMPORT_POWER]
     max_import_current = max_import_power / context.voltage
-    target_import_current = max_import_current
     
-    if not context.allow_grid_charging:
+    if not context.allow_grid_charging or not allow_grid_import:
         remaining_available_import_current = 0
     else:
-        remaining_available_import_current = target_import_current - context.total_import_current
+        remaining_available_import_current = max_import_current - context.total_import_current
 
     remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_a_current
     remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_b_current
     remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_c_current
-
-    # Battery discharge logic
-    battery_power = context.battery_power if context.battery_power is not None else 0
-    battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
-    battery_soc = context.battery_soc if context.battery_soc is not None else 100
-    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 0
-
-    if battery_soc > battery_soc_target:
-        available_battery_power = max(0, battery_max_discharge_power)
-    else:
-        available_battery_power = max(0, -battery_power)
-    available_battery_current = available_battery_power / context.voltage if context.voltage else 0
 
     if context.phases == 1:
         target_evse = context.evse_current_per_phase + min(
@@ -246,7 +282,42 @@ def calculate_standard_mode(context: ChargeContext):
         )
     else:
         target_evse = state.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+    
+    return target_evse
 
+
+def calculate_standard_mode(sensor, context: ChargeContext):
+    """
+    Calculate target current for Standard mode.
+    
+    Standard mode behavior with battery:
+    - Below min_soc (with hysteresis): No charging
+    - Above min_soc: Full speed charging with battery discharge available
+    """
+    state = context.state
+    
+    # Get battery parameters
+    battery_soc = context.battery_soc if context.battery_soc is not None else 100
+    battery_soc_min = context.battery_soc_min if context.battery_soc_min is not None else DEFAULT_BATTERY_SOC_MIN
+    hysteresis = context.battery_soc_hysteresis if context.battery_soc_hysteresis is not None else DEFAULT_BATTERY_SOC_HYSTERESIS
+    battery_power = context.battery_power if context.battery_power is not None else 0
+    battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
+    
+    # Check if we're above minimum SOC (with hysteresis)
+    above_min_soc = _check_soc_threshold_with_hysteresis(
+        sensor, "standard_min", battery_soc, battery_soc_min, hysteresis, is_above_check=True
+    )
+    
+    if not above_min_soc:
+        _LOGGER.debug(f"Standard mode: Battery SOC {battery_soc}% below minimum {battery_soc_min}% - no charging")
+        return 0
+    
+    # Above min_soc - full battery discharge available
+    available_battery_power = max(0, battery_max_discharge_power)
+    available_battery_current = available_battery_power / context.voltage if context.voltage else 0
+    
+    target_evse = _calculate_base_target_evse(context, available_battery_current, allow_grid_import=True)
+    
     # Apply power buffer logic
     power_buffer = state.get(CONF_POWER_BUFFER, 0)
     if power_buffer is None or not is_number(power_buffer):
@@ -257,79 +328,153 @@ def calculate_standard_mode(context: ChargeContext):
     
     if target_evse_buffered < context.min_current:
         if target_evse >= context.min_current:
-            _LOGGER.debug(f"Standard mode: buffered target {target_evse_buffered}A < min {context.min_current}A, using min_current {context.min_current}A")
+            _LOGGER.debug(f"Standard mode: buffered target {target_evse_buffered}A < min {context.min_current}A, using min_current")
             return context.min_current
         else:
-            _LOGGER.debug(f"Standard mode: buffered target {target_evse_buffered}A and full target {target_evse}A both < min {context.min_current}A")
+            _LOGGER.debug(f"Standard mode: both targets below min {context.min_current}A")
             return target_evse
     else:
-        _LOGGER.debug(f"Standard mode: using buffered target {target_evse_buffered}A")
+        _LOGGER.debug(f"Standard mode: SOC {battery_soc}% >= min {battery_soc_min}%, target {target_evse_buffered}A")
         return target_evse_buffered
 
 
-def calculate_solar_mode(context: ChargeContext, target_import_current=0):
-    """Calculate target current for Solar mode."""
-    state = context.state
+def calculate_solar_mode(sensor, context: ChargeContext):
+    """
+    Calculate target current for Solar mode.
     
-    if not context.allow_grid_charging:
-        remaining_available_import_current = 0
-    else:
-        remaining_available_import_current = target_import_current - context.total_import_current
+    Solar mode behavior with battery:
+    - Below target_soc (with hysteresis): No charging
+    - At/above target_soc: Charge at solar production rate only (no battery discharge for EV)
     
-    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_a_current
-    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_b_current
-    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_c_current
-
-    # Battery discharge logic
+    Note: Charging starts when battery is charging (has excess solar) at target_soc,
+    stops when SOC drops below target_soc - hysteresis.
+    """
+    battery_soc = context.battery_soc if context.battery_soc is not None else 100
+    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 50
+    hysteresis = context.battery_soc_hysteresis if context.battery_soc_hysteresis is not None else DEFAULT_BATTERY_SOC_HYSTERESIS
     battery_power = context.battery_power if context.battery_power is not None else 0
-    battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
-    battery_soc = context.battery_soc if context.battery_soc is not None else 0
-    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 0
-
-    if battery_soc > battery_soc_target:
-        available_battery_power = max(0, battery_max_discharge_power)
-    else:
-        available_battery_power = max(0, -battery_power)
-    available_battery_current = available_battery_power / context.voltage if context.voltage else 0
-
-    if context.phases == 1:
-        target_evse = context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_import_current + context.phase_a_export_current + available_battery_current
-        )
-    elif context.phases == 2:
-        target_evse = context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_current_phase_b,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + available_battery_current) / 2
-        )
-    elif context.phases == 3:
-        target_evse = context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_current_phase_b,
-            remaining_available_current_phase_c,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + context.phase_c_export_current + available_battery_current) / 3
-        )
-    else:
-        target_evse = state.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+    
+    # Check if we're above target SOC (with hysteresis)
+    above_target_soc = _check_soc_threshold_with_hysteresis(
+        sensor, "solar_target", battery_soc, battery_soc_target, hysteresis, is_above_check=True
+    )
+    
+    # For starting to charge, battery should be charging (negative power = charging) or SOC above target
+    battery_is_charging = battery_power < 0
+    
+    if not above_target_soc and not battery_is_charging:
+        _LOGGER.debug(f"Solar mode: Battery SOC {battery_soc}% below target {battery_soc_target}% and not charging - no EV charging")
+        return 0
+    
+    if not above_target_soc:
+        _LOGGER.debug(f"Solar mode: Battery SOC {battery_soc}% below target {battery_soc_target}% - no EV charging")
+        return 0
+    
+    # At/above target_soc - use solar only (no battery discharge for EV)
+    # Only consider current battery discharge that's already happening
+    available_battery_current = max(0, -battery_power / context.voltage) if context.voltage else 0
+    
+    target_evse = _calculate_base_target_evse(context, available_battery_current, allow_grid_import=False)
+    
+    _LOGGER.debug(f"Solar mode: SOC {battery_soc}% >= target {battery_soc_target}%, solar rate {target_evse}A")
     return max(target_evse, 0)
 
 
-def calculate_eco_mode(context: ChargeContext):
-    """Calculate target current for Eco mode."""
-    target_evse = calculate_solar_mode(context)
-    target_evse = max(context.min_current, target_evse)
-    return target_evse
+def calculate_eco_mode(sensor, context: ChargeContext):
+    """
+    Calculate target current for Eco mode.
+    
+    Eco mode behavior with battery:
+    - Below min_soc (with hysteresis): No charging
+    - Between min_soc and target_soc: Minimum rate charging (no battery discharge)
+    - At target_soc: Solar production rate
+    - Above target_soc: Full speed (like Standard mode)
+    """
+    battery_soc = context.battery_soc if context.battery_soc is not None else 100
+    battery_soc_min = context.battery_soc_min if context.battery_soc_min is not None else DEFAULT_BATTERY_SOC_MIN
+    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 50
+    hysteresis = context.battery_soc_hysteresis if context.battery_soc_hysteresis is not None else DEFAULT_BATTERY_SOC_HYSTERESIS
+    battery_power = context.battery_power if context.battery_power is not None else 0
+    battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
+    
+    # Check if we're above minimum SOC (with hysteresis)
+    above_min_soc = _check_soc_threshold_with_hysteresis(
+        sensor, "eco_min", battery_soc, battery_soc_min, hysteresis, is_above_check=True
+    )
+    
+    if not above_min_soc:
+        _LOGGER.debug(f"Eco mode: Battery SOC {battery_soc}% below minimum {battery_soc_min}% - no charging")
+        return 0
+    
+    # Check if we're above target SOC (with hysteresis)
+    above_target_soc = _check_soc_threshold_with_hysteresis(
+        sensor, "eco_target", battery_soc, battery_soc_target, hysteresis, is_above_check=True
+    )
+    
+    if above_target_soc:
+        # Above target_soc - full speed (like Standard mode)
+        available_battery_power = max(0, battery_max_discharge_power)
+        available_battery_current = available_battery_power / context.voltage if context.voltage else 0
+        target_evse = _calculate_base_target_evse(context, available_battery_current, allow_grid_import=True)
+        _LOGGER.debug(f"Eco mode: SOC {battery_soc}% > target {battery_soc_target}%, full speed {target_evse}A")
+        return target_evse
+    
+    # Between min_soc and target_soc
+    # Check if at target_soc (battery is charging = has solar)
+    battery_is_charging = battery_power < 0
+    at_target_with_solar = battery_soc >= battery_soc_target and battery_is_charging
+    
+    if at_target_with_solar:
+        # At target with solar - charge at solar rate
+        available_battery_current = max(0, -battery_power / context.voltage) if context.voltage else 0
+        target_evse = _calculate_base_target_evse(context, available_battery_current, allow_grid_import=False)
+        _LOGGER.debug(f"Eco mode: SOC {battery_soc}% at target with solar, rate {target_evse}A")
+        return max(target_evse, context.min_current)
+    
+    # Between min_soc and target_soc without solar - minimum rate only
+    _LOGGER.debug(f"Eco mode: SOC {battery_soc}% between min {battery_soc_min}% and target {battery_soc_target}% - min rate {context.min_current}A")
+    return context.min_current
 
 
 def calculate_excess_mode(sensor, context: ChargeContext):
-    """Calculate target current for Excess mode."""
+    """
+    Calculate target current for Excess mode.
+    
+    Excess mode behavior with battery:
+    - Below min_soc (with hysteresis): No charging
+    - Between min_soc and target_soc: Export power only (no battery discharge for EV)
+    - Between target_soc and 98%: Export power, slow battery discharge OK
+    - At/above 98%: Match solar production (like Solar mode)
+    """
     state = context.state
     voltage = context.voltage
     total_export_power = context.total_export_power
     base_threshold = state.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD)
     
-    if context.battery_soc is not None and context.battery_soc < 100:
+    battery_soc = context.battery_soc if context.battery_soc is not None else 100
+    battery_soc_min = context.battery_soc_min if context.battery_soc_min is not None else DEFAULT_BATTERY_SOC_MIN
+    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 50
+    hysteresis = context.battery_soc_hysteresis if context.battery_soc_hysteresis is not None else DEFAULT_BATTERY_SOC_HYSTERESIS
+    battery_power = context.battery_power if context.battery_power is not None else 0
+    
+    # Check if we're above minimum SOC (with hysteresis)
+    above_min_soc = _check_soc_threshold_with_hysteresis(
+        sensor, "excess_min", battery_soc, battery_soc_min, hysteresis, is_above_check=True
+    )
+    
+    if not above_min_soc:
+        _LOGGER.debug(f"Excess mode: Battery SOC {battery_soc}% below minimum {battery_soc_min}% - no charging")
+        return 0
+    
+    # If battery is nearly full (>= 98%), act like solar mode - match production
+    if battery_soc >= 98:
+        available_battery_current = max(0, -battery_power / voltage) if voltage else 0
+        target_evse = _calculate_base_target_evse(context, available_battery_current, allow_grid_import=False)
+        _LOGGER.debug(f"Excess mode: Battery nearly full ({battery_soc}%), matching solar production {target_evse}A")
+        return max(target_evse, 0)
+    
+    # Calculate threshold - add battery charge capacity if battery not at target
+    if battery_soc < battery_soc_target:
         battery_max_charge_power = state.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER)
     else:
         battery_max_charge_power = 0
@@ -338,7 +483,7 @@ def calculate_excess_mode(sensor, context: ChargeContext):
     now = datetime.datetime.now()
     
     if total_export_power > threshold:
-        _LOGGER.info(f"Excess mode: total_export_power {total_export_power}W > threshold {threshold}W, starting charge")
+        _LOGGER.info(f"Excess mode: export {total_export_power}W > threshold {threshold}W, starting charge")
         sensor._excess_charge_start_time = now
     
     keep_charging = False
@@ -355,6 +500,7 @@ def calculate_excess_mode(sensor, context: ChargeContext):
         target_evse = 0
     
     target_evse = min(target_evse, context.max_current, context.max_evse_available)
+    _LOGGER.debug(f"Excess mode: SOC {battery_soc}%, export {total_export_power}W, target {target_evse}A")
     return target_evse
 
 
@@ -454,6 +600,15 @@ def get_hub_state_config(sensor):
     battery_soc_target_entity = f"number.{hub_entity_id}_home_battery_soc_target"
     state["battery_soc_target"] = get_sensor_data(hass, battery_soc_target_entity)
 
+    # Battery SOC minimum from hub number entity
+    battery_soc_min_entity = f"number.{hub_entity_id}_home_battery_soc_min"
+    state["battery_soc_min"] = get_sensor_data(hass, battery_soc_min_entity)
+    if state["battery_soc_min"] is None:
+        state["battery_soc_min"] = DEFAULT_BATTERY_SOC_MIN
+    
+    # Battery SOC hysteresis from hub config
+    state["battery_soc_hysteresis"] = hub_entry.data.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)
+
     state[CONF_BATTERY_MAX_CHARGE_POWER] = hub_entry.data.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER)
     state[CONF_BATTERY_MAX_DISCHARGE_POWER] = hub_entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER)
 
@@ -512,6 +667,8 @@ def get_charge_context_values(sensor, state):
     battery_soc = state["battery_soc"]
     battery_power = state["battery_power"]
     battery_soc_target = state.get("battery_soc_target")
+    battery_soc_min = state.get("battery_soc_min", DEFAULT_BATTERY_SOC_MIN)
+    battery_soc_hysteresis = state.get("battery_soc_hysteresis", DEFAULT_BATTERY_SOC_HYSTERESIS)
     battery_max_charge_power = state.get(CONF_BATTERY_MAX_CHARGE_POWER)
     battery_max_discharge_power = state.get(CONF_BATTERY_MAX_DISCHARGE_POWER)
     allow_grid_charging = state.get("allow_grid_charging", True)
@@ -535,6 +692,8 @@ def get_charge_context_values(sensor, state):
         battery_soc=battery_soc,
         battery_power=battery_power,
         battery_soc_target=battery_soc_target,
+        battery_soc_min=battery_soc_min,
+        battery_soc_hysteresis=battery_soc_hysteresis,
         battery_max_charge_power=battery_max_charge_power,
         battery_max_discharge_power=battery_max_discharge_power,
         allow_grid_charging=allow_grid_charging,
@@ -557,9 +716,9 @@ def calculate_available_current_for_hub(sensor):
     max_evse_available = calculate_max_evse_available(charge_context)
     charge_context.max_evse_available = max_evse_available
 
-    target_evse_standard = calculate_standard_mode(charge_context)
-    target_evse_eco = calculate_eco_mode(charge_context)
-    target_evse_solar = calculate_solar_mode(charge_context)
+    target_evse_standard = calculate_standard_mode(sensor, charge_context)
+    target_evse_eco = calculate_eco_mode(sensor, charge_context)
+    target_evse_solar = calculate_solar_mode(sensor, charge_context)
     target_evse_excess = calculate_excess_mode(sensor, charge_context)
 
     charging_mode = state[CONF_CHARING_MODE]
