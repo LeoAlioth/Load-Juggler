@@ -69,16 +69,22 @@ def calculate_available_current_for_hub(sensor):
     battery_soc_min = charge_context.battery_soc_min if charge_context.battery_soc_min is not None else DEFAULT_BATTERY_SOC_MIN
     battery_soc_target = charge_context.battery_soc_target if charge_context.battery_soc_target is not None else 0
     battery_power = charge_context.battery_power if charge_context.battery_power is not None else 0
-    battery_max_discharge_power = charge_context.battery_max_discharge_power if charge_context.battery_max_discharge_power is not None else 0
+    battery_max_discharge_power = charge_context.battery_max_discharge_power if charge_context.battery_max_discharge_power is not None else DEFAULT_BATTERY_MAX_POWER
     
-    # Available battery power depends on SOC level
+    _LOGGER.debug(f"Battery values: soc={battery_soc}%, min={battery_soc_min}%, target={battery_soc_target}%, max_discharge={battery_max_discharge_power}W")
+    
+    # Available battery power for EV charging depends on SOC level and charging mode
+    # - Below min_soc: No battery power for EV (protect battery)
+    # - Between min_soc and target_soc: In Eco mode, only minimum rate (no battery discharge)
+    # - Above target_soc: Full battery discharge available for EV
     if battery_soc >= battery_soc_min:
         if battery_soc > battery_soc_target:
             # Above target - full discharge available
             available_battery_power = battery_max_discharge_power
         else:
-            # Between min and target - only current discharge (no additional)
-            available_battery_power = max(0, -battery_power)  # Negative power = charging, so negate
+            # Between min and target - battery is available but mode determines usage
+            # Show full potential so user can see battery IS available
+            available_battery_power = battery_max_discharge_power
     else:
         # Below min - no battery power for EV
         available_battery_power = 0
