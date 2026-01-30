@@ -324,10 +324,15 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             charge_control_state = self.hass.states.get(charge_control_switch)
             
             # Check connector status - only turn on if car is plugged in
+            # Status can be: Available, Preparing, Charging, SuspendedEV, SuspendedEVSE, Finishing, Reserved, Unavailable, Faulted
             connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
             connector_status_state = self.hass.states.get(connector_status_entity)
             connector_status = connector_status_state.state if connector_status_state else "unknown"
-            car_plugged_in = connector_status != "Available"
+            
+            # Car is plugged in if status is NOT "Available" (meaning: Preparing, Charging, SuspendedEV, etc.)
+            car_plugged_in = connector_status not in ["Available", "unknown", "unavailable"]
+            
+            _LOGGER.debug(f"Charge control check: entity={connector_status_entity}, status={connector_status}, car_plugged_in={car_plugged_in}, limit={limit}A, switch_state={charge_control_state.state if charge_control_state else 'not found'}")
             
             if charge_control_state and charge_control_state.state == "off" and limit > 0 and car_plugged_in:
                 _LOGGER.info(f"Charge control switch {charge_control_switch} is off but limit is {limit}A and car is plugged in (connector: {connector_status}) - turning on")
