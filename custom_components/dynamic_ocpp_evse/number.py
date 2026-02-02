@@ -20,6 +20,7 @@ from .const import (
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_BATTERY_MAX_POWER,
+    DEFAULT_BATTERY_SOC_MIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,9 +35,10 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     entities = []
     
     if entry_type == ENTRY_TYPE_HUB:
-        # Hub entities: Battery SOC Target, Power Buffer
+        # Hub entities: Battery SOC Target, Battery SOC Minimum, Power Buffer
         entities = [
             BatterySOCTargetSlider(hass, config_entry, name, entity_id),
+            BatterySOCMinSlider(hass, config_entry, name, entity_id),
             PowerBufferSlider(hass, config_entry, name, entity_id),
         ]
         _LOGGER.info(f"Setting up hub number entities: {[entity.unique_id for entity in entities]}")
@@ -66,9 +68,11 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Min Current"
         self._attr_unique_id = f"{entity_id}_min_current"
+        # Explicitly set entity_id to match what context.py expects
+        self.entity_id = f"number.{entity_id}_min_current"
         self._attr_native_min_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
         self._attr_native_max_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
-        self._attr_native_step = 1
+        self._attr_native_step = 0.5
         self._attr_native_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
@@ -97,9 +101,11 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Max Current"
         self._attr_unique_id = f"{entity_id}_max_current"
+        # Explicitly set entity_id to match what context.py expects
+        self.entity_id = f"number.{entity_id}_max_current"
         self._attr_native_min_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
         self._attr_native_max_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
-        self._attr_native_step = 1
+        self._attr_native_step = 0.5
         self._attr_native_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
@@ -123,16 +129,22 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
 # ==================== HUB NUMBER ENTITIES ====================
 
 class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
-    """Slider for battery SOC target (10-100%, step 5) (hub-level)."""
+    """Slider for battery SOC target (0-100%, step 1) (hub-level).
+    
+    In Eco mode: Below target, charge at minimum rate. At/above target, charge at solar rate or full speed.
+    In Solar mode: Below target, do not charge. At/above target, charge at solar rate.
+    """
     
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
         self._attr_name = f"{name} Home Battery SOC Target"
         self._attr_unique_id = f"{entity_id}_home_battery_soc_target"
-        self._attr_native_min_value = 10
+        # Explicitly set entity_id to match what context.py expects
+        self.entity_id = f"number.{entity_id}_home_battery_soc_target"
+        self._attr_native_min_value = 0
         self._attr_native_max_value = 100
-        self._attr_native_step = 5
+        self._attr_native_step = 1
         self._attr_native_value = 80  # Default SOC target
         self._attr_native_unit_of_measurement = "%"
         self._attr_icon = "mdi:battery-charging-80"
@@ -149,8 +161,47 @@ class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
 
     async def async_set_native_value(self, value: float) -> None:
-        # Clamp to step and range
-        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
+        # Clamp to range
+        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
+        self._attr_native_value = value
+        self.async_write_ha_state()
+
+
+class BatterySOCMinSlider(NumberEntity, RestoreEntity):
+    """Slider for minimum battery SOC (0-95%, step 1) (hub-level).
+    
+    Below this SOC level, EV charging will NOT occur in any mode.
+    This is the absolute floor to protect the home battery.
+    """
+    
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
+        self.hass = hass
+        self.config_entry = config_entry
+        self._attr_name = f"{name} Home Battery Minimum SOC"
+        self._attr_unique_id = f"{entity_id}_home_battery_soc_min"
+        # Explicitly set entity_id to match what context.py expects
+        self.entity_id = f"number.{entity_id}_home_battery_soc_min"
+        self._attr_native_min_value = 0
+        self._attr_native_max_value = 95
+        self._attr_native_step = 1
+        self._attr_native_value = DEFAULT_BATTERY_SOC_MIN  # Default 20%
+        self._attr_native_unit_of_measurement = "%"
+        self._attr_icon = "mdi:battery-alert-variant-outline"
+
+    async def async_added_to_hass(self) -> None:
+        """Restore last state when added to hass."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
+            try:
+                self._attr_native_value = float(last_state.state)
+                _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
+            except (ValueError, TypeError):
+                _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
+
+    async def async_set_native_value(self, value: float) -> None:
+        # Clamp to range
+        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
         self._attr_native_value = value
         self.async_write_ha_state()
 
@@ -168,6 +219,8 @@ class PowerBufferSlider(NumberEntity, RestoreEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Power Buffer"
         self._attr_unique_id = f"{entity_id}_power_buffer"
+        # Explicitly set entity_id to match what context.py expects
+        self.entity_id = f"number.{entity_id}_power_buffer"
         self._attr_native_min_value = 0
         self._attr_native_max_value = 5000
         self._attr_native_step = 100

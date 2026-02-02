@@ -37,7 +37,8 @@
                     "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
                     "battery_power_entity_id": "Sensor that measures battery power (positive=discharge, negative=charge)",
                     "battery_max_charge_power": "Maximum battery charge power in Watts",
-                    "battery_max_discharge_power": "Maximum battery discharge power in Watts"
+                    "battery_max_discharge_power": "Maximum battery discharge power in Watts",
+                    "battery_soc_hysteresis": "Battery SOC hysteresis (%) to prevent oscillation at thresholds"
                 }
             },
             "select_hub": {
@@ -89,7 +90,8 @@
                     "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
                     "battery_power_entity_id": "Sensor that measures battery power",
                     "battery_max_charge_power": "Maximum battery charge power in Watts",
-                    "battery_max_discharge_power": "Maximum battery discharge power in Watts"
+                    "battery_max_discharge_power": "Maximum battery discharge power in Watts",
+                    "battery_soc_hysteresis": "Battery SOC hysteresis (%) to prevent oscillation at thresholds"
                 }
             },
             "reconfigure_charger": {

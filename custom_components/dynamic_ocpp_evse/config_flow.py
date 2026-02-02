@@ -277,6 +277,9 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }),
             vol.Optional(CONF_BATTERY_MAX_CHARGE_POWER, default=DEFAULT_BATTERY_MAX_POWER): int,
             vol.Optional(CONF_BATTERY_MAX_DISCHARGE_POWER, default=DEFAULT_BATTERY_MAX_POWER): int,
+            vol.Optional(CONF_BATTERY_SOC_HYSTERESIS, default=DEFAULT_BATTERY_SOC_HYSTERESIS): selector({
+                "number": {"min": 1, "max": 10, "step": 1, "mode": "slider", "unit_of_measurement": "%"}
+            }),
         })
         
         return self.async_show_form(
@@ -663,6 +666,9 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }),
             vol.Optional(CONF_BATTERY_MAX_CHARGE_POWER, default=entry.data.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER)): int,
             vol.Optional(CONF_BATTERY_MAX_DISCHARGE_POWER, default=entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER)): int,
+            vol.Optional(CONF_BATTERY_SOC_HYSTERESIS, default=entry.data.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)): selector({
+                "number": {"min": 1, "max": 10, "step": 1, "mode": "slider", "unit_of_measurement": "%"}
+            }),
         })
         
         return self.async_show_form(
