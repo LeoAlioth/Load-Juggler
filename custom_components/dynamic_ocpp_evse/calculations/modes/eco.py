@@ -42,7 +42,12 @@ def calculate_eco_mode(sensor, context: ChargeContext):
     
     if above_target_soc:
         # Above target_soc - full speed (like Standard mode)
-        available_battery_power = max(0, battery_max_discharge_power)
+        # If battery is charging, use that power; otherwise use discharge limit
+        if battery_power < 0:
+            available_battery_power = abs(battery_power)
+            _LOGGER.debug(f"Eco mode: Battery charging at {available_battery_power}W, treating as available power")
+        else:
+            available_battery_power = max(0, battery_max_discharge_power)
         available_battery_current = available_battery_power / context.voltage if context.voltage else 0
         target_evse = calculate_base_target_evse(context, available_battery_current, allow_grid_import=True)
         # Clamp to max_evse_available

@@ -34,8 +34,16 @@ def calculate_standard_mode(sensor, context: ChargeContext):
         _LOGGER.debug(f"Standard mode: Battery SOC {battery_soc}% below minimum {battery_soc_min}% - no charging")
         return 0
     
-    # Above min_soc - full battery discharge available
-    available_battery_power = max(0, battery_max_discharge_power)
+    # Above min_soc - calculate available battery power
+    # If battery is charging (negative power), that power could go to EV instead
+    if battery_power < 0:
+        # Battery is charging - use charging power as available
+        available_battery_power = abs(battery_power)
+        _LOGGER.debug(f"Standard mode: Battery charging at {available_battery_power}W, treating as available power")
+    else:
+        # Battery discharging or idle - use discharge limit
+        available_battery_power = max(0, battery_max_discharge_power)
+    
     available_battery_current = available_battery_power / context.voltage if context.voltage else 0
     
     target_evse = calculate_base_target_evse(context, available_battery_current, allow_grid_import=True)
