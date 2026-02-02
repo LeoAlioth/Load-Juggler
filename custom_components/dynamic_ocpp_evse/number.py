@@ -68,8 +68,6 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Min Current"
         self._attr_unique_id = f"{entity_id}_min_current"
-        # Explicitly set entity_id to match what context.py expects
-        self.entity_id = f"number.{entity_id}_min_current"
         self._attr_native_min_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
         self._attr_native_max_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
         self._attr_native_step = 0.5
@@ -101,8 +99,6 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Max Current"
         self._attr_unique_id = f"{entity_id}_max_current"
-        # Explicitly set entity_id to match what context.py expects
-        self.entity_id = f"number.{entity_id}_max_current"
         self._attr_native_min_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
         self._attr_native_max_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
         self._attr_native_step = 0.5
@@ -140,8 +136,6 @@ class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Home Battery SOC Target"
         self._attr_unique_id = f"{entity_id}_home_battery_soc_target"
-        # Explicitly set entity_id to match what context.py expects
-        self.entity_id = f"number.{entity_id}_home_battery_soc_target"
         self._attr_native_min_value = 0
         self._attr_native_max_value = 100
         self._attr_native_step = 1
@@ -179,8 +173,6 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Home Battery Minimum SOC"
         self._attr_unique_id = f"{entity_id}_home_battery_soc_min"
-        # Explicitly set entity_id to match what context.py expects
-        self.entity_id = f"number.{entity_id}_home_battery_soc_min"
         self._attr_native_min_value = 0
         self._attr_native_max_value = 95
         self._attr_native_step = 1
@@ -219,8 +211,6 @@ class PowerBufferSlider(NumberEntity, RestoreEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Power Buffer"
         self._attr_unique_id = f"{entity_id}_power_buffer"
-        # Explicitly set entity_id to match what context.py expects
-        self.entity_id = f"number.{entity_id}_power_buffer"
         self._attr_native_min_value = 0
         self._attr_native_max_value = 5000
         self._attr_native_step = 100

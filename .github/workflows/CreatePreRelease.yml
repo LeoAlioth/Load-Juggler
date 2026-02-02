@@ -22,11 +22,13 @@ jobs:
       - name: Determine tag name
         run: |
           BRANCH="${GITHUB_REF##*/}"
+          TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
 
           if [ "$BRANCH" = "dev" ]; then
-            TAG_NAME="dev-$(git rev-parse --short HEAD)"
+            TAG_NAME="dev-${TIMESTAMP}-$(git rev-parse --short HEAD)"
           elif [ "$BRANCH" = "pre-release" ]; then
-            TAG_NAME=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
+            VERSION=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
+            TAG_NAME="${VERSION}-pre-${TIMESTAMP}"
           else
             echo "Unsupported branch"
             exit 1

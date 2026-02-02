@@ -302,6 +302,7 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
     # Define expected hub entities with their unique_ids
     expected_entities = {
         f"number.{entity_id}_home_battery_soc_target": f"{entity_id}_home_battery_soc_target",
+        f"number.{entity_id}_home_battery_soc_min": f"{entity_id}_home_battery_soc_min",
         f"number.{entity_id}_power_buffer": f"{entity_id}_power_buffer",
         f"select.{entity_id}_charging_mode": f"{entity_id}_charging_mode",
         f"switch.{entity_id}_allow_grid_charging": f"{entity_id}_allow_grid_charging"
