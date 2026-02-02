@@ -59,6 +59,9 @@ class DynamicOcppEvseChargingModeSelect(SelectEntity, RestoreEntity):
             _LOGGER.debug(f"Restored charging mode to: {self._attr_current_option}")
         else:
             _LOGGER.debug(f"No valid state to restore, using default: {self._attr_current_option}")
+        
+        # Write initial state
+        self.async_write_ha_state()
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""

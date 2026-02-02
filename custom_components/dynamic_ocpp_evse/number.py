@@ -85,6 +85,9 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
             except (ValueError, TypeError):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
+        
+        # Write initial state
+        self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
         self._attr_native_value = value
@@ -116,6 +119,9 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
             except (ValueError, TypeError):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
+        
+        # Write initial state
+        self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
         self._attr_native_value = value
@@ -153,6 +159,9 @@ class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
             except (ValueError, TypeError):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
+        
+        # Write initial state
+        self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
         # Clamp to range
@@ -171,7 +180,7 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = f"{name} Home Battery Minimum SOC"
+        self._attr_name = f"{name} Home Battery SOC Min"
         self._attr_unique_id = f"{entity_id}_home_battery_soc_min"
         self._attr_native_min_value = 0
         self._attr_native_max_value = 95
@@ -190,6 +199,9 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
             except (ValueError, TypeError):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
+        
+        # Write initial state
+        self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
         # Clamp to range
@@ -228,6 +240,9 @@ class PowerBufferSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
             except (ValueError, TypeError):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
+        
+        # Write initial state
+        self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
         # Clamp to step and range

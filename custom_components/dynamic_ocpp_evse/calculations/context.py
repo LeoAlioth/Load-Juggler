@@ -160,6 +160,9 @@ def get_hub_state_config(sensor):
     if state["battery_soc_target"] is None:
         _LOGGER.warning(f"Battery SOC target entity {battery_soc_target_entity} not found, using default 80%")
         state["battery_soc_target"] = 80  # Default to 80% if not found
+    
+    # Battery SOC min from hub number entity
+    battery_soc_min_entity = f"number.{hub_entity_id}_home_battery_soc_min"
     state["battery_soc_min"] = get_sensor_data(hass, battery_soc_min_entity)
     _LOGGER.info(f"Battery SOC min: entity={battery_soc_min_entity}, value={state['battery_soc_min']}")
     if state["battery_soc_min"] is None:
