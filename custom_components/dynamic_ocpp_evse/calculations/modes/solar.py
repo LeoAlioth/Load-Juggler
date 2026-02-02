@@ -44,6 +44,12 @@ def calculate_solar_mode(sensor, context: ChargeContext):
     available_battery_current = max(0, -battery_power / context.voltage) if context.voltage else 0
     
     target_evse = calculate_base_target_evse(context, available_battery_current, allow_grid_import=False)
+    target_evse = max(target_evse, 0)
+    
+    # Final check: if below minimum, set to 0
+    if target_evse < context.min_current:
+        _LOGGER.debug(f"Solar mode: Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
+        return 0
     
     _LOGGER.debug(f"Solar mode: SOC {battery_soc}% >= target {battery_soc_target}%, solar rate {target_evse}A")
-    return max(target_evse, 0)
+    return target_evse

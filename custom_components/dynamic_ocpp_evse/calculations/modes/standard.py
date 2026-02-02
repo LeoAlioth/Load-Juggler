@@ -60,13 +60,17 @@ def calculate_standard_mode(sensor, context: ChargeContext):
         if target_evse >= context.min_current:
             _LOGGER.debug(f"Standard mode: buffered target {target_evse_buffered}A < min {context.min_current}A, using min_current")
             result = min(context.min_current, context.max_evse_available, context.max_current)
-            return result
         else:
             _LOGGER.debug(f"Standard mode: both targets below min {context.min_current}A")
             result = min(target_evse, context.max_evse_available, context.max_current)
-            return result
     else:
         # Clamp to max_evse_available
         result = min(target_evse_buffered, context.max_evse_available, context.max_current)
-        _LOGGER.debug(f"Standard mode: SOC {battery_soc}% >= min {battery_soc_min}%, target {result}A")
-        return result
+    
+    # Final check: if result is below minimum current, set to 0 (charger can't support sub-minimum current)
+    if result < context.min_current:
+        _LOGGER.debug(f"Standard mode: Final target {result:.1f}A below minimum {context.min_current}A - setting to 0")
+        return 0
+    
+    _LOGGER.debug(f"Standard mode: SOC {battery_soc}% >= min {battery_soc_min}%, target {result}A")
+    return result

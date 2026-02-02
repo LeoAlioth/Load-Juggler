@@ -72,5 +72,11 @@ def calculate_excess_mode(sensor, context: ChargeContext):
         target_evse = 0
     
     target_evse = min(target_evse, context.max_current, context.max_evse_available)
+    
+    # Final check: if below minimum, set to 0
+    if target_evse < context.min_current:
+        _LOGGER.debug(f"Excess mode: Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
+        return 0
+    
     _LOGGER.debug(f"Excess mode: SOC {battery_soc}%, export {total_export_power}W, target {target_evse}A")
     return target_evse

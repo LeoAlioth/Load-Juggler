@@ -52,6 +52,10 @@ def calculate_eco_mode(sensor, context: ChargeContext):
         target_evse = calculate_base_target_evse(context, available_battery_current, allow_grid_import=True)
         # Clamp to max_evse_available
         target_evse = min(target_evse, context.max_evse_available, context.max_current)
+        # Final check: if below minimum, set to 0
+        if target_evse < context.min_current:
+            _LOGGER.debug(f"Eco mode: Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
+            return 0
         _LOGGER.debug(f"Eco mode: SOC {battery_soc}% > target {battery_soc_target}%, full speed {target_evse}A")
         return target_evse
     
@@ -67,10 +71,18 @@ def calculate_eco_mode(sensor, context: ChargeContext):
         target_evse = max(target_evse, context.min_current)
         # Clamp to max_evse_available
         target_evse = min(target_evse, context.max_evse_available, context.max_current)
+        # Final check: if below minimum, set to 0
+        if target_evse < context.min_current:
+            _LOGGER.debug(f"Eco mode: Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
+            return 0
         _LOGGER.debug(f"Eco mode: SOC {battery_soc}% at target with solar, rate {target_evse}A")
         return target_evse
     
     # Between min_soc and target_soc without solar - minimum rate only (clamped to available)
     target_evse = min(context.min_current, context.max_evse_available, context.max_current)
+    # Final check: if below minimum, set to 0
+    if target_evse < context.min_current:
+        _LOGGER.debug(f"Eco mode: Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
+        return 0
     _LOGGER.debug(f"Eco mode: SOC {battery_soc}% between min {battery_soc_min}% and target {battery_soc_target}% - min rate {target_evse}A (clamped from {context.min_current}A)")
     return target_evse
