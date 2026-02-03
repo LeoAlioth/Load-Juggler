@@ -9,7 +9,7 @@ All calculation logic has been refactored into the calculations/ directory.
 from .calculations import (
     calculate_available_current_for_hub,
     ChargeContext,
-    calculate_max_evse_available,
+    calculate_charger_available_current,
     calculate_standard_mode,
     calculate_eco_mode,
     calculate_solar_mode,
@@ -39,7 +39,7 @@ __all__ = [
     "get_charge_context_values",
     "determine_phases",
     # Calculations
-    "calculate_max_evse_available",
+    "calculate_charger_available_current",
     # Modes
     "calculate_standard_mode",
     "calculate_eco_mode",
