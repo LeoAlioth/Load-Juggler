@@ -248,7 +248,6 @@ def get_charge_context_values(sensor, state):
     battery_max_discharge_power = state.get(CONF_BATTERY_MAX_DISCHARGE_POWER)
     allow_grid_charging = state.get("allow_grid_charging", True)
     
-    return ChargeContext(
     context = ChargeContext(
         state=state,
         phases=phases,
