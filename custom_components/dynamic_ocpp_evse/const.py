@@ -91,9 +91,3 @@ CHARGE_RATE_UNIT_AUTO = "auto"
 CHARGE_RATE_UNIT_AMPS = "A"
 CHARGE_RATE_UNIT_WATTS = "W"
 DEFAULT_CHARGE_RATE_UNIT = CHARGE_RATE_UNIT_AUTO
-
-# Power calculation mode for Watts (per charger)
-CONF_WATTS_CALCULATION_MODE = "watts_calculation_mode"
-WATTS_CALC_ACTUAL_PHASES = "actual_phases"  # Use detected phases (default)
-WATTS_CALC_ALWAYS_3PHASE = "always_3phase"  # Always calculate as if 3 phases
-DEFAULT_WATTS_CALCULATION_MODE = WATTS_CALC_ACTUAL_PHASES

@@ -536,15 +536,6 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=DEFAULT_OCPP_PROFILE_TIMEOUT): int,
             vol.Required(CONF_CHARGE_PAUSE_DURATION, default=DEFAULT_CHARGE_PAUSE_DURATION): int,
             vol.Required(CONF_STACK_LEVEL, default=DEFAULT_STACK_LEVEL): int,
-            vol.Required(CONF_WATTS_CALCULATION_MODE, default=DEFAULT_WATTS_CALCULATION_MODE): selector({
-                "select": {
-                    "options": [
-                        {"value": WATTS_CALC_ACTUAL_PHASES, "label": "Use Actual Phases"},
-                        {"value": WATTS_CALC_ALWAYS_3PHASE, "label": "Always Calculate as 3-Phase"},
-                    ],
-                    "mode": "dropdown"
-                }
-            }),
         })
         
         return self.async_show_form(
@@ -718,15 +709,6 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)): int,
             vol.Required(CONF_CHARGE_PAUSE_DURATION, default=entry.data.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)): int,
             vol.Required(CONF_STACK_LEVEL, default=entry.data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)): int,
-            vol.Required(CONF_WATTS_CALCULATION_MODE, default=entry.data.get(CONF_WATTS_CALCULATION_MODE, DEFAULT_WATTS_CALCULATION_MODE)): selector({
-                "select": {
-                    "options": [
-                        {"value": WATTS_CALC_ACTUAL_PHASES, "label": "Use Actual Phases"},
-                        {"value": WATTS_CALC_ALWAYS_3PHASE, "label": "Always Calculate as 3-Phase"},
-                    ],
-                    "mode": "dropdown"
-                }
-            }),
         })
         
         return self.async_show_form(

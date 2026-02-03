@@ -287,30 +287,22 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                     charge_rate_unit = CHARGE_RATE_UNIT_AMPS
             
             # Convert limit based on charge rate unit
+            # Always use detected phases, default to 1 for maximum power availability
+            phases_for_profile = self._phases if self._phases else 1
+            
             if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
                 # Convert Amps to Watts: W = A * V * phases
                 voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
-                
-                # Get watts calculation mode
-                watts_calc_mode = self.config_entry.data.get(CONF_WATTS_CALCULATION_MODE, DEFAULT_WATTS_CALCULATION_MODE)
-                
-                if watts_calc_mode == WATTS_CALC_ALWAYS_3PHASE:
-                    # Always use 3 phases for calculation (some chargers expect this)
-                    phases_for_calc = 3
-                    _LOGGER.debug(f"Using 3-phase calculation for Watts (actual phases: {self._phases})")
-                else:
-                    # Use actual detected phases
-                    phases_for_calc = self._phases if self._phases else 3
-                
-                limit_for_charger = round(limit * voltage * phases_for_calc, 1)
+                limit_for_charger = round(limit * voltage * phases_for_profile, 1)
                 rate_unit = "W"
                 self._last_set_power = limit_for_charger
                 self._last_set_current = None
             else:
-                # Keep as Amps
-                limit_for_charger = limit
+                # When using Amps with numberPhases, limit represents TOTAL current across all phases
+                # So for 12A per phase on 3 phases, we need to send 36A total
+                limit_for_charger = round(limit * phases_for_profile, 1)
                 rate_unit = "A"
-                self._last_set_current = limit
+                self._last_set_current = limit_for_charger
                 self._last_set_power = None
             
             # Use chargingScheduleDuration instead of absolute validFrom/validTo timestamps
@@ -327,7 +319,8 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                     "chargingSchedulePeriod": [
                         {
                             "startPeriod": 0,
-                            "limit": limit_for_charger
+                            "limit": limit_for_charger,
+                            "numberPhases": phases_for_profile  # Explicitly tell charger how to interpret the limit
                         }
                     ]
                 }
