@@ -287,19 +287,20 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                     charge_rate_unit = CHARGE_RATE_UNIT_AMPS
             
             # Convert limit based on charge rate unit
-            # Always use detected phases, default to 1 for maximum power availability
-            phases_for_profile = self._phases if self._phases else 1
-            
             if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
-                # Convert Amps to Watts: W = A * V * phases
+                # For Watts mode: Always use 3 phases for calculation and numberPhases
+                # This works with chargers configured for 3-phase (ConnectorPhaseRotation: 0.RST)
+                # even when car uses only 1 phase - charger applies power correctly
                 voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
-                limit_for_charger = round(limit * voltage * phases_for_profile, 1)
+                limit_for_charger = round(limit * voltage * 3, 1)
                 rate_unit = "W"
+                phases_for_profile = 3
                 self._last_set_power = limit_for_charger
                 self._last_set_current = None
             else:
+                # For Amps mode: Use detected phases, default to 1
                 # When using Amps with numberPhases, limit represents TOTAL current across all phases
-                # So for 12A per phase on 3 phases, we need to send 36A total
+                phases_for_profile = self._phases if self._phases else 1
                 limit_for_charger = round(limit * phases_for_profile, 1)
                 rate_unit = "A"
                 self._last_set_current = limit_for_charger
