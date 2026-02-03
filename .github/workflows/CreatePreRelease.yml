@@ -25,7 +25,7 @@ jobs:
           TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
 
           if [ "$BRANCH" = "dev" ]; then
-            TAG_NAME="dev-${TIMESTAMP}-$(git rev-parse --short HEAD)"
+            TAG_NAME="dev-${TIMESTAMP}"
           elif [ "$BRANCH" = "pre-release" ]; then
             VERSION=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
             TAG_NAME="${VERSION}-pre-${TIMESTAMP}"
@@ -37,9 +37,38 @@ jobs:
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
 
-      # Note: Removed automatic deletion of previous prereleases
-      # Old prereleases are kept to maintain release history
-
+      # Delete old prereleases for the same branch
+      - name: Delete old prereleases
+        run: |
+          BRANCH="${GITHUB_REF##*/}"
+          GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
+          
+          # Get list of prereleases for the current branch
+          PRERELEASES=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases?per_page=100")
+          
+          # Filter prereleases for the current branch
+          PRERELEASE_IDS=$(echo "$PRERELEASES" | jq -r '.[] | select(.tag_name | startswith("'"${BRANCH}"'")) | .id')
+          
+          # Delete each old prerelease
+          for ID in $PRERELEASE_IDS; do
+            curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$ID"
+          done
+          
+          # Keep the latest prerelease (current one)
+          PRERELEASE_IDS=$(echo "$PRERELEASES" | jq -r '.[] | select(.tag_name | startswith("'"${BRANCH}"'")) | .id')
+          
+          # Get the latest prerelease ID
+          LATEST_ID=$(echo "$PRERELEASE_IDS" | sort -n | tail -n 1)
+          
+          # Delete all prereleases except the latest one
+          for ID in $PRERELEASE_IDS; do
+            if [ "$ID" -ne "$LATEST_ID" ]; then
+              curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+                "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$ID"
+            fi
+          done
       - name: Create ZIP archive
         run: |
           # Create zip with full path for HACS (content_in_root: false)
