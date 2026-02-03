@@ -54,7 +54,6 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
             CONF_PHASES: temp_sensor._phases,
             CONF_CHARING_MODE: temp_sensor._charging_mode,
             "calc_used": temp_sensor._calc_used,
-            "max_evse_available": temp_sensor._max_evse_available,
             "allocated_current": temp_sensor._allocated_current,
         }
 
@@ -113,9 +112,9 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self._attr_unique_id = f"{entity_id}_available_current"
         self._state = None
         self._phases = None
+        self._detected_phases = None  # Remembered phase count from actual charging
         self._charging_mode = None
         self._calc_used = None
-        self._max_evse_available = None
         self._allocated_current = None
         self._last_update = datetime.min
         self._pause_timer_running = False
@@ -138,6 +137,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         attrs = {
             "state_class": "measurement",
             CONF_PHASES: self._phases,
+            "detected_phases": self._detected_phases,
             "allocated_current": self._allocated_current,
             "last_update": self._last_update,
             "pause_timer_running": self._pause_timer_running,
@@ -176,11 +176,11 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             # Calculate total available current at hub level
             hub_data = calculate_available_current_for_hub(self)
             
-            # Store hub-level calculation results
+            # Store charger-level calculation results
             self._phases = hub_data.get(CONF_PHASES)
             self._charging_mode = hub_data.get(CONF_CHARING_MODE)
             self._calc_used = hub_data.get("calc_used")
-            self._max_evse_available = hub_data.get("max_evse_available")
+            charger_max_available = hub_data.get("charger_max_available", 0)
             self._target_evse = hub_data.get("target_evse")
             self._target_evse_standard = hub_data.get("target_evse_standard")
             self._target_evse_eco = hub_data.get("target_evse_eco")
@@ -199,7 +199,6 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             if "hub_data" not in self.hass.data[DOMAIN]:
                 self.hass.data[DOMAIN]["hub_data"] = {}
             self.hass.data[DOMAIN]["hub_data"][hub_entry_id] = {
-                "max_evse_available": self._max_evse_available,
                 "battery_soc": hub_data.get("battery_soc"),
                 "battery_soc_min": hub_data.get("battery_soc_min"),
                 "battery_soc_target": hub_data.get("battery_soc_target"),
@@ -374,10 +373,9 @@ class DynamicOcppEvseHubSensor(SensorEntity):
         """Initialize the hub sensor."""
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = f"{name} Site Available Current"
-        self._attr_unique_id = f"{entity_id}_site_available_current"
+        self._attr_name = f"{name} Site Info"
+        self._attr_unique_id = f"{entity_id}_site_info"
         self._state = None
-        self._max_evse_available = None
         self._battery_soc = None
         self._battery_soc_min = None
         self._battery_soc_target = None
@@ -397,9 +395,9 @@ class DynamicOcppEvseHubSensor(SensorEntity):
 
     @property
     def state(self):
-        """Return the state of the sensor (max available current for site)."""
-        if self._max_evse_available is not None:
-            return round(self._max_evse_available, 1)
+        """Return the state of the sensor (battery SOC as primary state)."""
+        if self._battery_soc is not None:
+            return round(self._battery_soc, 1)
         return None
 
     @property
@@ -410,8 +408,6 @@ class DynamicOcppEvseHubSensor(SensorEntity):
         
         return {
             "state_class": "measurement",
-            "max_evse_available": round_value(self._max_evse_available),
-            "battery_soc": round_value(self._battery_soc),
             "battery_soc_min": round_value(self._battery_soc_min),
             "battery_soc_target": round_value(self._battery_soc_target),
             "battery_power": round_value(self._battery_power),
@@ -437,12 +433,12 @@ class DynamicOcppEvseHubSensor(SensorEntity):
     @property
     def unit_of_measurement(self):
         """Return the unit of measurement."""
-        return "A"
+        return "%"
 
     @property
     def device_class(self):
         """Return the device class."""
-        return "current"
+        return "battery"
 
     async def async_update(self):
         """Update hub sensor with site-wide data from hass.data."""
@@ -451,7 +447,6 @@ class DynamicOcppEvseHubSensor(SensorEntity):
             hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
             
             if hub_data:
-                self._max_evse_available = hub_data.get("max_evse_available")
                 self._battery_soc = hub_data.get("battery_soc")
                 self._battery_soc_min = hub_data.get("battery_soc_min")
                 self._battery_soc_target = hub_data.get("battery_soc_target")

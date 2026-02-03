@@ -48,28 +48,94 @@ class ChargeContext:
 
 
 def determine_phases(sensor, state):
-    """Determine number of phases from charger data."""
+    """
+    Determine number of phases from charger data.
+    
+    Detection priority:
+    1. If car is actively charging: detect from OCPP L1/L2/L3 current attributes
+    2. If no active charging: use configured phases from state
+    3. Fallback: assume 1 phase (safest assumption for new connections)
+    
+    Returns:
+        tuple: (phases, calc_used) where calc_used indicates detection method
+    """
     phases = 0
     calc_used = ""
     
+    # Threshold for considering a phase as active (Amperes)
+    PHASE_DETECTION_THRESHOLD = 2.0
+    
+    # Try to detect from EVSE current import entity attributes
     evse_import_entity = sensor.config_entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
-    if state[CONF_EVSE_CURRENT_OFFERED] is not None and evse_import_entity:
+    
+    if evse_import_entity:
         evse_state = sensor.hass.states.get(evse_import_entity)
-        if evse_state:
+        if evse_state and evse_state.state not in ['unknown', 'unavailable', None]:
             evse_attributes = evse_state.attributes
+            
+            # Check for L1, L2, L3 current attributes
+            l1_current = None
+            l2_current = None
+            l3_current = None
+            
+            # Look for various attribute naming patterns
             for attr, value in evse_attributes.items():
-                if attr.startswith('L') and is_number(value) and float(value) > 1:
-                    phases += 1
-            if phases > 0:
-                calc_used = f"1-{phases}"
-
-    if phases == 0 and state[CONF_PHASES] is not None and is_number(state[CONF_PHASES]):
-        phases = state[CONF_PHASES]
-        calc_used = f"2-{phases}"
-
+                attr_lower = attr.lower()
+                if is_number(value):
+                    val = float(value)
+                    # Match L1, l1, phase_1, etc.
+                    if attr_lower in ['l1', 'phase_1', 'phase1', 'current_phase_1']:
+                        l1_current = val
+                    elif attr_lower in ['l2', 'phase_2', 'phase2', 'current_phase_2']:
+                        l2_current = val
+                    elif attr_lower in ['l3', 'phase_3', 'phase3', 'current_phase_3']:
+                        l3_current = val
+            
+            # Count active phases (those above threshold)
+            active_phases = 0
+            phase_details = []
+            
+            if l1_current is not None and l1_current > PHASE_DETECTION_THRESHOLD:
+                active_phases += 1
+                phase_details.append(f"L1:{l1_current:.1f}A")
+            
+            if l2_current is not None and l2_current > PHASE_DETECTION_THRESHOLD:
+                active_phases += 1
+                phase_details.append(f"L2:{l2_current:.1f}A")
+            
+            if l3_current is not None and l3_current > PHASE_DETECTION_THRESHOLD:
+                active_phases += 1
+                phase_details.append(f"L3:{l3_current:.1f}A")
+            
+            # If we detected active charging on any phases, use that
+            if active_phases > 0:
+                phases = active_phases
+                calc_used = f"1-detected_{phases}ph_from_ocpp"
+                _LOGGER.info(f"Detected {phases} active phase(s) from OCPP: {', '.join(phase_details)}")
+                return phases, calc_used
+            
+            # If no phases detected but sensor exists, check if car is charging
+            # If current_import > threshold but no phase breakdown, log warning
+            evse_current = state.get(CONF_EVSE_CURRENT_IMPORT)
+            if evse_current and is_number(evse_current) and float(evse_current) > PHASE_DETECTION_THRESHOLD:
+                _LOGGER.warning(
+                    f"EVSE is drawing {evse_current}A but no phase breakdown detected. "
+                    f"Sensor {evse_import_entity} attributes: {list(evse_attributes.keys())}"
+                )
+    
+    # Fallback 1: Use configured phases from state (from config or previous detection)
+    if phases == 0 and state.get(CONF_PHASES) is not None and is_number(state[CONF_PHASES]):
+        phases = int(state[CONF_PHASES])
+        calc_used = f"2-config_{phases}ph"
+        _LOGGER.debug(f"Using configured phases: {phases}")
+        return phases, calc_used
+    
+    # Fallback 2: Default to 1 phase (safest assumption for new car connections)
     if phases == 0:
-        phases = 3
-        calc_used = f"3-{phases}"
+        phases = 1
+        calc_used = "3-default_1ph"
+        _LOGGER.debug(f"No phase data available, defaulting to 1 phase")
+    
     return phases, calc_used
 
 
