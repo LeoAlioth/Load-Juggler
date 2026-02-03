@@ -130,6 +130,18 @@ def calculate_available_current_for_hub(sensor):
         'battery_soc_target': charge_context.battery_soc_target,
         'battery_power': charge_context.battery_power,
         'available_battery_power': round(available_battery_power, 1),
+        # Site available current/power per phase
+        'site_available_current_phase_a': charge_context.site_available_current_phase_a,
+        'site_available_current_phase_b': charge_context.site_available_current_phase_b,
+        'site_available_current_phase_c': charge_context.site_available_current_phase_c,
+        'site_available_power_phase_a': charge_context.site_available_power_phase_a,
+        'site_available_power_phase_b': charge_context.site_available_power_phase_b,
+        'site_available_power_phase_c': charge_context.site_available_power_phase_c,
+        # Site battery available power
+        'site_battery_available_power': charge_context.site_battery_available_power,
+        # Total site available
+        'total_site_available_current': charge_context.total_site_available_current,
+        'total_site_available_power': charge_context.total_site_available_power,
     }
 
 

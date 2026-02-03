@@ -35,6 +35,18 @@ class ChargeContext:
     battery_max_discharge_power: float = None
     allow_grid_charging: bool = True
     allow_grid_charging_entity_id: str = None
+    # Site available current/power per phase
+    site_available_current_phase_a: float = 0
+    site_available_current_phase_b: float = 0
+    site_available_current_phase_c: float = 0
+    site_available_power_phase_a: float = 0
+    site_available_power_phase_b: float = 0
+    site_available_power_phase_c: float = 0
+    # Site battery available power
+    site_battery_available_power: float = 0
+    # Total site available
+    total_site_available_current: float = 0
+    total_site_available_power: float = 0
 
 
 def determine_phases(sensor, state):
@@ -237,6 +249,7 @@ def get_charge_context_values(sensor, state):
     allow_grid_charging = state.get("allow_grid_charging", True)
     
     return ChargeContext(
+    context = ChargeContext(
         state=state,
         phases=phases,
         voltage=voltage,
@@ -261,3 +274,13 @@ def get_charge_context_values(sensor, state):
         battery_max_discharge_power=battery_max_discharge_power,
         allow_grid_charging=allow_grid_charging,
     )
+    
+    # Calculate site limits
+    from .utils import calculate_site_battery_available_power, calculate_site_available_power
+    
+    context.site_battery_available_power = calculate_site_battery_available_power(context)
+    calculate_site_available_power(context)
+    
+    _LOGGER.debug(f"Site battery available power: {context.site_battery_available_power}W")
+    
+    return context

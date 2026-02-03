@@ -101,3 +101,108 @@ def apply_ramping(sensor, state, target_evse, min_current, conf_evse_current_off
         sensor._last_ramp_value = ramped_value
         sensor._last_ramp_time = now
         state[conf_available_current] = ramped_value
+
+
+def calculate_site_battery_available_power(context):
+    """
+    Calculate battery available power for the whole site using three-state SOC logic.
+    
+    Three states:
+    1. Below hysteresis zone (SOC < min_soc - hysteresis): No battery available (0W)
+    2. Within hysteresis zone (min_soc - hysteresis <= SOC < min_soc): Only charging power available
+    3. Above minimum (SOC >= min_soc): Full battery power available
+    
+    Returns:
+        float: Available battery power in Watts
+    """
+    from ..const import DEFAULT_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_MAX_POWER
+    
+    battery_soc = context.battery_soc if context.battery_soc is not None else 0
+    battery_power = context.battery_power if context.battery_power is not None else 0
+    battery_soc_min = context.battery_soc_min if context.battery_soc_min is not None else DEFAULT_BATTERY_SOC_MIN
+    hysteresis = context.battery_soc_hysteresis if context.battery_soc_hysteresis is not None else DEFAULT_BATTERY_SOC_HYSTERESIS
+    battery_max_discharge = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else DEFAULT_BATTERY_MAX_POWER
+    
+    # Calculate hysteresis bounds
+    lower_bound = battery_soc_min - hysteresis
+    
+    if battery_soc < lower_bound:
+        # State 1: Below hysteresis - no battery available
+        available_power = 0
+        _LOGGER.debug(f"Battery SOC {battery_soc}% < {lower_bound}% (min-hysteresis): No battery power available")
+        
+    elif battery_soc < battery_soc_min:
+        # State 2: Within hysteresis - only charging power available
+        if battery_power < 0:  # Battery is charging (negative power)
+            available_power = abs(battery_power)
+            _LOGGER.debug(f"Battery SOC {battery_soc}% in hysteresis zone: Using charging power {available_power}W")
+        else:  # Battery discharging or idle
+            available_power = 0
+            _LOGGER.debug(f"Battery SOC {battery_soc}% in hysteresis zone, not charging: No battery power available")
+            
+    else:  # battery_soc >= battery_soc_min
+        # State 3: Above minimum - full power available
+        if battery_power < 0:  # Charging (negative power)
+            available_power = abs(battery_power)
+            _LOGGER.debug(f"Battery SOC {battery_soc}% >= {battery_soc_min}%, charging: Available power {available_power}W")
+        else:  # Discharging (positive power)
+            # Current discharge + remaining capacity
+            remaining_capacity = max(0, battery_max_discharge - battery_power)
+            available_power = battery_power + remaining_capacity
+            _LOGGER.debug(f"Battery SOC {battery_soc}% >= {battery_soc_min}%, discharging {battery_power}W: Available power {available_power}W")
+    
+    return available_power
+
+
+def calculate_site_available_power(context):
+    """
+    Calculate per-phase and total site available current/power.
+    
+    This function calculates the available current on each phase based on:
+    1. Main breaker rating per phase
+    2. Maximum import power limit (distributed across active phases)
+    
+    The per-phase available current is the minimum of both constraints.
+    Updates the context object with all calculated values.
+    """
+    from ..const import CONF_MAIN_BREAKER_RATING, CONF_MAX_IMPORT_POWER
+    
+    state = context.state
+    voltage = context.voltage
+    breaker_rating = state[CONF_MAIN_BREAKER_RATING]
+    max_import_power = state[CONF_MAX_IMPORT_POWER]
+    
+    # Constraint 1: Breaker available current per phase
+    breaker_avail_a = breaker_rating - context.grid_phase_a_current
+    breaker_avail_b = breaker_rating - context.grid_phase_b_current
+    breaker_avail_c = breaker_rating - context.grid_phase_c_current
+    
+    # Constraint 2: Import power constraint (distributed across active phases)
+    max_import_current = max_import_power / voltage if voltage > 0 else 0
+    import_headroom = max_import_current - context.total_import_current
+    import_per_phase = import_headroom / context.phases if context.phases > 0 else 0
+    
+    # Per phase available = min of both constraints
+    context.site_available_current_phase_a = min(breaker_avail_a, import_per_phase)
+    context.site_available_current_phase_b = min(breaker_avail_b, import_per_phase)
+    context.site_available_current_phase_c = min(breaker_avail_c, import_per_phase)
+    
+    # Convert to power
+    context.site_available_power_phase_a = context.site_available_current_phase_a * voltage
+    context.site_available_power_phase_b = context.site_available_current_phase_b * voltage
+    context.site_available_power_phase_c = context.site_available_current_phase_c * voltage
+    
+    # Calculate totals
+    context.total_site_available_current = (
+        context.site_available_current_phase_a +
+        context.site_available_current_phase_b +
+        context.site_available_current_phase_c
+    )
+    context.total_site_available_power = context.total_site_available_current * voltage
+    
+    _LOGGER.debug(
+        f"Site available current - Phase A: {context.site_available_current_phase_a:.2f}A, "
+        f"Phase B: {context.site_available_current_phase_b:.2f}A, "
+        f"Phase C: {context.site_available_current_phase_c:.2f}A, "
+        f"Total: {context.total_site_available_current:.2f}A ({context.total_site_available_power:.0f}W)"
+    )
