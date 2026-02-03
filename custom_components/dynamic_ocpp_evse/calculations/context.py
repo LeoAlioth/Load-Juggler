@@ -35,17 +35,15 @@ class ChargeContext:
     battery_max_discharge_power: float = None
     allow_grid_charging: bool = True
     allow_grid_charging_entity_id: str = None
-    # Site available current/power per phase
+    # Site available current per phase (A only)
     site_available_current_phase_a: float = 0
     site_available_current_phase_b: float = 0
     site_available_current_phase_c: float = 0
-    site_available_power_phase_a: float = 0
-    site_available_power_phase_b: float = 0
-    site_available_power_phase_c: float = 0
-    # Site battery available power
+    # Site battery available power (W)
     site_battery_available_power: float = 0
-    # Total site available
-    total_site_available_current: float = 0
+    # Site grid available power (W)
+    site_grid_available_power: float = 0
+    # Total site available power (W) - grid + battery
     total_site_available_power: float = 0
 
 

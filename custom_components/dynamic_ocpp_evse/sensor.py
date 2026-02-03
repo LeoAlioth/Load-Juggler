@@ -211,17 +211,15 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 "battery_soc_target": hub_data.get("battery_soc_target"),
                 "battery_power": hub_data.get("battery_power"),
                 "available_battery_power": hub_data.get("available_battery_power"),
-                # Site available current/power per phase
+                # Site available per-phase current (A)
                 "site_available_current_phase_a": hub_data.get("site_available_current_phase_a"),
                 "site_available_current_phase_b": hub_data.get("site_available_current_phase_b"),
                 "site_available_current_phase_c": hub_data.get("site_available_current_phase_c"),
-                "site_available_power_phase_a": hub_data.get("site_available_power_phase_a"),
-                "site_available_power_phase_b": hub_data.get("site_available_power_phase_b"),
-                "site_available_power_phase_c": hub_data.get("site_available_power_phase_c"),
-                # Site battery available power
+                # Site battery available power (W)
                 "site_battery_available_power": hub_data.get("site_battery_available_power"),
-                # Total site available
-                "total_site_available_current": hub_data.get("total_site_available_current"),
+                # Site grid available power (W)
+                "site_grid_available_power": hub_data.get("site_grid_available_power"),
+                # Total site available power (W) - grid + battery
                 "total_site_available_power": hub_data.get("total_site_available_power"),
                 "last_update": datetime.utcnow(),
             }
@@ -397,17 +395,15 @@ class DynamicOcppEvseHubSensor(SensorEntity):
         self._battery_soc_target = None
         self._battery_power = None
         self._available_battery_power = None
-        # Site available current/power per phase
+        # Site available per-phase current (A)
         self._site_available_current_phase_a = None
         self._site_available_current_phase_b = None
         self._site_available_current_phase_c = None
-        self._site_available_power_phase_a = None
-        self._site_available_power_phase_b = None
-        self._site_available_power_phase_c = None
-        # Site battery available power
+        # Site battery available power (W)
         self._site_battery_available_power = None
-        # Total site available
-        self._total_site_available_current = None
+        # Site grid available power (W)
+        self._site_grid_available_power = None
+        # Total site available power (W) - grid + battery
         self._total_site_available_power = None
         self._last_update = datetime.min
 
@@ -438,17 +434,15 @@ class DynamicOcppEvseHubSensor(SensorEntity):
             "battery_soc_target": round_value(self._battery_soc_target),
             "battery_power": round_value(self._battery_power),
             "available_battery_power": round_value(self._available_battery_power),
-            # Site available current/power per phase
+            # Site available per-phase current (A)
             "site_available_current_phase_a": round_value(self._site_available_current_phase_a),
             "site_available_current_phase_b": round_value(self._site_available_current_phase_b),
             "site_available_current_phase_c": round_value(self._site_available_current_phase_c),
-            "site_available_power_phase_a": round_value(self._site_available_power_phase_a, 0),
-            "site_available_power_phase_b": round_value(self._site_available_power_phase_b, 0),
-            "site_available_power_phase_c": round_value(self._site_available_power_phase_c, 0),
-            # Site battery available power
+            # Site battery available power (W)
             "site_battery_available_power": round_value(self._site_battery_available_power, 0),
-            # Total site available
-            "total_site_available_current": round_value(self._total_site_available_current),
+            # Site grid available power (W)
+            "site_grid_available_power": round_value(self._site_grid_available_power, 0),
+            # Total site available power (W) - grid + battery
             "total_site_available_power": round_value(self._total_site_available_power, 0),
             "last_update": self._last_update,
         }
@@ -487,17 +481,15 @@ class DynamicOcppEvseHubSensor(SensorEntity):
                 self._battery_soc_target = hub_data.get("battery_soc_target")
                 self._battery_power = hub_data.get("battery_power")
                 self._available_battery_power = hub_data.get("available_battery_power")
-                # Site available current/power per phase
+                # Site available per-phase current (A)
                 self._site_available_current_phase_a = hub_data.get("site_available_current_phase_a")
                 self._site_available_current_phase_b = hub_data.get("site_available_current_phase_b")
                 self._site_available_current_phase_c = hub_data.get("site_available_current_phase_c")
-                self._site_available_power_phase_a = hub_data.get("site_available_power_phase_a")
-                self._site_available_power_phase_b = hub_data.get("site_available_power_phase_b")
-                self._site_available_power_phase_c = hub_data.get("site_available_power_phase_c")
-                # Site battery available power
+                # Site battery available power (W)
                 self._site_battery_available_power = hub_data.get("site_battery_available_power")
-                # Total site available
-                self._total_site_available_current = hub_data.get("total_site_available_current")
+                # Site grid available power (W)
+                self._site_grid_available_power = hub_data.get("site_grid_available_power")
+                # Total site available power (W) - grid + battery
                 self._total_site_available_power = hub_data.get("total_site_available_power")
                 self._last_update = hub_data.get("last_update", datetime.utcnow())
         except Exception as e:

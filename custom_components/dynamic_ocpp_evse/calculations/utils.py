@@ -156,14 +156,20 @@ def calculate_site_battery_available_power(context):
 
 def calculate_site_available_power(context):
     """
-    Calculate per-phase and total site available current/power.
+    Calculate per-phase available current (A) and total site available power (W).
     
-    This function calculates the available current on each phase based on:
-    1. Main breaker rating per phase
-    2. Maximum import power limit (distributed across active phases)
+    Per-phase current shows what each phase can handle:
+    - Phase X current (A) = min(breaker_rating - phase_X_current, import_headroom)
     
-    The per-phase available current is the minimum of both constraints.
-    Updates the context object with all calculated values.
+    Total site power is constrained by import headroom:
+    - Total power (W) = import_headroom × voltage
+    
+    Example: 25A breakers, consumption 1/4/10A, 35A import limit, 230V
+    - Import headroom: 35 - (1+4+10) = 20A
+    - Phase A: min(25-1=24A, 20A) = 20A (can handle up to 20A)
+    - Phase B: min(25-4=21A, 20A) = 20A (can handle up to 20A)
+    - Phase C: min(25-10=15A, 20A) = 15A (can handle up to 15A)
+    - Total power: 20A × 230V = 4,600W (limited by import headroom)
     """
     from ..const import CONF_MAIN_BREAKER_RATING, CONF_MAX_IMPORT_POWER
     
@@ -177,32 +183,35 @@ def calculate_site_available_power(context):
     breaker_avail_b = breaker_rating - context.grid_phase_b_current
     breaker_avail_c = breaker_rating - context.grid_phase_c_current
     
-    # Constraint 2: Import power constraint (distributed across active phases)
+    # Constraint 2: Import power constraint (total headroom)
     max_import_current = max_import_power / voltage if voltage > 0 else 0
     import_headroom = max_import_current - context.total_import_current
-    import_per_phase = import_headroom / context.phases if context.phases > 0 else 0
     
-    # Per phase available = min of both constraints
-    context.site_available_current_phase_a = min(breaker_avail_a, import_per_phase)
-    context.site_available_current_phase_b = min(breaker_avail_b, import_per_phase)
-    context.site_available_current_phase_c = min(breaker_avail_c, import_per_phase)
+    # Per phase available current (A) = min of breaker limit and total import headroom
+    # This shows what each phase can independently handle
+    context.site_available_current_phase_a = min(breaker_avail_a, import_headroom)
+    context.site_available_current_phase_b = min(breaker_avail_b, import_headroom)
+    context.site_available_current_phase_c = min(breaker_avail_c, import_headroom)
     
-    # Convert to power
-    context.site_available_power_phase_a = context.site_available_current_phase_a * voltage
-    context.site_available_power_phase_b = context.site_available_current_phase_b * voltage
-    context.site_available_power_phase_c = context.site_available_current_phase_c * voltage
+    # Grid available power (W) is constrained by import headroom
+    context.site_grid_available_power = import_headroom * voltage
     
-    # Calculate totals
-    context.total_site_available_current = (
-        context.site_available_current_phase_a +
-        context.site_available_current_phase_b +
-        context.site_available_current_phase_c
-    )
-    context.total_site_available_power = context.total_site_available_current * voltage
+    # Total site available power (W) = grid + battery
+    context.total_site_available_power = context.site_grid_available_power + context.site_battery_available_power
     
     _LOGGER.debug(
-        f"Site available current - Phase A: {context.site_available_current_phase_a:.2f}A, "
-        f"Phase B: {context.site_available_current_phase_b:.2f}A, "
-        f"Phase C: {context.site_available_current_phase_c:.2f}A, "
-        f"Total: {context.total_site_available_current:.2f}A ({context.total_site_available_power:.0f}W)"
+        f"Site available - Breakers: {breaker_rating}A, Import headroom: {import_headroom:.2f}A"
+    )
+    _LOGGER.debug(
+        f"Per-phase current (A) - Phase A: {context.site_available_current_phase_a:.2f}A "
+        f"(breaker avail: {breaker_avail_a:.2f}A), "
+        f"Phase B: {context.site_available_current_phase_b:.2f}A "
+        f"(breaker avail: {breaker_avail_b:.2f}A), "
+        f"Phase C: {context.site_available_current_phase_c:.2f}A "
+        f"(breaker avail: {breaker_avail_c:.2f}A)"
+    )
+    _LOGGER.debug(
+        f"Site grid available: {context.site_grid_available_power:.0f}W, "
+        f"Battery available: {context.site_battery_available_power:.0f}W, "
+        f"Total available: {context.total_site_available_power:.0f}W"
     )
