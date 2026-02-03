@@ -7,7 +7,7 @@ on:
       - pre-release
 
 jobs:
-  release:
+  pre-release:
     if: github.ref_name == 'dev' || github.ref_name == 'pre-release'
     runs-on: ubuntu-latest
     permissions:
