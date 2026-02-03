@@ -119,6 +119,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self._last_update = datetime.min
         self._pause_timer_running = False
         self._last_set_current = 0
+        self._last_set_power = None
         self._target_evse = None
         self._target_evse_standard = None
         self._target_evse_eco = None
@@ -142,6 +143,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             "last_update": self._last_update,
             "pause_timer_running": self._pause_timer_running,
             "last_set_current": self._last_set_current,
+            "last_set_power": self._last_set_power,
             "charger_priority": self.config_entry.data.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
             "hub_entry_id": self.config_entry.data.get(CONF_HUB_ENTRY_ID),
         }
@@ -256,8 +258,6 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 limit = round(self._state, 1)
                 self._pause_timer_running = False
 
-            self._last_set_current = limit
-
             # Prepare the data for the OCPP set_charge_rate service
             profile_timeout = self.config_entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)
             stack_level = self.config_entry.data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
@@ -304,10 +304,14 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 
                 limit_for_charger = round(limit * voltage * phases_for_calc, 1)
                 rate_unit = "W"
+                self._last_set_power = limit_for_charger
+                self._last_set_current = None
             else:
                 # Keep as Amps
                 limit_for_charger = limit
                 rate_unit = "A"
+                self._last_set_current = limit
+                self._last_set_power = None
             
             # Use chargingScheduleDuration instead of absolute validFrom/validTo timestamps
             # This makes the profile valid for a duration (in seconds) from when the charger receives it
