@@ -290,8 +290,19 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
                 # Convert Amps to Watts: W = A * V * phases
                 voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
-                phases = self._phases if self._phases else 3
-                limit_for_charger = round(limit * voltage * phases, 1)
+                
+                # Get watts calculation mode
+                watts_calc_mode = self.config_entry.data.get(CONF_WATTS_CALCULATION_MODE, DEFAULT_WATTS_CALCULATION_MODE)
+                
+                if watts_calc_mode == WATTS_CALC_ALWAYS_3PHASE:
+                    # Always use 3 phases for calculation (some chargers expect this)
+                    phases_for_calc = 3
+                    _LOGGER.debug(f"Using 3-phase calculation for Watts (actual phases: {self._phases})")
+                else:
+                    # Use actual detected phases
+                    phases_for_calc = self._phases if self._phases else 3
+                
+                limit_for_charger = round(limit * voltage * phases_for_calc, 1)
                 rate_unit = "W"
             else:
                 # Keep as Amps
