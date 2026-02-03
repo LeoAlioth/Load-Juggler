@@ -200,12 +200,6 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 self.hass.data[DOMAIN]["hub_data"] = {}
             self.hass.data[DOMAIN]["hub_data"][hub_entry_id] = {
                 "max_evse_available": self._max_evse_available,
-                "charging_mode": self._charging_mode,
-                "target_evse": self._target_evse,
-                "target_evse_standard": self._target_evse_standard,
-                "target_evse_eco": self._target_evse_eco,
-                "target_evse_solar": self._target_evse_solar,
-                "target_evse_excess": self._target_evse_excess,
                 "battery_soc": hub_data.get("battery_soc"),
                 "battery_soc_min": hub_data.get("battery_soc_min"),
                 "battery_soc_target": hub_data.get("battery_soc_target"),
@@ -384,12 +378,6 @@ class DynamicOcppEvseHubSensor(SensorEntity):
         self._attr_unique_id = f"{entity_id}_site_available_current"
         self._state = None
         self._max_evse_available = None
-        self._charging_mode = None
-        self._target_evse = None
-        self._target_evse_standard = None
-        self._target_evse_eco = None
-        self._target_evse_solar = None
-        self._target_evse_excess = None
         self._battery_soc = None
         self._battery_soc_min = None
         self._battery_soc_target = None
@@ -422,13 +410,7 @@ class DynamicOcppEvseHubSensor(SensorEntity):
         
         return {
             "state_class": "measurement",
-            "charging_mode": self._charging_mode,
             "max_evse_available": round_value(self._max_evse_available),
-            "target_evse": round_value(self._target_evse),
-            "target_evse_standard": round_value(self._target_evse_standard),
-            "target_evse_eco": round_value(self._target_evse_eco),
-            "target_evse_solar": round_value(self._target_evse_solar),
-            "target_evse_excess": round_value(self._target_evse_excess),
             "battery_soc": round_value(self._battery_soc),
             "battery_soc_min": round_value(self._battery_soc_min),
             "battery_soc_target": round_value(self._battery_soc_target),
@@ -470,12 +452,6 @@ class DynamicOcppEvseHubSensor(SensorEntity):
             
             if hub_data:
                 self._max_evse_available = hub_data.get("max_evse_available")
-                self._charging_mode = hub_data.get("charging_mode")
-                self._target_evse = hub_data.get("target_evse")
-                self._target_evse_standard = hub_data.get("target_evse_standard")
-                self._target_evse_eco = hub_data.get("target_evse_eco")
-                self._target_evse_solar = hub_data.get("target_evse_solar")
-                self._target_evse_excess = hub_data.get("target_evse_excess")
                 self._battery_soc = hub_data.get("battery_soc")
                 self._battery_soc_min = hub_data.get("battery_soc_min")
                 self._battery_soc_target = hub_data.get("battery_soc_target")
