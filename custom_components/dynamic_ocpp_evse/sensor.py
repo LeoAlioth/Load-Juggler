@@ -292,9 +292,9 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 # This works with chargers configured for 3-phase (ConnectorPhaseRotation: 0.RST)
                 # even when car uses only 1 phase - charger applies power correctly
                 voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
-                limit_for_charger = round(limit * voltage, 1)
+                phases_for_profile = self._phases if self._phases else 1
+                limit_for_charger = round(limit * voltage* phases_for_profile else 1, 1)
                 rate_unit = "W"
-                phases_for_profile = 3
                 self._last_set_power = limit_for_charger
                 self._last_set_current = None
             else:
