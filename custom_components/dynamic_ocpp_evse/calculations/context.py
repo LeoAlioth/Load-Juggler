@@ -92,8 +92,9 @@ def get_hub_state_config(sensor):
     state[CONF_MAIN_BREAKER_RATING] = hub_entry.data.get(CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING)
     state[CONF_INVERT_PHASES] = hub_entry.data.get(CONF_INVERT_PHASES, False)
     
-    # Get charging mode from hub
-    charging_mode_entity = hub_entry.data.get(CONF_CHARGIN_MODE_ENTITY_ID)
+    # Get charging mode from charger (moved from hub to charger level)
+    charger_entity_id = charger_entry.data.get(CONF_ENTITY_ID)
+    charging_mode_entity = f"select.{charger_entity_id}_charging_mode"
     state[CONF_CHARING_MODE] = get_sensor_data(hass, charging_mode_entity) if charging_mode_entity else "Standard"
     
     # Phase voltage

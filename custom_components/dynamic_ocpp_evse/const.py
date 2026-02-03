@@ -38,6 +38,7 @@ CONF_CHARGIN_MODE_ENTITY_ID = "charging_mode_entity_id"
 CONF_HUB_ENTRY_ID = "hub_entry_id"
 CONF_CHARGER_ID = "charger_id"
 CONF_CHARGER_PRIORITY = "charger_priority"
+CONF_CHARGER_CHARGING_MODE_ENTITY_ID = "charger_charging_mode_entity_id"  # Charger-level charging mode
 CONF_OCPP_DEVICE_ID = "ocpp_device_id"
 CONF_EVSE_CURRENT_IMPORT_ENTITY_ID = "evse_current_import_entity_id"
 CONF_EVSE_CURRENT_OFFERED_ENTITY_ID = "evse_current_offered_entity_id"

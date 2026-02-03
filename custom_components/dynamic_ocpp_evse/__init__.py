@@ -190,8 +190,9 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Check if entities need migration
     await _migrate_hub_entities_if_needed(hass, entry)
     
-    # Forward setup to hub platforms (select, number, switch, sensor for hub-level entities)
-    await hass.config_entries.async_forward_entry_setups(entry, ["select", "number", "switch", "sensor"])
+    # Forward setup to hub platforms (number, switch, sensor for hub-level entities)
+    # Note: select platform removed from hub as charging mode moved to chargers
+    await hass.config_entries.async_forward_entry_setups(entry, ["number", "switch", "sensor"])
     
     # Trigger discovery for unconfigured OCPP chargers
     await _discover_and_notify_chargers(hass, entry.entry_id)
@@ -222,8 +223,8 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Initialize charger allocation
     hass.data[DOMAIN]["charger_allocations"][entry.entry_id] = 0
     
-    # Forward setup to charger platforms (sensor, number, button for charger-specific entities)
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "number", "button"])
+    # Forward setup to charger platforms (sensor, number, button, select for charger-specific entities)
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "number", "button", "select"])
     
     return True
 
@@ -350,8 +351,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     entry_type = entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
     
     if entry_type == ENTRY_TYPE_HUB:
-        # Unload hub platforms
-        for domain in ["select", "number", "switch", "sensor"]:
+        # Unload hub platforms (select removed as charging mode moved to chargers)
+        for domain in ["number", "switch", "sensor"]:
             await hass.config_entries.async_forward_entry_unload(entry, domain)
         
         # Remove hub from data
@@ -360,7 +361,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     
     elif entry_type == ENTRY_TYPE_CHARGER:
         # Unload charger platforms
-        for domain in ["sensor", "number", "button"]:
+        for domain in ["sensor", "number", "button", "select"]:
             await hass.config_entries.async_forward_entry_unload(entry, domain)
         
         # Remove charger from hub's list

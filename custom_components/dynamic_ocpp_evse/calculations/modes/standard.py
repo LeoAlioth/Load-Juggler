@@ -25,16 +25,8 @@ def calculate_standard_mode(sensor, context: ChargeContext):
     battery_power = context.battery_power if context.battery_power is not None else 0
     battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
     
-    # Check if we're above minimum SOC (with hysteresis)
-    above_min_soc = check_soc_threshold_with_hysteresis(
-        sensor, "standard_min", battery_soc, battery_soc_min, hysteresis, is_above_check=True
-    )
+
     
-    if not above_min_soc:
-        _LOGGER.debug(f"Standard mode: Battery SOC {battery_soc}% below minimum {battery_soc_min}% - no charging")
-        return 0
-    
-    # Above min_soc - calculate available battery power
     # If battery is charging (negative power), that power could go to EV instead
     if battery_power < 0:
         # Battery is charging - use charging power as available

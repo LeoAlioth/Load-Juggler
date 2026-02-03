@@ -26,15 +26,6 @@ def calculate_eco_mode(sensor, context: ChargeContext):
     
     _LOGGER.info(f"Eco mode inputs: soc={battery_soc}%, min={battery_soc_min}%, target={battery_soc_target}%, context.target={context.battery_soc_target}")
     
-    # Check if we're above minimum SOC (with hysteresis)
-    above_min_soc = check_soc_threshold_with_hysteresis(
-        sensor, "eco_min", battery_soc, battery_soc_min, hysteresis, is_above_check=True
-    )
-    
-    if not above_min_soc:
-        _LOGGER.debug(f"Eco mode: Battery SOC {battery_soc}% below minimum {battery_soc_min}% - no charging")
-        return 0
-    
     # Check if we're above target SOC (with hysteresis)
     above_target_soc = check_soc_threshold_with_hysteresis(
         sensor, "eco_target", battery_soc, battery_soc_target, hysteresis, is_above_check=True

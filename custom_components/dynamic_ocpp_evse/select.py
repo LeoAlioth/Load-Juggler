@@ -4,29 +4,33 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, CONF_NAME, CONF_ENTITY_ID
+from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     """Set up the Dynamic OCPP EVSE Select from a config entry."""
-    # Only set up select entities for hub entries
     entry_type = config_entry.data.get(ENTRY_TYPE)
-    if entry_type != ENTRY_TYPE_HUB:
-        _LOGGER.debug("Skipping select setup for non-hub entry: %s", config_entry.title)
+    
+    # Set up select entities for charger entries (charging mode per charger)
+    if entry_type == ENTRY_TYPE_CHARGER:
+        name = config_entry.data.get(CONF_NAME, "Charger")
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "charger")
+        
+        entities = [DynamicOcppEvseChargingModeSelect(hass, config_entry, name, entity_id)]
+        _LOGGER.info(f"Setting up charger select entities: {[entity.unique_id for entity in entities]}")
+        async_add_entities(entities)
         return
     
-    name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
-    entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
-    
-    entities = [DynamicOcppEvseChargingModeSelect(hass, config_entry, name, entity_id)]
-    _LOGGER.info(f"Setting up hub select entities: {[entity.unique_id for entity in entities]}")
-    async_add_entities(entities)
+    # Skip setup for hub entries (no longer create charging mode at hub level)
+    if entry_type == ENTRY_TYPE_HUB:
+        _LOGGER.debug("Skipping select setup for hub entry (charging mode moved to chargers): %s", config_entry.title)
+        return
 
 
 class DynamicOcppEvseChargingModeSelect(SelectEntity, RestoreEntity):
-    """Representation of a Dynamic OCPP EVSE Charging Mode Select (Hub-level)."""
+    """Representation of a Dynamic OCPP EVSE Charging Mode Select (Charger-level)."""
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         """Initialize the select entity."""

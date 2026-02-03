@@ -29,14 +29,6 @@ def calculate_excess_mode(sensor, context: ChargeContext):
     hysteresis = context.battery_soc_hysteresis if context.battery_soc_hysteresis is not None else DEFAULT_BATTERY_SOC_HYSTERESIS
     battery_power = context.battery_power if context.battery_power is not None else 0
     
-    # Check if we're above minimum SOC (with hysteresis)
-    above_min_soc = check_soc_threshold_with_hysteresis(
-        sensor, "excess_min", battery_soc, battery_soc_min, hysteresis, is_above_check=True
-    )
-    
-    if not above_min_soc:
-        _LOGGER.debug(f"Excess mode: Battery SOC {battery_soc}% below minimum {battery_soc_min}% - no charging")
-        return 0
     
     # If battery is nearly full (>= 98%), act like solar mode - match production
     if battery_soc >= 98:
