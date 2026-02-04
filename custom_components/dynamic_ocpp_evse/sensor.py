@@ -386,6 +386,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             # Prepare the data for the OCPP set_charge_rate service
             profile_timeout = self.config_entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)
             stack_level = self.config_entry.data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
+            profile_validity_mode = self.config_entry.data.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE)
             
             # Get charge rate unit from config (A or W)
             charge_rate_unit = self.config_entry.data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
@@ -425,25 +426,53 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 self._last_set_current = limit_for_charger
                 self._last_set_power = None
             
-            # Use chargingScheduleDuration instead of absolute validFrom/validTo timestamps
-            # This makes the profile valid for a duration (in seconds) from when the charger receives it
-            # rather than tied to HA's clock which may be out of sync with the charger
-            charging_profile = {
-                "chargingProfileId": 11,
-                "stackLevel": stack_level,
-                "chargingProfileKind": "Relative",
-                "chargingProfilePurpose": "TxDefaultProfile",
-                "chargingSchedule": {
-                    "chargingRateUnit": rate_unit,
-                    "duration": profile_timeout,  # Duration in seconds the schedule is valid for
-                    "chargingSchedulePeriod": [
-                        {
-                            "startPeriod": 0,
-                            "limit": limit_for_charger,
-                        }
-                    ]
+            # Build charging profile based on validity mode
+            if profile_validity_mode == PROFILE_VALIDITY_MODE_ABSOLUTE:
+                # Absolute mode: Use validFrom/validTo timestamps
+                # This provides explicit time windows and is more reliable for some chargers
+                now = datetime.utcnow()
+                valid_from = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                valid_to = (now + timedelta(seconds=profile_timeout)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                
+                charging_profile = {
+                    "chargingProfileId": 11,
+                    "stackLevel": stack_level,
+                    "chargingProfileKind": "Absolute",
+                    "chargingProfilePurpose": "TxDefaultProfile",
+                    "validFrom": valid_from,
+                    "validTo": valid_to,
+                    "chargingSchedule": {
+                        "chargingRateUnit": rate_unit,
+                        "startSchedule": valid_from,
+                        "chargingSchedulePeriod": [
+                            {
+                                "startPeriod": 0,
+                                "limit": limit_for_charger,
+                            }
+                        ]
+                    }
                 }
-            }
+                _LOGGER.debug(f"Using absolute profile validity mode: {valid_from} to {valid_to}")
+            else:
+                # Relative mode: Use duration (default)
+                # Profile is valid for X seconds from when the charger receives it
+                charging_profile = {
+                    "chargingProfileId": 11,
+                    "stackLevel": stack_level,
+                    "chargingProfileKind": "Relative",
+                    "chargingProfilePurpose": "TxDefaultProfile",
+                    "chargingSchedule": {
+                        "chargingRateUnit": rate_unit,
+                        "duration": profile_timeout,
+                        "chargingSchedulePeriod": [
+                            {
+                                "startPeriod": 0,
+                                "limit": limit_for_charger,
+                            }
+                        ]
+                    }
+                }
+                _LOGGER.debug(f"Using relative profile validity mode: duration={profile_timeout}s")
 
             # Get the OCPP device ID for targeting the correct charger
             ocpp_device_id = self.config_entry.data.get(CONF_OCPP_DEVICE_ID)

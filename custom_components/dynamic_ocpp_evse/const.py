@@ -92,6 +92,12 @@ CHARGE_RATE_UNIT_AMPS = "A"
 CHARGE_RATE_UNIT_WATTS = "W"
 DEFAULT_CHARGE_RATE_UNIT = CHARGE_RATE_UNIT_AUTO
 
+# Profile validity mode configuration (per charger)
+CONF_PROFILE_VALIDITY_MODE = "profile_validity_mode"
+PROFILE_VALIDITY_MODE_RELATIVE = "relative"
+PROFILE_VALIDITY_MODE_ABSOLUTE = "absolute"
+DEFAULT_PROFILE_VALIDITY_MODE = PROFILE_VALIDITY_MODE_RELATIVE
+
 # Distribution mode configuration (hub-level)
 CONF_DISTRIBUTION_MODE = "distribution_mode"
 DISTRIBUTION_MODE_SHARED = "Shared"
