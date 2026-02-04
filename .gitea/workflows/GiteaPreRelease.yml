@@ -68,13 +68,50 @@ jobs:
             -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"prerelease\": true, \"draft\": false}" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases")
           
-          echo "Release response: $RELEASE_RESPONSE"
+          echo "Gitea Release response: $RELEASE_RESPONSE"
           RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
-          echo "Release ID: $RELEASE_ID"
+          echo "Gitea Release ID: $RELEASE_ID"
           
-          # Upload the asset
+          # Upload the asset to Gitea
           curl -s -X POST \
             -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
             -H "Content-Type: application/zip" \
             --data-binary @custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
+          
+          echo "Gitea pre-release created successfully!"
+
+      - name: Create GitHub pre-release
+        run: |
+          echo "Creating GitHub pre-release for tag: $TAG_NAME"
+          
+          # Wait a moment for the tag to sync to GitHub mirror
+          sleep 5
+          
+          # Create the release using GitHub API
+          RELEASE_RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"prerelease\": true, \"draft\": false}" \
+            "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
+          
+          echo "GitHub Release response: $RELEASE_RESPONSE"
+          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
+          echo "GitHub Release ID: $RELEASE_ID"
+          
+          if [ "$RELEASE_ID" = "null" ] || [ -z "$RELEASE_ID" ]; then
+            echo "Failed to create GitHub release"
+            exit 1
+          fi
+          
+          # Upload the asset to GitHub
+          curl -s -X POST \
+            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Content-Type: application/zip" \
+            --data-binary @custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip \
+            "https://uploads.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
+          
+          echo "GitHub pre-release created successfully!"
