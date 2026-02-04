@@ -532,6 +532,15 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "mode": "dropdown"
                 }
             }),
+            vol.Required(CONF_PROFILE_VALIDITY_MODE, default=DEFAULT_PROFILE_VALIDITY_MODE): selector({
+                "select": {
+                    "options": [
+                        {"value": PROFILE_VALIDITY_MODE_RELATIVE, "label": "Relative (duration-based)"},
+                        {"value": PROFILE_VALIDITY_MODE_ABSOLUTE, "label": "Absolute (timestamp-based)"},
+                    ],
+                    "mode": "dropdown"
+                }
+            }),
             vol.Required(CONF_UPDATE_FREQUENCY, default=DEFAULT_UPDATE_FREQUENCY): int,
             vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=DEFAULT_OCPP_PROFILE_TIMEOUT): int,
             vol.Required(CONF_CHARGE_PAUSE_DURATION, default=DEFAULT_CHARGE_PAUSE_DURATION): int,
@@ -701,6 +710,15 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "options": [
                         {"value": CHARGE_RATE_UNIT_AMPS, "label": "Amperes (A)"},
                         {"value": CHARGE_RATE_UNIT_WATTS, "label": "Watts (W)"},
+                    ],
+                    "mode": "dropdown"
+                }
+            }),
+            vol.Required(CONF_PROFILE_VALIDITY_MODE, default=entry.data.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE)): selector({
+                "select": {
+                    "options": [
+                        {"value": PROFILE_VALIDITY_MODE_RELATIVE, "label": "Relative (duration-based)"},
+                        {"value": PROFILE_VALIDITY_MODE_ABSOLUTE, "label": "Absolute (timestamp-based)"},
                     ],
                     "mode": "dropdown"
                 }

@@ -537,7 +537,7 @@ class DynamicOcppEvseHubSensor(SensorEntity):
         """Initialize the hub sensor."""
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = f"{name} Site Info"
+        self._attr_name = f"{name} Site Available Power"
         self._attr_unique_id = f"{entity_id}_site_info"
         self._state = None
         self._battery_soc = None
