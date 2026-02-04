@@ -20,7 +20,17 @@ jobs:
 
       - name: Determine tag name
         run: |
-          BRANCH="${GITEA_REF##*/}"
+          # Use GITHUB_REF_NAME (short ref) if available, otherwise parse GITHUB_REF
+          if [ -n "$GITHUB_REF_NAME" ]; then
+            BRANCH="$GITHUB_REF_NAME"
+          else
+            BRANCH="${GITHUB_REF##*/}"
+          fi
+          
+          echo "Detected branch: $BRANCH"
+          echo "GITHUB_REF: $GITHUB_REF"
+          echo "GITHUB_REF_NAME: $GITHUB_REF_NAME"
+          
           TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
 
           if [ "$BRANCH" = "dev" ]; then
@@ -29,7 +39,7 @@ jobs:
             VERSION=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
             TAG_NAME="${VERSION}-pre-${TIMESTAMP}"
           else
-            echo "Unsupported branch"
+            echo "Unsupported branch: $BRANCH"
             exit 1
           fi
 
