@@ -150,7 +150,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 }
             }
         ]
-        script = Script(hass, sequence, "Reset OCPP EVSE")
+        script = Script(hass, sequence, "Reset OCPP EVSE", DOMAIN)
         await script.async_run()
 
     hass.services.async_register(DOMAIN, "reset_ocpp_evse", handle_reset_service)
