@@ -128,6 +128,18 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self.coordinator = coordinator
 
     @property
+    def device_info(self):
+        """Return device information about this charger."""
+        hub_entity_id = self.hub_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "EV Charger",
+            "via_device": (DOMAIN, self.hub_entry.entry_id),
+        }
+
+    @property
     def state(self):
         """Return the state of the sensor."""
         return self._state
@@ -408,8 +420,6 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 self._last_set_power = limit_for_charger
                 self._last_set_current = None
             else:
-                # For Amps mode: Use detected phases, default to 1
-                phases_for_profile = self._phases if self._phases else 1
                 limit_for_charger = round(limit , 1)
                 rate_unit = "A"
                 self._last_set_current = limit_for_charger
@@ -509,6 +519,16 @@ class DynamicOcppEvseHubSensor(SensorEntity):
         # Total site available power (W) - grid + battery
         self._total_site_available_power = None
         self._last_update = datetime.min
+
+    @property
+    def device_info(self):
+        """Return device information about this hub."""
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "Electrical System Hub",
+        }
 
     @property
     def state(self):

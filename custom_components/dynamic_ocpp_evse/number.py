@@ -3,6 +3,7 @@ import logging
 from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from .const import (
@@ -63,6 +64,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
     """Slider for minimum current (charger-level)."""
     
+    _attr_entity_category = EntityCategory.CONFIG
+    
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
@@ -74,6 +77,19 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
         self._attr_native_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
+
+    @property
+    def device_info(self):
+        """Return device information about this charger."""
+        from . import get_hub_for_charger
+        hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "EV Charger",
+            "via_device": (DOMAIN, hub_entry.entry_id) if hub_entry else None,
+        }
 
     async def async_added_to_hass(self) -> None:
         """Restore last state when added to hass."""
@@ -97,6 +113,8 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
 class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
     """Slider for maximum current (charger-level)."""
     
+    _attr_entity_category = EntityCategory.CONFIG
+    
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
@@ -108,6 +126,19 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
         self._attr_native_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
+
+    @property
+    def device_info(self):
+        """Return device information about this charger."""
+        from . import get_hub_for_charger
+        hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "EV Charger",
+            "via_device": (DOMAIN, hub_entry.entry_id) if hub_entry else None,
+        }
 
     async def async_added_to_hass(self) -> None:
         """Restore last state when added to hass."""
@@ -137,6 +168,8 @@ class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
     In Solar mode: Below target, do not charge. At/above target, charge at solar rate.
     """
     
+    _attr_entity_category = EntityCategory.CONFIG
+    
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
@@ -148,6 +181,16 @@ class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
         self._attr_native_value = 80  # Default SOC target
         self._attr_native_unit_of_measurement = "%"
         self._attr_icon = "mdi:battery-charging-80"
+
+    @property
+    def device_info(self):
+        """Return device information about this hub."""
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "Electrical System Hub",
+        }
 
     async def async_added_to_hass(self) -> None:
         """Restore last state when added to hass."""
@@ -177,6 +220,8 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
     This is the absolute floor to protect the home battery.
     """
     
+    _attr_entity_category = EntityCategory.CONFIG
+    
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
@@ -188,6 +233,16 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
         self._attr_native_value = DEFAULT_BATTERY_SOC_MIN  # Default 20%
         self._attr_native_unit_of_measurement = "%"
         self._attr_icon = "mdi:battery-alert-variant-outline"
+
+    @property
+    def device_info(self):
+        """Return device information about this hub."""
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "Electrical System Hub",
+        }
 
     async def async_added_to_hass(self) -> None:
         """Restore last state when added to hass."""
@@ -218,6 +273,8 @@ class PowerBufferSlider(NumberEntity, RestoreEntity):
     the system can use up to the full available power.
     """
     
+    _attr_entity_category = EntityCategory.CONFIG
+    
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
@@ -229,6 +286,16 @@ class PowerBufferSlider(NumberEntity, RestoreEntity):
         self._attr_native_value = 0  # Default: no buffer
         self._attr_native_unit_of_measurement = "W"
         self._attr_icon = "mdi:buffer"
+
+    @property
+    def device_info(self):
+        """Return device information about this hub."""
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "Electrical System Hub",
+        }
 
     async def async_added_to_hass(self) -> None:
         """Restore last state when added to hass."""

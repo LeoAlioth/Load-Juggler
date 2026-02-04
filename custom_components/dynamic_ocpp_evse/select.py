@@ -52,6 +52,19 @@ class DynamicOcppEvseChargingModeSelect(SelectEntity, RestoreEntity):
         self._attr_current_option = "Standard"  # Default, will be overridden by restore
 
     @property
+    def device_info(self):
+        """Return device information about this charger."""
+        from . import get_hub_for_charger
+        hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "EV Charger",
+            "via_device": (DOMAIN, hub_entry.entry_id) if hub_entry else None,
+        }
+
+    @property
     def icon(self):
         """Return the icon based on current mode."""
         icons = {
@@ -103,6 +116,16 @@ class DynamicOcppEvseDistributionModeSelect(SelectEntity, RestoreEntity):
             DISTRIBUTION_MODE_SEQUENTIAL_STRICT
         ]
         self._attr_current_option = DEFAULT_DISTRIBUTION_MODE  # Default, will be overridden by restore
+
+    @property
+    def device_info(self):
+        """Return device information about this hub."""
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "Electrical System Hub",
+        }
 
     @property
     def icon(self):

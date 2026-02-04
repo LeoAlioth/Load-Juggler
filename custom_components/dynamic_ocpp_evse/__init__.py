@@ -124,7 +124,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
         sequence = [
             {"service": "ocpp.clear_profile", "data": {}},
-            {"delay": {"seconds": 30}},
+            {"delay": {"seconds": 10}},
             {
                 "service": "ocpp.set_charge_rate",
                 "data": {

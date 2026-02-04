@@ -40,6 +40,16 @@ class AllowGridChargingSwitch(SwitchEntity, RestoreEntity):
         self._attr_icon = "mdi:transmission-tower"
 
     @property
+    def device_info(self):
+        """Return device information about this hub."""
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "Electrical System Hub",
+        }
+
+    @property
     def is_on(self):
         """Return true if grid charging is allowed."""
         return self._state

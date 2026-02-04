@@ -1,6 +1,7 @@
 import logging
 from homeassistant.components.button import ButtonEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID
@@ -26,6 +27,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 class ResetButton(ButtonEntity):
     """Representation of a reset button for a charger."""
 
+    _attr_entity_category = EntityCategory.CONFIG
+
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, name: str, entity_id: str):
         """Initialize the button."""
         self._hass = hass
@@ -33,6 +36,19 @@ class ResetButton(ButtonEntity):
         self._attr_name = f"{name} Reset OCPP"
         self._attr_unique_id = f"{entity_id}_reset_button"
         self._attr_icon = "mdi:restart"
+
+    @property
+    def device_info(self):
+        """Return device information about this charger."""
+        from . import get_hub_for_charger
+        hub_entry = get_hub_for_charger(self._hass, self._entry.entry_id)
+        return {
+            "identifiers": {(DOMAIN, self._entry.entry_id)},
+            "name": self._entry.data.get(CONF_NAME),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "EV Charger",
+            "via_device": (DOMAIN, hub_entry.entry_id) if hub_entry else None,
+        }
 
     async def async_press(self) -> None:
         """Handle the button press."""
