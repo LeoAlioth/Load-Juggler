@@ -53,6 +53,61 @@ jobs:
           cd custom_components/dynamic_ocpp_evse         
           zip -r dynamic-ocpp-evse.zip .
 
+      - name: Delete previous dev releases (dev branch only)
+        if: env.BRANCH == 'dev'
+        run: |
+          echo "Cleaning up previous dev releases..."
+          
+          # Delete previous dev releases from Gitea
+          echo "Fetching Gitea releases..."
+          GITEA_RELEASES=$(curl -s \
+            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases")
+          
+          echo "$GITEA_RELEASES" | jq -r '.[] | select(.tag_name | startswith("dev-")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
+            if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
+              echo "Deleting Gitea release: $RELEASE_TAG (ID: $RELEASE_ID)"
+              curl -s -X DELETE \
+                -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+                "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID"
+              
+              # Delete the tag from Gitea
+              echo "Deleting Gitea tag: $RELEASE_TAG"
+              curl -s -X DELETE \
+                -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+                "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/tags/$RELEASE_TAG"
+            fi
+          done
+          
+          # Delete previous dev releases from GitHub
+          echo "Fetching GitHub releases..."
+          GH_RELEASES=$(curl -s \
+            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
+          
+          echo "$GH_RELEASES" | jq -r '.[] | select(.tag_name | startswith("dev-")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
+            if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
+              echo "Deleting GitHub release: $RELEASE_TAG (ID: $RELEASE_ID)"
+              curl -s -X DELETE \
+                -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID"
+              
+              # Delete the tag from GitHub
+              echo "Deleting GitHub tag: $RELEASE_TAG"
+              curl -s -X DELETE \
+                -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/git/refs/tags/$RELEASE_TAG"
+            fi
+          done
+          
+          echo "Cleanup complete!"
+
       - name: Create Gitea pre-release
         run: |
           # Create the tag first
