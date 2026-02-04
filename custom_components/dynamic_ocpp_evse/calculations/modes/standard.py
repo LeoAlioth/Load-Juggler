@@ -21,9 +21,11 @@ def calculate_standard_mode(sensor, context: ChargeContext):
     # Check if battery is configured
     has_battery = context.battery_soc is not None or context.battery_power is not None
     
+    # Initialize battery variables at function scope
+    battery_soc = context.battery_soc if context.battery_soc is not None else 100
+    battery_soc_min = context.battery_soc_min if context.battery_soc_min is not None else DEFAULT_BATTERY_SOC_MIN
+    
     if has_battery:
-        battery_soc = context.battery_soc if context.battery_soc is not None else 100
-        battery_soc_min = context.battery_soc_min if context.battery_soc_min is not None else DEFAULT_BATTERY_SOC_MIN
         battery_power = context.battery_power if context.battery_power is not None else 0
         battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
         

@@ -126,11 +126,6 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self._target_evse_solar = None
         self._target_evse_excess = None
         self.coordinator = coordinator
-        # NEW: Store context fields for attributes
-        self._total_evse_power = None
-        self._net_site_consumption = None
-        self._solar_surplus_power = None
-        self._solar_surplus_current = None
 
     @property
     def device_info(self):
@@ -158,11 +153,6 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             "detected_phases": self._detected_phases,
             "allocated_current": self._allocated_current,
             "last_update": self._last_update,
-            # NEW: Site power information from context
-            "total_evse_power": round(self._total_evse_power, 1) if self._total_evse_power is not None else None,
-            "net_site_consumption": round(self._net_site_consumption, 1) if self._net_site_consumption is not None else None,
-            "solar_surplus_power": round(self._solar_surplus_power, 1) if self._solar_surplus_power is not None else None,
-            "solar_surplus_current": round(self._solar_surplus_current, 2) if self._solar_surplus_current is not None else None,
             "pause_timer_running": self._pause_timer_running,
             "last_set_current": self._last_set_current,
             "last_set_power": self._last_set_power,
@@ -211,12 +201,6 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             self._target_evse_solar = hub_data.get("target_evse_solar")
             self._target_evse_excess = hub_data.get("target_evse_excess")
             
-            # Store NEW context fields for attributes
-            self._total_evse_power = hub_data.get("total_evse_power")
-            self._net_site_consumption = hub_data.get("net_site_consumption")
-            self._solar_surplus_power = hub_data.get("solar_surplus_power")
-            self._solar_surplus_current = hub_data.get("solar_surplus_current")
-            
             if "excess_charge_start_time" in hub_data:
                 self._excess_charge_start_time = hub_data["excess_charge_start_time"]
             else:
@@ -244,6 +228,11 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 "site_grid_available_power": hub_data.get("site_grid_available_power"),
                 # Total site available power (W) - grid + battery
                 "total_site_available_power": hub_data.get("total_site_available_power"),
+                # NEW: Site power balance
+                "total_evse_power": hub_data.get("total_evse_power"),
+                "net_site_consumption": hub_data.get("net_site_consumption"),
+                "solar_surplus_power": hub_data.get("solar_surplus_power"),
+                "solar_surplus_current": hub_data.get("solar_surplus_current"),
                 "last_update": datetime.utcnow(),
             }
 
@@ -571,6 +560,11 @@ class DynamicOcppEvseHubSensor(SensorEntity):
         self._site_grid_available_power = None
         # Total site available power (W) - grid + battery
         self._total_site_available_power = None
+        # NEW: Site power balance fields
+        self._total_evse_power = None
+        self._net_site_consumption = None
+        self._solar_surplus_power = None
+        self._solar_surplus_current = None
         self._last_update = datetime.min
 
     @property
@@ -612,6 +606,11 @@ class DynamicOcppEvseHubSensor(SensorEntity):
             "site_grid_available_power": round_value(self._site_grid_available_power, 0),
             # Total site available power (W) - grid + battery
             "total_site_available_power": round_value(self._total_site_available_power, 0),
+            # NEW: Site power balance
+            "total_evse_power": round_value(self._total_evse_power, 0),
+            "net_site_consumption": round_value(self._net_site_consumption, 0),
+            "solar_surplus_power": round_value(self._solar_surplus_power, 0),
+            "solar_surplus_current": round_value(self._solar_surplus_current, 2),
             "last_update": self._last_update,
         }
 
@@ -652,6 +651,11 @@ class DynamicOcppEvseHubSensor(SensorEntity):
                 self._site_grid_available_power = hub_data.get("site_grid_available_power")
                 # Total site available power (W) - grid + battery
                 self._total_site_available_power = hub_data.get("total_site_available_power")
+                # NEW: Site power balance
+                self._total_evse_power = hub_data.get("total_evse_power")
+                self._net_site_consumption = hub_data.get("net_site_consumption")
+                self._solar_surplus_power = hub_data.get("solar_surplus_power")
+                self._solar_surplus_current = hub_data.get("solar_surplus_current")
                 self._last_update = hub_data.get("last_update", datetime.utcnow())
         except Exception as e:
             _LOGGER.error(f"Error updating hub sensor {self._attr_name}: {e}", exc_info=True)
