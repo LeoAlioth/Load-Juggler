@@ -26,14 +26,14 @@ def calculate_eco_mode(sensor, context: ChargeContext):
     if not has_battery:
         # No battery configured - use available solar/export power, minimum of min_current
         # This prevents exporting to grid by utilizing solar for EV charging
-        target_evse = calculate_base_target_evse(context, 0, allow_grid_import=False)
-        target_evse = max(target_evse, context.min_current)  # At least minimum rate
+        available_solar = max(0, context.solar_surplus_current)  # Use new context field
+        target_evse = max(available_solar, context.min_current)  # At least minimum rate
         target_evse = min(target_evse, context.max_evse_available, context.max_current)
         
         if target_evse < context.min_current:
             _LOGGER.debug(f"Eco mode (no battery): Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
             return 0
-        _LOGGER.debug(f"Eco mode (no battery): Charging at {target_evse}A (using solar/export, minimum {context.min_current}A)")
+        _LOGGER.debug(f"Eco mode (no battery): Charging at {target_evse:.1f}A (solar: {available_solar:.1f}A, minimum: {context.min_current}A)")
         return target_evse
     
     battery_soc = context.battery_soc if context.battery_soc is not None else 100
@@ -44,6 +44,23 @@ def calculate_eco_mode(sensor, context: ChargeContext):
     battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
     
     _LOGGER.info(f"Eco mode inputs: soc={battery_soc}%, min={battery_soc_min}%, target={battery_soc_target}%, context.target={context.battery_soc_target}")
+    
+    # Check if below min SOC - act like no-battery system
+    below_min_soc = check_soc_threshold_with_hysteresis(
+        sensor, "eco_min", battery_soc, battery_soc_min, hysteresis, is_above_check=False
+    )
+    
+    if below_min_soc:
+        # Below min SOC - act like no-battery system (use solar/export + minimum)
+        available_solar = max(0, context.solar_surplus_current)
+        target_evse = max(available_solar, context.min_current)
+        target_evse = min(target_evse, context.max_evse_available, context.max_current)
+        
+        if target_evse < context.min_current:
+            _LOGGER.debug(f"Eco mode (below min SOC): Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
+            return 0
+        _LOGGER.debug(f"Eco mode: SOC {battery_soc:.1f}% < min {battery_soc_min}%, acting like no-battery - charging at {target_evse:.1f}A")
+        return target_evse
     
     # Check if we're above target SOC (with hysteresis)
     above_target_soc = check_soc_threshold_with_hysteresis(

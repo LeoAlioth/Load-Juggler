@@ -45,6 +45,15 @@ class ChargeContext:
     site_grid_available_power: float = 0
     # Total site available power (W) - grid + battery
     total_site_available_power: float = 0
+    # NEW: Net site power balance (excluding EVSE)
+    # Positive = importing from grid, Negative = exporting to grid
+    net_site_consumption: float = 0  # Watts
+    # NEW: Solar surplus available for charging
+    # Positive = excess solar available, Negative = site importing
+    solar_surplus_current: float = 0  # Amps
+    solar_surplus_power: float = 0  # Watts
+    # NEW: Total EVSE charging power (all chargers)
+    total_evse_power: float = 0  # Watts
 
 
 def determine_phases(sensor, state):
@@ -345,6 +354,24 @@ def get_charge_context_values(sensor, state):
     context.site_battery_available_power = calculate_site_battery_available_power(context)
     calculate_site_available_power(context)
     
+    # Calculate NEW FIELDS: net site consumption and solar surplus
+    # Total EVSE power (current charging power for all chargers)
+    context.total_evse_power = evse_current_per_phase * voltage * phases
+    
+    # Net site consumption (excluding EVSE)
+    # Positive = importing, Negative = exporting
+    total_import_power = total_import_current * voltage
+    net_import_current = total_import_current - (phase_a_export_current + phase_b_export_current + phase_c_export_current)
+    context.net_site_consumption = net_import_current * voltage
+    
+    # Solar surplus available for charging
+    # Positive = excess solar available, Negative = site importing/no surplus
+    context.solar_surplus_current = -(net_import_current)  # Flip sign for easier logic
+    context.solar_surplus_power = -context.net_site_consumption
+    
     _LOGGER.debug(f"Site battery available power: {context.site_battery_available_power}W")
+    _LOGGER.debug(f"Total EVSE power: {context.total_evse_power:.1f}W")
+    _LOGGER.debug(f"Net site consumption: {context.net_site_consumption:.1f}W (+ = import, - = export)")
+    _LOGGER.debug(f"Solar surplus: {context.solar_surplus_power:.1f}W ({context.solar_surplus_current:.2f}A)")
     
     return context

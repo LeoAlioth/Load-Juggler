@@ -160,6 +160,11 @@ def calculate_available_current_for_charger(sensor):
         'site_grid_available_power': charge_context.site_grid_available_power,
         # Total site available power (W) - grid + battery
         'total_site_available_power': charge_context.total_site_available_power,
+        # NEW: Add context fields for site power information
+        'total_evse_power': charge_context.total_evse_power,
+        'net_site_consumption': charge_context.net_site_consumption,
+        'solar_surplus_power': charge_context.solar_surplus_power,
+        'solar_surplus_current': charge_context.solar_surplus_current,
     }
 
 

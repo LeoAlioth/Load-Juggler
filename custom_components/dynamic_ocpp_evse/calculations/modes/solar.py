@@ -26,15 +26,15 @@ def calculate_solar_mode(sensor, context: ChargeContext):
     
     if not has_battery:
         # No battery configured - charge from solar/export only (no grid import)
-        target_evse = calculate_base_target_evse(context, 0, allow_grid_import=False)
-        target_evse = max(target_evse, 0)
+        available_solar = max(0, context.solar_surplus_current)  # Use new context field
         
-        # Final check: if below minimum, set to 0
-        if target_evse < context.min_current:
-            _LOGGER.debug(f"Solar mode (no battery): Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
+        # Solar mode: only charge if we have enough solar (no grid import)
+        if available_solar < context.min_current:
+            _LOGGER.debug(f"Solar mode (no battery): Solar {available_solar:.1f}A < minimum {context.min_current}A - no charging (would require grid import)")
             return 0
         
-        _LOGGER.debug(f"Solar mode (no battery): Charging from solar/export at {target_evse}A")
+        target_evse = min(available_solar, context.max_evse_available, context.max_current)
+        _LOGGER.debug(f"Solar mode (no battery): Charging from solar at {target_evse:.1f}A (available: {available_solar:.1f}A)")
         return target_evse
     
     battery_soc = context.battery_soc if context.battery_soc is not None else 100
