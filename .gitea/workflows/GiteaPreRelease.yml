@@ -53,13 +53,28 @@ jobs:
           cd custom_components/dynamic_ocpp_evse         
           zip -r dynamic-ocpp-evse.zip .
 
-      - name: Create Gitea release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.TAG_NAME }}
-          name: Dynamic OCPP EVSE ${{ env.TAG_NAME }}
-          prerelease: true
-          draft: false
-          files: custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITEA_TOKEN }}
+      - name: Create Gitea pre-release
+        run: |
+          # Create the tag first
+          git config user.name "Gitea Actions"
+          git config user.email "actions@gitea.local"
+          git tag "$TAG_NAME"
+          git push origin "$TAG_NAME"
+          
+          # Create the release using Gitea API
+          RELEASE_RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"prerelease\": true, \"draft\": false}" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases")
+          
+          echo "Release response: $RELEASE_RESPONSE"
+          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
+          echo "Release ID: $RELEASE_ID"
+          
+          # Upload the asset
+          curl -s -X POST \
+            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+            -H "Content-Type: application/zip" \
+            --data-binary @custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
