@@ -13,10 +13,29 @@ def calculate_eco_mode(sensor, context: ChargeContext):
     
     Eco mode behavior with battery:
     - Below min_soc (with hysteresis): No charging
-    - Between min_soc and target_soc: Minimum rate charging (no battery discharge)
-    - At target_soc: Solar production rate
+    - Between min_soc and target_soc: Use available solar/export power, minimum of min_current (prevents grid export)
+    - At target_soc with solar: Solar production rate
     - Above target_soc: Full speed (like Standard mode)
+    
+    Eco mode behavior without battery:
+    - Use available solar/export power, minimum of min_current (prevents grid export)
     """
+    # Check if battery is configured
+    has_battery = context.battery_soc is not None or context.battery_power is not None
+    
+    if not has_battery:
+        # No battery configured - use available solar/export power, minimum of min_current
+        # This prevents exporting to grid by utilizing solar for EV charging
+        target_evse = calculate_base_target_evse(context, 0, allow_grid_import=False)
+        target_evse = max(target_evse, context.min_current)  # At least minimum rate
+        target_evse = min(target_evse, context.max_evse_available, context.max_current)
+        
+        if target_evse < context.min_current:
+            _LOGGER.debug(f"Eco mode (no battery): Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
+            return 0
+        _LOGGER.debug(f"Eco mode (no battery): Charging at {target_evse}A (using solar/export, minimum {context.min_current}A)")
+        return target_evse
+    
     battery_soc = context.battery_soc if context.battery_soc is not None else 100
     battery_soc_min = context.battery_soc_min if context.battery_soc_min is not None else DEFAULT_BATTERY_SOC_MIN
     battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 80  # Default to 80%, not 50%
@@ -69,11 +88,16 @@ def calculate_eco_mode(sensor, context: ChargeContext):
         _LOGGER.debug(f"Eco mode: SOC {battery_soc}% at target with solar, rate {target_evse}A")
         return target_evse
     
-    # Between min_soc and target_soc without solar - minimum rate only (clamped to available)
-    target_evse = min(context.min_current, context.max_evse_available, context.max_current)
+    # Between min_soc and target_soc without solar charging
+    # Use available solar/export power if available, otherwise charge at minimum rate
+    # This prevents exporting to grid by utilizing solar for EV charging
+    target_evse = calculate_base_target_evse(context, 0, allow_grid_import=False)
+    target_evse = max(target_evse, context.min_current)  # At least minimum rate
+    target_evse = min(target_evse, context.max_evse_available, context.max_current)
+    
     # Final check: if below minimum, set to 0
     if target_evse < context.min_current:
         _LOGGER.debug(f"Eco mode: Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
         return 0
-    _LOGGER.debug(f"Eco mode: SOC {battery_soc}% between min {battery_soc_min}% and target {battery_soc_target}% - min rate {target_evse}A (clamped from {context.min_current}A)")
+    _LOGGER.debug(f"Eco mode: SOC {battery_soc}% between min {battery_soc_min}% and target {battery_soc_target}% - charging at {target_evse}A (using solar/export, minimum {context.min_current}A)")
     return target_evse

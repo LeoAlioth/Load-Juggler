@@ -36,12 +36,23 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     entities = []
     
     if entry_type == ENTRY_TYPE_HUB:
-        # Hub entities: Battery SOC Target, Battery SOC Minimum, Power Buffer
-        entities = [
-            BatterySOCTargetSlider(hass, config_entry, name, entity_id),
-            BatterySOCMinSlider(hass, config_entry, name, entity_id),
-            PowerBufferSlider(hass, config_entry, name, entity_id),
-        ]
+        # Check if battery is configured
+        battery_soc_entity = config_entry.data.get("battery_soc_entity_id")
+        battery_power_entity = config_entry.data.get("battery_power_entity_id")
+        has_battery = (battery_soc_entity and battery_soc_entity != 'None') or \
+                      (battery_power_entity and battery_power_entity != 'None')
+        
+        # Always create Power Buffer (useful even without battery)
+        entities.append(PowerBufferSlider(hass, config_entry, name, entity_id))
+        
+        # Only create battery entities if battery is configured
+        if has_battery:
+            entities.append(BatterySOCTargetSlider(hass, config_entry, name, entity_id))
+            entities.append(BatterySOCMinSlider(hass, config_entry, name, entity_id))
+            _LOGGER.info(f"Battery configured - creating battery number entities")
+        else:
+            _LOGGER.info(f"No battery configured - skipping battery number entities")
+        
         _LOGGER.info(f"Setting up hub number entities: {[entity.unique_id for entity in entities]}")
     
     elif entry_type == ENTRY_TYPE_CHARGER:

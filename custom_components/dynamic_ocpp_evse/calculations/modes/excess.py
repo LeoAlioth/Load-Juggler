@@ -17,11 +17,49 @@ def calculate_excess_mode(sensor, context: ChargeContext):
     - Between min_soc and target_soc: Export power only (no battery discharge for EV)
     - Between target_soc and 98%: Export power, slow battery discharge OK
     - At/above 98%: Match solar production (like Solar mode)
+    
+    Excess mode behavior without battery:
+    - Charge when export exceeds threshold (simple excess solar charging)
     """
     state = context.state
     voltage = context.voltage
     total_export_power = context.total_export_power
     base_threshold = state.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD)
+    
+    # Check if battery is configured
+    has_battery = context.battery_soc is not None or context.battery_power is not None
+    
+    if not has_battery:
+        # No battery configured - simple excess export charging
+        threshold = base_threshold
+        now = datetime.datetime.now()
+        
+        if total_export_power > threshold:
+            _LOGGER.info(f"Excess mode (no battery): export {total_export_power}W > threshold {threshold}W, starting charge")
+            sensor._excess_charge_start_time = now
+        
+        keep_charging = False
+        if getattr(sensor, '_excess_charge_start_time', None) is not None and \
+           (now - sensor._excess_charge_start_time).total_seconds() < 15 * 60:
+            if total_export_power + context.min_current * voltage > threshold:
+                sensor._excess_charge_start_time = now
+            keep_charging = True
+        
+        if keep_charging:
+            export_available_current = (total_export_power - threshold) / voltage + context.evse_current_per_phase
+            target_evse = max(context.min_current, export_available_current)
+        else:
+            target_evse = 0
+        
+        target_evse = min(target_evse, context.max_current, context.max_evse_available)
+        
+        # Final check: if below minimum, set to 0
+        if target_evse < context.min_current:
+            _LOGGER.debug(f"Excess mode (no battery): Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
+            return 0
+        
+        _LOGGER.debug(f"Excess mode (no battery): export {total_export_power}W, target {target_evse}A")
+        return target_evse
     
     battery_soc = context.battery_soc if context.battery_soc is not None else 100
     battery_soc_min = context.battery_soc_min if context.battery_soc_min is not None else DEFAULT_BATTERY_SOC_MIN

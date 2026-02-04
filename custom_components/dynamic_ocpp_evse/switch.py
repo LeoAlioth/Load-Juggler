@@ -18,6 +18,16 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         _LOGGER.debug("Skipping switch setup for non-hub entry: %s", config_entry.title)
         return
     
+    # Check if battery is configured
+    battery_soc_entity = config_entry.data.get("battery_soc_entity_id")
+    battery_power_entity = config_entry.data.get("battery_power_entity_id")
+    has_battery = (battery_soc_entity and battery_soc_entity != 'None') or \
+                  (battery_power_entity and battery_power_entity != 'None')
+    
+    if not has_battery:
+        _LOGGER.info("No battery configured - skipping 'Allow Grid Charging' switch")
+        return
+    
     entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
     name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
     

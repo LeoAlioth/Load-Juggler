@@ -15,9 +15,28 @@ def calculate_solar_mode(sensor, context: ChargeContext):
     - Below target_soc (with hysteresis): No charging
     - At/above target_soc: Charge at solar production rate only (no battery discharge for EV)
     
+    Solar mode behavior without battery:
+    - Charge only from available solar/export power (no grid import)
+    
     Note: Charging starts when battery is charging (has excess solar) at target_soc,
     stops when SOC drops below target_soc - hysteresis.
     """
+    # Check if battery is configured
+    has_battery = context.battery_soc is not None or context.battery_power is not None
+    
+    if not has_battery:
+        # No battery configured - charge from solar/export only (no grid import)
+        target_evse = calculate_base_target_evse(context, 0, allow_grid_import=False)
+        target_evse = max(target_evse, 0)
+        
+        # Final check: if below minimum, set to 0
+        if target_evse < context.min_current:
+            _LOGGER.debug(f"Solar mode (no battery): Target {target_evse:.1f}A below minimum {context.min_current}A - setting to 0")
+            return 0
+        
+        _LOGGER.debug(f"Solar mode (no battery): Charging from solar/export at {target_evse}A")
+        return target_evse
+    
     battery_soc = context.battery_soc if context.battery_soc is not None else 100
     battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 80  # Default to 80%
     hysteresis = context.battery_soc_hysteresis if context.battery_soc_hysteresis is not None else DEFAULT_BATTERY_SOC_HYSTERESIS
