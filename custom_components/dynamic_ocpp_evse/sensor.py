@@ -514,9 +514,9 @@ class DynamicOcppEvseHubSensor(SensorEntity):
 
     @property
     def state(self):
-        """Return the state of the sensor (battery SOC as primary state)."""
-        if self._battery_soc is not None:
-            return round(self._battery_soc, 1)
+        """Return the state of the sensor (total site available power as primary state)."""
+        if self._total_site_available_power is not None:
+            return round(self._total_site_available_power, 0)
         return None
 
     @property
@@ -552,12 +552,12 @@ class DynamicOcppEvseHubSensor(SensorEntity):
     @property
     def unit_of_measurement(self):
         """Return the unit of measurement."""
-        return "%"
+        return "W"
 
     @property
     def device_class(self):
         """Return the device class."""
-        return "battery"
+        return "power"
 
     async def async_update(self):
         """Update hub sensor with site-wide data from hass.data."""
