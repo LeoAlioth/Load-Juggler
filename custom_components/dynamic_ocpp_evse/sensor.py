@@ -445,7 +445,13 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 }
             }
 
-            _LOGGER.debug(f"Sending set_charge_rate for {self._attr_name} with limit: {limit_for_charger}{rate_unit} (calculated from {limit}A)")
+            # Get the OCPP device ID for targeting the correct charger
+            ocpp_device_id = self.config_entry.data.get(CONF_OCPP_DEVICE_ID)
+            if not ocpp_device_id:
+                _LOGGER.error(f"No OCPP device ID configured for {self._attr_name} - cannot send charging profile")
+                return
+
+            _LOGGER.debug(f"Sending set_charge_rate to device {ocpp_device_id} for {self._attr_name} with limit: {limit_for_charger}{rate_unit} (calculated from {limit}A)")
 
             # Check if charge_control switch is off and we have available current - turn it on
             # But only if a car is actually plugged in (connector status is not "Available")
@@ -479,13 +485,15 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             elif charge_control_state and charge_control_state.state == "off" and limit > 0 and not car_plugged_in:
                 _LOGGER.debug(f"Charge control switch {charge_control_switch} is off with limit {limit}A, but no car plugged in (connector: {connector_status}) - not turning on")
 
-            # Call the OCPP set_charge_rate service
+            # Call the OCPP set_charge_rate service with device_id
             await self.hass.services.async_call(
                 "ocpp",
                 "set_charge_rate",
                 {
+                    "device_id": ocpp_device_id,
                     "custom_profile": charging_profile
-                }
+                },
+                blocking=False,
             )
             
             self._last_update = datetime.utcnow()

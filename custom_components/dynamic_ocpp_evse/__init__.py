@@ -79,6 +79,12 @@ async def async_setup(hass: HomeAssistant, config: dict):
         if entry is None:
             return
 
+        # Get the OCPP device ID
+        ocpp_device_id = entry.data.get(CONF_OCPP_DEVICE_ID)
+        if not ocpp_device_id:
+            _LOGGER.error(f"No OCPP device ID configured for entry {entry.title} - cannot reset")
+            return
+
         evse_minimum_charge_current = entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
         
         # Get charge rate unit from charger config
@@ -123,11 +129,12 @@ async def async_setup(hass: HomeAssistant, config: dict):
         reset_stack_level = max(1, configured_stack_level - 1)
 
         sequence = [
-            {"service": "ocpp.clear_profile", "data": {}},
+            {"service": "ocpp.clear_profile", "data": {"device_id": ocpp_device_id}},
             {"delay": {"seconds": 10}},
             {
                 "service": "ocpp.set_charge_rate",
                 "data": {
+                    "device_id": ocpp_device_id,
                     "custom_profile": {
                         "chargingProfileId": 10,
                         "stackLevel": reset_stack_level,
