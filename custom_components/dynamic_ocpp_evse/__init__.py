@@ -129,10 +129,15 @@ async def async_setup(hass: HomeAssistant, config: dict):
         reset_stack_level = max(1, configured_stack_level - 1)
 
         sequence = [
-            {"service": "ocpp.clear_profile", "data": {"devid": ocpp_device_id}},
+            {
+                "action": "ocpp.clear_profile",
+                "target": {},
+                "data": {"devid": ocpp_device_id}
+            },
             {"delay": {"seconds": 10}},
             {
-                "service": "ocpp.set_charge_rate",
+                "action": "ocpp.set_charge_rate",
+                "target": {},
                 "data": {
                     "devid": ocpp_device_id,
                     "custom_profile": {
@@ -151,7 +156,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
             }
         ]
         script = Script(hass, sequence, "Reset OCPP EVSE", DOMAIN)
-        await script.async_run()
+        await script.async_run(context=call.context)
 
     hass.services.async_register(DOMAIN, "reset_ocpp_evse", handle_reset_service)
 
