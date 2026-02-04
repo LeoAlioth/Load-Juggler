@@ -48,11 +48,22 @@ def get_sensor_attribute(hass, sensor, attribute):
 
 
 def apply_ramping(sensor, state, target_evse, min_current, conf_evse_current_offered, conf_available_current):
-    """Apply ramping logic to smooth current changes and prevent oscillations."""
+    """
+    Apply ramping logic to smooth current changes and prevent oscillations.
+    
+    Configuration changes (mode, min/max current) bypass ramping for instant response.
+    Normal power fluctuations use ramping to prevent oscillations.
+    """
     if not hasattr(sensor, '_last_ramp_value'):
         sensor._last_ramp_value = None
     if not hasattr(sensor, '_last_ramp_time'):
         sensor._last_ramp_time = None
+    if not hasattr(sensor, '_last_charging_mode'):
+        sensor._last_charging_mode = None
+    if not hasattr(sensor, '_last_min_current'):
+        sensor._last_min_current = None
+    if not hasattr(sensor, '_last_max_current'):
+        sensor._last_max_current = None
 
     # Ramping rates
     ramp_limit_up = 0.1    # Amps per second (ramp up) - slightly faster to reduce lag
@@ -62,6 +73,35 @@ def apply_ramping(sensor, state, target_evse, min_current, conf_evse_current_off
     deadband = 0.5  # Amps - changes smaller than this are ignored
     
     now = datetime.datetime.now()
+    
+    # Check for configuration changes (skip ramping if config changed)
+    from ..const import CONF_CHARING_MODE, CONF_MIN_CURRENT, CONF_MAX_CURRENT
+    current_mode = state.get(CONF_CHARING_MODE)
+    current_min = state.get(CONF_MIN_CURRENT)
+    current_max = state.get(CONF_MAX_CURRENT)
+    
+    config_changed = False
+    if (sensor._last_charging_mode is not None and sensor._last_charging_mode != current_mode):
+        _LOGGER.info(f"Charging mode changed from {sensor._last_charging_mode} to {current_mode} - applying instantly")
+        config_changed = True
+    if (sensor._last_min_current is not None and sensor._last_min_current != current_min):
+        _LOGGER.info(f"Min current changed from {sensor._last_min_current}A to {current_min}A - applying instantly")
+        config_changed = True
+    if (sensor._last_max_current is not None and sensor._last_max_current != current_max):
+        _LOGGER.info(f"Max current changed from {sensor._last_max_current}A to {current_max}A - applying instantly")
+        config_changed = True
+    
+    # Store current config for next comparison
+    sensor._last_charging_mode = current_mode
+    sensor._last_min_current = current_min
+    sensor._last_max_current = current_max
+    
+    # If config changed, skip ramping and apply target immediately
+    if config_changed:
+        _LOGGER.debug(f"Config change detected - setting current to {state[conf_available_current]}A instantly (no ramping)")
+        sensor._last_ramp_value = state[conf_available_current]
+        sensor._last_ramp_time = now
+        return
     
     ramp_enabled = True
     if ramp_enabled:
