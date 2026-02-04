@@ -403,15 +403,14 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
                 voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
                 phases_for_profile = self._phases if self._phases else 1
-                limit_for_charger = round(limit * voltage* phases_for_profile, 1)
+                limit_for_charger = round(limit * voltage * phases_for_profile, 0)
                 rate_unit = "W"
                 self._last_set_power = limit_for_charger
                 self._last_set_current = None
             else:
                 # For Amps mode: Use detected phases, default to 1
-                # When using Amps with numberPhases, limit represents TOTAL current across all phases
                 phases_for_profile = self._phases if self._phases else 1
-                limit_for_charger = round(limit * phases_for_profile, 1)
+                limit_for_charger = round(limit , 1)
                 rate_unit = "A"
                 self._last_set_current = limit_for_charger
                 self._last_set_power = None
@@ -431,7 +430,6 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                         {
                             "startPeriod": 0,
                             "limit": limit_for_charger,
-                            "numberPhases": phases_for_profile  # Explicitly tell charger how to interpret the limit
                         }
                     ]
                 }
