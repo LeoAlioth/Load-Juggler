@@ -1,4 +1,17 @@
 {
+    "entity": {
+        "select": {
+            "distribution_mode": {
+                "name": "Način Porazdelitve",
+                "state": {
+                    "shared": "Deljeno",
+                    "priority": "Prioriteta",
+                    "sequential___optimized": "Zaporedno - Optimizirano",
+                    "sequential___strict": "Zaporedno - Strogo"
+                }
+            }
+        }
+    },
     "config": {
         "step": {
             "user": {

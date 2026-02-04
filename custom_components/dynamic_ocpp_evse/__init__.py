@@ -190,9 +190,8 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Check if entities need migration
     await _migrate_hub_entities_if_needed(hass, entry)
     
-    # Forward setup to hub platforms (number, switch, sensor for hub-level entities)
-    # Note: select platform removed from hub as charging mode moved to chargers
-    await hass.config_entries.async_forward_entry_setups(entry, ["number", "switch", "sensor"])
+    # Forward setup to hub platforms (number, switch, sensor, select for hub-level entities)
+    await hass.config_entries.async_forward_entry_setups(entry, ["number", "switch", "sensor", "select"])
     
     # Trigger discovery for unconfigured OCPP chargers
     await _discover_and_notify_chargers(hass, entry.entry_id)
@@ -351,8 +350,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     entry_type = entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
     
     if entry_type == ENTRY_TYPE_HUB:
-        # Unload hub platforms (select removed as charging mode moved to chargers)
-        for domain in ["number", "switch", "sensor"]:
+        # Unload hub platforms (includes select for distribution mode)
+        for domain in ["number", "switch", "sensor", "select"]:
             await hass.config_entries.async_forward_entry_unload(entry, domain)
         
         # Remove hub from data
@@ -409,22 +408,48 @@ def get_chargers_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigE
     return chargers
 
 
-def distribute_current_to_chargers(hass: HomeAssistant, hub_entry_id: str, total_available_current: float) -> dict:
+def distribute_current_to_chargers(
+    hass: HomeAssistant, 
+    hub_entry_id: str, 
+    total_available_current: float,
+    charger_targets: dict = None  # {charger_entry_id: mode_target_current}
+) -> dict:
     """
-    Distribute available current to chargers based on priority.
+    Distribute available current to chargers based on distribution mode and priority.
     
-    Algorithm:
-    1. Sort chargers by priority (1 = highest)
-    2. For each charger (in priority order):
-       - If remaining_current >= min_current: allocate min(remaining, max_current)
-       - Else: allocate 0 (charger waits)
-    3. After initial allocation, distribute any excess evenly among active chargers
+    Distribution Modes:
+    - Shared: Allocate minimums first, then distribute excess equally
+    - Priority: Allocate minimums first, then distribute excess by priority
+    - Sequential - Optimized: Allocate in priority order, use leftover if higher priority can't use it
+    - Sequential - Strict: Fully satisfy each charger in strict priority order before moving to next
     
-    Returns dict of {charger_entry_id: allocated_current}
+    Args:
+        hass: HomeAssistant instance
+        hub_entry_id: Hub config entry ID
+        total_available_current: Total current available for distribution (A)
+        charger_targets: Dict of mode-specific targets for each charger (optional, uses max_current if not provided)
+    
+    Returns:
+        dict of {charger_entry_id: allocated_current}
     """
     chargers = get_chargers_for_hub(hass, hub_entry_id)
     if not chargers:
         return {}
+    
+    # Get distribution mode from hub's select entity
+    hub_entry = hass.data[DOMAIN]["hubs"][hub_entry_id]["entry"]
+    hub_entity_id = hub_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+    distribution_mode_entity = f"select.{hub_entity_id}_distribution_mode"
+    distribution_mode_state = hass.states.get(distribution_mode_entity)
+    
+    if distribution_mode_state and distribution_mode_state.state in [
+        DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
+        DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT
+    ]:
+        distribution_mode = distribution_mode_state.state
+    else:
+        distribution_mode = DEFAULT_DISTRIBUTION_MODE
+        _LOGGER.debug(f"Distribution mode entity not found or invalid, using default: {distribution_mode}")
     
     # Build charger info list with priority
     charger_info = []
@@ -433,10 +458,18 @@ def distribute_current_to_chargers(hass: HomeAssistant, hub_entry_id: str, total
         max_current = entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
         priority = entry.data.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
         
+        # Determine effective max: use mode target if available, otherwise use configured max
+        if charger_targets and entry.entry_id in charger_targets:
+            mode_target = charger_targets[entry.entry_id]
+            effective_max = min(max_current, mode_target) if mode_target > 0 else 0
+        else:
+            effective_max = max_current
+        
         charger_info.append({
             "entry_id": entry.entry_id,
             "min_current": min_current,
             "max_current": max_current,
+            "effective_max": effective_max,
             "priority": priority,
             "allocated": 0,
         })
@@ -444,28 +477,57 @@ def distribute_current_to_chargers(hass: HomeAssistant, hub_entry_id: str, total
     # Sort by priority (lower number = higher priority)
     charger_info.sort(key=lambda x: x["priority"])
     
+    # Apply distribution algorithm based on mode
+    if distribution_mode == DISTRIBUTION_MODE_SHARED:
+        _distribute_shared(charger_info, total_available_current)
+    elif distribution_mode == DISTRIBUTION_MODE_PRIORITY:
+        _distribute_priority(charger_info, total_available_current)
+    elif distribution_mode == DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED:
+        _distribute_sequential_optimized(charger_info, total_available_current)
+    elif distribution_mode == DISTRIBUTION_MODE_SEQUENTIAL_STRICT:
+        _distribute_sequential_strict(charger_info, total_available_current)
+    
+    # Build result dict and update global allocations
+    result = {}
+    for charger in charger_info:
+        result[charger["entry_id"]] = round(charger["allocated"], 1)
+        hass.data[DOMAIN]["charger_allocations"][charger["entry_id"]] = round(charger["allocated"], 1)
+    
+    _LOGGER.debug(
+        f"Current distribution ({distribution_mode}) - Total: {total_available_current:.1f}A, "
+        f"Allocations: {', '.join([f'{c['priority']}: {c['allocated']:.1f}A' for c in charger_info])}"
+    )
+    
+    return result
+
+
+def _distribute_shared(charger_info: list, total_available_current: float):
+    """
+    Shared mode: Allocate minimums first, then distribute excess equally.
+    
+    Phase 1: Give each charger its minimum (if target allows)
+    Phase 2: Distribute remaining equally among active chargers
+    """
     remaining_current = total_available_current
     active_chargers = []
     
-    # Phase 1: Initial allocation based on priority
+    # Phase 1: Allocate minimums
     for charger in charger_info:
-        if remaining_current >= charger["min_current"]:
-            # Allocate minimum current
+        if charger["effective_max"] >= charger["min_current"] and remaining_current >= charger["min_current"]:
             charger["allocated"] = charger["min_current"]
             remaining_current -= charger["min_current"]
             active_chargers.append(charger)
         else:
-            # Not enough current for this charger
             charger["allocated"] = 0
     
-    # Phase 2: Distribute excess current evenly among active chargers
+    # Phase 2: Distribute excess equally
     if active_chargers and remaining_current > 0:
-        while remaining_current > 0.1:  # Small threshold to avoid infinite loop
+        while remaining_current > 0.1:
             distributed_any = False
             share = remaining_current / len(active_chargers)
             
             for charger in active_chargers:
-                room = charger["max_current"] - charger["allocated"]
+                room = charger["effective_max"] - charger["allocated"]
                 if room > 0:
                     add = min(share, room)
                     charger["allocated"] += add
@@ -474,16 +536,105 @@ def distribute_current_to_chargers(hass: HomeAssistant, hub_entry_id: str, total
             
             if not distributed_any:
                 break
+
+
+def _distribute_priority(charger_info: list, total_available_current: float):
+    """
+    Priority mode: Allocate minimums first, then distribute excess by priority.
     
-    # Build result dict and update global allocations
-    result = {}
+    Phase 1: Give each charger its minimum (in priority order, if target allows)
+    Phase 2: Distribute remaining in priority order (satisfy higher priority first)
+    """
+    remaining_current = total_available_current
+    
+    # Phase 1: Allocate minimums
     for charger in charger_info:
-        result[charger["entry_id"]] = round(charger["allocated"], 1)
-        hass.data[DOMAIN]["charger_allocations"][charger["entry_id"]] = round(charger["allocated"], 1)
+        if charger["effective_max"] >= charger["min_current"] and remaining_current >= charger["min_current"]:
+            charger["allocated"] = charger["min_current"]
+            remaining_current -= charger["min_current"]
+        else:
+            charger["allocated"] = 0
     
-    _LOGGER.debug("Current distribution - Total: %.1fA, Allocations: %s", total_available_current, result)
+    # Phase 2: Distribute excess by priority
+    if remaining_current > 0:
+        for charger in charger_info:
+            if charger["allocated"] > 0:  # Only distribute to active chargers
+                room = charger["effective_max"] - charger["allocated"]
+                if room > 0:
+                    add = min(remaining_current, room)
+                    charger["allocated"] += add
+                    remaining_current -= add
+                    
+                    if remaining_current <= 0.1:
+                        break
+
+
+def _distribute_sequential_optimized(charger_info: list, total_available_current: float):
+    """
+    Sequential - Optimized mode: Allocate in priority order, use leftover if higher priority can't use it.
     
-    return result
+    For each charger in priority order:
+    - Allocate up to min(remaining, effective_max)
+    - If allocated >= min_current, accept it; otherwise allocate 0 and continue
+    """
+    remaining_current = total_available_current
+    
+    for charger in charger_info:
+        if charger["effective_max"] <= 0:
+            # Mode says charger doesn't want any current
+            charger["allocated"] = 0
+            continue
+        
+        # Try to allocate up to effective_max
+        potential_allocation = min(remaining_current, charger["effective_max"])
+        
+        if potential_allocation >= charger["min_current"]:
+            # Can allocate at least minimum - accept it
+            charger["allocated"] = potential_allocation
+            remaining_current -= potential_allocation
+        else:
+            # Can't reach minimum - don't allocate anything
+            charger["allocated"] = 0
+
+
+def _distribute_sequential_strict(charger_info: list, total_available_current: float):
+    """
+    Sequential - Strict mode: Fully satisfy each charger before moving to next.
+    
+    For each charger in priority order:
+    - Only allocate if previous charger is fully satisfied (at effective_max)
+    - Allocate up to effective_max if possible
+    - If can't reach minimum, allocate 0
+    """
+    remaining_current = total_available_current
+    previous_satisfied = True  # First charger can always try
+    
+    for charger in charger_info:
+        if not previous_satisfied:
+            # Previous charger wasn't fully satisfied - skip this one
+            charger["allocated"] = 0
+            continue
+        
+        if charger["effective_max"] <= 0:
+            # Mode says charger doesn't want any current
+            charger["allocated"] = 0
+            previous_satisfied = True  # Consider it "satisfied" (doesn't want current anyway)
+            continue
+        
+        # Try to allocate up to effective_max
+        potential_allocation = min(remaining_current, charger["effective_max"])
+        
+        if potential_allocation >= charger["min_current"]:
+            # Can allocate at least minimum
+            charger["allocated"] = potential_allocation
+            remaining_current -= potential_allocation
+            
+            # Check if this charger is fully satisfied
+            previous_satisfied = (charger["allocated"] >= charger["effective_max"] - 0.1)
+        else:
+            # Can't reach minimum - don't allocate anything
+            charger["allocated"] = 0
+            previous_satisfied = False
 
 
 def get_charger_allocation(hass: HomeAssistant, charger_entry_id: str) -> float:

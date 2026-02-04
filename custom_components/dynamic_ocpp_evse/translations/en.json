@@ -1,4 +1,17 @@
 {
+    "entity": {
+        "select": {
+            "distribution_mode": {
+                "name": "Distribution Mode",
+                "state": {
+                    "shared": "Shared",
+                    "priority": "Priority",
+                    "sequential___optimized": "Sequential - Optimized",
+                    "sequential___strict": "Sequential - Strict"
+                }
+            }
+        }
+    },
     "config": {
         "step": {
             "user": {
