@@ -129,12 +129,12 @@ async def async_setup(hass: HomeAssistant, config: dict):
         reset_stack_level = max(1, configured_stack_level - 1)
 
         sequence = [
-            {"service": "ocpp.clear_profile", "data": {"device_id": ocpp_device_id}},
+            {"service": "ocpp.clear_profile", "data": {"devid": ocpp_device_id}},
             {"delay": {"seconds": 10}},
             {
                 "service": "ocpp.set_charge_rate",
                 "data": {
-                    "device_id": ocpp_device_id,
+                    "devid": ocpp_device_id,
                     "custom_profile": {
                         "chargingProfileId": 10,
                         "stackLevel": reset_stack_level,

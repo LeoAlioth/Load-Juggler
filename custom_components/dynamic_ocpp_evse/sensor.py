@@ -490,7 +490,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 "ocpp",
                 "set_charge_rate",
                 {
-                    "device_id": ocpp_device_id,
+                    "devid": ocpp_device_id,
                     "custom_profile": charging_profile
                 },
                 blocking=False,
