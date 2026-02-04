@@ -1,0 +1,55 @@
+name: Auto Pre-Release (dev / pre-release)
+
+on:
+  push:
+    branches:
+      - dev
+      - pre-release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine tag name
+        run: |
+          BRANCH="${GITEA_REF##*/}"
+          TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
+
+          if [ "$BRANCH" = "dev" ]; then
+            TAG_NAME="dev-${TIMESTAMP}"
+          elif [ "$BRANCH" = "pre-release" ]; then
+            VERSION=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
+            TAG_NAME="${VERSION}-pre-${TIMESTAMP}"
+          else
+            echo "Unsupported branch"
+            exit 1
+          fi
+
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+
+      - name: Create ZIP archive
+        run: |
+          # Create zip with full path for HACS (content_in_root: false)
+          # HACS expects: /manifest.json
+          cd custom_components/dynamic_ocpp_evse         
+          zip -r dynamic-ocpp-evse.zip .
+
+      - name: Create Gitea release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: Dynamic OCPP EVSE ${{ env.TAG_NAME }}
+          prerelease: true
+          draft: false
+          files: custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITEA_TOKEN }}
