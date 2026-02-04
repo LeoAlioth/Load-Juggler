@@ -312,14 +312,14 @@ def get_charge_context_values(sensor, state):
         evse_current = 0
     evse_current_per_phase = evse_current
     
-    # Battery values
-    battery_soc = state["battery_soc"]
-    battery_power = state["battery_power"]
-    battery_soc_target = state.get("battery_soc_target")
-    battery_soc_min = state.get("battery_soc_min", DEFAULT_BATTERY_SOC_MIN)
-    battery_soc_hysteresis = state.get("battery_soc_hysteresis", DEFAULT_BATTERY_SOC_HYSTERESIS)
-    battery_max_charge_power = state.get(CONF_BATTERY_MAX_CHARGE_POWER)
-    battery_max_discharge_power = state.get(CONF_BATTERY_MAX_DISCHARGE_POWER)
+    # Battery values - ensure numeric types
+    battery_soc = float(state["battery_soc"]) if state["battery_soc"] is not None and is_number(state["battery_soc"]) else None
+    battery_power = float(state["battery_power"]) if state["battery_power"] is not None and is_number(state["battery_power"]) else None
+    battery_soc_target = float(state.get("battery_soc_target")) if state.get("battery_soc_target") is not None and is_number(state.get("battery_soc_target")) else None
+    battery_soc_min = float(state.get("battery_soc_min", DEFAULT_BATTERY_SOC_MIN)) if is_number(state.get("battery_soc_min", DEFAULT_BATTERY_SOC_MIN)) else DEFAULT_BATTERY_SOC_MIN
+    battery_soc_hysteresis = float(state.get("battery_soc_hysteresis", DEFAULT_BATTERY_SOC_HYSTERESIS)) if is_number(state.get("battery_soc_hysteresis", DEFAULT_BATTERY_SOC_HYSTERESIS)) else DEFAULT_BATTERY_SOC_HYSTERESIS
+    battery_max_charge_power = float(state.get(CONF_BATTERY_MAX_CHARGE_POWER)) if state.get(CONF_BATTERY_MAX_CHARGE_POWER) is not None and is_number(state.get(CONF_BATTERY_MAX_CHARGE_POWER)) else None
+    battery_max_discharge_power = float(state.get(CONF_BATTERY_MAX_DISCHARGE_POWER)) if state.get(CONF_BATTERY_MAX_DISCHARGE_POWER) is not None and is_number(state.get(CONF_BATTERY_MAX_DISCHARGE_POWER)) else None
     allow_grid_charging = state.get("allow_grid_charging", True)
     
     context = ChargeContext(
