@@ -69,10 +69,12 @@ def apply_ramping(sensor, state, target_evse, min_current, conf_evse_current_off
     ramp_limit_up = 0.1    # Amps per second (ramp up) - slightly faster to reduce lag
     ramp_limit_down = 0.2  # Amps per second (ramp down, faster for safety)
     
-    # Deadband to prevent oscillations - don't change if target is within this range of current value
-    deadband = 0.5  # Amps - changes smaller than this are ignored
+    # Schmitt trigger hysteresis to prevent oscillations
+    # Only start ramping when outside the hysteresis band around target
+    hysteresis = 0.2  # Amps - hysteresis band in both directions
     
     now = datetime.datetime.now()
+
     
     # Check for configuration changes (skip ramping if config changed)
     from ..const import CONF_CHARING_MODE, CONF_MIN_CURRENT, CONF_MAX_CURRENT
@@ -116,27 +118,39 @@ def apply_ramping(sensor, state, target_evse, min_current, conf_evse_current_off
 
         if sensor._last_ramp_value is not None and sensor._last_ramp_time is not None:
             dt = (now - sensor._last_ramp_time).total_seconds()
-            delta = state[conf_available_current] - sensor._last_ramp_value
+            target = state[conf_available_current]
+            current = sensor._last_ramp_value
             
-            # Apply deadband - don't change if within deadband unless it's a significant change
-            if abs(delta) < deadband:
-                # Keep current value unchanged to prevent oscillations
-                ramped_value = sensor._last_ramp_value
-                _LOGGER.debug(f"Deadband applied: staying at {ramped_value}A (target {state[conf_available_current]}A, delta {delta}A)")
-            elif delta > 0:
+            # Schmitt trigger: Calculate thresholds
+            lower_threshold = target - hysteresis  # Start ramping up if below this
+            upper_threshold = target + hysteresis  # Start ramping down if above this
+            
+            if current < lower_threshold:
+                # Below lower threshold: RAMP UP to target
                 max_delta = ramp_limit_up * max(dt, 0.1)
+                delta = target - current
                 if delta > max_delta:
-                    ramped_value = sensor._last_ramp_value + max_delta
-                    _LOGGER.debug(f"Ramping up: {sensor._last_ramp_value} -> {ramped_value} (requested {state[conf_available_current]})")
+                    ramped_value = current + max_delta
+                    _LOGGER.debug(f"Schmitt trigger: Ramping up {current:.2f}A -> {ramped_value:.2f}A (target {target}A, threshold {lower_threshold:.2f}A)")
                 else:
-                    ramped_value = state[conf_available_current]
-            else:
+                    ramped_value = target
+                    _LOGGER.debug(f"Schmitt trigger: Reached target {target}A from below")
+                    
+            elif current > upper_threshold:
+                # Above upper threshold: RAMP DOWN to target
                 max_delta = ramp_limit_down * max(dt, 0.1)
-                if abs(delta) > max_delta:
-                    ramped_value = sensor._last_ramp_value - max_delta
-                    _LOGGER.debug(f"Ramping down: {sensor._last_ramp_value} -> {ramped_value} (requested {state[conf_available_current]})")
+                delta = current - target
+                if delta > max_delta:
+                    ramped_value = current - max_delta
+                    _LOGGER.debug(f"Schmitt trigger: Ramping down {current:.2f}A -> {ramped_value:.2f}A (target {target}A, threshold {upper_threshold:.2f}A)")
                 else:
-                    ramped_value = state[conf_available_current]
+                    ramped_value = target
+                    _LOGGER.debug(f"Schmitt trigger: Reached target {target}A from above")
+                    
+            else:
+                # Within hysteresis band: HOLD (no oscillation)
+                ramped_value = current
+                _LOGGER.debug(f"Schmitt trigger: Holding at {current:.2f}A (within {lower_threshold:.2f}A - {upper_threshold:.2f}A band, target {target}A)")
                     
         sensor._last_ramp_value = ramped_value
         sensor._last_ramp_time = now
