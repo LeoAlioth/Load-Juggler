@@ -1,18 +1,103 @@
 # Test scenarios for EVSE distribution
-# Each scenario tests specific conditions
+# Naming: site_phases-chargers-mode-distribution-battery-context
+# Example: 1ph-1c-solar-prio-with-bat-normal
 
 scenarios:
   # ===== SINGLE PHASE SCENARIOS =====
   
-  - name: "1ph-1charger-solar-with-battery"
-    description: "Single phase, 1 charger, solar mode, with battery"
+  - name: "1ph-1c-solar-prio-with-bat-bellow-target"
+    description: "Single phase, 1 charger, solar mode, with battery, normal conditions"
     site:
       voltage: 230
+      main_breaker_rating: 63
       num_phases: 1
-      total_export_current: 15.0  # 15A export available
+      solar_production: 4140  # 18A at 230V
+      phase_a_consumption: 3.0  # Home load before EVSE
+      phase_b_consumption: 0.0
+      phase_c_consumption: 0.0
       battery_soc: 75
       battery_soc_min: 20
       battery_soc_target: 80
+      battery_max_charge_power: 4600  # 20A at 230V
+      battery_max_discharge_power: 4600  # 20A at 230V 
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        mode: "Solar"
+        priority: 1
+    expected: # 
+      charger_1:
+        target: 0  # battery not at target SOC, so no charging (18A solar - 3A load = 15A charging, but solar mode with battery below target prevents use)
+
+  - name: "1ph-1c-solar-prio-with-bat-at-target"
+    description: "Single phase, 1 charger, solar mode, with battery, normal conditions"
+    site:
+      voltage: 230
+      main_breaker_rating: 63
+      num_phases: 1
+      solar_production: 4140  # 18A at 230V
+      phase_a_consumption: 3.0  # Home load before EVSE
+      phase_b_consumption: 0.0
+      phase_c_consumption: 0.0
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4600  # 20A at 230V
+      battery_max_discharge_power: 4600  # 20A at 230V
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        mode: "Solar"
+        priority: 1
+    expected: # 
+      charger_1:
+        target: 15.0  # 18A solar - 3A consumption
+
+  - name: "1ph-1c-solar-prio-with-bat-above-target"
+    description: "Single phase, 1 charger, solar mode, with battery, normal conditions"
+    site:
+      voltage: 230
+      main_breaker_rating: 63
+      num_phases: 1
+      solar_production: 2300  # 10A at 230V
+      phase_a_consumption: 3.0  # Home load before EVSE
+      phase_b_consumption: 0.0
+      phase_c_consumption: 0.0
+      battery_soc: 90
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4600  # 20A at 230V
+      battery_max_discharge_power: 4600  # 20A at 230V
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        mode: "Solar"
+        priority: 1
+    expected: # 
+      charger_1:
+        target: 27.0  # 10A solar + 20A from battery - 3A consumption
+  
+  - name: "1ph-1c-solar-prio-no-bat-normal"
+    description: "Single phase, 1 charger, solar mode, no battery"
+    site:
+      voltage: 230
+      main_breaker_rating: 63
+      num_phases: 1
+      solar_production: 2300  # 10A at 230V
+      phase_a_consumption: 2.0  # Home load
+      phase_b_consumption: 0.0
+      phase_c_consumption: 0.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -22,47 +107,49 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 15.0  # Gets all 15A
+        target: 8.0  # 10A solar - 2A consumption = 8A
   
-  - name: "1ph-1charger-solar-no-battery"
-    description: "Single phase, 1 charger, solar mode, no battery"
+  - name: "1ph-1c-solar-prio-no-bat-insufficient"
+    description: "Single phase, 1 charger, insufficient solar (below min)"
     site:
       voltage: 230
+      main_breaker_rating: 63
       num_phases: 1
-      total_export_current: 8.0
+      solar_production: 1150  # 5A at 230V
+      phase_a_consumption: 1.0  # Home load
+      phase_b_consumption: 0.0
+      phase_c_consumption: 0.0
       battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 1
         mode: "Solar"
+        priority: 1
     expected:
       charger_1:
-        target: 8.0
+        target: 0  # 5A - 1A = 4A, below 6A minimum
   
-  - name: "1ph-1charger-insufficient-solar"
-    description: "Single phase, insufficient solar (below min)"
+  - name: "1ph-2c-solar-prio-with-bat-shared"
+    description: "Single phase, 2 chargers both solar, verify no double counting"
     site:
       voltage: 230
-      total_export_current: 4.0  # Below 6A min
-      battery_soc: null
-    chargers:
-      - entity_id: "charger_1"
-        min_current: 6
-        max_current: 16
-        phases: 1
-        mode: "Solar"
-    expected:
-      charger_1:
-        target: 0  # Below minimum
-  
-  - name: "1ph-2chargers-solar-double-count-check"
-    description: "Single phase, 2 chargers both solar - verify no double counting"
-    site:
-      voltage: 230
-      total_export_current: 20.0
+      main_breaker_rating: 63
+      num_phases: 1
+      solar_production: 5290  # 23A at 230V  
+      phase_a_consumption: 3.0  # Home load
+      phase_b_consumption: 0.0
+      phase_c_consumption: 0.0
       battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -78,37 +165,53 @@ scenarios:
         priority: 2
     expected:
       charger_1:
-        target: 16  # Limited by max, not 20A
+        target: 16  # 23A - 3A = 20A available, limited by max
       charger_2:
         target: 16  # Both see same 20A resource
   
   # ===== THREE PHASE SCENARIOS =====
   
-  - name: "3ph-1charger-solar-with-battery"
+  - name: "3ph-1c-solar-prio-with-bat-normal"
     description: "3-phase, 1 charger, solar mode, with battery"
     site:
       voltage: 230
+      main_breaker_rating: 63
       num_phases: 3
-      total_export_current: 30.0  # 30A total = 10A per phase
+      solar_production: 7590  # 33A total (11A per phase)
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0  
+      phase_c_consumption: 1.0  # 3A total consumption
       battery_soc: 75
       battery_soc_min: 20
       battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
         mode: "Solar"
+        priority: 1
     expected:
       charger_1:
-        target: 10.0  # 30A / 3 phases = 10A per phase
+        target: 10.0  # 33A - 3A = 30A / 3 phases = 10A per phase
   
-  - name: "3ph-2chargers-solar-shared"
-    description: "3-phase, 2 chargers, both solar - should share same resource"
+  - name: "3ph-2c-solar-prio-with-bat-shared"
+    description: "3-phase, 2 chargers, both solar, should share same resource"
     site:
       voltage: 230
-      total_export_current: 24.0  # 24A total = 8A per phase
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 6210  # 27A total (9A per phase)
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total
       battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -124,16 +227,25 @@ scenarios:
         priority: 2
     expected:
       charger_1:
-        target: 8.0  # Both see 24/3 = 8A per phase
+        target: 8.0  # 27A - 3A = 24A / 3 = 8A per phase
       charger_2:
-        target: 8.0
+        target: 8.0  # Both see same resource
   
-  - name: "3ph-2chargers-mixed-modes"
-    description: "3-phase, Standard + Solar modes"
+  - name: "3ph-2c-mixed-prio-with-bat-unbalanced"
+    description: "3-phase, Standard + Solar modes, unbalanced consumption"
     site:
       voltage: 230
-      total_export_current: 18.0  # 6A per phase
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 4830  # 21A total (7A per phase)
+      phase_a_consumption: 0.5
+      phase_b_consumption: 0.5
+      phase_c_consumption: 1.0  # 2A total (unbalanced)
       battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -149,111 +261,163 @@ scenarios:
         priority: 2
     expected:
       charger_1:
-        target: 32  # Wants max
+        target: 32  # Standard wants max
       charger_2:
-        target: 6.0  # Gets 18/3 = 6A (exactly min)
+        target: 6.3  # 21A - 2A = 19A / 3 phases = 6.33A per phase
   
   # ===== ECO MODE SCENARIOS =====
   
-  - name: "3ph-eco-battery-above-target"
+  - name: "3ph-1c-eco-prio-with-bat-high-soc"
     description: "Eco mode with battery above target"
     site:
       voltage: 230
-      total_export_current: 12.0
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 3450  # 15A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total
       battery_soc: 85  # Above 80% target
       battery_soc_min: 20
       battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
         mode: "Eco"
+        priority: 1
     expected:
       charger_1:
         target: 16  # Battery above target = full speed
   
-  - name: "3ph-eco-battery-below-min"
+  - name: "3ph-1c-eco-prio-with-bat-low-soc"
     description: "Eco mode with battery below minimum"
     site:
       voltage: 230
-      total_export_current: 20.0
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 5290  # 23A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total
       battery_soc: 15  # Below 20% min
       battery_soc_min: 20
       battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
         mode: "Eco"
+        priority: 1
     expected:
       charger_1:
         target: 0  # Battery too low = no charging
   
-  - name: "3ph-eco-battery-between"
+  - name: "3ph-1c-eco-prio-with-bat-mid-soc"
     description: "Eco mode with battery between min and target"
     site:
       voltage: 230
-      total_export_current: 15.0  # 5A per phase
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 4140  # 18A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, 15A export = 5A per phase
       battery_soc: 50  # Between 20-80%
       battery_soc_min: 20
       battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
         mode: "Eco"
+        priority: 1
     expected:
       charger_1:
         target: 6  # Uses min_current (export=5A < min=6A)
   
   # ===== EXCESS MODE SCENARIOS =====
   
-  - name: "3ph-excess-above-threshold"
+  - name: "3ph-1c-excess-prio-with-bat-above-threshold"
     description: "Excess mode with export above threshold"
     site:
       voltage: 230
-      total_export_power: 15000  # 15kW
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 18000  # Total 18kW
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, 18k - 690W = 17310W export
       excess_export_threshold: 10000  # 10kW
       battery_soc: 85
+      battery_soc_min: 20
       battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
         mode: "Excess"
+        priority: 1
     expected:
       charger_1:
-        target: 7.2  # (15000-10000)/230/3 = 7.25A
+        target: 10.6  # (17310W - 10000W) / 230V / 3ph = 10.6A
   
-  - name: "3ph-excess-below-threshold"
+  - name: "3ph-1c-excess-prio-with-bat-below-threshold"
     description: "Excess mode with export below threshold"
     site:
       voltage: 230
-      total_export_power: 8000  # 8kW
-      excess_export_threshold: 10000
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 10350  # Total ~10.35kW
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, ~8kW export
+      excess_export_threshold: 10000  # 10kW
       battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
         mode: "Excess"
+        priority: 1
     expected:
       charger_1:
         target: 0  # Below threshold
   
   # ===== MULTI-CHARGER SCENARIOS =====
   
-  - name: "3ph-3chargers-standard"
+  - name: "3ph-3c-standard-prio-with-bat-normal"
     description: "3 chargers, all standard mode"
     site:
       voltage: 230
-      total_export_current: 40.0
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 11500  # 50A total
+      phase_a_consumption: 3.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 4.0  # 10A total, 40A export
       battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -281,12 +445,21 @@ scenarios:
       charger_3:
         target: 10
   
-  - name: "3ph-mixed-1ph-and-3ph-chargers"
+  - name: "3ph-2c-solar-prio-with-bat-mixed-phases"
     description: "Mix of 1-phase and 3-phase chargers"
     site:
       voltage: 230
-      total_export_current: 30.0
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 7590  # 33A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, 30A export
       battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -308,75 +481,175 @@ scenarios:
   
   # ===== NO BATTERY SCENARIOS =====
   
-  - name: "3ph-no-battery-solar"
+  - name: "3ph-1c-solar-prio-no-bat-normal"
     description: "Solar mode without battery configured"
     site:
       voltage: 230
-      total_export_current: 21.0
-      battery_soc: null  # No battery
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 5520  # 24A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, 21A export
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
         mode: "Solar"
+        priority: 1
     expected:
       charger_1:
         target: 7.0  # 21/3 = 7A
   
-  - name: "3ph-no-battery-eco"
-    description: "Eco mode without battery - should use export"
+  - name: "3ph-1c-eco-prio-no-bat-normal"
+    description: "Eco mode without battery, should use export"
     site:
       voltage: 230
-      total_export_current: 24.0
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 6210  # 27A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, 24A export
       battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
         mode: "Eco"
+        priority: 1
     expected:
       charger_1:
         target: 8.0  # 24/3 = 8A (no battery = uses export)
   
   # ===== EDGE CASES =====
   
-  - name: "3ph-no-export-available"
+  - name: "3ph-2c-mixed-prio-with-bat-no-solar"
     description: "No solar export available"
     site:
       voltage: 230
-      total_export_current: 0
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 690  # 3A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, 0A export
       battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
         mode: "Solar"
+        priority: 1
       - entity_id: "charger_2"
         min_current: 6
         max_current: 16
         phases: 3
         mode: "Standard"
+        priority: 2
     expected:
       charger_1:
         target: 0  # No export
       charger_2:
         target: 16  # Standard wants max
   
-  - name: "3ph-import-scenario"
+  - name: "3ph-1c-solar-prio-with-bat-importing"
     description: "Site importing (negative export)"
     site:
       voltage: 230
-      total_export_current: -10.0  # Importing
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 0  # No solar
+      phase_a_consumption: 3.0
+      phase_b_consumption: 4.0
+      phase_c_consumption: 3.0  # 10A total, importing
       battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
         mode: "Solar"
+        priority: 1
     expected:
       charger_1:
         target: 0  # No export = no charging
+  
+  # ===== OSCILLATION TESTS (Multi-iteration with feedback) =====
+  
+  - name: "3ph-1c-solar-prio-with-bat-oscillation"
+    description: "Oscillation test: 3-phase solar with feedback simulation"
+    iterations: 5
+    max_variation: 0.3
+    site:
+      voltage: 230
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 6900  # 30A total = 10A per phase
+      phase_a_consumption: 2.0  # Unbalanced load
+      phase_b_consumption: 3.0
+      phase_c_consumption: 1.0  # 6A total
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        mode: "Solar"
+        priority: 1
+    expected:
+      charger_1:
+        target: 8.0  # Stabilizes at 8A (30A - 6A = 24A / 3 = 8A)
+  
+  - name: "1ph-1c-solar-prio-with-bat-oscillation"
+    description: "Oscillation test: Single-phase charger on 3-phase site"
+    iterations: 5
+    max_variation: 0.3
+    site:
+      voltage: 230
+      main_breaker_rating: 63
+      num_phases: 3
+      solar_production: 6900  # 30A total
+      phase_a_consumption: 5.0  # Higher load on phase A
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0  # 9A total
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        connected_to_phase: "B"
+        mode: "Solar"
+        priority: 1
+    expected:
+      charger_1:
+        target: 16  # Sees total 30A - 9A = 21A export (limited by max=16A)

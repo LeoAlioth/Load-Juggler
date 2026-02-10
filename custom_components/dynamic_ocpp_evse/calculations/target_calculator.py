@@ -7,13 +7,22 @@ race conditions between multiple chargers.
 """
 
 import logging
-from .context import SiteContext, ChargerContext
-from ..const import (
-    CHARGING_MODE_STANDARD,
-    CHARGING_MODE_ECO,
-    CHARGING_MODE_SOLAR,
-    CHARGING_MODE_EXCESS,
-)
+
+# Try relative imports first (for HA), fall back to absolute (for tests)
+try:
+    from .models import SiteContext, ChargerContext
+    from ..const import (
+        CHARGING_MODE_STANDARD,
+        CHARGING_MODE_ECO,
+        CHARGING_MODE_SOLAR,
+        CHARGING_MODE_EXCESS,
+    )
+except ImportError:
+    from models import SiteContext, ChargerContext
+    CHARGING_MODE_STANDARD = "Standard"
+    CHARGING_MODE_ECO = "Eco"
+    CHARGING_MODE_SOLAR = "Solar"
+    CHARGING_MODE_EXCESS = "Excess"
 
 _LOGGER = logging.getLogger(__name__)
 
