@@ -11,7 +11,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
-      distribution_mode: priority
+      distribution_mode: Priority
       solar_production: 4140  # 18A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
       phase_b_consumption: 0.0
@@ -38,6 +38,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
+      distribution_mode: Priority
       solar_production: 4140  # 18A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
       phase_b_consumption: 0.0
@@ -64,6 +65,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
+      distribution_mode: Priority
       solar_production: 2300  # 10A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
       phase_b_consumption: 0.0
@@ -90,6 +92,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
+      distribution_mode: Priority
       solar_production: 2300  # 10A at 230V
       phase_a_consumption: 2.0  # Home load
       phase_b_consumption: 0.0
@@ -116,6 +119,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
+      distribution_mode: Priority
       solar_production: 1150  # 5A at 230V
       phase_a_consumption: 1.0  # Home load
       phase_b_consumption: 0.0
@@ -142,6 +146,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
+      distribution_mode: Priority
       solar_production: 5290  # 23A at 230V  
       phase_a_consumption: 3.0  # Home load
       phase_b_consumption: 0.0
@@ -178,6 +183,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 7590  # 33A total (11A per phase)
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0  
@@ -204,6 +210,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 6210  # 27A total (9A per phase)
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -238,6 +245,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 4830  # 21A total (7A per phase)
       phase_a_consumption: 0.5
       phase_b_consumption: 0.5
@@ -274,6 +282,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 3450  # 15A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -300,6 +309,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 5290  # 23A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -326,6 +336,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 4140  # 18A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -354,6 +365,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 18000  # Total 18kW
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -381,6 +393,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 10350  # Total ~10.35kW
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -410,6 +423,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 11500  # 50A total
       phase_a_consumption: 3.0
       phase_b_consumption: 3.0
@@ -452,6 +466,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 7590  # 33A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -488,6 +503,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 5520  # 24A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -514,6 +530,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 6210  # 27A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -542,6 +559,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 690  # 3A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -576,6 +594,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 0  # No solar
       phase_a_consumption: 3.0
       phase_b_consumption: 4.0
@@ -606,6 +625,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 6900  # 30A total = 10A per phase
       phase_a_consumption: 2.0  # Unbalanced load
       phase_b_consumption: 3.0
@@ -634,6 +654,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
+      distribution_mode: Priority
       solar_production: 6900  # 30A total
       phase_a_consumption: 5.0  # Higher load on phase A
       phase_b_consumption: 2.0
