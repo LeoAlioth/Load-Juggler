@@ -11,7 +11,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 4140  # 18A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
       phase_b_consumption: 0.0
@@ -26,7 +27,6 @@ scenarios:
         min_current: 6
         max_current: 32
         phases: 1
-        mode: "Solar"
         priority: 1
     expected: # Manually verified expected result
       charger_1:
@@ -38,7 +38,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 4140  # 18A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
       phase_b_consumption: 0.0
@@ -53,7 +54,6 @@ scenarios:
         min_current: 6
         max_current: 32
         phases: 1
-        mode: "Solar"
         priority: 1
     expected: # Manually verified expected result 
       charger_1:
@@ -65,7 +65,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 2300  # 10A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
       phase_b_consumption: 0.0
@@ -80,7 +81,6 @@ scenarios:
         min_current: 6
         max_current: 32
         phases: 1
-        mode: "Solar"
         priority: 1
     expected: # Manually verified expected result
       charger_1:
@@ -92,7 +92,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 2300  # 10A at 230V
       phase_a_consumption: 2.0  # Home load
       phase_b_consumption: 0.0
@@ -107,7 +108,6 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 1
     expected: # Manually verified expected result
       charger_1:
@@ -119,7 +119,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 1150  # 5A at 230V
       phase_a_consumption: 1.0  # Home load
       phase_b_consumption: 0.0
@@ -134,7 +135,6 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 1
     expected: # Manually verified expected result
       charger_1:
@@ -146,7 +146,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 5290  # 23A at 230V  
       phase_a_consumption: 3.0  # Home load
       phase_b_consumption: 0.0
@@ -161,13 +162,11 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 1
       - entity_id: "charger_2"
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 2
     expected:  # Manually verified expected result
       charger_1:
@@ -181,7 +180,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 2300  # 10A at 230V  
       phase_a_consumption: 3.0  # Home load
       phase_b_consumption: 0.0
@@ -196,13 +196,11 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 1
       - entity_id: "charger_2"
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 2
     expected:  # Manually verified expected result
       charger_1:
@@ -231,13 +229,11 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 1
       - entity_id: "charger_2"
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 2
     expected:  # Manually verified expected result
       charger_1:
@@ -251,7 +247,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       num_phases: 1
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 6900  # 30A at 230V  
       phase_a_consumption: 3.0  # Home load
       phase_b_consumption: 0.0
@@ -266,13 +263,11 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 1
       - entity_id: "charger_2"
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 2
     expected:  # Manually verified expected result
       charger_1:
@@ -301,13 +296,11 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 1
       - entity_id: "charger_2"
         min_current: 6
         max_current: 16
         phases: 1
-        mode: "Solar"
         priority: 2
     expected:  # Manually verified expected result
       charger_1:
@@ -324,7 +317,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 7590  # 33A total (11A per phase)
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0  
@@ -339,7 +333,6 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Solar"
         priority: 1
     expected: # Manually verified expected result
       charger_1:
@@ -351,7 +344,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 6210  # 27A total (9A per phase)
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -359,61 +353,52 @@ scenarios:
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Solar"
         priority: 1
       - entity_id: "charger_2"
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Solar"
         priority: 2
-    expected:
+    expected: # Manually verified expected result
       charger_1:
-        target: 8.0  # 27A - 3A = 24A / 3 = 8A per phase
+        target: 8.0  # 24A total available after load, mimimum of both charers would be 6A per phase each, which totals 36A, so not enough for both to charge at minimum. Higher priority charger gets all 8A per phase available after load.
       charger_2:
-        target: 8.0  # Both see same resource
+        target: 0
   
-  - name: "3ph-2c-mixed-prio-with-bat-unbalanced"
-    description: "3-phase, Standard + Solar modes, unbalanced consumption"
+  - name: "3ph-2c-solar-prio-with-bat-unbalanced"
+    description: "3-phase, Solar mode, unbalanced consumption"
     site:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
-      solar_production: 4830  # 21A total (7A per phase)
+      distribution_mode: priority
+      charging_mode: Solar
+      solar_production: 6900  # 30A total (10A per phase)
       phase_a_consumption: 0.5
       phase_b_consumption: 0.5
       phase_c_consumption: 1.0  # 2A total (unbalanced)
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 32
         phases: 3
-        mode: "Standard"
         priority: 1
-      - entity_id: "charger_2"
-        min_current: 6
-        max_current: 16
-        phases: 3
-        mode: "Solar"
-        priority: 2
-    expected:
+    expected: # Manually verified expected result
       charger_1:
-        target: 32  # Standard wants max
-      charger_2:
-        target: 6.3  # 21A - 2A = 19A / 3 phases = 6.33A per phase
+        target: 9  # phases have 9.5, 9.5, 9A available after load, which is above minimum and enough for 9A per phase
+
   
   # ===== ECO MODE SCENARIOS =====
   
@@ -423,7 +408,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Eco
       solar_production: 3450  # 15A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -431,18 +417,17 @@ scenarios:
       battery_soc: 85  # Above 80% target
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140 # 18A at 230V
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Eco"
         priority: 1
-    expected:
+    expected: # Manually verified expected result
       charger_1:
-        target: 16  # Battery above target = full speed
+        target: 10 # available is 15A+18A from battery - 3A load = 30A. Even distribution so 10A per phase is available.
   
   - name: "3ph-1c-eco-prio-with-bat-low-soc"
     description: "Eco mode with battery below minimum"
@@ -450,22 +435,22 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
-      solar_production: 5290  # 23A total
+      distribution_mode: priority
+      charging_mode: Eco
+      solar_production: 3450  # 15 total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
       phase_c_consumption: 1.0  # 3A total
       battery_soc: 15  # Below 20% min
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Eco"
         priority: 1
     expected:
       charger_1:
@@ -477,7 +462,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 4140  # 18A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -485,8 +471,8 @@ scenarios:
       battery_soc: 50  # Between 20-80%
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -506,7 +492,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 18000  # Total 18kW
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -515,8 +502,8 @@ scenarios:
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -534,7 +521,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 10350  # Total ~10.35kW
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -543,8 +531,8 @@ scenarios:
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -564,7 +552,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 11500  # 50A total
       phase_a_consumption: 3.0
       phase_b_consumption: 3.0
@@ -572,8 +561,8 @@ scenarios:
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -607,7 +596,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 7590  # 33A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -615,20 +605,18 @@ scenarios:
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Solar"
         priority: 1
       - entity_id: "charger_2"
         min_current: 6
         max_current: 16
         phases: 1  # Single phase charger
-        mode: "Solar"
         priority: 2
     expected:
       charger_1:
@@ -644,7 +632,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 5520  # 24A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -659,7 +648,6 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Solar"
         priority: 1
     expected:
       charger_1:
@@ -671,7 +659,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 6210  # 27A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -700,7 +689,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 690  # 3A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -708,14 +698,13 @@ scenarios:
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Solar"
         priority: 1
       - entity_id: "charger_2"
         min_current: 6
@@ -735,7 +724,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 0  # No solar
       phase_a_consumption: 3.0
       phase_b_consumption: 4.0
@@ -743,14 +733,13 @@ scenarios:
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Solar"
         priority: 1
     expected:
       charger_1:
@@ -766,7 +755,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 6900  # 30A total = 10A per phase
       phase_a_consumption: 2.0  # Unbalanced load
       phase_b_consumption: 3.0
@@ -774,14 +764,13 @@ scenarios:
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Solar"
         priority: 1
     expected:
       charger_1:
@@ -795,7 +784,8 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       num_phases: 3
-      distribution_mode: Priority
+      distribution_mode: priority
+      charging_mode: Solar
       solar_production: 6900  # 30A total
       phase_a_consumption: 5.0  # Higher load on phase A
       phase_b_consumption: 2.0
@@ -803,15 +793,14 @@ scenarios:
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 1
         connected_to_phase: "B"
-        mode: "Solar"
         priority: 1
     expected:
       charger_1:
