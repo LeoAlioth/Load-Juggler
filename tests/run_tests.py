@@ -105,55 +105,47 @@ def build_site_from_scenario(scenario):
     site_data = scenario['site']
     voltage = site_data.get('voltage', 230)
     
-    # Handle per-phase or total export
-    if 'solar_production' in site_data:
-        # New format: solar production + per-phase consumption
-        solar_total = site_data.get('solar_production', 0)
-        phase_a_cons = site_data.get('phase_a_consumption', 0)
-        phase_b_cons = site_data.get('phase_b_consumption', 0)
-        phase_c_cons = site_data.get('phase_c_consumption', 0)
-        
-        # Calculate initial export per phase (solar evenly distributed)
-        solar_per_phase_amps = (solar_total / 3) / voltage
-        phase_a_export = max(0, solar_per_phase_amps - phase_a_cons)
-        phase_b_export = max(0, solar_per_phase_amps - phase_b_cons)
-        phase_c_export = max(0, solar_per_phase_amps - phase_c_cons)
-        
-        total_export_current = phase_a_export + phase_b_export + phase_c_export
-        total_export_power = total_export_current * voltage
-        
-        site = SiteContext(
-            voltage=voltage,
-            main_breaker_rating=site_data.get('main_breaker_rating', 63),
-            phase_a_consumption=phase_a_cons,
-            phase_b_consumption=phase_b_cons,
-            phase_c_consumption=phase_c_cons,
-            phase_a_export=phase_a_export,
-            phase_b_export=phase_b_export,
-            phase_c_export=phase_c_export,
-            solar_production_total=solar_total,
-            total_export_current=total_export_current,
-            total_export_power=total_export_power,
-            battery_soc=site_data.get('battery_soc'),
-            battery_soc_min=site_data.get('battery_soc_min', 20),
-            battery_soc_target=site_data.get('battery_soc_target', 80),
-            excess_export_threshold=site_data.get('excess_export_threshold', 13000),
-            battery_max_charge_power=site_data.get('battery_max_charge_power', 5000),
-            battery_max_discharge_power=site_data.get('battery_max_discharge_power', 5000),
-            distribution_mode=site_data.get('distribution_mode', 'priority'),
-        )
-    else:
-        # Legacy format: total_export_current
-        site = SiteContext(
-            voltage=voltage,
-            total_export_current=site_data.get('total_export_current', 0),
-            total_export_power=site_data.get('total_export_power', 0),
-            battery_soc=site_data.get('battery_soc'),
-            battery_soc_min=site_data.get('battery_soc_min', 20),
-            battery_soc_target=site_data.get('battery_soc_target', 80),
-            excess_export_threshold=site_data.get('excess_export_threshold', 13000),
-            battery_max_charge_power=site_data.get('battery_max_charge_power', 5000),
-        )
+    # Solar production + per-phase consumption format
+    solar_total = site_data.get('solar_production', 0)
+    phase_a_cons = site_data.get('phase_a_consumption', 0)
+    phase_b_cons = site_data.get('phase_b_consumption', 0)
+    phase_c_cons = site_data.get('phase_c_consumption', 0)
+    
+    # Calculate initial export per phase (solar evenly distributed)
+    solar_per_phase_amps = (solar_total / 3) / voltage
+    phase_a_export = max(0, solar_per_phase_amps - phase_a_cons)
+    phase_b_export = max(0, solar_per_phase_amps - phase_b_cons)
+    phase_c_export = max(0, solar_per_phase_amps - phase_c_cons)
+    
+    total_export_current = phase_a_export + phase_b_export + phase_c_export
+    total_export_power = total_export_current * voltage
+    
+    site = SiteContext(
+        voltage=voltage,
+        main_breaker_rating=site_data.get('main_breaker_rating', 63),
+        phase_a_consumption=phase_a_cons,
+        phase_b_consumption=phase_b_cons,
+        phase_c_consumption=phase_c_cons,
+        phase_a_export=phase_a_export,
+        phase_b_export=phase_b_export,
+        phase_c_export=phase_c_export,
+        solar_production_total=solar_total,
+        total_export_current=total_export_current,
+        total_export_power=total_export_power,
+        battery_soc=site_data.get('battery_soc'),
+        battery_soc_min=site_data.get('battery_soc_min', 20),
+        battery_soc_target=site_data.get('battery_soc_target', 80),
+        excess_export_threshold=site_data.get('excess_export_threshold', 13000),
+        battery_max_charge_power=site_data.get('battery_max_charge_power', 5000),
+        battery_max_discharge_power=site_data.get('battery_max_discharge_power', 5000),
+        distribution_mode=site_data.get('distribution_mode', 'priority'),
+    )
+    
+    # Set site-level charging mode (first charger's mode, or from site if specified)
+    if 'charging_mode' in site_data:
+        site.charging_mode = site_data['charging_mode']
+    elif scenario['chargers']:
+        site.charging_mode = scenario['chargers'][0].get('mode', 'Standard')
     
     # Build chargers
     for idx, charger_data in enumerate(scenario['chargers']):
@@ -163,7 +155,6 @@ def build_site_from_scenario(scenario):
             min_current=charger_data['min_current'],
             max_current=charger_data['max_current'],
             phases=charger_data['phases'],
-            charging_mode=charger_data.get('mode', 'Standard'),
             priority=charger_data.get('priority', 1),
         )
         # Store connected_to_phase in charger_id for single-phase (test only)
@@ -289,7 +280,7 @@ def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False):
             passed, errors, history = run_scenario_with_iterations(scenario, verbose=verbose)
             site = None  # Not needed for multi-iteration
         else:
-            # Single iteration (legacy mode)
+            # Single iteration
             site = build_site_from_scenario(scenario)
             calculate_all_charger_targets(site)
             passed, errors = validate_results(scenario, site)
@@ -365,7 +356,7 @@ def run_single_scenario(scenario_name, yaml_file='tests/test_scenarios.yaml'):
             # Print charger results
             print(f"Charger Targets:")
             for charger in site.chargers:
-                print(f"  {charger.entity_id} ({charger.charging_mode} mode):")
+                print(f"  {charger.entity_id} ({site.charging_mode} mode):")
                 print(f"    Config: {charger.min_current}-{charger.max_current}A, {charger.phases}ph")
                 print(f"    Target: {charger.target_current:.1f}A")
             print()

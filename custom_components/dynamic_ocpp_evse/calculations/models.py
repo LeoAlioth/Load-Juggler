@@ -19,7 +19,6 @@ class ChargerContext:
     priority: int = 1  # For distribution (lower = higher priority)
     
     # Current state
-    charging_mode: str = "Standard"
     current_import: float = 0  # What charger is currently drawing (A)
     current_offered: float = 0  # What was last offered (A)
     
@@ -95,7 +94,8 @@ class SiteContext:
     allow_grid_charging: bool = True
     power_buffer: float = 0
     excess_export_threshold: float = 13000
-    distribution_mode: str = "priority"  # "priority" or "proportional"
+    charging_mode: str = "Standard"  # "Standard", "Eco", "Solar", "Excess"
+    distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
     
     # Chargers at this site
     chargers: list[ChargerContext] = field(default_factory=list)
