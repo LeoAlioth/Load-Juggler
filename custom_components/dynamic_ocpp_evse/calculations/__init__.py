@@ -171,10 +171,137 @@ def calculate_available_current_for_charger(sensor):
 # Keep old function name for backward compatibility
 calculate_available_current_for_hub = calculate_available_current_for_charger
 
+def calculate_hub_state_centralized(hass, hub_entry, chargers):
+    """
+    Centralized hub state calculation - called once per hub update cycle.
+    
+    This function:
+    1. Runs calculation for each charger ONCE per cycle
+    2. Calculates targets using centralized logic (preventing double-counting)
+    3. Distributes current among chargers ONCE
+    4. Returns complete commands for all chargers
+    
+    Args:
+        hass: HomeAssistant instance
+        hub_entry: Hub config entry
+        chargers: List of charger config entries
+        
+    Returns:
+        dict with:
+            - hub_state: Hub-level data
+            - charger_commands: Dict of {charger_id: {allocated, target, ...}}
+    """
+    from .target_calculator import calculate_all_charger_targets
+    from .. import distribute_current_to_chargers
+    from .utils import get_sensor_data
+    
+    _LOGGER.debug(f"Hub centralized calculation for {len(chargers)} chargers")
+    
+    # Build minimal hub state from hub config
+    voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+    
+    # Read phase currents/powers from hub sensors
+    def get_phase_current(entity_id):
+        if not entity_id or entity_id == 'None':
+            return 0
+        value = get_sensor_data(hass, entity_id)
+        if value is None:
+            return 0
+        
+        entity_state = hass.states.get(entity_id)
+        if entity_state and entity_state.attributes.get('unit_of_measurement') == 'W':
+            return value / voltage if voltage > 0 else 0
+        return value
+    
+    grid_current_l1 = get_phase_current(hub_entry.data.get(CONF_PHASE_A_CURRENT_ENTITY_ID))
+    grid_current_l2 = get_phase_current(hub_entry.data.get(CONF_PHASE_B_CURRENT_ENTITY_ID))
+    grid_current_l3 = get_phase_current(hub_entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID))
+    
+    # Export is negative current
+    export_current_l1 = max(0, -grid_current_l1)
+    export_current_l2 = max(0, -grid_current_l2)
+    export_current_l3 = max(0, -grid_current_l3)
+    
+    total_export_current = export_current_l1 + export_current_l2 + export_current_l3
+    total_export_power = total_export_current * voltage
+    
+    # Read battery state
+    battery_soc = None
+    battery_power = None
+    battery_soc_entity = hub_entry.data.get(CONF_BATTERY_SOC_ENTITY_ID)
+    battery_power_entity = hub_entry.data.get(CONF_BATTERY_POWER_ENTITY_ID)
+    
+    if battery_soc_entity and battery_soc_entity != 'None':
+        battery_soc = get_sensor_data(hass, battery_soc_entity)
+    if battery_power_entity and battery_power_entity != 'None':
+        battery_power = get_sensor_data(hass, battery_power_entity)
+    
+    # Get battery SOC targets from hub number entities
+    hub_entity_id = hub_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+    battery_soc_min = get_sensor_data(hass, f"number.{hub_entity_id}_home_battery_soc_min")
+    battery_soc_target = get_sensor_data(hass, f"number.{hub_entity_id}_home_battery_soc_target")
+    
+    if battery_soc_min is None:
+        battery_soc_min = hub_entry.data.get(CONF_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_MIN)
+    if battery_soc_target is None:
+        battery_soc_target = hub_entry.data.get(CONF_BATTERY_SOC_TARGET, DEFAULT_BATTERY_SOC_TARGET)
+    
+    # Build hub_state for target calculator
+    hub_state = {
+        "battery_soc": battery_soc,
+        "battery_soc_min": battery_soc_min,
+        "battery_soc_target": battery_soc_target,
+        "battery_power": battery_power,
+        "total_export_current": total_export_current,
+        "total_export_power": total_export_power,
+        "voltage": voltage,
+        CONF_EXCESS_EXPORT_THRESHOLD: hub_entry.data.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD),
+        "charger_phases": {},
+    }
+    
+    # Get phases for each charger (from their sensor attributes if available)
+    for charger in chargers:
+        charger_entity_id = charger.data.get(CONF_ENTITY_ID)
+        charger_sensor = f"sensor.{charger_entity_id}_available_current"
+        phases = get_sensor_data(hass, charger_sensor, attribute=CONF_PHASES)
+        hub_state["charger_phases"][charger.entry_id] = phases if phases else 3
+    
+    # Calculate targets for all chargers centrally (prevents double-counting solar)
+    charger_targets = calculate_all_charger_targets(hass, hub_entry, hub_state, chargers)
+    
+    # Calculate total available current
+    # For now use a simple calculation - this should eventually use max_available logic
+    main_breaker_rating = hub_entry.data.get(CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING)
+    total_available_current = main_breaker_rating * 3  # Simplified
+    
+    _LOGGER.debug(f"Total available: {total_available_current}A, Targets: {charger_targets}")
+    
+    # Distribute current among chargers
+    allocations = distribute_current_to_chargers(
+        hass, hub_entry.entry_id, total_available_current, charger_targets
+    )
+    
+    # Build charger commands
+    charger_commands = {}
+    for charger in chargers:
+        charger_id = charger.entry_id
+        charger_commands[charger_id] = {
+            "allocated_current": allocations.get(charger_id, 0),
+            "target_current": charger_targets.get(charger_id, 0),
+            "charging_mode": get_sensor_data(hass, f"select.{charger.data.get(CONF_ENTITY_ID)}_charging_mode"),
+        }
+    
+    return {
+        "hub_state": hub_state,
+        "charger_commands": charger_commands,
+    }
+
+
 # Re-export for backward compatibility
 __all__ = [
     "calculate_available_current_for_hub",
     "calculate_available_current_for_charger",
+    "calculate_hub_state_centralized",
     "ChargeContext",
     "calculate_charger_available_current",
     "calculate_standard_mode",

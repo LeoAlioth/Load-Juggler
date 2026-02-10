@@ -14,19 +14,40 @@ def is_number(value):
         return False
 
 
-def get_sensor_data(hass, sensor):
-    """Get sensor data from Home Assistant."""
-    _LOGGER.debug(f"Getting state for sensor: {sensor}")
+def get_sensor_data(hass, sensor, attribute=None):
+    """
+    Get sensor data from Home Assistant.
+    
+    Args:
+        hass: HomeAssistant instance
+        sensor: Entity ID
+        attribute: Optional attribute name to get instead of state
+        
+    Returns:
+        Sensor state value or attribute value
+    """
+    _LOGGER.debug(f"Getting {'attribute ' + attribute if attribute else 'state'} for sensor: {sensor}")
     state = hass.states.get(sensor)
     if state is None:
         _LOGGER.warning(f"Failed to get state for sensor: {sensor}")
         return None
-    _LOGGER.debug(f"Got state for sensor: {sensor}  -  {state} ({type(state.state)})")
-    value = state.state
+    
+    # Get attribute if requested
+    if attribute:
+        value = state.attributes.get(attribute)
+        if value is None:
+            _LOGGER.debug(f"Attribute '{attribute}' not found for sensor: {sensor}")
+            return None
+    else:
+        value = state.state
+    
+    _LOGGER.debug(f"Got {'attribute ' + attribute if attribute else 'state'} for sensor: {sensor}  -  {value} ({type(value)})")
+    
+    # Convert to number if possible
     if type(value) == str:
         if is_number(value):
             value = float(value)
-            _LOGGER.debug(f"Sensor: {sensor}  -  {state} is ({type(value)})")
+            _LOGGER.debug(f"Sensor: {sensor}  -  converted to ({type(value)})")
     return value
 
 
