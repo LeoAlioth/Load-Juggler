@@ -9,8 +9,9 @@ scenarios:
     description: "Single phase, 1 charger, solar mode, with battery, normal conditions"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 35
       num_phases: 1
+      distribution_mode: priority
       solar_production: 4140  # 18A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
       phase_b_consumption: 0.0
@@ -19,7 +20,7 @@ scenarios:
       battery_soc_min: 20
       battery_soc_target: 80
       battery_max_charge_power: 4600  # 20A at 230V
-      battery_max_discharge_power: 4600  # 20A at 230V 
+      battery_max_discharge_power: 4600  # 20A at 230V
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -27,7 +28,7 @@ scenarios:
         phases: 1
         mode: "Solar"
         priority: 1
-    expected: # 
+    expected: # Manually verified expected result
       charger_1:
         target: 0  # battery not at target SOC, so no charging (18A solar - 3A load = 15A charging, but solar mode with battery below target prevents use)
 
@@ -35,7 +36,7 @@ scenarios:
     description: "Single phase, 1 charger, solar mode, with battery, normal conditions"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 35
       num_phases: 1
       solar_production: 4140  # 18A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
@@ -53,7 +54,7 @@ scenarios:
         phases: 1
         mode: "Solar"
         priority: 1
-    expected: # 
+    expected: # Manually verified expected result 
       charger_1:
         target: 15.0  # 18A solar - 3A consumption
 
@@ -61,7 +62,7 @@ scenarios:
     description: "Single phase, 1 charger, solar mode, with battery, normal conditions"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 35
       num_phases: 1
       solar_production: 2300  # 10A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
@@ -79,7 +80,7 @@ scenarios:
         phases: 1
         mode: "Solar"
         priority: 1
-    expected: # 
+    expected: # Manually verified expected result
       charger_1:
         target: 27.0  # 10A solar + 20A from battery - 3A consumption
   
@@ -87,7 +88,7 @@ scenarios:
     description: "Single phase, 1 charger, solar mode, no battery"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 35
       num_phases: 1
       solar_production: 2300  # 10A at 230V
       phase_a_consumption: 2.0  # Home load
@@ -113,7 +114,7 @@ scenarios:
     description: "Single phase, 1 charger, insufficient solar (below min)"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 35
       num_phases: 1
       solar_production: 1150  # 5A at 230V
       phase_a_consumption: 1.0  # Home load
@@ -139,7 +140,7 @@ scenarios:
     description: "Single phase, 2 chargers both solar, verify no double counting"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 35
       num_phases: 1
       solar_production: 5290  # 23A at 230V  
       phase_a_consumption: 3.0  # Home load
@@ -175,7 +176,7 @@ scenarios:
     description: "3-phase, 1 charger, solar mode, with battery"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 7590  # 33A total (11A per phase)
       phase_a_consumption: 1.0
@@ -201,7 +202,7 @@ scenarios:
     description: "3-phase, 2 chargers, both solar, should share same resource"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 6210  # 27A total (9A per phase)
       phase_a_consumption: 1.0
@@ -235,7 +236,7 @@ scenarios:
     description: "3-phase, Standard + Solar modes, unbalanced consumption"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 4830  # 21A total (7A per phase)
       phase_a_consumption: 0.5
@@ -271,7 +272,7 @@ scenarios:
     description: "Eco mode with battery above target"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 3450  # 15A total
       phase_a_consumption: 1.0
@@ -297,7 +298,7 @@ scenarios:
     description: "Eco mode with battery below minimum"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 5290  # 23A total
       phase_a_consumption: 1.0
@@ -323,7 +324,7 @@ scenarios:
     description: "Eco mode with battery between min and target"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 4140  # 18A total
       phase_a_consumption: 1.0
@@ -351,7 +352,7 @@ scenarios:
     description: "Excess mode with export above threshold"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 18000  # Total 18kW
       phase_a_consumption: 1.0
@@ -378,7 +379,7 @@ scenarios:
     description: "Excess mode with export below threshold"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 10350  # Total ~10.35kW
       phase_a_consumption: 1.0
@@ -407,7 +408,7 @@ scenarios:
     description: "3 chargers, all standard mode"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 11500  # 50A total
       phase_a_consumption: 3.0
@@ -449,7 +450,7 @@ scenarios:
     description: "Mix of 1-phase and 3-phase chargers"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 7590  # 33A total
       phase_a_consumption: 1.0
@@ -485,7 +486,7 @@ scenarios:
     description: "Solar mode without battery configured"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 5520  # 24A total
       phase_a_consumption: 1.0
@@ -511,7 +512,7 @@ scenarios:
     description: "Eco mode without battery, should use export"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 6210  # 27A total
       phase_a_consumption: 1.0
@@ -539,7 +540,7 @@ scenarios:
     description: "No solar export available"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 690  # 3A total
       phase_a_consumption: 1.0
@@ -573,7 +574,7 @@ scenarios:
     description: "Site importing (negative export)"
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 0  # No solar
       phase_a_consumption: 3.0
@@ -603,7 +604,7 @@ scenarios:
     max_variation: 0.3
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 6900  # 30A total = 10A per phase
       phase_a_consumption: 2.0  # Unbalanced load
@@ -631,7 +632,7 @@ scenarios:
     max_variation: 0.3
     site:
       voltage: 230
-      main_breaker_rating: 63
+      main_breaker_rating: 25
       num_phases: 3
       solar_production: 6900  # 30A total
       phase_a_consumption: 5.0  # Higher load on phase A

@@ -124,6 +124,7 @@ def build_site_from_scenario(scenario):
         
         site = SiteContext(
             voltage=voltage,
+            main_breaker_rating=site_data.get('main_breaker_rating', 63),
             phase_a_consumption=phase_a_cons,
             phase_b_consumption=phase_b_cons,
             phase_c_consumption=phase_c_cons,
@@ -138,6 +139,8 @@ def build_site_from_scenario(scenario):
             battery_soc_target=site_data.get('battery_soc_target', 80),
             excess_export_threshold=site_data.get('excess_export_threshold', 13000),
             battery_max_charge_power=site_data.get('battery_max_charge_power', 5000),
+            battery_max_discharge_power=site_data.get('battery_max_discharge_power', 5000),
+            distribution_mode=site_data.get('distribution_mode', 'priority'),
         )
     else:
         # Legacy format: total_export_current
@@ -231,9 +234,9 @@ def run_scenario_with_iterations(scenario, verbose=False):
         is_stable, analysis = detect_oscillation(history, scenario.get('max_variation', 0.5))
         if not is_stable:
             passed = False
-            errors.append(f"  ❌ Oscillation detected: {analysis}")
+            errors.append(f"Oscillation detected: {analysis}")
         elif verbose:
-            errors.append(f"  ✅ Stable: {analysis}")
+            errors.append(f"Stable: {analysis}")
     
     return passed, errors, history
 
@@ -254,11 +257,11 @@ def validate_results(scenario, site):
             if abs(actual_target - expected_target) > 0.1:
                 passed = False
                 errors.append(
-                    f"  ❌ {entity_id}: expected {expected_target}A, got {actual_target:.1f}A"
+                    f"{entity_id}: expected {expected_target}A, got {actual_target:.1f}A"
                 )
             else:
                 errors.append(
-                    f"  ✅ {entity_id}: {actual_target:.1f}A"
+                    f"{entity_id}: {actual_target:.1f}A"
                 )
     
     return passed, errors
@@ -269,7 +272,7 @@ def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False):
     scenarios = load_scenarios(yaml_file)
     
     print(f"\n{'='*70}")
-    print(f"🧪 RUNNING {len(scenarios)} TEST SCENARIOS")
+    print(f"TEST RUNNER: RUNNING {len(scenarios)} TEST SCENARIOS")
     print(f"{'='*70}\n")
     
     passed_count = 0
@@ -294,10 +297,10 @@ def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False):
         
         if passed:
             passed_count += 1
-            status = "✅ PASS"
+            status = "PASS"
         else:
             failed_count += 1
-            status = "❌ FAIL"
+            status = "FAIL"
         
         results.append({
             'name': name,
@@ -321,11 +324,11 @@ def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False):
     
     # Summary
     print(f"\n{'='*70}")
-    print(f"📊 TEST SUMMARY")
+    print(f"TEST SUMMARY")
     print(f"{'='*70}")
     print(f"Total:  {len(scenarios)}")
-    print(f"Passed: {passed_count} ✅")
-    print(f"Failed: {failed_count} ❌")
+    print(f"Passed: {passed_count}")
+    print(f"Failed: {failed_count}")
     print(f"{'='*70}\n")
     
     if failed_count > 0:

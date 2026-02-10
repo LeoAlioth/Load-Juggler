@@ -95,6 +95,7 @@ class SiteContext:
     allow_grid_charging: bool = True
     power_buffer: float = 0
     excess_export_threshold: float = 13000
+    distribution_mode: str = "priority"  # "priority" or "proportional"
     
     # Chargers at this site
     chargers: list[ChargerContext] = field(default_factory=list)
