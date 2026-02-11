@@ -380,9 +380,15 @@ def _distribute_priority(site: SiteContext) -> None:
     PRIORITY mode: Two-pass approach.
     Pass 1: Get everyone to min_current (by priority)
     Pass 2: Give remainder to highest priority first
+    
+    For 3-phase systems, total_available is per-phase current.
+    For 1-phase systems, total_available is total current.
     """
     chargers = sorted(site.chargers, key=lambda c: c.priority)
     total_available = site.total_export_current
+    
+    # Determine if we're working with per-phase values (3-phase system with 3-phase chargers)
+    is_per_phase = (site.num_phases == 3 and all(c.phases == 3 for c in chargers))
     
     # Initialize all wanting to charge
     for charger in chargers:
@@ -397,10 +403,20 @@ def _distribute_priority(site: SiteContext) -> None:
     remaining = total_available
     
     for charger in charging_chargers:
-        min_needed = charger.min_current * charger.phases
+        if is_per_phase:
+            # For per-phase: just need min_current per phase
+            min_needed = charger.min_current
+        else:
+            # For total: need min_current * phases
+            min_needed = charger.min_current * charger.phases
+        
         if remaining >= min_needed:
-            allocated[charger.entity_id] = min_needed / charger.phases
-            remaining -= min_needed
+            if is_per_phase:
+                allocated[charger.entity_id] = min_needed
+                remaining -= min_needed
+            else:
+                allocated[charger.entity_id] = min_needed / charger.phases
+                remaining -= min_needed
         else:
             allocated[charger.entity_id] = 0
             charger.target_current = 0
@@ -415,12 +431,17 @@ def _distribute_priority(site: SiteContext) -> None:
             charger.target_current = allocated[charger.entity_id]
             continue
         
-        wanted_additional = (charger.max_current - allocated[charger.entity_id]) * charger.phases
-        additional_total = min(wanted_additional, remaining)
-        additional_per_phase = additional_total / charger.phases
-        
-        charger.target_current = allocated[charger.entity_id] + additional_per_phase
-        remaining -= additional_total
+        if is_per_phase:
+            wanted_additional = charger.max_current - allocated[charger.entity_id]
+            additional = min(wanted_additional, remaining)
+            charger.target_current = allocated[charger.entity_id] + additional
+            remaining -= additional
+        else:
+            wanted_additional = (charger.max_current - allocated[charger.entity_id]) * charger.phases
+            additional_total = min(wanted_additional, remaining)
+            additional_per_phase = additional_total / charger.phases
+            charger.target_current = allocated[charger.entity_id] + additional_per_phase
+            remaining -= additional_total
 
 
 def _distribute_strict(site: SiteContext) -> None:
