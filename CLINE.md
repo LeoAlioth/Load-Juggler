@@ -132,17 +132,17 @@ The calculation engine follows a clear 5-step process (see `target_calculator.py
 
 ### Charging Modes
 
-1. **Standard**: Maximum charging speed, can import from grid
-2. **Eco**: Gentle battery protection, charge at minimum when battery between min-target
-3. **Solar**: Only use solar export (+ battery discharge if SOC > target)
+1. **Standard**: Maximum charging speed, can charge from grid, battery and solar
+2. **Eco**: match charging speed with solar production whetn at target soc, but still keep slowly charging even if not enough solar is available
+3. **Solar**: Only use solar power (+ battery discharge if SOC > target)
 4. **Excess**: Only charge when export exceeds threshold
 
 ### Distribution Modes
 
-1. **Priority**: Two-pass (min first, then remainder by priority)
-2. **Shared**: Two-pass (min first, then split remainder equally)
-3. **Strict**: Sequential (priority 1 gets all, then 2, etc.)
-4. **Optimized**: Smart reduction to fit more chargers
+1. **Shared**: Two-pass (min first, then split remainder equally)
+2. **Priority**: Two-pass (min first, then remainder by priority)
+3. **Optimized**: Smart Sequential charge one at a time but reduce higher priority charger if needed to consume all available power based on charging modes.
+4. **Strict**: simple Sequential (priority 1 gets all, then 2, etc.)
 
 ### Asymmetric vs Symmetric Inverters
 
@@ -239,12 +239,12 @@ Failing test:
    - ✅ **FIXED**: `_calculate_site_limit()` - uses per-phase arrays uniformly + accounts for total inverter limit
    - ✅ **FIXED**: `_get_phase_available_current()` - removed special cases  
    - ✅ **FIXED**: `_calculate_solar_available()` - completely refactored to use per-phase arrays uniformly!
-   - ⚠️ **PARTIAL**: `_determine_target_power()` - Standard mode still has one phase branch (returns per-phase vs total)
+   - ✅ **FIXED**: `_determine_target_power()` - now uses dual constraint tuples throughout (Phase 2), eliminates semantic branching
    
 2. **Semantic Switching Between Per-Phase and Total**
-   - ⚠️ Still present in Standard mode and in calculate_all_charger_targets() 
-   - This is intentional: different inverter types have different semantics
-   - May need architectural decision on whether to unify further
+   - ✅ **RESOLVED**: Phase 2 dual constraint implementation handles this properly
+   - All functions now return `(per_phase[], total)` tuples
+   - Semantic differences handled by dual constraint enforcement, not branching
    
 3. **Eco Mode Special Logic**
    - ✅ **FIXED**: Simplified from 3 branches to 2 (based on solar_available semantics)
