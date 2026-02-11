@@ -422,7 +422,7 @@ scenarios:
       charger_2:
         target: 0
   
-  - name: "3ph-2c-solar-prio-with-bat-unbalanced"
+  - name: "3ph-1c-solar-prio-with-bat-unbalanced"
     description: "3-phase, Solar mode, unbalanced consumption"
     site:
       voltage: 230
@@ -451,7 +451,7 @@ scenarios:
         priority: 1
     expected: # Manually verified expected result
       charger_1:
-        target: 9  # phases have 9.5, 9.5, 9A available after load, which is above minimum and enough for 9A per phase
+        target: 9.3  # 28A available total and can be assymetric.
 
   
   # ===== ECO MODE SCENARIOS =====
