@@ -138,14 +138,16 @@ def build_site_from_scenario(scenario):
         excess_export_threshold=site_data.get('excess_export_threshold', 13000),
         battery_max_charge_power=site_data.get('battery_max_charge_power', 5000),
         battery_max_discharge_power=site_data.get('battery_max_discharge_power', 5000),
+        max_import_power=site_data.get('max_import_power'),
         distribution_mode=site_data.get('distribution_mode', 'priority'),
     )
     
     # Set site-level charging mode (first charger's mode, or from site if specified)
     if 'charging_mode' in site_data:
         site.charging_mode = site_data['charging_mode']
-    elif scenario['chargers']:
-        site.charging_mode = scenario['chargers'][0].get('mode', 'Standard')
+    else:
+        # nofity user that test scenario should specify charging_mode at site level for clarity
+        print(f"⚠️  Scenario '{scenario['name']}' should specify 'charging_mode' at site level.")
     
     # Build chargers
     for idx, charger_data in enumerate(scenario['chargers']):
@@ -351,10 +353,11 @@ def run_single_scenario(scenario_name, yaml_file='tests/test_scenarios.yaml'):
             print(f"  Export: {site.total_export_current:.1f}A ({site.total_export_power:.0f}W)")
             print(f"  Battery SOC: {site.battery_soc}%")
             print(f"  Voltage: {site.voltage}V")
+            print(f"  Mode: {site.charging_mode}")
             print()
             
             # Print charger results
-            print(f"Charger Targets:")
+            print(f"Charger Configuration:")
             for charger in site.chargers:
                 print(f"  {charger.entity_id} ({site.charging_mode} mode):")
                 print(f"    Config: {charger.min_current}-{charger.max_current}A, {charger.phases}ph")

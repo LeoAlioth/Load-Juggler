@@ -10,6 +10,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 35
+      max_import_power: 8050
       num_phases: 1
       distribution_mode: priority
       charging_mode: Solar
@@ -37,6 +38,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 35
+      max_import_power: 8050
       num_phases: 1
       distribution_mode: priority
       charging_mode: Solar
@@ -64,6 +66,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 35
+      max_import_power: 8050
       num_phases: 1
       distribution_mode: priority
       charging_mode: Solar
@@ -91,6 +94,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 35
+      max_import_power: 8050
       num_phases: 1
       distribution_mode: priority
       charging_mode: Solar
@@ -118,6 +122,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 35
+      max_import_power: 8050
       num_phases: 1
       distribution_mode: priority
       charging_mode: Solar
@@ -145,6 +150,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 35
+      max_import_power: 8050
       num_phases: 1
       distribution_mode: priority
       charging_mode: Solar
@@ -179,6 +185,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 35
+      max_import_power: 8050
       num_phases: 1
       distribution_mode: priority
       charging_mode: Solar
@@ -213,8 +220,10 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 35
+      max_import_power: 8050
       num_phases: 1
       distribution_mode: Shared
+      charging_mode: Solar
       solar_production: 2300  # 10A at 230V  
       phase_a_consumption: 3.0  # Home load
       phase_b_consumption: 0.0
@@ -246,6 +255,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 35
+      max_import_power: 8050
       num_phases: 1
       distribution_mode: priority
       charging_mode: Solar
@@ -280,8 +290,10 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 35
+      max_import_power: 8050
       num_phases: 1
       distribution_mode: Shared
+      charging_mode: Solar
       solar_production: 6900  # 30A at 230V  
       phase_a_consumption: 3.0  # Home load
       phase_b_consumption: 0.0
@@ -316,6 +328,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -343,6 +356,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -377,6 +391,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -407,6 +422,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Eco
@@ -434,6 +450,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Eco
@@ -461,6 +478,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -491,6 +509,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -520,6 +539,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -551,6 +571,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -595,6 +616,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -631,6 +653,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -658,6 +681,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -688,6 +712,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -723,6 +748,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -754,6 +780,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
@@ -783,6 +810,7 @@ scenarios:
     site:
       voltage: 230
       main_breaker_rating: 25
+      max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
