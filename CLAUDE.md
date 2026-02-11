@@ -158,6 +158,13 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 **Important**: Regardless of inverter type, chargers are physically connected to specific phases and can only draw from those phases. The inverter asymmetric capability affects power SUPPLY flexibility, not charger DRAW flexibility.
 
+### Phase-Specific Allocation
+
+When chargers have explicit phase assignments (e.g., `connected_to_phase: "B"`):
+- Triggers per-phase distribution logic (`_distribute_power_per_phase()`)
+- Each phase is allocated independently
+- 3-phase chargers limited by minimum available phase
+
 ## Testing Framework
 
 Tests use **REAL production code** - no duplicates or mocks. Test scenarios are defined in YAML files:
@@ -230,3 +237,32 @@ The codebase is transitioning from dual constraint tuples `(per_phase[], total)`
 4. **Logging**: Use `_LOGGER.debug()` extensively for troubleshooting
 5. **Test First**: Run relevant tests before and after changes
 6. **Helper Functions**: Prefer helper functions over inline logic for maintainability
+
+### Adding New Features
+
+1. **Charging Mode**: Add to `calculations/modes/`, inherit from `base.py`
+2. **Distribution Mode**: Add to `target_calculator.py` as `_distribute_<mode>()`
+3. **Test Scenarios**: Create YAML scenarios in `tests/scenarios/`
+4. **Documentation**: Update CHARGE_MODES_GUIDE.md, README.md
+
+## Integration with Home Assistant
+
+The `calculations/` directory is pure Python and can be imported/tested independently. The HA integration:
+
+1. **context.py**: Builds SiteContext from HA entities
+2. **dynamic_ocpp_evse.py**: Manages OCPP charger connections, calls calculation engine
+3. **Entities** (button.py, number.py, etc.): Expose controls and sensors to HA UI
+
+## Debugging
+
+1. **Enable verbose logging** in HA: `custom_components.dynamic_ocpp_evse: debug`
+2. **Run specific test**: `python tests/run_tests.py "test-name"`
+3. **Check calculation steps**: Each step logs its output (site_limit, solar_available, target_power, etc.)
+4. **Per-phase values**: Log phase_a/b/c_export, consumption, available
+
+## Useful Resources
+
+- OCPP 1.6J Specification: https://www.openchargealliance.org/
+- Home Assistant Developer Docs: https://developers.home-assistant.io/
+- YAML Test Scenarios: `tests/scenarios/*.yaml`
+- Charging Modes Guide: `CHARGE_MODES_GUIDE.md`
