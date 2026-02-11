@@ -169,13 +169,15 @@ def build_site_from_scenario(scenario):
         # Set active_phases_mask based on charger configuration
         active_phases_mask = charger_data.get("active_phases_mask")
         if not active_phases_mask:
-            if phases == 3:
+            # Check for connected_to_phase first (works for 1-phase and 2-phase)
+            connected_to_phase = charger_data.get('connected_to_phase')
+            if connected_to_phase:
+                active_phases_mask = connected_to_phase
+            elif phases == 3:
                 active_phases_mask = "ABC"  # 3-phase chargers on all phases
-            elif phases == 1:
-                # 1-phase: use connected_to_phase if explicitly specified, otherwise None
-                active_phases_mask = charger_data.get('connected_to_phase')
             elif phases == 2:
-                active_phases_mask = "AB"  # 2-phase default (rare)
+                active_phases_mask = "AB"  # 2-phase default (rare, when not specified)
+            # else: phases == 1 without connected_to_phase remains None
         
         # For identification in charger_id
         connected_phase = charger_data.get('connected_to_phase') if phases == 1 else None

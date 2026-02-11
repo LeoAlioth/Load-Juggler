@@ -2,6 +2,20 @@
 
 This document describes the Dynamic OCPP EVSE repository structure, architecture, and development guidelines to help AI assistants (like Cline) effectively develop and maintain this project.
 
+## Design Principles
+
+### Generality Over Special Cases
+**⭐ CRITICAL: Always strive for the most general solution possible. Minimize unnecessary distinctions.**
+
+- **Don't create separate code paths** for 1-phase vs 3-phase unless absolutely necessary
+- **Don't distinguish** between "explicit" and "default" configurations - treat them the same
+- **Use per-phase calculations universally** instead of creating special logic for each site type
+- **The same algorithm should handle all cases**: 1-phase, 2-phase, 3-phase, symmetric, asymmetric
+
+**Example**: Instead of checking `if site.num_phases == 3:` and branching, use per-phase arrays `[A, B, C]` where unused phases are 0. This handles all cases uniformly.
+
+**Why**: Less code, fewer bugs, easier to maintain, more predictable behavior.
+
 ## Project Overview
 
 **Dynamic OCPP EVSE** is a Home Assistant custom component that provides intelligent EV charging control via OCPP 1.6J protocol. It dynamically adjusts charging current based on solar production, battery state, grid capacity, and user-defined charging modes.

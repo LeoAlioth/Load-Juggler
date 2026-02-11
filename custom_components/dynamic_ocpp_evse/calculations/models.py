@@ -23,6 +23,24 @@ class ChargerContext:
     active_phases_mask: str = None  # "A", "AB", "ABC", "B", "BC", "C", "AC"
     connector_status: str = "Charging"  # OCPP status: Default to active for backward compatibility
     
+    def __post_init__(self):
+        """Set default phase mask based on charger phases if not explicitly provided.
+        
+        Defaults:
+        - 3-phase: 'ABC' (all three phases)
+        - 2-phase: 'AB' (phases A and B)
+        - 1-phase: 'A' (phase A)
+        
+        These can be overridden by explicitly setting connected_to_phase in config.
+        """
+        if self.active_phases_mask is None:
+            if self.phases == 3:
+                self.active_phases_mask = 'ABC'
+            elif self.phases == 2:
+                self.active_phases_mask = 'AB'
+            elif self.phases == 1:
+                self.active_phases_mask = 'A'
+    
     # Per-phase current readings (from OCPP L1/L2/L3 attributes)
     l1_current: float = 0  # Phase A current (A)
     l2_current: float = 0  # Phase B current (A)
