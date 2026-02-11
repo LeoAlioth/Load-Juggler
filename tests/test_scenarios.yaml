@@ -497,7 +497,7 @@ scenarios:
         max_current: 16
         phases: 3
         priority: 1
-    expected:
+    expected: # Manually verified expected result
       charger_1:
         target: 6  # Uses min_current (export=5A < min=6A)
   
@@ -528,7 +528,7 @@ scenarios:
         max_current: 16
         phases: 3
         priority: 1
-    expected:
+    expected: # Manually verified expected result
       charger_1:
         target: 10.6  # (17310W - 10000W) / 230V / 3ph = 10.6A
   
@@ -557,7 +557,7 @@ scenarios:
         max_current: 16
         phases: 3
         priority: 1
-    expected:
+    expected: # Manually verified expected result
       charger_1:
         target: 0  # Below threshold
   
@@ -572,10 +572,10 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Standard
-      solar_production: 11500  # 50A total
+      solar_production: 4140  # 18A total
       phase_a_consumption: 3.0
       phase_b_consumption: 3.0
-      phase_c_consumption: 4.0  # 10A total, 40A export
+      phase_c_consumption: 3.0  # 9A total, 9 export
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
@@ -597,13 +597,13 @@ scenarios:
         max_current: 10
         phases: 3
         priority: 3
-    expected:
+    expected: # Manually verified expected result
       charger_1:
-        target: 16
+        target: 16 # total available is 18A from solar, and 75A from grid and 18 A from battery = 111A total, 102 A afer load (34A per phase)
       charger_2:
-        target: 16
+        target: 12 # 34A per phase is enough for 6A minimum for all 3 chargers, so after charger_1 gets its 16A, 18A remains
       charger_3:
-        target: 10
+        target: 6 # with charger 3 havin a 6A minimum, the charger 2 can only get 12A to keep the 3d one charging at all.
   
   - name: "3ph-2c-solar-prio-with-bat-mixed-phases"
     description: "Mix of 1-phase and 3-phase chargers"
@@ -636,11 +636,46 @@ scenarios:
         priority: 2
     expected:
       charger_1:
-        target: 10.0  # 30A / 3ph = 10A
+        target: 10.0  # After load, 10A per phase is available.  Taking a minimum of 6A per phase leaves only 12A total available for the second one. 6 goes to it to meet the minimum, remaining 6 gets split to charge a for 8A per phase.
       charger_2:
-        target: 16  # Sees full 30A but limited by max=16A
+        target: 6  # this is possible becase on batetry systems, we can treat solar and battery power as available for any phase.
   
   # ===== NO BATTERY SCENARIOS =====
+
+  - name: "3ph-2c-solar-prio-no-bat-mixed-phases"
+    description: "Mix of 1-phase and 3-phase chargers"
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      num_phases: 3
+      distribution_mode: priority
+      charging_mode: Solar
+      solar_production: 7590  # 33A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, 30A export
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 1  # Single phase charger
+        priority: 2
+    expected:
+      charger_1:
+        target: 10.0  # After load, 10A per phase is available.  Taking a minimum of 6A per phase leaves only 4A for the second one (below minimum) so charger_1 gets all 10A available.
+      charger_2:
+        target: 0
   
   - name: "3ph-1c-solar-prio-no-bat-normal"
     description: "Solar mode without battery configured"

@@ -201,11 +201,18 @@ def _calculate_excess_available(site: SiteContext) -> float:
     
     Returns:
         Current (A) available above excess threshold
+        For 3-phase: per-phase current
+        For 1-phase: total current
     """
     # Check if export exceeds threshold
     if site.total_export_power > site.excess_export_threshold:
         available_power = site.total_export_power - site.excess_export_threshold
         available_current = available_power / site.voltage if site.voltage > 0 else 0
+        
+        # For 3-phase systems, return per-phase to match solar_available semantics
+        if site.num_phases == 3:
+            return available_current / 3
+        
         return available_current
     
     return 0
@@ -227,14 +234,24 @@ def _determine_target_power(site: SiteContext, site_limit: float, solar_availabl
     mode = site.charging_mode
     
     if mode == CHARGING_MODE_STANDARD:
-        # Standard: Use site limit (essentially unlimited up to breaker)
-        # Standard mode can use battery discharge if SOC > min
+        # Standard: Use site limit + solar + battery
+        # In Standard mode, everything available can be used
         target = site_limit
         
+        # Add solar production (if any)
+        if site.solar_production_total:
+            solar_current = site.solar_production_total / site.voltage
+            target += solar_current
+        
+        # Add battery discharge if SOC > min
         if site.battery_soc is not None and site.battery_soc > site.battery_soc_min:
             if site.battery_max_discharge_power:
                 battery_discharge = site.battery_max_discharge_power / site.voltage
                 target += battery_discharge
+        
+        # For 3-phase systems, return per-phase to match distribution semantics
+        if site.num_phases == 3:
+            return target / 3
         
         return target
     
