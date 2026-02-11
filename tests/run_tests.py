@@ -399,13 +399,77 @@ def run_single_scenario(scenario_name, yaml_file='tests/test_scenarios.yaml'):
 
 if __name__ == "__main__":
     import sys
+    from pathlib import Path
+    
+    def _merge_scenarios_from_dir(dir_path):
+        """Merge all yaml scenarios from a directory into a single list."""
+        combined = []
+        p = Path(dir_path)
+        files = sorted(p.glob("*.yaml")) + sorted(p.glob("*.yml"))
+        for f in files:
+            with open(f, "r", encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+            combined.extend(data.get("scenarios", []))
+        return combined
     
     if len(sys.argv) > 1:
-        # Run specific scenario
-        scenario_name = sys.argv[1]
-        success = run_single_scenario(scenario_name)
+        arg = sys.argv[1]
+        p = Path(arg)
+        if p.exists():
+            # If arg is a directory, merge all scenario files and run them
+            if p.is_dir():
+                combined = _merge_scenarios_from_dir(p)
+                tmp = Path(__file__).parent / "scenarios_combined_temp.yaml"
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    yaml.safe_dump({"scenarios": combined}, fh)
+                success = run_tests(yaml_file=str(tmp), verbose=True)
+                try:
+                    tmp.unlink()
+                except Exception:
+                    pass
+            elif p.is_file():
+                # Arg is a specific yaml file
+                success = run_tests(yaml_file=str(p), verbose=True)
+            else:
+                print(f"❌ Path '{arg}' is not a file or directory")
+                success = False
+        else:
+            # Treat arg as a scenario name; search in tests/scenarios first, then fallback to default file
+            scenarios_dir = Path(__file__).parent / "scenarios"
+            search_paths = []
+            if scenarios_dir.exists():
+                search_paths = list(sorted(scenarios_dir.glob("*.yaml"))) + list(sorted(scenarios_dir.glob("*.yml")))
+            else:
+                search_paths = [Path(__file__).parent / "test_scenarios.yaml"]
+    
+            found = False
+            for f in search_paths:
+                with open(f, "r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+                for sc in data.get("scenarios", []):
+                    if sc.get("name") == arg:
+                        found = True
+                        success = run_single_scenario(arg, yaml_file=str(f))
+                        break
+                if found:
+                    break
+            if not found:
+                print(f"❌ Scenario '{arg}' not found in scenarios directory or files")
+                success = False
     else:
-        # Run all scenarios
-        success = run_tests(verbose=True)
+        # No args: if tests/scenarios exists, run all files in it, otherwise run default behaviour
+        scenarios_dir = Path(__file__).parent / "scenarios"
+        if scenarios_dir.exists():
+            combined = _merge_scenarios_from_dir(scenarios_dir)
+            tmp = Path(__file__).parent / "scenarios_combined_temp.yaml"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                yaml.safe_dump({"scenarios": combined}, fh)
+            success = run_tests(yaml_file=str(tmp), verbose=True)
+            try:
+                tmp.unlink()
+            except Exception:
+                pass
+        else:
+            success = run_tests(verbose=True)
     
     sys.exit(0 if success else 1)
