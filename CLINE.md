@@ -16,18 +16,40 @@ This document describes the Dynamic OCPP EVSE repository structure, architecture
 
 **Why**: Less code, fewer bugs, easier to maintain, more predictable behavior.
 
-### Dual Constraint Principle
-**⭐ CRITICAL: ALWAYS enforce BOTH per-phase AND total constraints, regardless of phase count or inverter asymmetric capability.**
+### Multi-Phase Constraint Principle  
+**⭐ CRITICAL: Track constraints for ALL phase combinations using a constraint dict.**
 
-- **ALL calculation functions** should return `(per_phase_limits[], total_limit)` tuples
-- **ALL distribution logic** must respect BOTH constraints simultaneously
-- **Per-phase constraints**: Each phase has a physical limit (breaker, inverter per-phase)
-- **Total constraint**: The sum across phases may have an independent limit (total inverter power)
-- **This applies to ALL scenarios**: 1-phase, 3-phase, symmetric, asymmetric - no exceptions!
+**ALL calculation functions** must return a constraint dict with keys:
+- `'A'`, `'B'`, `'C'` - Single-phase limits
+- `'AB'`, `'AC'`, `'BC'` - Two-phase limits (for 2-phase chargers)
+- `'ABC'` - Three-phase limit (total)
 
-**Example**: A system may have per-phase limits of [10A, 10A, 10A] AND a total limit of 20A. The distribution must not exceed either constraint.
+**Why this matters:**
+- **1-phase charger on phase A**: Uses `constraints['A']`
+- **2-phase charger on AB**: Uses `min(constraints['A'], constraints['B'], constraints['AB'])`
+- **3-phase charger**: Uses `min(constraints['A'], constraints['B'], constraints['C'], constraints['ABC'])`
 
-**Why**: Physical reality - inverters and breakers have both per-phase AND total limits that must be respected.
+This properly enforces the Dual Constraint Principle for **every** charger configuration:
+- Single-phase limits are respected
+- Multi-phase combinations have independent limits
+- Total system limit (ABC) is always enforced
+
+**Example**: 
+```python
+constraints = {
+    'A': 25.0,  # Phase A: 25A available
+    'B': 25.0,  # Phase B: 25A available  
+    'C': 25.0,  # Phase C: 25A available
+    'AB': 40.0,  # Phases A+B combined: 40A max (not 50A!)
+    'AC': 40.0,  # Phases A+C combined: 40A max
+    'BC': 40.0,  # Phases B+C combined: 40A max
+    'ABC': 52.0 # All phases: 52A total max (12kW / 230V)
+}
+```
+
+A 3-phase charger drawing 20A per phase (60A total) would violate the ABC constraint (52A), even though individual phases are fine.
+
+**Why**: Physical reality - inverters and breakers have limits for EACH phase combination, not just individual phases.
 
 ## Project Overview
 
@@ -231,72 +253,81 @@ Failing test:
 ✅ Dual-path distribution (standard vs per-phase) based on explicit phase assignments
 ✅ Handles mixed 1-phase/3-phase charger scenarios
 
-### Known Issues
+### Completed Refactoring
 
-🔴 **CRITICAL - Design Principle Violations**: The codebase violates the core principle "Generality Over Special Cases" in multiple places:
+✅ **Phase 1 & 2 Refactoring: COMPLETE** - Design principle violations resolved:
 
-1. **Excessive Phase-Specific Branching** 
-   - ✅ **FIXED**: `_calculate_site_limit()` - uses per-phase arrays uniformly + accounts for total inverter limit
-   - ✅ **FIXED**: `_get_phase_available_current()` - removed special cases  
-   - ✅ **FIXED**: `_calculate_solar_available()` - completely refactored to use per-phase arrays uniformly!
-   - ✅ **FIXED**: `_determine_target_power()` - now uses dual constraint tuples throughout (Phase 2), eliminates semantic branching
-   
-2. **Semantic Switching Between Per-Phase and Total**
-   - ✅ **RESOLVED**: Phase 2 dual constraint implementation handles this properly
-   - All functions now return `(per_phase[], total)` tuples
-   - Semantic differences handled by dual constraint enforcement, not branching
-   
-3. **Eco Mode Special Logic**
-   - ✅ **FIXED**: Simplified from 3 branches to 2 (based on solar_available semantics)
-   - Now follows same logic as calculate_all_charger_targets() for consistency
-   
-4. ✅ **FIXED: Helper Functions with Special Cases**
-   - ✅ `_get_phase_available_current()` now always returns dict with A/B/C keys
+1. ✅ **Excessive Phase-Specific Branching** - All functions now use per-phase arrays uniformly
+2. ✅ **Semantic Switching** - Dual constraint tuples `(per_phase[], total)` handle all cases
+3. ✅ **Eco Mode Logic** - Simplified and consistent
+4. ✅ **Helper Functions** - No special cases
 
-**Refactoring Plan**:
-- **Phase 1**: ✅ **COMPLETE** - Unified to per-phase arrays throughout
-  - ✅ `_calculate_site_limit()` - uses per-phase arrays + total inverter constraint
-  - ✅ `_calculate_solar_available()` - completely unified, no phase branching
-  - ✅ `_get_phase_available_current()` - no special cases
-  - ✅ `_determine_target_power()` Eco mode - simplified from 3 to 2 branches
-  - ✅ `_determine_target_power()` Standard mode - documented semantic requirements
-- **Phase 2**: ✅ **COMPLETE** - Dual constraint infrastructure implemented
-  - ✅ All calculation functions now return `(per_phase[], total)` tuples
-  - ✅ _calculate_site_limit() returns dual constraint
-  - ✅ _calculate_solar_available() returns dual constraint  
-  - ✅ _calculate_excess_available() returns dual constraint
-  - ✅ _determine_target_power() accepts and returns dual constraint
-  - ✅ _distribute_power() receives and uses dual constraint
-  - ⚠️ Tests still at 25/33 - infrastructure complete but logic needs refinement
-- **Phase 3**: 🔄 **NEXT** - Fix mode calculation logic to properly use dual constraints
-  - Standard mode needs to properly add solar + battery to site limits
-  - Investigate why chargers are getting max_current instead of constrained values
-  - Battery discharge scenarios need special attention
+**Infrastructure Status**: ✅ Complete
+- All calculation functions return dual constraint tuples
+- Per-phase arrays used throughout
+- Both constraints tracked and enforced
 
-**Status**: ✅ Phase 2 COMPLETE (infrastructure done, 25/33 tests passing - logic fixes needed in Phase 3)
+### Current Issues
 
-🔴 **CRITICAL - Dual Constraint Problem**: The current architecture only tracks ONE constraint (either per-phase OR total), but asymmetric inverters have BOTH:
-  - **Symmetric Inverter**: Per-phase [10A, 10A, 10A] → Total 30A (sum of phases)
-  - **Asymmetric Inverter**: Per-phase [10A, 10A, 10A] + Total 20A (independent limit!)
-  
-  **Impact**: Asymmetric systems can violate total inverter power limit even if per-phase limits are met.
-  
-  **Solution Required**:
-  - Track both `available_per_phase[]` AND `available_total` throughout calculation pipeline
-  - All calculation steps must return tuple: `(per_phase[], total)`
-  - Distribution logic must enforce BOTH constraints simultaneously
-  - Affects: `_calculate_solar_available()`, `_determine_target_power()`, all distribution modes
-  
-  **Status**: 🔄 Part of Phase 2 refactoring above
+🔴 **Phase 3: Mode Calculation Logic Refinement** (8 failing tests - all 3-phase + battery scenarios)
 
-⚠️ **Per-phase distribution with asymmetric inverters**: `_distribute_power_per_phase()` uses raw phase exports, doesn't include battery discharge capability. This affects scenarios where:
-  - Single-phase charger has explicit phase assignment
-  - Inverter supports asymmetric distribution
-  - Battery SOC > target (can discharge)
-  - Expected: charger should access total power pool (solar + battery)
-  - Actual: charger only sees phase export (solar only)
-  
-  **Note**: This will be resolved by Phase 1 & 2 refactoring above.
+**Problem Pattern**: Chargers receiving `max_current (16A)` instead of constrained values in battery scenarios.
+
+**Failing Tests** (all 3-phase with asymmetric inverters + battery):
+1. `3ph-2c-solar-prio-with-bat-shared` - expects 8A/0A, getting 16A/8A
+2. `3ph-1c-solar-prio-with-bat-unbalanced` - expects 9.3A, getting 28A
+3. `3ph-1c-eco-prio-with-bat-high-soc` - expects 10A, getting 16A  
+4. `3ph-1c-eco-prio-with-bat-mid-soc` - expects 6A, getting 16A
+5. `3ph-3c-standard-prio-with-bat-normal` - chargers 2&3 wrong values
+6. `3ph-2c-solar-prio-with-bat-mixed-phases` - expects 8A/6A, getting 16A/14A
+7. `3ph-2c-eco-prio-with-bat-no-solar` - expects 6A/6A, getting 16A/16A
+8. `3ph-1c-solar-prio-with-bat-oscillation` - expects 8A, getting 16A
+
+**Phase 2C: Multi-Phase Constraint System Implementation Plan**
+
+🔄 **IN PROGRESS** - Refactoring to use constraint dicts for all phase combinations
+
+**Implementation Steps**:
+
+1. **Update `_calculate_site_limit()`** to return constraint dict:
+   ```python
+   return {
+       'A': phase_a_limit,
+       'B': phase_b_limit,
+       'C': phase_c_limit,
+       'AB': min(phase_a_limit + phase_b_limit, inverter_total_limit),
+       'AC': min(phase_a_limit + phase_c_limit, inverter_total_limit),
+       'BC': min(phase_b_limit + phase_c_limit, inverter_total_limit),
+       'ABC': total_limit  # Already accounts for inverter_max_power
+   }
+   ```
+
+2. **Update `_calculate_solar_available()`** to return constraint dict:
+   - Calculate per-phase solar after consumption & battery
+   - Calculate all 2-phase combinations (sum of individuals)
+   - Calculate total (ABC) with inverter limit applied
+
+3. **Update `_calculate_excess_available()`** to return constraint dict:
+   - Similar structure to solar_available
+
+4. **Update `_determine_target_power()`** to work with constraint dicts:
+   - Accept constraint dicts as input
+   - Return constraint dict as output
+   - Each mode calculates constraints for all phase combinations
+
+5. **Update `_distribute_power_per_phase_priority()`** to use constraint dict:
+   - For each charger, look up the appropriate constraint key based on `active_phases_mask`
+   - Example: 3-phase charger uses `min(constraints['A'], constraints['B'], constraints['C'], constraints['ABC'])`
+   - Example: 2-phase AB charger uses `min(constraints['A'], constraints['B'], constraints['AB'])`
+   - Example: 1-phase A charger uses `constraints['A']`
+
+6. **Key Insight**: The constraint dict naturally handles asymmetric vs symmetric:
+   - **Asymmetric**: All phase combinations get the total pool divided appropriately
+   - **Symmetric**: Each combination is limited by actual per-phase availability
+
+**Expected Outcome**: All 8 failing battery tests should pass as we now properly enforce all constraints.
+
+**Status**: 🔄 Implementation starting
 
 ### Planned Features
 🔄 **2-Phase OBC Support**: Many European EVs (VW eGolf, eUp, ID.3 base, Seat, Škoda, Cupra) use 2-phase onboard chargers. Need to:
