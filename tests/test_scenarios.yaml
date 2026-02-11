@@ -23,6 +23,9 @@ scenarios:
       battery_soc_target: 80
       battery_max_charge_power: 4600  # 20A at 230V
       battery_max_discharge_power: 4600  # 20A at 230V
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -51,6 +54,9 @@ scenarios:
       battery_soc_target: 80
       battery_max_charge_power: 4600  # 20A at 230V
       battery_max_discharge_power: 4600  # 20A at 230V
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -79,6 +85,9 @@ scenarios:
       battery_soc_target: 80
       battery_max_charge_power: 4600  # 20A at 230V
       battery_max_discharge_power: 4600  # 20A at 230V
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -108,8 +117,8 @@ scenarios:
       battery_max_charge_power: null
       battery_max_discharge_power: null
       inverter_supports_asymmetric: False
-      inverter_max_power_per_phase: 5666
-      inverter_max_power: 17000
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -139,8 +148,8 @@ scenarios:
       battery_max_charge_power: null
       battery_max_discharge_power: null
       inverter_supports_asymmetric: False
-      inverter_max_power_per_phase: 5666
-      inverter_max_power: 17000
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -170,7 +179,7 @@ scenarios:
       battery_max_charge_power: 4140
       battery_max_discharge_power: 4140
       inverter_supports_asymmetric: True
-      inverter_max_power_per_phase: 6000
+      inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
@@ -208,7 +217,7 @@ scenarios:
       battery_max_charge_power: 4140
       battery_max_discharge_power: 4140
       inverter_supports_asymmetric: True
-      inverter_max_power_per_phase: 6000
+      inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
@@ -246,7 +255,7 @@ scenarios:
       battery_max_charge_power: 4140
       battery_max_discharge_power: 4140
       inverter_supports_asymmetric: True
-      inverter_max_power_per_phase: 6000
+      inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
@@ -284,7 +293,7 @@ scenarios:
       battery_max_charge_power: 4140
       battery_max_discharge_power: 4140
       inverter_supports_asymmetric: True
-      inverter_max_power_per_phase: 6000
+      inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
@@ -322,7 +331,7 @@ scenarios:
       battery_max_charge_power: 4140
       battery_max_discharge_power: 4140
       inverter_supports_asymmetric: True
-      inverter_max_power_per_phase: 6000
+      inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
