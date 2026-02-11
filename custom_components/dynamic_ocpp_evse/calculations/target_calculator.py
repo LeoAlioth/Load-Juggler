@@ -109,39 +109,42 @@ def _calculate_site_limit(site: SiteContext) -> float:
     """
     Step 1: Calculate absolute site power limit (prevents breaker trips).
     
+    Uses per-phase arrays uniformly - no special cases for 1-phase vs 3-phase.
+    For 1-phase systems, phase B and C consumption are 0.
+    
     Returns total available current considering:
     - Main breaker rating
     - Current consumption
     - Grid charging permission (with battery)
+    - Inverter total power limit (for asymmetric systems)
     
     Returns:
         Total current (A) available without tripping breakers
     """
-    # Single-phase calculation
-    if site.num_phases == 1:
-        # Available = breaker rating - current consumption
-        available = site.main_breaker_rating - site.phase_a_consumption
-        
-        # If grid charging not allowed (and has battery), can only use export
-        if not site.allow_grid_charging and site.battery_soc is not None:
-            available = site.total_export_current
-        
-        return max(0, available)
-    
-    # Three-phase: Calculate per-phase, use minimum
-    phase_a_limit = site.main_breaker_rating - site.phase_a_consumption
-    phase_b_limit = site.main_breaker_rating - site.phase_b_consumption
-    phase_c_limit = site.main_breaker_rating - site.phase_c_consumption
+    # Calculate per-phase limits using uniform approach
+    # Single-phase systems have phase_b_consumption = phase_c_consumption = 0
+    phase_limits = [
+        site.main_breaker_rating - site.phase_a_consumption,
+        site.main_breaker_rating - site.phase_b_consumption,
+        site.main_breaker_rating - site.phase_c_consumption,
+    ]
     
     # If grid charging not allowed (and has battery), limited to export only
     if not site.allow_grid_charging and site.battery_soc is not None:
-        phase_a_limit = min(phase_a_limit, site.phase_a_export)
-        phase_b_limit = min(phase_b_limit, site.phase_b_export)
-        phase_c_limit = min(phase_c_limit, site.phase_c_export)
+        phase_limits[0] = min(phase_limits[0], site.phase_a_export)
+        phase_limits[1] = min(phase_limits[1], site.phase_b_export)
+        phase_limits[2] = min(phase_limits[2], site.phase_c_export)
     
-    # For now, return total (will handle per-phase in distribution)
-    # TODO: Track per-phase limits through all steps
-    total_limit = max(0, phase_a_limit + phase_b_limit + phase_c_limit)
+    # Calculate total from sum of phases (unused phases are 0)
+    # For 1-phase: only phase_limits[0] is non-zero
+    # For 3-phase: all three contribute
+    total_limit = max(0, sum(phase_limits))
+    
+    # For asymmetric inverters, also check total inverter power limit
+    # This is the dual constraint: per-phase limits AND total limit
+    if site.inverter_supports_asymmetric and site.inverter_max_power:
+        max_inverter_current = site.inverter_max_power / site.voltage
+        total_limit = min(total_limit, max_inverter_current)
     
     return total_limit
 
@@ -150,8 +153,11 @@ def _calculate_solar_available(site: SiteContext) -> tuple:
     """
     Step 2: Calculate solar available power.
     
+    Uses per-phase arrays uniformly - no special cases for 1-phase vs 3-phase.
+    For 1-phase systems, phases B and C are 0.
+    
     Considers:
-    - Total solar export (per-phase for 3-phase systems)
+    - Total solar export (per-phase distribution)
     - Battery charging (if SOC < target)
     - Battery discharge (if SOC > target, mode-dependent)
     - Inverter limits (both per-phase AND total)
@@ -164,79 +170,67 @@ def _calculate_solar_available(site: SiteContext) -> tuple:
         For symmetric inverters: total = sum(per_phase)
         For asymmetric inverters: total may be less than sum(per_phase)
     """
-    # Calculate available per phase for 3-phase systems
-    if site.num_phases == 3:
-        # Solar evenly distributed: each phase gets 1/3
-        solar_per_phase = (site.solar_production_total / 3) / site.voltage if site.solar_production_total else 0
-        
-        # Calculate export per phase after consumption
-        phase_a_avail = max(0, solar_per_phase - site.phase_a_consumption)
-        phase_b_avail = max(0, solar_per_phase - site.phase_b_consumption)
-        phase_c_avail = max(0, solar_per_phase - site.phase_c_consumption)
-        
-        # Handle battery charging/discharging
-        if site.battery_soc is not None:
-            if site.battery_soc < site.battery_soc_target:
-                # Battery charges first - reduce available proportionally
-                battery_charge_current = site.battery_max_charge_power / site.voltage if site.battery_max_charge_power else 0
-                battery_per_phase = battery_charge_current / 3
-                phase_a_avail = max(0, phase_a_avail - battery_per_phase)
-                phase_b_avail = max(0, phase_b_avail - battery_per_phase)
-                phase_c_avail = max(0, phase_c_avail - battery_per_phase)
-            
-            elif site.battery_soc > site.battery_soc_target:
-                # Battery can discharge - add to each phase
-                if site.battery_max_discharge_power:
-                    battery_discharge_current = site.battery_max_discharge_power / site.voltage
-                    battery_per_phase = battery_discharge_current / 3
-                    phase_a_avail += battery_per_phase
-                    phase_b_avail += battery_per_phase
-                    phase_c_avail += battery_per_phase
-        
-        # Apply per-phase inverter limits if configured
-        if site.inverter_max_power_per_phase:
-            max_per_phase = site.inverter_max_power_per_phase / site.voltage
-            phase_a_avail = min(phase_a_avail, max_per_phase)
-            phase_b_avail = min(phase_b_avail, max_per_phase)
-            phase_c_avail = min(phase_c_avail, max_per_phase)
-        
-        # Calculate total available (sum of phases before inverter total limit)
-        total_available = phase_a_avail + phase_b_avail + phase_c_avail
-        
-        # Apply total inverter limit if configured
-        if site.inverter_max_power:
-            max_total = site.inverter_max_power / site.voltage
-            total_available = min(total_available, max_total)
-        
-        # Return both per-phase and total
-        per_phase = [phase_a_avail, phase_b_avail, phase_c_avail]
-        
-        _LOGGER.debug(
-            f"3-phase solar: per-phase=[{phase_a_avail:.1f}, {phase_b_avail:.1f}, {phase_c_avail:.1f}], "
-            f"total={total_available:.1f}A, asymmetric={site.inverter_supports_asymmetric}"
-        )
-        
-        return (per_phase, total_available)
+    # Calculate solar per phase - evenly distributed across active phases
+    # For num_phases=1: all solar on phase A, B and C are 0
+    # For num_phases=3: solar divided equally across A, B, C
+    num_active_phases = site.num_phases if site.num_phases > 0 else 1
+    solar_per_phase = (site.solar_production_total / num_active_phases) / site.voltage if site.solar_production_total else 0
     
-    # Single-phase system
-    available = site.total_export_current
+    # Calculate export per phase after consumption (unused phases have 0 consumption)
+    phase_available = [
+        max(0, solar_per_phase - site.phase_a_consumption),
+        max(0, solar_per_phase - site.phase_b_consumption) if site.num_phases > 1 else 0,
+        max(0, solar_per_phase - site.phase_c_consumption) if site.num_phases > 1 else 0,
+    ]
     
-    # No battery - just return export
-    if site.battery_soc is None:
-        return ([available, 0, 0], available)
+    # Handle battery charging/discharging
+    if site.battery_soc is not None:
+        battery_current_per_phase = 0
+        
+        if site.battery_soc < site.battery_soc_target:
+            # Battery charges first - reduce available proportionally across active phases
+            if site.battery_max_charge_power:
+                battery_charge_current = site.battery_max_charge_power / site.voltage
+                battery_current_per_phase = battery_charge_current / num_active_phases
+                # Reduce from active phases only
+                phase_available[0] = max(0, phase_available[0] - battery_current_per_phase)
+                if site.num_phases > 1:
+                    phase_available[1] = max(0, phase_available[1] - battery_current_per_phase)
+                    phase_available[2] = max(0, phase_available[2] - battery_current_per_phase)
+        
+        elif site.battery_soc > site.battery_soc_target:
+            # Battery can discharge - add to active phases
+            if site.battery_max_discharge_power:
+                battery_discharge_current = site.battery_max_discharge_power / site.voltage
+                battery_current_per_phase = battery_discharge_current / num_active_phases
+                # Add to active phases only
+                phase_available[0] += battery_current_per_phase
+                if site.num_phases > 1:
+                    phase_available[1] += battery_current_per_phase
+                    phase_available[2] += battery_current_per_phase
     
-    # Battery below target: Battery charges first
-    if site.battery_soc < site.battery_soc_target:
-        battery_charge_current = site.battery_max_charge_power / site.voltage if site.battery_max_charge_power else 0
-        available = max(0, available - battery_charge_current)
+    # Apply per-phase inverter limits if configured
+    if site.inverter_max_power_per_phase:
+        max_per_phase = site.inverter_max_power_per_phase / site.voltage
+        phase_available[0] = min(phase_available[0], max_per_phase)
+        if site.num_phases > 1:
+            phase_available[1] = min(phase_available[1], max_per_phase)
+            phase_available[2] = min(phase_available[2], max_per_phase)
     
-    # Battery above target: Can discharge
-    elif site.battery_soc > site.battery_soc_target:
-        if site.battery_max_discharge_power:
-            battery_discharge_current = site.battery_max_discharge_power / site.voltage
-            available += battery_discharge_current
+    # Calculate total available (sum of all phases - unused are 0)
+    total_available = sum(phase_available)
     
-    return ([available, 0, 0], available)
+    # Apply total inverter limit if configured (dual constraint!)
+    if site.inverter_max_power:
+        max_total = site.inverter_max_power / site.voltage
+        total_available = min(total_available, max_total)
+    
+    _LOGGER.debug(
+        f"Solar available: per-phase=[{phase_available[0]:.1f}, {phase_available[1]:.1f}, {phase_available[2]:.1f}], "
+        f"total={total_available:.1f}A, phases={site.num_phases}, asymmetric={site.inverter_supports_asymmetric}"
+    )
+    
+    return (phase_available, total_available)
 
 
 def _calculate_excess_available(site: SiteContext) -> float:
@@ -297,12 +291,16 @@ def _determine_target_power(site: SiteContext, site_limit: float, solar_availabl
                 battery_discharge = site.battery_max_discharge_power / site.voltage
                 target += battery_discharge
         
-        # For 3-phase systems without asymmetric: divide by 3 (per-phase)
-        # With asymmetric: return total (inverter can balance)
+        # Return semantics must match what calculate_all_charger_targets() expects:
+        # - For symmetric 3-phase: return per-phase (will be used with min() of phases)
+        # - For asymmetric or 1-phase: return total (inverter can balance or single phase)
+        # This matches the same logic used in Eco mode and in the caller
         if site.num_phases == 3 and not site.inverter_supports_asymmetric:
+            # Symmetric 3-phase: return per-phase value
             return target / 3
-        
-        return target
+        else:
+            # Asymmetric or 1-phase: return total
+            return target
     
     elif mode == CHARGING_MODE_ECO:
         # Eco: Charge at minimum to protect battery, can use more if battery is healthy
@@ -311,15 +309,20 @@ def _determine_target_power(site: SiteContext, site_limit: float, solar_availabl
         # - Battery >= target: Can use all solar available
         
         # Calculate sum of minimum charge rates
-        # Must match solar_available semantics (total vs per-phase)
-        if site.inverter_supports_asymmetric:
-            # Asymmetric: solar_available is TOTAL, so use total minimums
-            sum_minimums = sum(c.min_current * c.phases for c in site.chargers)
-        elif site.num_phases == 3 and all(c.phases == 3 for c in site.chargers):
-            # Symmetric 3-phase: solar_available is per-phase, so use per-phase minimums
+        # The semantics of solar_available determine how we calculate minimums:
+        # - If solar_available represents per-phase current, sum per-phase minimums
+        # - If solar_available represents total current, sum total minimums
+        # This depends on inverter type and phase count (set in calculate_all_charger_targets)
+        
+        # Determine if solar_available is per-phase or total based on same logic
+        # used in calculate_all_charger_targets() when calling this function
+        if site.num_phases == 3 and not site.inverter_supports_asymmetric:
+            # Symmetric 3-phase: solar_available is per-phase (minimum of phases)
+            # So sum per-phase minimums
             sum_minimums = sum(c.min_current for c in site.chargers)
         else:
-            # 1-phase or mixed: use total
+            # Asymmetric or 1-phase: solar_available is total
+            # So sum total minimums (min_current * phases)
             sum_minimums = sum(c.min_current * c.phases for c in site.chargers)
         
         # Battery below minimum - protect battery (no charging)
@@ -354,15 +357,15 @@ def _determine_target_power(site: SiteContext, site_limit: float, solar_availabl
 
 def _get_phase_available_current(site: SiteContext) -> dict:
     """
-    Helper: Get available current per phase for single-phase chargers.
+    Helper: Get available current per phase.
+    
+    Uses uniform per-phase representation - no special cases.
+    For 1-phase systems, phase_b_export and phase_c_export are 0.
     
     Returns:
         dict with keys 'A', 'B', 'C' containing available current per phase
     """
-    if site.num_phases == 1:
-        return {'A': site.phase_a_export, 'B': 0, 'C': 0}
-    
-    # For 3-phase, calculate available per phase
+    # Always return all three phases - unused phases are 0
     return {
         'A': site.phase_a_export,
         'B': site.phase_b_export,

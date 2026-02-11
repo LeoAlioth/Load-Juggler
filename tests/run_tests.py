@@ -7,6 +7,7 @@ Uses ACTUAL production code - no duplicates!
 import sys
 import yaml
 from pathlib import Path
+from datetime import datetime
 
 # Import REAL production code (pure Python, no HA dependencies)
 sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components" / "dynamic_ocpp_evse" / "calculations"))
@@ -435,9 +436,36 @@ def run_single_scenario(scenario_name, yaml_file='tests/test_scenarios.yaml'):
     return False
 
 
+class TeeOutput:
+    """Write to both console and log file."""
+    def __init__(self, log_file):
+        self.terminal = sys.stdout
+        self.log = open(log_file, 'w', encoding='utf-8')
+    
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+    
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+    
+    def close(self):
+        self.log.close()
+
+
 if __name__ == "__main__":
     import sys
     from pathlib import Path
+    
+    # Redirect output to both console and log file
+    log_file = Path(__file__).parent / "test_results.log"
+    tee = TeeOutput(log_file)
+    sys.stdout = tee
+    
+    # Print start timestamp
+    start_time = datetime.now()
+    print(f"Test run started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
     
     def _merge_scenarios_from_dir(dir_path):
         """Merge all yaml scenarios from a directory into a single list."""
@@ -524,5 +552,15 @@ if __name__ == "__main__":
                 pass
         else:
             success = run_tests(verbose=True, filter_verified=filter_verified)
+    
+    # Print end timestamp and duration
+    end_time = datetime.now()
+    duration = end_time - start_time
+    print(f"\nTest run finished: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Duration: {duration.total_seconds():.2f} seconds")
+    
+    # Close log file
+    tee.close()
+    sys.stdout = tee.terminal
     
     sys.exit(0 if success else 1)

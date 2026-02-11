@@ -200,6 +200,8 @@ python tests/run_tests.py --unverified tests/scenarios
 python tests/run_tests.py "scenario-name"
 ```
 
+**Test Output**: All test runs automatically output results to `tests/test_results.log` for review. This log file contains the complete test summary and is updated with each test run.
+
 ### Test Status
 
 Current verified test results: **28/29 passing (97%)**
@@ -218,6 +220,38 @@ Failing test:
 
 ### Known Issues
 
+🔴 **CRITICAL - Design Principle Violations**: The codebase violates the core principle "Generality Over Special Cases" in multiple places:
+
+1. **Excessive Phase-Specific Branching** 
+   - ✅ **FIXED**: `_calculate_site_limit()` - uses per-phase arrays uniformly + accounts for total inverter limit
+   - ✅ **FIXED**: `_get_phase_available_current()` - removed special cases  
+   - ✅ **FIXED**: `_calculate_solar_available()` - completely refactored to use per-phase arrays uniformly!
+   - ⚠️ **PARTIAL**: `_determine_target_power()` - Standard mode still has one phase branch (returns per-phase vs total)
+   
+2. **Semantic Switching Between Per-Phase and Total**
+   - ⚠️ Still present in Standard mode and in calculate_all_charger_targets() 
+   - This is intentional: different inverter types have different semantics
+   - May need architectural decision on whether to unify further
+   
+3. **Eco Mode Special Logic**
+   - ✅ **FIXED**: Simplified from 3 branches to 2 (based on solar_available semantics)
+   - Now follows same logic as calculate_all_charger_targets() for consistency
+   
+4. ✅ **FIXED: Helper Functions with Special Cases**
+   - ✅ `_get_phase_available_current()` now always returns dict with A/B/C keys
+
+**Refactoring Plan**:
+- **Phase 1**: ✅ **COMPLETE** - Unified to per-phase arrays throughout
+  - ✅ `_calculate_site_limit()` - uses per-phase arrays + total inverter constraint
+  - ✅ `_calculate_solar_available()` - completely unified, no phase branching
+  - ✅ `_get_phase_available_current()` - no special cases
+  - ✅ `_determine_target_power()` Eco mode - simplified from 3 to 2 branches
+  - ✅ `_determine_target_power()` Standard mode - documented semantic requirements
+- **Phase 2**: 🔄 **NEXT** - Fix dual constraint problem (track both per-phase AND total limits throughout pipeline)
+- **Phase 3**: 📋 **PLANNED** - Simplify semantic logic (consistent representation throughout pipeline)
+
+**Status**: ✅ Phase 1 COMPLETE (4 functions refactored, 25/33 tests passing, 0 regressions)
+
 🔴 **CRITICAL - Dual Constraint Problem**: The current architecture only tracks ONE constraint (either per-phase OR total), but asymmetric inverters have BOTH:
   - **Symmetric Inverter**: Per-phase [10A, 10A, 10A] → Total 30A (sum of phases)
   - **Asymmetric Inverter**: Per-phase [10A, 10A, 10A] + Total 20A (independent limit!)
@@ -230,7 +264,7 @@ Failing test:
   - Distribution logic must enforce BOTH constraints simultaneously
   - Affects: `_calculate_solar_available()`, `_determine_target_power()`, all distribution modes
   
-  **Status**: 🔄 Refactoring in progress
+  **Status**: 🔄 Part of Phase 2 refactoring above
 
 ⚠️ **Per-phase distribution with asymmetric inverters**: `_distribute_power_per_phase()` uses raw phase exports, doesn't include battery discharge capability. This affects scenarios where:
   - Single-phase charger has explicit phase assignment
@@ -239,7 +273,7 @@ Failing test:
   - Expected: charger should access total power pool (solar + battery)
   - Actual: charger only sees phase export (solar only)
   
-  **Note**: This may be resolved by the dual constraint refactoring above.
+  **Note**: This will be resolved by Phase 1 & 2 refactoring above.
 
 ### Planned Features
 🔄 **2-Phase OBC Support**: Many European EVs (VW eGolf, eUp, ID.3 base, Seat, Škoda, Cupra) use 2-phase onboard chargers. Need to:
