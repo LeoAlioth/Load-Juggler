@@ -36,6 +36,7 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     Calculate target current for all chargers using clear step-by-step approach.
     
     Steps:
+    0. Filter active chargers (with cars connected)
     1. Calculate absolute site limits (per-phase physical constraints)
     2. Calculate solar available power
     3. Calculate excess available power
@@ -45,8 +46,23 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     Args:
         site: SiteContext containing all site and charger data
     """
+    # Step 0: Filter out chargers with no car connected
+    active_chargers = [c for c in site.chargers 
+                       if c.connector_status not in ["Available", "Unknown", "Unavailable"]]
+    
+    if len(active_chargers) == 0:
+        _LOGGER.debug("No active chargers (all Available/Unknown/Unavailable)")
+        # Set all chargers to 0
+        for charger in site.chargers:
+            charger.target_current = 0
+        return
+    
+    # Temporarily replace site.chargers with active ones for calculation
+    all_chargers = site.chargers
+    site.chargers = active_chargers
+    
     _LOGGER.debug(
-        f"Calculating targets for {len(site.chargers)} chargers - "
+        f"Calculating targets for {len(active_chargers)}/{len(all_chargers)} active chargers - "
         f"Mode: {site.charging_mode}, Distribution: {site.distribution_mode}"
     )
     
@@ -71,6 +87,12 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     
     for charger in site.chargers:
         _LOGGER.debug(f"Final - {charger.entity_id}: {charger.target_current:.1f}A")
+    
+    # Restore original chargers list and set inactive ones to 0
+    site.chargers = all_chargers
+    for charger in all_chargers:
+        if charger not in active_chargers:
+            charger.target_current = 0
 
 
 def _calculate_site_limit(site: SiteContext) -> float:

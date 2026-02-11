@@ -163,11 +163,18 @@ def build_site_from_scenario(scenario):
     for idx, charger_data in enumerate(scenario['chargers']):
         charger = ChargerContext(
             charger_id=f"charger_{idx}",
-            entity_id=charger_data['entity_id'],
-            min_current=charger_data['min_current'],
-            max_current=charger_data['max_current'],
-            phases=charger_data['phases'],
-            priority=charger_data.get('priority', 1),
+            entity_id=charger_data.get("entity_id", f"charger_{idx}"),
+            min_current=charger_data.get("min_current", 6),
+            max_current=charger_data.get("max_current", 16),
+            phases=charger_data.get("phases", 1),
+            priority=charger_data.get("priority", idx),
+            # New fields for phase tracking and connector status
+            car_phases=charger_data.get("car_phases"),  # None = default to phases
+            active_phases_mask=charger_data.get("active_phases_mask"),  # None = default based on phases
+            connector_status=charger_data.get("connector_status", "Charging"),  # Default to active
+            l1_current=charger_data.get("l1_current", 0),
+            l2_current=charger_data.get("l2_current", 0),
+            l3_current=charger_data.get("l3_current", 0),
         )
         # Store connected_to_phase in charger_id for single-phase (test only)
         if charger.phases == 1:
