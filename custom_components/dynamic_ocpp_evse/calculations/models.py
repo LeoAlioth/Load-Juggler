@@ -15,8 +15,18 @@ class ChargerContext:
     # Configuration
     min_current: float
     max_current: float
-    phases: int  # 1 or 3
+    phases: int  # 1 or 3 (EVSE hardware capability)
     priority: int = 1  # For distribution (lower = higher priority)
+    
+    # Active car connection (detected from OCPP or configured)
+    car_phases: int = None  # 1, 2, or 3 (actual car OBC phases detected)
+    active_phases_mask: str = None  # "A", "AB", "ABC", "B", "BC", "C", "AC"
+    connector_status: str = "Charging"  # OCPP status: Default to active for backward compatibility
+    
+    # Per-phase current readings (from OCPP L1/L2/L3 attributes)
+    l1_current: float = 0  # Phase A current (A)
+    l2_current: float = 0  # Phase B current (A)
+    l3_current: float = 0  # Phase C current (A)
     
     # Current state
     current_import: float = 0  # What charger is currently drawing (A)

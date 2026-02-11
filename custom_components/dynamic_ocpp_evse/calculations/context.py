@@ -68,10 +68,18 @@ def determine_phases(sensor, state):
     3. Fallback: assume 1 phase (safest assumption for new connections)
     
     Returns:
-        tuple: (phases, calc_used) where calc_used indicates detection method
+        tuple: (phases, calc_used, active_mask, l1, l2, l3) where:
+            - phases: number of active phases
+            - calc_used: detection method used
+            - active_mask: which phases are active ("A", "AB", "ABC", etc.)
+            - l1, l2, l3: individual phase currents
     """
     phases = 0
     calc_used = ""
+    active_mask = None
+    l1_current = 0
+    l2_current = 0
+    l3_current = 0
     
     # Threshold for considering a phase as active (Amperes)
     PHASE_DETECTION_THRESHOLD = 2.0
@@ -122,8 +130,23 @@ def determine_phases(sensor, state):
             if active_phases > 0:
                 phases = active_phases
                 calc_used = f"1-detected_{phases}ph_from_ocpp"
-                _LOGGER.info(f"Detected {phases} active phase(s) from OCPP: {', '.join(phase_details)}")
-                return phases, calc_used
+                
+                # Build active phase mask
+                active_mask = ""
+                if l1_current is not None and l1_current > PHASE_DETECTION_THRESHOLD:
+                    active_mask += "A"
+                if l2_current is not None and l2_current > PHASE_DETECTION_THRESHOLD:
+                    active_mask += "B"
+                if l3_current is not None and l3_current > PHASE_DETECTION_THRESHOLD:
+                    active_mask += "C"
+                
+                # Store individual currents (default to 0 if None)
+                l1 = l1_current if l1_current is not None else 0
+                l2 = l2_current if l2_current is not None else 0
+                l3 = l3_current if l3_current is not None else 0
+                
+                _LOGGER.info(f"Detected {phases} active phase(s) from OCPP: {', '.join(phase_details)}, mask={active_mask}")
+                return phases, calc_used, active_mask, l1, l2, l3
             
             # If no phases detected but sensor exists, check if car is charging
             # If current_import > threshold but no phase breakdown, log warning
@@ -138,16 +161,24 @@ def determine_phases(sensor, state):
     if phases == 0 and state.get(CONF_PHASES) is not None and is_number(state[CONF_PHASES]):
         phases = int(state[CONF_PHASES])
         calc_used = f"2-config_{phases}ph"
-        _LOGGER.debug(f"Using configured phases: {phases}")
-        return phases, calc_used
+        # Set default mask based on configured phases
+        if phases == 1:
+            active_mask = "A"
+        elif phases == 3:
+            active_mask = "ABC"
+        else:
+            active_mask = "AB"
+        _LOGGER.debug(f"Using configured phases: {phases}, mask={active_mask}")
+        return phases, calc_used, active_mask, 0, 0, 0
     
     # Fallback 2: Default to 1 phase (safest assumption for new car connections)
     if phases == 0:
         phases = 1
         calc_used = "3-default_1ph"
-        _LOGGER.debug(f"No phase data available, defaulting to 1 phase")
+        active_mask = "A"  # Default to phase A
+        _LOGGER.debug(f"No phase data available, defaulting to 1 phase, mask={active_mask}")
     
-    return phases, calc_used
+    return phases, calc_used, active_mask, 0, 0, 0
 
 
 def get_hub_state_config(sensor):
@@ -280,7 +311,7 @@ def get_charge_context_values(sensor, state):
     """Build ChargeContext from state dictionary."""
     min_current = state[CONF_MIN_CURRENT] if state[CONF_MIN_CURRENT] is not None else state[CONF_EVSE_MINIMUM_CHARGE_CURRENT]
     max_current = state[CONF_MAX_CURRENT] if state[CONF_MAX_CURRENT] is not None else state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]
-    phases, calc_used = determine_phases(sensor, state)
+    phases, calc_used, active_mask, l1, l2, l3 = determine_phases(sensor, state)
     voltage = state[CONF_PHASE_VOLTAGE] if state[CONF_PHASE_VOLTAGE] is not None and is_number(state[CONF_PHASE_VOLTAGE]) else DEFAULT_PHASE_VOLTAGE
     
     phase_a_current = state[CONF_PHASE_A_CURRENT] if state[CONF_PHASE_A_CURRENT] is not None and is_number(state[CONF_PHASE_A_CURRENT]) else 0
