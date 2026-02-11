@@ -1,732 +1,312 @@
 # CLINE.md - Dynamic OCPP EVSE Development Guide
 
-## Project Overview
+This file helps me (Cline) understand and develop this Home Assistant integration for dynamic EVSE (Electric Vehicle Supply Equipment) charging management.
 
-**Dynamic OCPP EVSE** is a Home Assistant custom integration that provides intelligent, dynamic charging control for Electric Vehicle Supply Equipment (EVSE) that supports the Open Charge Point Protocol (OCPP). The integration calculates and automatically adjusts charging current based on available power, solar generation, battery state, and user preferences.
+## Repository Overview
 
-**Repository:** https://gitea.alpacasbarn.com/LeoAlioth/Dynamic_OCPP_EVSE  
-**Version:** 2.0.0  
-**Author:** @LeoAlioth  
-**License:** See LICENSE file
+**Project**: Dynamic OCPP EVSE Home Assistant Integration  
+**Purpose**: Intelligently manage EV charging based on solar production, battery state, and grid conditions  
+**Language**: Python 3  
+**Integration Type**: Home Assistant Custom Component  
 
----
+## What This Integration Does
 
-## Architecture Overview
+Dynamically controls EV charger current limits based on:
+- Solar production (real-time)
+- Battery state of charge
+- Home consumption  
+- Grid import/export limits
+- Multiple charging modes (Standard, Eco, Solar, Excess)
+- Multiple distribution modes (Priority, Shared, Strict, Optimized)
 
-### Hub-Charger Architecture (v2.0+)
+## Architecture
 
-The integration uses a **hub-charger architecture** introduced in v2.0:
+### New Architecture (Current - Post Refactoring)
 
-- **Hub**: Represents the home's electrical system (solar, grid, battery, power limits)
-  - Stores system-wide configuration (power limits, battery settings, phase voltage)
-  - Manages global entities (charging mode, battery SOC targets, power buffer)
-  - Coordinates current distribution across multiple chargers
-  
-- **Charger**: Represents individual OCPP-compatible EV chargers
-  - Links to a hub
-  - Has charger-specific configuration (min/max current, priority, OCPP device)
-  - Creates charger-specific entities (current sensors, buttons)
-  - Receives allocated current from hub's distribution algorithm
+**Core Calculation Engine**: `calculations/target_calculator.py`
+- Single entry point: `calculate_all_charger_targets(site)`
+- Works with `SiteContext` (site-wide) + multiple `ChargerContext` objects
+- **Per-phase tracking** for proper 3-phase and mixed-phase scenarios
+- All mode logic unified in one place
 
-**Migration Path:**  
-Legacy v1.x entries (single config) are automatically migrated to hub entries in v2.0+. Users must then add chargers separately.
+**Key Principle**: Everything is per-phase!
+- 3-phase site: Track A, B, C independently
+- Battery power can balance across phases (not tied to solar phases)
+- Solar power is phase-specific (evenly distributed)
+- Chargers consume from their connected phase(s)
 
----
+### Data Models (`calculations/models.py`)
 
-## Directory Structure
-
-```
-Dynamic_OCPP_EVSE/
-├── custom_components/
-│   └── dynamic_ocpp_evse/          # Main integration code
-│       ├── __init__.py              # Integration setup, hub/charger management, distribution
-│       ├── manifest.json            # Integration metadata
-│       ├── const.py                 # Constants and configuration keys
-│       ├── config_flow.py           # Configuration UI flows
-│       ├── services.yaml            # Service definitions
-│       ├── strings.json             # UI strings (English)
-│       │
-│       ├── button.py                # Button entities (Reset OCPP)
-│       ├── number.py                # Number entities (SOC targets, buffer, current limits)
-│       ├── select.py                # Select entities (modes, distribution)
-│       ├── sensor.py                # Sensor entities (current calculations, allocation)
-│       ├── switch.py                # Switch entities (grid charging)
-│       │
-│       ├── calculations/            # Current calculation engine
-│       │   ├── __init__.py
-│       │   ├── context.py           # CalculationContext data class
-│       │   ├── max_available.py     # Max available current calculation
-│       │   ├── utils.py             # Utility functions (power/current conversion)
-│       │   └── modes/               # Charging mode implementations
-│       │       ├── __init__.py
-│       │       ├── base.py          # BaseChargeMode abstract class
-│       │       ├── standard.py      # Standard mode (max speed)
-│       │       ├── eco.py           # Eco mode (solar + minimum)
-│       │       ├── solar.py         # Solar mode (solar only)
-│       │       └── excess.py        # Excess mode (threshold-based)
-│       │
-│       └── translations/            # Localization files
-│           ├── en.json              # English translations
-│           └── sl.json              # Slovenian translations
-│
-├── tests/                           # Test suite and results
-│   ├── test_current_calculation.py  # Current calculation tests
-│   ├── test_entity_migration.py    # Entity migration tests
-│   ├── current_calculation_results.csv
-│   ├── entity_migration_results.csv
-│   ├── entity_unique_ids.csv
-│   ├── README.md                    # Test documentation
-│   └── CSV_GRAPHING_GUIDE.md       # Guide for analyzing test results
-│
-├── README.md                        # User-facing documentation
-├── CHARGE_MODES_GUIDE.md           # Comprehensive charging modes guide
-├── CLINE.md                         # This file - developer guide
-├── hacs.json                        # HACS integration metadata
-├── requirements.txt                 # Runtime dependencies
-├── requirements_dev.txt             # Development dependencies
-├── mypy.py                          # MyPy type checking script
-├── .gitignore
-├── icon.png
-└── LICENSE
-```
-
----
-
-## Key Components
-
-### 1. Core Integration (`__init__.py`)
-
-**Responsibilities:**
-- Config entry setup and migration (v1 → v2)
-- Hub and charger entry management
-- Current distribution algorithms (4 modes)
-- Service registration (`reset_ocpp_evse`)
-- Entity discovery and automatic configuration
-
-**Key Functions:**
-- `async_migrate_entry()` - Handles version migrations
-- `async_setup_entry()` - Routes hub vs charger setup
-- `distribute_current_to_chargers()` - Main distribution logic
-- `_distribute_shared()` - Equal distribution after minimums
-- `_distribute_priority()` - Priority-based distribution
-- `_distribute_sequential_optimized()` - Sequential with leftover
-- `_distribute_sequential_strict()` - Strict priority enforcement
-
-**Distribution Modes:**
-1. **Shared**: Minimums first, then equal distribution
-2. **Priority**: Minimums first, then priority-based distribution
-3. **Sequential - Optimized**: Priority order, leftover flows to lower priority
-4. **Sequential - Strict**: Fully satisfy each priority before next
-
-### 2. Configuration Flow (`config_flow.py`)
-
-**Flows:**
-- Hub configuration (system-wide settings)
-- Charger configuration (per-charger settings)
-- Discovery flow (automatic OCPP charger detection)
-- Options flow (reconfiguration)
-
-**Auto-Detection:**
-- Detects SolarEdge, Deye, Solar Assistant sensors
-- Finds OCPP charger entities by suffix patterns
-- Suggests appropriate sensors during setup
-
-### 3. Constants (`const.py`)
-
-**Defines:**
-- Domain name and version
-- All configuration keys (CONF_*)
-- Entity suffixes (for OCPP integration)
-- Default values for all settings
-- Charging modes and distribution modes
-- Charge rate units (Amps/Watts/Auto)
-
-### 4. Calculation Engine (`calculations/`)
-
-**Architecture:**
-- `CalculationContext` - Data class holding all input data (grid, solar, battery, limits)
-- `BaseChargeMode` - Abstract base class for all modes
-- Mode implementations - Each mode calculates target current
-
-**Flow:**
-1. Coordinator reads all sensor values
-2. Creates `CalculationContext` with current state
-3. Calls active mode's `calculate()` method
-4. Mode returns target current
-5. Hub distributes current to chargers
-6. Chargers send OCPP commands to set charge rate
-
-**Modes:**
-- **Standard** (`standard.py`): Maximum speed charging
-  - Uses grid + solar + battery (if SOC > min)
-  - Respects power buffer for safety
-  
-- **Eco** (`eco.py`): Economical solar + minimum rate
-  - Without battery: max(solar, min_current)
-  - With battery: Graduated based on SOC thresholds
-  
-- **Solar** (`solar.py`): Pure solar charging
-  - Without battery: Solar export only
-  - With battery: Requires battery at target SOC
-  
-- **Excess** (`excess.py`): Threshold-based charging
-  - Without battery: Charge when export > threshold
-  - With battery: Dynamic threshold based on battery charge needs
-
-### 5. Entities
-
-**Hub Entities:**
-- `select.{hub}_charging_mode` - Active charging mode
-- `select.{hub}_distribution_mode` - Current distribution algorithm
-- `number.{hub}_home_battery_soc_target` - Target battery SOC
-- `number.{hub}_home_battery_soc_min` - Minimum battery SOC
-- `number.{hub}_power_buffer` - Safety buffer for Standard mode
-- `switch.{hub}_allow_grid_charging` - Enable/disable grid import
-- `sensor.{hub}_max_available_current` - Total available current
-
-**Charger Entities:**
-- `sensor.{charger}_target_charge_current` - Mode-calculated target
-- `sensor.{charger}_allocated_charge_current` - Distribution-allocated current
-- `number.{charger}_min_charge_current` - Minimum charge rate
-- `number.{charger}_max_charge_current` - Maximum charge rate
-- `number.{charger}_priority` - Distribution priority
-- `button.{charger}_reset_ocpp_evse` - Reset charger profile
-
----
-
-## Configuration Structure
-
-### Hub Configuration Data
-```python
-{
-    ENTRY_TYPE: "hub",
-    CONF_ENTITY_ID: "my_evse_hub",
-    
-    # Grid & Power
-    CONF_MAIN_BREAKER_RATING: 25,  # Amps per phase
-    CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.max_import_power",
-    CONF_PHASE_VOLTAGE: 230,  # Volts
-    CONF_NUM_PHASES: 3,
-    
-    # Phase Current/Power Sensors
-    CONF_L1_CURRENT_ENTITY_ID: "sensor.l1_current",
-    CONF_L2_CURRENT_ENTITY_ID: "sensor.l2_current",
-    CONF_L3_CURRENT_ENTITY_ID: "sensor.l3_current",
-    # OR
-    CONF_L1_POWER_ENTITY_ID: "sensor.l1_power",
-    # ...
-    
-    # Battery (optional)
-    CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
-    CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
-    CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,  # Watts
-    CONF_BATTERY_MAX_CHARGE_POWER: 5000,  # Watts
-    CONF_BATTERY_SOC_TARGET: 80,  # Percent
-    CONF_BATTERY_SOC_MIN: 20,  # Percent
-    
-    # Mode Settings
-    CONF_CHARGING_MODE: "eco",
-    CONF_EXCESS_EXPORT_THRESHOLD: 13000,  # Watts
-    CONF_POWER_BUFFER: 0,  # Watts
-    CONF_ALLOW_GRID_CHARGING: True,
-}
-```
-
-### Charger Configuration Data
-```python
-{
-    ENTRY_TYPE: "charger",
-    CONF_HUB_ENTRY_ID: "hub_entry_id_here",
-    CONF_ENTITY_ID: "my_charger",
-    
-    # OCPP Integration
-    CONF_OCPP_DEVICE_ID: "charger_device_id",
-    CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.charger_current_import",
-    CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: "sensor.charger_current_offered",
-    
-    # Charger Limits
-    CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,  # Amps
-    CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,  # Amps
-    
-    # Distribution
-    CONF_CHARGER_PRIORITY: 1,  # 1-10, lower = higher priority
-    
-    # OCPP Profile
-    CONF_STACK_LEVEL: 2,  # Stack level for charge profiles
-    CONF_CHARGE_RATE_UNIT: "auto",  # "amps", "watts", or "auto"
-    
-    # Update Control
-    CONF_UPDATE_FREQUENCY: 15,  # Seconds
-    CONF_CHARGE_PAUSE_DURATION: 180,  # Seconds
-}
-```
-
----
-
-## Development Workflow
-
-### Adding a New Charging Mode
-
-1. **Create mode file** in `calculations/modes/`
-   ```python
-   from .base import BaseChargeMode
-   from ..context import CalculationContext
-   
-   class MyMode(BaseChargeMode):
-       def calculate(self, context: CalculationContext) -> float:
-           # Implement calculation logic
-           return target_current
-   ```
-
-2. **Register mode** in `calculations/modes/__init__.py`
-   ```python
-   from .mymode import MyMode
-   
-   MODES = {
-       "standard": StandardMode,
-       "eco": EcoMode,
-       "solar": SolarMode,
-       "excess": ExcessMode,
-       "mymode": MyMode,  # Add here
-   }
-   ```
-
-3. **Add constant** in `const.py`
-   ```python
-   CHARGING_MODE_MYMODE = "mymode"
-   CHARGING_MODES = [..., CHARGING_MODE_MYMODE]
-   ```
-
-4. **Update strings** in `strings.json` and translations
-   ```json
-   {
-       "options": {
-           "charging_mode": {
-               "mymode": "My Mode Name"
-           }
-       }
-   }
-   ```
-
-5. **Document mode** in `CHARGE_MODES_GUIDE.md`
-
-6. **Add tests** in `tests/test_current_calculation.py`
-
-### Testing Changes
-
-```bash
-# Run current calculation tests
-python tests/test_current_calculation.py
-
-# Run entity migration tests
-python tests/test_entity_migration.py
-
-# Type checking
-python mypy.py
-
-# View test results
-# - Open tests/current_calculation_results.csv
-# - Follow tests/CSV_GRAPHING_GUIDE.md for analysis
-```
-
-### Debugging Tips
-
-1. **Enable debug logging** in Home Assistant's `configuration.yaml`:
-   ```yaml
-   logger:
-     default: info
-     logs:
-       custom_components.dynamic_ocpp_evse: debug
-   ```
-
-2. **Check entity states** in Developer Tools → States
-   - Look for hub entities: `select.{hub}_charging_mode`
-   - Look for charger entities: `sensor.{charger}_target_charge_current`
-   - Check allocated current: `sensor.{charger}_allocated_charge_current`
-
-3. **Monitor OCPP calls** - Enable OCPP integration debug logging:
-   ```yaml
-   logger:
-     logs:
-       custom_components.ocpp: debug
-   ```
-
-4. **Verify distribution** - Check logs for distribution calculations:
-   ```
-   Current distribution (priority) - Total: 32.0A, Allocations: 1: 16.0A, 2: 16.0A
-   ```
-
----
-
-## Key Concepts
-
-### Battery SOC Management
-
-**Thresholds:**
-- `min_soc` - Minimum battery level for operation (default 20%)
-- `target_soc` - Target battery level for mode behavior changes (default 80%)
-- `hysteresis` - Prevents oscillation around thresholds (default 3%)
-
-**Behavior by Mode:**
-- **Standard**: Battery provides power when SOC > min_soc
-- **Eco**: Graduated charging based on SOC ranges
-- **Solar**: Requires battery at target_soc before EV charging
-- **Excess**: Dynamic threshold adjustment based on battery needs
-
-### Power vs Current Sensors
-
-The integration supports both:
-- **Current sensors** (A) - Direct phase current measurements
-- **Power sensors** (W) - Converted to current using configured voltage
-
-**Auto-detection:**
-- Reads sensor's `unit_of_measurement` attribute
-- Automatically applies conversion when needed
-- Formula: `current = power / voltage`
-
-### OCPP Charge Profiles
-
-**Stack Levels:**
-- Integration uses configurable stack level (default 2)
-- Reset operation uses stack_level - 1
-- Higher stack levels override lower ones
-- Profile purpose: `TxDefaultProfile`
-- Profile kind: `Relative`
-
-**Rate Units:**
-- `amps` (A) - Standard OCPP current limit
-- `watts` (W) - Power-based limit (3-phase: I * V * 3)
-- `auto` - Detect from offered current sensor unit
-
-### Update Timing
-
-**Coordinator Pattern:**
-- Each charger has a `DataUpdateCoordinator`
-- Update frequency configurable (default 15s)
-- Coordinator fetches all sensor values
-- Builds `CalculationContext`
-- Calls mode calculation
-- Updates target current sensor
-- Triggers OCPP set_charge_rate if changed
-
-**Pause Duration:**
-- Minimum time before restarting stopped charging (default 180s)
-- Prevents rapid on/off cycling
-- Applies when mode says "stop charging"
-
----
-
-## Common Modifications
-
-### Change Default Values
-
-Edit `const.py`:
-```python
-DEFAULT_MIN_CHARGE_CURRENT = 6  # Amps
-DEFAULT_MAX_CHARGE_CURRENT = 16  # Amps
-DEFAULT_UPDATE_FREQUENCY = 15  # Seconds
-```
-
-### Add New Distribution Mode
-
-1. Add constant in `const.py`
-2. Implement distribution function in `__init__.py` (e.g., `_distribute_mymode()`)
-3. Add case in `distribute_current_to_chargers()`
-4. Update strings and translations
-
-### Support New Inverter Brand
-
-Edit `config_flow.py`:
-```python
-def _get_phase_current_sensors(hass):
-    # Add detection logic for new brand
-    if "mybrand" in entity_id:
-        suggested_sensors[f"L{phase}"] = entity_id
-```
-
-### Change Excess Mode Threshold Logic
-
-Edit `calculations/modes/excess.py`:
-```python
-def calculate(self, context: CalculationContext) -> float:
-    # Modify threshold calculation
-    effective_threshold = self._calculate_threshold(context)
-    # ... rest of logic
-```
-
----
-
-## Integration Points
-
-### OCPP Integration Dependency
-
-**After Dependency:**
-```json
-"after_dependencies": ["ocpp"]
-```
-
-**Expected Entities:**
-- `sensor.{charger}_current_import` - Current grid import
-- `sensor.{charger}_current_offered` - Current offered to vehicle
-
-**Service Calls:**
-- `ocpp.clear_profile` - Clear all charge profiles
-- `ocpp.set_charge_rate` - Set charging profile with custom limits
-
-### Home Assistant Platforms Used
-
-- **Config Flow** - Configuration UI
-- **Sensor** - Current calculations and monitoring
-- **Number** - Adjustable numeric settings
-- **Select** - Mode and distribution selection
-- **Switch** - Binary settings (grid charging)
-- **Button** - Action triggers (reset)
-
----
-
-## Migration Notes
-
-### v1.x to v2.0 Migration
-
-**Automatic:**
-- Entry type set to `hub`
-- Entity IDs preserved
-- Legacy config converted to hub structure
-
-**Manual Steps Required:**
-1. Restart Home Assistant after migration
-2. Go to Settings → Devices & Services → Dynamic OCPP EVSE
-3. Add charger(s) via "Add Charger" button or discovery
-4. Configure charger settings (OCPP device, limits, priority)
-5. Reset OCPP EVSE for each charger (clears old profiles)
-
-**What Changed:**
-- Single config → Hub + Charger(s)
-- Current calculation → Per-charger calculation + distribution
-- New distribution modes for multi-charger setups
-- Charger priority setting
-- Allocated current sensor (shows distribution result)
-
----
-
-## Troubleshooting Guide
-
-### Integration Won't Load
-
-1. Check Home Assistant logs for errors
-2. Verify OCPP integration is loaded first
-3. Check all required sensor entities exist
-4. Verify config entry data structure
-
-### Charger Not Responding
-
-1. Check OCPP device ID is correct
-2. Verify charger is online in OCPP integration
-3. Check charge profile stack level compatibility
-4. Test manual `ocpp.set_charge_rate` call
-5. Reset OCPP EVSE via button entity
-
-### Unexpected Current Allocation
-
-1. Check distribution mode setting
-2. Verify charger priorities
-3. Check hub's max available current sensor
-4. Review mode calculation in logs (debug level)
-5. Check charger min/max limits
-6. Verify target vs allocated current sensors
-
-### Battery Not Affecting Charging
-
-1. Check battery SOC sensor value
-2. Verify battery power sensor (positive = charging, negative = discharging)
-3. Check battery SOC thresholds (min, target)
-4. Verify mode supports battery integration
-5. Check "Allow Grid Charging" switch state
-
-### Solar Not Being Used
-
-1. Verify phase power/current sensors are correct
-2. Check if grid is importing (should be exporting for solar modes)
-3. Verify battery SOC meets mode requirements
-4. Check charging mode is solar-aware (Eco, Solar, Excess)
-5. Review calculation context in debug logs
-
----
-
-## API Reference
-
-### Key Classes
-
-**CalculationContext** (`calculations/context.py`)
 ```python
 @dataclass
-class CalculationContext:
-    grid_current_l1: float  # Grid import current per phase (A)
-    grid_current_l2: float
-    grid_current_l3: float
-    evse_current_offered: float  # Current offered by EVSE (A)
-    max_import_power: float  # Maximum import power limit (W)
-    main_breaker_rating: float  # Main breaker rating per phase (A)
-    battery_soc: float | None  # Battery state of charge (%)
-    battery_power: float | None  # Battery power (W, + charging, - discharging)
-    # ... plus battery thresholds, limits, etc.
+class SiteContext:
+    """Site-wide state"""
+    voltage: float
+    num_phases: int  # 1 or 3
+    main_breaker_rating: float
+    
+    # Per-phase consumption & export
+    phase_a_consumption: float
+    phase_b_consumption: float  
+    phase_c_consumption: float
+    phase_a_export: float
+    phase_b_export: float
+    phase_c_export: float
+    
+    # Solar & battery
+    solar_production_total: float
+    battery_soc: float | None
+    battery_max_charge_power: float
+    battery_max_discharge_power: float
+    
+    # Settings
+    charging_mode: str  # Standard/Eco/Solar/Excess
+    distribution_mode: str  # Priority/Shared/Strict/Optimized
+    allow_grid_charging: bool
+    
+    # Chargers
+    chargers: list[ChargerContext]
+
+@dataclass  
+class ChargerContext:
+    """Per-charger state"""
+    charger_id: str
+    entity_id: str
+    min_current: float
+    max_current: float
+    phases: int  # Charger capability (1 or 3)
+    priority: int
+    
+    # Phase tracking
+    car_phases: int | None  # Actual car OBC phases
+    active_phases_mask: str | None  # "A", "AB", "ABC", etc.
+    connector_status: str  # OCPP status
+    l1_current: float  # Per-phase readings
+    l2_current: float
+    l3_current: float
+    
+    # Result
+    target_current: float  # Calculated by target_calculator
 ```
 
-**BaseChargeMode** (`calculations/modes/base.py`)
-```python
-class BaseChargeMode(ABC):
-    @abstractmethod
-    def calculate(self, context: CalculationContext) -> float:
-        """Calculate target charge current based on context."""
-        pass
+### Calculation Flow
+
+1. **Filter active chargers** (skip "Available"/"Unknown")
+2. **Calculate site limits** (per-phase breaker limits)
+3. **Calculate solar available** (per-phase solar - consumption + battery balance)
+4. **Calculate excess available** (if export > threshold)
+5. **Determine target power** (based on charging mode)
+6. **Distribute power** (based on distribution mode, per-phase aware)
+
+### Key Insight: Per-Phase Budgeting
+
+**For 3-phase sites:**
+- Track 3 independent phase budgets: A, B, C
+- Solar: Equally distributed (e.g., 10A/phase)
+- Battery: Can balance anywhere (add to any phase needed)
+- 3-phase charger: Uses same current from ALL phases
+- 1-phase charger: Uses current from ONE phase
+
+**Example:**
+```
+Site: 10A/phase solar, 18A battery discharge available
+Charger 1 (3ph, priority 1): Gets 10A/phase → uses A+B+C
+Charger 2 (1ph, priority 2): Gets 6A → uses remaining + battery on one phase
 ```
 
-### Important Functions
+## Charging Modes
 
-**distribute_current_to_chargers()**
-```python
-def distribute_current_to_chargers(
-    hass: HomeAssistant, 
-    hub_entry_id: str, 
-    total_available_current: float,
-    charger_targets: dict = None
-) -> dict:
-    """Returns {charger_entry_id: allocated_current}"""
+### Standard Mode
+Use all available power (solar + grid up to limits + battery)
+
+### Eco Mode  
+Use max of (solar available, sum of minimums)
+- Protects battery if below minimum SOC
+- Can use battery discharge if above target SOC
+
+### Solar Mode
+Use ONLY solar available (solar export + battery discharge if SOC > target)
+- Pure solar charging
+- Battery acts as buffer
+
+### Excess Mode
+Charge ONLY when export > threshold
+- Prevents grid import
+- Waits for sufficient export
+
+## Distribution Modes
+
+### Priority Mode (Most Common)
+Two-pass allocation by priority:
+1. Give everyone minimum (by priority order)
+2. Give remainder to highest priority first
+
+### Shared Mode
+Two-pass equal allocation:
+1. Give everyone minimum
+2. Split remainder equally
+
+### Strict Mode
+One-pass sequential: First charger gets max, then next, etc.
+
+### Optimized Mode
+Smart reduction: Reduce high-priority to allow low-priority minimum
+
+## Files Structure
+
+```
+custom_components/dynamic_ocpp_evse/
+├── __init__.py              # Integration setup
+├── const.py                 # Constants
+├── config_flow.py           # UI configuration
+├── manifest.json            # Integration metadata
+├── sensor.py                # Main sensor (triggers calculations)
+├── switch.py, select.py, number.py, button.py  # UI entities
+├── calculations/
+│   ├── __init__.py          # Exports: SiteContext, ChargerContext, calculate_all_charger_targets
+│   ├── models.py            # Data models
+│   ├── target_calculator.py # Main calculation engine
+│   ├── context.py           # Phase detection utility (determine_phases)
+│   └── utils.py             # Shared utilities
+└── translations/            # UI translations (en, sl)
+
+tests/
+├── run_tests.py             # Test runner
+├── test_scenarios.yaml      # Test scenarios
+└── README.md                # Test documentation
 ```
 
-**get_hub_for_charger()**
-```python
-def get_hub_for_charger(
-    hass: HomeAssistant, 
-    charger_entry_id: str
-) -> ConfigEntry | None:
-    """Get hub config entry for a charger."""
-```
+## Testing
 
-**get_chargers_for_hub()**
-```python
-def get_chargers_for_hub(
-    hass: HomeAssistant, 
-    hub_entry_id: str
-) -> list[ConfigEntry]:
-    """Get all charger config entries for a hub."""
-```
-
----
-
-## Future Enhancements (Ideas)
-
-### Potential Features
-- [ ] Time-based charging schedules
-- [ ] Dynamic pricing integration (charge when electricity is cheap)
-- [ ] Weather forecast integration (predict solar generation)
-- [ ] Vehicle battery SOC integration (stop when car is full)
-- [ ] Statistics and reporting (energy charged, cost savings)
-- [ ] Smart preconditioning (start charging before departure)
-- [ ] Multi-hub support (multiple electrical systems)
-- [ ] Advanced battery management (prevent deep discharge cycles)
-- [ ] Load balancing with other high-power devices
-- [ ] Mobile app notifications (charging complete, errors)
-
-### Code Improvements
-- [ ] Add more unit tests (target 80%+ coverage)
-- [ ] Add integration tests with Home Assistant test framework
-- [ ] Improve type hints (full mypy compliance)
-- [ ] Add performance monitoring (track calculation times)
-- [ ] Optimize sensor polling (reduce API calls)
-- [ ] Add configuration validation (prevent invalid setups)
-- [ ] Improve error handling and recovery
-- [ ] Add migration tests for future versions
-
----
-
-## Resources
-
-### Documentation
-- Home Assistant Developer Docs: https://developers.home-assistant.io/
-- OCPP 1.6 Specification: https://www.openchargealliance.org/protocols/ocpp-16/
-- Python Type Hints: https://docs.python.org/3/library/typing.html
-
-### Related Projects
-- OCPP Integration: https://github.com/lbbrhzn/ocpp
-- HACS: https://hacs.xyz/
-
-### Support
-- GitHub Issues: https://github.com/LeoAlioth/Dynamic_OCPP_EVSE/issues
-- Home Assistant Community: https://community.home-assistant.io/
-
----
-
-## Changelog
-
-### v2.0.0 (Current)
-- Hub-charger architecture
-- Multi-charger support with distribution modes
-- No-battery support for all modes
-- Improved entity migration
-- Enhanced OCPP profile management
-
-### v1.x (Legacy)
-- Initial release
-- Single charger support
-- Basic charging modes
-- Battery integration
-
----
-
-## Development Setup
-
-### Prerequisites
+**Run all tests:**
 ```bash
-# Python 3.11+
-python --version
-
-# Home Assistant Core
-# Install in development mode or use devcontainer
+python tests/run_tests.py
 ```
 
-### Installation for Development
+**Run specific test:**
 ```bash
-# Clone repository
-git clone https://gitea.alpacasbarn.com/LeoAlioth/Dynamic_OCPP_EVSE
-cd Dynamic_OCPP_EVSE
-
-# Install dev dependencies
-pip install -r requirements_dev.txt
-
-# Symlink to Home Assistant config
-# Linux/Mac:
-ln -s $(pwd)/custom_components/dynamic_ocpp_evse ~/.homeassistant/custom_components/
-
-# Windows (as Administrator):
-mklink /D "C:\Users\{USER}\.homeassistant\custom_components\dynamic_ocpp_evse" "C:\path\to\Dynamic_OCPP_EVSE\custom_components\dynamic_ocpp_evse"
+python tests/run_tests.py "test-name"
 ```
 
-### Running Tests
-```bash
-# Run all tests
-python -m pytest tests/
+**Current test status:** 23/27 passing (85%)
 
-# Run specific test
-python tests/test_current_calculation.py
+### Known Failing Tests
+1. `3ph-2c-solar-prio-with-bat-mixed-phases` - Mixed 1ph/3ph distribution
+2. `3ph-2c-solar-prio-no-bat-mixed-phases` - Same without battery
+3. `3ph-1c-solar-prio-with-bat-oscillation` - Oscillation detection
+4. `1ph-1c-solar-prio-with-bat-oscillation` - Oscillation detection
 
-# Type checking
-python mypy.py
+## Development Notes
+
+### Recent Changes
+- ✅ Removed all legacy mode files (standard.py, solar.py, eco.py, excess.py, base.py)
+- ✅ Removed legacy max_available.py
+- ✅ Cleaned up calculations/__init__.py to export only new architecture
+- ✅ Added phase detection (determine_phases) with car_phases, active_phases_mask
+- ✅ Added connector status filtering (skip disconnected chargers)
+
+### Current Work
+- 🔧 Fixing mixed-phase distribution (1ph + 3ph chargers together)
+- 🔧 Proper per-phase budget tracking with battery balancing
+
+### TODO
+- [ ] Complete per-phase distribution with battery balancing
+- [ ] Update sensor.py to use new calculate_all_charger_targets() API
+- [ ] Fix remaining 4 test failures
+- [ ] Add oscillation protection
+- [ ] Document sensor.py integration
+
+## Important Concepts
+
+### Battery Behavior
+- **SOC < min**: Protect battery, no charging allowed (except Eco mode)
+- **SOC < target**: Battery charges from solar first, reduces EV charging
+- **SOC = target**: Battery idle, all solar to EV
+- **SOC > target**: Battery can discharge to boost EV charging
+
+### Phase Balancing
+- Solar: Fixed per-phase (1/3 of total per phase for 3ph)
+- Battery: Flexible, can be attributed to any phase for balancing
+- Grid: Per-phase limited by breaker rating
+
+### Min vs Max Current
+- **min_current**: Minimum to start/continue charging (typically 6A)
+- **max_current**: Charger/car capability limit (typically 16A, 32A)
+- If available < min_current: charger stops (set to 0A)
+
+## Common Patterns
+
+### Reading Sensor State
+```python
+# In sensor.py update()
+from .calculations import SiteContext, ChargerContext, calculate_all_charger_targets
+
+# Build site context
+site = SiteContext(
+    voltage=230,
+    num_phases=3,
+    # ... all site data
+)
+
+# Add chargers
+for charger_config in chargers:
+    charger = ChargerContext(
+        # ... charger data
+    )
+    site.chargers.append(charger)
+
+# Calculate!
+calculate_all_charger_targets(site)
+
+# Read results
+for charger in site.chargers:
+    target = charger.target_current
+    # Update OCPP charger setpoint
 ```
 
----
+### Adding a New Charging Mode
+1. Add constant to `const.py`
+2. Add case in `_determine_target_power()` in target_calculator.py
+3. Add translation strings
+4. Add test scenarios
+
+### Adding a New Distribution Mode
+1. Add function `_distribute_<mode>()` in target_calculator.py
+2. Add case in `_distribute_power()`
+3. Add test scenarios
+
+## Debugging Tips
+
+### Enable Debug Logging
+In Home Assistant `configuration.yaml`:
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.dynamic_ocpp_evse: debug
+```
+
+### Check Calculations
+Look for log entries:
+```
+Step 1 - Site limit: X.XA
+Step 2 - Solar available: X.XA
+Step 3 - Excess available: X.XA
+Step 4 - Target power (Mode): X.XA
+Final - charger_X: X.XA
+```
+
+### Common Issues
+- **Charger gets 0A**: Check if below min_current or battery SOC too low
+- **Wrong phase calc**: Check num_phases and per-phase consumption values
+- **Not charging**: Check connector_status (must be "Charging" or similar)
+
+## Git Remote
+
+```
+origin: https://gitea.alpacasbarn.com/LeoAlioth/Dynamic_OCPP_EVSE
+```
 
 ## Contact
 
-For questions, bugs, or contributions, please:
-1. Check existing GitHub Issues
-2. Read CHARGE_MODES_GUIDE.md for mode behavior
-3. Enable debug logging and check logs
-4. Open a new issue with details and logs
-
-**Author:** @LeoAlioth  
-**Repository:** https://gitea.alpacasbarn.com/LeoAlioth/Dynamic_OCPP_EVSE
-
----
-
-*Last Updated: v2.0.0 - February 2026*
+When in doubt, ask the user! They know the production system and real-world behavior.

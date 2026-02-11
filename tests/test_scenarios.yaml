@@ -634,7 +634,7 @@ scenarios:
         max_current: 16
         phases: 1  # Single phase charger
         priority: 2
-    expected:
+    expected: # Manually verified expected result
       charger_1:
         target: 10.0  # After load, 10A per phase is available.  Taking a minimum of 6A per phase leaves only 12A total available for the second one. 6 goes to it to meet the minimum, remaining 6 gets split to charge a for 8A per phase.
       charger_2:
@@ -671,7 +671,7 @@ scenarios:
         max_current: 16
         phases: 1  # Single phase charger
         priority: 2
-    expected:
+    expected: # Manually verified expected result
       charger_1:
         target: 10.0  # After load, 10A per phase is available.  Taking a minimum of 6A per phase leaves only 4A for the second one (below minimum) so charger_1 gets all 10A available.
       charger_2:
@@ -701,7 +701,7 @@ scenarios:
         max_current: 16
         phases: 3
         priority: 1
-    expected:
+    expected: # Manually verified expected result
       charger_1:
         target: 7.0  # 21/3 = 7A
   
@@ -729,7 +729,7 @@ scenarios:
         max_current: 16
         phases: 3
         priority: 1
-    expected:
+    expected: # Manually verified expected result
       charger_1:
         target: 8.0  # 24/3 = 8A (no battery = uses export)
   
@@ -764,11 +764,11 @@ scenarios:
         max_current: 16
         phases: 3
         priority: 2
-    expected:
+    expected: # Manually verified expected result
       charger_1:
-        target: 6  # No export
+        target: 6  
       charger_2:
-        target: 6  # Standard wants max
+        target: 6  
   
   - name: "3ph-1c-solar-prio-with-bat-importing"
     description: "Site importing (negative export)"
@@ -794,7 +794,7 @@ scenarios:
         max_current: 16
         phases: 3
         priority: 1
-    expected:
+    expected: # Manually verified expected result
       charger_1:
         target: 0  # No export = no charging
   
@@ -826,9 +826,9 @@ scenarios:
         max_current: 16
         phases: 3
         priority: 1
-    expected:
+    expected: # Manually verified expected result
       charger_1:
-        target: 8.0  # Stabilizes at 8A (30A - 6A = 24A / 3 = 8A)
+        target: 8.0  # Stabilizes at 8A (30A - 6A = 24A / 3 = 8A). 
   
   - name: "1ph-1c-solar-prio-with-bat-oscillation"
     description: "Oscillation test: Single-phase charger on 3-phase site"
