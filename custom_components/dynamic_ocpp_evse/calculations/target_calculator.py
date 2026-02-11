@@ -70,26 +70,25 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     site_limit_constraints = _calculate_site_limit(site)
     _LOGGER.debug(f"Step 1 - Site limit constraints: {site_limit_constraints}")
     
-    # Step 2: Calculate solar available (returns per-phase and total)
-    solar_per_phase, solar_total = _calculate_solar_available(site)
-    _LOGGER.debug(f"Step 2 - Solar available: per_phase={solar_per_phase}, total={solar_total:.1f}A")
+    # Step 2: Calculate solar available - returns constraint dict
+    solar_constraints = _calculate_solar_available(site)
+    _LOGGER.debug(f"Step 2 - Solar available constraints: {solar_constraints}")
     
-    # Step 3: Calculate excess available (returns per-phase and total)
-    excess_per_phase, excess_total = _calculate_excess_available(site)
-    _LOGGER.debug(f"Step 3 - Excess available: per_phase={excess_per_phase}, total={excess_total:.1f}A")
+    # Step 3: Calculate excess available - returns constraint dict
+    excess_constraints = _calculate_excess_available(site)
+    _LOGGER.debug(f"Step 3 - Excess available constraints: {excess_constraints}")
     
-    # Step 4: Determine target power based on mode - returns (per_phase, total) tuple
-    target_per_phase, target_total = _determine_target_power(
-        site, 
-        site_limit_per_phase, site_limit_total,
-        solar_per_phase, solar_total,
-        excess_per_phase, excess_total
+    # Step 4: Determine target power based on mode - returns constraint dict
+    target_constraints = _determine_target_power(
+        site,
+        site_limit_constraints,
+        solar_constraints,
+        excess_constraints
     )
-    _LOGGER.debug(f"Step 4 - Target power ({site.charging_mode}): per_phase={target_per_phase}, total={target_total:.1f}A")
+    _LOGGER.debug(f"Step 4 - Target power ({site.charging_mode}) constraints: {target_constraints}")
     
-    # Step 5: Distribute power among chargers
-    # Pass target per-phase data for per-phase distribution
-    _distribute_power(site, target_per_phase, target_total, solar_per_phase, solar_total)
+    # Step 5: Distribute power among chargers using constraint dict
+    _distribute_power(site, target_constraints)
     
     for charger in site.chargers:
         _LOGGER.debug(f"Final - {charger.entity_id}: {charger.target_current:.1f}A")
@@ -223,17 +222,15 @@ def _calculate_solar_available(site: SiteContext) -> dict:
     return constraints
 
 
-def _calculate_excess_available(site: SiteContext) -> tuple:
+def _calculate_excess_available(site: SiteContext) -> dict:
     """
     Step 3: Calculate excess available power.
     
+    Returns constraint dict for ALL phase combinations (Multi-Phase Constraint Principle).
     Excess mode only charges when export exceeds threshold.
-    Returns dual constraint (per-phase and total).
     
     Returns:
-        Tuple of (per_phase_limits, total_limit):
-        - per_phase_limits: [phase_a, phase_b, phase_c] available current per phase
-        - total_limit: Total available current
+        Dict with keys 'A', 'B', 'C', 'AB', 'AC', 'BC', 'ABC' containing available current
     """
     # Check if export exceeds threshold
     if site.total_export_power > site.excess_export_threshold:
@@ -244,111 +241,123 @@ def _calculate_excess_available(site: SiteContext) -> tuple:
         num_active_phases = site.num_phases if site.num_phases > 0 else 1
         per_phase_available = total_available / num_active_phases
         
-        # Build per-phase array
-        phase_available = [
-            per_phase_available,
-            per_phase_available if site.num_phases > 1 else 0,
-            per_phase_available if site.num_phases > 1 else 0,
-        ]
+        # Build constraint dict
+        phase_a = per_phase_available
+        phase_b = per_phase_available if site.num_phases > 1 else 0
+        phase_c = per_phase_available if site.num_phases > 1 else 0
         
-        return (phase_available, total_available)
+        constraints = {
+            'A': phase_a,
+            'B': phase_b,
+            'C': phase_c,
+            'AB': min(phase_a + phase_b, total_available),
+            'AC': min(phase_a + phase_c, total_available),
+            'BC': min(phase_b + phase_c, total_available),
+            'ABC': total_available
+        }
+        
+        return constraints
     
     # Below threshold - no power available
-    return ([0, 0, 0], 0)
+    return {'A': 0, 'B': 0, 'C': 0, 'AB': 0, 'AC': 0, 'BC': 0, 'ABC': 0}
 
 
 def _determine_target_power(
     site: SiteContext,
-    site_limit_per_phase: list,
-    site_limit_total: float,
-    solar_per_phase: list,
-    solar_total: float,
-    excess_per_phase: list,
-    excess_total: float
-) -> tuple:
+    site_limit_constraints: dict,
+    solar_constraints: dict,
+    excess_constraints: dict
+) -> dict:
     """
     Step 4: Determine target power based on charging mode.
     
-    Returns BOTH per-phase and total constraints (dual constraint).
+    Returns constraint dict for ALL phase combinations (Multi-Phase Constraint Principle).
     
     Args:
         site: SiteContext
-        site_limit_per_phase: Per-phase site limits from Step 1
-        site_limit_total: Total site limit from Step 1
-        solar_per_phase: Per-phase solar available from Step 2
-        solar_total: Total solar available from Step 2
-        excess_per_phase: Per-phase excess available from Step 3
-        excess_total: Total excess available from Step 3
+        site_limit_constraints: Site limit constraint dict from Step 1
+        solar_constraints: Solar available constraint dict from Step 2
+        excess_constraints: Excess available constraint dict from Step 3
     
     Returns:
-        Tuple of (per_phase_limits, total_limit):
-        - per_phase_limits: [phase_a, phase_b, phase_c] target current per phase
-        - total_limit: Total target current
+        Dict with keys 'A', 'B', 'C', 'AB', 'AC', 'BC', 'ABC' containing target current
     """
     mode = site.charging_mode
     
     if mode == CHARGING_MODE_STANDARD:
-        # Standard: Use site limit + solar + battery
-        # Start with site limits (includes grid + solar + battery discharge already calculated in solar_available)
-        target_per_phase = site_limit_per_phase.copy()
-        target_total = site_limit_total
-        
-        return (target_per_phase, target_total)
+        # Standard: Use site limit (includes grid + solar + battery)
+        return site_limit_constraints
     
     elif mode == CHARGING_MODE_ECO:
         # Eco: Charge at minimum to protect battery, can use more if battery is healthy
-        # - Battery < min: No charging (protect battery)
-        # - Battery between min and target: Charge at minimum only (gentle on battery)
-        # - Battery >= target: Can use all solar available
         
         # Battery below minimum - protect battery (no charging)
         if site.battery_soc is not None and site.battery_soc < site.battery_soc_min:
-            return ([0, 0, 0], 0)
+            return {'A': 0, 'B': 0, 'C': 0, 'AB': 0, 'AC': 0, 'BC': 0, 'ABC': 0}
         
-        # Calculate sum of minimum charge rates (total across all chargers)
+        # Calculate sum of minimum charge rates
         sum_minimums_total = sum(c.min_current * c.phases for c in site.chargers)
-        
-        # Calculate per-phase minimums (evenly distributed)
         num_active_phases = site.num_phases if site.num_phases > 0 else 1
         sum_minimums_per_phase = sum_minimums_total / num_active_phases
-        minimums_per_phase = [
-            sum_minimums_per_phase,
-            sum_minimums_per_phase if site.num_phases > 1 else 0,
-            sum_minimums_per_phase if site.num_phases > 1 else 0,
-        ]
         
-        # Battery between min and target - charge at minimum only (protect battery)
+        # Battery between min and target - charge at minimum only
         if site.battery_soc is not None and site.battery_soc < site.battery_soc_target:
+            min_a = sum_minimums_per_phase
+            min_b = sum_minimums_per_phase if site.num_phases > 1 else 0
+            min_c = sum_minimums_per_phase if site.num_phases > 1 else 0
+            
             # Cap at site limits
-            target_per_phase = [min(minimums_per_phase[i], site_limit_per_phase[i]) for i in range(3)]
-            target_total = min(sum_minimums_total, site_limit_total)
-            return (target_per_phase, target_total)
+            return {
+                'A': min(min_a, site_limit_constraints['A']),
+                'B': min(min_b, site_limit_constraints['B']),
+                'C': min(min_c, site_limit_constraints['C']),
+                'AB': min(min_a + min_b, site_limit_constraints['AB']),
+                'AC': min(min_a + min_c, site_limit_constraints['AC']),
+                'BC': min(min_b + min_c, site_limit_constraints['BC']),
+                'ABC': min(sum_minimums_total, site_limit_constraints['ABC'])
+            }
         else:
             # Battery >= target or no battery - can use all solar available
-            # Take maximum of solar and minimums (per-phase and total independently)
-            target_per_phase = [max(solar_per_phase[i], minimums_per_phase[i]) for i in range(3)]
-            target_total = max(solar_total, sum_minimums_total)
+            # Take maximum of solar and minimums for each constraint
+            min_a = sum_minimums_per_phase
+            min_b = sum_minimums_per_phase if site.num_phases > 1 else 0
+            min_c = sum_minimums_per_phase if site.num_phases > 1 else 0
             
-            # Cap at site limits (enforce dual constraint)
-            target_per_phase = [min(target_per_phase[i], site_limit_per_phase[i]) for i in range(3)]
-            target_total = min(target_total, site_limit_total)
+            target_constraints = {
+                'A': max(solar_constraints['A'], min_a),
+                'B': max(solar_constraints['B'], min_b),
+                'C': max(solar_constraints['C'], min_c),
+                'AB': max(solar_constraints['AB'], min_a + min_b),
+                'AC': max(solar_constraints['AC'], min_a + min_c),
+                'BC': max(solar_constraints['BC'], min_b + min_c),
+                'ABC': max(solar_constraints['ABC'], sum_minimums_total)
+            }
             
-            return (target_per_phase, target_total)
+            # Cap at site limits
+            return {
+                'A': min(target_constraints['A'], site_limit_constraints['A']),
+                'B': min(target_constraints['B'], site_limit_constraints['B']),
+                'C': min(target_constraints['C'], site_limit_constraints['C']),
+                'AB': min(target_constraints['AB'], site_limit_constraints['AB']),
+                'AC': min(target_constraints['AC'], site_limit_constraints['AC']),
+                'BC': min(target_constraints['BC'], site_limit_constraints['BC']),
+                'ABC': min(target_constraints['ABC'], site_limit_constraints['ABC'])
+            }
     
     elif mode == CHARGING_MODE_SOLAR:
         # Solar: Use only solar_available (includes battery discharge if SOC > target)
         # Battery priority: If battery below target, all solar goes to battery (EV gets 0)
         if site.battery_soc is not None and site.battery_soc < site.battery_soc_target:
-            return ([0, 0, 0], 0)
-        return (solar_per_phase, solar_total)
+            return {'A': 0, 'B': 0, 'C': 0, 'AB': 0, 'AC': 0, 'BC': 0, 'ABC': 0}
+        return solar_constraints
     
     elif mode == CHARGING_MODE_EXCESS:
         # Excess: Use only excess_available
-        return (excess_per_phase, excess_total)
+        return excess_constraints
     
     else:
         _LOGGER.warning(f"Unknown charging mode '{mode}', using site limit")
-        return (site_limit_per_phase, site_limit_total)
+        return site_limit_constraints
 
 
 def _get_phase_available_current(site: SiteContext) -> dict:
@@ -369,38 +378,27 @@ def _get_phase_available_current(site: SiteContext) -> dict:
     }
 
 
-def _distribute_power(site: SiteContext, target_per_phase: list, target_total: float, solar_per_phase: list, solar_total: float) -> None:
+def _distribute_power(site: SiteContext, target_constraints: dict) -> None:
     """
     Step 5: Distribute target power among chargers.
     
-    Uses per-phase distribution for ALL cases with dual constraint enforcement.
-    Receives both per-phase AND total limits from Step 4.
+    Uses constraint dict for ALL phase combinations (Multi-Phase Constraint Principle).
     
     Args:
         site: SiteContext with chargers
-        target_per_phase: Per-phase target current [A, B, C] from Step 4 (dual constraint)
-        target_total: Total target current from Step 4 (dual constraint)
-        solar_per_phase: Per-phase available current [A, B, C] from Step 2
-        solar_total: Total available current from Step 2
+        target_constraints: Constraint dict with keys 'A', 'B', 'C', 'AB', 'AC', 'BC', 'ABC'
     """
     if len(site.chargers) == 0:
         return
     
-    # Use target per-phase and total directly - these already enforce dual constraints
-    per_phase_available = target_per_phase
-    total_available = target_total
-    
-    _LOGGER.debug(
-        f"Distribution: per_phase={per_phase_available}, total={total_available:.1f}A, "
-        f"mode={site.charging_mode}, inverter_asymmetric={site.inverter_supports_asymmetric}"
-    )
+    _LOGGER.debug(f"Distribution constraints: {target_constraints}")
     
     # Log what each charger is drawing from
     for charger in site.chargers:
-        _LOGGER.debug(f"Charger {charger.entity_id}: mask={charger.active_phases_mask}")
+        _LOGGER.debug(f"Charger {charger.entity_id}: mask={charger.active_phases_mask}, phases={charger.phases}")
     
-    # Use per-phase distribution - it handles all cases uniformly with dual constraint
-    _distribute_power_per_phase(site, per_phase_available, total_available, site.distribution_mode)
+    # Use universal distribution with constraint dict
+    _distribute_power_per_phase(site, target_constraints, site.distribution_mode)
 
 
 def _distribute_shared(site: SiteContext) -> None:
@@ -521,68 +519,50 @@ def _distribute_priority(site: SiteContext) -> None:
             remaining -= additional_total
 
 
-def _distribute_power_per_phase(site: SiteContext, solar_per_phase: list, solar_total: float, distribution_mode: str) -> None:
+def _distribute_power_per_phase(site: SiteContext, constraints: dict, distribution_mode: str) -> None:
     """
     Universal per-phase distribution - handles ALL cases and ALL distribution modes.
     
-    For ASYMMETRIC inverters: chargers can access total power pool
-    For SYMMETRIC inverters: chargers limited to their specific phases
+    Uses constraint dict with all phase combinations (Multi-Phase Constraint Principle).
     
     Args:
         site: SiteContext with chargers
-        solar_per_phase: Available current per phase [A, B, C] from mode calculation
-        solar_total: Total available current from mode calculation
+        constraints: Constraint dict with keys 'A', 'B', 'C', 'AB', 'AC', 'BC', 'ABC'
         distribution_mode: "priority", "shared", "strict", or "optimized"
     """
     mode = distribution_mode.lower() if distribution_mode else "priority"
     
     if mode == "priority":
-        _distribute_per_phase_priority(site, solar_per_phase, solar_total)
+        _distribute_per_phase_priority(site, constraints)
     elif mode == "shared":
-        _distribute_per_phase_shared(site, solar_per_phase, solar_total)
+        _distribute_per_phase_shared(site, constraints)
     elif mode == "strict":
-        _distribute_per_phase_strict(site, solar_per_phase, solar_total)
+        _distribute_per_phase_strict(site, constraints)
     elif mode == "optimized":
-        _distribute_per_phase_optimized(site, solar_per_phase, solar_total)
+        _distribute_per_phase_optimized(site, constraints)
     else:
         _LOGGER.warning(f"Unknown distribution mode '{mode}', using priority")
-        _distribute_per_phase_priority(site, solar_per_phase, solar_total)
+        _distribute_per_phase_priority(site, constraints)
 
 
-def _distribute_per_phase_priority(site: SiteContext, solar_per_phase: list, solar_total: float) -> None:
+def _distribute_per_phase_priority(site: SiteContext, constraints: dict) -> None:
     """
-    PRIORITY mode in per-phase framework.
+    PRIORITY mode using constraint dict.
     Pass 1: Allocate minimum by priority
     Pass 2: Give remainder to highest priority first
+    
+    Uses Multi-Phase Constraint Principle:
+    - 1-phase on A: constraints['A']
+    - 2-phase on AB: MIN(constraints['A'], constraints['B'], constraints['AB']/2)
+    - 3-phase on ABC: MIN(constraints['A'], constraints['B'], constraints['C'], 
+                          constraints['AB']/2, constraints['AC']/2, constraints['BC']/2, constraints['ABC']/3)
     """
-    # For asymmetric inverters, chargers can access total power pool
-    # But multi-phase chargers must divide by their phase count
-    # For symmetric, they're limited to their actual phase availability
-    if site.inverter_supports_asymmetric:
-        # Asymmetric: chargers can balance across phases
-        # IMPORTANT: The values represent what each charger SEES per phase
-        # - 1-phase chargers: see full total (can draw all from one phase)
-        # - 2-phase chargers: see total/2 per phase (draw from 2 phases)
-        # - 3-phase chargers: see total/3 per phase (draw from 3 phases)
-        # We set these values per phase, and the min() logic will handle multi-phase correctly
-        phase_available = {
-            'A': solar_total,  # Single-phase chargers can access full pool
-            'B': solar_total,
-            'C': solar_total,
-        }
-    else:
-        # Symmetric: use per-phase limits
-        phase_available = {
-            'A': solar_per_phase[0],
-            'B': solar_per_phase[1],
-            'C': solar_per_phase[2],
-        }
     
     # Sort all chargers by priority (process across all phase groups)
     chargers_by_priority = sorted(site.chargers, key=lambda c: c.priority)
     
-    # Track remaining capacity per phase as we allocate
-    remaining_per_phase = phase_available.copy()
+    # Track remaining capacity - start with constraints
+    remaining_constraints = constraints.copy()
     
     # Two-pass allocation by priority
     allocated = {}
