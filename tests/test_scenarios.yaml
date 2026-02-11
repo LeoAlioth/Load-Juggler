@@ -696,7 +696,7 @@ scenarios:
         priority: 2
     expected: # Manually verified expected result
       charger_1:
-        target: 10.0  # After load, 10A per phase is available.  Taking a minimum of 6A per phase leaves only 12A total available for the second one. 6 goes to it to meet the minimum, remaining 6 gets split to charge a for 8A per phase.
+        target: 8  # After load, 10A per phase is available.  Taking a minimum of 6A per phase leaves only 12A total available for the second one. 6 goes to it to meet the minimum, remaining 6 gets split to charge a for 8A per phase.
       charger_2:
         target: 6  # this is possible becase on batetry systems, we can treat solar and battery power as available for any phase.
   
