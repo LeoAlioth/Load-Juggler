@@ -399,7 +399,7 @@ scenarios:
       phase_a_consumption: 0.5
       phase_b_consumption: 0.5
       phase_c_consumption: 1.0  # 2A total (unbalanced)
-      battery_soc: 85
+      battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
       battery_max_charge_power: 4140
