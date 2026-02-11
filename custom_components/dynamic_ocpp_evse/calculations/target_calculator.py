@@ -92,7 +92,8 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     _LOGGER.debug(f"Step 4 - Target power ({site.charging_mode}): {target_power:.1f}A")
     
     # Step 5: Distribute power among chargers
-    _distribute_power(site, target_power)
+    # Pass solar per-phase data for per-phase distribution
+    _distribute_power(site, target_power, solar_per_phase, solar_total)
     
     for charger in site.chargers:
         _LOGGER.debug(f"Final - {charger.entity_id}: {charger.target_current:.1f}A")
@@ -369,7 +370,7 @@ def _get_phase_available_current(site: SiteContext) -> dict:
     }
 
 
-def _distribute_power(site: SiteContext, target_power: float) -> None:
+def _distribute_power(site: SiteContext, target_power: float, solar_per_phase: list, solar_total: float) -> None:
     """
     Step 5: Distribute target power among chargers.
     
@@ -378,21 +379,25 @@ def _distribute_power(site: SiteContext, target_power: float) -> None:
     
     Args:
         site: SiteContext with chargers
-        target_power: Total current (A) to distribute
+        target_power: Total current (A) to distribute (mode-calculated)
+        solar_per_phase: Per-phase available current [A, B, C] including battery
+        solar_total: Total available current including battery
     """
     if len(site.chargers) == 0:
         return
     
-    # Check if we have chargers with explicit phase assignments (A, B, or C only)
+    # Check if we have chargers with explicit phase assignments 
+    # (single-phase 'A'/'B'/'C', 2-phase 'AB'/'BC'/'AC', or mixed)
     has_explicit_phases = any(
-        c.active_phases_mask in ['A', 'B', 'C'] for c in site.chargers
+        c.active_phases_mask and c.active_phases_mask != 'ABC' 
+        for c in site.chargers
     )
     
-    # Use per-phase distribution when chargers have explicit phase assignments
+    # Use per-phase distribution when chargers have explicit phase assignments (not standard 3-phase)
     # Note: inverter_supports_asymmetric affects power AVAILABILITY (calculated in solar_available),
     # but chargers are still physically limited to their connected phases
     if has_explicit_phases and site.num_phases == 3:
-        _distribute_power_per_phase(site)
+        _distribute_power_per_phase(site, solar_per_phase, solar_total)
         return
     
     # Standard distribution for all other cases
@@ -561,44 +566,71 @@ def _distribute_priority(site: SiteContext) -> None:
             remaining -= additional_total
 
 
-def _distribute_power_per_phase(site: SiteContext) -> None:
+def _distribute_power_per_phase(site: SiteContext, solar_per_phase: list, solar_total: float) -> None:
     """
     Distribute power for sites with single-phase chargers on specific phases.
-    Each phase is treated independently.
-    """
-    # Get available current per phase
-    phase_available = {
-        'A': site.phase_a_export,
-        'B': site.phase_b_export,
-        'C': site.phase_c_export,
-    }
     
-    # Group chargers by phase
-    phase_chargers = {'A': [], 'B': [], 'C': [], 'all': []}
+    For ASYMMETRIC inverters: single-phase chargers can access total power pool
+    For SYMMETRIC inverters: single-phase chargers limited to their specific phase
+    
+    Args:
+        site: SiteContext with chargers
+        solar_per_phase: Available current per phase [A, B, C] from mode calculation
+        solar_total: Total available current from mode calculation
+    """
+    # For asymmetric inverters, single-phase chargers can use total power pool
+    # For symmetric, they're limited to their phase
+    if site.inverter_supports_asymmetric:
+        # Asymmetric: single-phase chargers draw from total pool
+        phase_available = {
+            'A': solar_total,  # Can access full pool
+            'B': solar_total,
+            'C': solar_total,
+        }
+    else:
+        # Symmetric: use per-phase limits
+        phase_available = {
+            'A': solar_per_phase[0],
+            'B': solar_per_phase[1],
+            'C': solar_per_phase[2],
+        }
+    
+    # Group chargers by their phase configuration
+    # Key: phase_mask (e.g., 'A', 'AB', 'ABC'), Value: list of chargers
+    phase_groups = {}
     
     for charger in site.chargers:
-        if charger.phases == 1 and charger.active_phases_mask in ['A', 'B', 'C']:
-            phase_chargers[charger.active_phases_mask].append(charger)
-        elif charger.phases == 3:
-            phase_chargers['all'].append(charger)
-        else:
-            # Single-phase without specific phase - default to phase A
-            phase_chargers['A'].append(charger)
+        mask = charger.active_phases_mask
+        if mask:
+            if mask not in phase_groups:
+                phase_groups[mask] = []
+            phase_groups[mask].append(charger)
     
-    # Allocate for each phase independently (single-phase chargers)
-    for phase in ['A', 'B', 'C']:
-        chargers_on_phase = sorted(phase_chargers[phase], key=lambda c: c.priority)
-        available = phase_available[phase]
+    # Process each phase group
+    for phase_mask, chargers_in_group in sorted(phase_groups.items(), key=lambda x: len(x[1][0].active_phases_mask) if x[1] else 0):
+        chargers_sorted = sorted(chargers_in_group, key=lambda c: c.priority)
         
-        if not chargers_on_phase:
+        # Determine available current for this group based on phase mask
+        if phase_mask == 'ABC':
+            # 3-phase: limited by minimum available phase
+            group_available = min(phase_available['A'], phase_available['B'], phase_available['C'])
+        elif len(phase_mask) == 2:
+            # 2-phase: limited by minimum of the two phases
+            phases_used = list(phase_mask)
+            group_available = min(phase_available[phases_used[0]], phase_available[phases_used[1]])
+        elif len(phase_mask) == 1:
+            # Single-phase: use that phase's available
+            group_available = phase_available[phase_mask]
+        else:
+            _LOGGER.warning(f"Unknown phase mask '{phase_mask}', skipping")
             continue
         
-        # Two-pass priority distribution
+        # Two-pass priority distribution for this group
         allocated = {}
-        remaining = available
+        remaining = group_available
         
         # Pass 1: Allocate minimum
-        for charger in chargers_on_phase:
+        for charger in chargers_sorted:
             if remaining >= charger.min_current:
                 allocated[charger.entity_id] = charger.min_current
                 remaining -= charger.min_current
@@ -606,7 +638,7 @@ def _distribute_power_per_phase(site: SiteContext) -> None:
                 allocated[charger.entity_id] = 0
         
         # Pass 2: Allocate remainder by priority
-        for charger in chargers_on_phase:
+        for charger in chargers_sorted:
             if remaining <= 0 or allocated[charger.entity_id] == 0:
                 charger.target_current = allocated[charger.entity_id]
                 continue
@@ -615,47 +647,6 @@ def _distribute_power_per_phase(site: SiteContext) -> None:
             additional = min(wanted_additional, remaining)
             charger.target_current = allocated[charger.entity_id] + additional
             remaining -= additional
-    
-    # Handle 3-phase chargers (limited by minimum available phase)
-    three_phase_chargers = sorted(phase_chargers['all'], key=lambda c: c.priority)
-    if three_phase_chargers:
-        # Calculate what's left on each phase after single-phase allocation
-        remaining_a = phase_available['A']
-        remaining_b = phase_available['B']
-        remaining_c = phase_available['C']
-        
-        for charger in phase_chargers['A']:
-            remaining_a -= charger.target_current
-        for charger in phase_chargers['B']:
-            remaining_b -= charger.target_current
-        for charger in phase_chargers['C']:
-            remaining_c -= charger.target_current
-        
-        # Limiting phase determines available for 3-phase chargers
-        limiting_available = min(remaining_a, remaining_b, remaining_c)
-        
-        # Distribute among 3-phase chargers
-        allocated_3ph = {}
-        remaining_3ph = limiting_available
-        
-        # Pass 1: Minimum
-        for charger in three_phase_chargers:
-            if remaining_3ph >= charger.min_current:
-                allocated_3ph[charger.entity_id] = charger.min_current
-                remaining_3ph -= charger.min_current
-            else:
-                allocated_3ph[charger.entity_id] = 0
-        
-        # Pass 2: By priority
-        for charger in three_phase_chargers:
-            if remaining_3ph <= 0 or allocated_3ph[charger.entity_id] == 0:
-                charger.target_current = allocated_3ph[charger.entity_id]
-                continue
-            
-            wanted_additional = charger.max_current - allocated_3ph[charger.entity_id]
-            additional = min(wanted_additional, remaining_3ph)
-            charger.target_current = allocated_3ph[charger.entity_id] + additional
-            remaining_3ph -= additional
 
 
 def _distribute_strict(site: SiteContext) -> None:
