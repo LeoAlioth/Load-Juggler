@@ -938,6 +938,6 @@ scenarios:
         phases: 1
         connected_to_phase: "B"
         priority: 1
-    expected:
+    expected: # Manually verified expected result
       charger_1:
         target: 16  # Sees total 30A - 9A = 21A export (limited by max=16A)
