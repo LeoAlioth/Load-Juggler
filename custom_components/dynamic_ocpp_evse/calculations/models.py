@@ -87,6 +87,11 @@ class SiteContext:
     battery_max_charge_power: float | None = None
     battery_max_discharge_power: float | None = None
     
+    # Inverter specifications (for sites with battery/solar inverter)
+    inverter_max_power: float | None = None  # Total inverter power capacity (W)
+    inverter_max_power_per_phase: float | None = None  # Max power per phase (W)
+    inverter_supports_asymmetric: bool = False  # Can inverter balance power across phases
+    
     # Site available power
     site_available_current_phase_a: float = 0
     site_available_current_phase_b: float = 0

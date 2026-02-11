@@ -144,18 +144,15 @@ def _calculate_solar_available(site: SiteContext) -> float:
     - Total solar export (per-phase for 3-phase systems)
     - Battery charging (if SOC < target)
     - Battery discharge (if SOC > target, mode-dependent)
+    - Inverter asymmetric capability
     
-    Note: Solar power is equally distributed across phases.
-    Battery power can be freely distributed.
-    
-    For 3-phase systems with unbalanced load:
-    - Returns minimum available across phases (limiting phase)
-    - Prevents overloading any single phase
+    KEY: If inverter supports asymmetric distribution, it can balance power
+    across phases. Otherwise, solar is fixed per-phase.
     
     Returns:
         Current (A) available from solar (and battery if applicable)
-        For 3-phase: per-phase current (limiting phase)
-        For 1-phase: total current
+        - With asymmetric inverter: TOTAL current across all phases
+        - Without asymmetric: per-phase current (limiting phase) for 3ph, total for 1ph
     """
     # Calculate available per phase for 3-phase systems
     if site.num_phases == 3:
@@ -186,13 +183,32 @@ def _calculate_solar_available(site: SiteContext) -> float:
                     phase_b_avail += battery_per_phase
                     phase_c_avail += battery_per_phase
         
-        # For 3-phase chargers: use MINIMUM (limiting phase)
-        # This prevents overloading any single phase with unbalanced loads
-        available = min(phase_a_avail, phase_b_avail, phase_c_avail)
+        # Apply per-phase inverter limits if configured
+        if site.inverter_max_power_per_phase:
+            max_per_phase = site.inverter_max_power_per_phase / site.voltage
+            phase_a_avail = min(phase_a_avail, max_per_phase)
+            phase_b_avail = min(phase_b_avail, max_per_phase)
+            phase_c_avail = min(phase_c_avail, max_per_phase)
         
-        _LOGGER.debug(f"3-phase per-phase available: A={phase_a_avail:.1f}, B={phase_b_avail:.1f}, C={phase_c_avail:.1f}, limiting={available:.1f}A")
-        
-        return available
+        # Check if inverter supports asymmetric distribution
+        if site.inverter_supports_asymmetric:
+            # ASYMMETRIC: Inverter can balance power across phases
+            # Return TOTAL available current (chargers will use current × phases from total pool)
+            total_available = phase_a_avail + phase_b_avail + phase_c_avail
+            
+            # Apply total inverter limit if configured
+            if site.inverter_max_power:
+                max_total = site.inverter_max_power / site.voltage
+                total_available = min(total_available, max_total)
+            
+            _LOGGER.debug(f"3-phase ASYMMETRIC: A={phase_a_avail:.1f}, B={phase_b_avail:.1f}, C={phase_c_avail:.1f}, total={total_available:.1f}A")
+            return total_available
+        else:
+            # SYMMETRIC: Solar fixed per phase, use minimum (limiting phase)
+            # This prevents overloading any single phase
+            available = min(phase_a_avail, phase_b_avail, phase_c_avail)
+            _LOGGER.debug(f"3-phase SYMMETRIC: A={phase_a_avail:.1f}, B={phase_b_avail:.1f}, C={phase_c_avail:.1f}, limiting={available:.1f}A per phase")
+            return available
     
     # Single-phase system: use total export
     available = site.total_export_current
@@ -303,6 +319,9 @@ def _determine_target_power(site: SiteContext, site_limit: float, solar_availabl
     
     elif mode == CHARGING_MODE_SOLAR:
         # Solar: Use only solar_available (includes battery discharge if SOC > target)
+        # Battery priority: If battery below target, all solar goes to battery (EV gets 0)
+        if site.battery_soc is not None and site.battery_soc < site.battery_soc_target:
+            return 0
         return solar_available
     
     elif mode == CHARGING_MODE_EXCESS:
@@ -335,17 +354,18 @@ def _distribute_power(site: SiteContext, target_power: float) -> None:
     if len(site.chargers) == 1:
         charger = site.chargers[0]
         
-        # For 3-phase systems, target_power is already per-phase (limiting phase)
-        # For 1-phase systems, target_power is total available
-        if site.num_phases == 3 and charger.phases == 3:
-            # 3-phase charger on 3-phase site: target_power is already per-phase
-            available_per_phase = target_power
-        elif site.num_phases == 1 or charger.phases == 1:
-            # Single-phase: use total available
-            available_per_phase = target_power
-        else:
-            # Mixed case: divide by charger phases
+        # Calculate available per phase based on inverter capability
+        if site.inverter_supports_asymmetric:
+            # ASYMMETRIC: target_power is TOTAL, divide by charger phases
             available_per_phase = target_power / charger.phases if charger.phases > 0 else 0
+        else:
+            # SYMMETRIC: target_power is already per-phase for 3ph, total for 1ph
+            if site.num_phases == 3 and charger.phases == 3:
+                available_per_phase = target_power
+            elif site.num_phases == 1 or charger.phases == 1:
+                available_per_phase = target_power
+            else:
+                available_per_phase = target_power / charger.phases if charger.phases > 0 else 0
         
         if available_per_phase >= charger.min_current:
             charger.target_current = min(available_per_phase, charger.max_current)
@@ -426,14 +446,19 @@ def _distribute_priority(site: SiteContext) -> None:
     Pass 1: Get everyone to min_current (by priority)
     Pass 2: Give remainder to highest priority first
     
-    For 3-phase systems, total_available is per-phase current.
-    For 1-phase systems, total_available is total current.
+    ASYMMETRIC inverter: total_available is TOTAL current, chargers use (current × phases)
+    SYMMETRIC (no asymmetric): total_available is per-phase for 3ph/all-3ph-chargers, else total
     """
     chargers = sorted(site.chargers, key=lambda c: c.priority)
     total_available = site.total_export_current
     
-    # Determine if we're working with per-phase values (3-phase system with 3-phase chargers)
-    is_per_phase = (site.num_phases == 3 and all(c.phases == 3 for c in chargers))
+    # Determine distribution mode based on inverter capability
+    if site.inverter_supports_asymmetric:
+        # ASYMMETRIC: Work with total current pool (chargers use current × phases)
+        is_per_phase = False
+    else:
+        # SYMMETRIC: Work per-phase only if 3-phase site with all 3-phase chargers
+        is_per_phase = (site.num_phases == 3 and all(c.phases == 3 for c in chargers))
     
     # Initialize all wanting to charge
     for charger in chargers:
