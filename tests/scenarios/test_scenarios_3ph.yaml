@@ -7,6 +7,7 @@ scenarios:
 
   - name: "3ph-2c-solar-prio-no-bat-mixed-phases"
     description: "Mix of 1-phase and 3-phase chargers"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -45,6 +46,7 @@ scenarios:
   
   - name: "3ph-1c-solar-prio-no-bat-normal"
     description: "Solar mode without battery configured"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -76,6 +78,7 @@ scenarios:
   
   - name: "3ph-1c-eco-prio-no-bat-normal"
     description: "Eco mode without battery, should use export"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -109,6 +112,7 @@ scenarios:
   
   - name: "3ph-2c-solar-sym-two-single-phase"
     description: "Two 1-phase chargers on different phases, symmetric system"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -151,6 +155,7 @@ scenarios:
   
   - name: "3ph-1c-solar-very-unbalanced"
     description: "One phase maxed out, others idle"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -178,6 +183,6 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 2.0  # Limited by Phase A: 10A - 8A = 2A (below min, so 0A) - actually wait, this would be 2A
+        target: 0  # Limited by Phase A: 10A - 8A = 2A (below min, so 0A) 
   
   # ===== CHARGER CONFIG EDGE CASES =====

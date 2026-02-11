@@ -344,6 +344,24 @@ def _determine_target_power(site: SiteContext, site_limit: float, solar_availabl
         return site_limit
 
 
+def _get_phase_available_current(site: SiteContext) -> dict:
+    """
+    Helper: Get available current per phase for single-phase chargers.
+    
+    Returns:
+        dict with keys 'A', 'B', 'C' containing available current per phase
+    """
+    if site.num_phases == 1:
+        return {'A': site.phase_a_export, 'B': 0, 'C': 0}
+    
+    # For 3-phase, calculate available per phase
+    return {
+        'A': site.phase_a_export,
+        'B': site.phase_b_export,
+        'C': site.phase_c_export,
+    }
+
+
 def _distribute_power(site: SiteContext, target_power: float) -> None:
     """
     Step 5: Distribute target power among chargers.
@@ -354,11 +372,25 @@ def _distribute_power(site: SiteContext, target_power: float) -> None:
     - strict: One-pass sequential
     - optimized: One-pass with smart reduction
     
+    Special handling for single-phase chargers on specific phases:
+    - If charger has active_phases_mask set to 'A', 'B', or 'C', allocate from that phase only
+    
     Args:
         site: SiteContext with chargers
         target_power: Total current (A) to distribute
     """
     if len(site.chargers) == 0:
+        return
+    
+    # Check if we have single-phase chargers on specific phases
+    has_phase_specific = any(
+        c.phases == 1 and c.active_phases_mask in ['A', 'B', 'C'] 
+        for c in site.chargers
+    )
+    
+    # If we have phase-specific chargers on a 3-phase system, handle them separately
+    if has_phase_specific and site.num_phases == 3:
+        _distribute_power_per_phase(site)
         return
     
     # Single charger - simple case
@@ -524,6 +556,103 @@ def _distribute_priority(site: SiteContext) -> None:
             additional_per_phase = additional_total / charger.phases
             charger.target_current = allocated[charger.entity_id] + additional_per_phase
             remaining -= additional_total
+
+
+def _distribute_power_per_phase(site: SiteContext) -> None:
+    """
+    Distribute power for sites with single-phase chargers on specific phases.
+    Each phase is treated independently.
+    """
+    # Get available current per phase
+    phase_available = {
+        'A': site.phase_a_export,
+        'B': site.phase_b_export,
+        'C': site.phase_c_export,
+    }
+    
+    # Group chargers by phase
+    phase_chargers = {'A': [], 'B': [], 'C': [], 'all': []}
+    
+    for charger in site.chargers:
+        if charger.phases == 1 and charger.active_phases_mask in ['A', 'B', 'C']:
+            phase_chargers[charger.active_phases_mask].append(charger)
+        elif charger.phases == 3:
+            phase_chargers['all'].append(charger)
+        else:
+            # Single-phase without specific phase - default to phase A
+            phase_chargers['A'].append(charger)
+    
+    # Allocate for each phase independently (single-phase chargers)
+    for phase in ['A', 'B', 'C']:
+        chargers_on_phase = sorted(phase_chargers[phase], key=lambda c: c.priority)
+        available = phase_available[phase]
+        
+        if not chargers_on_phase:
+            continue
+        
+        # Two-pass priority distribution
+        allocated = {}
+        remaining = available
+        
+        # Pass 1: Allocate minimum
+        for charger in chargers_on_phase:
+            if remaining >= charger.min_current:
+                allocated[charger.entity_id] = charger.min_current
+                remaining -= charger.min_current
+            else:
+                allocated[charger.entity_id] = 0
+        
+        # Pass 2: Allocate remainder by priority
+        for charger in chargers_on_phase:
+            if remaining <= 0 or allocated[charger.entity_id] == 0:
+                charger.target_current = allocated[charger.entity_id]
+                continue
+            
+            wanted_additional = charger.max_current - allocated[charger.entity_id]
+            additional = min(wanted_additional, remaining)
+            charger.target_current = allocated[charger.entity_id] + additional
+            remaining -= additional
+    
+    # Handle 3-phase chargers (limited by minimum available phase)
+    three_phase_chargers = sorted(phase_chargers['all'], key=lambda c: c.priority)
+    if three_phase_chargers:
+        # Calculate what's left on each phase after single-phase allocation
+        remaining_a = phase_available['A']
+        remaining_b = phase_available['B']
+        remaining_c = phase_available['C']
+        
+        for charger in phase_chargers['A']:
+            remaining_a -= charger.target_current
+        for charger in phase_chargers['B']:
+            remaining_b -= charger.target_current
+        for charger in phase_chargers['C']:
+            remaining_c -= charger.target_current
+        
+        # Limiting phase determines available for 3-phase chargers
+        limiting_available = min(remaining_a, remaining_b, remaining_c)
+        
+        # Distribute among 3-phase chargers
+        allocated_3ph = {}
+        remaining_3ph = limiting_available
+        
+        # Pass 1: Minimum
+        for charger in three_phase_chargers:
+            if remaining_3ph >= charger.min_current:
+                allocated_3ph[charger.entity_id] = charger.min_current
+                remaining_3ph -= charger.min_current
+            else:
+                allocated_3ph[charger.entity_id] = 0
+        
+        # Pass 2: By priority
+        for charger in three_phase_chargers:
+            if remaining_3ph <= 0 or allocated_3ph[charger.entity_id] == 0:
+                charger.target_current = allocated_3ph[charger.entity_id]
+                continue
+            
+            wanted_additional = charger.max_current - allocated_3ph[charger.entity_id]
+            additional = min(wanted_additional, remaining_3ph)
+            charger.target_current = allocated_3ph[charger.entity_id] + additional
+            remaining_3ph -= additional
 
 
 def _distribute_strict(site: SiteContext) -> None:

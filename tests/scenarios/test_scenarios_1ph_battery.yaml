@@ -7,6 +7,7 @@ scenarios:
 
   - name: "1ph-1c-solar-prio-with-bat-bellow-target"
     description: "Single phase, 1 charger, solar mode, with battery, normal conditions"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -38,6 +39,7 @@ scenarios:
 
   - name: "1ph-1c-solar-prio-with-bat-at-target"
     description: "Single phase, 1 charger, solar mode, with battery, normal conditions"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -69,6 +71,7 @@ scenarios:
 
   - name: "1ph-1c-solar-prio-with-bat-above-target"
     description: "Single phase, 1 charger, solar mode, with battery, normal conditions"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -100,6 +103,7 @@ scenarios:
   
   - name: "1ph-2c-solar-prio-with-bat-shared"
     description: "Single phase, 2 chargers both solar, verify no double counting"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -138,6 +142,7 @@ scenarios:
 
   - name: "1ph-2c-solar-prio-with-bat-shared-low-solar"
     description: "Single phase, 2 chargers both solar, verify no double counting"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -176,6 +181,7 @@ scenarios:
 
   - name: "1ph-2c-solar-shared-with-bat-shared-low-solar"
     description: "Single phase, 2 chargers both solar, verify no double counting"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -214,6 +220,7 @@ scenarios:
 
   - name: "1ph-2c-solar-prio-with-bat-shared-high-solar"
     description: "Single phase, 2 chargers both solar, verify no double counting"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -252,6 +259,7 @@ scenarios:
 
   - name: "1ph-2c-solar-shared-with-bat-shared-high-solar"
     description: "Single phase, 2 chargers both solar, verify no double counting"
+    verified: True
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -287,6 +295,3 @@ scenarios:
         target: 13.5 # shared evenly
       charger_2:
         target: 13.5 
-
-
-  # ===== THREE PHASE SCENARIOS =====

@@ -164,6 +164,14 @@ def build_site_from_scenario(scenario):
     
     # Build chargers
     for idx, charger_data in enumerate(scenario['chargers']):
+        # Handle connected_to_phase for single-phase chargers
+        connected_phase = charger_data.get('connected_to_phase', 'A') if charger_data.get("phases", 1) == 1 else None
+        active_phases_mask = charger_data.get("active_phases_mask")
+        
+        # If single-phase and connected_to_phase specified, set active_phases_mask
+        if connected_phase and not active_phases_mask:
+            active_phases_mask = connected_phase
+        
         charger = ChargerContext(
             charger_id=f"charger_{idx}",
             entity_id=charger_data.get("entity_id", f"charger_{idx}"),
@@ -173,16 +181,15 @@ def build_site_from_scenario(scenario):
             priority=charger_data.get("priority", idx),
             # New fields for phase tracking and connector status
             car_phases=charger_data.get("car_phases"),  # None = default to phases
-            active_phases_mask=charger_data.get("active_phases_mask"),  # None = default based on phases
+            active_phases_mask=active_phases_mask,  # Set from connected_to_phase or YAML
             connector_status=charger_data.get("connector_status", "Charging"),  # Default to active
             l1_current=charger_data.get("l1_current", 0),
             l2_current=charger_data.get("l2_current", 0),
             l3_current=charger_data.get("l3_current", 0),
         )
-        # Store connected_to_phase in charger_id for single-phase (test only)
-        if charger.phases == 1:
-            phase = charger_data.get('connected_to_phase', 'A')
-            charger.charger_id = f"{charger.charger_id}_phase_{phase}"
+        # Store connected_to_phase in charger_id for single-phase (test only, for identification)
+        if charger.phases == 1 and connected_phase:
+            charger.charger_id = f"{charger.charger_id}_phase_{connected_phase}"
         site.chargers.append(charger)
     
     return site
