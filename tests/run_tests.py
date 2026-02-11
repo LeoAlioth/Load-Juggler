@@ -150,6 +150,9 @@ def build_site_from_scenario(scenario):
         battery_max_discharge_power=site_data.get('battery_max_discharge_power', 5000),
         max_import_power=site_data.get('max_import_power'),
         distribution_mode=site_data.get('distribution_mode', 'priority'),
+        inverter_max_power=site_data.get('inverter_max_power'),
+        inverter_max_power_per_phase=site_data.get('inverter_max_power_per_phase'),
+        inverter_supports_asymmetric=site_data.get('inverter_supports_asymmetric', False),
     )
     
     # Set site-level charging mode (first charger's mode, or from site if specified)
