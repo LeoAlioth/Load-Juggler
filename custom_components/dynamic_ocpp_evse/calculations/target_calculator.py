@@ -239,18 +239,20 @@ def _calculate_excess_available(site: SiteContext) -> float:
     
     Returns:
         Current (A) available above excess threshold
-        For 3-phase: per-phase current
-        For 1-phase: total current
+        - With asymmetric inverter: TOTAL current
+        - Without asymmetric: per-phase for 3ph, total for 1ph
     """
     # Check if export exceeds threshold
     if site.total_export_power > site.excess_export_threshold:
         available_power = site.total_export_power - site.excess_export_threshold
         available_current = available_power / site.voltage if site.voltage > 0 else 0
         
-        # For 3-phase systems, return per-phase to match solar_available semantics
-        if site.num_phases == 3:
+        # Match solar_available semantics
+        if site.num_phases == 3 and not site.inverter_supports_asymmetric:
+            # Symmetric 3-phase: return per-phase
             return available_current / 3
         
+        # Asymmetric or 1-phase: return total
         return available_current
     
     return 0
@@ -287,8 +289,9 @@ def _determine_target_power(site: SiteContext, site_limit: float, solar_availabl
                 battery_discharge = site.battery_max_discharge_power / site.voltage
                 target += battery_discharge
         
-        # For 3-phase systems, return per-phase to match distribution semantics
-        if site.num_phases == 3:
+        # For 3-phase systems without asymmetric: divide by 3 (per-phase)
+        # With asymmetric: return total (inverter can balance)
+        if site.num_phases == 3 and not site.inverter_supports_asymmetric:
             return target / 3
         
         return target
@@ -465,8 +468,9 @@ def _distribute_priority(site: SiteContext) -> None:
         # ASYMMETRIC: Work with total current pool (chargers use current × phases)
         is_per_phase = False
     else:
-        # SYMMETRIC: Work per-phase only if 3-phase site with all 3-phase chargers
-        is_per_phase = (site.num_phases == 3 and all(c.phases == 3 for c in chargers))
+        # SYMMETRIC: For 3-phase systems, always work per-phase
+        # (solar_available is per-phase for symmetric 3ph systems)
+        is_per_phase = (site.num_phases == 3)
     
     # Initialize all wanting to charge
     for charger in chargers:
