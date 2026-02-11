@@ -294,25 +294,33 @@ def _determine_target_power(site: SiteContext, site_limit: float, solar_availabl
         return target
     
     elif mode == CHARGING_MODE_ECO:
-        # Eco: Use max of (solar_available, sum_of_minimums)
-        # But respect battery protection
+        # Eco: Charge at minimum to protect battery, can use more if battery is healthy
+        # - Battery < min: No charging (protect battery)
+        # - Battery between min and target: Charge at minimum only (gentle on battery)
+        # - Battery >= target: Can use all solar available
         
         # Calculate sum of minimum charge rates
-        # For 3-phase systems, solar_available is per-phase, so sum_minimums must also be per-phase
-        if site.num_phases == 3 and all(c.phases == 3 for c in site.chargers):
-            # For 3-phase: sum_minimums per-phase to match solar_available semantics
+        # Must match solar_available semantics (total vs per-phase)
+        if site.inverter_supports_asymmetric:
+            # Asymmetric: solar_available is TOTAL, so use total minimums
+            sum_minimums = sum(c.min_current * c.phases for c in site.chargers)
+        elif site.num_phases == 3 and all(c.phases == 3 for c in site.chargers):
+            # Symmetric 3-phase: solar_available is per-phase, so use per-phase minimums
             sum_minimums = sum(c.min_current for c in site.chargers)
         else:
-            # For 1-phase or mixed: use total
+            # 1-phase or mixed: use total
             sum_minimums = sum(c.min_current * c.phases for c in site.chargers)
         
-        # Battery below minimum - protect battery
+        # Battery below minimum - protect battery (no charging)
         if site.battery_soc is not None and site.battery_soc < site.battery_soc_min:
             return 0
         
-        # Battery above target - can use discharge (already in solar_available)
-        # Use the larger of solar or sum of minimums
-        target = max(solar_available, sum_minimums)
+        # Battery between min and target - charge at minimum only (protect battery)
+        if site.battery_soc is not None and site.battery_soc < site.battery_soc_target:
+            target = sum_minimums
+        else:
+            # Battery >= target or no battery - can use all solar available
+            target = max(solar_available, sum_minimums)
         
         # Cap at site limit
         return min(target, site_limit)
