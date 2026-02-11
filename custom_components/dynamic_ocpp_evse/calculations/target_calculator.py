@@ -15,6 +15,7 @@ import logging
 # Try relative imports first (for HA), fall back to absolute (for tests)
 try:
     from .models import SiteContext, ChargerContext
+    from .utils import get_available_current, deduct_current
     from ..const import (
         CHARGING_MODE_STANDARD,
         CHARGING_MODE_ECO,
@@ -23,6 +24,7 @@ try:
     )
 except ImportError:
     from models import SiteContext, ChargerContext
+    from utils import get_available_current, deduct_current
     CHARGING_MODE_STANDARD = "Standard"
     CHARGING_MODE_ECO = "Eco"
     CHARGING_MODE_SOLAR = "Solar"
@@ -547,62 +549,33 @@ def _distribute_power_per_phase(site: SiteContext, constraints: dict, distributi
 
 def _distribute_per_phase_priority(site: SiteContext, constraints: dict) -> None:
     """
-    PRIORITY mode using constraint dict.
+    PRIORITY mode using constraint dict with helper functions.
     Pass 1: Allocate minimum by priority
     Pass 2: Give remainder to highest priority first
-    
-    Uses Multi-Phase Constraint Principle:
-    - 1-phase on A: constraints['A']
-    - 2-phase on AB: MIN(constraints['A'], constraints['B'], constraints['AB']/2)
-    - 3-phase on ABC: MIN(constraints['A'], constraints['B'], constraints['C'], 
-                          constraints['AB']/2, constraints['AC']/2, constraints['BC']/2, constraints['ABC']/3)
     """
-    
-    # Sort all chargers by priority (process across all phase groups)
+    # Sort all chargers by priority
     chargers_by_priority = sorted(site.chargers, key=lambda c: c.priority)
     
-    # Track remaining capacity - start with constraints
+    # Track remaining capacity
     remaining_constraints = constraints.copy()
-    
-    # Two-pass allocation by priority
     allocated = {}
     
     # Pass 1: Allocate minimum to all chargers (by priority)
     for charger in chargers_by_priority:
         mask = charger.active_phases_mask
-        # All chargers should have a mask set (via __post_init__)
         if not mask:
-            _LOGGER.error(f"Charger {charger.entity_id} has no phase mask! This should not happen.")
+            _LOGGER.error(f"Charger {charger.entity_id} has no phase mask!")
             allocated[charger.entity_id] = 0
             continue
         
-        # Determine limiting phase for this charger
-        # For asymmetric systems: multi-phase chargers must divide total by number of phases
-        if mask == 'ABC':
-            charger_available = min(remaining_per_phase['A'], remaining_per_phase['B'], remaining_per_phase['C'])
-            # For asymmetric systems, 3-phase charger draws from all 3 phases, so divide by 3
-            if site.inverter_supports_asymmetric:
-                charger_available = charger_available / 3
-        elif len(mask) == 2:
-            phases_used = list(mask)
-            charger_available = min(remaining_per_phase[phases_used[0]], remaining_per_phase[phases_used[1]])
-            # For asymmetric systems, 2-phase charger draws from 2 phases, so divide by 2
-            if site.inverter_supports_asymmetric:
-                charger_available = charger_available / 2
-        elif len(mask) == 1:
-            charger_available = remaining_per_phase[mask]
-            # Single-phase charger gets full value (already correct)
-        else:
-            _LOGGER.warning(f"Unknown phase mask '{mask}', skipping")
-            allocated[charger.entity_id] = 0
-            continue
+        # Use helper to get available current for this charger
+        charger_available = get_available_current(remaining_constraints, mask)
         
         # Try to allocate minimum
         if charger_available >= charger.min_current:
             allocated[charger.entity_id] = charger.min_current
-            # Deduct from all phases this charger uses
-            for phase in mask:
-                remaining_per_phase[phase] -= charger.min_current
+            # Use helper to deduct from all affected phase combinations
+            remaining_constraints = deduct_current(remaining_constraints, charger.min_current, mask)
         else:
             allocated[charger.entity_id] = 0
     
@@ -614,78 +587,45 @@ def _distribute_per_phase_priority(site: SiteContext, constraints: dict) -> None
         
         mask = charger.active_phases_mask
         if not mask:
-            # 3-phase charger without explicit mask
-            if charger.phases == 3:
-                mask = 'ABC'
-            else:
-                charger.target_current = allocated[charger.entity_id]
-                continue
-        
-        # Determine how much more this charger can get
-        # For asymmetric systems: multi-phase chargers must divide total by number of phases
-        if mask == 'ABC':
-            charger_available = min(remaining_per_phase['A'], remaining_per_phase['B'], remaining_per_phase['C'])
-            # For asymmetric systems, 3-phase charger draws from all 3 phases, so divide by 3
-            if site.inverter_supports_asymmetric:
-                charger_available = charger_available / 3
-        elif len(mask) == 2:
-            phases_used = list(mask)
-            charger_available = min(remaining_per_phase[phases_used[0]], remaining_per_phase[phases_used[1]])
-            # For asymmetric systems, 2-phase charger draws from 2 phases, so divide by 2
-            if site.inverter_supports_asymmetric:
-                charger_available = charger_available / 2
-        elif len(mask) == 1:
-            charger_available = remaining_per_phase[mask]
-            # Single-phase charger gets full value (already correct)
-        else:
             charger.target_current = allocated[charger.entity_id]
             continue
+        
+        # Use helper to get available current
+        charger_available = get_available_current(remaining_constraints, mask)
         
         wanted_additional = charger.max_current - allocated[charger.entity_id]
         additional = min(wanted_additional, charger_available)
         charger.target_current = allocated[charger.entity_id] + additional
         
-        # Deduct from all phases this charger uses
-        for phase in mask:
-            remaining_per_phase[phase] -= additional
+        # Use helper to deduct from all affected phase combinations
+        remaining_constraints = deduct_current(remaining_constraints, additional, mask)
 
 
-def _distribute_per_phase_shared(site: SiteContext, solar_per_phase: list, solar_total: float) -> None:
+def _distribute_per_phase_shared(site: SiteContext, constraints: dict) -> None:
     """
-    SHARED mode in per-phase framework.
+    SHARED mode using constraint dict with helper functions.
     Pass 1: Allocate minimum to all
     Pass 2: Split remainder equally among all charging chargers
     """
-    # Set up phase available dict
-    if site.inverter_supports_asymmetric:
-        phase_available = {'A': solar_total, 'B': solar_total, 'C': solar_total}
-    else:
-        phase_available = {'A': solar_per_phase[0], 'B': solar_per_phase[1], 'C': solar_per_phase[2]}
-    
-    remaining_per_phase = phase_available.copy()
+    remaining_constraints = constraints.copy()
     allocated = {}
     
     # Pass 1: Allocate minimum to all
     for charger in site.chargers:
         mask = charger.active_phases_mask
         if not mask:
+            _LOGGER.error(f"Charger {charger.entity_id} has no phase mask!")
             allocated[charger.entity_id] = 0
             continue
         
-        # Determine limiting phase
-        if mask == 'ABC':
-            charger_available = min(remaining_per_phase['A'], remaining_per_phase['B'], remaining_per_phase['C'])
-        elif len(mask) == 2:
-            phases_used = list(mask)
-            charger_available = min(remaining_per_phase[phases_used[0]], remaining_per_phase[phases_used[1]])
-        else:
-            charger_available = remaining_per_phase[mask]
+        # Use helper to get available current for this charger
+        charger_available = get_available_current(remaining_constraints, mask)
         
         # Allocate minimum
         if charger_available >= charger.min_current:
             allocated[charger.entity_id] = charger.min_current
-            for phase in mask:
-                remaining_per_phase[phase] -= charger.min_current
+            # Use helper to deduct from all affected phase combinations
+            remaining_constraints = deduct_current(remaining_constraints, charger.min_current, mask)
         else:
             allocated[charger.entity_id] = 0
     
@@ -695,18 +635,40 @@ def _distribute_per_phase_shared(site: SiteContext, solar_per_phase: list, solar
             charger.target_current = 0
         return
     
-    # Pass 2: Split remainder equally
-    # Calculate total remaining (minimum across all phases)
-    total_remaining = min(remaining_per_phase['A'], remaining_per_phase['B'], remaining_per_phase['C'])
+    # Pass 2: Split remainder equally among charging chargers
+    # Continue distributing until no more power available or all chargers at max
+    while True:
+        # Calculate what each charger can still accept
+        chargers_wanting_more = []
+        for charger in charging_chargers:
+            if allocated[charger.entity_id] < charger.max_current:
+                chargers_wanting_more.append(charger)
+        
+        if not chargers_wanting_more:
+            break
+        
+        # Find the minimum available across all chargers wanting more
+        min_available = float('inf')
+        for charger in chargers_wanting_more:
+            mask = charger.active_phases_mask
+            charger_available = get_available_current(remaining_constraints, mask)
+            min_available = min(min_available, charger_available)
+        
+        if min_available <= 0:
+            break
+        
+        # Split available equally among chargers wanting more
+        per_charger_increment = min_available / len(chargers_wanting_more)
+        
+        for charger in chargers_wanting_more:
+            mask = charger.active_phases_mask
+            additional = min(per_charger_increment, charger.max_current - allocated[charger.entity_id])
+            allocated[charger.entity_id] += additional
+            remaining_constraints = deduct_current(remaining_constraints, additional, mask)
     
-    if total_remaining > 0:
-        per_charger = total_remaining / len(charging_chargers)
-        for charger in charging_chargers:
-            additional = min(per_charger, charger.max_current - allocated[charger.entity_id])
-            charger.target_current = allocated[charger.entity_id] + additional
-    else:
-        for charger in charging_chargers:
-            charger.target_current = allocated[charger.entity_id]
+    # Apply allocated values
+    for charger in charging_chargers:
+        charger.target_current = allocated[charger.entity_id]
     
     # Set non-charging chargers to 0
     for charger in site.chargers:
@@ -714,69 +676,48 @@ def _distribute_per_phase_shared(site: SiteContext, solar_per_phase: list, solar
             charger.target_current = 0
 
 
-def _distribute_per_phase_strict(site: SiteContext, solar_per_phase: list, solar_total: float) -> None:
+def _distribute_per_phase_strict(site: SiteContext, constraints: dict) -> None:
     """
-    STRICT mode in per-phase framework.
+    STRICT mode using constraint dict with helper functions.
     Give first charger up to max, then next, etc. (by priority)
     """
-    if site.inverter_supports_asymmetric:
-        phase_available = {'A': solar_total, 'B': solar_total, 'C': solar_total}
-    else:
-        phase_available = {'A': solar_per_phase[0], 'B': solar_per_phase[1], 'C': solar_per_phase[2]}
-    
-    remaining_per_phase = phase_available.copy()
+    remaining_constraints = constraints.copy()
     chargers_by_priority = sorted(site.chargers, key=lambda c: c.priority)
     
     for charger in chargers_by_priority:
         mask = charger.active_phases_mask
         if not mask:
+            _LOGGER.error(f"Charger {charger.entity_id} has no phase mask!")
             charger.target_current = 0
             continue
         
-        # Determine limiting phase
-        if mask == 'ABC':
-            charger_available = min(remaining_per_phase['A'], remaining_per_phase['B'], remaining_per_phase['C'])
-        elif len(mask) == 2:
-            phases_used = list(mask)
-            charger_available = min(remaining_per_phase[phases_used[0]], remaining_per_phase[phases_used[1]])
-        else:
-            charger_available = remaining_per_phase[mask]
+        # Use helper to get available current for this charger
+        charger_available = get_available_current(remaining_constraints, mask)
         
         # Give up to max or what's available
         charger.target_current = min(charger.max_current, charger_available)
         
-        # Deduct from all phases
-        for phase in mask:
-            remaining_per_phase[phase] -= charger.target_current
+        # Use helper to deduct from all affected phase combinations
+        remaining_constraints = deduct_current(remaining_constraints, charger.target_current, mask)
 
 
-def _distribute_per_phase_optimized(site: SiteContext, solar_per_phase: list, solar_total: float) -> None:
+def _distribute_per_phase_optimized(site: SiteContext, constraints: dict) -> None:
     """
-    OPTIMIZED mode in per-phase framework.
+    OPTIMIZED mode using constraint dict with helper functions.
     Reduce higher priority chargers to allow lower priority to charge at minimum.
     """
-    if site.inverter_supports_asymmetric:
-        phase_available = {'A': solar_total, 'B': solar_total, 'C': solar_total}
-    else:
-        phase_available = {'A': solar_per_phase[0], 'B': solar_per_phase[1], 'C': solar_per_phase[2]}
-    
-    remaining_per_phase = phase_available.copy()
+    remaining_constraints = constraints.copy()
     chargers_by_priority = sorted(site.chargers, key=lambda c: c.priority)
     
     for i, charger in enumerate(chargers_by_priority):
         mask = charger.active_phases_mask
         if not mask:
+            _LOGGER.error(f"Charger {charger.entity_id} has no phase mask!")
             charger.target_current = 0
             continue
         
-        # Determine limiting phase
-        if mask == 'ABC':
-            charger_available = min(remaining_per_phase['A'], remaining_per_phase['B'], remaining_per_phase['C'])
-        elif len(mask) == 2:
-            phases_used = list(mask)
-            charger_available = min(remaining_per_phase[phases_used[0]], remaining_per_phase[phases_used[1]])
-        else:
-            charger_available = remaining_per_phase[mask]
+        # Use helper to get available current for this charger
+        charger_available = get_available_current(remaining_constraints, mask)
         
         wanted = min(charger.max_current, charger_available)
         
@@ -785,18 +726,9 @@ def _distribute_per_phase_optimized(site: SiteContext, solar_per_phase: list, so
             next_charger = chargers_by_priority[i + 1]
             next_mask = next_charger.active_phases_mask
             if next_mask:
-                # Calculate what next charger would see
-                temp_remaining = remaining_per_phase.copy()
-                for phase in mask:
-                    temp_remaining[phase] -= wanted
-                
-                if next_mask == 'ABC':
-                    next_available = min(temp_remaining['A'], temp_remaining['B'], temp_remaining['C'])
-                elif len(next_mask) == 2:
-                    next_phases = list(next_mask)
-                    next_available = min(temp_remaining[next_phases[0]], temp_remaining[next_phases[1]])
-                else:
-                    next_available = temp_remaining[next_mask]
+                # Calculate what next charger would see after allocating 'wanted' to current charger
+                temp_remaining = deduct_current(remaining_constraints, wanted, mask)
+                next_available = get_available_current(temp_remaining, next_mask)
                 
                 # If next can't charge at minimum, try to reduce current charger
                 if next_available < next_charger.min_current:
@@ -807,9 +739,8 @@ def _distribute_per_phase_optimized(site: SiteContext, solar_per_phase: list, so
         
         charger.target_current = wanted
         
-        # Deduct from all phases
-        for phase in mask:
-            remaining_per_phase[phase] -= wanted
+        # Use helper to deduct from all affected phase combinations
+        remaining_constraints = deduct_current(remaining_constraints, wanted, mask)
 
 
 def _distribute_strict(site: SiteContext) -> None:
