@@ -243,7 +243,13 @@ def _determine_target_power(site: SiteContext, site_limit: float, solar_availabl
         # But respect battery protection
         
         # Calculate sum of minimum charge rates
-        sum_minimums = sum(c.min_current * c.phases for c in site.chargers)
+        # For 3-phase systems, solar_available is per-phase, so sum_minimums must also be per-phase
+        if site.num_phases == 3 and all(c.phases == 3 for c in site.chargers):
+            # For 3-phase: sum_minimums per-phase to match solar_available semantics
+            sum_minimums = sum(c.min_current for c in site.chargers)
+        else:
+            # For 1-phase or mixed: use total
+            sum_minimums = sum(c.min_current * c.phases for c in site.chargers)
         
         # Battery below minimum - protect battery
         if site.battery_soc is not None and site.battery_soc < site.battery_soc_min:

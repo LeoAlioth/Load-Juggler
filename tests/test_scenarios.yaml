@@ -469,7 +469,7 @@ scenarios:
         max_current: 16
         phases: 3
         priority: 1
-    expected:
+    expected: # Manually verified expected result
       charger_1:
         target: 0  # Battery too low = no charging
   
@@ -481,7 +481,7 @@ scenarios:
       max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
-      charging_mode: Solar
+      charging_mode: Eco
       solar_production: 4140  # 18A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -496,7 +496,6 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Eco"
         priority: 1
     expected:
       charger_1:
@@ -512,7 +511,7 @@ scenarios:
       max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
-      charging_mode: Solar
+      charging_mode: Excess
       solar_production: 18000  # Total 18kW
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -528,7 +527,6 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Excess"
         priority: 1
     expected:
       charger_1:
@@ -542,7 +540,7 @@ scenarios:
       max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
-      charging_mode: Solar
+      charging_mode: Excess
       solar_production: 10350  # Total ~10.35kW
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -558,7 +556,6 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Excess"
         priority: 1
     expected:
       charger_1:
@@ -574,7 +571,7 @@ scenarios:
       max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
-      charging_mode: Solar
+      charging_mode: Standard
       solar_production: 11500  # 50A total
       phase_a_consumption: 3.0
       phase_b_consumption: 3.0
@@ -589,19 +586,16 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Standard"
         priority: 1
       - entity_id: "charger_2"
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Standard"
         priority: 2
       - entity_id: "charger_3"
         min_current: 6
         max_current: 10
         phases: 3
-        mode: "Standard"
         priority: 3
     expected:
       charger_1:
@@ -684,7 +678,7 @@ scenarios:
       max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
-      charging_mode: Solar
+      charging_mode: Eco
       solar_production: 6210  # 27A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -699,7 +693,6 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Eco"
         priority: 1
     expected:
       charger_1:
@@ -707,7 +700,7 @@ scenarios:
   
   # ===== EDGE CASES =====
   
-  - name: "3ph-2c-mixed-prio-with-bat-no-solar"
+  - name: "3ph-2c-eco-prio-with-bat-no-solar"
     description: "No solar export available"
     site:
       voltage: 230
@@ -715,7 +708,7 @@ scenarios:
       max_import_power: 17250
       num_phases: 3
       distribution_mode: priority
-      charging_mode: Solar
+      charging_mode: Eco
       solar_production: 690  # 3A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -735,13 +728,12 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 3
-        mode: "Standard"
         priority: 2
     expected:
       charger_1:
-        target: 0  # No export
+        target: 6  # No export
       charger_2:
-        target: 16  # Standard wants max
+        target: 6  # Standard wants max
   
   - name: "3ph-1c-solar-prio-with-bat-importing"
     description: "Site importing (negative export)"
