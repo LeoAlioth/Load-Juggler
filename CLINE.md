@@ -11,6 +11,7 @@ This document describes the Dynamic OCPP EVSE repository structure, architecture
 - **Don't distinguish** between "explicit" and "default" configurations - treat them the same
 - **Use per-phase calculations universally** instead of creating special logic for each site type
 - **The same algorithm should handle all cases**: 1-phase, 2-phase, 3-phase, symmetric, asymmetric
+- **Make use of helper functios** make code more readable, maintainable and most importantly reduces errors
 
 **Example**: Instead of checking `if site.num_phases == 3:` and branching, use per-phase arrays `[A, B, C]` where unused phases are 0. This handles all cases uniformly.
 
@@ -50,6 +51,9 @@ constraints = {
 A 3-phase charger drawing 20A per phase (60A total) would violate the ABC constraint (52A), even though individual phases are fine.
 
 **Why**: Physical reality - inverters and breakers have limits for EACH phase combination, not just individual phases.
+
+### Remove legacy code and compatibility with previous version
+**Why**: we are working on a new version, that is expected to be needed to be reconfigured. So this is essentially a fresh start.
 
 ## Project Overview
 
