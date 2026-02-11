@@ -164,13 +164,21 @@ def build_site_from_scenario(scenario):
     
     # Build chargers
     for idx, charger_data in enumerate(scenario['chargers']):
-        # Handle connected_to_phase for single-phase chargers
-        connected_phase = charger_data.get('connected_to_phase', 'A') if charger_data.get("phases", 1) == 1 else None
-        active_phases_mask = charger_data.get("active_phases_mask")
+        phases = charger_data.get("phases", 1)
         
-        # If single-phase and connected_to_phase specified, set active_phases_mask
-        if connected_phase and not active_phases_mask:
-            active_phases_mask = connected_phase
+        # Set active_phases_mask based on charger configuration
+        active_phases_mask = charger_data.get("active_phases_mask")
+        if not active_phases_mask:
+            if phases == 3:
+                active_phases_mask = "ABC"  # 3-phase chargers on all phases
+            elif phases == 1:
+                # 1-phase: use connected_to_phase if explicitly specified, otherwise None
+                active_phases_mask = charger_data.get('connected_to_phase')
+            elif phases == 2:
+                active_phases_mask = "AB"  # 2-phase default (rare)
+        
+        # For identification in charger_id
+        connected_phase = charger_data.get('connected_to_phase') if phases == 1 else None
         
         charger = ChargerContext(
             charger_id=f"charger_{idx}",
@@ -287,9 +295,30 @@ def validate_results(scenario, site):
     return passed, errors
 
 
-def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False):
-    """Run all test scenarios."""
-    scenarios = load_scenarios(yaml_file)
+def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False, filter_verified=None):
+    """
+    Run all test scenarios.
+    
+    Args:
+        yaml_file: Path to YAML file with scenarios
+        verbose: Print detailed output
+        filter_verified: Filter scenarios by verified status
+            - None or 'all': Run all scenarios (default)
+            - 'verified': Run only verified scenarios
+            - 'unverified': Run only unverified scenarios
+    """
+    all_scenarios = load_scenarios(yaml_file)
+    
+    # Filter scenarios based on verified field
+    if filter_verified == 'verified':
+        scenarios = [s for s in all_scenarios if s.get('verified', False)]
+        filter_msg = " (VERIFIED ONLY)"
+    elif filter_verified == 'unverified':
+        scenarios = [s for s in all_scenarios if not s.get('verified', False)]
+        filter_msg = " (UNVERIFIED ONLY)"
+    else:
+        scenarios = all_scenarios
+        filter_msg = ""
     
     print(f"\n{'='*70}")
     print(f"TEST RUNNER: RUNNING {len(scenarios)} TEST SCENARIOS")
@@ -419,8 +448,23 @@ if __name__ == "__main__":
             combined.extend(data.get("scenarios", []))
         return combined
     
-    if len(sys.argv) > 1:
-        arg = sys.argv[1]
+    # Parse filter_verified from command line
+    filter_verified = None
+    args = sys.argv[1:]
+    
+    # Check for --verified or --unverified flags
+    if '--verified' in args:
+        filter_verified = 'verified'
+        args.remove('--verified')
+    elif '--unverified' in args:
+        filter_verified = 'unverified'
+        args.remove('--unverified')
+    elif '--all' in args:
+        filter_verified = None
+        args.remove('--all')
+    
+    if len(args) > 0:
+        arg = args[0]
         p = Path(arg)
         if p.exists():
             # If arg is a directory, merge all scenario files and run them
@@ -429,14 +473,14 @@ if __name__ == "__main__":
                 tmp = Path(__file__).parent / "scenarios_combined_temp.yaml"
                 with open(tmp, "w", encoding="utf-8") as fh:
                     yaml.safe_dump({"scenarios": combined}, fh)
-                success = run_tests(yaml_file=str(tmp), verbose=True)
+                success = run_tests(yaml_file=str(tmp), verbose=True, filter_verified=filter_verified)
                 try:
                     tmp.unlink()
                 except Exception:
                     pass
             elif p.is_file():
                 # Arg is a specific yaml file
-                success = run_tests(yaml_file=str(p), verbose=True)
+                success = run_tests(yaml_file=str(p), verbose=True, filter_verified=filter_verified)
             else:
                 print(f"❌ Path '{arg}' is not a file or directory")
                 success = False
@@ -471,12 +515,12 @@ if __name__ == "__main__":
             tmp = Path(__file__).parent / "scenarios_combined_temp.yaml"
             with open(tmp, "w", encoding="utf-8") as fh:
                 yaml.safe_dump({"scenarios": combined}, fh)
-            success = run_tests(yaml_file=str(tmp), verbose=True)
+            success = run_tests(yaml_file=str(tmp), verbose=True, filter_verified=filter_verified)
             try:
                 tmp.unlink()
             except Exception:
                 pass
         else:
-            success = run_tests(verbose=True)
+            success = run_tests(verbose=True, filter_verified=filter_verified)
     
     sys.exit(0 if success else 1)

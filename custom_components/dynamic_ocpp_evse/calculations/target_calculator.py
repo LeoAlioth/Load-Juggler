@@ -70,16 +70,25 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     site_limit = _calculate_site_limit(site)
     _LOGGER.debug(f"Step 1 - Site limit: {site_limit:.1f}A")
     
-    # Step 2: Calculate solar available
-    solar_available = _calculate_solar_available(site)
-    _LOGGER.debug(f"Step 2 - Solar available: {solar_available:.1f}A")
+    # Step 2: Calculate solar available (returns per-phase and total)
+    solar_per_phase, solar_total = _calculate_solar_available(site)
+    _LOGGER.debug(f"Step 2 - Solar available: per_phase={solar_per_phase}, total={solar_total:.1f}A")
     
     # Step 3: Calculate excess available
     excess_available = _calculate_excess_available(site)
     _LOGGER.debug(f"Step 3 - Excess available: {excess_available:.1f}A")
     
     # Step 4: Determine target power based on mode
-    target_power = _determine_target_power(site, site_limit, solar_available, excess_available)
+    # For symmetric 3-phase systems, use minimum phase (per-phase semantics)
+    # For asymmetric systems, use total (can balance across phases)
+    if site.num_phases == 3 and not site.inverter_supports_asymmetric:
+        # Symmetric: use limiting phase
+        solar_for_mode = min(solar_per_phase)
+    else:
+        # Asymmetric or 1-phase: use total
+        solar_for_mode = solar_total
+    
+    target_power = _determine_target_power(site, site_limit, solar_for_mode, excess_available)
     _LOGGER.debug(f"Step 4 - Target power ({site.charging_mode}): {target_power:.1f}A")
     
     # Step 5: Distribute power among chargers
@@ -136,7 +145,7 @@ def _calculate_site_limit(site: SiteContext) -> float:
     return total_limit
 
 
-def _calculate_solar_available(site: SiteContext) -> float:
+def _calculate_solar_available(site: SiteContext) -> tuple:
     """
     Step 2: Calculate solar available power.
     
@@ -144,15 +153,15 @@ def _calculate_solar_available(site: SiteContext) -> float:
     - Total solar export (per-phase for 3-phase systems)
     - Battery charging (if SOC < target)
     - Battery discharge (if SOC > target, mode-dependent)
-    - Inverter asymmetric capability
-    
-    KEY: If inverter supports asymmetric distribution, it can balance power
-    across phases. Otherwise, solar is fixed per-phase.
+    - Inverter limits (both per-phase AND total)
     
     Returns:
-        Current (A) available from solar (and battery if applicable)
-        - With asymmetric inverter: TOTAL current across all phases
-        - Without asymmetric: per-phase current (limiting phase) for 3ph, total for 1ph
+        Tuple of (per_phase_limits, total_limit):
+        - per_phase_limits: [phase_a, phase_b, phase_c] available current per phase
+        - total_limit: Total available current across all phases
+        
+        For symmetric inverters: total = sum(per_phase)
+        For asymmetric inverters: total may be less than sum(per_phase)
     """
     # Calculate available per phase for 3-phase systems
     if site.num_phases == 3:
@@ -190,32 +199,30 @@ def _calculate_solar_available(site: SiteContext) -> float:
             phase_b_avail = min(phase_b_avail, max_per_phase)
             phase_c_avail = min(phase_c_avail, max_per_phase)
         
-        # Check if inverter supports asymmetric distribution
-        if site.inverter_supports_asymmetric:
-            # ASYMMETRIC: Inverter can balance power across phases
-            # Return TOTAL available current (chargers will use current × phases from total pool)
-            total_available = phase_a_avail + phase_b_avail + phase_c_avail
-            
-            # Apply total inverter limit if configured
-            if site.inverter_max_power:
-                max_total = site.inverter_max_power / site.voltage
-                total_available = min(total_available, max_total)
-            
-            _LOGGER.debug(f"3-phase ASYMMETRIC: A={phase_a_avail:.1f}, B={phase_b_avail:.1f}, C={phase_c_avail:.1f}, total={total_available:.1f}A")
-            return total_available
-        else:
-            # SYMMETRIC: Solar fixed per phase, use minimum (limiting phase)
-            # This prevents overloading any single phase
-            available = min(phase_a_avail, phase_b_avail, phase_c_avail)
-            _LOGGER.debug(f"3-phase SYMMETRIC: A={phase_a_avail:.1f}, B={phase_b_avail:.1f}, C={phase_c_avail:.1f}, limiting={available:.1f}A per phase")
-            return available
+        # Calculate total available (sum of phases before inverter total limit)
+        total_available = phase_a_avail + phase_b_avail + phase_c_avail
+        
+        # Apply total inverter limit if configured
+        if site.inverter_max_power:
+            max_total = site.inverter_max_power / site.voltage
+            total_available = min(total_available, max_total)
+        
+        # Return both per-phase and total
+        per_phase = [phase_a_avail, phase_b_avail, phase_c_avail]
+        
+        _LOGGER.debug(
+            f"3-phase solar: per-phase=[{phase_a_avail:.1f}, {phase_b_avail:.1f}, {phase_c_avail:.1f}], "
+            f"total={total_available:.1f}A, asymmetric={site.inverter_supports_asymmetric}"
+        )
+        
+        return (per_phase, total_available)
     
-    # Single-phase system: use total export
+    # Single-phase system
     available = site.total_export_current
     
     # No battery - just return export
     if site.battery_soc is None:
-        return available
+        return ([available, 0, 0], available)
     
     # Battery below target: Battery charges first
     if site.battery_soc < site.battery_soc_target:
@@ -228,7 +235,7 @@ def _calculate_solar_available(site: SiteContext) -> float:
             battery_discharge_current = site.battery_max_discharge_power / site.voltage
             available += battery_discharge_current
     
-    return available
+    return ([available, 0, 0], available)
 
 
 def _calculate_excess_available(site: SiteContext) -> float:
@@ -366,14 +373,8 @@ def _distribute_power(site: SiteContext, target_power: float) -> None:
     """
     Step 5: Distribute target power among chargers.
     
-    Uses distribution_mode to allocate power:
-    - priority: Two-pass (min first, then by priority)
-    - shared: Two-pass (min first, then equal split)
-    - strict: One-pass sequential
-    - optimized: One-pass with smart reduction
-    
-    Special handling for single-phase chargers on specific phases:
-    - If charger has active_phases_mask set to 'A', 'B', or 'C', allocate from that phase only
+    Special handling for single-phase chargers with explicit phase assignments.
+    All chargers have active_phases_mask set by test runner/HA integration.
     
     Args:
         site: SiteContext with chargers
@@ -382,17 +383,19 @@ def _distribute_power(site: SiteContext, target_power: float) -> None:
     if len(site.chargers) == 0:
         return
     
-    # Check if we have single-phase chargers on specific phases
-    has_phase_specific = any(
-        c.phases == 1 and c.active_phases_mask in ['A', 'B', 'C'] 
-        for c in site.chargers
+    # Check if we have chargers with explicit phase assignments (A, B, or C only)
+    has_explicit_phases = any(
+        c.active_phases_mask in ['A', 'B', 'C'] for c in site.chargers
     )
     
-    # If we have phase-specific chargers on a 3-phase system, handle them separately
-    if has_phase_specific and site.num_phases == 3:
+    # Use per-phase distribution when chargers have explicit phase assignments
+    # Note: inverter_supports_asymmetric affects power AVAILABILITY (calculated in solar_available),
+    # but chargers are still physically limited to their connected phases
+    if has_explicit_phases and site.num_phases == 3:
         _distribute_power_per_phase(site)
         return
     
+    # Standard distribution for all other cases
     # Single charger - simple case
     if len(site.chargers) == 1:
         charger = site.chargers[0]
