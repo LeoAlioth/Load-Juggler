@@ -110,18 +110,28 @@ def build_site_from_scenario(scenario):
     phase_a_cons = site_data.get('phase_a_consumption', 0)
     phase_b_cons = site_data.get('phase_b_consumption', 0)
     phase_c_cons = site_data.get('phase_c_consumption', 0)
+    num_phases = site_data.get('num_phases', 3)
     
     # Calculate initial export per phase (solar evenly distributed)
-    solar_per_phase_amps = (solar_total / 3) / voltage
-    phase_a_export = max(0, solar_per_phase_amps - phase_a_cons)
-    phase_b_export = max(0, solar_per_phase_amps - phase_b_cons)
-    phase_c_export = max(0, solar_per_phase_amps - phase_c_cons)
+    if num_phases == 1:
+        # Single-phase: all solar goes to phase A
+        solar_per_phase_amps = solar_total / voltage if voltage > 0 else 0
+        phase_a_export = max(0, solar_per_phase_amps - phase_a_cons)
+        phase_b_export = 0
+        phase_c_export = 0
+    else:
+        # Three-phase: solar evenly distributed across phases
+        solar_per_phase_amps = (solar_total / 3) / voltage if voltage > 0 else 0
+        phase_a_export = max(0, solar_per_phase_amps - phase_a_cons)
+        phase_b_export = max(0, solar_per_phase_amps - phase_b_cons)
+        phase_c_export = max(0, solar_per_phase_amps - phase_c_cons)
     
     total_export_current = phase_a_export + phase_b_export + phase_c_export
     total_export_power = total_export_current * voltage
     
     site = SiteContext(
         voltage=voltage,
+        num_phases=num_phases,
         main_breaker_rating=site_data.get('main_breaker_rating', 63),
         phase_a_consumption=phase_a_cons,
         phase_b_consumption=phase_b_cons,

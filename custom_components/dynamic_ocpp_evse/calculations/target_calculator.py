@@ -119,17 +119,60 @@ def _calculate_solar_available(site: SiteContext) -> float:
     Step 2: Calculate solar available power.
     
     Considers:
-    - Total solar export
+    - Total solar export (per-phase for 3-phase systems)
     - Battery charging (if SOC < target)
     - Battery discharge (if SOC > target, mode-dependent)
     
     Note: Solar power is equally distributed across phases.
     Battery power can be freely distributed.
     
+    For 3-phase systems with unbalanced load:
+    - Returns minimum available across phases (limiting phase)
+    - Prevents overloading any single phase
+    
     Returns:
-        Total current (A) available from solar (and battery if applicable)
+        Current (A) available from solar (and battery if applicable)
+        For 3-phase: per-phase current (limiting phase)
+        For 1-phase: total current
     """
-    # Start with total export
+    # Calculate available per phase for 3-phase systems
+    if site.num_phases == 3:
+        # Solar evenly distributed: each phase gets 1/3
+        solar_per_phase = (site.solar_production_total / 3) / site.voltage if site.solar_production_total else 0
+        
+        # Calculate export per phase after consumption
+        phase_a_avail = max(0, solar_per_phase - site.phase_a_consumption)
+        phase_b_avail = max(0, solar_per_phase - site.phase_b_consumption)
+        phase_c_avail = max(0, solar_per_phase - site.phase_c_consumption)
+        
+        # Handle battery charging/discharging
+        if site.battery_soc is not None:
+            if site.battery_soc < site.battery_soc_target:
+                # Battery charges first - reduce available proportionally
+                battery_charge_current = site.battery_max_charge_power / site.voltage if site.battery_max_charge_power else 0
+                battery_per_phase = battery_charge_current / 3
+                phase_a_avail = max(0, phase_a_avail - battery_per_phase)
+                phase_b_avail = max(0, phase_b_avail - battery_per_phase)
+                phase_c_avail = max(0, phase_c_avail - battery_per_phase)
+            
+            elif site.battery_soc > site.battery_soc_target:
+                # Battery can discharge - add to each phase
+                if site.battery_max_discharge_power:
+                    battery_discharge_current = site.battery_max_discharge_power / site.voltage
+                    battery_per_phase = battery_discharge_current / 3
+                    phase_a_avail += battery_per_phase
+                    phase_b_avail += battery_per_phase
+                    phase_c_avail += battery_per_phase
+        
+        # For 3-phase chargers: use MINIMUM (limiting phase)
+        # This prevents overloading any single phase with unbalanced loads
+        available = min(phase_a_avail, phase_b_avail, phase_c_avail)
+        
+        _LOGGER.debug(f"3-phase per-phase available: A={phase_a_avail:.1f}, B={phase_b_avail:.1f}, C={phase_c_avail:.1f}, limiting={available:.1f}A")
+        
+        return available
+    
+    # Single-phase system: use total export
     available = site.total_export_current
     
     # No battery - just return export
@@ -141,8 +184,7 @@ def _calculate_solar_available(site: SiteContext) -> float:
         battery_charge_current = site.battery_max_charge_power / site.voltage if site.battery_max_charge_power else 0
         available = max(0, available - battery_charge_current)
     
-    # Battery above target: Can discharge (for Solar/Eco modes)
-    # Note: Standard mode battery discharge is handled separately
+    # Battery above target: Can discharge
     elif site.battery_soc > site.battery_soc_target:
         if site.battery_max_discharge_power:
             battery_discharge_current = site.battery_max_discharge_power / site.voltage
@@ -247,7 +289,18 @@ def _distribute_power(site: SiteContext, target_power: float) -> None:
     # Single charger - simple case
     if len(site.chargers) == 1:
         charger = site.chargers[0]
-        available_per_phase = target_power / charger.phases if charger.phases > 0 else 0
+        
+        # For 3-phase systems, target_power is already per-phase (limiting phase)
+        # For 1-phase systems, target_power is total available
+        if site.num_phases == 3 and charger.phases == 3:
+            # 3-phase charger on 3-phase site: target_power is already per-phase
+            available_per_phase = target_power
+        elif site.num_phases == 1 or charger.phases == 1:
+            # Single-phase: use total available
+            available_per_phase = target_power
+        else:
+            # Mixed case: divide by charger phases
+            available_per_phase = target_power / charger.phases if charger.phases > 0 else 0
         
         if available_per_phase >= charger.min_current:
             charger.target_current = min(available_per_phase, charger.max_current)
