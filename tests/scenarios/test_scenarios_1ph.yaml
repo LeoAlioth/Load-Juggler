@@ -4,68 +4,7 @@
 scenarios:
 
   
-  - name: "1ph-1c-solar-prio-no-bat-normal"
-    description: "Single phase, 1 charger, solar mode, no battery"
-    site:
-      voltage: 230
-      main_breaker_rating: 35
-      max_import_power: 8050
-      num_phases: 1
-      distribution_mode: priority
-      charging_mode: Solar
-      solar_production: 2300  # 10A at 230V
-      phase_a_consumption: 2.0  # Home load
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
-      battery_soc: null
-      battery_soc_min: null
-      battery_soc_target: null
-      battery_max_charge_power: null
-      battery_max_discharge_power: null
-      inverter_supports_asymmetric: False
-      inverter_max_power_per_phase: 12000
-      inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
-        min_current: 6
-        max_current: 16
-        phases: 1
-        priority: 1
-    expected: # Manually verified expected result
-      charger_1:
-        target: 8.0  # 10A solar - 2A consumption = 8A
-  
-  - name: "1ph-1c-solar-prio-no-bat-insufficient"
-    description: "Single phase, 1 charger, insufficient solar (below min)"
-    site:
-      voltage: 230
-      main_breaker_rating: 35
-      max_import_power: 8050
-      num_phases: 1
-      distribution_mode: priority
-      charging_mode: Solar
-      solar_production: 1150  # 5A at 230V
-      phase_a_consumption: 1.0  # Home load
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
-      battery_soc: null
-      battery_soc_min: null
-      battery_soc_target: null
-      battery_max_charge_power: null
-      battery_max_discharge_power: null
-      inverter_supports_asymmetric: False
-      inverter_max_power_per_phase: 12000
-      inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
-        min_current: 6
-        max_current: 16
-        phases: 1
-        priority: 1
-    expected: # Manually verified expected result
-      charger_1:
-        target: 0  # 5A - 1A = 4A, below 6A minimum
-  
+
   - name: "1ph-1c-solar-prio-no-bat-normal"
     description: "Single phase, 1 charger, solar mode, no battery"
     site:
