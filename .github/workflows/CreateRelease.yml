@@ -23,10 +23,10 @@ jobs:
 
       - name: Create ZIP archive
         run: |
-          # Create zip with files at root for HACS (content_in_root: true)
+          # Create zip with just the integration folder for HACS
           mkdir -p release
-          cd custom_components/dynamic_ocpp_evse
-          zip -r ../../release/dynamic-ocpp-evse.zip .
+          cd custom_components
+          zip -r ../release/dynamic-ocpp-evse.zip dynamic_ocpp_evse/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

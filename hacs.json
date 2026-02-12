@@ -1,6 +1,6 @@
 {
     "name": "Dynamic OCPP EVSE",
-    "content_in_root": true,
+    "content_in_root": false,
     "domains": ["dynamic_ocpp_evse"],
     "country": "US",
     "homeassistant": "2023.8.0",
