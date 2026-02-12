@@ -145,6 +145,14 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return vol.Schema(dict(fields_list))
 
+    def _hub_grid_schema(self, defaults: dict | None = None) -> vol.Schema:
+        """Build schema with only grid/electrical fields."""
+        return self._hub_schema(defaults, include_grid=True, include_battery=False)
+
+    def _hub_battery_schema(self, defaults: dict | None = None) -> vol.Schema:
+        """Build schema with only battery fields."""
+        return self._hub_schema(defaults, include_grid=False, include_battery=True)
+
     def _charger_schema(self, defaults: dict | None = None, include_auto_unit: bool = True) -> vol.Schema:
         defaults = defaults or {}
         unit_options = [
@@ -662,7 +670,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
 
-            self._validate_charger_settings(self._data, errors)
+            validate_charger_settings(self._data, errors)
             if errors:
                 return self.async_show_form(
                     step_id="charger_config",
@@ -845,7 +853,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
 
-            self._validate_charger_settings(self._data, errors)
+            validate_charger_settings(self._data, errors)
             if errors:
                 return self.async_show_form(
                     step_id="reconfigure_charger",
@@ -940,7 +948,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             user_input = flow._normalize_optional_inputs(user_input)
             self._data.update(user_input)
-            flow._validate_charger_settings(self._data, errors)
+            validate_charger_settings(self._data, errors)
             if errors:
                 return self.async_show_form(
                     step_id="charger",
