@@ -5,7 +5,5 @@
     "country": "US",
     "homeassistant": "2023.8.0",
     "render_readme": true,
-    "icon": "mdi:ev-station",
-    "zip_release": true,
-    "filename": "dynamic-ocpp-evse-*.zip"
-}
+    "icon": "mdi:ev-station"
+  }
