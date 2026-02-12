@@ -366,6 +366,10 @@ def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False, filter_verif
     
     passed_count = 0
     failed_count = 0
+    verified_passed = 0
+    verified_failed = 0
+    unverified_passed = 0
+    unverified_failed = 0
     results = []
     
     for scenario in scenarios:
@@ -384,12 +388,23 @@ def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False, filter_verif
             passed, errors = validate_results(scenario, site)
             history = None
         
+        # Track verified/unverified status
+        is_verified = scenario.get('human_verified', False)
+        
         if passed:
             passed_count += 1
             status = "PASS"
+            if is_verified:
+                verified_passed += 1
+            else:
+                unverified_passed += 1
         else:
             failed_count += 1
             status = "FAIL"
+            if is_verified:
+                verified_failed += 1
+            else:
+                unverified_failed += 1
         
         results.append({
             'name': name,
@@ -404,20 +419,34 @@ def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False, filter_verif
         
         # Print result
         if verbose or not passed:
-            iter_info = f" ({iterations} iterations)" if iterations > 1 else ""
-            print(f"{status} {name}{iter_info}")
-            print(f"     {description}")
+            iter_info = f"({iterations} iterations)" if iterations > 1 else ""
+            print(("UNVERIFIED " if not is_verified else "") + f"{status} {name} {iter_info}")
             for error in errors:
                 print(error)
             print()
     
-    # Summary
+    # Summary with verified/unverified split
+    verified_total = verified_passed + verified_failed
+    unverified_total = unverified_passed + unverified_failed
+    
     print(f"\n{'='*70}")
     print(f"TEST SUMMARY")
     print(f"{'='*70}")
     print(f"Total:  {len(scenarios)}")
-    print(f"Passed: {passed_count}")
-    print(f"Failed: {failed_count}")
+    print()
+    print(f"Verified Scenarios:")
+    print(f"  Passed: {verified_passed}")
+    print(f"  Failed: {verified_failed}")
+    print(f"  Total:  {verified_total}")
+    print()
+    print(f"Unverified Scenarios:")
+    print(f"  Passed: {unverified_passed}")
+    print(f"  Failed: {unverified_failed}")
+    print(f"  Total:  {unverified_total}")
+    print()
+    print(f"Overall:")
+    print(f"  Passed: {passed_count}")
+    print(f"  Failed: {failed_count}")
     print(f"{'='*70}\n")
     
     if failed_count > 0:

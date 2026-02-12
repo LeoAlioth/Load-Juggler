@@ -890,7 +890,7 @@ scenarios:
   
   - name: "3ph-1c-solar-battery-at-exact-target"
     description: "Battery SOC exactly at target"
-    human_verified: False
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 25
