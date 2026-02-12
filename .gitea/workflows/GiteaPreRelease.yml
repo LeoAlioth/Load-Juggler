@@ -18,6 +18,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run test suite
+        run: |
+          python tests/run_tests.py tests/scenarios
+
       - name: Determine tag name
         run: |
           # Use GITHUB_REF_NAME (short ref) if available, otherwise parse GITHUB_REF

@@ -220,10 +220,10 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 
 1. **Asymmetric vs Symmetric confusion**: Remember inverter capability affects SUPPLY, not charger DRAW
 2. **Per-phase vs total power**: Track carefully whether working with per-phase (A) or total (A×3)
-3. **Battery priority**: Battery charges BEFORE EVs when SOC < target
+3. **Battery priority**: Battery charges BEFORE EVs when SOC < target (Standard mode being the exception)
 4. **Minimum current**: Chargers need ≥ min_current or get 0 (can't charge below minimum)
 5. **Phase assignment defaults**: Don't default to "A" - only set when explicitly specified
-6. **Don't remove legacy code**: This is version 2.0.0 - legacy compatibility has been intentionally removed as users are expected to reconfigure
+6. **Legacy code**: This is version 2.0.0 - legacy compatibility should removed as users are expected to reconfigure the integration
 
 ## Charging Modes
 
