@@ -157,8 +157,8 @@ def build_site_from_scenario(scenario):
         phase_b_export = 0
         phase_c_export = 0
     else:
-        # Three-phase: solar evenly distributed across phases
-        solar_per_phase_amps = (solar_total / 3) / voltage if voltage > 0 else 0
+        # Multi-phase: solar evenly distributed across active phases
+        solar_per_phase_amps = (solar_total / num_phases) / voltage if voltage > 0 else 0
         phase_a_export = max(0, solar_per_phase_amps - phase_a_cons)
         phase_b_export = max(0, solar_per_phase_amps - phase_b_cons)
         phase_c_export = max(0, solar_per_phase_amps - phase_c_cons)
