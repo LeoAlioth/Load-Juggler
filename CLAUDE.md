@@ -220,11 +220,13 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 - See `dev/tests/test_results.log` for the latest run output
 
 **Current Focus (HA Integration)** (progress as of 2026-02-12)
-- OptionsFlow (HA options UI): ✅ Implemented (DynamicOcppEvseOptionsFlow present in config_flow.py)
-- Split config entry data vs options: Implemented — static hardware identifiers are stored in `entry.data`; mutable settings are seeded into `entry.options` at creation. This is a breaking change: users will need to reconfigure entries after upgrading. No automated migration or backward-compatibility migration will be provided.
-- Refactor config flow schemas: Pending — reduce duplication and centralize optional-entity handling (helper methods present in config_flow.py)
-- Add basic validation (min ≤ max current, required hub fields): Started — validation helper exists and will be enforced during entry creation/options handling
-- Update translations/strings: Pending
+1. - [x] OptionsFlow (HA options UI): Implemented (DynamicOcppEvseOptionsFlow present in config_flow.py)
+2. - [x] Split config entry data vs options: Static hardware identifiers stored in `entry.data`; mutable settings seeded into `entry.options` at creation (breaking change, reconfiguration required after upgrade)
+3. - [ ] Refactor config flow schemas to reuse helpers and reduce duplication
+4. - [ ] Extend validation and add unit tests for config_flow/options behavior
+5. - [ ] Run full test suite after HA-integration changes
+
+**IMPORTANT**: Tests should ONLY be run against pure Python code in `calculations/` directory or helper functions that don't depend on Home Assistant. Integration tests requiring HA must be done on a machine with the HA environment installed.
 
 Next immediate tasks (numbered for easy reference)
 1. - [ ] Finalize split of static vs mutable fields in config flow (create entry with static data, seed initial options)
@@ -232,6 +234,8 @@ Next immediate tasks (numbered for easy reference)
 3. - [ ] Refactor config schemas to reuse helpers and reduce duplication
 4. - [ ] Extend validation and add unit tests for config_flow/options behavior
 5. - [ ] Run full test suite after HA-integration changes
+
+Note: Tasks 1 and 2 marked complete — options seeding implemented; static vs mutable split working.
 
 ## Common Pitfalls
 
