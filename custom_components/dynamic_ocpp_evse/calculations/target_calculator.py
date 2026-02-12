@@ -319,35 +319,37 @@ def _calculate_solar_available(site: SiteContext) -> dict:
     if site.inverter_supports_asymmetric:
         # ASYMMETRIC: Solar/battery power is a flexible pool that can be allocated to any phase
 
-        # Calculate total solar production available
+        # Calculate total solar production
         solar_total_current = site.solar_production_total / site.voltage if site.solar_production_total else 0
 
-        # Calculate total consumption
+        # Calculate total inverter output (solar + battery, respecting inverter limits)
+        inverter_output = solar_total_current
+
+        # Handle battery charging/discharging (affects inverter output)
+        if site.battery_soc is not None:
+            if site.battery_soc < site.battery_soc_target:
+                # Battery charges first - reduce inverter output available for EV
+                if site.battery_max_charge_power:
+                    battery_charge_current = site.battery_max_charge_power / site.voltage
+                    inverter_output = max(0, inverter_output - battery_charge_current)
+
+            elif site.battery_soc > site.battery_soc_target:
+                # Battery can discharge - add to inverter output
+                if site.battery_max_discharge_power:
+                    battery_discharge_current = site.battery_max_discharge_power / site.voltage
+                    inverter_output += battery_discharge_current
+
+        # Apply total inverter limit to OUTPUT (solar + battery combined)
+        if site.inverter_max_power:
+            max_total = site.inverter_max_power / site.voltage
+            inverter_output = min(inverter_output, max_total)
+
+        # NOW subtract total consumption to get what's available for charger
         total_consumption = site.phase_a_consumption
         if site.num_phases > 1:
             total_consumption += site.phase_b_consumption + site.phase_c_consumption
 
-        # Solar available after consumption
-        solar_available = max(0, solar_total_current - total_consumption)
-
-        # Handle battery charging/discharging
-        if site.battery_soc is not None:
-            if site.battery_soc < site.battery_soc_target:
-                # Battery charges first - reduce available
-                if site.battery_max_charge_power:
-                    battery_charge_current = site.battery_max_charge_power / site.voltage
-                    solar_available = max(0, solar_available - battery_charge_current)
-
-            elif site.battery_soc > site.battery_soc_target:
-                # Battery can discharge - add to available
-                if site.battery_max_discharge_power:
-                    battery_discharge_current = site.battery_max_discharge_power / site.voltage
-                    solar_available += battery_discharge_current
-
-        # Apply total inverter limit if configured
-        if site.inverter_max_power:
-            max_total = site.inverter_max_power / site.voltage
-            solar_available = min(solar_available, max_total)
+        solar_available = max(0, inverter_output - total_consumption)
 
         # Per-phase constraints: limited by (inverter per-phase max - consumption on that phase)
         # The inverter max is OUTPUT capacity, consumption must be covered first!
