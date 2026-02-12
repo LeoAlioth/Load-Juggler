@@ -1,0 +1,5 @@
+__pycache__/
+**/__pycache__/
+tests/test_results.log
+CLAUDE.md
+.claude
