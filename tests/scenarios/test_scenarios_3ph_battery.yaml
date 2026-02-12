@@ -650,7 +650,7 @@ scenarios:
   
   - name: "3ph-3c-solar-strict-distribution"
     description: "Strict mode: Sequential allocation"
-    verified: False
+    verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -690,13 +690,13 @@ scenarios:
       charger_1:
         target: 16  # Gets full 16A
       charger_2:
-        target: 0.3  # Gets remaining (49A - 48A = 1A total = 0.3A per phase)
+        target: 6.2  # remainimg not above min after charger 1 takes 16A per phgase
       charger_3:
         target: 0  # Nothing left
   
   - name: "3ph-3c-solar-optimized-distribution"
     description: "Optimized mode: Smart reduction to fit more chargers"
-    verified: False
+    verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -734,8 +734,8 @@ scenarios:
         priority: 3
     expected:
       charger_1:
-        target: 6  # Reduced to allow others
-      charger_2:
+        target: 11.8  # if ch 1 were to charge at full 16A, the remaining 8A would not be enough for the 2nd one to start
+      charger_2: 
         target: 6  # Gets minimum
       charger_3:
         target: 0  # Not enough for all 3
@@ -744,7 +744,7 @@ scenarios:
   
   - name: "3ph-3c-solar-asym-triple-mixed"
     description: "Three chargers: 1ph + 1ph + 3ph with asymmetric inverter"
-    verified: False
+    verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -752,17 +752,17 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 15000  # 65A total
+      solar_production: 14950  # 65A total
       phase_a_consumption: 2.0
       phase_b_consumption: 1.5
-      phase_c_consumption: 1.5
+      phase_c_consumption: 1.5 # 5A total, 60A export
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 5060 # 22A at 230V
+      battery_max_discharge_power: 5060
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 8000
+      inverter_max_power_per_phase: 8050 # 35A per phase
       inverter_max_power: 20000
     chargers:
       - entity_id: "charger_1"
@@ -780,13 +780,13 @@ scenarios:
         max_current: 16
         phases: 1
         priority: 3
-    expected:
+    expected: # 82a total pool which would be enough to power all 3 at full speed (48+16+16=80A)
       charger_1:
-        target: 16  # 48A consumed
+        target: 16  # after first pass, all charger recieve 6A per phase.
       charger_2:
-        target: 7  # 7A consumed
+        target: 11  # in second pass, Phase A will be most loaded, after that we have 35-2-6-6-6=15A left,
       charger_3:
-        target: 0  # 60A - 48A - 7A = 5A left (below min)
+        target: 6  # First one takes  10A, from all phases, leaving only 5A lefr on phase A, which gets allocated to charger 2
   
   - name: "3ph-1c-solar-no-grid-charging-with-bat"
     description: "allow_grid_charging=False limits to export only"

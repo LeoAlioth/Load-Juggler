@@ -205,13 +205,16 @@ def _calculate_inverter_limit(site: SiteContext) -> dict:
         max_per_phase = float('inf')
 
     if site.inverter_supports_asymmetric:
-        # ASYMMETRIC: Inverter power can be allocated to any phase (limited by per-phase max)
-        per_phase_limit = min(total_inverter_current, max_per_phase)
+        # ASYMMETRIC: Inverter power can be allocated to any phase
+        # Per-phase limit must account for consumption on that phase
+        phase_a_limit = min(total_inverter_current, max(0, max_per_phase - site.phase_a_consumption))
+        phase_b_limit = min(total_inverter_current, max(0, max_per_phase - site.phase_b_consumption)) if site.num_phases > 1 else 0
+        phase_c_limit = min(total_inverter_current, max(0, max_per_phase - site.phase_c_consumption)) if site.num_phases > 1 else 0
 
         constraints = {
-            'A': per_phase_limit,
-            'B': per_phase_limit if site.num_phases > 1 else 0,
-            'C': per_phase_limit if site.num_phases > 1 else 0,
+            'A': phase_a_limit,
+            'B': phase_b_limit,
+            'C': phase_c_limit,
             'AB': total_inverter_current,
             'AC': total_inverter_current,
             'BC': total_inverter_current,
@@ -346,13 +349,16 @@ def _calculate_solar_available(site: SiteContext) -> dict:
             max_total = site.inverter_max_power / site.voltage
             solar_available = min(solar_available, max_total)
 
-        # All phase constraints are the total available (limited by per-phase max)
-        per_phase_limit = min(solar_available, max_per_phase)
+        # Per-phase constraints: limited by (inverter per-phase max - consumption on that phase)
+        # The inverter max is OUTPUT capacity, consumption must be covered first!
+        phase_a_limit = min(solar_available, max(0, max_per_phase - site.phase_a_consumption))
+        phase_b_limit = min(solar_available, max(0, max_per_phase - site.phase_b_consumption)) if site.num_phases > 1 else 0
+        phase_c_limit = min(solar_available, max(0, max_per_phase - site.phase_c_consumption)) if site.num_phases > 1 else 0
 
         constraints = {
-            'A': per_phase_limit,
-            'B': per_phase_limit if site.num_phases > 1 else 0,
-            'C': per_phase_limit if site.num_phases > 1 else 0,
+            'A': phase_a_limit,
+            'B': phase_b_limit,
+            'C': phase_c_limit,
             'AB': solar_available,
             'AC': solar_available,
             'BC': solar_available,
@@ -454,13 +460,15 @@ def _calculate_excess_available(site: SiteContext) -> dict:
         # Build constraint dict based on inverter type
         if site.inverter_supports_asymmetric:
             # ASYMMETRIC: Excess power (solar) can be allocated to any phase
-            # All phase constraints are the total available (limited by per-phase max)
-            per_phase_limit = min(total_available, max_per_phase)
+            # Per-phase limit must account for consumption on that phase
+            phase_a_limit = min(total_available, max(0, max_per_phase - site.phase_a_consumption))
+            phase_b_limit = min(total_available, max(0, max_per_phase - site.phase_b_consumption)) if site.num_phases > 1 else 0
+            phase_c_limit = min(total_available, max(0, max_per_phase - site.phase_c_consumption)) if site.num_phases > 1 else 0
 
             constraints = {
-                'A': per_phase_limit,
-                'B': per_phase_limit if site.num_phases > 1 else 0,
-                'C': per_phase_limit if site.num_phases > 1 else 0,
+                'A': phase_a_limit,
+                'B': phase_b_limit,
+                'C': phase_c_limit,
                 'AB': total_available,
                 'AC': total_available,
                 'BC': total_available,
