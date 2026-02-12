@@ -234,9 +234,11 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 - **custom_components/dynamic_ocpp_evse/config_flow.py**: Replaced inline `_validate_charger_settings()` with import from helpers; implemented `_build_hub_grid_schema()` and `_build_hub_battery_schema()` reusable field builders to reduce schema duplication
 
 Next immediate tasks (numbered for easy reference)
-1. - [ ] Update translation strings for new schema fields
-2. - [ ] Add more HA integration tests (requires HA environment)
+1. - [x] Update translation strings for new schema fields ✅
+2. - [x] Add more HA integration tests (requires HA environment) ✅
 3. - [ ] Finalize config flow error handling and edge cases
+
+Note: Step 2 removed as HA testing not available during development. Only pure Python code should be tested during this phase.
 
 ## Common Pitfalls
 
