@@ -711,6 +711,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_ENTITY_ID: charger_id,
                 CONF_NAME: self._data.get(CONF_NAME),
                 ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+                CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
                 CONF_CHARGER_ID: self._data.get(CONF_CHARGER_ID),
                 CONF_OCPP_DEVICE_ID: self._data.get(CONF_OCPP_DEVICE_ID),
                 CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: self._data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID),
