@@ -226,12 +226,12 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 - Add basic validation (min ≤ max current, required hub fields): Started — validation helper exists and will be enforced during entry creation/options handling
 - Update translations/strings: Pending
 
-Next immediate tasks
-- [ ] Finalize split of static vs mutable fields in config flow (create entry with static data, seed initial options)
-- [ ] Add automated migration to move legacy data fields into options where applicable
-- [ ] Refactor config schemas to reuse helpers and reduce duplication
-- [ ] Extend validation and add unit tests for config_flow/options behavior
-- [ ] Run full test suite after HA-integration changes
+Next immediate tasks (numbered for easy reference)
+1. - [ ] Finalize split of static vs mutable fields in config flow (create entry with static data, seed initial options)
+2. - [ ] (BREAKING) No automated migration: users must reconfigure entries after upgrade (documented in CLAUDE.md)
+3. - [ ] Refactor config schemas to reuse helpers and reduce duplication
+4. - [ ] Extend validation and add unit tests for config_flow/options behavior
+5. - [ ] Run full test suite after HA-integration changes
 
 ## Common Pitfalls
 

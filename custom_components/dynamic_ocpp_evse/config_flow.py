@@ -9,7 +9,7 @@ from homeassistant.helpers.entity_registry import async_get as async_get_entity_
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from typing import Any
 from .const import *
-from .helpers import normalize_optional_entity
+from .helpers import normalize_optional_entity, validate_charger_settings
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -194,15 +194,6 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if key in normalized:
                 normalized[key] = normalize_optional_entity(normalized.get(key))
         return normalized
-
-    def _validate_charger_settings(self, data: dict[str, Any], errors: dict[str, str]) -> None:
-        min_current = data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
-        max_current = data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT)
-        if min_current is not None and max_current is not None:
-            if min_current <= 0 or max_current <= 0:
-                errors["base"] = "invalid_current"
-            elif min_current > max_current:
-                errors["base"] = "min_exceeds_max"
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -831,6 +822,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
+
             self._validate_charger_settings(self._data, errors)
             if errors:
                 return self.async_show_form(
