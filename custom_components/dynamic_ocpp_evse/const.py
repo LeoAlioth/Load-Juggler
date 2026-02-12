@@ -100,6 +100,12 @@ DEFAULT_PROFILE_VALIDITY_MODE = PROFILE_VALIDITY_MODE_RELATIVE
 
 # Distribution mode configuration (hub-level)
 CONF_DISTRIBUTION_MODE = "distribution_mode"
+
+# Charging mode configuration (hub-level)
+CHARGING_MODE_STANDARD = "Standard"
+CHARGING_MODE_ECO = "Eco"
+CHARGING_MODE_SOLAR = "Solar"
+CHARGING_MODE_EXCESS = "Excess"
 DISTRIBUTION_MODE_SHARED = "Shared"
 DISTRIBUTION_MODE_PRIORITY = "Priority"
 DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED = "Sequential - Optimized"
