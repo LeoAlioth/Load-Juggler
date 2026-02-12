@@ -32,6 +32,7 @@ python tests/run_tests.py "scenario-name"
 ```
 
 **Test results** are automatically written to `tests/test_results.log` after each run.
+**Test procedure** Do not combine multiple shell commands to one line. Always run one test at a time.
 
 ### Linting and Type Checking
 
@@ -219,7 +220,7 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 - Test runner updated to run without Home Assistant installed (dev/tests/run_tests.py loads calculation modules directly) ✅
 - See `dev/tests/test_results.log` for the latest run output
 
-**Current Focus (HA Integration)** (progress as of 2026-02-12)
+**Current Focus (HA Integration)**
 1. - [x] OptionsFlow (HA options UI): Implemented (DynamicOcppEvseOptionsFlow present in config_flow.py)
 2. - [x] Split config entry data vs options: Static hardware identifiers stored in `entry.data`; mutable settings seeded into `entry.options` at creation (breaking change, reconfiguration required after upgrade)
 3. - [ ] Refactor config flow schemas to reuse helpers and reduce duplication

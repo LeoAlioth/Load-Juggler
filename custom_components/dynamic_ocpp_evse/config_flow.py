@@ -61,67 +61,89 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         options.extend({"value": entity, "label": entity} for entity in entities)
         return options
 
+    def _build_hub_grid_schema(self, defaults: dict | None = None) -> list[tuple]:
+        """Build grid/electrical fields as a reusable list."""
+        defaults = defaults or {}
+        current_power_entities = self._current_power_entities()
+        optional_current_options = self._optional_entity_options(current_power_entities)
+        
+        return [
+            (vol.Required(
+                CONF_PHASE_A_CURRENT_ENTITY_ID,
+                default=defaults.get(CONF_PHASE_A_CURRENT_ENTITY_ID),
+            ), selector({"entity": {"domain": "sensor", "device_class": ["current", "power"]}})),
+            (vol.Optional(
+                CONF_PHASE_B_CURRENT_ENTITY_ID,
+                default=normalize_optional_entity(defaults.get(CONF_PHASE_B_CURRENT_ENTITY_ID)) or "",
+            ), selector({"select": {"options": optional_current_options, "mode": "dropdown"}})),
+            (vol.Optional(
+                CONF_PHASE_C_CURRENT_ENTITY_ID,
+                default=normalize_optional_entity(defaults.get(CONF_PHASE_C_CURRENT_ENTITY_ID)) or "",
+            ), selector({"select": {"options": optional_current_options, "mode": "dropdown"}})),
+            (vol.Required(
+                CONF_MAIN_BREAKER_RATING,
+                default=defaults.get(CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING),
+            ), int),
+            (vol.Required(
+                CONF_INVERT_PHASES,
+                default=defaults.get(CONF_INVERT_PHASES, False),
+            ), bool),
+            (vol.Required(
+                CONF_MAX_IMPORT_POWER_ENTITY_ID,
+                default=defaults.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
+            ), selector({"entity": {"domain": ["sensor", "input_number"], "device_class": "power"}})),
+            (vol.Required(
+                CONF_PHASE_VOLTAGE,
+                default=defaults.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE),
+            ), int),
+            (vol.Required(
+                CONF_EXCESS_EXPORT_THRESHOLD,
+                default=defaults.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD),
+            ), int),
+        ]
+
+    def _build_hub_battery_schema(self, defaults: dict | None = None) -> list[tuple]:
+        """Build battery fields as a reusable list."""
+        defaults = defaults or {}
+        battery_entities, power_entities = self._battery_power_entities()
+        
+        return [
+            (vol.Optional(
+                CONF_BATTERY_SOC_ENTITY_ID,
+                default=normalize_optional_entity(defaults.get(CONF_BATTERY_SOC_ENTITY_ID)) or "",
+            ), selector({"select": {"options": [{"value": "", "label": "None"}] + [{"value": e, "label": e} for e in battery_entities], "mode": "dropdown"}})),
+            (vol.Optional(
+                CONF_BATTERY_POWER_ENTITY_ID,
+                default=normalize_optional_entity(defaults.get(CONF_BATTERY_POWER_ENTITY_ID)) or "",
+            ), selector({"select": {"options": [{"value": "", "label": "None"}] + [{"value": e, "label": e} for e in power_entities], "mode": "dropdown"}})),
+            (vol.Optional(
+                CONF_BATTERY_MAX_CHARGE_POWER,
+                default=defaults.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER),
+            ), int),
+            (vol.Optional(
+                CONF_BATTERY_MAX_DISCHARGE_POWER,
+                default=defaults.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER),
+            ), int),
+            (vol.Optional(
+                CONF_BATTERY_SOC_HYSTERESIS,
+                default=defaults.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS),
+            ), selector({"number": {"min": 1, "max": 10, "step": 1, "mode": "slider", "unit_of_measurement": "%"}})),
+        ]
+
     def _hub_schema(self, defaults: dict | None = None, include_grid: bool = True, include_battery: bool = True) -> vol.Schema:
         """
-        Build a combined hub schema. Use include_grid/include_battery to select sections.
+        Build a combined hub schema from reusable field lists.
         This centralizes schema construction to reduce duplication.
         """
         defaults = defaults or {}
-        schema_fields: dict = {}
+        fields_list: list[tuple] = []
 
-        # Grid / electrical fields
         if include_grid:
-            current_power_entities = self._current_power_entities()
-            optional_current_options = self._optional_entity_options(current_power_entities)
-            phase_b_default = normalize_optional_entity(defaults.get(CONF_PHASE_B_CURRENT_ENTITY_ID)) or ""
-            phase_c_default = normalize_optional_entity(defaults.get(CONF_PHASE_C_CURRENT_ENTITY_ID)) or ""
+            fields_list.extend(self._build_hub_grid_schema(defaults))
+        if include_battery:
+            fields_list.extend(self._build_hub_battery_schema(defaults))
 
-            schema_fields.update({
-                vol.Required(
-                    CONF_PHASE_A_CURRENT_ENTITY_ID,
-                    default=defaults.get(CONF_PHASE_A_CURRENT_ENTITY_ID),
-                ): selector({
-                    "entity": {"domain": "sensor", "device_class": ["current", "power"]}
-                }),
-                vol.Optional(
-                    CONF_PHASE_B_CURRENT_ENTITY_ID,
-                    default=phase_b_default,
-                ): selector({"select": {"options": optional_current_options, "mode": "dropdown"}}),
-                vol.Optional(
-                    CONF_PHASE_C_CURRENT_ENTITY_ID,
-                    default=phase_c_default,
-                ): selector({"select": {"options": optional_current_options, "mode": "dropdown"}}),
-                vol.Required(
-                    CONF_MAIN_BREAKER_RATING,
-                    default=defaults.get(CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING),
-                ): int,
-                vol.Required(
-                    CONF_INVERT_PHASES,
-                    default=defaults.get(CONF_INVERT_PHASES, False),
-                ): bool,
-                vol.Required(
-                    CONF_MAX_IMPORT_POWER_ENTITY_ID,
-                    default=defaults.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
-                ): selector({
-                    "entity": {"domain": ["sensor", "input_number"], "device_class": "power"}
-                }),
-                vol.Required(
-                    CONF_PHASE_VOLTAGE,
-                    default=defaults.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE),
-                ): int,
-                vol.Required(
-                    CONF_EXCESS_EXPORT_THRESHOLD,
-                    default=defaults.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD),
-                ): int,
-            })
-
-    def _hub_grid_schema(self, defaults: dict | None = None) -> vol.Schema:
-        # Backwards-compatible wrapper for grid-only schema
-        return self._hub_schema(defaults, include_grid=True, include_battery=False)
-
-    def _hub_battery_schema(self, defaults: dict | None = None) -> vol.Schema:
-        # Backwards-compatible wrapper for battery-only schema
-        return self._hub_schema(defaults, include_grid=False, include_battery=True)
+        return vol.Schema(dict(fields_list))
 
     def _charger_schema(self, defaults: dict | None = None, include_auto_unit: bool = True) -> vol.Schema:
         defaults = defaults or {}
