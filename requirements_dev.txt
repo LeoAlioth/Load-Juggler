@@ -4,3 +4,6 @@ mypy>=0.991
 pylint>=2.15
 types-requests
 PyYAML>=6.0
+pytest
+pytest-asyncio
+pytest-homeassistant-custom-component
