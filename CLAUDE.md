@@ -210,15 +210,11 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 **Recent Major Fix** (2026-02-12): Asymmetric inverter support for solar/battery/excess modes
 - Single-phase chargers on asymmetric systems can now access the full flexible power pool
 - Symmetric inverters preserved with per-phase calculations
-- See `P1_FIXES_SUMMARY.md` for details
 
-**Test Status**: 44/53 passing (83.0%) - as of 2026-02-12
-- All verified P1 critical issues resolved ✅
-- All verified P2 issues resolved ✅
-- Standard mode battery discharge support implemented ✅
-- Mixed-phase distribution fix implemented ✅
-- 7 unverified test failures remaining (expected values may need correction)
-- Check `tests/test_results.log`, `STANDARD_MODE_FIX.md`, and `UTILS_REFACTORING_AND_FIX.md` for details
+**Test Status**: 52/52 passing (100%) - as of 2026-02-12
+- All scenarios passing ✅
+- Verified and unverified scenarios aligned ✅
+- See `tests/test_results.log` for the latest run output
 
 ## Common Pitfalls
 
