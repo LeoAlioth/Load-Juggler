@@ -12,26 +12,51 @@ from datetime import datetime
 # Load calculation modules directly from files to avoid importing Home Assistant-dependent
 # package __init__.py which imports 'homeassistant'.
 import importlib.util
+import types
 import sys
 
 repo_root = Path(__file__).parents[2]
-_calc_dir = repo_root / "custom_components" / "dynamic_ocpp_evse" / "calculations"
+_comp_dir = repo_root / "custom_components" / "dynamic_ocpp_evse"
+_calc_dir = _comp_dir / "calculations"
 
-def _load_module_as(name, path):
-    spec = importlib.util.spec_from_file_location(name, str(path))
+# Build proper package hierarchy so relative imports in target_calculator.py work.
+_PKG_ROOT = "custom_components"
+_PKG_COMP = "custom_components.dynamic_ocpp_evse"
+_PKG_CALC = "custom_components.dynamic_ocpp_evse.calculations"
+
+# Create stub namespace packages
+for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC):
+    if _pkg_name not in sys.modules:
+        _pkg = types.ModuleType(_pkg_name)
+        _pkg.__path__ = []  # make it a package
+        _pkg.__package__ = _pkg_name
+        sys.modules[_pkg_name] = _pkg
+
+
+def _load_module_as(fqn, path):
+    """Load a module with its fully-qualified name so relative imports resolve."""
+    spec = importlib.util.spec_from_file_location(fqn, str(path))
     module = importlib.util.module_from_spec(spec)
+    # Set __package__ to the parent package so `from .x` and `from ..x` work
+    module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
+    sys.modules[fqn] = module
     spec.loader.exec_module(module)
-    sys.modules[name] = module
     return module
 
-# Load models and utils as top-level modules so target_calculator's fallback imports work.
-_load_module_as("models", _calc_dir / "models.py")
-_load_module_as("utils", _calc_dir / "utils.py")
-# Load target_calculator (it will fall back to importing 'models' and 'utils' if relative imports fail)
-_load_module_as("target_calculator", _calc_dir / "target_calculator.py")
 
-from models import ChargerContext, SiteContext
-from target_calculator import calculate_all_charger_targets
+# 1) Load const (needed by target_calculator's `from ..const import ...`)
+_load_module_as(f"{_PKG_COMP}.const", _comp_dir / "const.py")
+
+# 2) Load models and utils (no relative imports of their own)
+_load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
+_load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
+
+# 3) Load target_calculator (has relative imports: .models, .utils, ..const)
+_load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
+
+# Convenience aliases for the rest of this file
+from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 
 
 def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
