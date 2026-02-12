@@ -10,10 +10,10 @@ from pathlib import Path
 from datetime import datetime
 
 # Import REAL production code (pure Python, no HA dependencies)
-sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components" / "dynamic_ocpp_evse" / "calculations"))
+sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from models import ChargerContext, SiteContext
-from target_calculator import calculate_all_charger_targets
+from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 
 
 def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
@@ -335,7 +335,7 @@ def validate_results(scenario, site):
     return passed, errors
 
 
-def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False, filter_verified=None):
+def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, filter_verified=None):
     """
     Run all test scenarios.
     
@@ -459,7 +459,7 @@ def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False, filter_verif
     return failed_count == 0
 
 
-def run_single_scenario(scenario_name, yaml_file='tests/test_scenarios.yaml'):
+def run_single_scenario(scenario_name, yaml_file='dev/tests/test_scenarios.yaml'):
     """Run a single scenario by name."""
     scenarios = load_scenarios(yaml_file)
     

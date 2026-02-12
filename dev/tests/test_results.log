@@ -1,0 +1,234 @@
+Test run started: 2026-02-12 12:12:07
+
+
+======================================================================
+TEST RUNNER: RUNNING 52 TEST SCENARIOS
+======================================================================
+
+PASS 1ph-1c-solar-prio-no-bat-normal 
+charger_1: 8.0A
+
+PASS 1ph-1c-solar-prio-no-bat-insufficient 
+charger_1: 0.0A
+
+PASS 1ph-1c-solar-prio-with-bat-bellow-target 
+charger_1: 0.0A
+
+PASS 1ph-1c-solar-prio-with-bat-at-target 
+charger_1: 15.0A
+
+PASS 1ph-1c-solar-prio-with-bat-above-target 
+charger_1: 27.0A
+
+PASS 1ph-2c-solar-prio-with-bat-shared 
+charger_1: 14.0A
+charger_2: 6.0A
+
+PASS 1ph-2c-solar-prio-with-bat-shared-low-solar 
+charger_1: 7.0A
+charger_2: 0.0A
+
+PASS 1ph-2c-solar-shared-with-bat-shared-low-solar 
+charger_1: 7.0A
+charger_2: 0.0A
+
+PASS 1ph-2c-solar-prio-with-bat-shared-high-solar 
+charger_1: 16.0A
+charger_2: 11.0A
+
+PASS 1ph-2c-solar-shared-with-bat-shared-high-solar 
+charger_1: 13.5A
+charger_2: 13.5A
+
+PASS 3ph-2c-solar-prio-no-bat-mixed-phases 
+charger_1: 10.0A
+charger_2: 0.0A
+
+PASS 3ph-1c-solar-prio-no-bat-normal 
+charger_1: 7.0A
+
+PASS 3ph-1c-eco-prio-no-bat-normal 
+charger_1: 8.0A
+
+PASS 3ph-2c-solar-sym-two-single-phase 
+charger_1: 15.4A
+charger_2: 16.0A
+
+PASS 3ph-1c-solar-very-unbalanced 
+charger_1: 0.0A
+
+PASS 3ph-1c-solar-2ph-obc-normal 
+charger_1: 8.0A
+
+PASS 3ph-2c-solar-2ph-and-3ph-mixed 
+charger_1: 12.0A
+charger_2: 6.0A
+
+PASS 3ph-2c-solar-2ph-and-3ph-mixed-alt 
+charger_1: 13.0A
+charger_2: 6.0A
+
+PASS 3ph-2c-solar-two-2ph-different-phases 
+charger_1: 6.3A
+charger_2: 6.0A
+
+PASS 3ph-1c-solar-prio-with-bat-normal 
+charger_1: 0.0A
+
+PASS 3ph-2c-solar-prio-with-bat-shared 
+charger_1: 8.0A
+charger_2: 0.0A
+
+PASS 3ph-1c-solar-prio-with-bat-unbalanced 
+charger_1: 9.3A
+
+PASS 3ph-1c-eco-prio-with-bat-high-soc 
+charger_1: 10.0A
+
+PASS 3ph-1c-eco-prio-with-bat-low-soc 
+charger_1: 0.0A
+
+PASS 3ph-1c-eco-prio-with-bat-mid-soc 
+charger_1: 6.0A
+
+PASS 3ph-1c-excess-prio-with-bat-above-threshold 
+charger_1: 8.0A
+
+PASS 3ph-1c-excess-prio-with-bat-below-threshold 
+charger_1: 0.0A
+
+PASS 3ph-3c-standard-prio-with-bat-normal 
+charger_1: 16.0A
+charger_2: 12.0A
+charger_3: 6.0A
+
+PASS 3ph-2c-solar-prio-with-bat-mixed-phases 
+charger_1: 8.0A
+charger_2: 6.0A
+
+PASS 3ph-2c-eco-prio-with-bat-no-solar 
+charger_1: 6.0A
+charger_2: 6.0A
+
+PASS 3ph-1c-solar-prio-with-bat-importing 
+charger_1: 0.0A
+
+PASS 3ph-1c-solar-2ph-obc-with-battery 
+charger_1: 16.0A
+
+PASS 3ph-2c-solar-2ph-and-1ph-mixed-battery 
+charger_1: 16.0A
+charger_2: 13.0A
+
+  Iteration 1: charger_1=8.0A
+  Iteration 2: charger_1=8.0A
+  Iteration 3: charger_1=8.0A
+  Iteration 4: charger_1=8.0A
+  Iteration 5: charger_1=8.0A
+PASS 3ph-1c-solar-prio-with-bat-oscillation (5 iterations)
+charger_1: 8.0A
+Stable: Stable
+
+  Iteration 1: charger_1=16.0A
+  Iteration 2: charger_1=16.0A
+  Iteration 3: charger_1=16.0A
+  Iteration 4: charger_1=16.0A
+  Iteration 5: charger_1=16.0A
+PASS 1ph-1c-solar-prio-with-bat-oscillation (5 iterations)
+charger_1: 16.0A
+Stable: Stable
+
+PASS 3ph-1c-solar-asym-per-phase-limit-hit 
+charger_1: 16.0A
+
+PASS 3ph-1c-solar-asym-total-limit-hit 
+charger_1: 15.7A
+
+PASS 3ph-3c-solar-strict-distribution 
+charger_1: 16.0A
+charger_2: 6.2A
+charger_3: 0.0A
+
+PASS 3ph-3c-solar-optimized-distribution 
+charger_1: 11.8A
+charger_2: 6.0A
+charger_3: 0.0A
+
+PASS 3ph-3c-solar-asym-triple-mixed 
+charger_1: 16.0A
+charger_2: 11.0A
+charger_3: 6.0A
+
+PASS 3ph-1c-solar-no-grid-charging-with-bat 
+charger_1: 7.3A
+
+PASS 3ph-1c-eco-no-grid-low-battery 
+charger_1: 0.0A
+
+PASS 3ph-1c-eco-battery-at-exact-min 
+charger_1: 6.0A
+
+PASS 3ph-1c-solar-battery-at-exact-target 
+charger_1: 0.0A
+
+PASS 3ph-1c-standard-heavy-importing 
+charger_1: 28.3A
+
+PASS 3ph-1c-solar-fixed-current-charger 
+charger_1: 16.0A
+
+PASS 3ph-2c-solar-wide-range-chargers 
+charger_1: 22.0A
+charger_2: 6.0A
+
+PASS 3ph-4c-solar-many-chargers 
+charger_1: 9.7A
+charger_2: 6.0A
+charger_3: 6.0A
+charger_4: 0.0A
+
+PASS 3ph-1c-standard-zero-solar-night 
+charger_1: 32.0A
+
+PASS 3ph-1c-eco-zero-solar-night 
+charger_1: 6.0A
+
+  Iteration 1: charger_1=8.8A, charger_2=0.0A
+  Iteration 2: charger_1=8.8A, charger_2=0.0A
+  Iteration 3: charger_1=8.8A, charger_2=0.0A
+PASS 3ph-2c-solar-morning-ramp-up (3 iterations)
+charger_1: 8.8A
+charger_2: 0.0A
+Stable: Stable
+
+  Iteration 1: charger_1=16.0A
+  Iteration 2: charger_1=16.0A
+  Iteration 3: charger_1=16.0A
+PASS 3ph-1c-solar-cloud-passing (3 iterations)
+charger_1: 16.0A
+Stable: Stable
+
+
+======================================================================
+TEST SUMMARY
+======================================================================
+Total:  52
+
+Verified Scenarios:
+  Passed: 52
+  Failed: 0
+  Total:  52
+
+Unverified Scenarios:
+  Passed: 0
+  Failed: 0
+  Total:  0
+
+Overall:
+  Passed: 52
+  Failed: 0
+======================================================================
+
+
+Test run finished: 2026-02-12 12:12:07
+Duration: 0.16 seconds

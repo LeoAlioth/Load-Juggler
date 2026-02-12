@@ -1,6 +1,6 @@
-/custom_components/dynamic_ocpp_evse/__pycache__
-/dev_support
-/custom_components/dynamic_ocpp_evse/calculations/__pycache__
-/.claude
-*__pycache__*
-/.clinerules
+__pycache__/
+**/__pycache__/
+dev/tests/test_results.log
+CLAUDE.md
+.claude
+dev/tests/scenarios_combined_temp.yaml
