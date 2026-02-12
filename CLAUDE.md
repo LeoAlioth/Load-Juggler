@@ -204,7 +204,7 @@ Test scenarios are organized in `tests/scenarios/`:
 
 ## Current Development Status
 
-**IMPORTANT**: we are develooing a 2.0 versoin. Disregard any backwards compatibility. Dont create any migration Processes. Treat as if everyting will be a new install.
+**IMPORTANT**: we are developing a 2.0 version. Disregard any backwards compatibility. No migration processes created.
 
 **Multi-Phase Constraint System**: ✅ Implemented
 
@@ -214,29 +214,29 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 - Single-phase chargers on asymmetric systems can now access the full flexible power pool
 - Symmetric inverters preserved with per-phase calculations
 
-**Test Status**: 52/52 passing (100%) - as of 2026-02-12
-- All scenarios passing ✅
-- Verified and unverified scenarios aligned ✅
+**Test Status**: 57/57 passing (100%) - as of 2026-02-12
+- All scenario tests passing ✅
+- Config flow validation tests passing ✅
 - Test runner updated to run without Home Assistant installed (dev/tests/run_tests.py loads calculation modules directly) ✅
 - See `dev/tests/test_results.log` for the latest run output
 
-**Current Focus (HA Integration)**
+**Current Focus (HA Integration)** (progress as of 2026-02-12)
 1. - [x] OptionsFlow (HA options UI): Implemented (DynamicOcppEvseOptionsFlow present in config_flow.py)
 2. - [x] Split config entry data vs options: Static hardware identifiers stored in `entry.data`; mutable settings seeded into `entry.options` at creation (breaking change, reconfiguration required after upgrade)
 3. - [x] Refactor config flow schemas to reuse helpers and reduce duplication
-4. - [ ] Extend validation and add unit tests for config_flow/options behavior
-5. - [ ] Run full test suite after HA-integration changes
+4. - [x] Extend validation and add unit tests for config_flow/options behavior: Implemented pure Python `validate_charger_settings()` helper and extended validation test suite (57/57 passing)
 
 **IMPORTANT**: Tests should ONLY be run against pure Python code in `calculations/` directory or helper functions that don't depend on Home Assistant. Integration tests requiring HA must be done on a machine with the HA environment installed.
 
-Next immediate tasks (numbered for easy reference)
-1. - [ ] Finalize split of static vs mutable fields in config flow (create entry with static data, seed initial options)
-2. - [ ] (BREAKING) No automated migration: users must reconfigure entries after upgrade (documented in CLAUDE.md)
-3. - [ ] Refactor config schemas to reuse helpers and reduce duplication
-4. - [ ] Extend validation and add unit tests for config_flow/options behavior
-5. - [ ] Run full test suite after HA-integration changes
+### Recent Changes (2026-02-12)
+- **dev/tests/test_config_flow_validation.py**: Added 5 validation test cases including edge cases for min/max current validation
+- **custom_components/dynamic_ocpp_evse/helpers.py**: Added `validate_charger_settings()` function for pure Python config validation
+- **custom_components/dynamic_ocpp_evse/config_flow.py**: Replaced inline `_validate_charger_settings()` with import from helpers; implemented `_build_hub_grid_schema()` and `_build_hub_battery_schema()` reusable field builders to reduce schema duplication
 
-Note: Tasks 1 and 2 marked complete — options seeding implemented; static vs mutable split working.
+Next immediate tasks (numbered for easy reference)
+1. - [ ] Update translation strings for new schema fields
+2. - [ ] Add more HA integration tests (requires HA environment)
+3. - [ ] Finalize config flow error handling and edge cases
 
 ## Common Pitfalls
 
