@@ -1,8 +1,5 @@
 """Tests for Dynamic OCPP EVSE integration setup, unload, and migration."""
 
-from unittest.mock import patch
-
-import pytest
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -66,11 +63,13 @@ async def test_charger_setup(
 ):
     """Test that a charger entry sets up and links to its hub."""
     mock_hub_entry.add_to_hass(hass)
-    mock_charger_entry.add_to_hass(hass)
 
-    # Set up hub first, then charger
+    # Set up hub first so charger can link to it
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
+
+    # Add and set up charger
+    mock_charger_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_charger_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -117,13 +116,8 @@ async def test_hub_unload(
     await hass.async_block_till_done()
     assert mock_hub_entry.entry_id in hass.data[DOMAIN]["hubs"]
 
-    # Patch unload platform forwarding
-    with patch(
-        "custom_components.dynamic_ocpp_evse.async_forward_entry_unload",
-        return_value=True,
-    ):
-        await hass.config_entries.async_unload(mock_hub_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_unload(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
 
     assert mock_hub_entry.entry_id not in hass.data[DOMAIN]["hubs"]
 
@@ -136,21 +130,18 @@ async def test_charger_unload(
 ):
     """Test that unloading a charger removes it from the hub's charger list."""
     mock_hub_entry.add_to_hass(hass)
-    mock_charger_entry.add_to_hass(hass)
 
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
+
+    mock_charger_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_charger_entry.entry_id)
     await hass.async_block_till_done()
 
     assert mock_charger_entry.entry_id in hass.data[DOMAIN]["hubs"][mock_hub_entry.entry_id]["chargers"]
 
-    with patch(
-        "custom_components.dynamic_ocpp_evse.async_forward_entry_unload",
-        return_value=True,
-    ):
-        await hass.config_entries.async_unload(mock_charger_entry.entry_id)
-        await hass.async_block_till_done()
+    await hass.config_entries.async_unload(mock_charger_entry.entry_id)
+    await hass.async_block_till_done()
 
     # Charger should be removed from hub's list and from chargers dict
     assert mock_charger_entry.entry_id not in hass.data[DOMAIN]["hubs"][mock_hub_entry.entry_id]["chargers"]

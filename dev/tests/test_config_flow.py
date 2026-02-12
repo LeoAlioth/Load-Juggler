@@ -224,9 +224,10 @@ async def test_options_flow_charger_shows_form(
 ):
     """Test that options flow for a charger entry shows the charger form."""
     mock_hub_entry.add_to_hass(hass)
-    mock_charger_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
+
+    mock_charger_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_charger_entry.entry_id)
     await hass.async_block_till_done()
 

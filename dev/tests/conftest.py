@@ -1,9 +1,10 @@
 """Shared fixtures for Dynamic OCPP EVSE integration tests."""
 
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntries
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dynamic_ocpp_evse.const import (
@@ -124,21 +125,29 @@ def mock_charger_entry(mock_hub_entry: MockConfigEntry) -> MockConfigEntry:
 def mock_setup(hass: HomeAssistant):
     """Patch platform forwarding and discovery to isolate __init__.py tests."""
     with (
-        patch(
-            "custom_components.dynamic_ocpp_evse.async_forward_entry_setups",
-            return_value=None,
+        patch.object(
+            ConfigEntries,
+            "async_forward_entry_setups",
+            new_callable=AsyncMock,
         ) as mock_forward,
+        patch.object(
+            ConfigEntries,
+            "async_forward_entry_unload",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_unload,
         patch(
             "custom_components.dynamic_ocpp_evse._discover_and_notify_chargers",
-            return_value=None,
+            new_callable=AsyncMock,
         ) as mock_discover,
         patch(
             "custom_components.dynamic_ocpp_evse._migrate_hub_entities_if_needed",
-            return_value=None,
+            new_callable=AsyncMock,
         ) as mock_migrate,
     ):
         yield {
             "forward": mock_forward,
+            "unload": mock_unload,
             "discover": mock_discover,
             "migrate": mock_migrate,
         }
