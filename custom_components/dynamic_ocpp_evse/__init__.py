@@ -14,16 +14,14 @@ _LOGGER = logging.getLogger(__name__)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # Integration version for entity migration
-INTEGRATION_VERSION = "2.0.0"
+INTEGRATION_VERSION = "1.3.1"
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old entry to new version."""
-    _LOGGER.info("Migrating from version %s.%s to version 2.1", 
-                 config_entry.version, 
-                 getattr(config_entry, 'minor_version', 0))
+    _LOGGER.info("Migrating from version %s to version 2", config_entry.version)
 
-    if config_entry.version < 2:
+    if config_entry.version == 1:
         # Migrate from V1 (single config) to V2 (hub + charger architecture)
         new_data = dict(config_entry.data)
         
@@ -41,31 +39,21 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         if CONF_POWER_BUFFER_ENTITY_ID not in new_data:
             new_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
         
-        # Update the config entry with new version
+        # Update the config entry
         hass.config_entries.async_update_entry(
             config_entry,
             data=new_data,
-            version=2,
-            minor_version=1
+            version=2
         )
         
         _LOGGER.info(
-            "Migration to version 2.1 successful. Legacy entry converted to hub. "
+            "Migration to version 2 successful. Legacy entry converted to hub. "
             "You will need to add chargers separately after migration."
         )
         
         return True
     
-    # Handle minor version updates if version is already 2
-    if config_entry.version == 2 and getattr(config_entry, 'minor_version', 0) < 1:
-        hass.config_entries.async_update_entry(
-            config_entry,
-            minor_version=1
-        )
-        _LOGGER.info("Updated minor version to 1")
-        return True
-    
-    return True
+    return False
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
