@@ -203,6 +203,8 @@ Test scenarios are organized in `tests/scenarios/`:
 
 ## Current Development Status
 
+**IMPORTANT**: we are develooing a 2.0 versoin. Disregard any backwards compatibility. Dont create any migration Processes. Treat as if everyting will be a new install.
+
 **Multi-Phase Constraint System**: ✅ Implemented
 
 The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', 'AB', 'AC', 'BC', 'ABC') to properly enforce physical constraints for 1-phase, 2-phase, and 3-phase chargers.
@@ -214,14 +216,22 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 **Test Status**: 52/52 passing (100%) - as of 2026-02-12
 - All scenarios passing ✅
 - Verified and unverified scenarios aligned ✅
-- See `tests/test_results.log` for the latest run output
+- Test runner updated to run without Home Assistant installed (dev/tests/run_tests.py loads calculation modules directly) ✅
+- See `dev/tests/test_results.log` for the latest run output
 
-**Current Focus (HA Integration)** (2026-02-12)
-- Add OptionsFlow to expose mutable settings via the HA “Configure” UI.
-- Split config entry data vs options (static in `entry.data`, mutable in `entry.options`).
-- Refactor config flow schemas to reduce duplication and standardize optional entity handling.
-- Add basic validation (min <= max current, required hub fields, etc.).
-- Update translations/strings and ensure backward compatibility via migration.
+**Current Focus (HA Integration)** (progress as of 2026-02-12)
+- OptionsFlow (HA options UI): ✅ Implemented (DynamicOcppEvseOptionsFlow present in config_flow.py)
+- Split config entry data vs options: Implemented — static hardware identifiers are stored in `entry.data`; mutable settings are seeded into `entry.options` at creation. This is a breaking change: users will need to reconfigure entries after upgrading. No automated migration or backward-compatibility migration will be provided.
+- Refactor config flow schemas: Pending — reduce duplication and centralize optional-entity handling (helper methods present in config_flow.py)
+- Add basic validation (min ≤ max current, required hub fields): Started — validation helper exists and will be enforced during entry creation/options handling
+- Update translations/strings: Pending
+
+Next immediate tasks
+- [ ] Finalize split of static vs mutable fields in config flow (create entry with static data, seed initial options)
+- [ ] Add automated migration to move legacy data fields into options where applicable
+- [ ] Refactor config schemas to reuse helpers and reduce duplication
+- [ ] Extend validation and add unit tests for config_flow/options behavior
+- [ ] Run full test suite after HA-integration changes
 
 ## Common Pitfalls
 

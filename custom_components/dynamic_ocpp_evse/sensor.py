@@ -6,6 +6,7 @@ from datetime import timedelta, datetime
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .dynamic_ocpp_evse import calculate_available_current_for_hub
 from .const import *
+from .helpers import get_entry_value
 from . import get_hub_for_charger, distribute_current_to_chargers, get_charger_allocation
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         return
 
     # Fetch the initial update frequency from the configuration
-    update_frequency = config_entry.data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
+    update_frequency = get_entry_value(config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
     _LOGGER.info(f"Initial update frequency for {name}: {update_frequency} seconds")
 
     async def async_update_data():
@@ -78,7 +79,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         """Handle options update."""
         nonlocal update_frequency
         _LOGGER.debug("async_update_listener triggered for %s", name)
-        new_update_frequency = entry.data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
+        new_update_frequency = get_entry_value(entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
         _LOGGER.info(f"Detected update frequency change for {name}: {new_update_frequency} seconds")
         if new_update_frequency != update_frequency:
             _LOGGER.info(f"Updating update_frequency to {new_update_frequency} seconds")
@@ -156,7 +157,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             "pause_timer_running": self._pause_timer_running,
             "last_set_current": self._last_set_current,
             "last_set_power": self._last_set_power,
-            "charger_priority": self.config_entry.data.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
+            "charger_priority": get_entry_value(self.config_entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
             "hub_entry_id": self.config_entry.data.get(CONF_HUB_ENTRY_ID),
         }
         return attrs
@@ -256,8 +257,8 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 charging_mode = charging_mode_state.state if charging_mode_state else "Standard"
                 
                 # Get charger's configured limits
-                max_current = charger_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
-                min_current = charger_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+                max_current = get_entry_value(charger_entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+                min_current = get_entry_value(charger_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
                 
                 # For Standard mode: wants to use maximum available
                 if charging_mode == "Standard":
@@ -360,7 +361,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             self._state = self._allocated_current
 
             # Get charger-specific limits
-            min_charge_current = self.config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+            min_charge_current = get_entry_value(self.config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
 
             # Check if the state drops below minimum
             if self._state < min_charge_current and not self._pause_timer_running:
@@ -372,7 +373,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                         "start",
                         {
                             "entity_id": timer_entity_id,
-                            "duration": self.config_entry.data.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
+                            "duration": get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
                         }
                     )
                     self._pause_timer_running = True
@@ -389,12 +390,12 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 self._pause_timer_running = False
 
             # Prepare the data for the OCPP set_charge_rate service
-            profile_timeout = self.config_entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)
-            stack_level = self.config_entry.data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
-            profile_validity_mode = self.config_entry.data.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE)
+            profile_timeout = get_entry_value(self.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)
+            stack_level = get_entry_value(self.config_entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
+            profile_validity_mode = get_entry_value(self.config_entry, CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE)
             
             # Get charge rate unit from config (A or W)
-            charge_rate_unit = self.config_entry.data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
+            charge_rate_unit = get_entry_value(self.config_entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
             
             # If set to auto or not recognized, detect from sensor
             if charge_rate_unit == CHARGE_RATE_UNIT_AUTO or charge_rate_unit not in [CHARGE_RATE_UNIT_AMPS, CHARGE_RATE_UNIT_WATTS]:

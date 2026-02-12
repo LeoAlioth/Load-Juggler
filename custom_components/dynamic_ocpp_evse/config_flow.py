@@ -1,5 +1,6 @@
 import re
 import logging
+import asyncio
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -8,6 +9,7 @@ from homeassistant.helpers.entity_registry import async_get as async_get_entity_
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from typing import Any
 from .const import *
+from .helpers import normalize_optional_entity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +25,184 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._data = {}
         self._discovered_chargers = []
         self._selected_charger = None
+        self._entity_cache = None
+
+    def _get_entity_registry_ids(self) -> list[str]:
+        if self._entity_cache is None:
+            entity_registry = async_get_entity_registry(self.hass)
+            self._entity_cache = list(entity_registry.entities.keys())
+        return self._entity_cache
+
+    def _current_power_entities(self) -> list[str]:
+        current_power_entities: list[str] = []
+        for state in self.hass.states.async_all():
+            entity_id = state.entity_id
+            if entity_id.startswith("sensor."):
+                device_class = state.attributes.get("device_class")
+                if device_class in ["current", "power"]:
+                    current_power_entities.append(entity_id)
+        return sorted({entity for entity in current_power_entities if entity})
+
+    def _battery_power_entities(self) -> tuple[list[str], list[str]]:
+        battery_entities = []
+        power_entities = []
+        for state in self.hass.states.async_all():
+            entity_id = state.entity_id
+            if entity_id.startswith("sensor."):
+                device_class = state.attributes.get("device_class")
+                if device_class == "battery":
+                    battery_entities.append(entity_id)
+                elif device_class == "power":
+                    power_entities.append(entity_id)
+        return sorted(battery_entities), sorted(power_entities)
+
+    def _optional_entity_options(self, entities: list[str]) -> list[dict[str, str]]:
+        options = [{"value": "", "label": "None"}]
+        options.extend({"value": entity, "label": entity} for entity in entities)
+        return options
+
+    def _hub_schema(self, defaults: dict | None = None, include_grid: bool = True, include_battery: bool = True) -> vol.Schema:
+        """
+        Build a combined hub schema. Use include_grid/include_battery to select sections.
+        This centralizes schema construction to reduce duplication.
+        """
+        defaults = defaults or {}
+        schema_fields: dict = {}
+
+        # Grid / electrical fields
+        if include_grid:
+            current_power_entities = self._current_power_entities()
+            optional_current_options = self._optional_entity_options(current_power_entities)
+            phase_b_default = normalize_optional_entity(defaults.get(CONF_PHASE_B_CURRENT_ENTITY_ID)) or ""
+            phase_c_default = normalize_optional_entity(defaults.get(CONF_PHASE_C_CURRENT_ENTITY_ID)) or ""
+
+            schema_fields.update({
+                vol.Required(
+                    CONF_PHASE_A_CURRENT_ENTITY_ID,
+                    default=defaults.get(CONF_PHASE_A_CURRENT_ENTITY_ID),
+                ): selector({
+                    "entity": {"domain": "sensor", "device_class": ["current", "power"]}
+                }),
+                vol.Optional(
+                    CONF_PHASE_B_CURRENT_ENTITY_ID,
+                    default=phase_b_default,
+                ): selector({"select": {"options": optional_current_options, "mode": "dropdown"}}),
+                vol.Optional(
+                    CONF_PHASE_C_CURRENT_ENTITY_ID,
+                    default=phase_c_default,
+                ): selector({"select": {"options": optional_current_options, "mode": "dropdown"}}),
+                vol.Required(
+                    CONF_MAIN_BREAKER_RATING,
+                    default=defaults.get(CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING),
+                ): int,
+                vol.Required(
+                    CONF_INVERT_PHASES,
+                    default=defaults.get(CONF_INVERT_PHASES, False),
+                ): bool,
+                vol.Required(
+                    CONF_MAX_IMPORT_POWER_ENTITY_ID,
+                    default=defaults.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
+                ): selector({
+                    "entity": {"domain": ["sensor", "input_number"], "device_class": "power"}
+                }),
+                vol.Required(
+                    CONF_PHASE_VOLTAGE,
+                    default=defaults.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE),
+                ): int,
+                vol.Required(
+                    CONF_EXCESS_EXPORT_THRESHOLD,
+                    default=defaults.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD),
+                ): int,
+            })
+
+    def _hub_grid_schema(self, defaults: dict | None = None) -> vol.Schema:
+        # Backwards-compatible wrapper for grid-only schema
+        return self._hub_schema(defaults, include_grid=True, include_battery=False)
+
+    def _hub_battery_schema(self, defaults: dict | None = None) -> vol.Schema:
+        # Backwards-compatible wrapper for battery-only schema
+        return self._hub_schema(defaults, include_grid=False, include_battery=True)
+
+    def _charger_schema(self, defaults: dict | None = None, include_auto_unit: bool = True) -> vol.Schema:
+        defaults = defaults or {}
+        unit_options = [
+            {"value": CHARGE_RATE_UNIT_AMPS, "label": "Amperes (A)"},
+            {"value": CHARGE_RATE_UNIT_WATTS, "label": "Watts (W)"},
+        ]
+        if include_auto_unit:
+            detected_unit = self._detect_charge_rate_unit(
+                self._selected_charger["current_offered_entity"]
+            )
+            unit_hint = f" (detected: {detected_unit})" if detected_unit else ""
+            unit_options.insert(0, {"value": CHARGE_RATE_UNIT_AUTO, "label": f"Auto-detect{unit_hint}"})
+
+        return vol.Schema({
+            vol.Required(
+                CONF_CHARGER_PRIORITY,
+                default=defaults.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
+            ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
+            vol.Required(
+                CONF_EVSE_MINIMUM_CHARGE_CURRENT,
+                default=defaults.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT),
+            ): int,
+            vol.Required(
+                CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
+                default=defaults.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT),
+            ): int,
+            vol.Required(
+                CONF_CHARGE_RATE_UNIT,
+                default=defaults.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT),
+            ): selector({"select": {"options": unit_options, "mode": "dropdown"}}),
+            vol.Required(
+                CONF_PROFILE_VALIDITY_MODE,
+                default=defaults.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE),
+            ): selector({
+                "select": {
+                    "options": [
+                        {"value": PROFILE_VALIDITY_MODE_RELATIVE, "label": "Relative (duration-based)"},
+                        {"value": PROFILE_VALIDITY_MODE_ABSOLUTE, "label": "Absolute (timestamp-based)"},
+                    ],
+                    "mode": "dropdown",
+                }
+            }),
+            vol.Required(
+                CONF_UPDATE_FREQUENCY,
+                default=defaults.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY),
+            ): int,
+            vol.Required(
+                CONF_OCPP_PROFILE_TIMEOUT,
+                default=defaults.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT),
+            ): int,
+            vol.Required(
+                CONF_CHARGE_PAUSE_DURATION,
+                default=defaults.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION),
+            ): int,
+            vol.Required(
+                CONF_STACK_LEVEL,
+                default=defaults.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL),
+            ): int,
+        })
+
+    def _normalize_optional_inputs(self, data: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(data)
+        for key in [
+            CONF_PHASE_B_CURRENT_ENTITY_ID,
+            CONF_PHASE_C_CURRENT_ENTITY_ID,
+            CONF_BATTERY_SOC_ENTITY_ID,
+            CONF_BATTERY_POWER_ENTITY_ID,
+        ]:
+            if key in normalized:
+                normalized[key] = normalize_optional_entity(normalized.get(key))
+        return normalized
+
+    def _validate_charger_settings(self, data: dict[str, Any], errors: dict[str, str]) -> None:
+        min_current = data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
+        max_current = data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT)
+        if min_current is not None and max_current is not None:
+            if min_current <= 0 or max_current <= 0:
+                errors["base"] = "invalid_current"
+            elif min_current > max_current:
+                errors["base"] = "min_exceeds_max"
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -112,6 +292,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         
         if user_input is not None:
+            user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
             return await self.async_step_hub_battery()
 
@@ -157,9 +338,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ]
             
             # Fetch available entities
-            entity_registry = async_get_entity_registry(self.hass)
-            entities = entity_registry.entities
-            entity_ids = entities.keys()
+            entity_ids = self._get_entity_registry_ids()
             
             # Try to find a complete set of phases using pattern sets
             default_phase_a = None
@@ -190,33 +369,15 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Find max import power sensor
             default_max_import_power = next((entity_id for entity_id in entity_ids if re.match(r'sensor\..*power_limit.*', entity_id)), None)
 
-            # Build list of current/power sensors for optional phase selectors
-            current_power_entities = ['None']
-            for state in self.hass.states.async_all():
-                entity_id = state.entity_id
-                if entity_id.startswith('sensor.'):
-                    device_class = state.attributes.get('device_class')
-                    if device_class in ['current', 'power']:
-                        current_power_entities.append(entity_id)
-            current_power_entities = sorted(current_power_entities)
-
-            data_schema = vol.Schema({
-                vol.Required(CONF_PHASE_A_CURRENT_ENTITY_ID, default=default_phase_a): selector({
-                    "entity": {"domain": "sensor", "device_class": ["current", "power"]}
-                }),
-                vol.Optional(CONF_PHASE_B_CURRENT_ENTITY_ID, default=default_phase_b or 'None'): selector({
-                    "select": {"options": current_power_entities}
-                }),
-                vol.Optional(CONF_PHASE_C_CURRENT_ENTITY_ID, default=default_phase_c or 'None'): selector({
-                    "select": {"options": current_power_entities}
-                }),
-                vol.Required(CONF_MAIN_BREAKER_RATING, default=DEFAULT_MAIN_BREAKER_RATING): int,
-                vol.Required(CONF_INVERT_PHASES, default=False): bool,
-                vol.Required(CONF_MAX_IMPORT_POWER_ENTITY_ID, default=default_max_import_power): selector({
-                    "entity": {"domain": ["sensor", "input_number"], "device_class": "power"}
-                }),
-                vol.Required(CONF_PHASE_VOLTAGE, default=DEFAULT_PHASE_VOLTAGE): int,
-                vol.Required(CONF_EXCESS_EXPORT_THRESHOLD, default=DEFAULT_EXCESS_EXPORT_THRESHOLD): int,
+            data_schema = self._hub_grid_schema({
+                CONF_PHASE_A_CURRENT_ENTITY_ID: default_phase_a,
+                CONF_PHASE_B_CURRENT_ENTITY_ID: default_phase_b,
+                CONF_PHASE_C_CURRENT_ENTITY_ID: default_phase_c,
+                CONF_MAX_IMPORT_POWER_ENTITY_ID: default_max_import_power,
+                CONF_MAIN_BREAKER_RATING: DEFAULT_MAIN_BREAKER_RATING,
+                CONF_INVERT_PHASES: False,
+                CONF_PHASE_VOLTAGE: DEFAULT_PHASE_VOLTAGE,
+                CONF_EXCESS_EXPORT_THRESHOLD: DEFAULT_EXCESS_EXPORT_THRESHOLD,
             })
             
         except Exception as e:
@@ -238,6 +399,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         
         if user_input is not None:
+            user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
             
             # Generate entity IDs for hub-created entities
@@ -247,39 +409,45 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
             self._data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
             
-            return self.async_create_entry(
-                title=self._data[CONF_NAME],
-                data=self._data
+            # Split static vs mutable fields:
+            static_data = {
+                CONF_NAME: self._data.get(CONF_NAME),
+                CONF_ENTITY_ID: self._data.get(CONF_ENTITY_ID),
+                ENTRY_TYPE: ENTRY_TYPE_HUB,
+            }
+            # Options contain the mutable configuration values
+            options_data = {k: v for k, v in self._data.items() if k not in static_data}
+            
+            # Create the config entry with only static data
+            result = self.async_create_entry(
+                title=static_data[CONF_NAME],
+                data=static_data
             )
+            
+            # Schedule a background task to seed options after the entry is created
+            async def _seed_options():
+                # Wait briefly for the config entry to be registered
+                await asyncio.sleep(0.1)
+                for entry in self.hass.config_entries.async_entries(DOMAIN):
+                    if entry.data.get(CONF_ENTITY_ID) == static_data.get(CONF_ENTITY_ID) and entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_HUB:
+                        try:
+                            self.hass.config_entries.async_update_entry(
+                                entry,
+                                options={**entry.options, **options_data}
+                            )
+                        except Exception:
+                            _LOGGER.exception("Failed to seed options for hub entry")
+                        break
+            
+            asyncio.create_task(_seed_options())
+            return result
 
-        # Get all battery and power sensors
-        battery_entities = []
-        power_entities = []
-        
-        for state in self.hass.states.async_all():
-            entity_id = state.entity_id
-            if entity_id.startswith('sensor.'):
-                device_class = state.attributes.get('device_class')
-                if device_class == 'battery':
-                    battery_entities.append(entity_id)
-                elif device_class == 'power':
-                    power_entities.append(entity_id)
-        
-        battery_soc_options = ['None'] + sorted(battery_entities)
-        battery_power_options = ['None'] + sorted(power_entities)
-        
-        data_schema = vol.Schema({
-            vol.Optional(CONF_BATTERY_SOC_ENTITY_ID, default='None'): selector({
-                "select": {"options": battery_soc_options}
-            }),
-            vol.Optional(CONF_BATTERY_POWER_ENTITY_ID, default='None'): selector({
-                "select": {"options": battery_power_options}
-            }),
-            vol.Optional(CONF_BATTERY_MAX_CHARGE_POWER, default=DEFAULT_BATTERY_MAX_POWER): int,
-            vol.Optional(CONF_BATTERY_MAX_DISCHARGE_POWER, default=DEFAULT_BATTERY_MAX_POWER): int,
-            vol.Optional(CONF_BATTERY_SOC_HYSTERESIS, default=DEFAULT_BATTERY_SOC_HYSTERESIS): selector({
-                "number": {"min": 1, "max": 10, "step": 1, "mode": "slider", "unit_of_measurement": "%"}
-            }),
+        data_schema = self._hub_battery_schema({
+            CONF_BATTERY_SOC_ENTITY_ID: None,
+            CONF_BATTERY_POWER_ENTITY_ID: None,
+            CONF_BATTERY_MAX_CHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
+            CONF_BATTERY_SOC_HYSTERESIS: DEFAULT_BATTERY_SOC_HYSTERESIS,
         })
         
         return self.async_show_form(
@@ -478,7 +646,22 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         
         if user_input is not None:
+            user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
+
+            self._validate_charger_settings(self._data, errors)
+            if errors:
+                return self.async_show_form(
+                    step_id="charger_config",
+                    data_schema=self._charger_schema(self._data, include_auto_unit=True),
+                    errors=errors,
+                    description_placeholders={
+                        "charger_name": self._selected_charger["name"],
+                        "current_import": self._selected_charger["current_import_entity"],
+                        "current_offered": self._selected_charger["current_offered_entity"],
+                    },
+                    last_step=True,
+                )
             
             # Auto-detect charge rate unit if set to "auto"
             if user_input.get(CONF_CHARGE_RATE_UNIT) == CHARGE_RATE_UNIT_AUTO:
@@ -500,52 +683,57 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._data[CONF_MAX_CURRENT_ENTITY_ID] = f"number.{charger_id}_max_current"
             self._data[CONF_NAME] = self._selected_charger["name"]
             self._data[CONF_ENTITY_ID] = charger_id
+            self._data[ENTRY_TYPE] = ENTRY_TYPE_CHARGER
             
-            return self.async_create_entry(
+            # Split static vs mutable fields for charger
+            static_data = {
+                CONF_ENTITY_ID: charger_id,
+                CONF_NAME: self._data.get(CONF_NAME),
+                ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+                CONF_CHARGER_ID: self._data.get(CONF_CHARGER_ID),
+                CONF_OCPP_DEVICE_ID: self._data.get(CONF_OCPP_DEVICE_ID),
+                CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: self._data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID),
+                CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: self._data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID),
+            }
+            options_data = {k: v for k, v in self._data.items() if k not in static_data}
+            
+            result = self.async_create_entry(
                 title=f"{self._selected_charger['name']} Charger",
-                data=self._data
+                data=static_data
             )
+            
+            async def _seed_charger_options():
+                await asyncio.sleep(0.1)
+                for entry in self.hass.config_entries.async_entries(DOMAIN):
+                    if entry.data.get(CONF_ENTITY_ID) == charger_id and entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER:
+                        try:
+                            self.hass.config_entries.async_update_entry(
+                                entry,
+                                options={**entry.options, **options_data}
+                            )
+                        except Exception:
+                            _LOGGER.exception("Failed to seed options for charger entry")
+                        break
+            
+            asyncio.create_task(_seed_charger_options())
+            return result
         
-        # Calculate next priority number
         existing_chargers = self._get_charger_entries()
         next_priority = len(existing_chargers) + 1
-        
-        # Try to auto-detect the default charge rate unit
-        detected_unit = self._detect_charge_rate_unit(
-            self._selected_charger["current_offered_entity"]
+        data_schema = self._charger_schema(
+            {
+                CONF_CHARGER_PRIORITY: next_priority,
+                CONF_EVSE_MINIMUM_CHARGE_CURRENT: DEFAULT_MIN_CHARGE_CURRENT,
+                CONF_EVSE_MAXIMUM_CHARGE_CURRENT: DEFAULT_MAX_CHARGE_CURRENT,
+                CONF_CHARGE_RATE_UNIT: CHARGE_RATE_UNIT_AUTO,
+                CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
+                CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+                CONF_OCPP_PROFILE_TIMEOUT: DEFAULT_OCPP_PROFILE_TIMEOUT,
+                CONF_CHARGE_PAUSE_DURATION: DEFAULT_CHARGE_PAUSE_DURATION,
+                CONF_STACK_LEVEL: DEFAULT_STACK_LEVEL,
+            },
+            include_auto_unit=True,
         )
-        unit_hint = f" (detected: {detected_unit})" if detected_unit else ""
-        
-        data_schema = vol.Schema({
-            vol.Required(CONF_CHARGER_PRIORITY, default=next_priority): selector({
-                "number": {"min": 1, "max": 10, "mode": "box"}
-            }),
-            vol.Required(CONF_EVSE_MINIMUM_CHARGE_CURRENT, default=DEFAULT_MIN_CHARGE_CURRENT): int,
-            vol.Required(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, default=DEFAULT_MAX_CHARGE_CURRENT): int,
-            vol.Required(CONF_CHARGE_RATE_UNIT, default=CHARGE_RATE_UNIT_AUTO): selector({
-                "select": {
-                    "options": [
-                        {"value": CHARGE_RATE_UNIT_AUTO, "label": f"Auto-detect{unit_hint}"},
-                        {"value": CHARGE_RATE_UNIT_AMPS, "label": "Amperes (A) - Manual"},
-                        {"value": CHARGE_RATE_UNIT_WATTS, "label": "Watts (W) - Manual"},
-                    ],
-                    "mode": "dropdown"
-                }
-            }),
-            vol.Required(CONF_PROFILE_VALIDITY_MODE, default=DEFAULT_PROFILE_VALIDITY_MODE): selector({
-                "select": {
-                    "options": [
-                        {"value": PROFILE_VALIDITY_MODE_RELATIVE, "label": "Relative (duration-based)"},
-                        {"value": PROFILE_VALIDITY_MODE_ABSOLUTE, "label": "Absolute (timestamp-based)"},
-                    ],
-                    "mode": "dropdown"
-                }
-            }),
-            vol.Required(CONF_UPDATE_FREQUENCY, default=DEFAULT_UPDATE_FREQUENCY): int,
-            vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=DEFAULT_OCPP_PROFILE_TIMEOUT): int,
-            vol.Required(CONF_CHARGE_PAUSE_DURATION, default=DEFAULT_CHARGE_PAUSE_DURATION): int,
-            vol.Required(CONF_STACK_LEVEL, default=DEFAULT_STACK_LEVEL): int,
-        })
         
         return self.async_show_form(
             step_id="charger_config",
@@ -586,39 +774,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         
         if user_input is not None:
+            user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
-            self.hass.config_entries.async_update_entry(entry, data={**entry.data, **user_input})
             return await self.async_step_reconfigure_hub_battery()
 
         try:
-            # Build list of current/power sensors
-            current_power_entities = ['None']
-            for state in self.hass.states.async_all():
-                entity_id = state.entity_id
-                if entity_id.startswith('sensor.'):
-                    device_class = state.attributes.get('device_class')
-                    if device_class in ['current', 'power']:
-                        current_power_entities.append(entity_id)
-            current_power_entities = sorted(current_power_entities)
-
-            data_schema = vol.Schema({
-                vol.Required(CONF_PHASE_A_CURRENT_ENTITY_ID, default=entry.data.get(CONF_PHASE_A_CURRENT_ENTITY_ID)): selector({
-                    "entity": {"domain": "sensor", "device_class": ["current", "power"]}
-                }),
-                vol.Optional(CONF_PHASE_B_CURRENT_ENTITY_ID, default=entry.data.get(CONF_PHASE_B_CURRENT_ENTITY_ID, 'None')): selector({
-                    "select": {"options": current_power_entities}
-                }),
-                vol.Optional(CONF_PHASE_C_CURRENT_ENTITY_ID, default=entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID, 'None')): selector({
-                    "select": {"options": current_power_entities}
-                }),
-                vol.Required(CONF_MAIN_BREAKER_RATING, default=entry.data.get(CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING)): int,
-                vol.Required(CONF_INVERT_PHASES, default=entry.data.get(CONF_INVERT_PHASES, False)): bool,
-                vol.Required(CONF_MAX_IMPORT_POWER_ENTITY_ID, default=entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID)): selector({
-                    "entity": {"domain": ["sensor", "input_number"], "device_class": "power"}
-                }),
-                vol.Required(CONF_PHASE_VOLTAGE, default=entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)): int,
-                vol.Required(CONF_EXCESS_EXPORT_THRESHOLD, default=entry.data.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD)): int,
-            })
+            data_schema = self._hub_grid_schema(entry.data)
         except Exception as e:
             _LOGGER.error("Error in reconfigure_hub_grid: %s", e, exc_info=True)
             errors["base"] = "unknown"
@@ -639,6 +800,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         
         if user_input is not None:
+            user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
             self.hass.config_entries.async_update_entry(entry, data={**entry.data, **self._data})
             
@@ -650,35 +812,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             
             return self.async_abort(reason="reconfigure_successful")
 
-        # Get battery and power sensors
-        battery_entities = []
-        power_entities = []
-        
-        for state in self.hass.states.async_all():
-            entity_id = state.entity_id
-            if entity_id.startswith('sensor.'):
-                device_class = state.attributes.get('device_class')
-                if device_class == 'battery':
-                    battery_entities.append(entity_id)
-                elif device_class == 'power':
-                    power_entities.append(entity_id)
-        
-        battery_soc_options = ['None'] + sorted(battery_entities)
-        battery_power_options = ['None'] + sorted(power_entities)
-        
-        data_schema = vol.Schema({
-            vol.Optional(CONF_BATTERY_SOC_ENTITY_ID, default=entry.data.get(CONF_BATTERY_SOC_ENTITY_ID, 'None')): selector({
-                "select": {"options": battery_soc_options}
-            }),
-            vol.Optional(CONF_BATTERY_POWER_ENTITY_ID, default=entry.data.get(CONF_BATTERY_POWER_ENTITY_ID, 'None')): selector({
-                "select": {"options": battery_power_options}
-            }),
-            vol.Optional(CONF_BATTERY_MAX_CHARGE_POWER, default=entry.data.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER)): int,
-            vol.Optional(CONF_BATTERY_MAX_DISCHARGE_POWER, default=entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER)): int,
-            vol.Optional(CONF_BATTERY_SOC_HYSTERESIS, default=entry.data.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)): selector({
-                "number": {"min": 1, "max": 10, "step": 1, "mode": "slider", "unit_of_measurement": "%"}
-            }),
-        })
+        data_schema = self._hub_battery_schema(entry.data)
         
         return self.async_show_form(
             step_id="reconfigure_hub_battery",
@@ -695,39 +829,20 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         
         if user_input is not None:
+            user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
+            self._validate_charger_settings(self._data, errors)
+            if errors:
+                return self.async_show_form(
+                    step_id="reconfigure_charger",
+                    data_schema=self._charger_schema(self._data, include_auto_unit=False),
+                    errors=errors,
+                    last_step=True,
+                )
             self.hass.config_entries.async_update_entry(entry, data={**entry.data, **user_input})
             return self.async_abort(reason="reconfigure_successful")
         
-        data_schema = vol.Schema({
-            vol.Required(CONF_CHARGER_PRIORITY, default=entry.data.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)): selector({
-                "number": {"min": 1, "max": 10, "mode": "box"}
-            }),
-            vol.Required(CONF_EVSE_MINIMUM_CHARGE_CURRENT, default=entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)): int,
-            vol.Required(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, default=entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)): int,
-            vol.Required(CONF_CHARGE_RATE_UNIT, default=entry.data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)): selector({
-                "select": {
-                    "options": [
-                        {"value": CHARGE_RATE_UNIT_AMPS, "label": "Amperes (A)"},
-                        {"value": CHARGE_RATE_UNIT_WATTS, "label": "Watts (W)"},
-                    ],
-                    "mode": "dropdown"
-                }
-            }),
-            vol.Required(CONF_PROFILE_VALIDITY_MODE, default=entry.data.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE)): selector({
-                "select": {
-                    "options": [
-                        {"value": PROFILE_VALIDITY_MODE_RELATIVE, "label": "Relative (duration-based)"},
-                        {"value": PROFILE_VALIDITY_MODE_ABSOLUTE, "label": "Absolute (timestamp-based)"},
-                    ],
-                    "mode": "dropdown"
-                }
-            }),
-            vol.Required(CONF_UPDATE_FREQUENCY, default=entry.data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)): int,
-            vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)): int,
-            vol.Required(CONF_CHARGE_PAUSE_DURATION, default=entry.data.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)): int,
-            vol.Required(CONF_STACK_LEVEL, default=entry.data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)): int,
-        })
+        data_schema = self._charger_schema(entry.data, include_auto_unit=False)
         
         return self.async_show_form(
             step_id="reconfigure_charger",
@@ -735,3 +850,99 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
             last_step=True
         )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry):
+        """Get the options flow for this handler."""
+        return DynamicOcppEvseOptionsFlow(config_entry)
+
+
+class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
+    """Handle options flow for Dynamic OCPP EVSE."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry):
+        self.config_entry = config_entry
+        self._data = {}
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
+        entry_type = self.config_entry.data.get(ENTRY_TYPE)
+
+        if entry_type == ENTRY_TYPE_HUB:
+            return await self.async_step_hub()
+        if entry_type == ENTRY_TYPE_CHARGER:
+            return await self.async_step_charger()
+        return self.async_abort(reason="entry_not_found")
+
+    async def async_step_hub(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
+        errors: dict[str, str] = {}
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+        flow = DynamicOcppEvseConfigFlow()
+        flow.hass = self.hass
+
+        if user_input is not None:
+            user_input = flow._normalize_optional_inputs(user_input)
+            self._data.update(user_input)
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                options={**self.config_entry.options, **self._data},
+            )
+            return self.async_create_entry(title="", data={})
+
+        data_schema = flow._hub_battery_schema(defaults)
+        return self.async_show_form(
+            step_id="hub",
+            data_schema=data_schema,
+            errors=errors,
+        )
+
+    async def async_step_hub_grid(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
+        errors: dict[str, str] = {}
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+        flow = DynamicOcppEvseConfigFlow()
+        flow.hass = self.hass
+
+        if user_input is not None:
+            user_input = flow._normalize_optional_inputs(user_input)
+            self._data.update(user_input)
+            return await self.async_step_hub()
+
+        data_schema = flow._hub_grid_schema(defaults)
+        return self.async_show_form(
+            step_id="hub_grid",
+            data_schema=data_schema,
+            errors=errors,
+        )
+
+    async def async_step_charger(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
+        errors: dict[str, str] = {}
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+        flow = DynamicOcppEvseConfigFlow()
+        flow.hass = self.hass
+        flow._selected_charger = {
+            "current_offered_entity": defaults.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID),
+        }
+
+        if user_input is not None:
+            user_input = flow._normalize_optional_inputs(user_input)
+            self._data.update(user_input)
+            flow._validate_charger_settings(self._data, errors)
+            if errors:
+                return self.async_show_form(
+                    step_id="charger",
+                    data_schema=flow._charger_schema(self._data, include_auto_unit=False),
+                    errors=errors,
+                )
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                options={**self.config_entry.options, **self._data},
+            )
+            return self.async_create_entry(title="", data={})
+
+        data_schema = flow._charger_schema(defaults, include_auto_unit=False)
+        return self.async_show_form(
+            step_id="charger",
+            data_schema=data_schema,
+            errors=errors,
+        )
+

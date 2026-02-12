@@ -9,6 +9,7 @@ from homeassistant.helpers.device_registry import async_get as async_get_device_
 from datetime import datetime, timedelta
 import logging
 from .const import *
+from .helpers import get_entry_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,9 +45,25 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             new_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
         
         # Update the config entry with new version
+        options = dict(entry.options)
+        options.setdefault(CONF_EVSE_MINIMUM_CHARGE_CURRENT, new_data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT))
+        options.setdefault(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, new_data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT))
+        options.setdefault(CONF_UPDATE_FREQUENCY, new_data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY))
+        options.setdefault(CONF_OCPP_PROFILE_TIMEOUT, new_data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT))
+        options.setdefault(CONF_CHARGE_PAUSE_DURATION, new_data.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION))
+        options.setdefault(CONF_STACK_LEVEL, new_data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
+        options.setdefault(CONF_CHARGE_RATE_UNIT, new_data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT))
+        options.setdefault(CONF_PROFILE_VALIDITY_MODE, new_data.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE))
+        options.setdefault(CONF_BATTERY_SOC_ENTITY_ID, new_data.get(CONF_BATTERY_SOC_ENTITY_ID))
+        options.setdefault(CONF_BATTERY_POWER_ENTITY_ID, new_data.get(CONF_BATTERY_POWER_ENTITY_ID))
+        options.setdefault(CONF_BATTERY_MAX_CHARGE_POWER, new_data.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
+        options.setdefault(CONF_BATTERY_MAX_DISCHARGE_POWER, new_data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
+        options.setdefault(CONF_BATTERY_SOC_HYSTERESIS, new_data.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS))
+
         hass.config_entries.async_update_entry(
             entry,
             data=new_data,
+            options=options,
             version=2,
             minor_version=1
         )
@@ -60,11 +77,28 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     # Handle minor version updates if version is already 2
     if entry.version == 2 and getattr(entry, 'minor_version', 0) < 1:
+        options = dict(entry.options)
+        data = entry.data
+        options.setdefault(CONF_EVSE_MINIMUM_CHARGE_CURRENT, data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT))
+        options.setdefault(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT))
+        options.setdefault(CONF_UPDATE_FREQUENCY, data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY))
+        options.setdefault(CONF_OCPP_PROFILE_TIMEOUT, data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT))
+        options.setdefault(CONF_CHARGE_PAUSE_DURATION, data.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION))
+        options.setdefault(CONF_STACK_LEVEL, data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
+        options.setdefault(CONF_CHARGE_RATE_UNIT, data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT))
+        options.setdefault(CONF_PROFILE_VALIDITY_MODE, data.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE))
+        options.setdefault(CONF_BATTERY_SOC_ENTITY_ID, data.get(CONF_BATTERY_SOC_ENTITY_ID))
+        options.setdefault(CONF_BATTERY_POWER_ENTITY_ID, data.get(CONF_BATTERY_POWER_ENTITY_ID))
+        options.setdefault(CONF_BATTERY_MAX_CHARGE_POWER, data.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
+        options.setdefault(CONF_BATTERY_MAX_DISCHARGE_POWER, data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
+        options.setdefault(CONF_BATTERY_SOC_HYSTERESIS, data.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS))
+
         hass.config_entries.async_update_entry(
             entry,
+            options=options,
             minor_version=1
         )
-        _LOGGER.info("Updated minor version to 1")
+        _LOGGER.info("Updated minor version to 1 and seeded options")
         return True
     
     return True
@@ -86,10 +120,10 @@ async def async_setup(hass: HomeAssistant, config: dict):
             _LOGGER.error(f"No OCPP device ID configured for entry {entry.title} - cannot reset")
             return
 
-        evse_minimum_charge_current = entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+        evse_minimum_charge_current = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
         
         # Get charge rate unit from charger config
-        charge_rate_unit = entry.data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
+        charge_rate_unit = get_entry_value(entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
         
         # If set to auto, detect from sensor
         if charge_rate_unit == CHARGE_RATE_UNIT_AUTO:
@@ -126,7 +160,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
             rate_unit = "A"
         
         # Stack level for reset should be 1 lower than regular operation
-        configured_stack_level = entry.data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
+        configured_stack_level = get_entry_value(entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
         reset_stack_level = max(1, configured_stack_level - 1)
 
         sequence = [
@@ -467,9 +501,9 @@ def distribute_current_to_chargers(
     # Build charger info list with priority
     charger_info = []
     for entry in chargers:
-        min_current = entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
-        max_current = entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
-        priority = entry.data.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
+        min_current = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+        max_current = get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+        priority = get_entry_value(entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
         
         # Determine effective max: use mode target if available, otherwise use configured max
         if charger_targets and entry.entry_id in charger_targets:

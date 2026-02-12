@@ -40,7 +40,11 @@ def determine_phases(sensor, state):
         CONF_PHASES = "phases"
     
     # Try to detect from EVSE current import entity attributes
-    evse_import_entity = sensor.config_entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
+    try:
+        from ..helpers import get_entry_value
+        evse_import_entity = get_entry_value(sensor.config_entry, CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
+    except Exception:
+        evse_import_entity = sensor.config_entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
     
     if evse_import_entity:
         evse_state = sensor.hass.states.get(evse_import_entity)

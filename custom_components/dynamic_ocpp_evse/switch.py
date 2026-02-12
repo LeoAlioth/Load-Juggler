@@ -6,6 +6,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, CONF_NAME, CONF_ENTITY_ID
+from .helpers import get_entry_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,10 +20,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         return
     
     # Check if battery is configured
-    battery_soc_entity = config_entry.data.get("battery_soc_entity_id")
-    battery_power_entity = config_entry.data.get("battery_power_entity_id")
-    has_battery = (battery_soc_entity and battery_soc_entity != 'None') or \
-                  (battery_power_entity and battery_power_entity != 'None')
+    battery_soc_entity = get_entry_value(config_entry, "battery_soc_entity_id")
+    battery_power_entity = get_entry_value(config_entry, "battery_power_entity_id")
+    has_battery = bool(battery_soc_entity or battery_power_entity)
     
     if not has_battery:
         _LOGGER.info("No battery configured - skipping 'Allow Grid Charging' switch")
