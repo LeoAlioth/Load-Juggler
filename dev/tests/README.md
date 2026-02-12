@@ -1,87 +1,59 @@
-# Dynamic OCPP EVSE Tests
+# Dynamic OCPP EVSE Scenario Tests
 
-This folder contains test scripts to verify the functionality of the Dynamic OCPP EVSE integration fixes. All tests output results to CSV files for detailed analysis and graphing.
+This folder contains the scenario-based test runner and YAML scenarios used to validate the Dynamic OCPP EVSE calculation engine.
 
-## Test Files
+## Test Runner
 
-### `test_entity_migration.py`
-Tests the entity migration functionality that ensures new entities are created during integration updates without requiring reconfiguration.
+The main runner is `dev/tests/run_tests.py`, which executes scenarios defined in `dev/tests/scenarios/`.
 
-**What it tests:**
-- All possible entity combinations (32 scenarios covering 2^5 combinations)
-- Fresh installation scenario (no entities exist)
-- Partial update scenarios (some entities exist, others need creation)
-- Complete installation scenario (all entities exist, no migration needed)
-- Entity unique ID consistency patterns
+### Run all scenarios
 
-**Run with:**
 ```bash
-python tests/test_entity_migration.py
+python dev/tests/run_tests.py dev/tests/scenarios
 ```
 
-**CSV Output Files:**
-- `tests/entity_migration_results.csv` - Detailed migration test results
-- `tests/entity_unique_ids.csv` - Entity unique ID patterns
+### Run only verified or unverified scenarios
 
-**CSV Columns (entity_migration_results.csv):**
-- Scenario, Existing_Entity_Count, Missing_Entity_Count, Migration_Needed
-- Individual entity existence flags (Min_Current, Max_Current, etc.)
-- Missing_Entities_List for detailed analysis
-
-### `test_current_calculation.py`
-Tests the current calculation logic fix that resolves the feedback loop issue in Standard charge mode.
-
-**What it tests:**
-- Detailed comparison between old (broken) and new (fixed) logic
-- EVSE current range from 0A to 20A per phase (21 data points)
-- Demonstrates feedback loop elimination with granular data
-- Edge cases including high base loads and export scenarios
-- Current stability analysis across full operating range
-
-**Run with:**
 ```bash
-python tests/test_current_calculation.py
+python dev/tests/run_tests.py --verified dev/tests/scenarios
+python dev/tests/run_tests.py --unverified dev/tests/scenarios
 ```
 
-**CSV Output Files:**
-- `tests/current_calculation_results.csv` - Detailed current calculation data
+### Run a single scenario by name
 
-**CSV Columns (current_calculation_results.csv):**
-- EVSE_Current_Per_Phase_A, Total_EVSE_Current_A, Total_Import_Current_A
-- Old_Logic_Available_A, New_Logic_Available_A, Difference_A
-- Phase_Current_A, Non_EVSE_Import_A
-- Remaining_Import_Old_A, Remaining_Import_New_A
+```bash
+python dev/tests/run_tests.py "scenario-name"
+```
 
-## Issues Fixed
+**Test results** are written to `dev/tests/test_results.log`.
 
-### Problem 1: Entity Creation During Updates
-**Issue:** New entities (min/max current sliders) weren't created on integration updates unless reconfigured.
+## Debug Runner
 
-**Fix:** Added entity migration system that detects missing entities and creates them automatically.
+Use `dev/debug_scenario.py` when you want to debug a **single scenario** interactively with logging enabled.
 
-### Problem 2: Standard Charge Mode Current Calculation
-**Issue:** In Standard mode, as EVSE current increased, available current decreased due to feedback loop.
+```bash
+python dev/debug_scenario.py "scenario-name"
+```
 
-**Fix:** Modified calculation to exclude EVSE current from its own availability calculation.
+### Verbose logging
 
-## Test Results Summary
+```bash
+python dev/debug_scenario.py "scenario-name" --verbose
+```
 
-Both test scripts demonstrate that the fixes work correctly:
+By default, the debug runner searches `dev/tests/scenarios/` for scenario YAML files. You can override this with `--scenarios-dir`.
 
-1. **Entity Migration:** ✅ All scenarios handled properly
-2. **Current Calculation:** ✅ Feedback loop eliminated, stable current limits
+## Scenarios
 
-## Usage Notes
+Scenario files live in:
 
-- Tests are standalone and don't require Home Assistant to run
-- They use mock objects to simulate the integration environment
-- Tests demonstrate the logic fixes without needing actual hardware
-- Run tests after making changes to verify functionality
+```
+dev/tests/scenarios/
+```
 
-## Integration Testing
+Each YAML file contains a `scenarios:` list with inputs and expected targets for chargers.
 
-For full integration testing:
-1. Install the updated integration in Home Assistant
-2. Verify new entities are created automatically on update
-3. Test Standard charge mode with gradually increasing current
-4. Confirm current limits remain stable as EVSE consumption increases
+## Notes
+
+- The scenario runner uses **real production code** from `custom_components/dynamic_ocpp_evse/calculations`.
+- Use scenario tests for calculation logic changes, and update expected values when behavior changes intentionally.

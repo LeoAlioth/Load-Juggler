@@ -10,10 +10,10 @@ from pathlib import Path
 from datetime import datetime
 
 # Import REAL production code (pure Python, no HA dependencies)
-sys.path.insert(0, str(Path(__file__).parents[2] / "custom_components" / "dynamic_ocpp_evse" / "calculations"))
+sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from models import ChargerContext, SiteContext
-from target_calculator import calculate_all_charger_targets
+from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 
 
 def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):

@@ -3,4 +3,4 @@ __pycache__/
 dev/tests/test_results.log
 CLAUDE.md
 .claude
-dev/
+dev/tests/scenarios_combined_temp.yaml
