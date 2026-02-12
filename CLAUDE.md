@@ -113,6 +113,9 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
    ↓
 1. Calculate absolute site limits (per-phase physical constraints)
    → _calculate_site_limit()
+     ├─ _calculate_grid_limit()      (grid capacity based on breaker rating)
+     ├─ _calculate_inverter_limit()  (solar + battery for Standard mode)
+     └─ _sum_constraint_dicts()      (combines grid + inverter for Standard mode)
    ↓
 2. Calculate solar available power (includes battery charge/discharge)
    → _calculate_solar_available()
@@ -209,10 +212,13 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 - Symmetric inverters preserved with per-phase calculations
 - See `P1_FIXES_SUMMARY.md` for details
 
-**Test Status**: 31/33 passing (93.9%)
-- All P1 critical issues resolved
-- 2 P2 distribution logic issues remain
-- Check `tests/test_results.log` for latest results
+**Test Status**: 44/53 passing (83.0%) - as of 2026-02-12
+- All verified P1 critical issues resolved ✅
+- All verified P2 issues resolved ✅
+- Standard mode battery discharge support implemented ✅
+- Mixed-phase distribution fix implemented ✅
+- 7 unverified test failures remaining (expected values may need correction)
+- Check `tests/test_results.log`, `STANDARD_MODE_FIX.md`, and `UTILS_REFACTORING_AND_FIX.md` for details
 
 ## Common Pitfalls
 
@@ -225,9 +231,13 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 
 ## Charging Modes
 
-1. **Standard**: Maximum charging speed from grid, battery, and solar
+1. **Standard**: Maximum charging speed from grid + solar + battery (when SOC >= min)
+   - Includes ALL available power sources simultaneously
+   - Battery discharge allowed when `battery_soc >= battery_soc_min`
+   - No solar requirement - works day and night
 2. **Eco**: Match charging speed with solar production when at target SOC, but continue slow charging even without sufficient solar
 3. **Solar**: Only use solar power (+ battery discharge if SOC > target)
+   - Battery discharge allowed when `battery_soc > battery_soc_target`
 4. **Excess**: Only charge when export exceeds threshold (with 15-minute continuation after threshold drop)
 
 ## Distribution Modes

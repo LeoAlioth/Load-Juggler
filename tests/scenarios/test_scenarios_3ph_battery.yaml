@@ -472,7 +472,7 @@ scenarios:
   
   - name: "3ph-2c-solar-2ph-and-1ph-mixed-battery"
     description: "Mix of 2-phase and 1-phase chargers with battery"
-    verified: false
+    verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -507,9 +507,9 @@ scenarios:
         priority: 2
     expected:
       charger_1:
-        target: 16.0  # Gets max
+        target: 16.0  # 27+18=45A total pool, enough to start both chargers. 12A tptal to 1, 6 to2.  leaves 27A. ch. 1 can take additional 10A per phase, totaling 16 per phase, leaving 7A for the second oneon top of existing 6
       charger_2:
-        target: 16.0  # Asymmetric, can access pool: 45A - 16A = 29A remaining, gets max 16A
+        target: 13 
   
   # ===== OSCILLATION TESTS (Multi-iteration with feedback) =====
   
