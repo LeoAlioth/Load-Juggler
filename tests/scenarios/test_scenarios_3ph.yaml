@@ -189,7 +189,7 @@ scenarios:
   
   - name: "3ph-1c-solar-2ph-obc-normal"
     description: "Single 2-phase OBC charger (VW eGolf, eUp, ID.3 base)"
-    verified: false
+    verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -207,8 +207,8 @@ scenarios:
       battery_max_charge_power: null
       battery_max_discharge_power: null
       inverter_supports_asymmetric: false
-      inverter_max_power_per_phase: 8000
-      inverter_max_power: 20000
+      inverter_max_power_per_phase: 8050  # 35A per phase
+      inverter_max_power: 20700  # 90A total
     chargers:
       - entity_id: "charger_1"
         min_current: 6

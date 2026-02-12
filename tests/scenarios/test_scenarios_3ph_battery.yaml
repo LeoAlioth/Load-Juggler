@@ -592,18 +592,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 16000  # ~70A total, ~23A per phase
-      phase_a_consumption: 0.5
-      phase_b_consumption: 0.5
-      phase_c_consumption: 0.5
+      solar_production: 16100  # 70A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 5060  # 22A
+      battery_max_discharge_power: 5060  # 22A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 4000  # 17.4A per phase limit
-      inverter_max_power: 20000  # 87A total limit
+      inverter_max_power_per_phase: 4140  # 18A per phase limit
+      inverter_max_power: 20700  # 90A total limit
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -612,7 +612,7 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 17.4  # Limited by per-phase, not total
+        target: 17  # 18A per-phase max - 1A consumption = 17A per phase
   
   - name: "3ph-1c-solar-asym-total-limit-hit"
     description: "Total inverter limit constrains available power"
@@ -624,18 +624,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 16000  # ~70A total
-      phase_a_consumption: 0.5
-      phase_b_consumption: 0.5
-      phase_c_consumption: 0.5
+      solar_production: 16100  # 70A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 5060  # 22A
+      battery_max_discharge_power: 5060  # 22A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 8000  # 34.8A per phase (high)
-      inverter_max_power: 12000  # 52.2A total limit (constraining)
+      inverter_max_power_per_phase: 8050  # 35A per phase (high)
+      inverter_max_power: 11500  # 50A total limit (constraining)
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -644,7 +644,7 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 17.4  # (12000W / 230V) / 3 phases = 17.4A per phase
+        target: 16.7  # Solar: 70-3+22=89A, limited by inverter total 50A. 50/3 = 16.7A per phase
   
   # ===== DISTRIBUTION MODE TESTS =====
   
@@ -763,7 +763,7 @@ scenarios:
       battery_max_discharge_power: 5060
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 8050 # 35A per phase
-      inverter_max_power: 20000
+      inverter_max_power: 20700  # 90A total
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -780,13 +780,13 @@ scenarios:
         max_current: 16
         phases: 1
         priority: 3
-    expected: # 82a total pool which would be enough to power all 3 at full speed (48+16+16=80A)
+    expected: # 82A total pool (65-5+22=82). Per-phase A limit: 35-2=33A
       charger_1:
-        target: 16  # after first pass, all charger recieve 6A per phase.
+        target: 16  # Pass 1: all get 6A. Pass 2: C1 gets +10A = 16A. Phase A used: 6+6+6+10=28A, remaining 33-28=5A
       charger_2:
-        target: 11  # in second pass, Phase A will be most loaded, after that we have 35-2-6-6-6=15A left,
+        target: 11  # Gets 6+5 = 11A (limited by phase A: 33-16-6-6=5A remaining)
       charger_3:
-        target: 6  # First one takes  10A, from all phases, leaving only 5A lefr on phase A, which gets allocated to charger 2
+        target: 6  # Phase A exhausted, stays at minimum
   
   - name: "3ph-1c-solar-no-grid-charging-with-bat"
     description: "allow_grid_charging=False limits to export only"
@@ -799,18 +799,18 @@ scenarios:
       distribution_mode: priority
       charging_mode: Solar
       allow_grid_charging: false
-      solar_production: 3000  # 13A total
+      solar_production: 2990  # 13A total
       phase_a_consumption: 3.0
       phase_b_consumption: 3.0
       phase_c_consumption: 3.0  # 9A total, 4A export
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 6000
-      inverter_max_power: 15000
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -819,7 +819,7 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 6.0  # Limited to export (4A) + battery (17.4A) = 21.4A total / 3 = 7.1A, but battery can add
+        target: 7.3  # Solar: 13-9+18=22A. 22/3=7.3A per phase. Grid limited to export but solar mode uses solar constraints
 
   - name: "3ph-1c-eco-no-grid-low-battery"
     description: "No grid charging with battery below minimum"
@@ -832,18 +832,18 @@ scenarios:
       distribution_mode: priority
       charging_mode: Eco
       allow_grid_charging: false
-      solar_production: 3000  # 13A total
+      solar_production: 2990  # 13A total
       phase_a_consumption: 3.0
       phase_b_consumption: 3.0
       phase_c_consumption: 3.0
       battery_soc: 15  # Below minimum
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 6000
-      inverter_max_power: 15000
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -866,18 +866,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Eco
-      solar_production: 5000  # 22A total
+      solar_production: 4600  # 20A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
       phase_c_consumption: 1.0
       battery_soc: 20  # Exactly at minimum
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 6000
-      inverter_max_power: 15000
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -886,7 +886,7 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 6  # At minimum, should charge at min_current
+        target: 6  # Eco with SOC at min, below target: charge at minimum only
   
   - name: "3ph-1c-solar-battery-at-exact-target"
     description: "Battery SOC exactly at target"
@@ -898,18 +898,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 5000  # 22A total
+      solar_production: 4600  # 20A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
       phase_c_consumption: 1.0
       battery_soc: 80  # Exactly at target
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 6000
-      inverter_max_power: 15000
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -918,7 +918,7 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 6.3  # 22A - 3A = 19A / 3 = 6.3A (at target, not above, so no discharge)
+        target: 0  # Solar: 20-3=17A (at target, no discharge). 17/3=5.67A per phase → below min_current 6A → 0
   
   # ===== EXTREME CONSUMPTION =====
   
@@ -932,18 +932,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Standard
-      solar_production: 3000  # 13A total
+      solar_production: 2990  # 13A total
       phase_a_consumption: 8.0
       phase_b_consumption: 7.0
       phase_c_consumption: 6.0  # 21A total (importing 8A)
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 6000
-      inverter_max_power: 15000
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -952,7 +952,7 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 32  # Standard mode allows grid import (24A breaker + 13A solar + 17A battery = 54A available / 3 = 18A per phase, but asymmetric so can use more)
+        target: 32  # Standard: grid(24+25+26=75A) + inverter(13+18=31A) = 106A. Per-phase A: 24+(26-8)=42A. 106/3=35.3 → capped at 32
   
   - name: "3ph-1c-solar-fixed-current-charger"
     description: "Charger with min_current = max_current (no variability)"
@@ -964,18 +964,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 8000  # 35A total
+      solar_production: 8050  # 35A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
       phase_c_consumption: 1.0
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 6000
-      inverter_max_power: 15000
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
     chargers:
       - entity_id: "charger_1"
         min_current: 16
@@ -984,7 +984,7 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 16  # Can only do 16A or nothing
+        target: 16  # 35-3+18=50A available. 50/3=16.7A per phase → 16A (fixed)
   
   - name: "3ph-2c-solar-wide-range-chargers"
     description: "Mix of chargers with different capabilities"
@@ -996,18 +996,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 15000  # 65A total
+      solar_production: 14950  # 65A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
       phase_c_consumption: 1.0
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5000
-      battery_max_discharge_power: 5000
+      battery_max_charge_power: 5060  # 22A
+      battery_max_discharge_power: 5060  # 22A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 8000
-      inverter_max_power: 20000
+      inverter_max_power_per_phase: 8050  # 35A
+      inverter_max_power: 20700  # 90A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -1021,9 +1021,9 @@ scenarios:
         priority: 2
     expected:
       charger_1:
-        target: 20.7  # Gets most of available
+        target: 22  # 65-3+22=84A. Pass 1: both get 6A (36A). Pass 2: C1 gets remainder. 84/3=28 per-phase, limited by (35-1)=34. Needs verification
       charger_2:
-        target: 0  # Not enough left after charger_1
+        target: 6  # Gets minimum in pass 1
   
   # ===== MULTI-CHARGER PRIORITY EDGE CASES =====
   
@@ -1037,18 +1037,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 12000  # 52A total
+      solar_production: 11500  # 50A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
       phase_c_consumption: 1.0
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 8000
-      inverter_max_power: 20000
+      inverter_max_power_per_phase: 8050  # 35A
+      inverter_max_power: 20700  # 90A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -1072,13 +1072,13 @@ scenarios:
         priority: 4
     expected:
       charger_1:
-        target: 16  # Gets max
+        target: 9.7  # 50-3+18=65A. Pass 1: C1-C3 get 6A (54A), C4 can't fit (needs 72A). Pass 2: 11A left, C1 gets +3.7A
       charger_2:
-        target: 0.3  # Gets tiny amount (49A - 48A = 1A = 0.33A/phase)
+        target: 6  # Got minimum in pass 1
       charger_3:
-        target: 0
+        target: 6  # Got minimum in pass 1
       charger_4:
-        target: 0
+        target: 0  # Not enough for minimum (65-54=11A < 18A needed)
   
   - name: "3ph-2c-solar-same-priority"
     description: "Two chargers with identical priority"
@@ -1090,18 +1090,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 8000  # 35A total
+      solar_production: 8050  # 35A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
       phase_c_consumption: 1.0
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 6000
-      inverter_max_power: 15000
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -1115,9 +1115,9 @@ scenarios:
         priority: 1  # Same priority
     expected:
       charger_1:
-        target: 6  # Both get minimum first
+        target: 10.7  # 35-3+18=50A. Pass 1: both get 6A (36A). Pass 2: C1 gets 14/3=4.7A extra = 10.7A
       charger_2:
-        target: 6  # Then split remainder (32A total, 36A needed for both min)
+        target: 6  # Gets minimum only, no remainder left
   
   # ===== ZERO/NULL VALUE HANDLING =====
   
@@ -1138,11 +1138,11 @@ scenarios:
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 6000
-      inverter_max_power: 15000
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -1151,7 +1151,7 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 27.3  # Grid only: (32A - 2A) * 3 + 17.4A battery = 107.4A / 3 = ~35.8A but let's calculate properly
+        target: 32  # Standard: grid(30+30+30=90A) + battery(18A) = 108A. Per-phase: 30+(26-2)=54A. 108/3=36→capped at 32
   
   - name: "3ph-1c-eco-zero-solar-night"
     description: "Eco mode at night should use minimum only"
@@ -1170,11 +1170,11 @@ scenarios:
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 6000
-      inverter_max_power: 15000
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -1183,7 +1183,7 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 6  # Eco with battery above target but no solar: use battery discharge (17.4A available) which is > min
+        target: 6  # Eco with battery above target: solar available 0-6+18=12A. 12/3=4A per phase → below min but Eco guarantees min
   
   # ===== REAL-WORLD SCENARIOS =====
   
@@ -1199,18 +1199,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 3000  # Starts low, will increase
+      solar_production: 2990  # 13A - Starts low, will increase
       phase_a_consumption: 1.5
       phase_b_consumption: 1.5
       phase_c_consumption: 1.5
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 8000
-      inverter_max_power: 20000
+      inverter_max_power_per_phase: 8050  # 35A
+      inverter_max_power: 20700  # 90A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -1224,7 +1224,7 @@ scenarios:
         priority: 2
     expected:
       charger_1:
-        target: 6  # Eventually stabilizes
+        target: 8.8  # 13-4.5+18=26.5A. 26.5/3=8.8A per phase. C2 can't fit
       charger_2:
         target: 0
   
@@ -1240,18 +1240,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 12000  # Starts high
+      solar_production: 11500  # 50A - Starts high
       phase_a_consumption: 2.0
       phase_b_consumption: 2.0
       phase_c_consumption: 2.0
       battery_soc: 85
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 4000
-      battery_max_discharge_power: 4000
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 8000
-      inverter_max_power: 20000
+      inverter_max_power_per_phase: 8050  # 35A
+      inverter_max_power: 20700  # 90A
     chargers:
       - entity_id: "charger_1"
         min_current: 6
