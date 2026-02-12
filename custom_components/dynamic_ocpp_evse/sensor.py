@@ -4,45 +4,70 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from datetime import timedelta, datetime
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from .dynamic_ocpp_evse import calculate_available_current
+from .dynamic_ocpp_evse import calculate_available_current_for_hub
 from .const import *
+from . import get_hub_for_charger, distribute_current_to_chargers, get_charger_allocation
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=10)
 
+
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities):
     """Set up the Dynamic OCPP EVSE Sensor from a config entry."""
+    entry_type = config_entry.data.get(ENTRY_TYPE)
+    
+    # Set up hub sensor for hub entries
+    if entry_type == ENTRY_TYPE_HUB:
+        name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+        hub_sensor = DynamicOcppEvseHubSensor(hass, config_entry, name, entity_id)
+        async_add_entities([hub_sensor])
+        _LOGGER.info(f"Setting up hub sensor: {hub_sensor.unique_id}")
+        return
+    
+    # Only set up charger sensors for charger entries
+    if entry_type != ENTRY_TYPE_CHARGER:
+        _LOGGER.debug("Skipping sensor setup for unknown entry type: %s", config_entry.title)
+        return
+    
     name = config_entry.data[CONF_NAME]
     entity_id = config_entry.data[CONF_ENTITY_ID]
+    charger_entry_id = config_entry.entry_id
+
+    # Get the hub entry for this charger
+    hub_entry = get_hub_for_charger(hass, charger_entry_id)
+    if not hub_entry:
+        _LOGGER.error("No hub found for charger: %s", name)
+        return
 
     # Fetch the initial update frequency from the configuration
-    update_frequency = config_entry.data.get(CONF_UPDATE_FREQUENCY, 10)  # Default to 5 seconds if not set
-    _LOGGER.info(f"Initial update frequency: {update_frequency} seconds")
+    update_frequency = config_entry.data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
+    _LOGGER.info(f"Initial update frequency for {name}: {update_frequency} seconds")
 
     async def async_update_data():
         """Fetch data for the coordinator."""
         # Create a temporary sensor instance to calculate the data
-        temp_sensor = DynamicOcppEvseSensor(hass, config_entry, name, entity_id, None)
+        temp_sensor = DynamicOcppEvseChargerSensor(hass, config_entry, hub_entry, name, entity_id, None)
         await temp_sensor.async_update()
         return {
             CONF_AVAILABLE_CURRENT: temp_sensor._state,
             CONF_PHASES: temp_sensor._phases,
             CONF_CHARING_MODE: temp_sensor._charging_mode,
             "calc_used": temp_sensor._calc_used,
-            "max_evse_available": temp_sensor._max_evse_available,
+            "allocated_current": temp_sensor._allocated_current,
         }
 
     # Create a DataUpdateCoordinator to manage the update interval dynamically
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
-        name="Dynamic OCPP EVSE Coordinator",
+        name=f"Dynamic OCPP EVSE Coordinator - {name}",
         update_method=async_update_data,
         update_interval=timedelta(seconds=update_frequency),
     )
 
     # Create the sensor entity
-    sensor = DynamicOcppEvseSensor(hass, config_entry, name, entity_id, coordinator)
+    sensor = DynamicOcppEvseChargerSensor(hass, config_entry, hub_entry, name, entity_id, coordinator)
     async_add_entities([sensor])
 
     # Start the first update
@@ -51,54 +76,68 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     # Listen for updates to the config entry and recreate the coordinator if necessary
     async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry):
         """Handle options update."""
-        nonlocal update_frequency  # Declare nonlocal before using the variable
-        _LOGGER.debug("async_update_listener triggered")
-        new_update_frequency = entry.data.get(CONF_UPDATE_FREQUENCY, 5)
-        _LOGGER.info(f"Detected update frequency change: {new_update_frequency} seconds")
+        nonlocal update_frequency
+        _LOGGER.debug("async_update_listener triggered for %s", name)
+        new_update_frequency = entry.data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
+        _LOGGER.info(f"Detected update frequency change for {name}: {new_update_frequency} seconds")
         if new_update_frequency != update_frequency:
             _LOGGER.info(f"Updating update_frequency to {new_update_frequency} seconds")
-            # Recreate the coordinator with the new update frequency
-            nonlocal coordinator  # Update the outer coordinator variable
+            nonlocal coordinator
             coordinator = DataUpdateCoordinator(
                 hass,
                 _LOGGER,
-                name="Dynamic OCPP EVSE Coordinator",
+                name=f"Dynamic OCPP EVSE Coordinator - {name}",
                 update_method=async_update_data,
                 update_interval=timedelta(seconds=new_update_frequency),
             )
-            update_frequency = new_update_frequency  # Update the variable
+            update_frequency = new_update_frequency
             _LOGGER.debug(f"Recreated DataUpdateCoordinator with update_interval: {new_update_frequency} seconds")
             await coordinator.async_config_entry_first_refresh()
             sensor.coordinator = coordinator
 
     # Register the listener for config entry updates
-    _LOGGER.debug("Registering async_on_update listener")
+    _LOGGER.debug("Registering async_on_update listener for %s", name)
     config_entry.async_on_unload(config_entry.add_update_listener(async_update_listener))
 
 
-class DynamicOcppEvseSensor(SensorEntity):
-    """Representation of a Dynamic OCPP EVSE Sensor."""
+class DynamicOcppEvseChargerSensor(SensorEntity):
+    """Representation of a Dynamic OCPP EVSE Charger Sensor."""
 
-    def __init__(self, hass, config_entry, name, entity_id, coordinator):
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id, coordinator):
         """Initialize the sensor."""
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = name
-        self._attr_unique_id = entity_id  # Set a unique ID for the entity
+        self.hub_entry = hub_entry
+        self._attr_name = f"{name} Available Current"
+        self._attr_unique_id = f"{entity_id}_available_current"
         self._state = None
         self._phases = None
+        self._detected_phases = None  # Remembered phase count from actual charging
         self._charging_mode = None
         self._calc_used = None
-        self._max_evse_available = None
-        self._last_update = datetime.min  # Initialize the last update timestamp
-        self._pause_timer_running = False  # Track if the pause timer is running
+        self._allocated_current = None
+        self._last_update = datetime.min
+        self._pause_timer_running = False
         self._last_set_current = 0
-        self._target_evse = None  # Initialize target_evse
+        self._last_set_power = None
+        self._target_evse = None
         self._target_evse_standard = None
         self._target_evse_eco = None
         self._target_evse_solar = None
         self._target_evse_excess = None
         self.coordinator = coordinator
+
+    @property
+    def device_info(self):
+        """Return device information about this charger."""
+        hub_entity_id = self.hub_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "EV Charger",
+            "via_device": (DOMAIN, self.hub_entry.entry_id),
+        }
 
     @property
     def state(self):
@@ -107,113 +146,516 @@ class DynamicOcppEvseSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        """Return the state attributes."""
+        """Return charger-specific attributes only (site-level data is on hub sensor)."""
         attrs = {
             "state_class": "measurement",
             CONF_PHASES: self._phases,
-            CONF_CHARING_MODE: self._charging_mode,
-            "calc_used": self._calc_used,
-            "max_evse_available": self._max_evse_available,
+            "detected_phases": self._detected_phases,
+            "allocated_current": self._allocated_current,
             "last_update": self._last_update,
             "pause_timer_running": self._pause_timer_running,
             "last_set_current": self._last_set_current,
-            "target_evse": self._target_evse,  # Always include target_evse
-            "target_evse_standard": self._target_evse_standard,
-            "target_evse_eco": self._target_evse_eco,
-            "target_evse_solar": self._target_evse_solar,
-            "target_evse_excess": self._target_evse_excess,
+            "last_set_power": self._last_set_power,
+            "charger_priority": self.config_entry.data.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
+            "hub_entry_id": self.config_entry.data.get(CONF_HUB_ENTRY_ID),
         }
-        # Add excess_charge_start_time if available
-        if hasattr(self, '_excess_charge_start_time') and self._excess_charge_start_time is not None:
-            attrs["excess_charge_start_time"] = self._excess_charge_start_time
         return attrs
 
     @property
     def icon(self):
         """Return the icon to use in the frontend."""
-        return "mdi:transmission-tower"
+        return "mdi:ev-station"
+
+    @property
+    def unit_of_measurement(self):
+        """Return the unit of measurement."""
+        return "A"
+
+    @property
+    def device_class(self):
+        """Return the device class."""
+        return "current"
 
     async def async_update(self):
         """Fetch new state data for the sensor asynchronously."""
         try:
-            # Fetch all attributes from the calculate_available_current function
-            data = calculate_available_current(self)
-            self._state = data[CONF_AVAILABLE_CURRENT]
-            self._phases = data[CONF_PHASES]
-            self._charging_mode = data[CONF_CHARING_MODE]
-            self._calc_used = data["calc_used"]
-            self._max_evse_available = data["max_evse_available"]
-            self._target_evse = data["target_evse"]
-            self._target_evse_standard =  data["target_evse_standard"]
-            self._target_evse_eco = data["target_evse_eco"]
-            self._target_evse_solar = data["target_evse_solar"]
-            self._target_evse_excess = data["target_evse_excess"]
-            # Store excess_charge_start_time if present
-            if "excess_charge_start_time" in data:
-                self._excess_charge_start_time = data["excess_charge_start_time"]
+            # Get fresh hub entry in case it was updated
+            hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
+            if not hub_entry:
+                _LOGGER.error("Hub not found for charger: %s", self._attr_name)
+                return
+            
+            self.hub_entry = hub_entry
+            
+            # Calculate total available current at hub level
+            hub_data = calculate_available_current_for_hub(self)
+            
+            # Store charger-level calculation results
+            self._phases = hub_data.get(CONF_PHASES)
+            self._charging_mode = hub_data.get(CONF_CHARING_MODE)
+            self._calc_used = hub_data.get("calc_used")
+            charger_max_available = hub_data.get("charger_max_available", 0)
+            self._target_evse = hub_data.get("target_evse")
+            self._target_evse_standard = hub_data.get("target_evse_standard")
+            self._target_evse_eco = hub_data.get("target_evse_eco")
+            self._target_evse_solar = hub_data.get("target_evse_solar")
+            self._target_evse_excess = hub_data.get("target_evse_excess")
+            
+            if "excess_charge_start_time" in hub_data:
+                self._excess_charge_start_time = hub_data["excess_charge_start_time"]
             else:
                 self._excess_charge_start_time = None
 
-            # Check if the state drops below 6
-            if self._state < 6 and not self._pause_timer_running:
+            # Store hub data in hass.data for hub sensor to read
+            hub_entry_id = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
+            if DOMAIN not in self.hass.data:
+                self.hass.data[DOMAIN] = {}
+            if "hub_data" not in self.hass.data[DOMAIN]:
+                self.hass.data[DOMAIN]["hub_data"] = {}
+            self.hass.data[DOMAIN]["hub_data"][hub_entry_id] = {
+                "battery_soc": hub_data.get("battery_soc"),
+                "battery_soc_min": hub_data.get("battery_soc_min"),
+                "battery_soc_target": hub_data.get("battery_soc_target"),
+                "battery_power": hub_data.get("battery_power"),
+                "available_battery_power": hub_data.get("available_battery_power"),
+                # Site available per-phase current (A)
+                "site_available_current_phase_a": hub_data.get("site_available_current_phase_a"),
+                "site_available_current_phase_b": hub_data.get("site_available_current_phase_b"),
+                "site_available_current_phase_c": hub_data.get("site_available_current_phase_c"),
+                # Site battery available power (W)
+                "site_battery_available_power": hub_data.get("site_battery_available_power"),
+                # Site grid available power (W)
+                "site_grid_available_power": hub_data.get("site_grid_available_power"),
+                # Total site available power (W) - grid + battery
+                "total_site_available_power": hub_data.get("total_site_available_power"),
+                # NEW: Site power balance
+                "total_evse_power": hub_data.get("total_evse_power"),
+                "net_site_consumption": hub_data.get("net_site_consumption"),
+                "solar_surplus_power": hub_data.get("solar_surplus_power"),
+                "solar_surplus_current": hub_data.get("solar_surplus_current"),
+                "last_update": datetime.utcnow(),
+            }
+
+            # Get total available current from hub calculation
+            total_available = hub_data.get(CONF_AVAILABLE_CURRENT, 0)
+            
+            # Build charger targets dict for distribution
+            # Each charger's target depends on its charging mode
+            charger_targets = {}
+            from . import get_chargers_for_hub
+            hub_chargers = get_chargers_for_hub(self.hass, hub_entry_id)
+            
+            # We need to calculate each charger's mode-specific target
+            # This requires running the calculation for each charger to get their targets
+            for charger_entry in hub_chargers:
+                charger_entity_id = charger_entry.data.get(CONF_ENTITY_ID)
+                
+                # Get the charger's current charging mode
+                charging_mode_entity = f"select.{charger_entity_id}_charging_mode"
+                charging_mode_state = self.hass.states.get(charging_mode_entity)
+                charging_mode = charging_mode_state.state if charging_mode_state else "Standard"
+                
+                # Get charger's configured limits
+                max_current = charger_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+                min_current = charger_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+                
+                # For Standard mode: wants to use maximum available
+                if charging_mode == "Standard":
+                    charger_targets[charger_entry.entry_id] = max_current
+                
+                # For Eco mode: limited by battery constraints
+                elif charging_mode == "Eco":
+                    # Eco mode respects battery SOC constraints
+                    # If battery SOC is below target, charger wants minimum only
+                    # If battery SOC is above target, charger can use more
+                    battery_soc = hub_data.get("battery_soc")
+                    battery_soc_target = hub_data.get("battery_soc_target", 80)
+                    
+                    if battery_soc is not None and battery_soc < battery_soc_target:
+                        # Battery not satisfied - only use minimum
+                        charger_targets[charger_entry.entry_id] = min_current
+                    else:
+                        # Battery satisfied or no battery - can use max
+                        charger_targets[charger_entry.entry_id] = max_current
+                
+                # For Solar mode: wants power from solar only
+                elif charging_mode == "Solar":
+                    # Solar mode only wants to charge if there's excess solar
+                    # Calculate available solar power (export power)
+                    from .calculations.context import get_hub_state_config, get_charge_context_values
+                    
+                    # Create a temporary sensor to get state
+                    temp_sensor_data = type('obj', (object,), {
+                        'hass': self.hass,
+                        'config_entry': charger_entry,
+                        'hub_entry': hub_entry,
+                        '_detected_phases': None
+                    })()
+                    
+                    state = get_hub_state_config(temp_sensor_data)
+                    charge_context = get_charge_context_values(temp_sensor_data, state)
+                    
+                    # Solar mode wants export current (if positive)
+                    # Total export current represents available solar
+                    total_export_current = (
+                        charge_context.phase_a_export_current +
+                        charge_context.phase_b_export_current +
+                        charge_context.phase_c_export_current
+                    )
+                    
+                    # Determine charger phases for proper current calculation
+                    charger_phases = charge_context.phases if charge_context.phases else 1
+                    available_per_phase = total_export_current / charger_phases if charger_phases > 0 else 0
+                    
+                    if available_per_phase >= min_current:
+                        # Enough solar to charge - target is available solar up to max
+                        charger_targets[charger_entry.entry_id] = min(available_per_phase, max_current)
+                    else:
+                        # Not enough solar - don't want to charge
+                        charger_targets[charger_entry.entry_id] = 0
+                
+                # For Excess mode: similar to solar but with threshold
+                elif charging_mode == "Excess":
+                    # Excess mode waits for export to exceed threshold before charging
+                    from .calculations.context import get_hub_state_config, get_charge_context_values
+                    
+                    temp_sensor_data = type('obj', (object,), {
+                        'hass': self.hass,
+                        'config_entry': charger_entry,
+                        'hub_entry': hub_entry,
+                        '_detected_phases': None
+                    })()
+                    
+                    state = get_hub_state_config(temp_sensor_data)
+                    charge_context = get_charge_context_values(temp_sensor_data, state)
+                    
+                    excess_threshold = state.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD)
+                    total_export_power = charge_context.total_export_power
+                    
+                    if total_export_power > excess_threshold:
+                        # Excess power available - calculate available current
+                        available_power = total_export_power - excess_threshold
+                        charger_phases = charge_context.phases if charge_context.phases else 1
+                        available_current = (available_power / charge_context.voltage) / charger_phases if charger_phases > 0 else 0
+                        
+                        if available_current >= min_current:
+                            charger_targets[charger_entry.entry_id] = min(available_current, max_current)
+                        else:
+                            charger_targets[charger_entry.entry_id] = 0
+                    else:
+                        # Not enough excess - don't want to charge
+                        charger_targets[charger_entry.entry_id] = 0
+                
+                else:
+                    # Unknown mode - default to max
+                    charger_targets[charger_entry.entry_id] = max_current
+            
+            _LOGGER.debug(f"Charger targets: {', '.join([f'{k[-8:]}: {v:.1f}A' for k, v in charger_targets.items()])}")
+            
+            # Distribute current among all chargers connected to this hub
+            distribute_current_to_chargers(self.hass, hub_entry_id, total_available, charger_targets)
+            
+            # Get this charger's allocated current
+            self._allocated_current = get_charger_allocation(self.hass, self.config_entry.entry_id)
+            self._state = self._allocated_current
+
+            # Get charger-specific limits
+            min_charge_current = self.config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+
+            # Check if the state drops below minimum
+            if self._state < min_charge_current and not self._pause_timer_running:
                 # Start the Charge Pause Timer
-                await self.hass.services.async_call(
-                    "timer",
-                    "start",
-                    {
-                        "entity_id": f"timer.{self._attr_unique_id}_charge_pause_timer",
-                        "duration": self.config_entry.data[CONF_CHARGE_PAUSE_DURATION]
-                    }
-                )
-                self._pause_timer_running = True
+                timer_entity_id = f"timer.{self.config_entry.data[CONF_ENTITY_ID]}_charge_pause_timer"
+                try:
+                    await self.hass.services.async_call(
+                        "timer",
+                        "start",
+                        {
+                            "entity_id": timer_entity_id,
+                            "duration": self.config_entry.data.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
+                        }
+                    )
+                    self._pause_timer_running = True
+                except Exception as e:
+                    _LOGGER.debug(f"Timer {timer_entity_id} not available: {e}")
 
             # Check if the timer is running
-            timer_state = self.hass.states.get(f"timer.{self._attr_unique_id}_charge_pause_timer")
+            timer_entity_id = f"timer.{self.config_entry.data[CONF_ENTITY_ID]}_charge_pause_timer"
+            timer_state = self.hass.states.get(timer_entity_id)
             if timer_state and timer_state.state == "active":
                 limit = 0
             else:
                 limit = round(self._state, 1)
                 self._pause_timer_running = False
 
-            self._last_set_current = limit
-
             # Prepare the data for the OCPP set_charge_rate service
-            profile_timeout = self.config_entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, 15)  # Default to 15 seconds if not set
-            valid_from = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
-            valid_to = (datetime.utcnow() + timedelta(seconds=profile_timeout)).isoformat(timespec='seconds') + 'Z'
-            # Get stackLevel from config, default to 2 if not set
-            stack_level = self.config_entry.data.get(CONF_STACK_LEVEL, 2)
+            profile_timeout = self.config_entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)
+            stack_level = self.config_entry.data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
+            profile_validity_mode = self.config_entry.data.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE)
             
-            charging_profile = {
-                "chargingProfileId": 11,
-                "stackLevel": stack_level,
-                "chargingProfileKind": "Relative",
-                "chargingProfilePurpose": "TxDefaultProfile",
-                "validFrom": valid_from,
-                "validTo": valid_to,
-                "chargingSchedule": {
-                    "chargingRateUnit": "A",
-                    "chargingSchedulePeriod": [
-                        {
-                            "startPeriod": 0,
-                            "limit": limit
-                        }
-                    ]
+            # Get charge rate unit from config (A or W)
+            charge_rate_unit = self.config_entry.data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
+            
+            # If set to auto or not recognized, detect from sensor
+            if charge_rate_unit == CHARGE_RATE_UNIT_AUTO or charge_rate_unit not in [CHARGE_RATE_UNIT_AMPS, CHARGE_RATE_UNIT_WATTS]:
+                _LOGGER.debug(f"Auto-detecting charge rate unit for {self._attr_name}")
+                current_offered_entity = self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID)
+                if current_offered_entity:
+                    sensor_state = self.hass.states.get(current_offered_entity)
+                    if sensor_state:
+                        unit = sensor_state.attributes.get("unit_of_measurement")
+                        if unit == "W":
+                            charge_rate_unit = CHARGE_RATE_UNIT_WATTS
+                            _LOGGER.info(f"Auto-detected charge rate unit: Watts (W) for {self._attr_name}")
+                        else:
+                            charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+                            _LOGGER.info(f"Auto-detected charge rate unit: Amperes (A) for {self._attr_name}")
+                    else:
+                        _LOGGER.warning(f"Could not get state for {current_offered_entity}, defaulting to Amperes")
+                        charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+                else:
+                    _LOGGER.warning(f"No current_offered entity configured, defaulting to Amperes")
+                    charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+            
+            # Convert limit based on charge rate unit
+            if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
+                voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+                phases_for_profile = self._phases if self._phases else 1
+                limit_for_charger = round(limit * voltage * phases_for_profile, 0)
+                rate_unit = "W"
+                self._last_set_power = limit_for_charger
+                self._last_set_current = None
+            else:
+                limit_for_charger = round(limit , 1)
+                rate_unit = "A"
+                self._last_set_current = limit_for_charger
+                self._last_set_power = None
+            
+            # Build charging profile based on validity mode
+            if profile_validity_mode == PROFILE_VALIDITY_MODE_ABSOLUTE:
+                # Absolute mode: Use validFrom/validTo timestamps
+                # This provides explicit time windows and is more reliable for some chargers
+                now = datetime.utcnow()
+                valid_from = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                valid_to = (now + timedelta(seconds=profile_timeout)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                
+                charging_profile = {
+                    "chargingProfileId": 11,
+                    "stackLevel": stack_level,
+                    "chargingProfileKind": "Absolute",
+                    "chargingProfilePurpose": "TxDefaultProfile",
+                    "validFrom": valid_from,
+                    "validTo": valid_to,
+                    "chargingSchedule": {
+                        "chargingRateUnit": rate_unit,
+                        "startSchedule": valid_from,
+                        "chargingSchedulePeriod": [
+                            {
+                                "startPeriod": 0,
+                                "limit": limit_for_charger,
+                            }
+                        ]
+                    }
                 }
-            }
+                _LOGGER.debug(f"Using absolute profile validity mode: {valid_from} to {valid_to}")
+            else:
+                # Relative mode: Use duration (default)
+                # Profile is valid for X seconds from when the charger receives it
+                charging_profile = {
+                    "chargingProfileId": 11,
+                    "stackLevel": stack_level,
+                    "chargingProfileKind": "Relative",
+                    "chargingProfilePurpose": "TxDefaultProfile",
+                    "chargingSchedule": {
+                        "chargingRateUnit": rate_unit,
+                        "duration": profile_timeout,
+                        "chargingSchedulePeriod": [
+                            {
+                                "startPeriod": 0,
+                                "limit": limit_for_charger,
+                            }
+                        ]
+                    }
+                }
+                _LOGGER.debug(f"Using relative profile validity mode: duration={profile_timeout}s")
 
-            # Log the data being sent
-            _LOGGER.debug(f"Sending set_charge_rate with data: {charging_profile}")
+            # Get the OCPP device ID for targeting the correct charger
+            ocpp_device_id = self.config_entry.data.get(CONF_OCPP_DEVICE_ID)
+            if not ocpp_device_id:
+                _LOGGER.error(f"No OCPP device ID configured for {self._attr_name} - cannot send charging profile")
+                return
 
-            # Call the OCPP set_charge_rate service
+            _LOGGER.debug(f"Sending set_charge_rate to device {ocpp_device_id} for {self._attr_name} with limit: {limit_for_charger}{rate_unit} (calculated from {limit}A)")
+
+            # Check if charge_control switch is off and we have available current - turn it on
+            # But only if a car is actually plugged in (connector status is not "Available")
+            charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
+            charge_control_switch = f"switch.{charger_entity_id}_charge_control"
+            charge_control_state = self.hass.states.get(charge_control_switch)
+            
+            # Check connector status - only turn on if car is plugged in
+            # Status can be: Available, Preparing, Charging, SuspendedEV, SuspendedEVSE, Finishing, Reserved, Unavailable, Faulted
+            connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
+            connector_status_state = self.hass.states.get(connector_status_entity)
+            connector_status = connector_status_state.state if connector_status_state else "unknown"
+            
+            # Car is plugged in if status is NOT "Available" (meaning: Preparing, Charging, SuspendedEV, etc.)
+            car_plugged_in = connector_status not in ["Available", "unknown", "unavailable"]
+            
+            _LOGGER.debug(f"Charge control check: entity={connector_status_entity}, status={connector_status}, car_plugged_in={car_plugged_in}, limit={limit}A, switch_state={charge_control_state.state if charge_control_state else 'not found'}")
+            
+            if charge_control_state and charge_control_state.state == "off" and limit > 0 and car_plugged_in:
+                _LOGGER.info(f"Charge control switch {charge_control_switch} is off but limit is {limit}A and car is plugged in (connector: {connector_status}) - turning on")
+                try:
+                    await self.hass.services.async_call(
+                        "switch",
+                        "turn_on",
+                        {
+                            "entity_id": charge_control_switch
+                        }
+                    )
+                except Exception as e:
+                    _LOGGER.warning(f"Failed to turn on charge_control switch {charge_control_switch}: {e}")
+            elif charge_control_state and charge_control_state.state == "off" and limit > 0 and not car_plugged_in:
+                _LOGGER.debug(f"Charge control switch {charge_control_switch} is off with limit {limit}A, but no car plugged in (connector: {connector_status}) - not turning on")
+
+            # Call the OCPP set_charge_rate service with device_id
             await self.hass.services.async_call(
                 "ocpp",
                 "set_charge_rate",
                 {
+                    "devid": ocpp_device_id,
                     "custom_profile": charging_profile
-                }
+                },
+                blocking=False,
             )
-            # Update the last update timestamp
+            
             self._last_update = datetime.utcnow()
         except Exception as e:
-            _LOGGER.error(f"Error updating Dynamic OCPP EVSE Sensor: {e}", exc_info=True)
+            _LOGGER.error(f"Error updating Dynamic OCPP EVSE Charger Sensor {self._attr_name}: {e}", exc_info=True)
+
+
+class DynamicOcppEvseHubSensor(SensorEntity):
+    """Hub-level sensor showing site-wide charging information."""
+
+    def __init__(self, hass, config_entry, name, entity_id):
+        """Initialize the hub sensor."""
+        self.hass = hass
+        self.config_entry = config_entry
+        self._attr_name = f"{name} Site Available Power"
+        self._attr_unique_id = f"{entity_id}_site_info"
+        self._state = None
+        self._battery_soc = None
+        self._battery_soc_min = None
+        self._battery_soc_target = None
+        self._battery_power = None
+        self._available_battery_power = None
+        # Site available per-phase current (A)
+        self._site_available_current_phase_a = None
+        self._site_available_current_phase_b = None
+        self._site_available_current_phase_c = None
+        # Site battery available power (W)
+        self._site_battery_available_power = None
+        # Site grid available power (W)
+        self._site_grid_available_power = None
+        # Total site available power (W) - grid + battery
+        self._total_site_available_power = None
+        # NEW: Site power balance fields
+        self._total_evse_power = None
+        self._net_site_consumption = None
+        self._solar_surplus_power = None
+        self._solar_surplus_current = None
+        self._last_update = datetime.min
+
+    @property
+    def device_info(self):
+        """Return device information about this hub."""
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "Electrical System Hub",
+        }
+
+    @property
+    def state(self):
+        """Return the state of the sensor (total site available power as primary state)."""
+        if self._total_site_available_power is not None:
+            return round(self._total_site_available_power, 0)
+        return None
+
+    @property
+    def extra_state_attributes(self):
+        """Return the state attributes - site-level data."""
+        def round_value(val, decimals=1):
+            return round(val, decimals) if val is not None else None
+        
+        return {
+            "state_class": "measurement",
+            "battery_soc_min": round_value(self._battery_soc_min),
+            "battery_soc_target": round_value(self._battery_soc_target),
+            "battery_power": round_value(self._battery_power),
+            "available_battery_power": round_value(self._available_battery_power),
+            # Site available per-phase current (A)
+            "site_available_current_phase_a": round_value(self._site_available_current_phase_a),
+            "site_available_current_phase_b": round_value(self._site_available_current_phase_b),
+            "site_available_current_phase_c": round_value(self._site_available_current_phase_c),
+            # Site battery available power (W)
+            "site_battery_available_power": round_value(self._site_battery_available_power, 0),
+            # Site grid available power (W)
+            "site_grid_available_power": round_value(self._site_grid_available_power, 0),
+            # Total site available power (W) - grid + battery
+            "total_site_available_power": round_value(self._total_site_available_power, 0),
+            # NEW: Site power balance
+            "total_evse_power": round_value(self._total_evse_power, 0),
+            "net_site_consumption": round_value(self._net_site_consumption, 0),
+            "solar_surplus_power": round_value(self._solar_surplus_power, 0),
+            "solar_surplus_current": round_value(self._solar_surplus_current, 2),
+            "last_update": self._last_update,
+        }
+
+    @property
+    def icon(self):
+        """Return the icon to use in the frontend."""
+        return "mdi:home-lightning-bolt"
+
+    @property
+    def unit_of_measurement(self):
+        """Return the unit of measurement."""
+        return "W"
+
+    @property
+    def device_class(self):
+        """Return the device class."""
+        return "power"
+
+    async def async_update(self):
+        """Update hub sensor with site-wide data from hass.data."""
+        try:
+            hub_entry_id = self.config_entry.entry_id
+            hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
+            
+            if hub_data:
+                self._battery_soc = hub_data.get("battery_soc")
+                self._battery_soc_min = hub_data.get("battery_soc_min")
+                self._battery_soc_target = hub_data.get("battery_soc_target")
+                self._battery_power = hub_data.get("battery_power")
+                self._available_battery_power = hub_data.get("available_battery_power")
+                # Site available per-phase current (A)
+                self._site_available_current_phase_a = hub_data.get("site_available_current_phase_a")
+                self._site_available_current_phase_b = hub_data.get("site_available_current_phase_b")
+                self._site_available_current_phase_c = hub_data.get("site_available_current_phase_c")
+                # Site battery available power (W)
+                self._site_battery_available_power = hub_data.get("site_battery_available_power")
+                # Site grid available power (W)
+                self._site_grid_available_power = hub_data.get("site_grid_available_power")
+                # Total site available power (W) - grid + battery
+                self._total_site_available_power = hub_data.get("total_site_available_power")
+                # NEW: Site power balance
+                self._total_evse_power = hub_data.get("total_evse_power")
+                self._net_site_consumption = hub_data.get("net_site_consumption")
+                self._solar_surplus_power = hub_data.get("solar_surplus_power")
+                self._solar_surplus_current = hub_data.get("solar_surplus_current")
+                self._last_update = hub_data.get("last_update", datetime.utcnow())
+        except Exception as e:
+            _LOGGER.error(f"Error updating hub sensor {self._attr_name}: {e}", exc_info=True)
