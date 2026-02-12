@@ -12,23 +12,14 @@ Clear architecture:
 
 import logging
 
-# Try relative imports first (for HA), fall back to absolute (for tests)
-try:
-    from .models import SiteContext, ChargerContext
-    from .utils import get_available_current, deduct_current
-    from ..const import (
-        CHARGING_MODE_STANDARD,
-        CHARGING_MODE_ECO,
-        CHARGING_MODE_SOLAR,
-        CHARGING_MODE_EXCESS,
-    )
-except ImportError:
-    from models import SiteContext, ChargerContext
-    from utils import get_available_current, deduct_current
-    CHARGING_MODE_STANDARD = "Standard"
-    CHARGING_MODE_ECO = "Eco"
-    CHARGING_MODE_SOLAR = "Solar"
-    CHARGING_MODE_EXCESS = "Excess"
+from .models import SiteContext, ChargerContext
+from .utils import get_available_current, deduct_current
+from ..const import (
+    CHARGING_MODE_STANDARD,
+    CHARGING_MODE_ECO,
+    CHARGING_MODE_SOLAR,
+    CHARGING_MODE_EXCESS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
