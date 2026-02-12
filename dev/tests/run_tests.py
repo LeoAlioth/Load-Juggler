@@ -9,11 +9,29 @@ import yaml
 from pathlib import Path
 from datetime import datetime
 
-# Import REAL production code (pure Python, no HA dependencies)
-sys.path.insert(0, str(Path(__file__).parents[2]))
+# Load calculation modules directly from files to avoid importing Home Assistant-dependent
+# package __init__.py which imports 'homeassistant'.
+import importlib.util
+import sys
 
-from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext
-from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
+repo_root = Path(__file__).parents[2]
+_calc_dir = repo_root / "custom_components" / "dynamic_ocpp_evse" / "calculations"
+
+def _load_module_as(name, path):
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules[name] = module
+    return module
+
+# Load models and utils as top-level modules so target_calculator's fallback imports work.
+_load_module_as("models", _calc_dir / "models.py")
+_load_module_as("utils", _calc_dir / "utils.py")
+# Load target_calculator (it will fall back to importing 'models' and 'utils' if relative imports fail)
+_load_module_as("target_calculator", _calc_dir / "target_calculator.py")
+
+from models import ChargerContext, SiteContext
+from target_calculator import calculate_all_charger_targets
 
 
 def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
