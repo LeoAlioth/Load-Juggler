@@ -223,7 +223,7 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 **Current Focus (HA Integration)**
 1. - [x] OptionsFlow (HA options UI): Implemented (DynamicOcppEvseOptionsFlow present in config_flow.py)
 2. - [x] Split config entry data vs options: Static hardware identifiers stored in `entry.data`; mutable settings seeded into `entry.options` at creation (breaking change, reconfiguration required after upgrade)
-3. - [ ] Refactor config flow schemas to reuse helpers and reduce duplication
+3. - [x] Refactor config flow schemas to reuse helpers and reduce duplication
 4. - [ ] Extend validation and add unit tests for config_flow/options behavior
 5. - [ ] Run full test suite after HA-integration changes
 
