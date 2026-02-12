@@ -31,7 +31,7 @@ jobs:
 
       - name: Run test suite
         run: |
-          python tests/run_tests.py tests/scenarios
+          python dev/tests/run_tests.py dev/tests/scenarios
 
       - name: Set up variables
         id: vars
