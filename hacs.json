@@ -7,5 +7,5 @@
     "render_readme": true,
     "icon": "mdi:ev-station",
     "zip_release": true,
-    "filename": "dynamic-ocpp-evse.zip"
+    "filename": "dynamic-ocpp-evse-*.zip"
 }
