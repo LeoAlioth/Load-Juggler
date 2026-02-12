@@ -216,6 +216,13 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 - Verified and unverified scenarios aligned ✅
 - See `tests/test_results.log` for the latest run output
 
+**Current Focus (HA Integration)** (2026-02-12)
+- Add OptionsFlow to expose mutable settings via the HA “Configure” UI.
+- Split config entry data vs options (static in `entry.data`, mutable in `entry.options`).
+- Refactor config flow schemas to reduce duplication and standardize optional entity handling.
+- Add basic validation (min <= max current, required hub fields, etc.).
+- Update translations/strings and ensure backward compatibility via migration.
+
 ## Common Pitfalls
 
 1. **Asymmetric vs Symmetric confusion**: Remember inverter capability affects SUPPLY, not charger DRAW
