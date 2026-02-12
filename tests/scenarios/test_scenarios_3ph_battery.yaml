@@ -7,7 +7,7 @@ scenarios:
 
   - name: "3ph-1c-solar-prio-with-bat-normal"
     description: "3-phase, 1 charger, solar mode, with battery"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -39,7 +39,7 @@ scenarios:
   
   - name: "3ph-2c-solar-prio-with-bat-shared"
     description: "3-phase, 2 chargers, both solar, should share same resource"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -78,7 +78,7 @@ scenarios:
   
   - name: "3ph-1c-solar-prio-with-bat-unbalanced"
     description: "3-phase, Solar mode, unbalanced consumption"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -113,7 +113,7 @@ scenarios:
   
   - name: "3ph-1c-eco-prio-with-bat-high-soc"
     description: "Eco mode with battery above target"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -145,7 +145,7 @@ scenarios:
   
   - name: "3ph-1c-eco-prio-with-bat-low-soc"
     description: "Eco mode with battery below minimum"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -177,7 +177,7 @@ scenarios:
   
   - name: "3ph-1c-eco-prio-with-bat-mid-soc"
     description: "Eco mode with battery between min and target"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -211,7 +211,7 @@ scenarios:
   
   - name: "3ph-1c-excess-prio-with-bat-above-threshold"
     description: "Excess mode with export above threshold"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -244,7 +244,7 @@ scenarios:
   
   - name: "3ph-1c-excess-prio-with-bat-below-threshold"
     description: "Excess mode with export below threshold"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -279,7 +279,7 @@ scenarios:
   
   - name: "3ph-3c-standard-prio-with-bat-normal"
     description: "3 chargers, all standard mode"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -325,7 +325,7 @@ scenarios:
   
   - name: "3ph-2c-solar-prio-with-bat-mixed-phases"
     description: "Mix of 1-phase and 3-phase chargers"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -366,7 +366,7 @@ scenarios:
   
   - name: "3ph-2c-eco-prio-with-bat-no-solar"
     description: "No solar export available"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -405,7 +405,7 @@ scenarios:
   
   - name: "3ph-1c-solar-prio-with-bat-importing"
     description: "Site importing (negative export)"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -439,7 +439,7 @@ scenarios:
   
   - name: "3ph-1c-solar-2ph-obc-with-battery"
     description: "2-phase OBC with battery above target"
-    verified: true
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -472,7 +472,7 @@ scenarios:
   
   - name: "3ph-2c-solar-2ph-and-1ph-mixed-battery"
     description: "Mix of 2-phase and 1-phase chargers with battery"
-    verified: true
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -517,7 +517,7 @@ scenarios:
     description: "Oscillation test: 3-phase solar with feedback simulation"
     iterations: 5
     max_variation: 0.3
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -551,7 +551,7 @@ scenarios:
     description: "Oscillation test: Single-phase charger on 3-phase site"
     iterations: 5
     max_variation: 0.3
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -584,7 +584,7 @@ scenarios:
   
   - name: "3ph-1c-solar-asym-per-phase-limit-hit"
     description: "Per-phase inverter limit constrains available power"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -592,18 +592,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 16100  # 70A total
+      solar_production: 13800  # 60A total - high enough to test per-phase limit
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
-      phase_c_consumption: 1.0
-      battery_soc: 85
+      phase_c_consumption: 1.0  # 3A total, 57A export
+      battery_soc: 85  # Above target so battery can discharge in Solar mode
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5060  # 22A
-      battery_max_discharge_power: 5060  # 22A
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 4140  # 18A per phase limit
-      inverter_max_power: 20700  # 90A total limit
+      inverter_max_power_per_phase: 4140  # 18A per phase limit (the constraint being tested)
+      inverter_max_power: 23000  # 100A total (high, not constraining)
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -612,11 +612,11 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 17  # 18A per-phase max - 1A consumption = 17A per phase
+        target: 17  # Limited by inverter_max_power_per_phase (18A) - 1A consumption = 17A available per phase
   
   - name: "3ph-1c-solar-asym-total-limit-hit"
     description: "Total inverter limit constrains available power"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -624,18 +624,18 @@ scenarios:
       num_phases: 3
       distribution_mode: priority
       charging_mode: Solar
-      solar_production: 16100  # 70A total
+      solar_production: 11500  # 50A total (matches inverter max to test total limit)
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
-      phase_c_consumption: 1.0
-      battery_soc: 85
+      phase_c_consumption: 1.0  # 3A total, 47A export
+      battery_soc: 85  # Above target so battery can discharge in Solar mode
       battery_soc_min: 20
       battery_soc_target: 80
-      battery_max_charge_power: 5060  # 22A
-      battery_max_discharge_power: 5060  # 22A
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
       inverter_supports_asymmetric: true
-      inverter_max_power_per_phase: 8050  # 35A per phase (high)
-      inverter_max_power: 11500  # 50A total limit (constraining)
+      inverter_max_power_per_phase: 8050  # 35A per phase (high, not constraining)
+      inverter_max_power: 11500  # 50A total limit (the constraint being tested)
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -644,13 +644,13 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        target: 16.7  # Solar: 70-3+22=89A, limited by inverter total 50A. 50/3 = 16.7A per phase
+        target: 16.7  # Solar: 50A - 3A + 18A battery = 65A. Limited by inverter_max_power 50A. 50/3 = 16.7A per phase
   
   # ===== DISTRIBUTION MODE TESTS =====
   
   - name: "3ph-3c-solar-strict-distribution"
     description: "Strict mode: Sequential allocation"
-    verified: true
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -696,7 +696,7 @@ scenarios:
   
   - name: "3ph-3c-solar-optimized-distribution"
     description: "Optimized mode: Smart reduction to fit more chargers"
-    verified: true
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -744,7 +744,7 @@ scenarios:
   
   - name: "3ph-3c-solar-asym-triple-mixed"
     description: "Three chargers: 1ph + 1ph + 3ph with asymmetric inverter"
-    verified: true
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -790,7 +790,7 @@ scenarios:
   
   - name: "3ph-1c-solar-no-grid-charging-with-bat"
     description: "allow_grid_charging=False limits to export only"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -823,7 +823,7 @@ scenarios:
 
   - name: "3ph-1c-eco-no-grid-low-battery"
     description: "No grid charging with battery below minimum"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -858,7 +858,7 @@ scenarios:
   
   - name: "3ph-1c-eco-battery-at-exact-min"
     description: "Battery SOC exactly at minimum threshold"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -890,7 +890,7 @@ scenarios:
   
   - name: "3ph-1c-solar-battery-at-exact-target"
     description: "Battery SOC exactly at target"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -924,7 +924,7 @@ scenarios:
   
   - name: "3ph-1c-standard-heavy-importing"
     description: "Home consuming more than solar produces (importing)"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -956,7 +956,7 @@ scenarios:
   
   - name: "3ph-1c-solar-fixed-current-charger"
     description: "Charger with min_current = max_current (no variability)"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -988,7 +988,7 @@ scenarios:
   
   - name: "3ph-2c-solar-wide-range-chargers"
     description: "Mix of chargers with different capabilities"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -1029,7 +1029,7 @@ scenarios:
   
   - name: "3ph-4c-solar-many-chargers"
     description: "Four chargers competing for limited power"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -1082,7 +1082,7 @@ scenarios:
   
   - name: "3ph-2c-solar-same-priority"
     description: "Two chargers with identical priority"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -1123,7 +1123,7 @@ scenarios:
   
   - name: "3ph-1c-standard-zero-solar-night"
     description: "Night time charging with no solar"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -1155,7 +1155,7 @@ scenarios:
   
   - name: "3ph-1c-eco-zero-solar-night"
     description: "Eco mode at night should use minimum only"
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -1191,7 +1191,7 @@ scenarios:
     description: "Solar increasing during charge (multi-iteration)"
     iterations: 3
     max_variation: 1.0
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -1232,7 +1232,7 @@ scenarios:
     description: "Solar dropping suddenly (oscillation test)"
     iterations: 3
     max_variation: 0.5
-    verified: False
+    human_verified: False
     site:
       voltage: 230
       main_breaker_rating: 32

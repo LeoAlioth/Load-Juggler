@@ -7,7 +7,7 @@ scenarios:
 
   - name: "1ph-1c-solar-prio-no-bat-normal"
     description: "Single phase, 1 charger, solar mode, no battery"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -39,7 +39,7 @@ scenarios:
   
   - name: "1ph-1c-solar-prio-no-bat-insufficient"
     description: "Single phase, 1 charger, insufficient solar (below min)"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 35

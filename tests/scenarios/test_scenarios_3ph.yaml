@@ -7,7 +7,7 @@ scenarios:
 
   - name: "3ph-2c-solar-prio-no-bat-mixed-phases"
     description: "Mix of 1-phase and 3-phase chargers"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -46,7 +46,7 @@ scenarios:
   
   - name: "3ph-1c-solar-prio-no-bat-normal"
     description: "Solar mode without battery configured"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -78,7 +78,7 @@ scenarios:
   
   - name: "3ph-1c-eco-prio-no-bat-normal"
     description: "Eco mode without battery, should use export"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -112,7 +112,7 @@ scenarios:
   
   - name: "3ph-2c-solar-sym-two-single-phase"
     description: "Two 1-phase chargers on different phases, symmetric system"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -155,7 +155,7 @@ scenarios:
   
   - name: "3ph-1c-solar-very-unbalanced"
     description: "One phase maxed out, others idle"
-    verified: True
+    human_verified: True
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -189,7 +189,7 @@ scenarios:
   
   - name: "3ph-1c-solar-2ph-obc-normal"
     description: "Single 2-phase OBC charger (VW eGolf, eUp, ID.3 base)"
-    verified: true
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -222,7 +222,7 @@ scenarios:
   
   - name: "3ph-2c-solar-2ph-and-3ph-mixed"
     description: "Mix of 2-phase and 3-phase chargers"
-    verified: true
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -262,7 +262,7 @@ scenarios:
 
   - name: "3ph-2c-solar-2ph-and-3ph-mixed-alt"
     description: "Mix of 2-phase and 3-phase chargers"
-    verified: true
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -303,7 +303,7 @@ scenarios:
 
   - name: "3ph-2c-solar-two-2ph-different-phases"
     description: "Two 2-phase chargers on different phase combinations"
-    verified: true
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 32

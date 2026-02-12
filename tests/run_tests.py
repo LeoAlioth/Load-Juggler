@@ -344,17 +344,17 @@ def run_tests(yaml_file='tests/test_scenarios.yaml', verbose=False, filter_verif
         verbose: Print detailed output
         filter_verified: Filter scenarios by verified status
             - None or 'all': Run all scenarios (default)
-            - 'verified': Run only verified scenarios
-            - 'unverified': Run only unverified scenarios
+            - 'verified': Run only human verified scenarios
+            - 'unverified': Run only human unverified scenarios
     """
     all_scenarios = load_scenarios(yaml_file)
     
     # Filter scenarios based on verified field
     if filter_verified == 'verified':
-        scenarios = [s for s in all_scenarios if s.get('verified', False)]
+        scenarios = [s for s in all_scenarios if s.get('human_verified', False)]
         filter_msg = " (VERIFIED ONLY)"
     elif filter_verified == 'unverified':
-        scenarios = [s for s in all_scenarios if not s.get('verified', False)]
+        scenarios = [s for s in all_scenarios if not s.get('human_verified', False)]
         filter_msg = " (UNVERIFIED ONLY)"
     else:
         scenarios = all_scenarios
