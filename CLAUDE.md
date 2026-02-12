@@ -200,11 +200,19 @@ Test scenarios are organized in `tests/scenarios/`:
 
 ## Current Development Status
 
-**Active Refactoring**: Implementing Multi-Phase Constraint System
+**Multi-Phase Constraint System**: ✅ Implemented
 
-The codebase is transitioning from dual constraint tuples `(per_phase[], total)` to constraint dicts with all phase combinations. This properly enforces physical constraints for 1-phase, 2-phase, and 3-phase chargers.
+The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', 'AB', 'AC', 'BC', 'ABC') to properly enforce physical constraints for 1-phase, 2-phase, and 3-phase chargers.
 
-**Test Status**: Check `tests/test_results.log` for latest results. Recent status was 28/29 passing (97%).
+**Recent Major Fix** (2026-02-12): Asymmetric inverter support for solar/battery/excess modes
+- Single-phase chargers on asymmetric systems can now access the full flexible power pool
+- Symmetric inverters preserved with per-phase calculations
+- See `P1_FIXES_SUMMARY.md` for details
+
+**Test Status**: 31/33 passing (93.9%)
+- All P1 critical issues resolved
+- 2 P2 distribution logic issues remain
+- Check `tests/test_results.log` for latest results
 
 ## Common Pitfalls
 

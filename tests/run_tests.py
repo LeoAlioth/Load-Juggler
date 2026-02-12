@@ -19,40 +19,76 @@ from target_calculator import calculate_all_charger_targets
 def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
     """
     Simulate feedback: chargers drawing power reduces export.
-    
+
     Args:
         site: SiteContext with chargers that have target_current set
         initial_solar: Total solar production (W)
         initial_consumption_per_phase: [phase_a, phase_b, phase_c] consumption (A)
     """
     voltage = site.voltage
-    
-    # Solar per phase (evenly distributed)
-    solar_per_phase = initial_solar / 3 / voltage  # Convert to A per phase
-    
+    num_phases = site.num_phases if site.num_phases > 0 else 1
+
+    # Solar per phase (evenly distributed across active phases)
+    if num_phases == 1:
+        # Single-phase: all solar goes to phase A
+        solar_per_phase_a = initial_solar / voltage if voltage > 0 else 0
+        solar_per_phase_b = 0
+        solar_per_phase_c = 0
+    else:
+        # Three-phase: solar evenly distributed
+        solar_per_phase = initial_solar / num_phases / voltage if voltage > 0 else 0
+        solar_per_phase_a = solar_per_phase
+        solar_per_phase_b = solar_per_phase
+        solar_per_phase_c = solar_per_phase
+
     # Start with initial consumption
     phase_a_load = initial_consumption_per_phase[0]
     phase_b_load = initial_consumption_per_phase[1]
     phase_c_load = initial_consumption_per_phase[2]
-    
-    # Add charger loads
+
+    # Add charger loads based on their actual phase connections
     for charger in site.chargers:
-        # For simplicity, distribute all chargers evenly across phases
-        # (Real system would track per-phase but this is good enough for oscillation testing)
         if charger.phases == 1:
-            # Single-phase: add to one phase (assume phase A for now)
-            phase_a_load += charger.target_current
-        else:
-            # 3-phase charger - add evenly to all phases
+            # Single-phase: add to specific phase based on active_phases_mask
+            if charger.active_phases_mask:
+                if 'A' in charger.active_phases_mask and 'B' not in charger.active_phases_mask and 'C' not in charger.active_phases_mask:
+                    phase_a_load += charger.target_current
+                elif 'B' in charger.active_phases_mask and 'A' not in charger.active_phases_mask and 'C' not in charger.active_phases_mask:
+                    phase_b_load += charger.target_current
+                elif 'C' in charger.active_phases_mask and 'A' not in charger.active_phases_mask and 'B' not in charger.active_phases_mask:
+                    phase_c_load += charger.target_current
+            else:
+                # No mask - default to phase A
+                phase_a_load += charger.target_current
+
+        elif charger.phases == 2:
+            # Two-phase: add to appropriate two phases
+            if charger.active_phases_mask:
+                if 'A' in charger.active_phases_mask and 'B' in charger.active_phases_mask:
+                    phase_a_load += charger.target_current
+                    phase_b_load += charger.target_current
+                elif 'A' in charger.active_phases_mask and 'C' in charger.active_phases_mask:
+                    phase_a_load += charger.target_current
+                    phase_c_load += charger.target_current
+                elif 'B' in charger.active_phases_mask and 'C' in charger.active_phases_mask:
+                    phase_b_load += charger.target_current
+                    phase_c_load += charger.target_current
+            else:
+                # No mask - default to AB
+                phase_a_load += charger.target_current
+                phase_b_load += charger.target_current
+
+        elif charger.phases == 3:
+            # Three-phase: add to all phases
             phase_a_load += charger.target_current
             phase_b_load += charger.target_current
             phase_c_load += charger.target_current
-    
+
     # Calculate new export per phase (solar - total_load)
-    site.phase_a_export = max(0, solar_per_phase - phase_a_load)
-    site.phase_b_export = max(0, solar_per_phase - phase_b_load)
-    site.phase_c_export = max(0, solar_per_phase - phase_c_load)
-    
+    site.phase_a_export = max(0, solar_per_phase_a - phase_a_load)
+    site.phase_b_export = max(0, solar_per_phase_b - phase_b_load)
+    site.phase_c_export = max(0, solar_per_phase_c - phase_c_load)
+
     # Update totals
     site.total_export_current = site.phase_a_export + site.phase_b_export + site.phase_c_export
     site.total_export_power = site.total_export_current * voltage
@@ -179,6 +215,7 @@ def build_site_from_scenario(scenario):
             elif phases == 2:
                 active_phases_mask = "AB"  # 2-phase default (rare, when not specified)
             # else: phases == 1 without connected_to_phase remains None
+            # Note: ChargerContext.__post_init__() will default single-phase to 'A'
         
         # For identification in charger_id
         connected_phase = charger_data.get('connected_to_phase') if phases == 1 else None
