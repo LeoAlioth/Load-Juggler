@@ -40,11 +40,9 @@ jobs:
 
       - name: Create ZIP archive
         run: |
-          # Create zip with just the integration folder for HACS
-          # HACS expects: dynamic_ocpp_evse/__init__.py, etc.
+          # Create zip with only the custom_components folder for HACS
           mkdir -p release
-          cd custom_components
-          zip -r ../release/dynamic-ocpp-evse.zip dynamic_ocpp_evse/
+          zip -r release/dynamic-ocpp-evse.zip custom_components/
 
       - name: Create GitHub prerelease
         uses: softprops/action-gh-release@v2
