@@ -19,19 +19,19 @@ Dynamic OCPP EVSE is a Home Assistant custom component that provides intelligent
 
 ```bash
 # Run all test scenarios
-python tests/run_tests.py tests/scenarios
+python dev/tests/run_tests.py dev/tests/scenarios
 
 # Run only verified scenarios
-python tests/run_tests.py --verified tests/scenarios
+python dev/tests/run_tests.py --verified dev/tests/scenarios
 
 # Run only unverified scenarios
-python tests/run_tests.py --unverified tests/scenarios
+python dev/tests/run_tests.py --unverified dev/tests/scenarios
 
 # Run specific scenario by name
-python tests/run_tests.py "scenario-name"
+python dev/tests/run_tests.py "scenario-name"
 ```
 
-**Test results** are automatically written to `tests/test_results.log` after each run.
+**Test results** are automatically written to `dev/tests/test_results.log` after each run.
 
 ### Linting and Type Checking
 
@@ -195,7 +195,7 @@ scenarios:
         target: 10.0  # Expected current in Amps
 ```
 
-Test scenarios are organized in `tests/scenarios/`:
+Test scenarios are organized in `dev/tests/scenarios/`:
 - `test_scenarios_1ph.yaml` - Single-phase scenarios
 - `test_scenarios_1ph_battery.yaml` - Single-phase with battery
 - `test_scenarios_3ph.yaml` - Three-phase scenarios
@@ -214,7 +214,7 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 **Test Status**: 52/52 passing (100%) - as of 2026-02-12
 - All scenarios passing ✅
 - Verified and unverified scenarios aligned ✅
-- See `tests/test_results.log` for the latest run output
+- See `dev/tests/test_results.log` for the latest run output
 
 ## Common Pitfalls
 
@@ -256,7 +256,7 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 
 1. **Charging Mode**: Add to `calculations/modes/`, inherit from `base.py`
 2. **Distribution Mode**: Add to `target_calculator.py` as `_distribute_<mode>()`
-3. **Test Scenarios**: Create YAML scenarios in `tests/scenarios/`
+3. **Test Scenarios**: Create YAML scenarios in `dev/tests/scenarios/`
 4. **Documentation**: Update CHARGE_MODES_GUIDE.md, README.md
 
 ## Integration with Home Assistant
@@ -270,7 +270,7 @@ The `calculations/` directory is pure Python and can be imported/tested independ
 ## Debugging
 
 1. **Enable verbose logging** in HA: `custom_components.dynamic_ocpp_evse: debug`
-2. **Run specific test**: `python tests/run_tests.py "test-name"`
+2. **Run specific test**: `python dev/tests/run_tests.py "test-name"`
 3. **Check calculation steps**: Each step logs its output (site_limit, solar_available, target_power, etc.)
 4. **Per-phase values**: Log phase_a/b/c_export, consumption, available
 
@@ -278,5 +278,5 @@ The `calculations/` directory is pure Python and can be imported/tested independ
 
 - OCPP 1.6J Specification: https://www.openchargealliance.org/
 - Home Assistant Developer Docs: https://developers.home-assistant.io/
-- YAML Test Scenarios: `tests/scenarios/*.yaml`
+- YAML Test Scenarios: `dev/tests/scenarios/*.yaml`
 - Charging Modes Guide: `CHARGE_MODES_GUIDE.md`
