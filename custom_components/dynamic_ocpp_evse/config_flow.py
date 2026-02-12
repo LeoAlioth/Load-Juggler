@@ -497,15 +497,6 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }),
             vol.Required(CONF_EVSE_MINIMUM_CHARGE_CURRENT, default=DEFAULT_MIN_CHARGE_CURRENT): int,
             vol.Required(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, default=DEFAULT_MAX_CHARGE_CURRENT): int,
-            vol.Required(CONF_CHARGE_RATE_UNIT, default=DEFAULT_CHARGE_RATE_UNIT): selector({
-                "select": {
-                    "options": [
-                        {"value": CHARGE_RATE_UNIT_AMPS, "label": "Amperes (A)"},
-                        {"value": CHARGE_RATE_UNIT_WATTS, "label": "Watts (W)"},
-                    ],
-                    "mode": "dropdown"
-                }
-            }),
             vol.Required(CONF_UPDATE_FREQUENCY, default=DEFAULT_UPDATE_FREQUENCY): int,
             vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=DEFAULT_OCPP_PROFILE_TIMEOUT): int,
             vol.Required(CONF_CHARGE_PAUSE_DURATION, default=DEFAULT_CHARGE_PAUSE_DURATION): int,
@@ -667,15 +658,6 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }),
             vol.Required(CONF_EVSE_MINIMUM_CHARGE_CURRENT, default=entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)): int,
             vol.Required(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, default=entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)): int,
-            vol.Required(CONF_CHARGE_RATE_UNIT, default=entry.data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)): selector({
-                "select": {
-                    "options": [
-                        {"value": CHARGE_RATE_UNIT_AMPS, "label": "Amperes (A)"},
-                        {"value": CHARGE_RATE_UNIT_WATTS, "label": "Watts (W)"},
-                    ],
-                    "mode": "dropdown"
-                }
-            }),
             vol.Required(CONF_UPDATE_FREQUENCY, default=entry.data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)): int,
             vol.Required(CONF_OCPP_PROFILE_TIMEOUT, default=entry.data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)): int,
             vol.Required(CONF_CHARGE_PAUSE_DURATION, default=entry.data.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)): int,
