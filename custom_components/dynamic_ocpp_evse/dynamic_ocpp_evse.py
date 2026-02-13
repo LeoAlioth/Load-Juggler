@@ -114,6 +114,7 @@ def calculate_available_current_for_hub(sensor):
     battery_power = _read_entity(battery_power_entity, None) if battery_power_entity else None
     battery_soc_min = get_entry_value(hub_entry, CONF_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_MIN)
     battery_soc_target = _read_entity(battery_soc_target_entity, None) if battery_soc_target_entity else None
+    battery_soc_hysteresis = get_entry_value(hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
     battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
 
@@ -133,6 +134,14 @@ def calculate_available_current_for_hub(sensor):
     distribution_mode_entity = f"select.{hub_entity_id}_distribution_mode"
     distribution_mode_state = hass.states.get(distribution_mode_entity)
     distribution_mode = distribution_mode_state.state if distribution_mode_state and distribution_mode_state.state else "Priority"
+
+    # --- Read allow_grid_charging switch and power_buffer number ---
+    allow_grid_entity = f"switch.{hub_entity_id}_allow_grid_charging"
+    allow_grid_state = hass.states.get(allow_grid_entity)
+    allow_grid_charging = allow_grid_state.state != "off" if allow_grid_state else True
+
+    power_buffer_entity = f"number.{hub_entity_id}_power_buffer"
+    power_buffer = _read_entity(power_buffer_entity, 0)
 
     _LOGGER.debug(
         "Hub state read: phases=%d, phase_a=%.1fA (entity=%s), phase_b=%.1fA, phase_c=%.1fA, "
@@ -159,14 +168,18 @@ def calculate_available_current_for_hub(sensor):
         total_export_current=total_export_current,
         total_export_power=total_export_power,
         battery_soc=float(battery_soc) if battery_soc is not None else None,
+        battery_power=float(battery_power) if battery_power is not None else None,
         battery_soc_min=float(battery_soc_min) if battery_soc_min is not None else None,
         battery_soc_target=float(battery_soc_target) if battery_soc_target is not None else None,
+        battery_soc_hysteresis=float(battery_soc_hysteresis) if battery_soc_hysteresis is not None else 5,
         battery_max_charge_power=float(battery_max_charge_power) if battery_max_charge_power is not None else None,
         battery_max_discharge_power=float(battery_max_discharge_power) if battery_max_discharge_power is not None else None,
         inverter_max_power=float(inverter_max_power) if inverter_max_power is not None else None,
         inverter_max_power_per_phase=float(inverter_max_power_per_phase) if inverter_max_power_per_phase is not None else None,
         inverter_supports_asymmetric=inverter_supports_asymmetric,
         excess_export_threshold=excess_threshold,
+        allow_grid_charging=allow_grid_charging,
+        power_buffer=power_buffer,
         distribution_mode=distribution_mode,
         charging_mode=charging_mode,
     )
@@ -261,10 +274,17 @@ def calculate_available_current_for_hub(sensor):
         "battery_soc_target": site.battery_soc_target,
         "battery_power": battery_power,
         "available_battery_power": available_battery_power,
-        "site_available_current_phase_a": round(site.phase_a_export, 1),
-        "site_available_current_phase_b": round(site.phase_b_export, 1),
-        "site_available_current_phase_c": round(site.phase_c_export, 1),
-        "total_site_available_power": round(total_export_power, 0),
+        # Per-phase available current for EV = breaker headroom + solar surplus
+        "site_available_current_phase_a": round(main_breaker_rating - raw_phase_a, 1),
+        "site_available_current_phase_b": round(main_breaker_rating - raw_phase_b, 1) if num_phases >= 2 else 0,
+        "site_available_current_phase_c": round(main_breaker_rating - raw_phase_c, 1) if num_phases >= 3 else 0,
+        # Total site available power = sum of per-phase available * voltage
+        "total_site_available_power": round(
+            (main_breaker_rating - raw_phase_a) * voltage
+            + ((main_breaker_rating - raw_phase_b) * voltage if num_phases >= 2 else 0)
+            + ((main_breaker_rating - raw_phase_c) * voltage if num_phases >= 3 else 0),
+            0,
+        ),
         "net_site_consumption": round(
             (phase_a_consumption + phase_b_consumption + phase_c_consumption) * voltage, 0
         ),

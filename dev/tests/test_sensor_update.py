@@ -221,6 +221,8 @@ def _set_ha_states(hass):
     hass.states.async_set("select.test_hub_distribution_mode", "Priority")
     # Battery SOC target
     hass.states.async_set("number.test_hub_home_battery_soc_target", "90")
+    # Allow grid charging switch
+    hass.states.async_set("switch.test_hub_allow_grid_charging", "on")
     # Power buffer
     hass.states.async_set("number.test_hub_power_buffer", "200")
 
@@ -308,10 +310,10 @@ async def test_calculate_available_current_reads_ha_entities(
         "Battery SOC should be read from the HA entity"
     )
 
-    # Grid is importing (positive raw values) → no export on any phase
-    assert result.get("site_available_current_phase_a") == 0.0
-    assert result.get("site_available_current_phase_b") == 0.0
-    assert result.get("site_available_current_phase_c") == 0.0
+    # Grid importing ~5A/phase with 25A breaker → ~20A available per phase
+    assert result.get("site_available_current_phase_a") == 20.0
+    assert result.get("site_available_current_phase_b") == 20.5
+    assert result.get("site_available_current_phase_c") == 21.2
 
     # Charger targets should contain our charger with a real allocation
     charger_targets = result.get("charger_targets", {})
@@ -716,3 +718,161 @@ async def test_watts_charge_rate_conversion(
         ]
         profile = ocpp_calls[0][0][2]["custom_profile"]
         assert profile["chargingSchedule"]["chargingRateUnit"] == "W"
+
+
+# ── Result dict completeness test ────────────────────────────────────
+
+
+async def test_result_dict_all_keys_populated(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Verify every key in the result dict is populated (not None) when
+    HA entities are fully configured.
+
+    This test acts as a safety net: if a new hub sensor key is added to
+    sensor.py but not to the result dict in dynamic_ocpp_evse.py, this
+    test will catch the mismatch.
+    """
+    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+        calculate_available_current_for_hub,
+    )
+
+    _set_ha_states(hass)
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+
+    result = calculate_available_current_for_hub(sensor)
+
+    # Every key that hub_data storage (sensor.py) reads must be present
+    # in the result dict AND must not be None when entities are configured.
+    expected_keys = {
+        CONF_AVAILABLE_CURRENT,
+        CONF_PHASES,
+        CONF_CHARING_MODE,
+        "calc_used",
+        "battery_soc",
+        "battery_soc_min",
+        "battery_soc_target",
+        "battery_power",
+        "available_battery_power",
+        "site_available_current_phase_a",
+        "site_available_current_phase_b",
+        "site_available_current_phase_c",
+        "total_site_available_power",
+        "net_site_consumption",
+        "site_grid_available_power",
+        "site_battery_available_power",
+        "total_evse_power",
+        "solar_surplus_power",
+        "solar_surplus_current",
+        "charger_targets",
+        "distribution_mode",
+    }
+
+    missing = expected_keys - set(result.keys())
+    assert not missing, f"Result dict missing keys: {missing}"
+
+    none_keys = {k for k in expected_keys if result.get(k) is None}
+    assert not none_keys, (
+        f"These result dict keys are None when all HA entities are configured: {none_keys}"
+    )
+
+
+async def test_result_dict_values_are_reasonable(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Verify result dict values match expectations for the test scenario.
+
+    Test scenario: 3-phase, 25A breaker, importing ~5A/phase, battery at 80%
+    SOC discharging 500W, charger drawing 10A on L1.
+    """
+    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+        calculate_available_current_for_hub,
+    )
+
+    _set_ha_states(hass)
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+
+    result = calculate_available_current_for_hub(sensor)
+
+    # --- Grid / phase values ---
+    assert result[CONF_PHASES] == 3
+    # Importing ~5A/phase with 25A breaker → ~20A available per phase
+    assert result["site_available_current_phase_a"] == 20.0
+    assert result["site_available_current_phase_b"] == 20.5
+    assert result["site_available_current_phase_c"] == 21.2
+    # Total site available: (20 + 20.5 + 21.2) * 230 ≈ 14191W
+    assert result["total_site_available_power"] > 14000
+    # Net consumption: (5.0 + 4.5 + 3.8) * 230 ≈ 3059W
+    assert 3000 < result["net_site_consumption"] < 3200
+    # Grid headroom (same as available since no export):
+    # (25-5)*230 + (25-4.5)*230 + (25-3.8)*230 = 4600 + 4715 + 4876 = 14191
+    assert result["site_grid_available_power"] > 14000
+    # No export → solar surplus = 0
+    assert result["solar_surplus_power"] == 0
+    assert result["solar_surplus_current"] == 0
+
+    # --- Battery ---
+    assert result["battery_soc"] == 80.0
+    assert result["battery_power"] == -500.0  # charging at 500W
+    assert result["battery_soc_min"] is not None
+    assert result["battery_soc_target"] == 90.0
+    # SOC 80% >= min 20% and battery_max_discharge = 5000 → available
+    assert result["available_battery_power"] == 5000
+    assert result["site_battery_available_power"] == 5000
+
+    # --- EVSE ---
+    # Charger drawing 10A on L1 → 10 * 230 = 2300W
+    assert result["total_evse_power"] == 2300
+
+    # --- Charger targets ---
+    assert result[CONF_CHARING_MODE] == "Standard"
+    assert result["distribution_mode"] == "Priority"
+    assert charger_entry.entry_id in result["charger_targets"]
+    assert result[CONF_AVAILABLE_CURRENT] > 0
+
+
+async def test_allow_grid_charging_off_reduces_available(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """When allow_grid_charging switch is OFF, the grid contribution is removed
+    so the charger target should be lower than when ON (inverter-only power)."""
+    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+        calculate_available_current_for_hub,
+    )
+
+    # First: run with grid charging ON
+    _set_ha_states(hass)
+    sensor_on = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    result_on = calculate_available_current_for_hub(sensor_on)
+    target_on = result_on["charger_targets"].get(charger_entry.entry_id, 0)
+
+    # Then: run with grid charging OFF
+    hass.states.async_set("switch.test_hub_allow_grid_charging", "off")
+    sensor_off = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    result_off = calculate_available_current_for_hub(sensor_off)
+    target_off = result_off["charger_targets"].get(charger_entry.entry_id, 0)
+
+    # Grid charging OFF should yield less power than ON
+    assert target_off < target_on, (
+        f"allow_grid_charging=off ({target_off:.1f}A) should give less than "
+        f"allow_grid_charging=on ({target_on:.1f}A)"
+    )
