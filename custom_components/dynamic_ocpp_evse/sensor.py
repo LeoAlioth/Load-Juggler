@@ -22,15 +22,10 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
         
-        entities = [
-            DynamicOcppEvseHubSensor(hass, config_entry, name, entity_id),
-            # Individual site-level sensors
-            DynamicOcppEvseBatterySocSensor(hass, config_entry, name, entity_id),
-            DynamicOcppEvseBatteryPowerSensor(hass, config_entry, name, entity_id),
-            DynamicOcppEvseAvailableBatteryPowerSensor(hass, config_entry, name, entity_id),
-            DynamicOcppEvseTotalSiteAvailablePowerSensor(hass, config_entry, name, entity_id),
-            DynamicOcppEvseNetSiteConsumptionSensor(hass, config_entry, name, entity_id),
-        ]
+        entities = [DynamicOcppEvseHubSensor(hass, config_entry, name, entity_id)]
+        # Create individual hub data sensors from definitions
+        for defn in HUB_SENSOR_DEFINITIONS:
+            entities.append(DynamicOcppEvseHubDataSensor(hass, config_entry, name, entity_id, defn))
         
         async_add_entities(entities)
         _LOGGER.info(f"Setting up hub sensors for {name}")
@@ -447,27 +442,7 @@ class DynamicOcppEvseHubSensor(SensorEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Site Available Power"
         self._attr_unique_id = f"{entity_id}_site_info"
-        self._state = None
-        self._battery_soc = None
-        self._battery_soc_min = None
-        self._battery_soc_target = None
-        self._battery_power = None
-        self._available_battery_power = None
-        # Site available per-phase current (A)
-        self._site_available_current_phase_a = None
-        self._site_available_current_phase_b = None
-        self._site_available_current_phase_c = None
-        # Site battery available power (W)
-        self._site_battery_available_power = None
-        # Site grid available power (W)
-        self._site_grid_available_power = None
-        # Total site available power (W) - grid + battery
         self._total_site_available_power = None
-        # NEW: Site power balance fields
-        self._total_evse_power = None
-        self._net_site_consumption = None
-        self._solar_surplus_power = None
-        self._solar_surplus_current = None
         self._last_update = datetime.min
 
     @property
@@ -490,31 +465,9 @@ class DynamicOcppEvseHubSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        """Return the state attributes - site-level data."""
-        def round_value(val, decimals=1):
-            return round(val, decimals) if val is not None else None
-        
+        """Return the state attributes."""
         return {
             "state_class": "measurement",
-            "battery_soc_min": round_value(self._battery_soc_min),
-            "battery_soc_target": round_value(self._battery_soc_target),
-            "battery_power": round_value(self._battery_power),
-            "available_battery_power": round_value(self._available_battery_power),
-            # Site available per-phase current (A)
-            "site_available_current_phase_a": round_value(self._site_available_current_phase_a),
-            "site_available_current_phase_b": round_value(self._site_available_current_phase_b),
-            "site_available_current_phase_c": round_value(self._site_available_current_phase_c),
-            # Site battery available power (W)
-            "site_battery_available_power": round_value(self._site_battery_available_power, 0),
-            # Site grid available power (W)
-            "site_grid_available_power": round_value(self._site_grid_available_power, 0),
-            # Total site available power (W) - grid + battery
-            "total_site_available_power": round_value(self._total_site_available_power, 0),
-            # NEW: Site power balance
-            "total_evse_power": round_value(self._total_evse_power, 0),
-            "net_site_consumption": round_value(self._net_site_consumption, 0),
-            "solar_surplus_power": round_value(self._solar_surplus_power, 0),
-            "solar_surplus_current": round_value(self._solar_surplus_current, 2),
             "last_update": self._last_update,
         }
 
@@ -538,47 +491,155 @@ class DynamicOcppEvseHubSensor(SensorEntity):
         try:
             hub_entry_id = self.config_entry.entry_id
             hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
-            
+
             if hub_data:
-                self._battery_soc = hub_data.get("battery_soc")
-                self._battery_soc_min = hub_data.get("battery_soc_min")
-                self._battery_soc_target = hub_data.get("battery_soc_target")
-                self._battery_power = hub_data.get("battery_power")
-                self._available_battery_power = hub_data.get("available_battery_power")
-                # Site available per-phase current (A)
-                self._site_available_current_phase_a = hub_data.get("site_available_current_phase_a")
-                self._site_available_current_phase_b = hub_data.get("site_available_current_phase_b")
-                self._site_available_current_phase_c = hub_data.get("site_available_current_phase_c")
-                # Site battery available power (W)
-                self._site_battery_available_power = hub_data.get("site_battery_available_power")
-                # Site grid available power (W)
-                self._site_grid_available_power = hub_data.get("site_grid_available_power")
-                # Total site available power (W) - grid + battery
                 self._total_site_available_power = hub_data.get("total_site_available_power")
-                # NEW: Site power balance
-                self._total_evse_power = hub_data.get("total_evse_power")
-                self._net_site_consumption = hub_data.get("net_site_consumption")
-                self._solar_surplus_power = hub_data.get("solar_surplus_power")
-                self._solar_surplus_current = hub_data.get("solar_surplus_current")
                 self._last_update = hub_data.get("last_update", datetime.utcnow())
         except Exception as e:
             _LOGGER.error(f"Error updating hub sensor {self._attr_name}: {e}", exc_info=True)
 
 
-class DynamicOcppEvseBatterySocSensor(SensorEntity):
-    """Individual battery SOC sensor for better HA UI visibility."""
+# ---------------------------------------------------------------------------
+# Data-driven hub sensor definitions
+# Each entry defines one individual sensor that reads from hub_data.
+# ---------------------------------------------------------------------------
+HUB_SENSOR_DEFINITIONS = [
+    {
+        "name_suffix": "Battery SOC",
+        "unique_id_suffix": "battery_soc",
+        "hub_data_key": "battery_soc",
+        "unit": "%",
+        "device_class": "battery",
+        "icon": "mdi:battery-80",
+        "decimals": 1,
+    },
+    {
+        "name_suffix": "Battery Power",
+        "unique_id_suffix": "battery_power",
+        "hub_data_key": "battery_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:battery-charging",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Available Battery Power",
+        "unique_id_suffix": "available_battery_power",
+        "hub_data_key": "available_battery_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:battery-high",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Total Site Available Power",
+        "unique_id_suffix": "total_site_available_power",
+        "hub_data_key": "total_site_available_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:home-lightning-bolt",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Net Site Consumption",
+        "unique_id_suffix": "net_site_consumption",
+        "hub_data_key": "net_site_consumption",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:home-import-outline",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Site Available Current Phase A",
+        "unique_id_suffix": "site_available_current_phase_a",
+        "hub_data_key": "site_available_current_phase_a",
+        "unit": "A",
+        "device_class": "current",
+        "icon": "mdi:current-ac",
+        "decimals": 1,
+    },
+    {
+        "name_suffix": "Site Available Current Phase B",
+        "unique_id_suffix": "site_available_current_phase_b",
+        "hub_data_key": "site_available_current_phase_b",
+        "unit": "A",
+        "device_class": "current",
+        "icon": "mdi:current-ac",
+        "decimals": 1,
+    },
+    {
+        "name_suffix": "Site Available Current Phase C",
+        "unique_id_suffix": "site_available_current_phase_c",
+        "hub_data_key": "site_available_current_phase_c",
+        "unit": "A",
+        "device_class": "current",
+        "icon": "mdi:current-ac",
+        "decimals": 1,
+    },
+    {
+        "name_suffix": "Site Battery Available Power",
+        "unique_id_suffix": "site_battery_available_power",
+        "hub_data_key": "site_battery_available_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:battery-arrow-up",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Site Grid Available Power",
+        "unique_id_suffix": "site_grid_available_power",
+        "hub_data_key": "site_grid_available_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:transmission-tower",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Total EVSE Power",
+        "unique_id_suffix": "total_evse_power",
+        "hub_data_key": "total_evse_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:ev-station",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Solar Surplus Power",
+        "unique_id_suffix": "solar_surplus_power",
+        "hub_data_key": "solar_surplus_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:solar-power",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Solar Surplus Current",
+        "unique_id_suffix": "solar_surplus_current",
+        "hub_data_key": "solar_surplus_current",
+        "unit": "A",
+        "device_class": "current",
+        "icon": "mdi:solar-power",
+        "decimals": 2,
+    },
+]
 
-    def __init__(self, hass, config_entry, name, entity_id):
-        """Initialize the sensor."""
+
+class DynamicOcppEvseHubDataSensor(SensorEntity):
+    """Generic hub data sensor driven by a definition dict."""
+
+    def __init__(self, hass, config_entry, name, entity_id, defn):
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = f"{name} Battery SOC"
-        self._attr_unique_id = f"{entity_id}_battery_soc"
+        self._defn = defn
+        self._attr_name = f"{name} {defn['name_suffix']}"
+        self._attr_unique_id = f"{entity_id}_{defn['unique_id_suffix']}"
+        self._attr_native_unit_of_measurement = defn["unit"]
+        self._attr_device_class = defn["device_class"]
+        self._attr_icon = defn["icon"]
         self._state = None
 
     @property
     def device_info(self):
-        """Return device information about this hub."""
         return {
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
             "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
@@ -588,243 +649,13 @@ class DynamicOcppEvseBatterySocSensor(SensorEntity):
 
     @property
     def state(self):
-        """Return the state of the sensor."""
         return self._state
 
-    @property
-    def icon(self):
-        """Return the icon to use in the frontend."""
-        return "mdi:battery-80"
-
-    @property
-    def unit_of_measurement(self):
-        """Return the unit of measurement."""
-        return "%"
-
-    @property
-    def device_class(self):
-        """Return the device class."""
-        return "battery"
-
     async def async_update(self):
-        """Update battery SOC sensor with data from hass.data."""
         try:
-            hub_entry_id = self.config_entry.entry_id
-            hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
-            
-            if hub_data and "battery_soc" in hub_data:
-                self._state = round(float(hub_data["battery_soc"]), 1) if hub_data["battery_soc"] is not None else None
+            hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(self.config_entry.entry_id, {})
+            key = self._defn["hub_data_key"]
+            if hub_data and key in hub_data and hub_data[key] is not None:
+                self._state = round(float(hub_data[key]), self._defn["decimals"])
         except Exception as e:
-            _LOGGER.error(f"Error updating battery SOC sensor {self._attr_name}: {e}", exc_info=True)
-
-
-class DynamicOcppEvseBatteryPowerSensor(SensorEntity):
-    """Individual battery power sensor for better HA UI visibility."""
-
-    def __init__(self, hass, config_entry, name, entity_id):
-        """Initialize the sensor."""
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_name = f"{name} Battery Power"
-        self._attr_unique_id = f"{entity_id}_battery_power"
-        self._state = None
-
-    @property
-    def device_info(self):
-        """Return device information about this hub."""
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Electrical System Hub",
-        }
-
-    @property
-    def state(self):
-        """Return the state of the sensor."""
-        return self._state
-
-    @property
-    def icon(self):
-        """Return the icon to use in the frontend."""
-        return "mdi:battery-charging"
-
-    @property
-    def unit_of_measurement(self):
-        """Return the unit of measurement."""
-        return "W"
-
-    @property
-    def device_class(self):
-        """Return the device class."""
-        return "power"
-
-    async def async_update(self):
-        """Update battery power sensor with data from hass.data."""
-        try:
-            hub_entry_id = self.config_entry.entry_id
-            hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
-            
-            if hub_data and "battery_power" in hub_data:
-                self._state = round(float(hub_data["battery_power"]), 0) if hub_data["battery_power"] is not None else None
-        except Exception as e:
-            _LOGGER.error(f"Error updating battery power sensor {self._attr_name}: {e}", exc_info=True)
-
-
-class DynamicOcppEvseAvailableBatteryPowerSensor(SensorEntity):
-    """Individual available battery power sensor for better HA UI visibility."""
-
-    def __init__(self, hass, config_entry, name, entity_id):
-        """Initialize the sensor."""
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_name = f"{name} Available Battery Power"
-        self._attr_unique_id = f"{entity_id}_available_battery_power"
-        self._state = None
-
-    @property
-    def device_info(self):
-        """Return device information about this hub."""
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Electrical System Hub",
-        }
-
-    @property
-    def state(self):
-        """Return the state of the sensor."""
-        return self._state
-
-    @property
-    def icon(self):
-        """Return the icon to use in the frontend."""
-        return "mdi:battery-high"
-
-    @property
-    def unit_of_measurement(self):
-        """Return the unit of measurement."""
-        return "W"
-
-    @property
-    def device_class(self):
-        """Return the device class."""
-        return "power"
-
-    async def async_update(self):
-        """Update available battery power sensor with data from hass.data."""
-        try:
-            hub_entry_id = self.config_entry.entry_id
-            hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
-            
-            if hub_data and "available_battery_power" in hub_data:
-                self._state = round(float(hub_data["available_battery_power"]), 0) if hub_data["available_battery_power"] is not None else None
-        except Exception as e:
-            _LOGGER.error(f"Error updating available battery power sensor {self._attr_name}: {e}", exc_info=True)
-
-
-class DynamicOcppEvseTotalSiteAvailablePowerSensor(SensorEntity):
-    """Individual total site available power sensor for better HA UI visibility."""
-
-    def __init__(self, hass, config_entry, name, entity_id):
-        """Initialize the sensor."""
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_name = f"{name} Total Site Available Power"
-        self._attr_unique_id = f"{entity_id}_total_site_available_power"
-        self._state = None
-
-    @property
-    def device_info(self):
-        """Return device information about this hub."""
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Electrical System Hub",
-        }
-
-    @property
-    def state(self):
-        """Return the state of the sensor."""
-        return self._state
-
-    @property
-    def icon(self):
-        """Return the icon to use in the frontend."""
-        return "mdi:home-lightning-bolt"
-
-    @property
-    def unit_of_measurement(self):
-        """Return the unit of measurement."""
-        return "W"
-
-    @property
-    def device_class(self):
-        """Return the device class."""
-        return "power"
-
-    async def async_update(self):
-        """Update total site available power sensor with data from hass.data."""
-        try:
-            hub_entry_id = self.config_entry.entry_id
-            hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
-            
-            if hub_data and "total_site_available_power" in hub_data:
-                self._state = round(float(hub_data["total_site_available_power"]), 0) if hub_data["total_site_available_power"] is not None else 0
-        except Exception as e:
-            _LOGGER.error(f"Error updating total site available power sensor {self._attr_name}: {e}", exc_info=True)
-
-
-class DynamicOcppEvseNetSiteConsumptionSensor(SensorEntity):
-    """Individual net site consumption sensor for better HA UI visibility."""
-
-    def __init__(self, hass, config_entry, name, entity_id):
-        """Initialize the sensor."""
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_name = f"{name} Net Site Consumption"
-        self._attr_unique_id = f"{entity_id}_net_site_consumption"
-        self._state = None
-
-    @property
-    def device_info(self):
-        """Return device information about this hub."""
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Electrical System Hub",
-        }
-
-    @property
-    def state(self):
-        """Return the state of the sensor."""
-        return self._state
-
-    @property
-    def icon(self):
-        """Return the icon to use in the frontend."""
-        return "mdi:home-import-outline"
-
-    @property
-    def unit_of_measurement(self):
-        """Return the unit of measurement."""
-        return "W"
-
-    @property
-    def device_class(self):
-        """Return the device class."""
-        return "power"
-
-    async def async_update(self):
-        """Update net site consumption sensor with data from hass.data."""
-        try:
-            hub_entry_id = self.config_entry.entry_id
-            hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
-            
-            if hub_data and "net_site_consumption" in hub_data:
-                self._state = round(float(hub_data["net_site_consumption"]), 0) if hub_data["net_site_consumption"] is not None else 0
-        except Exception as e:
-            _LOGGER.error(f"Error updating net site consumption sensor {self._attr_name}: {e}", exc_info=True)
+            _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
