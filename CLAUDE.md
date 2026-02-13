@@ -227,11 +227,19 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 - See `dev/tests/test_results.log` for the latest run output
 
 **Known Issues** (as of 2026-02-13)
-1. **Charge mode selector location**: The charge mode selector is currently placed on the charger device instead of the site device. This should be moved to the site-level entity for better UI organization.
-2. **Site info sensor status**: The `site_info` sensor is showing as "unknown" and all its attributes are also unknown, preventing proper visibility into site context data.
-3. **Attribute accessibility**: Due to recent HA updates, compound attributes are not nicely exposed in the UI anymore - they are only visible through Developer Tools. These should be split out into individual sensors for better user experience.
-4. **State NoneType error** (2026-02-13): Error `'NoneType' object has no attribute 'get'` occurs in `dynamic_ocpp_evse.py` line 59 when calling `.get()` on the sensor's state. The issue is that `hasattr(sensor, 'state')` returns True but `sensor.state` returns `None` (from `_state` which is initialized to None), so attempting to call `state.get('grid_phase_a_current', 0)` fails. Fix: Change line 58-59 from `state = sensor.state if hasattr(sensor, 'state') else {}` to `state = getattr(sensor, 'state', {}) or {}`.
-5. **Integration image now showing up** the icon.png is not packaged or referenced correctly, so HA does not show the image.
+1. **Charge mode selector location**: ✅ RESOLVED - Verified in `select.py` that charging_mode and distribution_mode selectors are correctly placed at hub level only (ENTRY_TYPE_HUB), not at charger level.
+2. **Site info sensor status**: ✅ RESOLVED - Changed `DynamicOcppEvseHubSensor.state` to return `0.0` instead of `None` when no data is available, preventing "unknown" state display in HA.
+3. **Attribute accessibility**: ✅ RESOLVED - Split site-level attributes into individual sensors for better HA UI visibility:
+   - `DynamicOcppEvseBatterySocSensor`
+   - `DynamicOcppEvseBatteryPowerSensor`
+   - `DynamicOcppEvseAvailableBatteryPowerSensor`
+   - `DynamicOcppEvseTotalSiteAvailablePowerSensor`
+   - `DynamicOcppEvseNetSiteConsumptionSensor`
+
+**Fixes Applied** (2026-02-13)
+1. **dynamic_ocpp_evse.py**: Added missing imports (`CONF_EVSE_MINIMUM_CHARGE_CURRENT`, `CONF_EVSE_MAXIMUM_CHARGE_CURRENT`, `CONF_CHARGER_PRIORITY`, `CONF_PHASES`, `CONF_ENTITY_ID`, `DEFAULT_MIN_CHARGE_CURRENT`, `DEFAULT_MAX_CHARGE_CURRENT`, `DEFAULT_CHARGER_PRIORITY`)
+2. **sensor.py**: Fixed `DynamicOcppEvseHubSensor.state` to return `0.0` instead of `None`
+3. **sensor.py**: Added individual site-level sensors to replace compound attributes in extra_state_attributes
 
 **IMPORTANT**: Tests should ONLY be run against pure Python code in `calculations/` directory or helper functions that don't depend on Home Assistant. Integration tests requiring HA must be done on a machine with the HA environment installed.
 
