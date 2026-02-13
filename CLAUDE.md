@@ -18,6 +18,8 @@ Dynamic OCPP EVSE is a Home Assistant custom component that provides intelligent
 
 **Bug tracking**: Open issues live in `dev/ISSUES.md`. Claude picks them up automatically at the start of each session.
 
+**Improvement Ideas** `dev/IMPROVEMENTS.md` List of ideas for future imporovements and changes. Developer will prompt Claude to discuss and refine them.
+
 ## Architecture
 
 ### Code Structure
