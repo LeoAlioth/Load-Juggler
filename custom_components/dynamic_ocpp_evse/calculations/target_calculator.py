@@ -25,71 +25,101 @@ _LOGGER = logging.getLogger(__name__)
 
 def calculate_all_charger_targets(site: SiteContext) -> None:
     """
-    Calculate target current for all chargers using clear step-by-step approach.
-    
+    Calculate allocated and available current for all chargers.
+
     Steps:
     0. Filter active chargers (with cars connected)
     1. Calculate absolute site limits (per-phase physical constraints)
     2. Calculate solar available power
     3. Calculate excess available power
     4. Determine target power based on charging mode
-    5. Distribute power among chargers
-    
+    5. Distribute power among active chargers
+    6. Calculate available current for all chargers
+
     Args:
         site: SiteContext containing all site and charger data
     """
-    # Step 0: Filter out chargers with no car connected
-    active_chargers = [c for c in site.chargers 
-                       if c.connector_status not in ["Available", "Unknown", "Unavailable"]]
-    
-    if len(active_chargers) == 0:
-        _LOGGER.debug("No active chargers (all Available/Unknown/Unavailable)")
-        # Set all chargers to 0
-        for charger in site.chargers:
-            charger.target_current = 0
-        return
-    
-    # Temporarily replace site.chargers with active ones for calculation
+    # Step 0: Filter active vs inactive chargers
     all_chargers = site.chargers
-    site.chargers = active_chargers
-    
+    active_chargers = [c for c in all_chargers
+                       if c.connector_status not in ["Available", "Unknown", "Unavailable"]]
+    inactive_chargers = [c for c in all_chargers if c not in active_chargers]
+
     _LOGGER.debug(
         f"Calculating targets for {len(active_chargers)}/{len(all_chargers)} active chargers - "
         f"Mode: {site.charging_mode}, Distribution: {site.distribution_mode}"
     )
-    
-    # Step 1: Calculate absolute site limits (physical constraints) - returns constraint dict
+
+    # Steps 1-4: Calculate constraints (always, even with no active chargers)
     site_limit_constraints = _calculate_site_limit(site)
     _LOGGER.debug(f"Step 1 - Site limit constraints: {site_limit_constraints}")
-    
-    # Step 2: Calculate solar available - returns constraint dict
+
     solar_constraints = _calculate_solar_available(site)
     _LOGGER.debug(f"Step 2 - Solar available constraints: {solar_constraints}")
-    
-    # Step 3: Calculate excess available - returns constraint dict
+
     excess_constraints = _calculate_excess_available(site)
     _LOGGER.debug(f"Step 3 - Excess available constraints: {excess_constraints}")
-    
-    # Step 4: Determine target power based on mode - returns constraint dict
+
     target_constraints = _determine_target_power(
-        site,
-        site_limit_constraints,
-        solar_constraints,
-        excess_constraints
+        site, site_limit_constraints, solar_constraints, excess_constraints
     )
     _LOGGER.debug(f"Step 4 - Target power ({site.charging_mode}) constraints: {target_constraints}")
-    
-    # Step 5: Distribute power among chargers using constraint dict
-    _distribute_power(site, target_constraints)
-    
-    for charger in site.chargers:
-        _LOGGER.debug(f"Final - {charger.entity_id}: {charger.target_current:.1f}A")
-    
-    # Restore original chargers list and set inactive ones to 0
-    site.chargers = all_chargers
+
+    # Step 5: Distribute power among active chargers only
+    if active_chargers:
+        site.chargers = active_chargers
+        _distribute_power(site, target_constraints)
+        site.chargers = all_chargers
+
+    # Set inactive chargers to 0 allocated
+    for charger in inactive_chargers:
+        charger.allocated_current = 0
+
+    # Step 6: Calculate available current for all chargers
+    _calculate_available_current(all_chargers, active_chargers, inactive_chargers, target_constraints)
+
     for charger in all_chargers:
-        if charger not in active_chargers:
-            charger.target_current = 0
+        _LOGGER.debug(
+            f"Final - {charger.entity_id}: allocated={charger.allocated_current:.1f}A, "
+            f"available={charger.available_current:.1f}A"
+        )
+
+
+def _calculate_available_current(
+    all_chargers: list,
+    active_chargers: list,
+    inactive_chargers: list,
+    target_constraints: PhaseConstraints,
+) -> None:
+    """
+    Calculate available current for all chargers.
+
+    - Active chargers: available = allocated (they're getting what's available)
+    - Inactive chargers: available = what they could get from remaining capacity
+      after active chargers are deducted. Each idle charger independently sees
+      the same remaining pool (hypothetical, no deduction between idle chargers).
+    """
+    # Active chargers: available = allocated
+    for charger in active_chargers:
+        charger.available_current = charger.allocated_current
+
+    # Calculate remaining constraints after active allocations
+    remaining = target_constraints.copy()
+    for charger in active_chargers:
+        if charger.allocated_current > 0 and charger.active_phases_mask:
+            remaining = remaining.deduct(charger.allocated_current, charger.active_phases_mask)
+
+    # Inactive chargers: each independently sees remaining pool
+    for charger in inactive_chargers:
+        mask = charger.active_phases_mask
+        if not mask:
+            charger.available_current = 0
+            continue
+        available = remaining.get_available(mask)
+        if available >= charger.min_current:
+            charger.available_current = min(charger.max_current, available)
+        else:
+            charger.available_current = 0
 
 
 def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
@@ -475,18 +505,18 @@ def _distribute_per_phase_priority(site: SiteContext, constraints: PhaseConstrai
     # Pass 2: Allocate remainder by priority
     for charger in chargers_by_priority:
         if allocated.get(charger.entity_id, 0) == 0:
-            charger.target_current = 0
+            charger.allocated_current = 0
             continue
 
         mask = charger.active_phases_mask
         if not mask:
-            charger.target_current = allocated[charger.entity_id]
+            charger.allocated_current = allocated[charger.entity_id]
             continue
 
         charger_available = remaining.get_available(mask)
         wanted_additional = charger.max_current - allocated[charger.entity_id]
         additional = min(wanted_additional, charger_available)
-        charger.target_current = allocated[charger.entity_id] + additional
+        charger.allocated_current = allocated[charger.entity_id] + additional
         remaining = remaining.deduct(additional, mask)
 
 
@@ -516,7 +546,7 @@ def _distribute_per_phase_shared(site: SiteContext, constraints: PhaseConstraint
     charging_chargers = [c for c in site.chargers if allocated.get(c.entity_id, 0) > 0]
     if not charging_chargers:
         for charger in site.chargers:
-            charger.target_current = 0
+            charger.allocated_current = 0
         return
 
     # Pass 2: Split remainder equally among charging chargers
@@ -538,11 +568,11 @@ def _distribute_per_phase_shared(site: SiteContext, constraints: PhaseConstraint
             remaining = remaining.deduct(additional, mask)
 
     for charger in charging_chargers:
-        charger.target_current = allocated[charger.entity_id]
+        charger.allocated_current = allocated[charger.entity_id]
 
     for charger in site.chargers:
         if charger not in charging_chargers:
-            charger.target_current = 0
+            charger.allocated_current = 0
 
 
 def _distribute_per_phase_strict(site: SiteContext, constraints: PhaseConstraints) -> None:
@@ -556,12 +586,12 @@ def _distribute_per_phase_strict(site: SiteContext, constraints: PhaseConstraint
         mask = charger.active_phases_mask
         if not mask:
             _LOGGER.error(f"Charger {charger.entity_id} has no phase mask!")
-            charger.target_current = 0
+            charger.allocated_current = 0
             continue
 
         charger_available = remaining.get_available(mask)
-        charger.target_current = min(charger.max_current, charger_available)
-        remaining = remaining.deduct(charger.target_current, mask)
+        charger.allocated_current = min(charger.max_current, charger_available)
+        remaining = remaining.deduct(charger.allocated_current, mask)
 
 
 def _distribute_per_phase_optimized(site: SiteContext, constraints: PhaseConstraints) -> None:
@@ -575,7 +605,7 @@ def _distribute_per_phase_optimized(site: SiteContext, constraints: PhaseConstra
         mask = charger.active_phases_mask
         if not mask:
             _LOGGER.error(f"Charger {charger.entity_id} has no phase mask!")
-            charger.target_current = 0
+            charger.allocated_current = 0
             continue
 
         charger_available = remaining.get_available(mask)
@@ -594,7 +624,7 @@ def _distribute_per_phase_optimized(site: SiteContext, constraints: PhaseConstra
                     can_reduce = max(0, wanted - charger.min_current)
                     wanted -= min(reduction_needed, can_reduce)
 
-        charger.target_current = wanted
+        charger.allocated_current = wanted
         remaining = remaining.deduct(wanted, mask)
 
 

@@ -35,7 +35,7 @@ scenarios:
         priority: 1
     expected: # Manually verified expected result
       charger_1:
-        target: 8.0  # 10A solar - 2A consumption = 8A
+        allocated: 8.0  # 10A solar - 2A consumption = 8A
   
   - name: "1ph-1c-solar-prio-no-bat-insufficient"
     description: "Single phase, 1 charger, insufficient solar (below min)"
@@ -67,4 +67,4 @@ scenarios:
         priority: 1
     expected: # Manually verified expected result
       charger_1:
-        target: 0  # 5A - 1A = 4A, below 6A minimum
+        allocated: 0  # 5A - 1A = 4A, below 6A minimum

@@ -64,7 +64,7 @@ def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
     Simulate feedback: chargers drawing power reduces export.
 
     Args:
-        site: SiteContext with chargers that have target_current set
+        site: SiteContext with chargers that have allocated_current set
         initial_solar: Total solar production (W)
         initial_consumption_per_phase: [phase_a, phase_b, phase_c] consumption (A)
     """
@@ -95,37 +95,37 @@ def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
             # Single-phase: add to specific phase based on active_phases_mask
             if charger.active_phases_mask:
                 if 'A' in charger.active_phases_mask and 'B' not in charger.active_phases_mask and 'C' not in charger.active_phases_mask:
-                    phase_a_load += charger.target_current
+                    phase_a_load += charger.allocated_current
                 elif 'B' in charger.active_phases_mask and 'A' not in charger.active_phases_mask and 'C' not in charger.active_phases_mask:
-                    phase_b_load += charger.target_current
+                    phase_b_load += charger.allocated_current
                 elif 'C' in charger.active_phases_mask and 'A' not in charger.active_phases_mask and 'B' not in charger.active_phases_mask:
-                    phase_c_load += charger.target_current
+                    phase_c_load += charger.allocated_current
             else:
                 # No mask - default to phase A
-                phase_a_load += charger.target_current
+                phase_a_load += charger.allocated_current
 
         elif charger.phases == 2:
             # Two-phase: add to appropriate two phases
             if charger.active_phases_mask:
                 if 'A' in charger.active_phases_mask and 'B' in charger.active_phases_mask:
-                    phase_a_load += charger.target_current
-                    phase_b_load += charger.target_current
+                    phase_a_load += charger.allocated_current
+                    phase_b_load += charger.allocated_current
                 elif 'A' in charger.active_phases_mask and 'C' in charger.active_phases_mask:
-                    phase_a_load += charger.target_current
-                    phase_c_load += charger.target_current
+                    phase_a_load += charger.allocated_current
+                    phase_c_load += charger.allocated_current
                 elif 'B' in charger.active_phases_mask and 'C' in charger.active_phases_mask:
-                    phase_b_load += charger.target_current
-                    phase_c_load += charger.target_current
+                    phase_b_load += charger.allocated_current
+                    phase_c_load += charger.allocated_current
             else:
                 # No mask - default to AB
-                phase_a_load += charger.target_current
-                phase_b_load += charger.target_current
+                phase_a_load += charger.allocated_current
+                phase_b_load += charger.allocated_current
 
         elif charger.phases == 3:
             # Three-phase: add to all phases
-            phase_a_load += charger.target_current
-            phase_b_load += charger.target_current
-            phase_c_load += charger.target_current
+            phase_a_load += charger.allocated_current
+            phase_b_load += charger.allocated_current
+            phase_c_load += charger.allocated_current
 
     # Calculate new export per phase (solar - total_load)
     site.export_current = PhaseValues(
@@ -262,7 +262,8 @@ def build_site_from_scenario(scenario):
             # New fields for phase tracking and connector status
             car_phases=charger_data.get("car_phases"),  # None = default to phases
             active_phases_mask=active_phases_mask,  # Set from connected_to_phase or YAML
-            connector_status=charger_data.get("connector_status", "Charging"),  # Default to active
+            connector_status=charger_data.get("connector_status",
+                                              "Available" if charger_data.get("active") is False else "Charging"),
             l1_current=charger_data.get("l1_current", 0),
             l2_current=charger_data.get("l2_current", 0),
             l3_current=charger_data.get("l3_current", 0),
@@ -310,7 +311,7 @@ def run_scenario_with_iterations(scenario, verbose=False):
         # Record iteration
         history.append({
             'iteration': i,
-            'chargers': {c.entity_id: c.target_current for c in site.chargers},
+            'chargers': {c.entity_id: c.allocated_current for c in site.chargers},
             'export_per_phase': [site.export_current.a, site.export_current.b, site.export_current.c],
             'total_export': site.total_export_current,
         })
@@ -342,24 +343,38 @@ def validate_results(scenario, site):
     expected = scenario['expected']
     passed = True
     errors = []
-    
+
     for charger in site.chargers:
         entity_id = charger.entity_id
         if entity_id in expected:
-            expected_target = expected[entity_id]['target']
-            actual_target = charger.target_current
-            
+            expected_allocated = expected[entity_id]['allocated']
+            actual_allocated = charger.allocated_current
+
             # Allow 0.1A tolerance for floating point
-            if abs(actual_target - expected_target) > 0.1:
+            if abs(actual_allocated - expected_allocated) > 0.1:
                 passed = False
                 errors.append(
-                    f"{entity_id}: expected {expected_target}A, got {actual_target:.1f}A"
+                    f"{entity_id}: expected allocated={expected_allocated}A, got {actual_allocated:.1f}A"
                 )
             else:
                 errors.append(
-                    f"{entity_id}: {actual_target:.1f}A"
+                    f"{entity_id}: allocated={actual_allocated:.1f}A"
                 )
-    
+
+            # Check available current if specified in expected
+            if 'available' in expected[entity_id]:
+                expected_available = expected[entity_id]['available']
+                actual_available = charger.available_current
+                if abs(actual_available - expected_available) > 0.1:
+                    passed = False
+                    errors.append(
+                        f"{entity_id}: expected available={expected_available}A, got {actual_available:.1f}A"
+                    )
+                else:
+                    errors.append(
+                        f"{entity_id}: available={actual_available:.1f}A"
+                    )
+
     return passed, errors
 
 
@@ -514,7 +529,7 @@ def run_single_scenario(scenario_name, yaml_file='dev/tests/test_scenarios.yaml'
             for charger in site.chargers:
                 print(f"  {charger.entity_id} ({site.charging_mode} mode):")
                 print(f"    Config: {charger.min_current}-{charger.max_current}A, {charger.phases}ph")
-                print(f"    Target: {charger.target_current:.1f}A")
+                print(f"    Target: {charger.allocated_current:.1f}A")
             print()
             
             # Validate

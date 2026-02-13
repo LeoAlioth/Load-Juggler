@@ -251,9 +251,10 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                     [f"{k[-8:]}: {v:.1f}A" for k, v in charger_targets.items()]
                 ))
 
-            # Get this charger's allocated current directly from engine output
+            # Get this charger's allocated and available current from engine output
+            charger_available = hub_data.get("charger_available", {})
             self._allocated_current = charger_targets.get(self.config_entry.entry_id, 0)
-            self._state = self._allocated_current
+            self._state = charger_available.get(self.config_entry.entry_id, self._allocated_current)
 
             # Also update the global allocations for any other code that reads them
             if DOMAIN in self.hass.data and "charger_allocations" in self.hass.data[DOMAIN]:
@@ -266,7 +267,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             # allocated current drops below the charger's minimum
             pause_duration = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
 
-            if self._state < min_charge_current:
+            if self._allocated_current < min_charge_current:
                 # Current below minimum — start or continue pause
                 if self._pause_started_at is None:
                     self._pause_started_at = datetime.now()
@@ -283,9 +284,9 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                     else:
                         # Pause expired and current is sufficient — resume
                         self._pause_started_at = None
-                        limit = round(self._state, 1)
+                        limit = round(self._allocated_current, 1)
                 else:
-                    limit = round(self._state, 1)
+                    limit = round(self._allocated_current, 1)
 
             # Prepare the data for the OCPP set_charge_rate service
             profile_timeout = get_entry_value(self.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)

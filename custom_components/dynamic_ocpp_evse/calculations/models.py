@@ -51,8 +51,9 @@ class ChargerContext:
     l2_current: float = 0  # Phase B current (A)
     l3_current: float = 0  # Phase C current (A)
     
-    # Calculated target (populated during calculation)
-    target_current: float = 0
+    # Calculated values (populated during calculation)
+    allocated_current: float = 0   # What the charger actually gets (sent via OCPP)
+    available_current: float = 0   # What the charger could get if a car were plugged in
 
     # OCPP settings
     ocpp_device_id: str = None

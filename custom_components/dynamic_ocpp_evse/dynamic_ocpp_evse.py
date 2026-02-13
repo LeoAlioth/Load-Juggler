@@ -226,7 +226,8 @@ def calculate_available_current_for_hub(sensor):
     calculate_all_charger_targets(site)
 
     # Build per-charger targets dict — these ARE the final allocations
-    charger_targets = {c.charger_id: c.target_current for c in site.chargers}
+    charger_targets = {c.charger_id: c.allocated_current for c in site.chargers}
+    charger_available = {c.charger_id: c.available_current for c in site.chargers}
 
     # Total available current = sum of all charger targets
     total_available = sum(charger_targets.values())
@@ -285,6 +286,7 @@ def calculate_available_current_for_hub(sensor):
 
         # Per-charger targets — these are the final allocations from the engine
         "charger_targets": charger_targets,
+        "charger_available": charger_available,
         "distribution_mode": site.distribution_mode,
     }
 
