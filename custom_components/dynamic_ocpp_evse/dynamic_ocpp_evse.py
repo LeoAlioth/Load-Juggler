@@ -229,6 +229,25 @@ def calculate_available_current_for_hub(sensor):
     # Total available current = sum of all charger targets
     total_available = sum(charger_targets.values())
 
+    # Compute derived values for hub sensors
+    # Grid headroom: how much more we can import per phase before hitting breaker
+    grid_headroom_a = max(0, main_breaker_rating - phase_a_consumption) * voltage
+    grid_headroom_b = max(0, main_breaker_rating - phase_b_consumption) * voltage if num_phases >= 2 else 0
+    grid_headroom_c = max(0, main_breaker_rating - phase_c_consumption) * voltage if num_phases >= 3 else 0
+    site_grid_available_power = round(grid_headroom_a + grid_headroom_b + grid_headroom_c, 0)
+
+    # Battery discharge power available for EV charging
+    if (battery_soc is not None and battery_soc_min is not None
+            and battery_soc >= battery_soc_min and battery_max_discharge_power):
+        available_battery_power = round(float(battery_max_discharge_power), 0)
+    else:
+        available_battery_power = 0
+
+    # Total EVSE power = sum of actual charger draws
+    total_evse_power = round(
+        sum((c.l1_current + c.l2_current + c.l3_current) * voltage for c in site.chargers), 0
+    )
+
     # Build result dict
     result = {
         CONF_AVAILABLE_CURRENT: round(total_available, 1),
@@ -241,7 +260,7 @@ def calculate_available_current_for_hub(sensor):
         "battery_soc_min": site.battery_soc_min,
         "battery_soc_target": site.battery_soc_target,
         "battery_power": battery_power,
-        "available_battery_power": 0,
+        "available_battery_power": available_battery_power,
         "site_available_current_phase_a": round(site.phase_a_export, 1),
         "site_available_current_phase_b": round(site.phase_b_export, 1),
         "site_available_current_phase_c": round(site.phase_c_export, 1),
@@ -249,6 +268,11 @@ def calculate_available_current_for_hub(sensor):
         "net_site_consumption": round(
             (phase_a_consumption + phase_b_consumption + phase_c_consumption) * voltage, 0
         ),
+        "site_grid_available_power": site_grid_available_power,
+        "site_battery_available_power": available_battery_power,
+        "total_evse_power": total_evse_power,
+        "solar_surplus_power": round(total_export_power, 0),
+        "solar_surplus_current": round(total_export_current, 2),
 
         # Per-charger targets — these are the final allocations from the engine
         "charger_targets": charger_targets,
