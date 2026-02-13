@@ -55,7 +55,7 @@ _load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
 _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
 
 # Convenience aliases for the rest of this file
-from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext
+from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext, PhaseValues
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 
 
@@ -128,12 +128,14 @@ def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
             phase_c_load += charger.target_current
 
     # Calculate new export per phase (solar - total_load)
-    site.phase_a_export = max(0, solar_per_phase_a - phase_a_load)
-    site.phase_b_export = max(0, solar_per_phase_b - phase_b_load)
-    site.phase_c_export = max(0, solar_per_phase_c - phase_c_load)
+    site.export_current = PhaseValues(
+        max(0, solar_per_phase_a - phase_a_load),
+        max(0, solar_per_phase_b - phase_b_load),
+        max(0, solar_per_phase_c - phase_c_load),
+    )
 
     # Update totals
-    site.total_export_current = site.phase_a_export + site.phase_b_export + site.phase_c_export
+    site.total_export_current = site.export_current.total
     site.total_export_power = site.total_export_current * voltage
 
 
@@ -213,12 +215,8 @@ def build_site_from_scenario(scenario):
         voltage=voltage,
         num_phases=num_phases,
         main_breaker_rating=site_data.get('main_breaker_rating', 63),
-        phase_a_consumption=phase_a_cons,
-        phase_b_consumption=phase_b_cons,
-        phase_c_consumption=phase_c_cons,
-        phase_a_export=phase_a_export,
-        phase_b_export=phase_b_export,
-        phase_c_export=phase_c_export,
+        consumption=PhaseValues(phase_a_cons, phase_b_cons, phase_c_cons),
+        export_current=PhaseValues(phase_a_export, phase_b_export, phase_c_export),
         solar_production_total=solar_total,
         total_export_current=total_export_current,
         total_export_power=total_export_power,
@@ -228,7 +226,7 @@ def build_site_from_scenario(scenario):
         excess_export_threshold=site_data.get('excess_export_threshold', 13000),
         battery_max_charge_power=site_data.get('battery_max_charge_power', 5000),
         battery_max_discharge_power=site_data.get('battery_max_discharge_power', 5000),
-        max_import_power=site_data.get('max_import_power'),
+        max_grid_import_power=site_data.get('max_import_power'),
         distribution_mode=site_data.get('distribution_mode', 'priority'),
         inverter_max_power=site_data.get('inverter_max_power'),
         inverter_max_power_per_phase=site_data.get('inverter_max_power_per_phase'),
@@ -313,10 +311,8 @@ def run_scenario_with_iterations(scenario, verbose=False):
         # If not first iteration, use updated export from feedback
         if i > 0 and initial_solar > 0:
             prev = history[-1]
-            site.phase_a_export = prev['export_per_phase'][0]
-            site.phase_b_export = prev['export_per_phase'][1]
-            site.phase_c_export = prev['export_per_phase'][2]
-            site.total_export_current = sum(prev['export_per_phase'])
+            site.export_current = PhaseValues(*prev['export_per_phase'])
+            site.total_export_current = site.export_current.total
             site.total_export_power = site.total_export_current * site.voltage
         
         # Calculate targets
@@ -326,7 +322,7 @@ def run_scenario_with_iterations(scenario, verbose=False):
         history.append({
             'iteration': i,
             'chargers': {c.entity_id: c.target_current for c in site.chargers},
-            'export_per_phase': [site.phase_a_export, site.phase_b_export, site.phase_c_export],
+            'export_per_phase': [site.export_current.a, site.export_current.b, site.export_current.c],
             'total_export': site.total_export_current,
         })
         

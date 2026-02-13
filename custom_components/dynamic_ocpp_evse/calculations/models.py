@@ -2,7 +2,12 @@
 Data models for EVSE calculations - NO Home Assistant dependencies.
 Pure Python dataclasses that can be used in tests.
 """
+from __future__ import annotations
+
+import logging
 from dataclasses import dataclass, field
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -65,36 +70,43 @@ class ChargerContext:
 
 
 @dataclass
+class PhaseValues:
+    """Per-phase values (A, B, C) with convenience properties."""
+    a: float = 0.0
+    b: float = 0.0
+    c: float = 0.0
+
+    @property
+    def total(self) -> float:
+        return self.a + self.b + self.c
+
+    def __neg__(self) -> PhaseValues:
+        return PhaseValues(-self.a, -self.b, -self.c)
+
+    def clamp_min(self, v: float = 0.0) -> PhaseValues:
+        return PhaseValues(max(v, self.a), max(v, self.b), max(v, self.c))
+
+    def __repr__(self) -> str:
+        return f"PV(a={self.a:.1f}, b={self.b:.1f}, c={self.c:.1f})"
+
+
+@dataclass
 class SiteContext:
     """Site-wide electrical system state and configuration."""
     # Grid/Power configuration
     voltage: float = 230
     main_breaker_rating: float = 63
-    max_import_power: float = 0
     num_phases: int = 3
-    invert_phases: bool = False
-    
-    # Grid currents (site meter readings) - Positive = import, Negative = export
-    grid_phase_a_current: float = 0
-    grid_phase_b_current: float = 0
-    grid_phase_c_current: float = 0
-    total_import_current: float = 0
-    
-    # Per-phase consumption (home load before EV)
-    phase_a_consumption: float = 0
-    phase_b_consumption: float = 0
-    phase_c_consumption: float = 0
-    
-    # Export (solar surplus) - Positive values
-    phase_a_export_current: float = 0
-    phase_b_export_current: float = 0
-    phase_c_export_current: float = 0
-    phase_a_export: float = 0  # Alias for compatibility
-    phase_b_export: float = 0  # Alias for compatibility
-    phase_c_export: float = 0  # Alias for compatibility
+
+    # Per-phase readings from site meter (Amps)
+    grid_current: PhaseValues = field(default_factory=PhaseValues)     # raw meter (+ import, - export)
+    consumption: PhaseValues = field(default_factory=PhaseValues)      # max(0, grid_current) per phase
+    export_current: PhaseValues = field(default_factory=PhaseValues)   # max(0, -grid_current) per phase
+
+    # Totals
     total_export_current: float = 0
     total_export_power: float = 0
-    solar_production_total: float = 0  # For tests
+    solar_production_total: float = 0
     
     # Battery
     battery_soc: float | None = None
@@ -112,29 +124,194 @@ class SiteContext:
     inverter_max_power: float | None = None  # Total inverter power capacity (W)
     inverter_max_power_per_phase: float | None = None  # Max power per phase (W)
     inverter_supports_asymmetric: bool = False  # Can inverter balance power across phases
-    
-    # Site available power
-    site_available_current_phase_a: float = 0
-    site_available_current_phase_b: float = 0
-    site_available_current_phase_c: float = 0
-    site_battery_available_power: float = 0
-    site_grid_available_power: float = 0
-    total_site_available_power: float = 0
-    
-    # Site power balance
-    net_site_consumption: float = 0  # Watts (+ = importing, - = exporting)
-    solar_surplus_current: float = 0  # Amps (+ = excess available)
-    solar_surplus_power: float = 0  # Watts (+ = excess available)
-    
+
     # Settings
     allow_grid_charging: bool = True
     power_buffer: float = 0
     excess_export_threshold: float = 13000
     charging_mode: str = "Standard"  # "Standard", "Eco", "Solar", "Excess"
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
-    
+
     # Chargers at this site
     chargers: list[ChargerContext] = field(default_factory=list)
-    
-    # Legacy state dict (for backward compatibility during migration)
-    state: dict = field(default_factory=dict)
+
+
+@dataclass
+class PhaseConstraints:
+    """Per-phase and combination power constraints (in Amps).
+
+    Keys represent physical phase combinations:
+    - A, B, C: single-phase limits
+    - AB, AC, BC: two-phase combination limits
+    - ABC: three-phase (total) limit
+    """
+    A: float = 0.0
+    B: float = 0.0
+    C: float = 0.0
+    AB: float = 0.0
+    AC: float = 0.0
+    BC: float = 0.0
+    ABC: float = 0.0
+
+    @classmethod
+    def zeros(cls) -> PhaseConstraints:
+        return cls()
+
+    @classmethod
+    def from_per_phase(cls, a: float, b: float, c: float) -> PhaseConstraints:
+        """Build constraints from per-phase values (symmetric inverter pattern).
+
+        Multi-phase combos are the sum of their components.
+        """
+        return cls(
+            A=a, B=b, C=c,
+            AB=a + b, AC=a + c, BC=b + c,
+            ABC=a + b + c,
+        )
+
+    @classmethod
+    def from_pool(cls, a: float, b: float, c: float, total: float) -> PhaseConstraints:
+        """Build constraints for asymmetric inverter pattern.
+
+        Per-phase limits may be less than total (due to per-phase inverter cap),
+        but multi-phase combos can access the full pool.
+        """
+        return cls(
+            A=a, B=b, C=c,
+            AB=total, AC=total, BC=total,
+            ABC=total,
+        )
+
+    def __add__(self, other: PhaseConstraints) -> PhaseConstraints:
+        return PhaseConstraints(
+            A=self.A + other.A, B=self.B + other.B, C=self.C + other.C,
+            AB=self.AB + other.AB, AC=self.AC + other.AC, BC=self.BC + other.BC,
+            ABC=self.ABC + other.ABC,
+        )
+
+    def __sub__(self, other: PhaseConstraints) -> PhaseConstraints:
+        return PhaseConstraints(
+            A=self.A - other.A, B=self.B - other.B, C=self.C - other.C,
+            AB=self.AB - other.AB, AC=self.AC - other.AC, BC=self.BC - other.BC,
+            ABC=self.ABC - other.ABC,
+        )
+
+    def scale(self, factor: float) -> PhaseConstraints:
+        return PhaseConstraints(
+            A=self.A * factor, B=self.B * factor, C=self.C * factor,
+            AB=self.AB * factor, AC=self.AC * factor, BC=self.BC * factor,
+            ABC=self.ABC * factor,
+        )
+
+    def element_min(self, other: PhaseConstraints) -> PhaseConstraints:
+        return PhaseConstraints(
+            A=min(self.A, other.A), B=min(self.B, other.B), C=min(self.C, other.C),
+            AB=min(self.AB, other.AB), AC=min(self.AC, other.AC), BC=min(self.BC, other.BC),
+            ABC=min(self.ABC, other.ABC),
+        )
+
+    def element_max(self, other: PhaseConstraints) -> PhaseConstraints:
+        return PhaseConstraints(
+            A=max(self.A, other.A), B=max(self.B, other.B), C=max(self.C, other.C),
+            AB=max(self.AB, other.AB), AC=max(self.AC, other.AC), BC=max(self.BC, other.BC),
+            ABC=max(self.ABC, other.ABC),
+        )
+
+    def get_available(self, mask: str) -> float:
+        """Get per-phase current available for a charger with given phase mask.
+
+        Implements Multi-Phase Constraint Principle:
+        - 1-phase on A: min(A, any 2-phase combo containing A, ABC)
+        - 2-phase on AB: min(A, B, AB/2, ABC/2)
+        - 3-phase: min(A, B, C, AB/2, AC/2, BC/2, ABC/3)
+        """
+        if len(mask) == 1:
+            phase = mask
+            two_phase_limits = []
+            for combo in ('AB', 'AC', 'BC'):
+                if phase in combo:
+                    two_phase_limits.append(getattr(self, combo))
+            return min(getattr(self, phase), *two_phase_limits, self.ABC)
+
+        elif len(mask) == 2:
+            return min(
+                getattr(self, mask[0]),
+                getattr(self, mask[1]),
+                getattr(self, mask) / 2,
+                self.ABC / 2,
+            )
+
+        elif mask == 'ABC':
+            return min(
+                self.A, self.B, self.C,
+                self.AB / 2, self.AC / 2, self.BC / 2,
+                self.ABC / 3,
+            )
+
+        _LOGGER.warning("Unknown phase mask '%s', returning 0", mask)
+        return 0
+
+    def deduct(self, current: float, mask: str) -> PhaseConstraints:
+        """Deduct current from all affected phase combinations. Returns new instance."""
+        result = self.copy()
+
+        # Deduct from individual phases
+        for phase in mask:
+            setattr(result, phase, getattr(result, phase) - current)
+
+        # Deduct from affected 2-phase combinations
+        for combo in ('AB', 'AC', 'BC'):
+            overlap = sum(1 for p in mask if p in combo)
+            if overlap > 0:
+                setattr(result, combo, getattr(result, combo) - current * overlap)
+
+        # Deduct total from ABC
+        result.ABC -= current * len(mask)
+
+        return result.normalize()
+
+    def normalize(self) -> PhaseConstraints:
+        """Apply cascading limits to ensure constraint consistency. Returns new instance."""
+        r = self.copy()
+
+        for _ in range(2):
+            # DOWNWARD: larger combos limited by smaller components
+            r.AB = min(r.AB, r.A + r.B, r.ABC)
+            r.AC = min(r.AC, r.A + r.C, r.ABC)
+            r.BC = min(r.BC, r.B + r.C, r.ABC)
+
+            r.ABC = min(
+                r.ABC,
+                r.A + r.B + r.C,
+                r.AB + r.C,
+                r.AC + r.B,
+                r.BC + r.A,
+            )
+
+            # UPWARD: smaller components limited by larger combos
+            r.A = min(r.A, r.AB, r.AC, r.ABC)
+            r.B = min(r.B, r.AB, r.BC, r.ABC)
+            r.C = min(r.C, r.AC, r.BC, r.ABC)
+
+        # Clamp non-negative
+        r.A = max(0, r.A)
+        r.B = max(0, r.B)
+        r.C = max(0, r.C)
+        r.AB = max(0, r.AB)
+        r.AC = max(0, r.AC)
+        r.BC = max(0, r.BC)
+        r.ABC = max(0, r.ABC)
+
+        return r
+
+    def copy(self) -> PhaseConstraints:
+        return PhaseConstraints(
+            A=self.A, B=self.B, C=self.C,
+            AB=self.AB, AC=self.AC, BC=self.BC,
+            ABC=self.ABC,
+        )
+
+    def __repr__(self) -> str:
+        return (f"PC(A={self.A:.1f}, B={self.B:.1f}, C={self.C:.1f}, "
+                f"AB={self.AB:.1f}, AC={self.AC:.1f}, BC={self.BC:.1f}, "
+                f"ABC={self.ABC:.1f})")

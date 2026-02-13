@@ -8,6 +8,7 @@ All core calculation logic has been refactored into the calculations/ directory.
 from .calculations import (
     SiteContext,
     ChargerContext,
+    PhaseValues,
     calculate_all_charger_targets,
 )
 
@@ -158,15 +159,9 @@ def calculate_available_current_for_hub(sensor):
         voltage=voltage,
         main_breaker_rating=main_breaker_rating,
         num_phases=num_phases,
-        grid_phase_a_current=raw_phase_a,
-        grid_phase_b_current=raw_phase_b,
-        grid_phase_c_current=raw_phase_c,
-        phase_a_consumption=phase_a_consumption,
-        phase_b_consumption=phase_b_consumption,
-        phase_c_consumption=phase_c_consumption,
-        phase_a_export=phase_a_export_current,
-        phase_b_export=phase_b_export_current,
-        phase_c_export=phase_c_export_current,
+        grid_current=PhaseValues(raw_phase_a, raw_phase_b, raw_phase_c),
+        consumption=PhaseValues(phase_a_consumption, phase_b_consumption, phase_c_consumption),
+        export_current=PhaseValues(phase_a_export_current, phase_b_export_current, phase_c_export_current),
         solar_production_total=solar_production_total,
         total_export_current=total_export_current,
         total_export_power=total_export_power,
@@ -318,17 +313,10 @@ def calculate_charger_available_current(charger_target, max_current):
     return min(charger_target, max_current)
 
 
-# Backward compatibility aliases
-ChargeContext = ChargerContext
-calculate_standard_mode = lambda site: site.charging_mode  # Placeholder for backward compat
-calculate_eco_mode = lambda site: site.charging_mode      # Placeholder for backward compat
-calculate_solar_mode = lambda site: site.charging_mode    # Placeholder for backward compat
-calculate_excess_mode = lambda site: site.charging_mode   # Placeholder for backward compat
-
-# Re-export everything from calculations package
 __all__ = [
     "SiteContext",
     "ChargerContext",
+    "PhaseValues",
     "calculate_all_charger_targets",
     "calculate_available_current_for_hub",
     "calculate_charger_available_current",
