@@ -118,10 +118,9 @@ def calculate_available_current_for_hub(sensor):
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
     battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
 
-    # --- Read inverter data from HA entities ---
+    # --- Read max grid import power from HA entity ---
     max_import_power_entity = get_entry_value(hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
-    inverter_max_power = _read_entity(max_import_power_entity, None) if max_import_power_entity else None
-    inverter_max_power_per_phase = inverter_max_power / num_phases if inverter_max_power else None
+    max_grid_import_power = _read_entity(max_import_power_entity, None) if max_import_power_entity else None
     inverter_supports_asymmetric = False  # TODO: make configurable
 
     # --- Read charging and distribution mode from HA select entities ---
@@ -142,6 +141,10 @@ def calculate_available_current_for_hub(sensor):
 
     power_buffer_entity = f"number.{hub_entity_id}_power_buffer"
     power_buffer = _read_entity(power_buffer_entity, 0)
+
+    # Apply power buffer to reduce effective max grid import power
+    if max_grid_import_power is not None and power_buffer > 0:
+        max_grid_import_power = max(0, max_grid_import_power - power_buffer)
 
     _LOGGER.debug(
         "Hub state read: phases=%d, phase_a=%.1fA (entity=%s), phase_b=%.1fA, phase_c=%.1fA, "
@@ -174,8 +177,7 @@ def calculate_available_current_for_hub(sensor):
         battery_soc_hysteresis=float(battery_soc_hysteresis) if battery_soc_hysteresis is not None else 5,
         battery_max_charge_power=float(battery_max_charge_power) if battery_max_charge_power is not None else None,
         battery_max_discharge_power=float(battery_max_discharge_power) if battery_max_discharge_power is not None else None,
-        inverter_max_power=float(inverter_max_power) if inverter_max_power is not None else None,
-        inverter_max_power_per_phase=float(inverter_max_power_per_phase) if inverter_max_power_per_phase is not None else None,
+        max_grid_import_power=float(max_grid_import_power) if max_grid_import_power is not None else None,
         inverter_supports_asymmetric=inverter_supports_asymmetric,
         excess_export_threshold=excess_threshold,
         allow_grid_charging=allow_grid_charging,

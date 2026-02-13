@@ -105,6 +105,9 @@ class SiteContext:
     battery_max_charge_power: float | None = None
     battery_max_discharge_power: float | None = None
     
+    # Grid import limit (from smart meter / grid operator)
+    max_grid_import_power: float | None = None  # Max total power allowed from grid (W)
+
     # Inverter specifications (for sites with battery/solar inverter)
     inverter_max_power: float | None = None  # Total inverter power capacity (W)
     inverter_max_power_per_phase: float | None = None  # Max power per phase (W)

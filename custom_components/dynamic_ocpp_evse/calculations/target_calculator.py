@@ -141,6 +141,20 @@ def _calculate_grid_limit(site: SiteContext) -> dict:
     # Calculate total available (sum of all phases)
     total_limit = phase_a_limit + phase_b_limit + phase_c_limit
 
+    # Apply max grid import power limit (if configured)
+    # This is a total (all-phase) constraint from the grid operator / smart meter.
+    # Power buffer has already been subtracted before reaching SiteContext.
+    if site.max_grid_import_power is not None:
+        total_consumption = site.phase_a_consumption + site.phase_b_consumption + site.phase_c_consumption
+        max_import_current = site.max_grid_import_power / site.voltage
+        available_for_evs = max(0, max_import_current - total_consumption)
+        if total_limit > available_for_evs and total_limit > 0:
+            scale = available_for_evs / total_limit
+            phase_a_limit *= scale
+            phase_b_limit *= scale
+            phase_c_limit *= scale
+            total_limit = available_for_evs
+
     # Build constraint dict with all phase combinations
     constraints = {
         'A': phase_a_limit,

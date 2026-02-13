@@ -876,3 +876,47 @@ async def test_allow_grid_charging_off_reduces_available(
         f"allow_grid_charging=off ({target_off:.1f}A) should give less than "
         f"allow_grid_charging=on ({target_on:.1f}A)"
     )
+
+
+async def test_power_buffer_reduces_grid_available(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Power buffer is subtracted from max_grid_import_power, reducing
+    the grid available power and thus the charger target.
+
+    Test scenario: 3-phase, importing ~5A/phase (~3060W total consumption).
+    grid_power_limit = 6000W → available for EVs = (6000-3060)/230 ≈ 12.8A total → 4.3A/phase.
+    With 2000W buffer → effective = 4000W → (4000-3060)/230 ≈ 4.1A total → below min_current → 0A.
+    """
+    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+        calculate_available_current_for_hub,
+    )
+
+    _set_ha_states(hass)
+    # Set a low grid power limit so it becomes the binding constraint
+    hass.states.async_set("sensor.grid_power_limit", "6000")
+
+    # Run with power buffer = 0
+    hass.states.async_set("number.test_hub_power_buffer", "0")
+    sensor_no_buf = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    result_no_buf = calculate_available_current_for_hub(sensor_no_buf)
+    target_no_buf = result_no_buf["charger_targets"].get(charger_entry.entry_id, 0)
+
+    # Run with 2000W buffer → effective grid limit drops significantly
+    hass.states.async_set("number.test_hub_power_buffer", "2000")
+    sensor_buf = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    result_buf = calculate_available_current_for_hub(sensor_buf)
+    target_buf = result_buf["charger_targets"].get(charger_entry.entry_id, 0)
+
+    # With the buffer reducing effective grid import, charger gets less power
+    assert target_buf < target_no_buf, (
+        f"power_buffer=2000W ({target_buf:.1f}A) should give less than "
+        f"power_buffer=0 ({target_no_buf:.1f}A)"
+    )
