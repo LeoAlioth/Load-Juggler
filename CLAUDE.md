@@ -234,53 +234,9 @@ wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Docu
 
 **IMPORTANT**: we are developing a 2.0 version. Disregard any backwards compatibility. No migration processes created.
 
-**ERRORS**: a developer will paste any new problems into  dev/ISSUES.md
-When working on problems, alway look if there is anytinhg in that file, analyze it, and note in in this file in a numbered list with checkboxes, so we can track its progress when working on solving it. Once it is noted in this file, delete it from ISSUES.md
+**Bug tracking**: Open issues live in `dev/ISSUES.md`. Claude picks them up automatically at the start of each session.
 
-**Multi-Phase Constraint System**: ✅ Implemented
-
-The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', 'AB', 'AC', 'BC', 'ABC') to properly enforce physical constraints for 1-phase, 2-phase, and 3-phase chargers.
-
-**Recent Major Fix** (2026-02-12): Asymmetric inverter support for solar/battery/excess modes
-
-- Single-phase chargers on asymmetric systems can now access the full flexible power pool
-- Symmetric inverters preserved with per-phase calculations
-
-See `dev/tests/test_results.log` for the latest calculation test run output.
-
-**Known Issues**
-
-1. **Site entities not do not get populated with values at all**. I am first trying to see the sites values without any chargers, as that should also work.
-
-2. **Charge mode selector location**: ✅ RESOLVED - Verified in `select.py` that charging_mode and distribution_mode selectors are correctly placed at hub level only (ENTRY_TYPE_HUB), not at charger level.
-4. **Site info sensor status**: ✅ RESOLVED - Changed `DynamicOcppEvseHubSensor.state` to return `0.0` instead of `None` when no data is available, preventing "unknown" state display in HA.
-5. **Attribute accessibility**: ✅ RESOLVED - Split site-level attributes into individual sensors for better HA UI visibility:
-   - `DynamicOcppEvseBatterySocSensor`
-   - `DynamicOcppEvseBatteryPowerSensor`
-   - `DynamicOcppEvseAvailableBatteryPowerSensor`
-   - `DynamicOcppEvseTotalSiteAvailablePowerSensor`
-   - `DynamicOcppEvseNetSiteConsumptionSensor`
-6. **TimerEntity import crash**: ✅ RESOLVED - `homeassistant.components.timer.TimerEntity` doesn't exist. Deleted `timer.py`, replaced with internal `datetime`-based pause tracking in sensor.
-
-**Fixes Applied** (2026-02-13)
-
-1. **dynamic_ocpp_evse.py**: Added missing imports (`CONF_EVSE_MINIMUM_CHARGE_CURRENT`, `CONF_EVSE_MAXIMUM_CHARGE_CURRENT`, `CONF_CHARGER_PRIORITY`, `CONF_PHASES`, `CONF_ENTITY_ID`, `DEFAULT_MIN_CHARGE_CURRENT`, `DEFAULT_MAX_CHARGE_CURRENT`, `DEFAULT_CHARGER_PRIORITY`)
-2. **sensor.py**: Fixed `DynamicOcppEvseHubSensor.state` to return `0.0` instead of `None`
-3. **sensor.py**: Added individual site-level sensors to replace compound attributes in extra_state_attributes
-4. **timer.py**: Deleted — `TimerEntity` does not exist as a public HA API (`homeassistant.components.timer` is a user helper, not a base class). Charge pause timer replaced with internal `datetime` tracking in `sensor.py`.
-5. **__init__.py**: Removed broken `TimerEntity` import and `"timer"` from charger platform setup/unload lists
-
-**Test Status**: 90 tests passing (100%) - as of 2026-02-13
-- 52 calculation scenario tests ✅
-- 16 config flow tests (test_config_flow.py + test_config_flow_e2e.py) ✅
-- 8 init/migration tests ✅
-- 14 sensor update cycle tests ✅
-
-### Recent Changes (2026-02-12)
-
-- **dev/tests/test_config_flow_validation.py**: Added 5 validation test cases including edge cases for min/max current validation
-- **custom_components/dynamic_ocpp_evse/helpers.py**: Added `validate_charger_settings()` function for pure Python config validation
-- **custom_components/dynamic_ocpp_evse/config_flow.py**: Replaced inline `_validate_charger_settings()` with import from helpers; implemented `_build_hub_grid_schema()` and `_build_hub_battery_schema()` reusable field builders to reduce schema duplication
+**Test Status**: See `dev/tests/test_results.log` for latest output.
 
 ## Common Pitfalls
 
