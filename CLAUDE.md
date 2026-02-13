@@ -45,7 +45,6 @@ custom_components/dynamic_ocpp_evse/
 └── translations/                  # Localization files
 ```
 
-**Important**: The `calculations/` directory contains pure Python code with NO Home Assistant dependencies. This enables direct testing without mocking HA.
 
 ### Core Design Principle: Generality Over Special Cases
 
@@ -139,7 +138,7 @@ The `calculations/` directory is pure Python and can be imported/tested independ
 
 - Solar/battery power can be distributed across any phase
 - Inverter can balance load dynamically
-- Total power pool available (not per-phase limited)
+- Total power pool available (not per-phase limited, respecting inverter limits)
 
 **Important**: Regardless of inverter type, chargers are physically connected to specific phases and can only draw from those phases. The inverter asymmetric capability affects power SUPPLY flexibility, not charger DRAW flexibility.
 
@@ -151,23 +150,11 @@ When chargers have explicit phase assignments (e.g., `connected_to_phase: "B"`):
 - Each phase is allocated independently
 - 3-phase chargers limited by minimum available phase
 
-## Charging Modes
+## Charging & Distribution Modes
 
-1. **Standard**: Maximum charging speed from grid + solar + battery (when SOC >= min)
-   - Includes ALL available power sources simultaneously
-   - Battery discharge allowed when `battery_soc >= battery_soc_min`
-   - No solar requirement — works day and night
-2. **Eco**: Match charging speed with solar production when at target SOC, but continue slow charging even without sufficient solar
-3. **Solar**: Only use solar power (+ battery discharge if SOC > target)
-   - Battery discharge allowed when `battery_soc > battery_soc_target`
-4. **Excess**: Only charge when export exceeds threshold (with 15-minute continuation after threshold drop)
+Four charging modes: **Standard** (max speed from all sources), **Eco** (solar-first with min rate fallback), **Solar** (pure solar only), **Excess** (threshold-based export charging). See [CHARGE_MODES_GUIDE.md](CHARGE_MODES_GUIDE.md) for full details.
 
-## Distribution Modes
-
-1. **Shared**: Two-pass (min first, then split remainder equally)
-2. **Priority**: Two-pass (min first, then remainder by priority)
-3. **Optimized**: Smart sequential — charge one at a time but reduce higher priority charger to consume all available power
-4. **Strict**: Simple sequential (priority 1 gets all, then 2, etc.)
+Four distribution modes for multi-charger setups: **Shared** (equal split), **Priority** (higher priority first), **Optimized** (sequential with leftover sharing), **Strict** (sequential, no sharing). See [DISTRIBUTION_MODES_GUIDE.md](DISTRIBUTION_MODES_GUIDE.md) for full details.
 
 ## Development
 
@@ -288,8 +275,9 @@ mypy custom_components/dynamic_ocpp_evse
 
 ## Useful Resources
 
+- Charging Modes Guide: `CHARGE_MODES_GUIDE.md`
+- Distribution Modes Guide: `DISTRIBUTION_MODES_GUIDE.md`
+- Release notes: `RELEASE_NOTES.md`
+- YAML Test Scenarios: `dev/tests/scenarios/*.yaml`
 - OCPP 1.6J Specification: <https://www.openchargealliance.org/>
 - Home Assistant Developer Docs: <https://developers.home-assistant.io/>
-- YAML Test Scenarios: `dev/tests/scenarios/*.yaml`
-- Charging Modes Guide: `CHARGE_MODES_GUIDE.md`
-- Release notes: `RELEASE_NOTES.md`
