@@ -123,7 +123,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self._calc_used = None
         self._allocated_current = None
         self._last_update = datetime.min
-        self._pause_timer_running = False
+        self._pause_started_at = None  # datetime when charge pause started
         self._last_set_current = 0
         self._last_set_power = None
         self._target_evse = None
@@ -159,7 +159,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             "detected_phases": self._detected_phases,
             "allocated_current": self._allocated_current,
             "last_update": self._last_update,
-            "pause_timer_running": self._pause_timer_running,
+            "pause_active": self._pause_started_at is not None,
             "last_set_current": self._last_set_current,
             "last_set_power": self._last_set_power,
             "charger_priority": get_entry_value(self.config_entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
@@ -260,31 +260,30 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             # Get charger-specific limits
             min_charge_current = get_entry_value(self.config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
 
-            # Check if the state drops below minimum
-            if self._state < min_charge_current and not self._pause_timer_running:
-                # Start the Charge Pause Timer
-                timer_entity_id = f"timer.{self.config_entry.data[CONF_ENTITY_ID]}_charge_pause_timer"
-                try:
-                    await self.hass.services.async_call(
-                        "timer",
-                        "start",
-                        {
-                            "entity_id": timer_entity_id,
-                            "duration": get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
-                        }
-                    )
-                    self._pause_timer_running = True
-                except Exception as e:
-                    _LOGGER.debug(f"Timer {timer_entity_id} not available: {e}")
+            # Charge pause logic: hold at 0A for a configured duration when
+            # allocated current drops below the charger's minimum
+            pause_duration = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
 
-            # Check if the timer is running
-            timer_entity_id = f"timer.{self.config_entry.data[CONF_ENTITY_ID]}_charge_pause_timer"
-            timer_state = self.hass.states.get(timer_entity_id)
-            if timer_state and timer_state.state == "active":
+            if self._state < min_charge_current:
+                # Current below minimum — start or continue pause
+                if self._pause_started_at is None:
+                    self._pause_started_at = datetime.now()
+                    _LOGGER.debug("Charge pause started for %s", self._attr_name)
+                # While pausing (regardless of elapsed time), charger can't meet minimum
                 limit = 0
             else:
-                limit = round(self._state, 1)
-                self._pause_timer_running = False
+                # Current >= minimum — reset pause, charge normally
+                if self._pause_started_at is not None:
+                    elapsed = (datetime.now() - self._pause_started_at).total_seconds()
+                    if elapsed < pause_duration:
+                        # Still within pause window — hold at 0
+                        limit = 0
+                    else:
+                        # Pause expired and current is sufficient — resume
+                        self._pause_started_at = None
+                        limit = round(self._state, 1)
+                else:
+                    limit = round(self._state, 1)
 
             # Prepare the data for the OCPP set_charge_rate service
             profile_timeout = get_entry_value(self.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)

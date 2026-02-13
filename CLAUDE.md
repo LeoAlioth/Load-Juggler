@@ -251,12 +251,15 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
    - `DynamicOcppEvseAvailableBatteryPowerSensor`
    - `DynamicOcppEvseTotalSiteAvailablePowerSensor`
    - `DynamicOcppEvseNetSiteConsumptionSensor`
+6. **TimerEntity import crash**: ✅ RESOLVED - `homeassistant.components.timer.TimerEntity` doesn't exist. Deleted `timer.py`, replaced with internal `datetime`-based pause tracking in sensor.
 
 **Fixes Applied** (2026-02-13)
 
 1. **dynamic_ocpp_evse.py**: Added missing imports (`CONF_EVSE_MINIMUM_CHARGE_CURRENT`, `CONF_EVSE_MAXIMUM_CHARGE_CURRENT`, `CONF_CHARGER_PRIORITY`, `CONF_PHASES`, `CONF_ENTITY_ID`, `DEFAULT_MIN_CHARGE_CURRENT`, `DEFAULT_MAX_CHARGE_CURRENT`, `DEFAULT_CHARGER_PRIORITY`)
 2. **sensor.py**: Fixed `DynamicOcppEvseHubSensor.state` to return `0.0` instead of `None`
 3. **sensor.py**: Added individual site-level sensors to replace compound attributes in extra_state_attributes
+4. **timer.py**: Deleted — `TimerEntity` does not exist as a public HA API (`homeassistant.components.timer` is a user helper, not a base class). Charge pause timer replaced with internal `datetime` tracking in `sensor.py`.
+5. **__init__.py**: Removed broken `TimerEntity` import and `"timer"` from charger platform setup/unload lists
 
 **IMPORTANT**: Tests should ONLY be run against pure Python code in `calculations/` directory or helper functions that don't depend on Home Assistant. Integration tests requiring HA must be done on a machine with the HA environment installed.
 
