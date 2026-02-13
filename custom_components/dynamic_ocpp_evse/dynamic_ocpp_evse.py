@@ -16,18 +16,19 @@ from .calculations.utils import is_number
 
 # Import context helpers
 from .calculations.context import determine_phases
+from .const import *
 
 
 def calculate_available_current_for_hub(sensor):
     """
     Calculate available current for a hub (legacy wrapper).
-    
+
     This is the main entry point for Home Assistant sensor updates.
     Uses the new SiteContext-based calculation system.
-    
+
     Args:
         sensor: The HA sensor object containing config and state
-        
+
     Returns:
         dict with calculated values including:
             - CONF_AVAILABLE_CURRENT: Total available current (A)
@@ -36,7 +37,6 @@ def calculate_available_current_for_hub(sensor):
             - Other site/charger data
     """
     from .helpers import get_entry_value
-    from .const import *
     
     # Get hub config
     hub_entry = sensor.hub_entry
