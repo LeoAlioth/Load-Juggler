@@ -7,3 +7,4 @@ dev/tests/test_results.log
 dev/tests/scenarios_combined_temp.yaml
 *.whl
 dev/ISSUES.md
+dev/debug.log
