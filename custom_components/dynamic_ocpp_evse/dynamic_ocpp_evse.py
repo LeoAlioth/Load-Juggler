@@ -49,7 +49,7 @@ def calculate_available_current_for_hub(sensor):
     hub_entry = sensor.hub_entry
     
     # Build SiteContext from sensor state and hub config
-    state = sensor.state if hasattr(sensor, 'state') else {}
+    state = getattr(sensor, 'state', {}) or {}
     
     voltage = get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
     main_breaker_rating = get_entry_value(hub_entry, CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING)

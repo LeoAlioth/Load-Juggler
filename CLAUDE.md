@@ -229,6 +229,12 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 3. - [x] Refactor config flow schemas to reuse helpers and reduce duplication
 4. - [x] Extend validation and add unit tests for config_flow/options behavior: Implemented pure Python `validate_charger_settings()` helper and extended validation test suite (57/57 passing)
 
+**Known Issues** (as of 2026-02-13)
+1. **Charge mode selector location**: The charge mode selector is currently placed on the charger device instead of the site device. This should be moved to the site-level entity for better UI organization.
+2. **Site info sensor status**: The `site_info` sensor is showing as "unknown" and all its attributes are also unknown, preventing proper visibility into site context data.
+3. **Attribute accessibility**: Due to recent HA updates, compound attributes are not nicely exposed in the UI anymore - they are only visible through Developer Tools. These should be split out into individual sensors for better user experience.
+4. **State NoneType error** (2026-02-13): Error `'NoneType' object has no attribute 'get'` occurs in `dynamic_ocpp_evse.py` line 59 when calling `.get()` on the sensor's state. The issue is that `hasattr(sensor, 'state')` returns True but `sensor.state` returns `None` (from `_state` which is initialized to None), so attempting to call `state.get('grid_phase_a_current', 0)` fails. Fix: Change line 58-59 from `state = sensor.state if hasattr(sensor, 'state') else {}` to `state = getattr(sensor, 'state', {}) or {}`.
+
 **IMPORTANT**: Tests should ONLY be run against pure Python code in `calculations/` directory or helper functions that don't depend on Home Assistant. Integration tests requiring HA must be done on a machine with the HA environment installed.
 
 ### Recent Changes (2026-02-12)

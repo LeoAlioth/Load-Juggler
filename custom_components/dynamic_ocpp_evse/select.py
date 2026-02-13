@@ -8,6 +8,7 @@ from .const import (
     DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID,
     DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY, 
     DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
+    CHARGING_MODE_STANDARD, CHARGING_MODE_ECO, CHARGING_MODE_SOLAR, CHARGING_MODE_EXCESS,
     DEFAULT_DISTRIBUTION_MODE
 )
 
@@ -18,29 +19,27 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     """Set up the Dynamic OCPP EVSE Select from a config entry."""
     entry_type = config_entry.data.get(ENTRY_TYPE)
     
-    # Set up select entities for charger entries (charging mode per charger)
-    if entry_type == ENTRY_TYPE_CHARGER:
-        name = config_entry.data.get(CONF_NAME, "Charger")
-        entity_id = config_entry.data.get(CONF_ENTITY_ID, "charger")
-        
-        entities = [DynamicOcppEvseChargingModeSelect(hass, config_entry, name, entity_id)]
-        _LOGGER.info(f"Setting up charger select entities: {[entity.unique_id for entity in entities]}")
-        async_add_entities(entities)
-        return
-    
-    # Set up select entities for hub entries (distribution mode at hub level)
+    # Hub entries get both charging_mode and distribution_mode selectors
     if entry_type == ENTRY_TYPE_HUB:
         name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
         
-        entities = [DynamicOcppEvseDistributionModeSelect(hass, config_entry, name, entity_id)]
+        entities = [
+            DynamicOcppEvseChargingModeSelect(hass, config_entry, name, entity_id),
+            DynamicOcppEvseDistributionModeSelect(hass, config_entry, name, entity_id)
+        ]
         _LOGGER.info(f"Setting up hub select entities: {[entity.unique_id for entity in entities]}")
         async_add_entities(entities)
+        return
+    
+    # Charger entries don't get any selectors now (all mode selection is at hub level)
+    if entry_type == ENTRY_TYPE_CHARGER:
+        _LOGGER.debug("No selector entities for charger entries - all mode selection is at hub level")
         return
 
 
 class DynamicOcppEvseChargingModeSelect(SelectEntity, RestoreEntity):
-    """Representation of a Dynamic OCPP EVSE Charging Mode Select (Charger-level)."""
+    """Representation of a Dynamic OCPP EVSE Charging Mode Select (Hub-level)."""
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         """Initialize the select entity."""
@@ -48,30 +47,27 @@ class DynamicOcppEvseChargingModeSelect(SelectEntity, RestoreEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Charging Mode"
         self._attr_unique_id = f"{entity_id}_charging_mode"
-        self._attr_options = ["Standard", "Eco", "Solar", "Excess"]
-        self._attr_current_option = "Standard"  # Default, will be overridden by restore
+        self._attr_options = [CHARGING_MODE_STANDARD, CHARGING_MODE_ECO, CHARGING_MODE_SOLAR, CHARGING_MODE_EXCESS]
+        self._attr_current_option = CHARGING_MODE_STANDARD  # Default, will be overridden by restore
 
     @property
     def device_info(self):
-        """Return device information about this charger."""
-        from . import get_hub_for_charger
-        hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
+        """Return device information about this hub."""
         return {
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME),
+            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
             "manufacturer": "Dynamic OCPP EVSE",
-            "model": "EV Charger",
-            "via_device": (DOMAIN, hub_entry.entry_id) if hub_entry else None,
+            "model": "Electrical System Hub",
         }
 
     @property
     def icon(self):
         """Return the icon based on current mode."""
         icons = {
-            "Standard": "mdi:flash",
-            "Eco": "mdi:leaf",
-            "Solar": "mdi:solar-power",
-            "Excess": "mdi:solar-power-variant",
+            CHARGING_MODE_STANDARD: "mdi:flash",
+            CHARGING_MODE_ECO: "mdi:leaf",
+            CHARGING_MODE_SOLAR: "mdi:solar-power",
+            CHARGING_MODE_EXCESS: "mdi:solar-power-variant",
         }
         return icons.get(self._attr_current_option, "mdi:flash")
 
