@@ -1,0 +1,25 @@
+{
+    "css.format.enable": false
+
+
+    // --- Cline settings for this specific project ---
+
+    // 1. Set the API provider to 'lmstudio'
+    "cline.apiProvider": "lmstudio",
+
+    // 2. Specify the model you have loaded in LM Studio
+    "cline.model": "qwen/qwen3-coder-next",
+
+    // 3. (Optional) LM Studio Base URL - only needed if you've changed LM Studio's default port.
+    //    Default is http://localhost:1234/v1.
+    "cline.lmstudio.baseUrl": "http://192.168.1.80:1234",
+
+    // 4. Enable compact prompts for better performance with local models. This is crucial.
+    "cline.useCompactPrompt": false,
+
+    // 5. (Optional) Adjust other settings like temperature or max tokens for this project
+    // "cline.temperature": 0.5,
+    // "cline.maxTokens": 4096,
+    // "cline.contextWindow": 262144 // Match this to your LM Studio setting
+
+}

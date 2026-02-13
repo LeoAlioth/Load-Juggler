@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Dynamic OCPP EVSE is a Home Assistant custom component that provides intelligent EV charging control via OCPP 1.6J protocol. It dynamically adjusts charging current based on solar production, battery state, grid capacity, and user-defined charging modes.
 
 **Key Capabilities:**
+
 - Multiple charging modes (Standard, Eco, Solar, Excess)
 - Multi-charger support with priority-based distribution
 - Battery integration with SOC thresholds
@@ -37,6 +38,7 @@ python tests/run_tests.py "scenario-name"
 ### Linting and Type Checking
 
 Development dependencies are in `requirements_dev.txt`:
+
 ```bash
 pip install -r requirements_dev.txt
 
@@ -67,11 +69,13 @@ mypy custom_components/dynamic_ocpp_evse
 ### Multi-Phase Constraint Principle
 
 **CRITICAL**: ALL calculation functions must return a constraint dict with keys:
+
 - `'A'`, `'B'`, `'C'` - Single-phase limits
 - `'AB'`, `'AC'`, `'BC'` - Two-phase limits (for 2-phase chargers)
 - `'ABC'` - Three-phase limit (total)
 
 This properly enforces constraints for every charger configuration:
+
 - 1-phase charger on phase A: Uses `constraints['A']`
 - 2-phase charger on AB: Uses `min(constraints['A'], constraints['B'], constraints['AB'])`
 - 3-phase charger: Uses `min(constraints['A'], constraints['B'], constraints['C'], constraints['ABC'])`
@@ -80,7 +84,7 @@ This properly enforces constraints for every charger configuration:
 
 ### Code Structure
 
-```
+```text
 custom_components/dynamic_ocpp_evse/
 ├── __init__.py                    # HA component initialization
 ├── manifest.json                  # Component metadata
@@ -109,7 +113,7 @@ custom_components/dynamic_ocpp_evse/
 
 The calculation engine follows a 5-step process (see `target_calculator.py`):
 
-```
+```text
 0. Refresh SiteContext (done externally in HA integration)
    ↓
 1. Calculate absolute site limits (per-phase physical constraints)
@@ -134,6 +138,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 ### Data Models
 
 **SiteContext** (`calculations/models.py`) - Represents the entire electrical site:
+
 - Electrical: voltage, num_phases, main_breaker_rating
 - Consumption: phase_a/b/c_consumption, phase_a/b/c_export
 - Solar: solar_production_total
@@ -142,6 +147,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Charging: charging_mode, distribution_mode, chargers[]
 
 **ChargerContext** (`calculations/models.py`) - Represents a single EVSE:
+
 - Config: entity_id, min_current, max_current, phases, car_phases, priority
 - Status: connector_status (Available, Charging, etc.)
 - Phase tracking: active_phases_mask ("A", "B", "C", "AB", "BC", "AC", "ABC")
@@ -151,11 +157,13 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 ### Asymmetric vs Symmetric Inverters
 
 **Symmetric Inverter** (`inverter_supports_asymmetric=False`):
+
 - Solar/battery power is fixed per-phase
 - Each phase operates independently
 - 3-phase chargers limited by minimum available phase
 
 **Asymmetric Inverter** (`inverter_supports_asymmetric=True`):
+
 - Solar/battery power can be distributed across any phase
 - Inverter can balance load dynamically
 - Total power pool available (not per-phase limited)
@@ -165,6 +173,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 ### Phase-Specific Allocation
 
 When chargers have explicit phase assignments (e.g., `connected_to_phase: "B"`):
+
 - Triggers per-phase distribution logic (`_distribute_power_per_phase()`)
 - Each phase is allocated independently
 - 3-phase chargers limited by minimum available phase
@@ -197,14 +206,16 @@ scenarios:
 ```
 
 Test scenarios are organized in `tests/scenarios/`:
+
 - `test_scenarios_1ph.yaml` - Single-phase scenarios
 - `test_scenarios_1ph_battery.yaml` - Single-phase with battery
 - `test_scenarios_3ph.yaml` - Three-phase scenarios
 - `test_scenarios_3ph_battery.yaml` - Three-phase with battery
 
-
 ### Testing HA integrations
+
 we can test under WSL now, using pytest-homeassistant-custom-component
+
 ## Current Development Status
 
 **IMPORTANT**: we are developing a 2.0 version. Disregard any backwards compatibility. No migration processes created.
@@ -217,19 +228,24 @@ When working on problems, alway look if there is anytinhg in that file, analyze 
 The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', 'AB', 'AC', 'BC', 'ABC') to properly enforce physical constraints for 1-phase, 2-phase, and 3-phase chargers.
 
 **Recent Major Fix** (2026-02-12): Asymmetric inverter support for solar/battery/excess modes
+
 - Single-phase chargers on asymmetric systems can now access the full flexible power pool
 - Symmetric inverters preserved with per-phase calculations
 
 **Test Status**: 57/57 passing (100%) - as of 2026-02-12
+
 - All scenario tests passing ✅
 - Config flow validation tests passing ✅
 - Test runner updated to run without Home Assistant installed (dev/tests/run_tests.py loads calculation modules directly) ✅
 - See `dev/tests/test_results.log` for the latest run output
 
-**Known Issues** (as of 2026-02-13)
-1. **Charge mode selector location**: ✅ RESOLVED - Verified in `select.py` that charging_mode and distribution_mode selectors are correctly placed at hub level only (ENTRY_TYPE_HUB), not at charger level.
-2. **Site info sensor status**: ✅ RESOLVED - Changed `DynamicOcppEvseHubSensor.state` to return `0.0` instead of `None` when no data is available, preventing "unknown" state display in HA.
-3. **Attribute accessibility**: ✅ RESOLVED - Split site-level attributes into individual sensors for better HA UI visibility:
+**Known Issues**
+
+1. **Site entities not do not get populated with values at all**. I am first trying to see the sites values without any chargers, as that should also work.
+
+2. **Charge mode selector location**: ✅ RESOLVED - Verified in `select.py` that charging_mode and distribution_mode selectors are correctly placed at hub level only (ENTRY_TYPE_HUB), not at charger level.
+4. **Site info sensor status**: ✅ RESOLVED - Changed `DynamicOcppEvseHubSensor.state` to return `0.0` instead of `None` when no data is available, preventing "unknown" state display in HA.
+5. **Attribute accessibility**: ✅ RESOLVED - Split site-level attributes into individual sensors for better HA UI visibility:
    - `DynamicOcppEvseBatterySocSensor`
    - `DynamicOcppEvseBatteryPowerSensor`
    - `DynamicOcppEvseAvailableBatteryPowerSensor`
@@ -237,6 +253,7 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
    - `DynamicOcppEvseNetSiteConsumptionSensor`
 
 **Fixes Applied** (2026-02-13)
+
 1. **dynamic_ocpp_evse.py**: Added missing imports (`CONF_EVSE_MINIMUM_CHARGE_CURRENT`, `CONF_EVSE_MAXIMUM_CHARGE_CURRENT`, `CONF_CHARGER_PRIORITY`, `CONF_PHASES`, `CONF_ENTITY_ID`, `DEFAULT_MIN_CHARGE_CURRENT`, `DEFAULT_MAX_CHARGE_CURRENT`, `DEFAULT_CHARGER_PRIORITY`)
 2. **sensor.py**: Fixed `DynamicOcppEvseHubSensor.state` to return `0.0` instead of `None`
 3. **sensor.py**: Added individual site-level sensors to replace compound attributes in extra_state_attributes
@@ -244,6 +261,7 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 **IMPORTANT**: Tests should ONLY be run against pure Python code in `calculations/` directory or helper functions that don't depend on Home Assistant. Integration tests requiring HA must be done on a machine with the HA environment installed.
 
 ### Recent Changes (2026-02-12)
+
 - **dev/tests/test_config_flow_validation.py**: Added 5 validation test cases including edge cases for min/max current validation
 - **custom_components/dynamic_ocpp_evse/helpers.py**: Added `validate_charger_settings()` function for pure Python config validation
 - **custom_components/dynamic_ocpp_evse/config_flow.py**: Replaced inline `_validate_charger_settings()` with import from helpers; implemented `_build_hub_grid_schema()` and `_build_hub_battery_schema()` reusable field builders to reduce schema duplication
@@ -308,8 +326,8 @@ The `calculations/` directory is pure Python and can be imported/tested independ
 
 ## Useful Resources
 
-- OCPP 1.6J Specification: https://www.openchargealliance.org/
-- Home Assistant Developer Docs: https://developers.home-assistant.io/
+- OCPP 1.6J Specification: <https://www.openchargealliance.org/>
+- Home Assistant Developer Docs: <https://developers.home-assistant.io/>
 - YAML Test Scenarios: `tests/scenarios/*.yaml`
 - Charging Modes Guide: `CHARGE_MODES_GUIDE.md`
 - Release notes `RELEASE_NOTES.md`

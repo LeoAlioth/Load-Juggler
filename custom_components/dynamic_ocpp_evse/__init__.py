@@ -4,6 +4,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.script import Script
 from homeassistant.components.button import ButtonEntity
+from homeassistant.components.timer import TimerEntity
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from datetime import datetime, timedelta
@@ -269,8 +270,8 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Initialize charger allocation
     hass.data[DOMAIN]["charger_allocations"][entry.entry_id] = 0
     
-    # Forward setup to charger platforms (sensor, number, button, select for charger-specific entities)
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "number", "button", "select"])
+    # Forward setup to charger platforms (sensor, number, button, select, timer for charge pause)
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "number", "button", "select", "timer"])
     
     return True
 
@@ -406,8 +407,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
             del hass.data[DOMAIN]["hubs"][entry.entry_id]
     
     elif entry_type == ENTRY_TYPE_CHARGER:
-        # Unload charger platforms
-        for domain in ["sensor", "number", "button", "select"]:
+        # Unload charger platforms (including timer for charge pause functionality)
+        for domain in ["sensor", "number", "button", "select", "timer"]:
             await hass.config_entries.async_forward_entry_unload(entry, domain)
         
         # Remove charger from hub's list
