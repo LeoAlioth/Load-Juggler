@@ -223,12 +223,6 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 - Test runner updated to run without Home Assistant installed (dev/tests/run_tests.py loads calculation modules directly) ✅
 - See `dev/tests/test_results.log` for the latest run output
 
-**Current Focus (HA Integration)** (progress as of 2026-02-12)
-1. - [x] OptionsFlow (HA options UI): Implemented (DynamicOcppEvseOptionsFlow present in config_flow.py)
-2. - [x] Split config entry data vs options: Static hardware identifiers stored in `entry.data`; mutable settings seeded into `entry.options` at creation (breaking change, reconfiguration required after upgrade)
-3. - [x] Refactor config flow schemas to reuse helpers and reduce duplication
-4. - [x] Extend validation and add unit tests for config_flow/options behavior: Implemented pure Python `validate_charger_settings()` helper and extended validation test suite (57/57 passing)
-
 **Known Issues** (as of 2026-02-13)
 1. **Charge mode selector location**: The charge mode selector is currently placed on the charger device instead of the site device. This should be moved to the site-level entity for better UI organization.
 2. **Site info sensor status**: The `site_info` sensor is showing as "unknown" and all its attributes are also unknown, preventing proper visibility into site context data.
