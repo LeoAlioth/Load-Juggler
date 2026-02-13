@@ -212,9 +212,23 @@ Test scenarios are organized in `tests/scenarios/`:
 - `test_scenarios_3ph.yaml` - Three-phase scenarios
 - `test_scenarios_3ph_battery.yaml` - Three-phase with battery
 
-### Testing HA integrations
+### Running HA Integration Tests
 
-we can test under WSL now, using pytest-homeassistant-custom-component
+Integration tests use `pytest-homeassistant-custom-component` and run under WSL (HA core requires `fcntl`, Unix-only):
+
+```bash
+# All integration tests
+wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python -m pytest dev/tests/test_init.py dev/tests/test_config_flow.py dev/tests/test_config_flow_e2e.py dev/tests/test_sensor_update.py -v"
+
+# Individual test file
+wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python -m pytest dev/tests/test_sensor_update.py -v"
+```
+
+**Integration test files:**
+- `test_init.py` — Setup, teardown, migration (v1→v2, v2.0→v2.1)
+- `test_config_flow.py` — Config flow step navigation and validation
+- `test_config_flow_e2e.py` — Full hub/charger creation flows, options flow, discovery
+- `test_sensor_update.py` — Sensor initialization, update cycle, OCPP calls, charge pause, profile formats
 
 ## Current Development Status
 
@@ -232,12 +246,7 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 - Single-phase chargers on asymmetric systems can now access the full flexible power pool
 - Symmetric inverters preserved with per-phase calculations
 
-**Test Status**: 57/57 passing (100%) - as of 2026-02-12
-
-- All scenario tests passing ✅
-- Config flow validation tests passing ✅
-- Test runner updated to run without Home Assistant installed (dev/tests/run_tests.py loads calculation modules directly) ✅
-- See `dev/tests/test_results.log` for the latest run output
+See `dev/tests/test_results.log` for the latest calculation test run output.
 
 **Known Issues**
 
@@ -261,7 +270,11 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 4. **timer.py**: Deleted — `TimerEntity` does not exist as a public HA API (`homeassistant.components.timer` is a user helper, not a base class). Charge pause timer replaced with internal `datetime` tracking in `sensor.py`.
 5. **__init__.py**: Removed broken `TimerEntity` import and `"timer"` from charger platform setup/unload lists
 
-**IMPORTANT**: Tests should ONLY be run against pure Python code in `calculations/` directory or helper functions that don't depend on Home Assistant. Integration tests requiring HA must be done on a machine with the HA environment installed.
+**Test Status**: 90 tests passing (100%) - as of 2026-02-13
+- 52 calculation scenario tests ✅
+- 16 config flow tests (test_config_flow.py + test_config_flow_e2e.py) ✅
+- 8 init/migration tests ✅
+- 14 sensor update cycle tests ✅
 
 ### Recent Changes (2026-02-12)
 
