@@ -209,6 +209,9 @@ we can test under WSL now, using pytest-homeassistant-custom-component
 
 **IMPORTANT**: we are developing a 2.0 version. Disregard any backwards compatibility. No migration processes created.
 
+**ERRORS**: a developer will paste any new problems into  dev/ISSUES.md
+When working on problems, alway look if there is anytinhg in that file, analyze it, and note in in this file in a numbered list with checkboxes, so we can track its progress when working on solving it. Once it is noted in this file, delete it from ISSUES.md
+
 **Multi-Phase Constraint System**: ✅ Implemented
 
 The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', 'AB', 'AC', 'BC', 'ABC') to properly enforce physical constraints for 1-phase, 2-phase, and 3-phase chargers.
@@ -228,6 +231,7 @@ The codebase uses constraint dicts with all phase combinations ('A', 'B', 'C', '
 2. **Site info sensor status**: The `site_info` sensor is showing as "unknown" and all its attributes are also unknown, preventing proper visibility into site context data.
 3. **Attribute accessibility**: Due to recent HA updates, compound attributes are not nicely exposed in the UI anymore - they are only visible through Developer Tools. These should be split out into individual sensors for better user experience.
 4. **State NoneType error** (2026-02-13): Error `'NoneType' object has no attribute 'get'` occurs in `dynamic_ocpp_evse.py` line 59 when calling `.get()` on the sensor's state. The issue is that `hasattr(sensor, 'state')` returns True but `sensor.state` returns `None` (from `_state` which is initialized to None), so attempting to call `state.get('grid_phase_a_current', 0)` fails. Fix: Change line 58-59 from `state = sensor.state if hasattr(sensor, 'state') else {}` to `state = getattr(sensor, 'state', {}) or {}`.
+5. **Integration image now showing up** the icon.png is not packaged or referenced correctly, so HA does not show the image.
 
 **IMPORTANT**: Tests should ONLY be run against pure Python code in `calculations/` directory or helper functions that don't depend on Home Assistant. Integration tests requiring HA must be done on a machine with the HA environment installed.
 
