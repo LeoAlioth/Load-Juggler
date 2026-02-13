@@ -242,20 +242,22 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 "last_update": datetime.utcnow(),
             }
 
-            # Get total available current from hub calculation
-            total_available = hub_data.get(CONF_AVAILABLE_CURRENT, 0)
-            
-            # Use pre-computed charger targets from the SiteContext calculation
+            # Use pre-computed charger targets from the calculation engine
+            # These are the final allocations — the engine already handles distribution
             charger_targets = hub_data.get("charger_targets", {})
 
-            _LOGGER.debug(f"Charger targets: {', '.join([f'{k[-8:]}: {v:.1f}A' for k, v in charger_targets.items()])}")
-            
-            # Distribute current among all chargers connected to this hub
-            distribute_current_to_chargers(self.hass, hub_entry_id, total_available, charger_targets)
-            
-            # Get this charger's allocated current
-            self._allocated_current = get_charger_allocation(self.hass, self.config_entry.entry_id)
+            if charger_targets:
+                _LOGGER.debug("Charger targets: %s", ", ".join(
+                    [f"{k[-8:]}: {v:.1f}A" for k, v in charger_targets.items()]
+                ))
+
+            # Get this charger's allocated current directly from engine output
+            self._allocated_current = charger_targets.get(self.config_entry.entry_id, 0)
             self._state = self._allocated_current
+
+            # Also update the global allocations for any other code that reads them
+            if DOMAIN in self.hass.data and "charger_allocations" in self.hass.data[DOMAIN]:
+                self.hass.data[DOMAIN]["charger_allocations"][self.config_entry.entry_id] = self._allocated_current
 
             # Get charger-specific limits
             min_charge_current = get_entry_value(self.config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)

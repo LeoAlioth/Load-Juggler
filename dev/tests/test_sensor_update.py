@@ -3,11 +3,6 @@
 These tests create actual sensor entity instances with mocked HA states
 and call async_update() to verify the data flow from HA entities through
 the calculation engine to the sensor state.
-
-IMPORTANT: These tests expose a critical bug — calculate_available_current_for_hub()
-reads from sensor.state (which is None or a float) instead of reading HA entity states.
-The state dict it expects is never populated from the configured entity IDs. This is
-why all entities show 0/unknown in a live HA instance.
 """
 
 from unittest.mock import patch, AsyncMock, MagicMock
@@ -275,25 +270,19 @@ async def test_hub_data_sensors_initialize(hass, hub_entry):
         assert sensor.state is None  # No data yet
 
 
-# ── The critical state-dict bug ────────────────────────────────────────
+# ── Calculation engine reads HA entity states ─────────────────────────
 
 
-async def test_calculate_available_current_state_dict_is_empty(
+async def test_calculate_available_current_reads_ha_entities(
     hass,
     hub_entry,
     charger_entry,
     setup_domain_data,
 ):
-    """
-    EXPOSES BUG: calculate_available_current_for_hub reads from sensor.state,
-    which is None (or a float), NOT a dict of HA entity states.
+    """Verify that calculate_available_current_for_hub reads HA entity states.
 
-    The function on line 45 of dynamic_ocpp_evse.py does:
-        state = getattr(sensor, 'state', {}) or {}
-    But sensor.state returns self._state which is None initially.
-
-    As a result, all state.get() calls return their defaults (0 or None),
-    and the SiteContext is built with empty data — producing 0A available.
+    With 3-phase Standard mode, 25A breaker, grid importing ~5A/phase,
+    the charger (3p, min=6A, max=16A) should get a real allocation.
     """
     from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
         calculate_available_current_for_hub,
@@ -305,27 +294,32 @@ async def test_calculate_available_current_state_dict_is_empty(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
 
-    # sensor.state is None at this point
-    assert sensor.state is None
-
-    # Call the function directly
     result = calculate_available_current_for_hub(sensor)
 
-    # BUG: The function gets {} for the state dict, so all grid/solar/battery
-    # values default to 0. The only data it CAN get is from OCPP entity states
-    # (which it reads directly via hass.states.get on line 149).
-    assert result[CONF_AVAILABLE_CURRENT] == 0.0, (
-        "Expected 0.0 because the state dict is empty — "
-        "HA entity states are never read into it"
+    # With the fix, HA entity states are actually read — Standard mode with
+    # 25A breaker and grid importing ~5A/phase leaves ~20A headroom per phase,
+    # capped by charger max (16A)
+    assert result[CONF_AVAILABLE_CURRENT] > 0, (
+        "Available current should be > 0 in Standard mode with spare grid capacity"
     )
 
-    # Despite having real HA states configured (sensor.inverter_phase_a = 5.0A, etc.),
-    # none of them are used. The configured entity IDs in hub_entry.options are ignored.
-    assert result.get("battery_soc") is None, (
-        "Battery SOC should be None because state dict is empty"
+    # Battery SOC should be read from sensor.battery_soc entity (80%)
+    assert result.get("battery_soc") == 80.0, (
+        "Battery SOC should be read from the HA entity"
     )
-    assert result.get("site_available_current_phase_a") == 0.0, (
-        "Phase A available should be 0 because grid currents are never read from HA"
+
+    # Grid is importing (positive raw values) → no export on any phase
+    assert result.get("site_available_current_phase_a") == 0.0
+    assert result.get("site_available_current_phase_b") == 0.0
+    assert result.get("site_available_current_phase_c") == 0.0
+
+    # Charger targets should contain our charger with a real allocation
+    charger_targets = result.get("charger_targets", {})
+    assert charger_entry.entry_id in charger_targets, (
+        "Charger should appear in charger_targets"
+    )
+    assert charger_targets[charger_entry.entry_id] > 0, (
+        "Charger target should be > 0 in Standard mode with available capacity"
     )
 
 
@@ -432,7 +426,6 @@ async def test_hub_data_sensor_reads_values(
     await data_sensor.async_update()
 
     # The sensor should have read from hub_data
-    # (value will be 0 due to the state dict bug, but the data pipeline works)
     assert data_sensor.state is not None or data_sensor.state == 0
 
 
@@ -445,8 +438,15 @@ async def test_charge_pause_starts_when_below_minimum(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that charge pause starts when allocated current < min_current."""
+    """Test that charge pause starts when allocated current < min_current.
+
+    Uses Solar mode with grid importing (no export surplus). The charger
+    is active (connector_status=Charging) but gets 0A because there is
+    no solar power available — triggering the pause logic.
+    """
     _set_ha_states(hass)
+    # Override to Solar mode — with grid importing there is no solar surplus
+    hass.states.async_set("select.test_hub_charging_mode", "Solar")
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -455,8 +455,7 @@ async def test_charge_pause_starts_when_below_minimum(
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         await sensor.async_update()
 
-    # Due to the state dict bug, available current = 0 which is < min (6A)
-    # So the pause should have been started
+    # In Solar mode with no export, charger gets 0A which is < min (6A)
     assert sensor._pause_started_at is not None, (
         "Pause should start when allocated current (0) < min_current (6)"
     )
@@ -469,8 +468,13 @@ async def test_charge_pause_holds_at_zero(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that during pause, the OCPP profile limit is set to 0."""
+    """Test that during pause, the OCPP profile limit is set to 0.
+
+    Uses Solar mode with no export surplus so the charger gets 0A allocation.
+    """
     _set_ha_states(hass)
+    # Override to Solar mode — charger gets 0A allocation
+    hass.states.async_set("select.test_hub_charging_mode", "Solar")
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
