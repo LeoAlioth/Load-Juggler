@@ -14,46 +14,38 @@ Dynamic OCPP EVSE is a Home Assistant custom component that provides intelligent
 - Phase-aware handling (1-phase, 2-phase, 3-phase installations)
 - Symmetric and asymmetric inverter support
 
-## Development Commands
+**Version 2.0** — disregard backwards compatibility. No migration processes needed.
 
-### Running Tests
-
-```bash
-# Run all test scenarios
-python tests/run_tests.py tests/scenarios
-
-# Run only verified scenarios
-python tests/run_tests.py --verified tests/scenarios
-
-# Run only unverified scenarios
-python tests/run_tests.py --unverified tests/scenarios
-
-# Run specific scenario by name
-python tests/run_tests.py "scenario-name"
-```
-
-**Test results** are automatically written to `tests/test_results.log` after each run.
-**Test procedure** Do not combine multiple shell commands to one line. Always run one test at a time.
-
-### Linting and Type Checking
-
-Development dependencies are in `requirements_dev.txt`:
-
-```bash
-pip install -r requirements_dev.txt
-
-# Code formatting
-black custom_components/dynamic_ocpp_evse
-
-# Linting
-flake8 custom_components/dynamic_ocpp_evse
-pylint custom_components/dynamic_ocpp_evse
-
-# Type checking
-mypy custom_components/dynamic_ocpp_evse
-```
+**Bug tracking**: Open issues live in `dev/ISSUES.md`. Claude picks them up automatically at the start of each session.
 
 ## Architecture
+
+### Code Structure
+
+```text
+custom_components/dynamic_ocpp_evse/
+├── __init__.py                    # HA component initialization
+├── manifest.json                  # Component metadata
+├── const.py                       # Constants and defaults
+├── config_flow.py                 # HA configuration flow
+├── dynamic_ocpp_evse.py          # Main entry point — reads HA states, builds SiteContext, calls engine
+├── [button|number|select|sensor|switch].py  # HA entities
+├── calculations/                  # Core calculation logic (PURE PYTHON - no HA dependencies)
+│   ├── models.py                  # Data models (SiteContext, ChargerContext)
+│   ├── context.py                 # Context builder (HA → models)
+│   ├── target_calculator.py       # Main calculation engine
+│   ├── max_available.py           # Max available power calculations
+│   ├── utils.py                   # Utility functions
+│   └── modes/                     # Charging mode implementations
+│       ├── base.py
+│       ├── standard.py
+│       ├── eco.py
+│       ├── solar.py
+│       └── excess.py
+└── translations/                  # Localization files
+```
+
+**Important**: The `calculations/` directory contains pure Python code with NO Home Assistant dependencies. This enables direct testing without mocking HA.
 
 ### Core Design Principle: Generality Over Special Cases
 
@@ -80,34 +72,7 @@ This properly enforces constraints for every charger configuration:
 - 2-phase charger on AB: Uses `min(constraints['A'], constraints['B'], constraints['AB'])`
 - 3-phase charger: Uses `min(constraints['A'], constraints['B'], constraints['C'], constraints['ABC'])`
 
-**Why**: Physical reality - inverters and breakers have limits for EACH phase combination, not just individual phases.
-
-### Code Structure
-
-```text
-custom_components/dynamic_ocpp_evse/
-├── __init__.py                    # HA component initialization
-├── manifest.json                  # Component metadata
-├── const.py                       # Constants and defaults
-├── config_flow.py                 # HA configuration flow
-├── dynamic_ocpp_evse.py          # Core OCPP charger manager
-├── [button|number|select|sensor|switch].py  # HA entities
-├── calculations/                  # Core calculation logic (PURE PYTHON - no HA dependencies)
-│   ├── models.py                  # Data models (SiteContext, ChargerContext)
-│   ├── context.py                 # Context builder (HA → models)
-│   ├── target_calculator.py       # Main calculation engine
-│   ├── max_available.py           # Max available power calculations
-│   ├── utils.py                   # Utility functions
-│   └── modes/                     # Charging mode implementations
-│       ├── base.py
-│       ├── standard.py
-│       ├── eco.py
-│       ├── solar.py
-│       └── excess.py
-└── translations/                  # Localization files
-```
-
-**Important**: The `calculations/` directory contains pure Python code with NO Home Assistant dependencies. This enables direct testing without mocking HA.
+**Why**: Physical reality — inverters and breakers have limits for EACH phase combination, not just individual phases.
 
 ### Calculation Flow
 
@@ -137,7 +102,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 ### Data Models
 
-**SiteContext** (`calculations/models.py`) - Represents the entire electrical site:
+**SiteContext** (`calculations/models.py`) — Represents the entire electrical site:
 
 - Electrical: voltage, num_phases, main_breaker_rating
 - Consumption: phase_a/b/c_consumption, phase_a/b/c_export
@@ -146,13 +111,21 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric
 - Charging: charging_mode, distribution_mode, chargers[]
 
-**ChargerContext** (`calculations/models.py`) - Represents a single EVSE:
+**ChargerContext** (`calculations/models.py`) — Represents a single EVSE:
 
 - Config: entity_id, min_current, max_current, phases, car_phases, priority
 - Status: connector_status (Available, Charging, etc.)
 - Phase tracking: active_phases_mask ("A", "B", "C", "AB", "BC", "AC", "ABC")
 - Current: l1_current, l2_current, l3_current (actual draw)
 - Calculated: target_current (output of calculation)
+
+### HA Integration Layer
+
+The `calculations/` directory is pure Python and can be imported/tested independently. The HA integration layer:
+
+1. **dynamic_ocpp_evse.py**: Reads HA entity states, builds SiteContext/ChargerContext, calls calculation engine
+2. **sensor.py**: Uses engine output (charger_targets) to set OCPP charging profiles via service calls
+3. **Entities** (button.py, number.py, select.py, etc.): Expose controls and sensors to HA UI
 
 ### Asymmetric vs Symmetric Inverters
 
@@ -178,41 +151,105 @@ When chargers have explicit phase assignments (e.g., `connected_to_phase: "B"`):
 - Each phase is allocated independently
 - 3-phase chargers limited by minimum available phase
 
-## Testing Framework
+## Charging Modes
 
-Tests use **REAL production code** - no duplicates or mocks. Test scenarios are defined in YAML files:
+1. **Standard**: Maximum charging speed from grid + solar + battery (when SOC >= min)
+   - Includes ALL available power sources simultaneously
+   - Battery discharge allowed when `battery_soc >= battery_soc_min`
+   - No solar requirement — works day and night
+2. **Eco**: Match charging speed with solar production when at target SOC, but continue slow charging even without sufficient solar
+3. **Solar**: Only use solar power (+ battery discharge if SOC > target)
+   - Battery discharge allowed when `battery_soc > battery_soc_target`
+4. **Excess**: Only charge when export exceeds threshold (with 15-minute continuation after threshold drop)
+
+## Distribution Modes
+
+1. **Shared**: Two-pass (min first, then split remainder equally)
+2. **Priority**: Two-pass (min first, then remainder by priority)
+3. **Optimized**: Smart sequential — charge one at a time but reduce higher priority charger to consume all available power
+4. **Strict**: Simple sequential (priority 1 gets all, then 2, etc.)
+
+## Development
+
+### Guidelines
+
+1. **Understand the Flow**: Always trace through the 5-step calculation process
+2. **Pure Python**: `calculations/` directory has no HA dependencies for testability
+3. **Data Models**: Use SiteContext and ChargerContext — don't pass raw values
+4. **Logging**: Use `_LOGGER.debug()` extensively for troubleshooting
+5. **Test First**: Run relevant tests before and after changes
+6. **Helper Functions**: Prefer helper functions over inline logic for maintainability
+
+### Adding New Features
+
+1. **Charging Mode**: Add to `calculations/modes/`, inherit from `base.py`
+2. **Distribution Mode**: Add to `target_calculator.py` as `_distribute_<mode>()`
+3. **Test Scenarios**: Create YAML scenarios in `dev/tests/scenarios/`
+4. **Documentation**: Update CHARGE_MODES_GUIDE.md, README.md
+
+### Common Pitfalls
+
+1. **Asymmetric vs Symmetric confusion**: Remember inverter capability affects SUPPLY, not charger DRAW
+2. **Per-phase vs total power**: Track carefully whether working with per-phase (A) or total (A*3)
+3. **Battery priority**: Battery charges BEFORE EVs when SOC < target (Standard mode being the exception)
+4. **Minimum current**: Chargers need >= min_current or get 0 (can't charge below minimum)
+5. **Phase assignment defaults**: Don't default to "A" — only set when explicitly specified
+6. **Legacy code**: This is version 2.0.0 — legacy compatibility should be removed as users are expected to reconfigure the integration
+
+## Testing and Debugging
+
+**Test procedure**: Do not combine multiple shell commands to one line. Always run one test at a time.
+
+### Calculation Scenario Tests (Pure Python)
+
+YAML-driven tests that validate the calculation engine directly. Run on any platform.
+
+```bash
+# Run all scenarios
+python dev/tests/run_tests.py dev/tests/scenarios
+
+# Run only verified or unverified
+python dev/tests/run_tests.py --verified dev/tests/scenarios
+python dev/tests/run_tests.py --unverified dev/tests/scenarios
+
+# Run a single scenario by name
+python dev/tests/run_tests.py "scenario-name"
+```
+
+Test results are written to `dev/tests/test_results.log`.
+
+Scenario YAML format:
 
 ```yaml
 scenarios:
   - name: "test-name"
     description: "What this tests"
-    verified: true  # Manually verified by maintainer
-    iterations: 1   # For oscillation tests
+    verified: true
+    iterations: 1
     site:
       voltage: 230
       num_phases: 3
       charging_mode: Solar
-      # ... all site parameters
     chargers:
       - entity_id: "charger_1"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
-        connected_to_phase: "A"  # Optional explicit phase assignment
+        connected_to_phase: "A"
     expected:
       charger_1:
-        target: 10.0  # Expected current in Amps
+        target: 10.0
 ```
 
-Test scenarios are organized in `tests/scenarios/`:
+Scenario files in `dev/tests/scenarios/`:
 
-- `test_scenarios_1ph.yaml` - Single-phase scenarios
-- `test_scenarios_1ph_battery.yaml` - Single-phase with battery
-- `test_scenarios_3ph.yaml` - Three-phase scenarios
-- `test_scenarios_3ph_battery.yaml` - Three-phase with battery
+- `test_scenarios_1ph.yaml` — Single-phase scenarios
+- `test_scenarios_1ph_battery.yaml` — Single-phase with battery
+- `test_scenarios_3ph.yaml` — Three-phase scenarios
+- `test_scenarios_3ph_battery.yaml` — Three-phase with battery
 
-### Running HA Integration Tests
+### HA Integration Tests (WSL/Linux)
 
 Integration tests use `pytest-homeassistant-custom-component` and run under WSL (HA core requires `fcntl`, Unix-only):
 
@@ -225,81 +262,34 @@ wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Docu
 ```
 
 **Integration test files:**
-- `test_init.py` — Setup, teardown, migration (v1→v2, v2.0→v2.1)
+
+- `test_init.py` — Setup, teardown, migration (v1->v2, v2.0->v2.1)
 - `test_config_flow.py` — Config flow step navigation and validation
 - `test_config_flow_e2e.py` — Full hub/charger creation flows, options flow, discovery
 - `test_sensor_update.py` — Sensor initialization, update cycle, OCPP calls, charge pause, profile formats
 
-## Current Development Status
+### Linting and Type Checking
 
-**IMPORTANT**: we are developing a 2.0 version. Disregard any backwards compatibility. No migration processes created.
+```bash
+pip install -r requirements_dev.txt
+black custom_components/dynamic_ocpp_evse
+flake8 custom_components/dynamic_ocpp_evse
+pylint custom_components/dynamic_ocpp_evse
+mypy custom_components/dynamic_ocpp_evse
+```
 
-**Bug tracking**: Open issues live in `dev/ISSUES.md`. Claude picks them up automatically at the start of each session.
-
-**Test Status**: See `dev/tests/test_results.log` for latest output.
-
-## Common Pitfalls
-
-1. **Asymmetric vs Symmetric confusion**: Remember inverter capability affects SUPPLY, not charger DRAW
-2. **Per-phase vs total power**: Track carefully whether working with per-phase (A) or total (A×3)
-3. **Battery priority**: Battery charges BEFORE EVs when SOC < target (Standard mode being the exception)
-4. **Minimum current**: Chargers need ≥ min_current or get 0 (can't charge below minimum)
-5. **Phase assignment defaults**: Don't default to "A" - only set when explicitly specified
-6. **Legacy code**: This is version 2.0.0 - legacy compatibility should removed as users are expected to reconfigure the integration
-
-## Charging Modes
-
-1. **Standard**: Maximum charging speed from grid + solar + battery (when SOC >= min)
-   - Includes ALL available power sources simultaneously
-   - Battery discharge allowed when `battery_soc >= battery_soc_min`
-   - No solar requirement - works day and night
-2. **Eco**: Match charging speed with solar production when at target SOC, but continue slow charging even without sufficient solar
-3. **Solar**: Only use solar power (+ battery discharge if SOC > target)
-   - Battery discharge allowed when `battery_soc > battery_soc_target`
-4. **Excess**: Only charge when export exceeds threshold (with 15-minute continuation after threshold drop)
-
-## Distribution Modes
-
-1. **Shared**: Two-pass (min first, then split remainder equally)
-2. **Priority**: Two-pass (min first, then remainder by priority)
-3. **Optimized**: Smart sequential - charge one at a time but reduce higher priority charger to consume all available power
-4. **Strict**: Simple sequential (priority 1 gets all, then 2, etc.)
-
-## Development Guidelines
-
-1. **Understand the Flow**: Always trace through the 5-step calculation process
-2. **Pure Python**: `calculations/` directory has no HA dependencies for testability
-3. **Data Models**: Use SiteContext and ChargerContext - don't pass raw values
-4. **Logging**: Use `_LOGGER.debug()` extensively for troubleshooting
-5. **Test First**: Run relevant tests before and after changes
-6. **Helper Functions**: Prefer helper functions over inline logic for maintainability
-
-### Adding New Features
-
-1. **Charging Mode**: Add to `calculations/modes/`, inherit from `base.py`
-2. **Distribution Mode**: Add to `target_calculator.py` as `_distribute_<mode>()`
-3. **Test Scenarios**: Create YAML scenarios in `tests/scenarios/`
-4. **Documentation**: Update CHARGE_MODES_GUIDE.md, README.md
-
-## Integration with Home Assistant
-
-The `calculations/` directory is pure Python and can be imported/tested independently. The HA integration:
-
-1. **context.py**: Builds SiteContext from HA entities
-2. **dynamic_ocpp_evse.py**: Manages OCPP charger connections, calls calculation engine
-3. **Entities** (button.py, number.py, etc.): Expose controls and sensors to HA UI
-
-## Debugging
+### Debugging
 
 1. **Enable verbose logging** in HA: `custom_components.dynamic_ocpp_evse: debug`
-2. **Run specific test**: `python tests/run_tests.py "test-name"`
-3. **Check calculation steps**: Each step logs its output (site_limit, solar_available, target_power, etc.)
-4. **Per-phase values**: Log phase_a/b/c_export, consumption, available
+2. **Run specific test**: `python dev/tests/run_tests.py "test-name"`
+3. **Debug a single scenario**: `python dev/debug_scenario.py "scenario-name" --verbose`
+4. **Check calculation steps**: Each step logs its output (site_limit, solar_available, target_power, etc.)
+5. **Per-phase values**: Log phase_a/b/c_export, consumption, available
 
 ## Useful Resources
 
 - OCPP 1.6J Specification: <https://www.openchargealliance.org/>
 - Home Assistant Developer Docs: <https://developers.home-assistant.io/>
-- YAML Test Scenarios: `tests/scenarios/*.yaml`
+- YAML Test Scenarios: `dev/tests/scenarios/*.yaml`
 - Charging Modes Guide: `CHARGE_MODES_GUIDE.md`
-- Release notes `RELEASE_NOTES.md`
+- Release notes: `RELEASE_NOTES.md`
