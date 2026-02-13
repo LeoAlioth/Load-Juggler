@@ -906,11 +906,10 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             user_input = flow._normalize_optional_inputs(user_input)
             self._data.update(user_input)
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                options={**self.config_entry.options, **self._data},
+            return self.async_create_entry(
+                title="",
+                data={**self.config_entry.options, **self._data},
             )
-            return self.async_create_entry(title="", data={})
 
         data_schema = flow._hub_battery_schema(defaults)
         return self.async_show_form(
@@ -956,11 +955,10 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
                     data_schema=flow._charger_schema(self._data, include_auto_unit=False),
                     errors=errors,
                 )
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                options={**self.config_entry.options, **self._data},
+            return self.async_create_entry(
+                title="",
+                data={**self.config_entry.options, **self._data},
             )
-            return self.async_create_entry(title="", data={})
 
         data_schema = flow._charger_schema(defaults, include_auto_unit=False)
         return self.async_show_form(

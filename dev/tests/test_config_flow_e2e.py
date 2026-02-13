@@ -372,17 +372,7 @@ async def test_options_flow_hub_saves_changes(
     mock_hub_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test that submitting hub options actually updates the config entry.
-
-    BUG: The options flow calls async_update_entry() with the correct merged
-    options, then immediately calls async_create_entry(data={}) which the HA
-    framework uses to OVERWRITE entry.options with {}. This means the options
-    flow appears to work but actually clears all options.
-
-    Fix: config_flow.py DynamicOcppEvseOptionsFlow.async_step_hub() should
-    return async_create_entry(data={**self.config_entry.options, **self._data})
-    instead of calling async_update_entry + async_create_entry(data={}).
-    """
+    """Test that submitting hub options actually updates the config entry."""
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
@@ -396,9 +386,6 @@ async def test_options_flow_hub_saves_changes(
         "sensor.battery_power", "1500",
         {"device_class": "power", "unit_of_measurement": "W"},
     )
-
-    # Record original options
-    original_charge_power = mock_hub_entry.options.get(CONF_BATTERY_MAX_CHARGE_POWER)
 
     result = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
     assert result["type"] == FlowResultType.FORM
@@ -417,12 +404,10 @@ async def test_options_flow_hub_saves_changes(
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
-    # BUG: options were cleared by async_create_entry(data={})
-    # When this bug is fixed, change this assertion to verify 7000:
-    assert mock_hub_entry.options == {}, (
-        "Options are cleared to {} by async_create_entry(data={}) — "
-        "this is a bug in the options flow"
-    )
+    # Options should now contain the submitted values
+    assert mock_hub_entry.options.get(CONF_BATTERY_MAX_CHARGE_POWER) == 7000
+    assert mock_hub_entry.options.get(CONF_BATTERY_MAX_DISCHARGE_POWER) == 7000
+    assert mock_hub_entry.options.get(CONF_BATTERY_SOC_HYSTERESIS) == 5
 
 
 async def test_options_flow_charger_saves_changes(
@@ -431,10 +416,7 @@ async def test_options_flow_charger_saves_changes(
     mock_charger_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test that submitting charger options updates the config entry.
-
-    Same bug as hub options flow — async_create_entry(data={}) clears options.
-    """
+    """Test that submitting charger options updates the config entry."""
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
@@ -464,11 +446,10 @@ async def test_options_flow_charger_saves_changes(
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
-    # BUG: options were cleared (same issue as hub options flow)
-    assert mock_charger_entry.options == {}, (
-        "Options are cleared to {} by async_create_entry(data={}) — "
-        "this is a bug in the options flow"
-    )
+    # Options should now contain the submitted values
+    assert mock_charger_entry.options.get(CONF_CHARGER_PRIORITY) == 2
+    assert mock_charger_entry.options.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT) == 8
+    assert mock_charger_entry.options.get(CONF_UPDATE_FREQUENCY) == 30
 
 
 async def test_options_flow_charger_validates(
