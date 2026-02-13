@@ -213,7 +213,7 @@ async def test_options_flow_hub_shows_form(
     result = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
 
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub"
+    assert result["step_id"] == "hub_grid"
 
 
 async def test_options_flow_charger_shows_form(

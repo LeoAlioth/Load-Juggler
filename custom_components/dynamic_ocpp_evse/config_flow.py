@@ -794,14 +794,15 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Reconfigure hub grid settings."""
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        
+        defaults = {**entry.data, **entry.options}
+
         if user_input is not None:
             user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
             return await self.async_step_reconfigure_hub_battery()
 
         try:
-            data_schema = self._hub_grid_schema(entry.data)
+            data_schema = self._hub_grid_schema(defaults)
         except Exception as e:
             _LOGGER.error("Error in reconfigure_hub_grid: %s", e, exc_info=True)
             errors["base"] = "unknown"
@@ -820,21 +821,18 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Reconfigure hub battery settings."""
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        
+        defaults = {**entry.data, **entry.options}
+
         if user_input is not None:
             user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
-            self.hass.config_entries.async_update_entry(entry, data={**entry.data, **self._data})
-            
-            # Call reset service
-            try:
-                await self.hass.services.async_call(DOMAIN, "reset_ocpp_evse", {"entry_id": entry.entry_id})
-            except Exception:
-                pass
-            
+            self.hass.config_entries.async_update_entry(
+                entry,
+                options={**entry.options, **self._data},
+            )
             return self.async_abort(reason="reconfigure_successful")
 
-        data_schema = self._hub_battery_schema(entry.data)
+        data_schema = self._hub_battery_schema(defaults)
         
         return self.async_show_form(
             step_id="reconfigure_hub_battery",
@@ -849,7 +847,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Reconfigure charger settings."""
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        
+        defaults = {**entry.data, **entry.options}
+
         if user_input is not None:
             user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
@@ -862,10 +861,13 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors=errors,
                     last_step=True,
                 )
-            self.hass.config_entries.async_update_entry(entry, data={**entry.data, **user_input})
+            self.hass.config_entries.async_update_entry(
+                entry,
+                options={**entry.options, **self._data},
+            )
             return self.async_abort(reason="reconfigure_successful")
-        
-        data_schema = self._charger_schema(entry.data, include_auto_unit=False)
+
+        data_schema = self._charger_schema(defaults, include_auto_unit=False)
         
         return self.async_show_form(
             step_id="reconfigure_charger",
@@ -878,21 +880,20 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
         """Get the options flow for this handler."""
-        return DynamicOcppEvseOptionsFlow(config_entry)
+        return DynamicOcppEvseOptionsFlow()
 
 
 class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for Dynamic OCPP EVSE."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry):
-        self.config_entry = config_entry
+    def __init__(self):
         self._data = {}
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
         entry_type = self.config_entry.data.get(ENTRY_TYPE)
 
         if entry_type == ENTRY_TYPE_HUB:
-            return await self.async_step_hub()
+            return await self.async_step_hub_grid()
         if entry_type == ENTRY_TYPE_CHARGER:
             return await self.async_step_charger()
         return self.async_abort(reason="entry_not_found")

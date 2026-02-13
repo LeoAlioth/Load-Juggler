@@ -51,22 +51,13 @@ class ChargerContext:
     l2_current: float = 0  # Phase B current (A)
     l3_current: float = 0  # Phase C current (A)
     
-    # Current state
-    current_import: float = 0  # What charger is currently drawing (A)
-    current_offered: float = 0  # What was last offered (A)
-    
-    # Calculated values (populated during calculation)
-    target_current: float = 0  # What mode calculation determines (A)
-    allocated_current: float = 0  # What distribution allocates (A)
-    max_available: float = 0  # Maximum available from site for this charger (A)
-    
+    # Calculated target (populated during calculation)
+    target_current: float = 0
+
     # OCPP settings
     ocpp_device_id: str = None
     stack_level: int = 2
     charge_rate_unit: str = "auto"  # "amps", "watts", or "auto"
-    
-    # Legacy sensor reference (for backward compatibility)
-    sensor: object = None
 
 
 @dataclass
@@ -103,9 +94,7 @@ class SiteContext:
     consumption: PhaseValues = field(default_factory=PhaseValues)      # max(0, grid_current) per phase
     export_current: PhaseValues = field(default_factory=PhaseValues)   # max(0, -grid_current) per phase
 
-    # Totals
-    total_export_current: float = 0
-    total_export_power: float = 0
+    # Solar
     solar_production_total: float = 0
     
     # Battery
@@ -134,6 +123,14 @@ class SiteContext:
 
     # Chargers at this site
     chargers: list[ChargerContext] = field(default_factory=list)
+
+    @property
+    def total_export_current(self) -> float:
+        return self.export_current.total
+
+    @property
+    def total_export_power(self) -> float:
+        return self.export_current.total * self.voltage
 
 
 @dataclass

@@ -134,10 +134,6 @@ def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
         max(0, solar_per_phase_c - phase_c_load),
     )
 
-    # Update totals
-    site.total_export_current = site.export_current.total
-    site.total_export_power = site.total_export_current * voltage
-
 
 def detect_oscillation(history, max_variation=0.5):
     """
@@ -208,9 +204,6 @@ def build_site_from_scenario(scenario):
         phase_b_export = max(0, solar_per_phase_amps - phase_b_cons)
         phase_c_export = max(0, solar_per_phase_amps - phase_c_cons)
     
-    total_export_current = phase_a_export + phase_b_export + phase_c_export
-    total_export_power = total_export_current * voltage
-    
     site = SiteContext(
         voltage=voltage,
         num_phases=num_phases,
@@ -218,8 +211,6 @@ def build_site_from_scenario(scenario):
         consumption=PhaseValues(phase_a_cons, phase_b_cons, phase_c_cons),
         export_current=PhaseValues(phase_a_export, phase_b_export, phase_c_export),
         solar_production_total=solar_total,
-        total_export_current=total_export_current,
-        total_export_power=total_export_power,
         battery_soc=site_data.get('battery_soc'),
         battery_soc_min=site_data.get('battery_soc_min', 20),
         battery_soc_target=site_data.get('battery_soc_target', 80),
@@ -312,8 +303,6 @@ def run_scenario_with_iterations(scenario, verbose=False):
         if i > 0 and initial_solar > 0:
             prev = history[-1]
             site.export_current = PhaseValues(*prev['export_per_phase'])
-            site.total_export_current = site.export_current.total
-            site.total_export_power = site.total_export_current * site.voltage
         
         # Calculate targets
         calculate_all_charger_targets(site)

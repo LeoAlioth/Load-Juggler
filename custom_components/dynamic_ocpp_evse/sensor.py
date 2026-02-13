@@ -7,7 +7,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .dynamic_ocpp_evse import calculate_available_current_for_hub
 from .const import *
 from .helpers import get_entry_value
-from . import get_hub_for_charger, distribute_current_to_chargers, get_charger_allocation
+from . import get_hub_for_charger
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=10)

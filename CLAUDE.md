@@ -34,14 +34,7 @@ custom_components/dynamic_ocpp_evse/
 │   ├── models.py                  # Data models (SiteContext, ChargerContext)
 │   ├── context.py                 # Context builder (HA → models)
 │   ├── target_calculator.py       # Main calculation engine
-│   ├── max_available.py           # Max available power calculations
-│   ├── utils.py                   # Utility functions
-│   └── modes/                     # Charging mode implementations
-│       ├── base.py
-│       ├── standard.py
-│       ├── eco.py
-│       ├── solar.py
-│       └── excess.py
+│   └── utils.py                   # Utility functions (is_number)
 └── translations/                  # Localization files
 ```
 
@@ -83,8 +76,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 1. Calculate absolute site limits (per-phase physical constraints)
    → _calculate_site_limit()
      ├─ _calculate_grid_limit()      (grid capacity based on breaker rating)
-     ├─ _calculate_inverter_limit()  (solar + battery for Standard mode)
-     └─ _sum_constraint_dicts()      (combines grid + inverter for Standard mode)
+     └─ _calculate_inverter_limit()  (solar + battery for Standard mode)
    ↓
 2. Calculate solar available power (includes battery charge/discharge)
    → _calculate_solar_available()
@@ -101,11 +93,16 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 ### Data Models
 
+**PhaseValues** (`calculations/models.py`) — Per-phase values (a, b, c) with `.total` property.
+
+**PhaseConstraints** (`calculations/models.py`) — Per-phase + combination power constraints (A, B, C, AB, AC, BC, ABC). Methods: `from_per_phase()`, `from_pool()`, `get_available(mask)`, `deduct()`, `normalize()`, arithmetic operators.
+
 **SiteContext** (`calculations/models.py`) — Represents the entire electrical site:
 
 - Electrical: voltage, num_phases, main_breaker_rating
-- Consumption: phase_a/b/c_consumption, phase_a/b/c_export
+- Per-phase: consumption (PhaseValues), export_current (PhaseValues), grid_current (PhaseValues)
 - Solar: solar_production_total
+- Derived: total_export_current, total_export_power (computed properties)
 - Battery: battery_soc, battery_soc_min, battery_soc_target, battery_max_charge/discharge_power
 - Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric
 - Charging: charging_mode, distribution_mode, chargers[]
@@ -115,7 +112,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Config: entity_id, min_current, max_current, phases, car_phases, priority
 - Status: connector_status (Available, Charging, etc.)
 - Phase tracking: active_phases_mask ("A", "B", "C", "AB", "BC", "AC", "ABC")
-- Current: l1_current, l2_current, l3_current (actual draw)
+- Current: l1_current, l2_current, l3_current (actual OCPP draw)
 - Calculated: target_current (output of calculation)
 
 ### HA Integration Layer
@@ -146,8 +143,8 @@ The `calculations/` directory is pure Python and can be imported/tested independ
 
 When chargers have explicit phase assignments (e.g., `connected_to_phase: "B"`):
 
-- Triggers per-phase distribution logic (`_distribute_power_per_phase()`)
-- Each phase is allocated independently
+- All distribution uses PhaseConstraints — per-phase limits are enforced automatically
+- Each phase is allocated independently via `_distribute_power()`
 - 3-phase chargers limited by minimum available phase
 
 ## Charging & Distribution Modes

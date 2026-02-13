@@ -116,7 +116,7 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
     # This is a total (all-phase) constraint from the grid operator / smart meter.
     # Power buffer has already been subtracted before reaching SiteContext.
     if site.max_grid_import_power is not None:
-        total_consumption = site.consumption.a + site.consumption.b + site.consumption.c
+        total_consumption = site.consumption.total
         max_import_current = site.max_grid_import_power / site.voltage
         available_for_evs = max(0, max_import_current - total_consumption)
         if total_limit > available_for_evs and total_limit > 0:
@@ -169,8 +169,8 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     if site.inverter_supports_asymmetric:
         # ASYMMETRIC: Inverter power can be allocated to any phase
         phase_a_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.a))
-        phase_b_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.b)) if site.num_phases > 1 else 0
-        phase_c_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.c)) if site.num_phases > 1 else 0
+        phase_b_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.b))
+        phase_c_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.c))
 
         constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, total_inverter_current)
     else:
@@ -178,8 +178,8 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
         inverter_per_phase = total_inverter_current / num_active_phases
 
         phase_a_available = min(inverter_per_phase, max_per_phase)
-        phase_b_available = min(inverter_per_phase, max_per_phase) if site.num_phases > 1 else 0
-        phase_c_available = min(inverter_per_phase, max_per_phase) if site.num_phases > 1 else 0
+        phase_b_available = min(inverter_per_phase, max_per_phase)
+        phase_c_available = min(inverter_per_phase, max_per_phase)
 
         constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
 
@@ -270,16 +270,12 @@ def _calculate_solar_available(site: SiteContext) -> PhaseConstraints:
             inverter_output = min(inverter_output, max_total)
 
         # NOW subtract total consumption to get what's available for charger
-        total_consumption = site.consumption.a
-        if site.num_phases > 1:
-            total_consumption += site.consumption.b + site.consumption.c
-
-        solar_available = max(0, inverter_output - total_consumption)
+        solar_available = max(0, inverter_output - site.consumption.total)
 
         # Per-phase constraints: limited by (inverter per-phase max - consumption on that phase)
         phase_a_limit = min(solar_available, max(0, max_per_phase - site.consumption.a))
-        phase_b_limit = min(solar_available, max(0, max_per_phase - site.consumption.b)) if site.num_phases > 1 else 0
-        phase_c_limit = min(solar_available, max(0, max_per_phase - site.consumption.c)) if site.num_phases > 1 else 0
+        phase_b_limit = min(solar_available, max(0, max_per_phase - site.consumption.b))
+        phase_c_limit = min(solar_available, max(0, max_per_phase - site.consumption.c))
 
         constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, solar_available)
     else:
@@ -289,8 +285,8 @@ def _calculate_solar_available(site: SiteContext) -> PhaseConstraints:
 
         # Subtract consumption per phase
         phase_a_available = max(0, solar_per_phase_current - site.consumption.a)
-        phase_b_available = max(0, solar_per_phase_current - site.consumption.b) if site.num_phases > 1 else 0
-        phase_c_available = max(0, solar_per_phase_current - site.consumption.c) if site.num_phases > 1 else 0
+        phase_b_available = max(0, solar_per_phase_current - site.consumption.b)
+        phase_c_available = max(0, solar_per_phase_current - site.consumption.c)
 
         # Handle battery charging/discharging (distributed per phase)
         if site.battery_soc is not None:
@@ -300,9 +296,8 @@ def _calculate_solar_available(site: SiteContext) -> PhaseConstraints:
                     battery_charge_current = site.battery_max_charge_power / site.voltage
                     battery_current_per_phase = battery_charge_current / num_active_phases
                     phase_a_available = max(0, phase_a_available - battery_current_per_phase)
-                    if site.num_phases > 1:
-                        phase_b_available = max(0, phase_b_available - battery_current_per_phase)
-                        phase_c_available = max(0, phase_c_available - battery_current_per_phase)
+                    phase_b_available = max(0, phase_b_available - battery_current_per_phase)
+                    phase_c_available = max(0, phase_c_available - battery_current_per_phase)
 
             elif site.battery_soc > site.battery_soc_target:
                 # Battery can discharge - add to available per phase
@@ -310,15 +305,13 @@ def _calculate_solar_available(site: SiteContext) -> PhaseConstraints:
                     battery_discharge_current = site.battery_max_discharge_power / site.voltage
                     battery_current_per_phase = battery_discharge_current / num_active_phases
                     phase_a_available += battery_current_per_phase
-                    if site.num_phases > 1:
-                        phase_b_available += battery_current_per_phase
-                        phase_c_available += battery_current_per_phase
+                    phase_b_available += battery_current_per_phase
+                    phase_c_available += battery_current_per_phase
 
         # Apply per-phase inverter limits
         phase_a_available = min(phase_a_available, max_per_phase)
-        if site.num_phases > 1:
-            phase_b_available = min(phase_b_available, max_per_phase)
-            phase_c_available = min(phase_c_available, max_per_phase)
+        phase_b_available = min(phase_b_available, max_per_phase)
+        phase_c_available = min(phase_c_available, max_per_phase)
 
         # Apply total inverter limit if configured
         constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
@@ -354,8 +347,8 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
 
         if site.inverter_supports_asymmetric:
             phase_a_limit = min(total_available, max(0, max_per_phase - site.consumption.a))
-            phase_b_limit = min(total_available, max(0, max_per_phase - site.consumption.b)) if site.num_phases > 1 else 0
-            phase_c_limit = min(total_available, max(0, max_per_phase - site.consumption.c)) if site.num_phases > 1 else 0
+            phase_b_limit = min(total_available, max(0, max_per_phase - site.consumption.b))
+            phase_c_limit = min(total_available, max(0, max_per_phase - site.consumption.c))
 
             constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, total_available)
         else:
@@ -363,8 +356,8 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
             per_phase_available = total_available / num_active_phases
 
             phase_a = min(per_phase_available, max_per_phase)
-            phase_b = min(per_phase_available, max_per_phase) if site.num_phases > 1 else 0
-            phase_c = min(per_phase_available, max_per_phase) if site.num_phases > 1 else 0
+            phase_b = min(per_phase_available, max_per_phase)
+            phase_c = min(per_phase_available, max_per_phase)
 
             constraints = PhaseConstraints.from_per_phase(phase_a, phase_b, phase_c)
 
@@ -400,10 +393,9 @@ def _determine_target_power(
         num_active_phases = site.num_phases if site.num_phases > 0 else 1
         sum_minimums_per_phase = sum_minimums_total / num_active_phases
 
-        min_a = sum_minimums_per_phase
-        min_b = sum_minimums_per_phase if site.num_phases > 1 else 0
-        min_c = sum_minimums_per_phase if site.num_phases > 1 else 0
-        minimums = PhaseConstraints.from_per_phase(min_a, min_b, min_c)
+        minimums = PhaseConstraints.from_per_phase(
+            sum_minimums_per_phase, sum_minimums_per_phase, sum_minimums_per_phase
+        )
 
         # Battery between min and target - charge at minimum only
         if site.battery_soc is not None and site.battery_soc < site.battery_soc_target:
@@ -431,41 +423,29 @@ def _distribute_power(site: SiteContext, target_constraints: PhaseConstraints) -
     Step 5: Distribute target power among chargers.
 
     Uses PhaseConstraints (Multi-Phase Constraint Principle).
+    Dispatches to mode-specific distribution function.
     """
     if len(site.chargers) == 0:
         return
-    
+
     _LOGGER.debug(f"Distribution constraints: {target_constraints}")
-    
-    # Log what each charger is drawing from
+
     for charger in site.chargers:
         _LOGGER.debug(f"Charger {charger.entity_id}: mask={charger.active_phases_mask}, phases={charger.phases}")
-    
-    # Use universal distribution with constraint dict
-    _distribute_power_per_phase(site, target_constraints, site.distribution_mode)
 
-
-
-
-def _distribute_power_per_phase(site: SiteContext, constraints: PhaseConstraints, distribution_mode: str) -> None:
-    """
-    Universal per-phase distribution - handles ALL cases and ALL distribution modes.
-
-    Uses PhaseConstraints (Multi-Phase Constraint Principle).
-    """
-    mode = distribution_mode.lower() if distribution_mode else "priority"
+    mode = site.distribution_mode.lower() if site.distribution_mode else "priority"
     
     if mode == "priority":
-        _distribute_per_phase_priority(site, constraints)
+        _distribute_per_phase_priority(site, target_constraints)
     elif mode == "shared":
-        _distribute_per_phase_shared(site, constraints)
+        _distribute_per_phase_shared(site, target_constraints)
     elif mode == "strict":
-        _distribute_per_phase_strict(site, constraints)
+        _distribute_per_phase_strict(site, target_constraints)
     elif mode == "optimized":
-        _distribute_per_phase_optimized(site, constraints)
+        _distribute_per_phase_optimized(site, target_constraints)
     else:
         _LOGGER.warning(f"Unknown distribution mode '{mode}', using priority")
-        _distribute_per_phase_priority(site, constraints)
+        _distribute_per_phase_priority(site, target_constraints)
 
 
 def _distribute_per_phase_priority(site: SiteContext, constraints: PhaseConstraints) -> None:

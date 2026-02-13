@@ -11,12 +11,6 @@ from .calculations import (
     PhaseValues,
     calculate_all_charger_targets,
 )
-
-# Import utilities
-from .calculations.utils import is_number
-
-# Import context helpers
-from .calculations.context import determine_phases
 from .const import *
 
 
@@ -163,8 +157,6 @@ def calculate_available_current_for_hub(sensor):
         consumption=PhaseValues(phase_a_consumption, phase_b_consumption, phase_c_consumption),
         export_current=PhaseValues(phase_a_export_current, phase_b_export_current, phase_c_export_current),
         solar_production_total=solar_production_total,
-        total_export_current=total_export_current,
-        total_export_power=total_export_power,
         battery_soc=float(battery_soc) if battery_soc is not None else None,
         battery_power=float(battery_power) if battery_power is not None else None,
         battery_soc_min=float(battery_soc_min) if battery_soc_min is not None else None,
@@ -299,27 +291,10 @@ def calculate_available_current_for_hub(sensor):
     return result
 
 
-def calculate_charger_available_current(charger_target, max_current):
-    """
-    Calculate available current for a single charger.
-    
-    Args:
-        charger_target: Target current from mode calculation
-        max_current: Maximum configured current
-        
-    Returns:
-        Available current (A)
-    """
-    return min(charger_target, max_current)
-
-
 __all__ = [
     "SiteContext",
     "ChargerContext",
     "PhaseValues",
     "calculate_all_charger_targets",
     "calculate_available_current_for_hub",
-    "calculate_charger_available_current",
-    "is_number",
-    "determine_phases",
 ]
