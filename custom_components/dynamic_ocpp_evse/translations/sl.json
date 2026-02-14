@@ -40,7 +40,8 @@
                     "invert_phases": "Obrni odčitke toka, če se uvoz meri kot negativen",
                     "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
                     "phase_voltage": "Napetost na fazo v voltih",
-                    "excess_export_threshold": "Prag presežne izvozne moči (W), pri katerem se začne polnjenje v načinu Excess"
+                    "excess_export_threshold": "Prag presežne izvozne moči (W), pri katerem se začne polnjenje v načinu Excess",
+                    "solar_production_entity_id": "Senzor proizvodnje sončne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)"
                 }
             },
             "hub_battery": {
@@ -54,11 +55,32 @@
                     "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
                 }
             },
+            "device_type": {
+                "title": "Vrsta naprave",
+                "description": "Izberite vrsto naprave, ki jo želite dodati",
+                "data": {
+                    "device_type": "Vrsta naprave"
+                }
+            },
             "select_hub": {
                 "title": "Izberi hub",
                 "description": "Izberite, kateremu električnemu hubu dodate ta polnilnik",
                 "data": {
                     "hub_entry_id": "Domači električni hub"
+                }
+            },
+            "plug_config": {
+                "title": "Konfiguracija pametne vtičnice",
+                "description": "Nastavite nastavitve za vašo pametno vtičnico ali rele",
+                "data": {
+                    "name": "Ime za to napravo",
+                    "entity_id": "Predpona ID entitete",
+                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
+                    "plug_power_rating": "Največja nazivna moč (W)",
+                    "connected_to_phase": "Priključena na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja prioriteta)",
+                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno — omogoča samodejno zaznavo dejanske porabe)",
+                    "update_frequency": "Frekvenca posodabljanja v sekundah"
                 }
             },
             "discover_chargers": {
@@ -94,7 +116,8 @@
                     "invert_phases": "Obrni odčitke toka, če se uvoz meri kot negativen",
                     "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
                     "phase_voltage": "Napetost na fazo v voltih",
-                    "excess_export_threshold": "Prag presežne izvozne moči (W)"
+                    "excess_export_threshold": "Prag presežne izvozne moči (W)",
+                    "solar_production_entity_id": "Senzor proizvodnje sončne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)"
                 }
             },
             "reconfigure_hub_battery": {
@@ -106,6 +129,18 @@
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
                     "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih",
                     "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
+                }
+            },
+            "reconfigure_plug": {
+                "title": "Ponovno konfiguriraj pametno vtičnico",
+                "description": "Posodobite nastavitve pametne vtičnice",
+                "data": {
+                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
+                    "plug_power_rating": "Največja nazivna moč (W)",
+                    "connected_to_phase": "Priključena na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja prioriteta)",
+                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno — omogoča samodejno zaznavo dejanske porabe)",
+                    "update_frequency": "Frekvenca posodabljanja v sekundah"
                 }
             },
             "reconfigure_charger": {
@@ -149,7 +184,8 @@
                     "invert_phases": "Obrni odčitke toka, če se uvoz meri kot negativen",
                     "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
                     "phase_voltage": "Napetost na fazo v voltih",
-                    "excess_export_threshold": "Prag presežne izvozne moči (W)"
+                    "excess_export_threshold": "Prag presežne izvozne moči (W)",
+                    "solar_production_entity_id": "Senzor proizvodnje sončne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)"
                 }
             },
             "hub": {
@@ -161,6 +197,18 @@
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
                     "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih",
                     "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
+                }
+            },
+            "plug": {
+                "title": "Posodobi nastavitve pametne vtičnice",
+                "description": "Posodobite nastavitve pametne vtičnice",
+                "data": {
+                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
+                    "plug_power_rating": "Največja nazivna moč (W)",
+                    "connected_to_phase": "Priključena na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja prioriteta)",
+                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno — omogoča samodejno zaznavo dejanske porabe)",
+                    "update_frequency": "Frekvenca posodabljanja v sekundah"
                 }
             },
             "charger": {
