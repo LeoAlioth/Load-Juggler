@@ -136,7 +136,25 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ), selector({"number": {"min": 1, "max": 10, "step": 1, "mode": "slider", "unit_of_measurement": "%"}})),
         ]
 
-    def _hub_schema(self, defaults: dict | None = None, include_grid: bool = True, include_battery: bool = True) -> vol.Schema:
+    def _build_hub_inverter_schema(self, defaults: dict | None = None) -> list[tuple]:
+        """Build inverter configuration fields as a reusable list."""
+        defaults = defaults or {}
+        return [
+            (vol.Optional(
+                CONF_INVERTER_MAX_POWER,
+                default=defaults.get(CONF_INVERTER_MAX_POWER, 0),
+            ), selector({"number": {"min": 0, "max": 50000, "step": 100, "mode": "box", "unit_of_measurement": "W"}})),
+            (vol.Optional(
+                CONF_INVERTER_MAX_POWER_PER_PHASE,
+                default=defaults.get(CONF_INVERTER_MAX_POWER_PER_PHASE, 0),
+            ), selector({"number": {"min": 0, "max": 20000, "step": 100, "mode": "box", "unit_of_measurement": "W"}})),
+            (vol.Required(
+                CONF_INVERTER_SUPPORTS_ASYMMETRIC,
+                default=defaults.get(CONF_INVERTER_SUPPORTS_ASYMMETRIC, False),
+            ), bool),
+        ]
+
+    def _hub_schema(self, defaults: dict | None = None, include_grid: bool = True, include_battery: bool = True, include_inverter: bool = False) -> vol.Schema:
         """
         Build a combined hub schema from reusable field lists.
         This centralizes schema construction to reduce duplication.
@@ -148,6 +166,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             fields_list.extend(self._build_hub_grid_schema(defaults))
         if include_battery:
             fields_list.extend(self._build_hub_battery_schema(defaults))
+        if include_inverter:
+            fields_list.extend(self._build_hub_inverter_schema(defaults))
 
         return vol.Schema(dict(fields_list))
 
@@ -158,6 +178,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _hub_battery_schema(self, defaults: dict | None = None) -> vol.Schema:
         """Build schema with only battery fields."""
         return self._hub_schema(defaults, include_grid=False, include_battery=True)
+
+    def _hub_inverter_schema(self, defaults: dict | None = None) -> vol.Schema:
+        """Build schema with only inverter fields."""
+        return self._hub_schema(defaults, include_grid=False, include_battery=False, include_inverter=True)
 
     def _charger_schema(self, defaults: dict | None = None, detected_unit: str | None = None) -> vol.Schema:
         """Build schema for EVSE charger configuration.
@@ -492,18 +516,48 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> config_entries.FlowResult:
         """Hub step 3: Battery configuration."""
         errors: dict[str, str] = {}
-        
+
         if user_input is not None:
             user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
-            
+            return await self.async_step_hub_inverter()
+
+        data_schema = self._hub_battery_schema({
+            CONF_BATTERY_SOC_ENTITY_ID: None,
+            CONF_BATTERY_POWER_ENTITY_ID: None,
+            CONF_BATTERY_MAX_CHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
+            CONF_BATTERY_SOC_HYSTERESIS: DEFAULT_BATTERY_SOC_HYSTERESIS,
+        })
+
+        return self.async_show_form(
+            step_id="hub_battery",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=False
+        )
+
+    async def async_step_hub_inverter(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Hub step 4: Inverter configuration."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            self._data.update(user_input)
+
+            # Normalize inverter power values: 0 means "not configured" → store as None
+            for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
+                if key in self._data and self._data[key] == 0:
+                    self._data[key] = None
+
             # Generate entity IDs for hub-created entities
             entity_id = self._data.get(CONF_ENTITY_ID)
             self._data[CONF_CHARGING_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
             self._data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
             self._data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
             self._data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
-            
+
             # Split static vs mutable fields:
             static_data = {
                 CONF_NAME: self._data.get(CONF_NAME),
@@ -512,13 +566,13 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
             # Options contain the mutable configuration values
             options_data = {k: v for k, v in self._data.items() if k not in static_data}
-            
+
             # Create the config entry with only static data
             result = self.async_create_entry(
                 title=static_data[CONF_NAME],
                 data=static_data
             )
-            
+
             # Schedule a background task to seed options after the entry is created
             async def _seed_options():
                 # Wait briefly for the config entry to be registered
@@ -533,20 +587,18 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         except Exception:
                             _LOGGER.exception("Failed to seed options for hub entry")
                         break
-            
+
             asyncio.create_task(_seed_options())
             return result
 
-        data_schema = self._hub_battery_schema({
-            CONF_BATTERY_SOC_ENTITY_ID: None,
-            CONF_BATTERY_POWER_ENTITY_ID: None,
-            CONF_BATTERY_MAX_CHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
-            CONF_BATTERY_SOC_HYSTERESIS: DEFAULT_BATTERY_SOC_HYSTERESIS,
+        data_schema = self._hub_inverter_schema({
+            CONF_INVERTER_MAX_POWER: 0,
+            CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
+            CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
         })
-        
+
         return self.async_show_form(
-            step_id="hub_battery",
+            step_id="hub_inverter",
             data_schema=data_schema,
             errors=errors,
             last_step=True
@@ -850,13 +902,14 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return None
 
             value = str(value).strip()
+            value_lower = value.lower()
             _LOGGER.info("OCPP ChargingScheduleAllowedChargingRateUnit = %s", value)
 
-            if "Current" in value and "Power" in value:
+            if "current" in value_lower and "power" in value_lower:
                 return CHARGE_RATE_UNIT_AMPS  # Both supported — prefer Amps
-            elif "Power" in value:
+            elif "power" in value_lower:
                 return CHARGE_RATE_UNIT_WATTS
-            elif "Current" in value:
+            elif "current" in value_lower:
                 return CHARGE_RATE_UNIT_AMPS
             else:
                 _LOGGER.warning("Unrecognised ChargingScheduleAllowedChargingRateUnit value: %s", value)
@@ -1029,16 +1082,47 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
+            return await self.async_step_reconfigure_hub_inverter()
+
+        data_schema = self._hub_battery_schema(defaults)
+
+        return self.async_show_form(
+            step_id="reconfigure_hub_battery",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=False
+        )
+
+    async def async_step_reconfigure_hub_inverter(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Reconfigure hub inverter settings."""
+        errors: dict[str, str] = {}
+        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
+        defaults = {**entry.data, **entry.options}
+
+        if user_input is not None:
+            self._data.update(user_input)
+            # Normalize: 0 means "not configured" → store as None
+            for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
+                if key in self._data and self._data[key] == 0:
+                    self._data[key] = None
             self.hass.config_entries.async_update_entry(
                 entry,
                 options={**entry.options, **self._data},
             )
             return self.async_abort(reason="reconfigure_successful")
 
-        data_schema = self._hub_battery_schema(defaults)
-        
+        # Show existing values, defaulting 0 for None (user sees 0 = "not set")
+        inverter_defaults = dict(defaults)
+        for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
+            if inverter_defaults.get(key) is None:
+                inverter_defaults[key] = 0
+
+        data_schema = self._hub_inverter_schema(inverter_defaults)
+
         return self.async_show_form(
-            step_id="reconfigure_hub_battery",
+            step_id="reconfigure_hub_inverter",
             data_schema=data_schema,
             errors=errors,
             last_step=True
@@ -1142,14 +1226,41 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             user_input = flow._normalize_optional_inputs(user_input)
             self._data.update(user_input)
+            return await self.async_step_hub_inverter()
+
+        data_schema = flow._hub_battery_schema(defaults)
+        return self.async_show_form(
+            step_id="hub",
+            data_schema=data_schema,
+            errors=errors,
+        )
+
+    async def async_step_hub_inverter(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
+        errors: dict[str, str] = {}
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+        flow = DynamicOcppEvseConfigFlow()
+        flow.hass = self.hass
+
+        if user_input is not None:
+            self._data.update(user_input)
+            # Normalize: 0 means "not configured" → store as None
+            for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
+                if key in self._data and self._data[key] == 0:
+                    self._data[key] = None
             return self.async_create_entry(
                 title="",
                 data={**self.config_entry.options, **self._data},
             )
 
-        data_schema = flow._hub_battery_schema(defaults)
+        # Show existing values, defaulting 0 for None
+        inverter_defaults = dict(defaults)
+        for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
+            if inverter_defaults.get(key) is None:
+                inverter_defaults[key] = 0
+
+        data_schema = flow._hub_inverter_schema(inverter_defaults)
         return self.async_show_form(
-            step_id="hub",
+            step_id="hub_inverter",
             data_schema=data_schema,
             errors=errors,
         )

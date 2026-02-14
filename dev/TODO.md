@@ -67,6 +67,19 @@
 
 24. - [x] **Total EVSE Power shows 0** — `dynamic_ocpp_evse.py` read per-phase currents from entity attributes (`l1_current`, `l2_current`, `l3_current`) that don't exist on most OCPP integrations. Fixed: try per-phase attributes first (multiple naming conventions via `_read_phase_attr` helper), fall back to entity state value distributed across configured phases.
 
+25. - [x] **Inverter configuration in config flow** — Added `CONF_INVERTER_MAX_POWER`, `CONF_INVERTER_MAX_POWER_PER_PHASE`, `CONF_INVERTER_SUPPORTS_ASYMMETRIC` to `const.py`. New `hub_inverter` step in config_flow.py (initial setup, reconfigure, options flow). `dynamic_ocpp_evse.py` reads from config instead of hardcoded `False`. Translations added for en.json and sl.json. 70/70 + 50/50 tests passing.
+
+26. - [x] **Grid consumption feedback loop** — Grid CTs measure total site current INCLUDING charger draws. The engine double-counted charger power as both "consumption" and "charger demand". Fixed: `dynamic_ocpp_evse.py` now subtracts each charger's l1/l2/l3_current from site.consumption before calling the calculation engine. Hub sensor display values still show raw grid readings. 2 integration tests added.
+
+27. - [x] **Charge pause UX improvements** — Three changes:
+    - `pause_remaining_seconds` attribute added to charger sensor `extra_state_attributes` (computed from pause start time and configured duration).
+    - Mode change cancellation: pause is cancelled immediately when charging_mode or distribution_mode changes (tracks previous values via `_prev_charging_mode`/`_prev_distribution_mode`).
+    - 3 integration tests in `test_sensor_update.py`. 70/70 + 55/55 tests passing.
+
+28. - [x] **battery_soc_target None crash** — `TypeError: '<' not supported between 'float' and 'NoneType'` when `battery_soc_target` entity not configured. Added `site.battery_soc_target is not None` guard to all 4 comparison sites in `target_calculator.py`. (fixes ISSUES.md #5)
+
+29. - [x] **Charge rate unit case sensitivity** — Chargers returning lowercase `"power"` instead of `"Power"` caused `Unrecognised ChargingScheduleAllowedChargingRateUnit` warning. Fixed `_detect_charge_rate_unit()` in `config_flow.py` to normalize to lowercase before matching. (fixes ISSUES.md #6)
+
 ## In Progress
 
 ## Backlog

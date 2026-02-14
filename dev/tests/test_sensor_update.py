@@ -1185,6 +1185,204 @@ async def test_auto_reset_cooldown_prevents_retrigger(
         )
 
 
+async def test_feedback_loop_subtracts_charger_draw_from_consumption(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that charger draw is subtracted from grid consumption before engine runs.
+
+    Grid CTs measure total site current INCLUDING charger draws. Without the
+    feedback loop fix, the engine double-counts charger power. With the fix,
+    the charger's 10A L1 draw is subtracted from phase_a consumption (5A),
+    resulting in adjusted consumption of 0A on phase A.
+
+    This means the engine sees more available headroom on phase A than the
+    raw sensor reading would suggest.
+    """
+    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass)
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+
+    result = run_hub_calculation(sensor)
+
+    # The charger draws 10A on L1 (from entity attributes).
+    # Phase A grid reading is 5.0A import.
+    # After subtracting: adjusted consumption = max(0, 5.0 - 10.0) = 0.0A
+    # The engine should see 25A available on phase A (full breaker rating).
+    # Charger target should still be 16A (max) since there's plenty of headroom.
+    charger_targets = result.get("charger_targets", {})
+    target = charger_targets.get(charger_entry.entry_id, 0)
+    assert target == 16.0, (
+        f"With feedback loop fix, charger should get full 16A (max), got {target}A"
+    )
+
+    # NOTE: The hub sensor display values (site_available_current_phase_a etc.)
+    # use the raw grid readings, NOT the adjusted consumption. This is intentional:
+    # the display shows actual grid state, the engine uses adjusted values.
+    assert result["site_available_current_phase_a"] == 20.0
+    assert result["site_available_current_phase_b"] == 20.5
+    assert result["site_available_current_phase_c"] == 21.2
+
+
+async def test_feedback_loop_with_constrained_breaker(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test feedback loop fix with heavy charger draw on a normal breaker.
+
+    Grid reads ~5A/phase import, but charger is drawing 4A/phase. Without fix,
+    the engine sees 5A consumption; with fix it sees max(0, 5-4)=1A, giving
+    more headroom: 25-1=24A on phase A vs 25-5=20A without fix.
+    """
+    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass)
+    # Charger drawing 4A on all 3 phases (instead of default 10/0/0)
+    hass.states.async_set(
+        "sensor.test_charger_current_import", "4.0",
+        {
+            "l1_current": 4.0,
+            "l2_current": 4.0,
+            "l3_current": 4.0,
+            "device_class": "current",
+            "unit_of_measurement": "A",
+        },
+    )
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+
+    result = run_hub_calculation(sensor)
+
+    # Phase A: consumption=5.0A, charger_l1=4.0A → adjusted=1.0A → headroom=24.0A
+    # Phase B: consumption=4.5A, charger_l2=4.0A → adjusted=0.5A → headroom=24.5A
+    # Phase C: consumption=3.8A, charger_l3=4.0A → adjusted=0.0A → headroom=25.0A
+    # 3-phase charger gets min(24, 24.5, 25) = 16A (capped at max_current)
+    charger_targets = result.get("charger_targets", {})
+    target = charger_targets.get(charger_entry.entry_id, 0)
+    assert target == 16.0, (
+        f"With feedback loop fix, charger should get 16A (max), got {target}A"
+    )
+
+    # Verify the display values still use raw readings (not adjusted)
+    assert result["site_available_current_phase_a"] == 20.0
+    assert result["site_available_current_phase_b"] == 20.5
+    assert result["site_available_current_phase_c"] == 21.2
+
+
+async def test_charge_pause_cancelled_on_charging_mode_change(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that active charge pause is cancelled when user changes charging mode.
+
+    Start in Solar mode (no surplus → pause starts), then switch to Standard mode.
+    The pause should be cancelled immediately on the mode change.
+    """
+    _set_ha_states(hass)
+    # Start in Solar mode — no export surplus → charger gets 0A → pause starts
+    hass.states.async_set("select.test_hub_charging_mode", "Solar")
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        # First update: Solar mode, no surplus → pause starts
+        await sensor.async_update()
+        assert sensor._pause_started_at is not None, "Pause should have started in Solar mode"
+        assert sensor._prev_charging_mode == "Solar"
+
+        # Switch to Standard mode
+        hass.states.async_set("select.test_hub_charging_mode", "Standard")
+
+        # Second update: mode changed → pause should be cancelled
+        await sensor.async_update()
+        assert sensor._pause_started_at is None, (
+            "Pause should be cancelled when charging mode changes from Solar to Standard"
+        )
+        assert sensor._prev_charging_mode == "Standard"
+
+
+async def test_charge_pause_cancelled_on_distribution_mode_change(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that active charge pause is cancelled when user changes distribution mode.
+
+    Start in Solar mode (triggers pause), then change BOTH distribution mode AND
+    charging mode to Standard. The mode change cancels the pause, and Standard
+    mode provides enough current to prevent a new pause from starting.
+    """
+    _set_ha_states(hass)
+    # Start in Solar mode — charger gets 0A → pause starts
+    hass.states.async_set("select.test_hub_charging_mode", "Solar")
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        # First update: Solar mode → pause starts
+        await sensor.async_update()
+        assert sensor._pause_started_at is not None, "Pause should have started"
+        assert sensor._prev_distribution_mode == "Priority"
+
+        # Switch distribution mode AND charging mode so charger gets current
+        hass.states.async_set("select.test_hub_distribution_mode", "Shared")
+        hass.states.async_set("select.test_hub_charging_mode", "Standard")
+
+        # Second update: distribution mode changed → pause cancelled,
+        # Standard mode gives current → no new pause
+        await sensor.async_update()
+        assert sensor._pause_started_at is None, (
+            "Pause should be cancelled when distribution mode changes"
+        )
+        assert sensor._prev_distribution_mode == "Shared"
+
+
+async def test_charge_pause_remaining_seconds_attribute(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that pause_remaining_seconds attribute is populated during active pause."""
+    _set_ha_states(hass)
+    hass.states.async_set("select.test_hub_charging_mode", "Solar")
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await sensor.async_update()
+
+    # Pause should be active with remaining seconds
+    attrs = sensor.extra_state_attributes
+    assert attrs["pause_active"] is True
+    assert attrs["pause_remaining_seconds"] is not None
+    assert attrs["pause_remaining_seconds"] > 0
+    assert attrs["pause_remaining_seconds"] <= 180  # Default pause duration
+
+
 async def test_auto_reset_skips_when_car_not_plugged_in(
     hass,
     hub_entry,

@@ -7,3 +7,9 @@
 3. ~~**Distribution mode "Sequential - Optimized" and "Sequential - Strict" silently defaulted to Priority**~~ **FIXED** — The `target_calculator.py` comparison used exact lowercase match (`"optimized"`, `"strict"`) but the HA select entity stores the full display strings (`"Sequential - Optimized"`, `"Sequential - Strict"`). Fixed to use substring matching (`"optimized" in mode`).
 
 4. ~~**Reset service hardcoded 3 phases for Watts conversion**~~ **FIXED** — `__init__.py` used `voltage * 3` regardless of charger config. Now reads `CONF_PHASES` from the charger's config entry.
+
+
+
+5. ~~**TypeError: battery_soc < battery_soc_target when target is None**~~ **FIXED** — Added `site.battery_soc_target is not None` guard to all 4 comparison sites in `target_calculator.py` (asymmetric solar surplus, symmetric solar surplus, ECO mode, Solar mode).
+
+6. ~~**Case-sensitive charge rate unit detection**~~ **FIXED** — `config_flow.py` `_detect_charge_rate_unit()` now normalizes to lowercase before matching `"current"` / `"power"`, handling chargers that return lowercase values like `"power"`.

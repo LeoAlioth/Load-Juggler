@@ -280,7 +280,7 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
         inverter_output = solar_total_current
 
         # Handle battery charging/discharging (affects inverter output)
-        if site.battery_soc is not None:
+        if site.battery_soc is not None and site.battery_soc_target is not None:
             if site.battery_soc < site.battery_soc_target:
                 # Battery charges first - reduce inverter output available for EV
                 if site.battery_max_charge_power:
@@ -318,7 +318,7 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
         phase_c_available = max(0, solar_per_phase_current - site.consumption.c) if site.consumption.c is not None else 0
 
         # Handle battery charging/discharging (distributed per phase)
-        if site.battery_soc is not None:
+        if site.battery_soc is not None and site.battery_soc_target is not None:
             if site.battery_soc < site.battery_soc_target:
                 # Battery charges first - reduce available per phase
                 if site.battery_max_charge_power:
@@ -430,7 +430,7 @@ def _determine_target_power(
         )
 
         # Battery between min and target - charge at minimum only
-        if site.battery_soc is not None and site.battery_soc < site.battery_soc_target:
+        if site.battery_soc is not None and site.battery_soc_target is not None and site.battery_soc < site.battery_soc_target:
             return minimums.element_min(site_limit_constraints)
         else:
             # Battery >= target or no battery - use max of solar and minimums, capped at site limit
@@ -438,7 +438,7 @@ def _determine_target_power(
             return target.element_min(site_limit_constraints)
 
     elif mode == CHARGING_MODE_SOLAR:
-        if site.battery_soc is not None and site.battery_soc < site.battery_soc_target:
+        if site.battery_soc is not None and site.battery_soc_target is not None and site.battery_soc < site.battery_soc_target:
             return PhaseConstraints.zeros()
         return solar_constraints
 

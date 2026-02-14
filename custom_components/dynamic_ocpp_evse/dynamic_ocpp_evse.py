@@ -129,7 +129,11 @@ def run_hub_calculation(sensor):
     # --- Read max grid import power from HA entity ---
     max_import_power_entity = get_entry_value(hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
     max_grid_import_power = _read_entity(max_import_power_entity, None) if max_import_power_entity else None
-    inverter_supports_asymmetric = False  # TODO: make configurable
+
+    # --- Read inverter configuration ---
+    inverter_max_power = get_entry_value(hub_entry, CONF_INVERTER_MAX_POWER, None)
+    inverter_max_power_per_phase = get_entry_value(hub_entry, CONF_INVERTER_MAX_POWER_PER_PHASE, None)
+    inverter_supports_asymmetric = get_entry_value(hub_entry, CONF_INVERTER_SUPPORTS_ASYMMETRIC, False)
 
     # --- Read charging and distribution mode from HA select entities ---
     hub_entity_id = hub_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
@@ -177,6 +181,8 @@ def run_hub_calculation(sensor):
         battery_max_charge_power=float(battery_max_charge_power) if battery_max_charge_power is not None else None,
         battery_max_discharge_power=float(battery_max_discharge_power) if battery_max_discharge_power is not None else None,
         max_grid_import_power=float(max_grid_import_power) if max_grid_import_power is not None else None,
+        inverter_max_power=float(inverter_max_power) if inverter_max_power is not None else None,
+        inverter_max_power_per_phase=float(inverter_max_power_per_phase) if inverter_max_power_per_phase is not None else None,
         inverter_supports_asymmetric=inverter_supports_asymmetric,
         excess_export_threshold=excess_threshold,
         allow_grid_charging=allow_grid_charging,
@@ -305,7 +311,25 @@ def run_hub_calculation(sensor):
                         pass
 
         site.chargers.append(charger)
-    
+
+    # Subtract charger draws from consumption before running the engine.
+    # Grid CTs measure total site current INCLUDING charger draws. Without this
+    # adjustment, the engine double-counts charger power as both "consumption"
+    # and "charger demand", leading to under-allocation or false pauses.
+    total_charger_l1 = sum(c.l1_current for c in site.chargers)
+    total_charger_l2 = sum(c.l2_current for c in site.chargers)
+    total_charger_l3 = sum(c.l3_current for c in site.chargers)
+
+    if total_charger_l1 > 0 or total_charger_l2 > 0 or total_charger_l3 > 0:
+        adj_a = max(0, site.consumption.a - total_charger_l1) if site.consumption.a is not None else None
+        adj_b = max(0, site.consumption.b - total_charger_l2) if site.consumption.b is not None else None
+        adj_c = max(0, site.consumption.c - total_charger_l3) if site.consumption.c is not None else None
+        site.consumption = PhaseValues(adj_a, adj_b, adj_c)
+        _LOGGER.debug(
+            "Adjusted consumption (subtracted charger draws L1=%.1fA L2=%.1fA L3=%.1fA): A=%s B=%s C=%s",
+            total_charger_l1, total_charger_l2, total_charger_l3, adj_a, adj_b, adj_c,
+        )
+
     # Calculate targets (includes distribution)
     calculate_all_charger_targets(site)
 

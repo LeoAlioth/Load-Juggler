@@ -130,6 +130,8 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self._allocated_current = None
         self._last_update = datetime.min
         self._pause_started_at = None  # datetime when charge pause started
+        self._prev_charging_mode = None   # for detecting mode changes to cancel pause
+        self._prev_distribution_mode = None
         self._last_set_current = 0
         self._last_set_power = None
         self._last_commanded_limit = None  # Amps, after rate-limiting (for ramp + compliance)
@@ -163,6 +165,12 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
     @property
     def extra_state_attributes(self):
         """Return charger-specific attributes only (site-level data is on hub sensor)."""
+        pause_remaining = None
+        if self._pause_started_at is not None:
+            pause_duration = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
+            elapsed = (datetime.now() - self._pause_started_at).total_seconds()
+            pause_remaining = max(0, round(pause_duration - elapsed))
+
         attrs = {
             "state_class": "measurement",
             CONF_PHASES: self._phases,
@@ -170,6 +178,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             "allocated_current": self._allocated_current,
             "last_update": self._last_update,
             "pause_active": self._pause_started_at is not None,
+            "pause_remaining_seconds": pause_remaining,
             "last_set_current": self._last_set_current,
             "last_set_power": self._last_set_power,
             "charger_priority": get_entry_value(self.config_entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
@@ -333,6 +342,22 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             # Store charger-level calculation results
             self._phases = hub_data.get(CONF_PHASES)
             self._charging_mode = hub_data.get(CONF_CHARGING_MODE)
+            current_distribution_mode = hub_data.get("distribution_mode")
+
+            # Cancel charge pause when user changes charging or distribution mode
+            if self._pause_started_at is not None:
+                if (self._prev_charging_mode is not None and self._charging_mode != self._prev_charging_mode) or \
+                   (self._prev_distribution_mode is not None and current_distribution_mode != self._prev_distribution_mode):
+                    _LOGGER.info(
+                        "Mode changed for %s (charging: %s→%s, distribution: %s→%s) — cancelling charge pause",
+                        self._attr_name, self._prev_charging_mode, self._charging_mode,
+                        self._prev_distribution_mode, current_distribution_mode,
+                    )
+                    self._pause_started_at = None
+
+            self._prev_charging_mode = self._charging_mode
+            self._prev_distribution_mode = current_distribution_mode
+
             self._calc_used = hub_data.get("calc_used")
             charger_max_available = hub_data.get("charger_max_available", 0)
             self._target_evse = hub_data.get("target_evse")

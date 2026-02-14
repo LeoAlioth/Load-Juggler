@@ -55,6 +55,15 @@
                     "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
                 }
             },
+            "hub_inverter": {
+                "title": "Konfiguracija razsmernika",
+                "description": "Nastavite omejitve moči razsmernika (neobvezno — nastavite na 0 za brez omejitev)",
+                "data": {
+                    "inverter_max_power": "Skupna moč razsmernika (W)",
+                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz"
+                }
+            },
             "device_type": {
                 "title": "Vrsta naprave",
                 "description": "Izberite vrsto naprave, ki jo želite dodati",
@@ -131,6 +140,15 @@
                     "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
                 }
             },
+            "reconfigure_hub_inverter": {
+                "title": "Ponovno konfiguriraj nastavitve razsmernika",
+                "description": "Posodobite konfiguracijo razsmernika",
+                "data": {
+                    "inverter_max_power": "Skupna moč razsmernika (W)",
+                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz"
+                }
+            },
             "reconfigure_plug": {
                 "title": "Ponovno konfiguriraj pametno vtičnico",
                 "description": "Posodobite nastavitve pametne vtičnice",
@@ -197,6 +215,15 @@
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
                     "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih",
                     "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
+                }
+            },
+            "hub_inverter": {
+                "title": "Posodobi nastavitve razsmernika",
+                "description": "Posodobite konfiguracijo razsmernika",
+                "data": {
+                    "inverter_max_power": "Skupna moč razsmernika (W)",
+                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz"
                 }
             },
             "plug": {

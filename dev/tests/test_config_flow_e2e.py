@@ -38,6 +38,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_SOC_TARGET_ENTITY_ID,
     CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
     CONF_POWER_BUFFER_ENTITY_ID,
+    CONF_INVERTER_MAX_POWER,
+    CONF_INVERTER_MAX_POWER_PER_PHASE,
+    CONF_INVERTER_SUPPORTS_ASYMMETRIC,
     CONF_CHARGER_PRIORITY,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
@@ -139,7 +142,7 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_battery"
 
-    # Step 4: hub_battery → provide battery settings → creates entry
+    # Step 4: hub_battery → provide battery settings
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
@@ -148,6 +151,18 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
             CONF_BATTERY_MAX_CHARGE_POWER: 5000,
             CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "hub_inverter"
+
+    # Step 5: hub_inverter → provide inverter settings → creates entry
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_INVERTER_MAX_POWER: 10000,
+            CONF_INVERTER_MAX_POWER_PER_PHASE: 4000,
+            CONF_INVERTER_SUPPORTS_ASYMMETRIC: True,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -222,6 +237,18 @@ async def test_hub_creation_single_phase(hass: HomeAssistant):
             CONF_BATTERY_MAX_CHARGE_POWER: 0,
             CONF_BATTERY_MAX_DISCHARGE_POWER: 0,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "hub_inverter"
+
+    # No inverter limits
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_INVERTER_MAX_POWER: 0,
+            CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
+            CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -437,12 +464,28 @@ async def test_options_flow_hub_saves_changes(
             CONF_BATTERY_SOC_HYSTERESIS: 5,
         },
     )
+
+    # Step 3: hub_inverter (inverter settings)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "hub_inverter"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_INVERTER_MAX_POWER: 8000,
+            CONF_INVERTER_MAX_POWER_PER_PHASE: 3000,
+            CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
+        },
+    )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     # Options should now contain the submitted values
     assert mock_hub_entry.options.get(CONF_BATTERY_MAX_CHARGE_POWER) == 7000
     assert mock_hub_entry.options.get(CONF_BATTERY_MAX_DISCHARGE_POWER) == 7000
     assert mock_hub_entry.options.get(CONF_BATTERY_SOC_HYSTERESIS) == 5
+    assert mock_hub_entry.options.get(CONF_INVERTER_MAX_POWER) == 8000
+    assert mock_hub_entry.options.get(CONF_INVERTER_MAX_POWER_PER_PHASE) == 3000
+    assert mock_hub_entry.options.get(CONF_INVERTER_SUPPORTS_ASYMMETRIC) is False
 
 
 async def test_options_flow_charger_saves_changes(

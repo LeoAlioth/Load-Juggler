@@ -55,6 +55,15 @@
                     "battery_soc_hysteresis": "Battery SOC hysteresis (%) to prevent oscillation at thresholds"
                 }
             },
+            "hub_inverter": {
+                "title": "Inverter Configuration",
+                "description": "Configure inverter power limits (optional — set to 0 to leave unconstrained)",
+                "data": {
+                    "inverter_max_power": "Total inverter power capacity (W)",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase (W)",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding"
+                }
+            },
             "select_hub": {
                 "title": "Select Hub",
                 "description": "Select which electrical hub to add this charger to",
@@ -131,6 +140,15 @@
                     "battery_soc_hysteresis": "Battery SOC hysteresis (%) to prevent oscillation at thresholds"
                 }
             },
+            "reconfigure_hub_inverter": {
+                "title": "Reconfigure Inverter Settings",
+                "description": "Update your inverter configuration",
+                "data": {
+                    "inverter_max_power": "Total inverter power capacity (W)",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase (W)",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding"
+                }
+            },
             "reconfigure_plug": {
                 "title": "Reconfigure Smart Plug",
                 "description": "Update smart plug settings",
@@ -197,6 +215,15 @@
                     "battery_max_charge_power": "Maximum battery charge power in Watts",
                     "battery_max_discharge_power": "Maximum battery discharge power in Watts",
                     "battery_soc_hysteresis": "Battery SOC hysteresis (%) to prevent oscillation at thresholds"
+                }
+            },
+            "hub_inverter": {
+                "title": "Update Inverter Settings",
+                "description": "Update your inverter configuration",
+                "data": {
+                    "inverter_max_power": "Total inverter power capacity (W)",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase (W)",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding"
                 }
             },
             "plug": {
