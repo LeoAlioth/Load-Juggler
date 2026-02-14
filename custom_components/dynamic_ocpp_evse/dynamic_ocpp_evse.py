@@ -12,6 +12,16 @@ from .calculations import (
     calculate_all_charger_targets,
 )
 from .const import *
+from .calculations.utils import is_number
+
+
+def _read_phase_attr(attrs: dict, keys: tuple) -> float | None:
+    """Try to read a numeric phase current from entity attributes using multiple naming conventions."""
+    for key in keys:
+        val = attrs.get(key)
+        if val is not None and is_number(val):
+            return float(val)
+    return None
 
 
 def run_hub_calculation(sensor):
@@ -266,15 +276,31 @@ def run_hub_calculation(sensor):
                 connector_status=connector_status,
             )
 
-            # Get OCPP data for this charger
+            # Get OCPP current draw for this charger
             evse_import = entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
             if evse_import:
                 evse_state = hass.states.get(evse_import)
                 if evse_state and evse_state.state not in ['unknown', 'unavailable', None]:
                     try:
-                        charger.l1_current = float(evse_state.attributes.get('l1_current', 0) or 0)
-                        charger.l2_current = float(evse_state.attributes.get('l2_current', 0) or 0)
-                        charger.l3_current = float(evse_state.attributes.get('l3_current', 0) or 0)
+                        # Try per-phase attributes first (various naming conventions)
+                        attrs = evse_state.attributes
+                        l1 = _read_phase_attr(attrs, ('l1_current', 'l1', 'phase_1', 'current_phase_1'))
+                        l2 = _read_phase_attr(attrs, ('l2_current', 'l2', 'phase_2', 'current_phase_2'))
+                        l3 = _read_phase_attr(attrs, ('l3_current', 'l3', 'phase_3', 'current_phase_3'))
+
+                        if l1 is not None or l2 is not None or l3 is not None:
+                            # Per-phase data available from attributes
+                            charger.l1_current = l1 or 0
+                            charger.l2_current = l2 or 0
+                            charger.l3_current = l3 or 0
+                        else:
+                            # No per-phase attributes — use entity state as per-phase current
+                            current_import = float(evse_state.state)
+                            charger.l1_current = current_import
+                            if phases >= 2:
+                                charger.l2_current = current_import
+                            if phases >= 3:
+                                charger.l3_current = current_import
                     except (ValueError, TypeError):
                         pass
 
