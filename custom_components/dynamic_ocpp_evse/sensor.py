@@ -1,4 +1,5 @@
 import logging
+import time
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -51,34 +52,36 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         _LOGGER.error("No hub found for charger: %s", name)
         return
 
-    # Fetch the initial update frequency from the configuration
-    update_frequency = get_entry_value(config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
-    _LOGGER.info(f"Initial update frequency for {name}: {update_frequency} seconds")
+    # Site update frequency (fast loop) — controls how often site sensors refresh.
+    # Read from hub config since it's a site-level setting.
+    site_update_frequency = get_entry_value(hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY)
+    _LOGGER.info(f"Initial site update frequency for {name}: {site_update_frequency}s (charger command rate: {get_entry_value(config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)}s)")
+
+    # Create the sensor FIRST so the coordinator can reference its persistent state
+    # (e.g., _last_command_time for throttling OCPP commands).
+    sensor = DynamicOcppEvseChargerSensor(hass, config_entry, hub_entry, name, entity_id, None)
 
     async def async_update_data():
-        """Fetch data for the coordinator."""
-        # Create a temporary sensor instance to calculate the data
-        temp_sensor = DynamicOcppEvseChargerSensor(hass, config_entry, hub_entry, name, entity_id, None)
-        await temp_sensor.async_update()
+        """Fetch data for the coordinator using the persistent sensor instance."""
+        await sensor.async_update()
         return {
-            CONF_TOTAL_ALLOCATED_CURRENT: temp_sensor._state,
-            CONF_PHASES: temp_sensor._phases,
-            CONF_CHARGING_MODE: temp_sensor._charging_mode,
-            "calc_used": temp_sensor._calc_used,
-            "allocated_current": temp_sensor._allocated_current,
+            CONF_TOTAL_ALLOCATED_CURRENT: sensor._state,
+            CONF_PHASES: sensor._phases,
+            CONF_CHARGING_MODE: sensor._charging_mode,
+            "calc_used": sensor._calc_used,
+            "allocated_current": sensor._allocated_current,
         }
 
-    # Create a DataUpdateCoordinator to manage the update interval dynamically
+    # Create a DataUpdateCoordinator at the fast site refresh rate.
+    # OCPP commands are throttled internally by the sensor's _last_command_time.
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name=f"Dynamic OCPP EVSE Coordinator - {name}",
         update_method=async_update_data,
-        update_interval=timedelta(seconds=update_frequency),
+        update_interval=timedelta(seconds=site_update_frequency),
     )
-
-    # Create the sensor entities (available current + allocated current)
-    sensor = DynamicOcppEvseChargerSensor(hass, config_entry, hub_entry, name, entity_id, coordinator)
+    sensor.coordinator = coordinator
     allocated_sensor = DynamicOcppEvseAllocatedCurrentSensor(hass, config_entry, hub_entry, name, entity_id)
     async_add_entities([sensor, allocated_sensor])
 
@@ -88,22 +91,22 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     # Listen for updates to the config entry and recreate the coordinator if necessary
     async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry):
         """Handle options update."""
-        nonlocal update_frequency
+        nonlocal site_update_frequency
         _LOGGER.debug("async_update_listener triggered for %s", name)
-        new_update_frequency = get_entry_value(entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
-        _LOGGER.info(f"Detected update frequency change for {name}: {new_update_frequency} seconds")
-        if new_update_frequency != update_frequency:
-            _LOGGER.info(f"Updating update_frequency to {new_update_frequency} seconds")
+        # Re-read hub entry for hub-level settings
+        current_hub = get_hub_for_charger(hass, entry.entry_id)
+        new_site_freq = get_entry_value(current_hub, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY) if current_hub else site_update_frequency
+        if new_site_freq != site_update_frequency:
+            _LOGGER.info(f"Updating site_update_frequency to {new_site_freq}s for {name}")
             nonlocal coordinator
             coordinator = DataUpdateCoordinator(
                 hass,
                 _LOGGER,
                 name=f"Dynamic OCPP EVSE Coordinator - {name}",
                 update_method=async_update_data,
-                update_interval=timedelta(seconds=new_update_frequency),
+                update_interval=timedelta(seconds=new_site_freq),
             )
-            update_frequency = new_update_frequency
-            _LOGGER.debug(f"Recreated DataUpdateCoordinator with update_interval: {new_update_frequency} seconds")
+            site_update_frequency = new_site_freq
             await coordinator.async_config_entry_first_refresh()
             sensor.coordinator = coordinator
 
@@ -135,6 +138,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self._last_set_current = 0
         self._last_set_power = None
         self._last_commanded_limit = None  # Amps, after rate-limiting (for ramp + compliance)
+        self._last_command_time: float = 0  # monotonic time of last OCPP/plug command
         self._mismatch_count = 0           # consecutive non-compliant cycles
         self._last_auto_reset_at = None    # datetime of last auto-reset
         self._target_evse = None
@@ -422,6 +426,14 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 self.hass.data[DOMAIN]["charger_allocations"] = {}
             self.hass.data[DOMAIN]["charger_allocations"][self.config_entry.entry_id] = self._allocated_current
 
+            # --- Throttle: only send device commands at the charger update rate ---
+            command_interval = get_entry_value(self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
+            now_mono = time.monotonic()
+            if now_mono - self._last_command_time < command_interval:
+                _LOGGER.debug("Site refresh for %s (command send in %.0fs)",
+                              self._attr_name, command_interval - (now_mono - self._last_command_time))
+                return
+
             # Get charger-specific limits
             min_charge_current = get_entry_value(self.config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
             max_charge_current = get_entry_value(self.config_entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
@@ -502,6 +514,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                         _LOGGER.debug(f"Could not update device power slider: {e}")
 
                 self._last_update = datetime.utcnow()
+                self._last_command_time = now_mono
 
             else:
                 # OCPP EVSE — send charging profile
@@ -652,6 +665,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
 
                 self._last_commanded_limit = limit  # Store for next cycle's ramp + compliance
                 self._last_update = datetime.utcnow()
+                self._last_command_time = now_mono
         except Exception as e:
             _LOGGER.error(f"Error updating Dynamic OCPP EVSE Charger Sensor {self._attr_name}: {e}", exc_info=True)
 

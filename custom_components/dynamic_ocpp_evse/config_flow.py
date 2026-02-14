@@ -106,6 +106,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ), selector({"select": {"options": self._optional_entity_options(
                 self._battery_and_power_entities()[1]  # power entities list
             ), "mode": "dropdown"}})),
+            (vol.Optional(
+                CONF_SITE_UPDATE_FREQUENCY,
+                default=defaults.get(CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY),
+            ), selector({"number": {"min": 1, "max": 60, "step": 1, "mode": "box", "unit_of_measurement": "s"}})),
         ]
 
     def _build_hub_battery_schema(self, defaults: dict | None = None) -> list[tuple]:

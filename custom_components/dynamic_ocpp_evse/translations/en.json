@@ -41,7 +41,8 @@
                     "max_import_power_entity_id": "Sensor for maximum import power allowed",
                     "phase_voltage": "Voltage per phase in volts",
                     "excess_export_threshold": "Excess Export Power Threshold (W) at which charging starts in Excess mode",
-                    "solar_production_entity_id": "Solar power production sensor (optional — leave 'None' to derive from grid meter)"
+                    "solar_production_entity_id": "Solar power production sensor (optional — leave 'None' to derive from grid meter)",
+                    "site_update_frequency": "Site sensor refresh rate (seconds)"
                 }
             },
             "hub_battery": {
@@ -126,7 +127,8 @@
                     "max_import_power_entity_id": "Sensor for maximum import power allowed",
                     "phase_voltage": "Voltage per phase in volts",
                     "excess_export_threshold": "Excess Export Power Threshold (W)",
-                    "solar_production_entity_id": "Solar power production sensor (optional — leave 'None' to derive from grid meter)"
+                    "solar_production_entity_id": "Solar power production sensor (optional — leave 'None' to derive from grid meter)",
+                    "site_update_frequency": "Site sensor refresh rate (seconds)"
                 }
             },
             "reconfigure_hub_battery": {
@@ -203,7 +205,8 @@
                     "max_import_power_entity_id": "Sensor for maximum import power allowed",
                     "phase_voltage": "Voltage per phase in volts",
                     "excess_export_threshold": "Excess Export Power Threshold (W)",
-                    "solar_production_entity_id": "Solar power production sensor (optional — leave 'None' to derive from grid meter)"
+                    "solar_production_entity_id": "Solar power production sensor (optional — leave 'None' to derive from grid meter)",
+                    "site_update_frequency": "Site sensor refresh rate (seconds)"
                 }
             },
             "hub": {

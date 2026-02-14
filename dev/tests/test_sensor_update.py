@@ -1485,3 +1485,58 @@ async def test_eco_mode_night_with_feedback_loop(
         f"If >6A, solar_production_total was likely not recalculated after "
         f"feedback loop adjustment."
     )
+
+
+async def test_dual_frequency_throttles_ocpp_commands(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that site info refreshes on every cycle but OCPP commands are throttled.
+
+    The sensor update loop runs at the fast site_update_frequency (default 5s),
+    but OCPP set_charge_rate commands are only sent when the charger's
+    update_frequency (default 15s) has elapsed.
+    """
+    _set_ha_states(hass)
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
+        # First update: _last_command_time is 0, so command should fire
+        await sensor.async_update()
+
+        ocpp_calls = [
+            c for c in mock_call.call_args_list
+            if len(c[0]) >= 2 and c[0][0] == "ocpp" and c[0][1] == "set_charge_rate"
+        ]
+        assert len(ocpp_calls) == 1, (
+            f"First update should send OCPP command, got {len(ocpp_calls)} calls"
+        )
+
+        # Verify hub_data was populated (site info refreshed)
+        hub_entry_id = charger_entry.data.get("hub_entry_id")
+        hub_data = hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
+        assert hub_data, "Hub data should be populated after first update"
+
+        # Reset mock to count only new calls
+        mock_call.reset_mock()
+
+        # Second update immediately after: should be throttled (no OCPP command)
+        # _last_command_time was just set, and update_frequency is 15s
+        await sensor.async_update()
+
+        ocpp_calls_2 = [
+            c for c in mock_call.call_args_list
+            if len(c[0]) >= 2 and c[0][0] == "ocpp" and c[0][1] == "set_charge_rate"
+        ]
+        assert len(ocpp_calls_2) == 0, (
+            f"Second immediate update should be throttled, got {len(ocpp_calls_2)} OCPP calls"
+        )
+
+        # Verify hub_data was STILL refreshed (site info updates every cycle)
+        hub_data_2 = hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
+        assert hub_data_2, "Hub data should still be populated on throttled cycle"

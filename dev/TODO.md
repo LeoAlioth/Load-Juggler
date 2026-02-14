@@ -82,9 +82,9 @@
 
 30. - [x] **Eco mode fake solar surplus at night** — Feedback loop fix (item 26) created a mismatch: `solar_production_total` was derived from ORIGINAL consumption, but the engine used ADJUSTED consumption (after charger subtraction). This produced a fake solar surplus equal to the charger's own draw, inflating Eco mode targets (e.g. 11.2A instead of 6A at night). Fixed: `dynamic_ocpp_evse.py` recalculates `solar_production_total` from adjusted consumption + export after the feedback loop subtraction (only when solar is derived, not when dedicated solar entity is configured). 1 integration test added. 70/70 + 56/56 tests passing. (fixes ISSUES.md #7)
 
-## In Progress
+31. - [x] **Dual-frequency update loop** — Coordinator now runs at `site_update_frequency` (hub-level, default 5s). Calculation + hub_data refresh happen every cycle. OCPP commands and plug switches are throttled to `update_frequency` (charger-level, default 15s) via `_last_command_time` monotonic clock. Eliminated temp sensor pattern — coordinator now uses the persistent sensor instance. New `CONF_SITE_UPDATE_FREQUENCY` constant, config flow field, translations (en + sl). 1 integration test. 70/70 + 57/57 tests passing.
 
-31. - [ ] **Dual-frequency update loop** — Separate fast site info updates (default 5s) from slow charger OCPP command updates (default 15s). Site sensor refresh should happen more frequently for better responsiveness without overwhelming chargers with frequent OCPP profile changes.
+## In Progress
 
 ## Backlog
 
