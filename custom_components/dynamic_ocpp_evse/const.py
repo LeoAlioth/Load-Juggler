@@ -18,6 +18,7 @@ CONF_INVERT_PHASES = "invert_phases"
 CONF_MAX_IMPORT_POWER_ENTITY_ID = "max_import_power_entity_id"
 CONF_PHASE_VOLTAGE = "phase_voltage"
 CONF_EXCESS_EXPORT_THRESHOLD = "excess_export_threshold"  # Maximum allowed export before charging starts in Excess mode
+CONF_SOLAR_PRODUCTION_ENTITY_ID = "solar_production_entity_id"  # Optional direct solar production sensor (W)
 
 # Battery support configuration constants (hub-level)
 CONF_BATTERY_POWER_ENTITY_ID = "battery_power_entity_id"
@@ -50,6 +51,16 @@ CONF_UPDATE_FREQUENCY = "update_frequency"
 CONF_OCPP_PROFILE_TIMEOUT = "ocpp_profile_timeout"
 CONF_CHARGE_PAUSE_DURATION = "charge_pause_duration"
 CONF_STACK_LEVEL = "stack_level"
+
+# Device type (charger-level) — EVSE (OCPP) or smart plug/relay
+CONF_DEVICE_TYPE = "device_type"
+DEVICE_TYPE_EVSE = "evse"
+DEVICE_TYPE_PLUG = "plug"
+CONF_PLUG_SWITCH_ENTITY_ID = "plug_switch_entity_id"  # HA switch entity to control on/off
+CONF_PLUG_POWER_RATING = "plug_power_rating"  # Fixed power draw in watts
+CONF_PLUG_POWER_MONITOR_ENTITY_ID = "plug_power_monitor_entity_id"  # Optional power monitoring sensor
+CONF_CONNECTED_TO_PHASE = "connected_to_phase"  # Which phase(s) the device is wired to
+DEFAULT_PLUG_POWER_RATING = 2000
 
 # sensor attributes
 CONF_PHASES = "phases"
@@ -96,10 +107,16 @@ DEFAULT_CHARGE_RATE_UNIT = CHARGE_RATE_UNIT_AUTO
 CONF_PROFILE_VALIDITY_MODE = "profile_validity_mode"
 PROFILE_VALIDITY_MODE_RELATIVE = "relative"
 PROFILE_VALIDITY_MODE_ABSOLUTE = "absolute"
-DEFAULT_PROFILE_VALIDITY_MODE = PROFILE_VALIDITY_MODE_RELATIVE
+DEFAULT_PROFILE_VALIDITY_MODE = PROFILE_VALIDITY_MODE_ABSOLUTE
 
 # Distribution mode configuration (hub-level)
 CONF_DISTRIBUTION_MODE = "distribution_mode"
+
+# Charging mode configuration (hub-level)
+CHARGING_MODE_STANDARD = "Standard"
+CHARGING_MODE_ECO = "Eco"
+CHARGING_MODE_SOLAR = "Solar"
+CHARGING_MODE_EXCESS = "Excess"
 DISTRIBUTION_MODE_SHARED = "Shared"
 DISTRIBUTION_MODE_PRIORITY = "Priority"
 DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED = "Sequential - Optimized"

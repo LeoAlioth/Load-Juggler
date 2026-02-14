@@ -12,13 +12,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 4140  # 18A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: 75
       battery_soc_min: 20
       battery_soc_target: 80
@@ -35,7 +34,7 @@ scenarios:
         priority: 1
     expected: # Manually verified expected result
       charger_1:
-        target: 0  # battery not at target SOC, so no charging (18A solar - 3A load = 15A charging, but solar mode with battery below target prevents use)
+        allocated: 0  # battery not at target SOC, so no charging (18A solar - 3A load = 15A charging, but solar mode with battery below target prevents use)
 
   - name: "1ph-1c-solar-prio-with-bat-at-target"
     description: "Single phase, 1 charger, solar mode, with battery, normal conditions"
@@ -44,13 +43,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 4140  # 18A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
@@ -67,7 +65,7 @@ scenarios:
         priority: 1
     expected: # Manually verified expected result 
       charger_1:
-        target: 15.0  # 18A solar - 3A consumption
+        allocated: 15.0  # 18A solar - 3A consumption
 
   - name: "1ph-1c-solar-prio-with-bat-above-target"
     description: "Single phase, 1 charger, solar mode, with battery, normal conditions"
@@ -76,13 +74,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 2300  # 10A at 230V
       phase_a_consumption: 3.0  # Home load before EVSE
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: 90
       battery_soc_min: 20
       battery_soc_target: 80
@@ -99,7 +96,7 @@ scenarios:
         priority: 1
     expected: # Manually verified expected result
       charger_1:
-        target: 27.0  # 10A solar + 20A from battery - 3A consumption
+        allocated: 27.0  # 10A solar + 20A from battery - 3A consumption
   
   - name: "1ph-2c-solar-prio-with-bat-shared"
     description: "Single phase, 2 chargers both solar, verify no double counting"
@@ -108,13 +105,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 5290  # 23A at 230V  
       phase_a_consumption: 3.0  # Home load
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
@@ -136,9 +132,9 @@ scenarios:
         priority: 2
     expected:  # Manually verified expected result
       charger_1:
-        target: 14  # 20A is available after load, That is enough for both chargers to charge. After minimum charge rate is met for both chargers, the remaining 8 goes to the gihewr priority one.
+        allocated: 14  # 20A is available after load, That is enough for both chargers to charge. After minimum charge rate is met for both chargers, the remaining 8 goes to the gihewr priority one.
       charger_2:
-        target: 6 
+        allocated: 6 
 
   - name: "1ph-2c-solar-prio-with-bat-shared-low-solar"
     description: "Single phase, 2 chargers both solar, verify no double counting"
@@ -147,13 +143,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 2300  # 10A at 230V  
       phase_a_consumption: 3.0  # Home load
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
@@ -175,9 +170,9 @@ scenarios:
         priority: 2
     expected:  # Manually verified expected result
       charger_1:
-        target: 7  # Not enough is available for both to charge at minimum, so higher priority charger gets all 7A available after load
+        allocated: 7  # Not enough is available for both to charge at minimum, so higher priority charger gets all 7A available after load
       charger_2:
-        target: 0 
+        allocated: 0 
 
   - name: "1ph-2c-solar-shared-with-bat-shared-low-solar"
     description: "Single phase, 2 chargers both solar, verify no double counting"
@@ -186,13 +181,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
-      num_phases: 1
+
       distribution_mode: Shared
       charging_mode: Solar
       solar_production: 2300  # 10A at 230V  
       phase_a_consumption: 3.0  # Home load
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
@@ -214,9 +208,9 @@ scenarios:
         priority: 2
     expected:  # Manually verified expected result
       charger_1:
-        target: 7  # Not enough is available for both to charge at minimum, so higher priority charger gets all 7A available after load
+        allocated: 7  # Not enough is available for both to charge at minimum, so higher priority charger gets all 7A available after load
       charger_2:
-        target: 0 
+        allocated: 0 
 
   - name: "1ph-2c-solar-prio-with-bat-shared-high-solar"
     description: "Single phase, 2 chargers both solar, verify no double counting"
@@ -225,13 +219,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 6900  # 30A at 230V  
       phase_a_consumption: 3.0  # Home load
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
@@ -253,9 +246,9 @@ scenarios:
         priority: 2
     expected:  # Manually verified expected result
       charger_1:
-        target: 16 # Maxes out at 16A, even though more is available 
+        allocated: 16 # Maxes out at 16A, even though more is available 
       charger_2:
-        target: 11 # 30A - 3A load - 16A to charger_1
+        allocated: 11 # 30A - 3A load - 16A to charger_1
 
   - name: "1ph-2c-solar-shared-with-bat-shared-high-solar"
     description: "Single phase, 2 chargers both solar, verify no double counting"
@@ -264,13 +257,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
-      num_phases: 1
+
       distribution_mode: Shared
       charging_mode: Solar
       solar_production: 6900  # 30A at 230V  
       phase_a_consumption: 3.0  # Home load
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: 80
       battery_soc_min: 20
       battery_soc_target: 80
@@ -292,6 +284,6 @@ scenarios:
         priority: 2
     expected:  # Manually verified expected result
       charger_1:
-        target: 13.5 # shared evenly
+        allocated: 13.5 # shared evenly
       charger_2:
-        target: 13.5 
+        allocated: 13.5 

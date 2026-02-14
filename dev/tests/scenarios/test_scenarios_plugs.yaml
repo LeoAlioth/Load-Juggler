@@ -1,0 +1,220 @@
+# Test scenarios: Smart plug / relay device type
+# Plugs are binary on/off devices with fixed power draw.
+# They are modeled as ChargerContext with min_current == max_current == power_rating / (voltage * phases).
+# The engine's min-current threshold naturally produces binary behavior:
+#   - If available >= equiv_current → allocate equiv_current (turn on)
+#   - If available < equiv_current → allocate 0 (turn off)
+
+scenarios:
+
+  - name: "plug-1ph-solar-enough"
+    description: "1-phase plug (1500W = 6.5A), Solar mode, enough solar to power plug"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Solar
+      solar_production: 3000
+      phase_a_consumption: 2.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        power_rating: 1500
+        phases: 1
+        priority: 1
+        connected_to_phase: "A"
+    expected:
+      plug_1:
+        allocated: 6.5  # 1500W / 230V = 6.5A; solar available = 3000/230 - 2 = 11.0A > 6.5A → on
+
+  - name: "plug-1ph-solar-not-enough"
+    description: "1-phase plug (2000W = 8.7A), Solar mode, not enough solar → 0A (binary off)"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Solar
+      solar_production: 2000
+      phase_a_consumption: 5.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        connected_to_phase: "A"
+    expected:
+      plug_1:
+        allocated: 0.0  # 2000W / 230V = 8.7A; solar available = 2000/230 - 5 = 3.7A < 8.7A → off
+
+  - name: "plug-mixed-evse-and-plug-priority"
+    description: "3-phase EVSE (priority 1) + 1-phase plug (priority 2), Priority mode, Solar. EVSE gets power first."
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Solar
+      solar_production: 6000
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "plug_1"
+        device_type: "plug"
+        power_rating: 1500
+        phases: 1
+        priority: 2
+        connected_to_phase: "A"
+    expected:
+      # Solar per phase = 6000/3/230 = 8.7A. Available per phase = 8.7 - 2 = 6.7A
+      # EVSE (3-phase, priority 1): gets min(6.7, 6.7, 6.7) = 6.7A
+      # After EVSE: phase A left = 6.7 - 6.7 = 0A, phases B/C left = 0A
+      # Plug (1-phase A, priority 2): needs 6.5A, only 0A left → off
+      evse_1:
+        allocated: 6.7
+      plug_1:
+        allocated: 0.0
+
+  - name: "plug-mixed-evse-and-plug-plenty"
+    description: "3-phase EVSE (priority 1) + 1-phase plug (priority 2), Priority mode, Solar. Phase A shared between EVSE and plug."
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 63
+      max_import_power: 14490
+      distribution_mode: priority
+      charging_mode: Solar
+      solar_production: 12000
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "plug_1"
+        device_type: "plug"
+        power_rating: 1500
+        phases: 1
+        priority: 2
+        connected_to_phase: "A"
+    expected:
+      # Solar per phase = 12000/3/230 = 17.4A. Available per phase = 17.4 - 2 = 15.4A
+      # EVSE (3-phase) and plug (1-phase A) share phase A.
+      # Distribution accounts for shared phase: EVSE gets 8.9A (3-phase), plug gets 6.5A (phase A).
+      # Phase A total: 8.9 + 6.5 = 15.4A. Phases B/C: 8.9A each.
+      evse_1:
+        allocated: 8.9
+      plug_1:
+        allocated: 6.5
+
+  - name: "plug-3ph-standard"
+    description: "3-phase plug (11kW = 15.9A/phase), Standard mode, verify full allocation"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 63
+      max_import_power: 14490
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 5.0
+      phase_b_consumption: 5.0
+      phase_c_consumption: 5.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        power_rating: 11000
+        phases: 3
+        priority: 1
+    expected:
+      plug_1:
+        # 11000W / (230V * 3) = 15.9A per phase
+        # Standard mode: grid limit = 63 - 5 = 58A per phase. 15.9 < 58 → full allocation
+        allocated: 15.9
+
+  - name: "plug-idle"
+    description: "Plug with connector_status=Available, verify available_current shows correct value"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Solar
+      solar_production: 5000
+      phase_a_consumption: 2.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        connected_to_phase: "A"
+        connector_status: "Available"
+        active: false
+    expected:
+      plug_1:
+        allocated: 0.0  # Idle — not charging
+        available: 8.7  # 2000/230 = 8.7A equivalent; solar available = 5000/230 - 2 = 19.7A > 8.7A → would get 8.7A if active

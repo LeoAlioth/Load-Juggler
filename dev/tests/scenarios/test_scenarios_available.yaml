@@ -1,0 +1,361 @@
+# Test scenarios: Available current for idle (inactive) chargers
+# Tests that idle chargers show what they COULD get if a car were plugged in
+
+scenarios:
+
+  - name: "3ph-1c-idle-single-charger"
+    description: "Single idle 3-phase charger shows full available capacity"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        active: false
+    expected:
+      charger_1:
+        allocated: 0
+        available: 16  # 25A breaker - 2A load = 23A per phase, capped at max 16A
+
+  - name: "3ph-2c-both-idle"
+    description: "Two idle chargers each independently see full remaining capacity"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        active: false
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+        active: false
+    expected:
+      charger_1:
+        allocated: 0
+        available: 16  # Each idle charger independently sees 23A per phase, capped at 16A
+      charger_2:
+        allocated: 0
+        available: 16  # Same pool - hypothetical, not deducted between idle chargers
+
+  - name: "3ph-2c-one-active-one-idle"
+    description: "One charger active, one idle sees remaining capacity"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        # active: true (default)
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+        active: false
+    expected:
+      charger_1:
+        allocated: 16  # 25A - 2A = 23A per phase, capped at 16A
+        available: 16
+      charger_2:
+        allocated: 0
+        available: 7  # 23A per phase - 16A charger_1 = 7A remaining per phase
+
+  - name: "3ph-2c-one-active-one-idle-tight"
+    description: "Active charger leaves less than min for idle charger"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 5.0
+      phase_b_consumption: 5.0
+      phase_c_consumption: 5.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        # active: true (default)
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+        active: false
+    expected:
+      charger_1:
+        allocated: 16  # 25A - 5A = 20A per phase, capped at 16A
+        available: 16
+      charger_2:
+        allocated: 0
+        available: 0  # 20A - 16A = 4A remaining per phase, below min 6A -> 0
+
+  - name: "3ph-2c-one-active-one-idle-different-phases"
+    description: "3-phase active + idle 1-phase on separate phase"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        # active: true (default)
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        connected_to_phase: "B"
+        priority: 2
+        active: false
+    expected:
+      charger_1:
+        allocated: 16  # Standard mode: 25A - 2A = 23A on phase A (worst), capped at 16A
+        available: 16
+      charger_2:
+        allocated: 0
+        available: 8  # Phase B: 25A - 1A load - 16A from charger_1 = 8A remaining
+
+  - name: "1ph-1c-idle-standard-no-solar"
+    description: "Single idle 1-phase charger, Standard mode, no solar"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 5750
+
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 2.0
+
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        active: false
+    expected:
+      charger_1:
+        allocated: 0
+        available: 16  # 25A breaker - 2A load = 23A, capped at max 16A
+
+  - name: "1ph-2c-one-active-one-idle-standard"
+    description: "1-phase site, one charger active, one idle sees remaining"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 5750
+
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 2.0
+
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        # active: true (default)
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        active: false
+    expected:
+      charger_1:
+        allocated: 16  # 25A - 2A = 23A, capped at 16A
+        available: 16
+      charger_2:
+        allocated: 0
+        available: 7  # 23A - 16A = 7A remaining
+
+  - name: "1ph-2c-one-active-one-idle-tight"
+    description: "1-phase site, active charger leaves less than min for idle"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 5750
+
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 5.0
+
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        # active: true (default)
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        active: false
+    expected:
+      charger_1:
+        allocated: 16  # 25A - 5A = 20A, capped at 16A
+        available: 16
+      charger_2:
+        allocated: 0
+        available: 0  # 20A - 16A = 4A, below min 6A -> 0
+
+  - name: "1ph-1c-idle-solar-mode-no-battery"
+    description: "Idle charger in solar mode without battery"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 5750
+
+      distribution_mode: priority
+      charging_mode: Solar
+      solar_production: 3450  # 15A
+      phase_a_consumption: 3.0
+
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        active: false
+    expected:
+      charger_1:
+        allocated: 0
+        available: 12  # Solar: 15A - 3A = 12A export available

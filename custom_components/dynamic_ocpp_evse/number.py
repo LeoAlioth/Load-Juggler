@@ -23,6 +23,7 @@ from .const import (
     DEFAULT_BATTERY_MAX_POWER,
     DEFAULT_BATTERY_SOC_MIN,
 )
+from .helpers import get_entry_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,10 +38,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     
     if entry_type == ENTRY_TYPE_HUB:
         # Check if battery is configured
-        battery_soc_entity = config_entry.data.get("battery_soc_entity_id")
-        battery_power_entity = config_entry.data.get("battery_power_entity_id")
-        has_battery = (battery_soc_entity and battery_soc_entity != 'None') or \
-                      (battery_power_entity and battery_power_entity != 'None')
+        battery_soc_entity = get_entry_value(config_entry, "battery_soc_entity_id")
+        battery_power_entity = get_entry_value(config_entry, "battery_power_entity_id")
+        has_battery = bool(battery_soc_entity or battery_power_entity)
         
         # Always create Power Buffer (useful even without battery)
         entities.append(PowerBufferSlider(hass, config_entry, name, entity_id))
@@ -82,10 +82,10 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Min Current"
         self._attr_unique_id = f"{entity_id}_min_current"
-        self._attr_native_min_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
-        self._attr_native_max_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+        self._attr_native_min_value = get_entry_value(config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+        self._attr_native_max_value = get_entry_value(config_entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
         self._attr_native_step = 0.5
-        self._attr_native_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+        self._attr_native_value = get_entry_value(config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
 
@@ -131,10 +131,10 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
         self.config_entry = config_entry
         self._attr_name = f"{name} Max Current"
         self._attr_unique_id = f"{entity_id}_max_current"
-        self._attr_native_min_value = config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
-        self._attr_native_max_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+        self._attr_native_min_value = get_entry_value(config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+        self._attr_native_max_value = get_entry_value(config_entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
         self._attr_native_step = 0.5
-        self._attr_native_value = config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+        self._attr_native_value = get_entry_value(config_entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
 

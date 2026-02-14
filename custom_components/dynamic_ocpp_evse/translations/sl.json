@@ -50,7 +50,8 @@
                     "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
                     "battery_power_entity_id": "Senzor, ki meri moč baterije (pozitivno=praznjenje, negativno=polnjenje)",
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
-                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih"
+                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih",
+                    "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
                 }
             },
             "select_hub": {
@@ -75,6 +76,7 @@
                     "evse_minimum_charge_current": "Minimalni tok polnjenja EVSE (A)",
                     "evse_maximum_charge_current": "Maksimalni tok polnjenja EVSE (A)",
                     "charge_rate_unit": "Enota hitrosti polnjenja (Samodejno priporočeno)",
+                    "profile_validity_mode": "Način veljavnosti profila polnjenja",
                     "update_frequency": "Frekvenca posodabljanja v sekundah",
                     "ocpp_profile_timeout": "Časovna omejitev OCPP profila v sekundah",
                     "charge_pause_duration": "Trajanje premora polnjenja v sekundah",
@@ -102,7 +104,8 @@
                     "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
                     "battery_power_entity_id": "Senzor, ki meri moč baterije",
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
-                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih"
+                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih",
+                    "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
                 }
             },
             "reconfigure_charger": {
@@ -113,6 +116,7 @@
                     "evse_minimum_charge_current": "Minimalni tok polnjenja EVSE (A)",
                     "evse_maximum_charge_current": "Maksimalni tok polnjenja EVSE (A)",
                     "charge_rate_unit": "Enota hitrosti polnjenja (A=Amperi, W=Vati)",
+                    "profile_validity_mode": "Način veljavnosti profila polnjenja",
                     "update_frequency": "Frekvenca posodabljanja v sekundah",
                     "ocpp_profile_timeout": "Časovna omejitev OCPP profila v sekundah",
                     "charge_pause_duration": "Trajanje premora polnjenja v sekundah",
@@ -123,11 +127,57 @@
         "error": {
             "no_hub_configured": "Hub ni konfiguriran. Najprej nastavite domači električni hub.",
             "no_ocpp_chargers_found": "OCPP polnilniki niso najdeni. Prepričajte se, da imate nameščeno in konfigurirano integracijo OCPP z vsaj enim polnilnikom.",
+            "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
+            "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
             "unknown": "Prišlo je do neznane napake"
         },
         "abort": {
             "reconfigure_successful": "Konfiguracija uspešno posodobljena",
             "entry_not_found": "Konfiguracijski vnos ni najden"
+        }
+    },
+    "options": {
+        "step": {
+            "hub_grid": {
+                "title": "Posodobi nastavitve omrežja",
+                "description": "Posodobite omrežje in električne nastavitve",
+                "data": {
+                    "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (obvezno)",
+                    "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno)",
+                    "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
+                    "main_breaker_rating": "Ocena glavnega odklopnika (na fazo v amperih)",
+                    "invert_phases": "Obrni odčitke toka, če se uvoz meri kot negativen",
+                    "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
+                    "phase_voltage": "Napetost na fazo v voltih",
+                    "excess_export_threshold": "Prag presežne izvozne moči (W)"
+                }
+            },
+            "hub": {
+                "title": "Posodobi nastavitve baterije",
+                "description": "Posodobite konfiguracijo baterije",
+                "data": {
+                    "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
+                    "battery_power_entity_id": "Senzor, ki meri moč baterije",
+                    "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
+                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih",
+                    "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
+                }
+            },
+            "charger": {
+                "title": "Posodobi nastavitve polnilnika",
+                "description": "Posodobite nastavitve polnilnika",
+                "data": {
+                    "charger_priority": "Prioriteta polnilnika (1 = najvišja prioriteta)",
+                    "evse_minimum_charge_current": "Minimalni tok polnjenja EVSE (A)",
+                    "evse_maximum_charge_current": "Maksimalni tok polnjenja EVSE (A)",
+                    "charge_rate_unit": "Enota hitrosti polnjenja (A=Amperi, W=Vati)",
+                    "profile_validity_mode": "Način veljavnosti profila polnjenja",
+                    "update_frequency": "Frekvenca posodabljanja v sekundah",
+                    "ocpp_profile_timeout": "Časovna omejitev OCPP profila v sekundah",
+                    "charge_pause_duration": "Trajanje premora polnjenja v sekundah",
+                    "stack_level": "OCPP nivo sklada"
+                }
+            }
         }
     }
 }

@@ -9,10 +9,53 @@ import yaml
 from pathlib import Path
 from datetime import datetime
 
-# Import REAL production code (pure Python, no HA dependencies)
-sys.path.insert(0, str(Path(__file__).parents[2]))
+# Load calculation modules directly from files to avoid importing Home Assistant-dependent
+# package __init__.py which imports 'homeassistant'.
+import importlib.util
+import types
+import sys
 
-from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext
+repo_root = Path(__file__).parents[2]
+_comp_dir = repo_root / "custom_components" / "dynamic_ocpp_evse"
+_calc_dir = _comp_dir / "calculations"
+
+# Build proper package hierarchy so relative imports in target_calculator.py work.
+_PKG_ROOT = "custom_components"
+_PKG_COMP = "custom_components.dynamic_ocpp_evse"
+_PKG_CALC = "custom_components.dynamic_ocpp_evse.calculations"
+
+# Create stub namespace packages
+for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC):
+    if _pkg_name not in sys.modules:
+        _pkg = types.ModuleType(_pkg_name)
+        _pkg.__path__ = []  # make it a package
+        _pkg.__package__ = _pkg_name
+        sys.modules[_pkg_name] = _pkg
+
+
+def _load_module_as(fqn, path):
+    """Load a module with its fully-qualified name so relative imports resolve."""
+    spec = importlib.util.spec_from_file_location(fqn, str(path))
+    module = importlib.util.module_from_spec(spec)
+    # Set __package__ to the parent package so `from .x` and `from ..x` work
+    module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
+    sys.modules[fqn] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+# 1) Load const (needed by target_calculator's `from ..const import ...`)
+_load_module_as(f"{_PKG_COMP}.const", _comp_dir / "const.py")
+
+# 2) Load models and utils (no relative imports of their own)
+_load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
+_load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
+
+# 3) Load target_calculator (has relative imports: .models, .utils, ..const)
+_load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
+
+# Convenience aliases for the rest of this file
+from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext, PhaseValues
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 
 
@@ -21,30 +64,20 @@ def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
     Simulate feedback: chargers drawing power reduces export.
 
     Args:
-        site: SiteContext with chargers that have target_current set
+        site: SiteContext with chargers that have allocated_current set
         initial_solar: Total solar production (W)
         initial_consumption_per_phase: [phase_a, phase_b, phase_c] consumption (A)
+            Values are None for phases that don't physically exist.
     """
     voltage = site.voltage
-    num_phases = site.num_phases if site.num_phases > 0 else 1
 
-    # Solar per phase (evenly distributed across active phases)
-    if num_phases == 1:
-        # Single-phase: all solar goes to phase A
-        solar_per_phase_a = initial_solar / voltage if voltage > 0 else 0
-        solar_per_phase_b = 0
-        solar_per_phase_c = 0
-    else:
-        # Three-phase: solar evenly distributed
-        solar_per_phase = initial_solar / num_phases / voltage if voltage > 0 else 0
-        solar_per_phase_a = solar_per_phase
-        solar_per_phase_b = solar_per_phase
-        solar_per_phase_c = solar_per_phase
+    # Solar per phase (evenly distributed across existing phases)
+    solar_per_phase = initial_solar / site.num_phases / voltage if voltage > 0 else 0
 
-    # Start with initial consumption
-    phase_a_load = initial_consumption_per_phase[0]
-    phase_b_load = initial_consumption_per_phase[1]
-    phase_c_load = initial_consumption_per_phase[2]
+    # Start with initial consumption (None = phase doesn't exist, use 0 for load calc)
+    phase_a_load = initial_consumption_per_phase[0] if initial_consumption_per_phase[0] is not None else 0
+    phase_b_load = initial_consumption_per_phase[1] if initial_consumption_per_phase[1] is not None else 0
+    phase_c_load = initial_consumption_per_phase[2] if initial_consumption_per_phase[2] is not None else 0
 
     # Add charger loads based on their actual phase connections
     for charger in site.chargers:
@@ -52,46 +85,44 @@ def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
             # Single-phase: add to specific phase based on active_phases_mask
             if charger.active_phases_mask:
                 if 'A' in charger.active_phases_mask and 'B' not in charger.active_phases_mask and 'C' not in charger.active_phases_mask:
-                    phase_a_load += charger.target_current
+                    phase_a_load += charger.allocated_current
                 elif 'B' in charger.active_phases_mask and 'A' not in charger.active_phases_mask and 'C' not in charger.active_phases_mask:
-                    phase_b_load += charger.target_current
+                    phase_b_load += charger.allocated_current
                 elif 'C' in charger.active_phases_mask and 'A' not in charger.active_phases_mask and 'B' not in charger.active_phases_mask:
-                    phase_c_load += charger.target_current
+                    phase_c_load += charger.allocated_current
             else:
                 # No mask - default to phase A
-                phase_a_load += charger.target_current
+                phase_a_load += charger.allocated_current
 
         elif charger.phases == 2:
             # Two-phase: add to appropriate two phases
             if charger.active_phases_mask:
                 if 'A' in charger.active_phases_mask and 'B' in charger.active_phases_mask:
-                    phase_a_load += charger.target_current
-                    phase_b_load += charger.target_current
+                    phase_a_load += charger.allocated_current
+                    phase_b_load += charger.allocated_current
                 elif 'A' in charger.active_phases_mask and 'C' in charger.active_phases_mask:
-                    phase_a_load += charger.target_current
-                    phase_c_load += charger.target_current
+                    phase_a_load += charger.allocated_current
+                    phase_c_load += charger.allocated_current
                 elif 'B' in charger.active_phases_mask and 'C' in charger.active_phases_mask:
-                    phase_b_load += charger.target_current
-                    phase_c_load += charger.target_current
+                    phase_b_load += charger.allocated_current
+                    phase_c_load += charger.allocated_current
             else:
                 # No mask - default to AB
-                phase_a_load += charger.target_current
-                phase_b_load += charger.target_current
+                phase_a_load += charger.allocated_current
+                phase_b_load += charger.allocated_current
 
         elif charger.phases == 3:
             # Three-phase: add to all phases
-            phase_a_load += charger.target_current
-            phase_b_load += charger.target_current
-            phase_c_load += charger.target_current
+            phase_a_load += charger.allocated_current
+            phase_b_load += charger.allocated_current
+            phase_c_load += charger.allocated_current
 
-    # Calculate new export per phase (solar - total_load)
-    site.phase_a_export = max(0, solar_per_phase_a - phase_a_load)
-    site.phase_b_export = max(0, solar_per_phase_b - phase_b_load)
-    site.phase_c_export = max(0, solar_per_phase_c - phase_c_load)
-
-    # Update totals
-    site.total_export_current = site.phase_a_export + site.phase_b_export + site.phase_c_export
-    site.total_export_power = site.total_export_current * voltage
+    # Calculate new export per phase (solar - total_load), preserving None for non-existent phases
+    site.export_current = PhaseValues(
+        max(0, solar_per_phase - phase_a_load) if initial_consumption_per_phase[0] is not None else None,
+        max(0, solar_per_phase - phase_b_load) if initial_consumption_per_phase[1] is not None else None,
+        max(0, solar_per_phase - phase_c_load) if initial_consumption_per_phase[2] is not None else None,
+    )
 
 
 def detect_oscillation(history, max_variation=0.5):
@@ -142,50 +173,44 @@ def build_site_from_scenario(scenario):
     site_data = scenario['site']
     voltage = site_data.get('voltage', 230)
     
-    # Solar production + per-phase consumption format
+    # Solar production + per-phase consumption (None = phase doesn't exist)
     solar_total = site_data.get('solar_production', 0)
-    phase_a_cons = site_data.get('phase_a_consumption', 0)
-    phase_b_cons = site_data.get('phase_b_consumption', 0)
-    phase_c_cons = site_data.get('phase_c_consumption', 0)
-    num_phases = site_data.get('num_phases', 3)
-    
-    # Calculate initial export per phase (solar evenly distributed)
-    if num_phases == 1:
-        # Single-phase: all solar goes to phase A
-        solar_per_phase_amps = solar_total / voltage if voltage > 0 else 0
-        phase_a_export = max(0, solar_per_phase_amps - phase_a_cons)
-        phase_b_export = 0
-        phase_c_export = 0
+    solar_production_direct = site_data.get('solar_production_direct', False)
+    phase_a_cons = site_data.get('phase_a_consumption')
+    phase_b_cons = site_data.get('phase_b_consumption')
+    phase_c_cons = site_data.get('phase_c_consumption')
+
+    # Infer num_phases from which consumption values are provided
+    active_phases = sum(1 for v in [phase_a_cons, phase_b_cons, phase_c_cons] if v is not None)
+    if active_phases == 0:
+        active_phases = 1
+
+    # Export current: use explicit per-phase values if provided, otherwise derive from solar
+    if 'phase_a_export' in site_data or 'phase_b_export' in site_data or 'phase_c_export' in site_data:
+        # Explicit export values (used with solar_production_direct to test independent solar reading)
+        phase_a_export = site_data.get('phase_a_export') if phase_a_cons is not None else None
+        phase_b_export = site_data.get('phase_b_export') if phase_b_cons is not None else None
+        phase_c_export = site_data.get('phase_c_export') if phase_c_cons is not None else None
     else:
-        # Multi-phase: solar evenly distributed across active phases
-        solar_per_phase_amps = (solar_total / num_phases) / voltage if voltage > 0 else 0
-        phase_a_export = max(0, solar_per_phase_amps - phase_a_cons)
-        phase_b_export = max(0, solar_per_phase_amps - phase_b_cons)
-        phase_c_export = max(0, solar_per_phase_amps - phase_c_cons)
-    
-    total_export_current = phase_a_export + phase_b_export + phase_c_export
-    total_export_power = total_export_current * voltage
-    
+        # Derive export from solar (existing behavior)
+        solar_per_phase_amps = (solar_total / active_phases) / voltage if voltage > 0 and solar_total > 0 else 0
+        phase_a_export = max(0, solar_per_phase_amps - phase_a_cons) if phase_a_cons is not None else None
+        phase_b_export = max(0, solar_per_phase_amps - phase_b_cons) if phase_b_cons is not None else None
+        phase_c_export = max(0, solar_per_phase_amps - phase_c_cons) if phase_c_cons is not None else None
+
     site = SiteContext(
         voltage=voltage,
-        num_phases=num_phases,
         main_breaker_rating=site_data.get('main_breaker_rating', 63),
-        phase_a_consumption=phase_a_cons,
-        phase_b_consumption=phase_b_cons,
-        phase_c_consumption=phase_c_cons,
-        phase_a_export=phase_a_export,
-        phase_b_export=phase_b_export,
-        phase_c_export=phase_c_export,
+        consumption=PhaseValues(phase_a_cons, phase_b_cons, phase_c_cons),
+        export_current=PhaseValues(phase_a_export, phase_b_export, phase_c_export),
         solar_production_total=solar_total,
-        total_export_current=total_export_current,
-        total_export_power=total_export_power,
         battery_soc=site_data.get('battery_soc'),
         battery_soc_min=site_data.get('battery_soc_min', 20),
         battery_soc_target=site_data.get('battery_soc_target', 80),
         excess_export_threshold=site_data.get('excess_export_threshold', 13000),
         battery_max_charge_power=site_data.get('battery_max_charge_power', 5000),
         battery_max_discharge_power=site_data.get('battery_max_discharge_power', 5000),
-        max_import_power=site_data.get('max_import_power'),
+        max_grid_import_power=site_data.get('max_import_power'),
         distribution_mode=site_data.get('distribution_mode', 'priority'),
         inverter_max_power=site_data.get('inverter_max_power'),
         inverter_max_power_per_phase=site_data.get('inverter_max_power_per_phase'),
@@ -220,17 +245,31 @@ def build_site_from_scenario(scenario):
         # For identification in charger_id
         connected_phase = charger_data.get('connected_to_phase') if phases == 1 else None
         
+        # Determine device type and current limits
+        device_type = charger_data.get("device_type", "evse")
+        if device_type == "plug":
+            # Smart plug: compute equivalent current from power rating
+            power_rating = charger_data.get("power_rating", 2000)
+            equiv_current = round(power_rating / (voltage * phases), 1)
+            min_current = equiv_current
+            max_current = equiv_current
+        else:
+            min_current = charger_data.get("min_current", 6)
+            max_current = charger_data.get("max_current", 16)
+
         charger = ChargerContext(
             charger_id=f"charger_{idx}",
             entity_id=charger_data.get("entity_id", f"charger_{idx}"),
-            min_current=charger_data.get("min_current", 6),
-            max_current=charger_data.get("max_current", 16),
+            min_current=min_current,
+            max_current=max_current,
             phases=charger_data.get("phases", 1),
             priority=charger_data.get("priority", idx),
+            device_type=device_type,
             # New fields for phase tracking and connector status
             car_phases=charger_data.get("car_phases"),  # None = default to phases
             active_phases_mask=active_phases_mask,  # Set from connected_to_phase or YAML
-            connector_status=charger_data.get("connector_status", "Charging"),  # Default to active
+            connector_status=charger_data.get("connector_status",
+                                              "Available" if charger_data.get("active") is False else "Charging"),
             l1_current=charger_data.get("l1_current", 0),
             l2_current=charger_data.get("l2_current", 0),
             l3_current=charger_data.get("l3_current", 0),
@@ -253,12 +292,12 @@ def run_scenario_with_iterations(scenario, verbose=False):
     iterations = scenario.get('iterations', 1)
     site_data = scenario['site']
     
-    # Store initial conditions for feedback
+    # Store initial conditions for feedback (None = phase doesn't exist)
     initial_solar = site_data.get('solar_production', 0)
     initial_consumption = [
-        site_data.get('phase_a_consumption', 0),
-        site_data.get('phase_b_consumption', 0),
-        site_data.get('phase_c_consumption', 0),
+        site_data.get('phase_a_consumption'),
+        site_data.get('phase_b_consumption'),
+        site_data.get('phase_c_consumption'),
     ]
     
     history = []
@@ -270,11 +309,7 @@ def run_scenario_with_iterations(scenario, verbose=False):
         # If not first iteration, use updated export from feedback
         if i > 0 and initial_solar > 0:
             prev = history[-1]
-            site.phase_a_export = prev['export_per_phase'][0]
-            site.phase_b_export = prev['export_per_phase'][1]
-            site.phase_c_export = prev['export_per_phase'][2]
-            site.total_export_current = sum(prev['export_per_phase'])
-            site.total_export_power = site.total_export_current * site.voltage
+            site.export_current = PhaseValues(*prev['export_per_phase'])
         
         # Calculate targets
         calculate_all_charger_targets(site)
@@ -282,8 +317,8 @@ def run_scenario_with_iterations(scenario, verbose=False):
         # Record iteration
         history.append({
             'iteration': i,
-            'chargers': {c.entity_id: c.target_current for c in site.chargers},
-            'export_per_phase': [site.phase_a_export, site.phase_b_export, site.phase_c_export],
+            'chargers': {c.entity_id: c.allocated_current for c in site.chargers},
+            'export_per_phase': [site.export_current.a, site.export_current.b, site.export_current.c],
             'total_export': site.total_export_current,
         })
         
@@ -314,24 +349,38 @@ def validate_results(scenario, site):
     expected = scenario['expected']
     passed = True
     errors = []
-    
+
     for charger in site.chargers:
         entity_id = charger.entity_id
         if entity_id in expected:
-            expected_target = expected[entity_id]['target']
-            actual_target = charger.target_current
-            
+            expected_allocated = expected[entity_id]['allocated']
+            actual_allocated = charger.allocated_current
+
             # Allow 0.1A tolerance for floating point
-            if abs(actual_target - expected_target) > 0.1:
+            if abs(actual_allocated - expected_allocated) > 0.1:
                 passed = False
                 errors.append(
-                    f"{entity_id}: expected {expected_target}A, got {actual_target:.1f}A"
+                    f"{entity_id}: expected allocated={expected_allocated}A, got {actual_allocated:.1f}A"
                 )
             else:
                 errors.append(
-                    f"{entity_id}: {actual_target:.1f}A"
+                    f"{entity_id}: allocated={actual_allocated:.1f}A"
                 )
-    
+
+            # Check available current if specified in expected
+            if 'available' in expected[entity_id]:
+                expected_available = expected[entity_id]['available']
+                actual_available = charger.available_current
+                if abs(actual_available - expected_available) > 0.1:
+                    passed = False
+                    errors.append(
+                        f"{entity_id}: expected available={expected_available}A, got {actual_available:.1f}A"
+                    )
+                else:
+                    errors.append(
+                        f"{entity_id}: available={actual_available:.1f}A"
+                    )
+
     return passed, errors
 
 
@@ -486,7 +535,7 @@ def run_single_scenario(scenario_name, yaml_file='dev/tests/test_scenarios.yaml'
             for charger in site.chargers:
                 print(f"  {charger.entity_id} ({site.charging_mode} mode):")
                 print(f"    Config: {charger.min_current}-{charger.max_current}A, {charger.phases}ph")
-                print(f"    Target: {charger.target_current:.1f}A")
+                print(f"    Target: {charger.allocated_current:.1f}A")
             print()
             
             # Validate
