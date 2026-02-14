@@ -11,10 +11,13 @@
 ### New Features
 - **Multi-charger support** with 4 distribution modes:
   - Shared (equal split), Priority (highest-priority first), Optimized (smart reduction to fit more chargers), Strict (sequential allocation).
+- **Smart plug / relay support**: new device type for non-OCPP controllable loads (e.g., granny charger plugged into a Shelly smart plug). Binary on/off control via `switch.turn_on`/`switch.turn_off`. Configurable power rating, phase assignment, and optional power monitoring sensor. The calculation engine treats plugs like any other charger — the fixed power rating naturally produces binary behavior through the min-current threshold.
+- **Dedicated solar power entity**: optional config field that points to a direct solar production sensor (W) instead of deriving solar from `consumption + export`. Improves accuracy for sites with inverter-side metering. Auto-detection for common solar sensor naming patterns.
+- **Available current display**: idle chargers now show how much current they would receive if they started charging, giving users visibility into headroom without an active session.
 - **Asymmetric inverter support**: flexible power pool across phases for solar, battery, and excess modes.
 - **Standard mode battery discharge**: combines grid + solar + battery when SOC >= minimum threshold.
 - **2-phase OBC charger support** for vehicles like VW eGolf, eUp, ID.3 base.
-- **Power-based charging**: send watts instead of amps (auto-detection or manual selection).
+- **Power-based charging**: send watts instead of amps with OCPP charge rate unit detection via `GetConfiguration` for `ChargingScheduleAllowedChargingRateUnit`. If detection fails, the field is left empty for the user to choose manually. Detection available during initial setup, reconfigure, and options flows.
 - **Per-phase constraint system** enforcing physical limits across all charger types (1ph, 2ph, 3ph) using constraint dicts with keys A, B, C, AB, AC, BC, ABC.
 - 4 charging modes with distinct behaviors:
   - **Standard**: max speed from grid + solar + battery (when SOC >= min).
@@ -28,9 +31,18 @@
 ### Architecture
 - New pure Python calculation engine (`calculations/`) with no Home Assistant dependencies, enabling standalone testing and debugging.
 - 5-step calculation pipeline: site limits, solar available, excess available, target power, distribution.
+- Phase handling uses `None` for non-existent phases (vs `0.0` for exists-with-no-load), enabling correct behavior for 1-phase and 2-phase sites without special-case code.
+- `SiteContext.num_phases` is a derived property from active consumption phases, eliminating redundant configuration.
 
 ### Testing
-- 53 YAML-based test scenarios covering 1ph/2ph/3ph, battery, asymmetric inverters, mixed-phase, oscillation stability.
+- 70 YAML-based test scenarios covering:
+  - 1-phase / 3-phase with and without battery
+  - Asymmetric inverters, mixed-phase chargers, 2-phase OBC
+  - All 4 distribution modes, oscillation stability
+  - Smart plug scenarios (binary on/off, mixed EVSE + plug)
+  - Direct solar entity vs derived solar
+  - Available current for idle chargers
+- HA integration tests: config flow, end-to-end setup, sensor update cycle, OCPP profile formats, charge pause logic.
 - Automated test suite with CI integration (runs on every push to dev/pre-release).
 
 ### Other
