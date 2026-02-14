@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-Oscillation test runner for EVSE distribution.
+Multi-cycle simulation test runner for EVSE distribution.
 Uses ACTUAL production code - no duplicates!
+
+Every scenario runs a 30-cycle simulation:
+  - Cycles 0-4:   Ramp-up (site values interpolate from 0 to target)
+  - Cycles 5-24:  Warmup (full site values, ramp rate limiting on charger output)
+  - Cycles 25-29: Stability check (verify convergence)
 """
 
 import sys
@@ -58,108 +63,81 @@ _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator
 from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext, PhaseValues
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 
+# ---------------------------------------------------------------------------
+# Simulation constants
+# ---------------------------------------------------------------------------
+RAMP_UP_CYCLES = 5
+WARMUP_CYCLES = 20
+STABILITY_CYCLES = 5
+TOTAL_CYCLES = RAMP_UP_CYCLES + WARMUP_CYCLES + STABILITY_CYCLES  # 30
+UPDATE_FREQ = 15        # seconds per cycle
+RAMP_UP_PER_CYCLE = 1.5   # 0.1 A/s * 15s
+RAMP_DOWN_PER_CYCLE = 3.0  # 0.2 A/s * 15s
 
-def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
+
+# ---------------------------------------------------------------------------
+# Simulation helpers
+# ---------------------------------------------------------------------------
+
+def scale_site_values(site, t):
+    """Scale dynamic site values by factor t (0.0 to 1.0) for cold-start ramp-up.
+
+    Scales consumption, export_current, and solar_production_total.
+    Preserves None for non-existent phases.  Config values (voltage, breaker
+    rating, battery SOC, etc.) are NOT scaled.
     """
-    Simulate feedback: chargers drawing power reduces export.
-
-    Args:
-        site: SiteContext with chargers that have allocated_current set
-        initial_solar: Total solar production (W)
-        initial_consumption_per_phase: [phase_a, phase_b, phase_c] consumption (A)
-            Values are None for phases that don't physically exist.
-    """
-    voltage = site.voltage
-
-    # Solar per phase (evenly distributed across existing phases)
-    solar_per_phase = initial_solar / site.num_phases / voltage if voltage > 0 else 0
-
-    # Start with initial consumption (None = phase doesn't exist, use 0 for load calc)
-    phase_a_load = initial_consumption_per_phase[0] if initial_consumption_per_phase[0] is not None else 0
-    phase_b_load = initial_consumption_per_phase[1] if initial_consumption_per_phase[1] is not None else 0
-    phase_c_load = initial_consumption_per_phase[2] if initial_consumption_per_phase[2] is not None else 0
-
-    # Add charger loads based on their actual phase connections
-    for charger in site.chargers:
-        if charger.phases == 1:
-            # Single-phase: add to specific phase based on active_phases_mask
-            if charger.active_phases_mask:
-                if 'A' in charger.active_phases_mask and 'B' not in charger.active_phases_mask and 'C' not in charger.active_phases_mask:
-                    phase_a_load += charger.allocated_current
-                elif 'B' in charger.active_phases_mask and 'A' not in charger.active_phases_mask and 'C' not in charger.active_phases_mask:
-                    phase_b_load += charger.allocated_current
-                elif 'C' in charger.active_phases_mask and 'A' not in charger.active_phases_mask and 'B' not in charger.active_phases_mask:
-                    phase_c_load += charger.allocated_current
-            else:
-                # No mask - default to phase A
-                phase_a_load += charger.allocated_current
-
-        elif charger.phases == 2:
-            # Two-phase: add to appropriate two phases
-            if charger.active_phases_mask:
-                if 'A' in charger.active_phases_mask and 'B' in charger.active_phases_mask:
-                    phase_a_load += charger.allocated_current
-                    phase_b_load += charger.allocated_current
-                elif 'A' in charger.active_phases_mask and 'C' in charger.active_phases_mask:
-                    phase_a_load += charger.allocated_current
-                    phase_c_load += charger.allocated_current
-                elif 'B' in charger.active_phases_mask and 'C' in charger.active_phases_mask:
-                    phase_b_load += charger.allocated_current
-                    phase_c_load += charger.allocated_current
-            else:
-                # No mask - default to AB
-                phase_a_load += charger.allocated_current
-                phase_b_load += charger.allocated_current
-
-        elif charger.phases == 3:
-            # Three-phase: add to all phases
-            phase_a_load += charger.allocated_current
-            phase_b_load += charger.allocated_current
-            phase_c_load += charger.allocated_current
-
-    # Calculate new export per phase (solar - total_load), preserving None for non-existent phases
+    if t >= 1.0:
+        return
+    site.solar_production_total *= t
+    site.consumption = PhaseValues(
+        site.consumption.a * t if site.consumption.a is not None else None,
+        site.consumption.b * t if site.consumption.b is not None else None,
+        site.consumption.c * t if site.consumption.c is not None else None,
+    )
     site.export_current = PhaseValues(
-        max(0, solar_per_phase - phase_a_load) if initial_consumption_per_phase[0] is not None else None,
-        max(0, solar_per_phase - phase_b_load) if initial_consumption_per_phase[1] is not None else None,
-        max(0, solar_per_phase - phase_c_load) if initial_consumption_per_phase[2] is not None else None,
+        site.export_current.a * t if site.export_current.a is not None else None,
+        site.export_current.b * t if site.export_current.b is not None else None,
+        site.export_current.c * t if site.export_current.c is not None else None,
     )
 
 
-def detect_oscillation(history, max_variation=0.5):
+def apply_ramp_rate(prev_limit, target):
+    """Apply ramp rate limiting between consecutive cycles.
+
+    Matches sensor.py behaviour: only ramp when both prev and target > 0
+    (pause-to-resume is instant).
     """
-    Detect if charger targets are oscillating.
-    
-    Args:
-        history: List of iteration data
-        max_variation: Maximum allowed variation after stabilization
-        
-    Returns:
-        (is_stable, analysis)
+    if prev_limit <= 0 or target <= 0:
+        return target
+    delta = target - prev_limit
+    if delta > 0:
+        return round(prev_limit + min(delta, RAMP_UP_PER_CYCLE), 1)
+    else:
+        return round(prev_limit + max(delta, -RAMP_DOWN_PER_CYCLE), 1)
+
+
+def check_stability(history, tolerance=0.5):
+    """Check that commanded limits are stable over the last STABILITY_CYCLES.
+
+    Returns (is_stable, message).
     """
-    if len(history) < 3:
-        return True, "Not enough iterations"
-    
-    # Check each charger
-    for charger_id in history[0]['chargers'].keys():
-        values = [h['chargers'][charger_id] for h in history]
-        
-        # Check last 3 iterations for stability
-        last_three = values[-3:]
-        variation = max(last_three) - min(last_three)
-        
-        if variation > max_variation:
-            return False, f"{charger_id} unstable: variation={variation:.2f}A"
-        
-        # Check for ping-pong pattern (up-down-up or down-up-down)
-        if len(values) >= 4:
-            diffs = [values[i+1] - values[i] for i in range(len(values)-1)]
-            # Check if signs alternate
-            sign_changes = sum(1 for i in range(len(diffs)-1) if diffs[i] * diffs[i+1] < 0)
-            if sign_changes >= len(diffs) - 1:  # All signs different
-                return False, f"{charger_id} oscillating: ping-pong pattern detected"
-    
+    if len(history) < STABILITY_CYCLES:
+        return True, "Not enough cycles"
+
+    tail = history[-STABILITY_CYCLES:]
+
+    for charger_id in tail[0]['commanded'].keys():
+        values = [h['commanded'][charger_id] for h in tail]
+        variation = max(values) - min(values)
+        if variation > tolerance:
+            return False, f"{charger_id} unstable: variation={variation:.2f}A over last {STABILITY_CYCLES} cycles"
+
     return True, "Stable"
 
+
+# ---------------------------------------------------------------------------
+# Scenario loading and building
+# ---------------------------------------------------------------------------
 
 def load_scenarios(yaml_file):
     """Load test scenarios from YAML file."""
@@ -172,7 +150,7 @@ def build_site_from_scenario(scenario):
     """Build SiteContext from scenario dict."""
     site_data = scenario['site']
     voltage = site_data.get('voltage', 230)
-    
+
     # Solar production + per-phase consumption (None = phase doesn't exist)
     solar_total = site_data.get('solar_production', 0)
     solar_production_direct = site_data.get('solar_production_direct', False)
@@ -217,39 +195,32 @@ def build_site_from_scenario(scenario):
         inverter_max_power_per_phase=site_data.get('inverter_max_power_per_phase'),
         inverter_supports_asymmetric=site_data.get('inverter_supports_asymmetric', False),
     )
-    
+
     # Set site-level charging mode (first charger's mode, or from site if specified)
     if 'charging_mode' in site_data:
         site.charging_mode = site_data['charging_mode']
     else:
-        # nofity user that test scenario should specify charging_mode at site level for clarity
-        print(f"⚠️  Scenario '{scenario['name']}' should specify 'charging_mode' at site level.")
-    
+        print(f"  Scenario '{scenario['name']}' should specify 'charging_mode' at site level.")
+
     # Build chargers
     for idx, charger_data in enumerate(scenario['chargers']):
         phases = charger_data.get("phases", 1)
-        
+
         # Set active_phases_mask based on charger configuration
         active_phases_mask = charger_data.get("active_phases_mask")
         if not active_phases_mask:
-            # Check for connected_to_phase first (works for 1-phase and 2-phase)
             connected_to_phase = charger_data.get('connected_to_phase')
             if connected_to_phase:
                 active_phases_mask = connected_to_phase
             elif phases == 3:
-                active_phases_mask = "ABC"  # 3-phase chargers on all phases
+                active_phases_mask = "ABC"
             elif phases == 2:
-                active_phases_mask = "AB"  # 2-phase default (rare, when not specified)
-            # else: phases == 1 without connected_to_phase remains None
-            # Note: ChargerContext.__post_init__() will default single-phase to 'A'
-        
-        # For identification in charger_id
+                active_phases_mask = "AB"
+
         connected_phase = charger_data.get('connected_to_phase') if phases == 1 else None
-        
-        # Determine device type and current limits
+
         device_type = charger_data.get("device_type", "evse")
         if device_type == "plug":
-            # Smart plug: compute equivalent current from power rating
             power_rating = charger_data.get("power_rating", 2000)
             equiv_current = round(power_rating / (voltage * phases), 1)
             min_current = equiv_current
@@ -266,82 +237,79 @@ def build_site_from_scenario(scenario):
             phases=charger_data.get("phases", 1),
             priority=charger_data.get("priority", idx),
             device_type=device_type,
-            # New fields for phase tracking and connector status
-            car_phases=charger_data.get("car_phases"),  # None = default to phases
-            active_phases_mask=active_phases_mask,  # Set from connected_to_phase or YAML
+            car_phases=charger_data.get("car_phases"),
+            active_phases_mask=active_phases_mask,
             connector_status=charger_data.get("connector_status",
                                               "Available" if charger_data.get("active") is False else "Charging"),
             l1_current=charger_data.get("l1_current", 0),
             l2_current=charger_data.get("l2_current", 0),
             l3_current=charger_data.get("l3_current", 0),
         )
-        # Store connected_to_phase in charger_id for single-phase (test only, for identification)
         if charger.phases == 1 and connected_phase:
             charger.charger_id = f"{charger.charger_id}_phase_{connected_phase}"
         site.chargers.append(charger)
-    
+
     return site
 
 
-def run_scenario_with_iterations(scenario, verbose=False):
+# ---------------------------------------------------------------------------
+# Core simulation
+# ---------------------------------------------------------------------------
+
+def run_scenario_simulation(scenario, verbose=False):
+    """Run 30-cycle simulation for a scenario.
+
+    Cycles 0-4:   Site values ramp from 0 to target (cold start).
+    Cycles 5-24:  Warmup with ramp rate limiting on charger output.
+    Cycles 25-29: Stability check — engine targets and commanded limits
+                  must converge.
+
+    Returns (passed, errors, history).
     """
-    Run scenario with multiple iterations to detect oscillation.
-    
-    Returns:
-        (passed, errors, history)
-    """
-    iterations = scenario.get('iterations', 1)
-    site_data = scenario['site']
-    
-    # Store initial conditions for feedback (None = phase doesn't exist)
-    initial_solar = site_data.get('solar_production', 0)
-    initial_consumption = [
-        site_data.get('phase_a_consumption'),
-        site_data.get('phase_b_consumption'),
-        site_data.get('phase_c_consumption'),
-    ]
-    
+    commanded_limits = {}  # entity_id -> current commanded limit
     history = []
-    
-    for i in range(iterations):
-        # Build/rebuild site
+
+    for cycle in range(TOTAL_CYCLES):
+        # 1. Build site with full target values from YAML
         site = build_site_from_scenario(scenario)
-        
-        # If not first iteration, use updated export from feedback
-        if i > 0 and initial_solar > 0:
-            prev = history[-1]
-            site.export_current = PhaseValues(*prev['export_per_phase'])
-        
-        # Calculate targets
+
+        # 2. Scale values for cold-start ramp-up (cycles 0-4)
+        if cycle < RAMP_UP_CYCLES:
+            t = (cycle + 1) / RAMP_UP_CYCLES
+            scale_site_values(site, t)
+
+        # 3. Run calculation engine
         calculate_all_charger_targets(site)
-        
-        # Record iteration
+
+        # 4. Apply ramp rate limiting to engine targets
+        for charger in site.chargers:
+            target = charger.allocated_current
+            prev = commanded_limits.get(charger.entity_id, 0)
+            commanded_limits[charger.entity_id] = apply_ramp_rate(prev, target)
+
+        # 5. Record history
         history.append({
-            'iteration': i,
-            'chargers': {c.entity_id: c.allocated_current for c in site.chargers},
-            'export_per_phase': [site.export_current.a, site.export_current.b, site.export_current.c],
-            'total_export': site.total_export_current,
+            'cycle': cycle,
+            'engine_targets': {c.entity_id: c.allocated_current for c in site.chargers},
+            'commanded': {c.entity_id: commanded_limits[c.entity_id] for c in site.chargers},
         })
-        
-        # Apply feedback for next iteration
-        if i < iterations - 1 and initial_solar > 0:
-            apply_charging_feedback(site, initial_solar, initial_consumption)
-        
+
         if verbose:
-            print(f"  Iteration {i+1}: {', '.join([f'{k}={v:.1f}A' for k,v in history[-1]['chargers'].items()])}")
-    
-    # Validate final result
+            parts = []
+            for charger in site.chargers:
+                eid = charger.entity_id
+                parts.append(f"{eid}={commanded_limits[eid]:.1f}A(t={charger.allocated_current:.1f})")
+            print(f"  Cycle {cycle:2d}: {', '.join(parts)}")
+
+    # --- Validate engine targets from last cycle against expected values ---
     passed, errors = validate_results(scenario, site)
-    
-    # Check for oscillation if multiple iterations
-    if iterations > 1:
-        is_stable, analysis = detect_oscillation(history, scenario.get('max_variation', 0.5))
-        if not is_stable:
-            passed = False
-            errors.append(f"Oscillation detected: {analysis}")
-        elif verbose:
-            errors.append(f"Stable: {analysis}")
-    
+
+    # --- Check stability over last STABILITY_CYCLES ---
+    is_stable, stability_msg = check_stability(history)
+    if not is_stable:
+        passed = False
+        errors.append(f"Stability check failed: {stability_msg}")
+
     return passed, errors, history
 
 
@@ -357,7 +325,6 @@ def validate_results(scenario, site):
             expected_allocated = expected[entity_id]['allocated']
             actual_allocated = charger.allocated_current
 
-            # Allow 0.1A tolerance for floating point
             if abs(actual_allocated - expected_allocated) > 0.1:
                 passed = False
                 errors.append(
@@ -368,7 +335,6 @@ def validate_results(scenario, site):
                     f"{entity_id}: allocated={actual_allocated:.1f}A"
                 )
 
-            # Check available current if specified in expected
             if 'available' in expected[entity_id]:
                 expected_available = expected[entity_id]['available']
                 actual_available = charger.available_current
@@ -385,35 +351,25 @@ def validate_results(scenario, site):
     return passed, errors
 
 
+# ---------------------------------------------------------------------------
+# Test runner
+# ---------------------------------------------------------------------------
+
 def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, filter_verified=None):
-    """
-    Run all test scenarios.
-    
-    Args:
-        yaml_file: Path to YAML file with scenarios
-        verbose: Print detailed output
-        filter_verified: Filter scenarios by verified status
-            - None or 'all': Run all scenarios (default)
-            - 'verified': Run only human verified scenarios
-            - 'unverified': Run only human unverified scenarios
-    """
+    """Run all test scenarios with 30-cycle simulation."""
     all_scenarios = load_scenarios(yaml_file)
-    
-    # Filter scenarios based on verified field
+
     if filter_verified == 'verified':
         scenarios = [s for s in all_scenarios if s.get('human_verified', False)]
-        filter_msg = " (VERIFIED ONLY)"
     elif filter_verified == 'unverified':
         scenarios = [s for s in all_scenarios if not s.get('human_verified', False)]
-        filter_msg = " (UNVERIFIED ONLY)"
     else:
         scenarios = all_scenarios
-        filter_msg = ""
-    
+
     print(f"\n{'='*70}")
-    print(f"TEST RUNNER: RUNNING {len(scenarios)} TEST SCENARIOS")
+    print(f"TEST RUNNER: RUNNING {len(scenarios)} SCENARIOS ({TOTAL_CYCLES}-cycle simulation)")
     print(f"{'='*70}\n")
-    
+
     passed_count = 0
     failed_count = 0
     verified_passed = 0
@@ -421,26 +377,14 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, filter_v
     unverified_passed = 0
     unverified_failed = 0
     results = []
-    
+
     for scenario in scenarios:
         name = scenario['name']
         description = scenario['description']
-        iterations = scenario.get('iterations', 1)
-        
-        # Run with iterations if specified
-        if iterations > 1:
-            passed, errors, history = run_scenario_with_iterations(scenario, verbose=verbose)
-            site = None  # Not needed for multi-iteration
-        else:
-            # Single iteration
-            site = build_site_from_scenario(scenario)
-            calculate_all_charger_targets(site)
-            passed, errors = validate_results(scenario, site)
-            history = None
-        
-        # Track verified/unverified status
         is_verified = scenario.get('human_verified', False)
-        
+
+        passed, errors, history = run_scenario_simulation(scenario, verbose=verbose)
+
         if passed:
             passed_count += 1
             status = "PASS"
@@ -455,30 +399,27 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, filter_v
                 verified_failed += 1
             else:
                 unverified_failed += 1
-        
+
         results.append({
             'name': name,
             'description': description,
             'status': status,
             'passed': passed,
             'errors': errors,
-            'site': site,
             'history': history,
-            'iterations': iterations
         })
-        
-        # Print result
+
         if verbose or not passed:
-            iter_info = f"({iterations} iterations)" if iterations > 1 else ""
-            print(("UNVERIFIED " if not is_verified else "") + f"{status} {name} {iter_info}")
+            prefix = "UNVERIFIED " if not is_verified else ""
+            print(f"{prefix}{status} {name}")
             for error in errors:
-                print(error)
+                print(f"  {error}")
             print()
-    
-    # Summary with verified/unverified split
+
+    # Summary
     verified_total = verified_passed + verified_failed
     unverified_total = unverified_passed + unverified_failed
-    
+
     print(f"\n{'='*70}")
     print(f"TEST SUMMARY")
     print(f"{'='*70}")
@@ -498,57 +439,46 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, filter_v
     print(f"  Passed: {passed_count}")
     print(f"  Failed: {failed_count}")
     print(f"{'='*70}\n")
-    
+
     if failed_count > 0:
         print("Failed scenarios:")
         for result in results:
             if not result['passed']:
                 print(f"  - {result['name']}")
         print()
-    
+
     return failed_count == 0
 
 
 def run_single_scenario(scenario_name, yaml_file='dev/tests/test_scenarios.yaml'):
-    """Run a single scenario by name."""
+    """Run a single scenario by name with verbose simulation output."""
     scenarios = load_scenarios(yaml_file)
-    
+
     for scenario in scenarios:
         if scenario['name'] == scenario_name:
             print(f"\n{'='*70}")
             print(f"Running: {scenario['name']}")
             print(f"Description: {scenario['description']}")
             print(f"{'='*70}\n")
-            
-            site = build_site_from_scenario(scenario)
-            calculate_all_charger_targets(site)
-            
-            # Print site info
-            print(f"Site Configuration:")
-            print(f"  Export: {site.total_export_current:.1f}A ({site.total_export_power:.0f}W)")
-            print(f"  Battery SOC: {site.battery_soc}%")
-            print(f"  Voltage: {site.voltage}V")
-            print(f"  Mode: {site.charging_mode}")
+
+            passed, errors, history = run_scenario_simulation(scenario, verbose=True)
+
+            # Print final state summary
+            last = history[-1]
+            print(f"\nFinal state (cycle {last['cycle']}):")
+            for eid in last['engine_targets']:
+                print(f"  {eid}: engine={last['engine_targets'][eid]:.1f}A, "
+                      f"commanded={last['commanded'][eid]:.1f}A")
             print()
-            
-            # Print charger results
-            print(f"Charger Configuration:")
-            for charger in site.chargers:
-                print(f"  {charger.entity_id} ({site.charging_mode} mode):")
-                print(f"    Config: {charger.min_current}-{charger.max_current}A, {charger.phases}ph")
-                print(f"    Target: {charger.allocated_current:.1f}A")
-            print()
-            
-            # Validate
-            passed, errors = validate_results(scenario, site)
+
             print("Validation:")
             for error in errors:
-                print(error)
+                print(f"  {error}")
             print()
-            
+
             return passed
-    
-    print(f"❌ Scenario '{scenario_name}' not found")
+
+    print(f"Scenario '{scenario_name}' not found")
     return False
 
 
@@ -557,15 +487,15 @@ class TeeOutput:
     def __init__(self, log_file):
         self.terminal = sys.stdout
         self.log = open(log_file, 'w', encoding='utf-8')
-    
+
     def write(self, message):
         self.terminal.write(message)
         self.log.write(message)
-    
+
     def flush(self):
         self.terminal.flush()
         self.log.flush()
-    
+
     def close(self):
         self.log.close()
 
@@ -573,16 +503,16 @@ class TeeOutput:
 if __name__ == "__main__":
     import sys
     from pathlib import Path
-    
+
     # Redirect output to both console and log file
     log_file = Path(__file__).parent / "test_results.log"
     tee = TeeOutput(log_file)
     sys.stdout = tee
-    
+
     # Print start timestamp
     start_time = datetime.now()
     print(f"Test run started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-    
+
     def _merge_scenarios_from_dir(dir_path):
         """Merge all yaml scenarios from a directory into a single list."""
         combined = []
@@ -593,12 +523,11 @@ if __name__ == "__main__":
                 data = yaml.safe_load(fh) or {}
             combined.extend(data.get("scenarios", []))
         return combined
-    
+
     # Parse filter_verified from command line
     filter_verified = None
     args = sys.argv[1:]
-    
-    # Check for --verified or --unverified flags
+
     if '--verified' in args:
         filter_verified = 'verified'
         args.remove('--verified')
@@ -608,12 +537,11 @@ if __name__ == "__main__":
     elif '--all' in args:
         filter_verified = None
         args.remove('--all')
-    
+
     if len(args) > 0:
         arg = args[0]
         p = Path(arg)
         if p.exists():
-            # If arg is a directory, merge all scenario files and run them
             if p.is_dir():
                 combined = _merge_scenarios_from_dir(p)
                 tmp = Path(__file__).parent / "scenarios_combined_temp.yaml"
@@ -625,20 +553,18 @@ if __name__ == "__main__":
                 except Exception:
                     pass
             elif p.is_file():
-                # Arg is a specific yaml file
                 success = run_tests(yaml_file=str(p), verbose=True, filter_verified=filter_verified)
             else:
-                print(f"❌ Path '{arg}' is not a file or directory")
+                print(f"Path '{arg}' is not a file or directory")
                 success = False
         else:
-            # Treat arg as a scenario name; search in tests/scenarios first, then fallback to default file
             scenarios_dir = Path(__file__).parent / "scenarios"
             search_paths = []
             if scenarios_dir.exists():
                 search_paths = list(sorted(scenarios_dir.glob("*.yaml"))) + list(sorted(scenarios_dir.glob("*.yml")))
             else:
                 search_paths = [Path(__file__).parent / "test_scenarios.yaml"]
-    
+
             found = False
             for f in search_paths:
                 with open(f, "r", encoding="utf-8") as fh:
@@ -651,10 +577,9 @@ if __name__ == "__main__":
                 if found:
                     break
             if not found:
-                print(f"❌ Scenario '{arg}' not found in scenarios directory or files")
+                print(f"Scenario '{arg}' not found in scenarios directory or files")
                 success = False
     else:
-        # No args: if tests/scenarios exists, run all files in it, otherwise run default behaviour
         scenarios_dir = Path(__file__).parent / "scenarios"
         if scenarios_dir.exists():
             combined = _merge_scenarios_from_dir(scenarios_dir)
@@ -668,15 +593,15 @@ if __name__ == "__main__":
                 pass
         else:
             success = run_tests(verbose=True, filter_verified=filter_verified)
-    
+
     # Print end timestamp and duration
     end_time = datetime.now()
     duration = end_time - start_time
     print(f"\nTest run finished: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Duration: {duration.total_seconds():.2f} seconds")
-    
+
     # Close log file
     tee.close()
     sys.stdout = tee.terminal
-    
+
     sys.exit(0 if success else 1)

@@ -92,10 +92,12 @@
     - Fixed `_last_command_time` init from `0` to `-inf` (first throttle check always passes regardless of process uptime).
     - 70/70 + 57/57 tests passing. (fixes ISSUES.md #7 and #8)
 
+33. - [x] **Multi-cycle test simulation** — Revamped `run_tests.py` to run every scenario through a 30-cycle simulation (5 ramp-up + 20 warmup + 5 stability check) instead of single-shot calculation. Added ramp rate limiting simulation (1.5 A/cycle up, 3.0 A/cycle down, matching `sensor.py` constants). Cold start from zero with linear interpolation to target values. Stability check verifies convergence over last 5 cycles. Removed old `apply_charging_feedback`, `detect_oscillation`, `run_scenario_with_iterations` and the single-shot vs multi-iteration split. `iterations` YAML field now ignored. 70/70 + 57/57 tests passing.
+
 ## In Progress
 
 ## Backlog
 
 ### Other
 
-33. - [ ] **Icon submission** — Submit `icon.png` to [HA brands repo](https://github.com/home-assistant/brands) (see dev/ISSUES.md)
+34. - [ ] **Icon submission** — Submit `icon.png` to [HA brands repo](https://github.com/home-assistant/brands) (see dev/ISSUES.md)
