@@ -13,3 +13,5 @@
 5. ~~**TypeError: battery_soc < battery_soc_target when target is None**~~ **FIXED** — Added `site.battery_soc_target is not None` guard to all 4 comparison sites in `target_calculator.py` (asymmetric solar surplus, symmetric solar surplus, ECO mode, Solar mode).
 
 6. ~~**Case-sensitive charge rate unit detection**~~ **FIXED** — `config_flow.py` `_detect_charge_rate_unit()` now normalizes to lowercase before matching `"current"` / `"power"`, handling chargers that return lowercase values like `"power"`.
+
+7. ~~**Eco mode charges at 11.2A instead of 6A at night**~~ **FIXED** — The grid feedback loop fix (subtracting charger draws from consumption) created a solar production mismatch. `solar_production_total` was derived from original consumption, but the engine's solar surplus calculation used adjusted consumption — producing fake surplus equal to the charger's own draw. Fixed by recalculating `solar_production_total` from adjusted consumption + export after the feedback loop subtraction (only when solar is derived from grid meter, not when a dedicated solar entity is configured).

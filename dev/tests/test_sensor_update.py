@@ -1414,3 +1414,74 @@ async def test_auto_reset_skips_when_car_not_plugged_in(
             if len(c[0]) >= 2 and c[0][0] == DOMAIN and c[0][1] == "reset_ocpp_evse"
         ]
         assert len(reset_calls) == 0
+
+
+async def test_eco_mode_night_with_feedback_loop(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test Eco mode at night gives min_current, not inflated solar surplus.
+
+    Reproduces the real-world bug where Eco mode targeted 11.2A at night instead
+    of the expected 6A (min_current). Root cause: solar_production_total was
+    derived from ORIGINAL consumption (before charger subtraction), but the
+    engine's solar surplus calculation used ADJUSTED consumption. This created
+    a fake surplus equal to the charger's own draw.
+
+    With the fix, solar_production_total is recalculated after the feedback loop
+    adjustment, so the surplus is correctly near zero at night.
+    """
+    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass)
+    # Night scenario: high consumption (includes charger draws), no export
+    # Grid reads ~15A/phase import (consumption ~15A, export 0A)
+    hass.states.async_set(
+        "sensor.inverter_phase_a", "14.64",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.inverter_phase_b", "13.26",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.inverter_phase_c", "18.43",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    # Charger drawing ~10A on all 3 phases
+    hass.states.async_set(
+        "sensor.test_charger_current_import", "9.8",
+        {
+            "l1_current": 9.8,
+            "l2_current": 9.8,
+            "l3_current": 9.8,
+            "device_class": "current",
+            "unit_of_measurement": "A",
+        },
+    )
+    # No battery (night, typical for non-battery setups)
+    hass.states.async_set("sensor.battery_soc", "unknown")
+    hass.states.async_set("sensor.battery_power", "unknown")
+    # Eco mode
+    hass.states.async_set("select.test_hub_charging_mode", "Eco")
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+
+    result = run_hub_calculation(sensor)
+
+    charger_targets = result.get("charger_targets", {})
+    target = charger_targets.get(charger_entry.entry_id, 0)
+
+    # Eco mode at night: no solar, so target should be min_current (6A)
+    # NOT 11.2A (the bug value from fake solar surplus)
+    assert target == 6.0, (
+        f"Eco mode at night should give min_current (6A), got {target}A. "
+        f"If >6A, solar_production_total was likely not recalculated after "
+        f"feedback loop adjustment."
+    )

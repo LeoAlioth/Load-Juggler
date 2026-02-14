@@ -76,6 +76,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 ```text
 0. Refresh SiteContext (done externally in HA integration)
+   → Subtract charger draws from consumption (feedback loop correction)
    ↓
 1. Calculate absolute site limits (per-phase physical constraints)
    → _calculate_site_limit()
@@ -183,6 +184,7 @@ Four distribution modes for multi-charger setups: **Shared** (equal split), **Pr
 4. **Minimum current**: Chargers need >= min_current or get 0 (can't charge below minimum)
 5. **Phase assignment defaults**: Don't default to "A" — only set when explicitly specified
 6. **Legacy code**: This is version 2.0.0 — legacy compatibility should be removed as users are expected to reconfigure the integration
+7. **Grid CT consumption includes charger draws**: Grid current sensors measure TOTAL site import, which includes charger power. `dynamic_ocpp_evse.py` subtracts each charger's l1/l2/l3_current from `site.consumption` before calling the engine (step 0). Without this, the engine double-counts charger power as both "consumption" and "charger demand", leading to under-allocation or false pauses. Hub sensor display values intentionally show the raw (unadjusted) grid readings.
 
 ## Testing and Debugging
 

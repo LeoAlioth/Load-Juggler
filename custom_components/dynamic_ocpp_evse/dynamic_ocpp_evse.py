@@ -330,6 +330,16 @@ def run_hub_calculation(sensor):
             total_charger_l1, total_charger_l2, total_charger_l3, adj_a, adj_b, adj_c,
         )
 
+        # Recalculate derived solar production to match adjusted consumption.
+        # solar = consumption + export must hold; without this, the engine sees
+        # fake solar surplus equal to the charger's own draw.
+        if not solar_production_entity:
+            site.solar_production_total = (site.consumption.total + site.export_current.total) * site.voltage
+            _LOGGER.debug(
+                "Recalculated solar_production_total after feedback adjustment: %.1fW",
+                site.solar_production_total,
+            )
+
     # Calculate targets (includes distribution)
     calculate_all_charger_targets(site)
 
