@@ -138,7 +138,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self._last_set_current = 0
         self._last_set_power = None
         self._last_commanded_limit = None  # Amps, after rate-limiting (for ramp + compliance)
-        self._last_command_time: float = 0  # monotonic time of last OCPP/plug command
+        self._last_command_time: float = -float('inf')  # monotonic time of last OCPP/plug command
         self._mismatch_count = 0           # consecutive non-compliant cycles
         self._last_auto_reset_at = None    # datetime of last auto-reset
         self._target_evse = None

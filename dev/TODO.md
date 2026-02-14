@@ -80,9 +80,17 @@
 
 29. - [x] **Charge rate unit case sensitivity** — Chargers returning lowercase `"power"` instead of `"Power"` caused `Unrecognised ChargingScheduleAllowedChargingRateUnit` warning. Fixed `_detect_charge_rate_unit()` in `config_flow.py` to normalize to lowercase before matching. (fixes ISSUES.md #6)
 
-30. - [x] **Eco mode fake solar surplus at night** — Feedback loop fix (item 26) created a mismatch: `solar_production_total` was derived from ORIGINAL consumption, but the engine used ADJUSTED consumption (after charger subtraction). This produced a fake solar surplus equal to the charger's own draw, inflating Eco mode targets (e.g. 11.2A instead of 6A at night). Fixed: `dynamic_ocpp_evse.py` recalculates `solar_production_total` from adjusted consumption + export after the feedback loop subtraction (only when solar is derived, not when dedicated solar entity is configured). 1 integration test added. 70/70 + 56/56 tests passing. (fixes ISSUES.md #7)
+30. - [x] **Eco mode fake solar surplus at night (partial fix)** — Feedback loop fix (item 26) created a mismatch: `solar_production_total` was derived from ORIGINAL consumption, but the engine used ADJUSTED consumption (after charger subtraction). This produced a fake solar surplus equal to the charger's own draw, inflating Eco mode targets (e.g. 11.2A instead of 6A at night). First fix (recalculating solar_production_total after feedback) was insufficient — see item 33 for the full fix.
 
 31. - [x] **Dual-frequency update loop** — Coordinator now runs at `site_update_frequency` (hub-level, default 5s). Calculation + hub_data refresh happen every cycle. OCPP commands and plug switches are throttled to `update_frequency` (charger-level, default 15s) via `_last_command_time` monotonic clock. Eliminated temp sensor pattern — coordinator now uses the persistent sensor instance. New `CONF_SITE_UPDATE_FREQUENCY` constant, config flow field, translations (en + sl). 1 integration test. 70/70 + 57/57 tests passing.
+
+32. - [x] **Derived solar production formula fundamentally broken** — The formula `solar_production_total = (consumption + export) * voltage` treats total grid import as solar production. At night with 36A grid import and 0A export, it computed "solar" = 8367W, creating fake surplus on phases with below-average consumption. Root cause: with only a grid CT, solar production CANNOT be determined — only the net export (surplus) is observable. Fix:
+    - `models.py`: Added `solar_is_derived: bool` flag to `SiteContext`.
+    - `dynamic_ocpp_evse.py`: When no dedicated solar entity, set `solar_production_total = total_export_power` and `solar_is_derived = True`.
+    - `target_calculator.py`: New derived path in `_calculate_solar_surplus()` — uses per-phase export current directly as surplus (symmetric) or total export as pool (asymmetric). Skips battery adjustment since grid readings already reflect battery effects. Also skips battery in `_calculate_inverter_limit()` when derived.
+    - Feedback loop: Now reconstructs raw grid current and re-splits into consumption/export after subtracting charger draws, correctly revealing hidden export.
+    - Fixed `_last_command_time` init from `0` to `-inf` (first throttle check always passes regardless of process uptime).
+    - 70/70 + 57/57 tests passing. (fixes ISSUES.md #7 and #8)
 
 ## In Progress
 
@@ -90,4 +98,4 @@
 
 ### Other
 
-32. - [ ] **Icon submission** — Submit `icon.png` to [HA brands repo](https://github.com/home-assistant/brands) (see dev/ISSUES.md)
+33. - [ ] **Icon submission** — Submit `icon.png` to [HA brands repo](https://github.com/home-assistant/brands) (see dev/ISSUES.md)

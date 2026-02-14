@@ -126,6 +126,7 @@ class SiteContext:
 
     # Solar
     solar_production_total: float = 0
+    solar_is_derived: bool = False  # True = derived from grid meter (export IS the surplus)
     
     # Battery
     battery_soc: float | None = None

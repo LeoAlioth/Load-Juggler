@@ -170,6 +170,9 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     Solar and battery share the same inverter, so per-phase and total inverter limits
     apply to their combined output.
 
+    When solar is derived from grid: export current already includes battery effects,
+    so only use the observable surplus (no battery adjustment).
+
     Battery can discharge when SOC >= battery_soc_min.
 
     For ASYMMETRIC inverters: Solar+battery power can be allocated to any phase.
@@ -179,8 +182,10 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     solar_current = site.solar_production_total / site.voltage if site.solar_production_total else 0
 
     # Calculate battery discharge current (if available)
+    # Skip when derived — grid readings already reflect battery charge/discharge
     battery_current = 0
-    if (site.battery_soc is not None and
+    if (not site.solar_is_derived and
+        site.battery_soc is not None and
         site.battery_soc >= site.battery_soc_min and
         site.battery_max_discharge_power):
         battery_current = site.battery_max_discharge_power / site.voltage
@@ -254,11 +259,11 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
 
     Returns PhaseConstraints for ALL phase combinations.
 
-    Considers:
-    - Solar export per phase after consumption
-    - Battery charging (if SOC < target)
-    - Battery discharge (if SOC > target)
-    - Inverter limits (per-phase and total)
+    Two paths:
+    - Derived (grid-only): Export current IS the measured surplus per phase.
+      Grid readings already account for battery effects, so no battery adjustment.
+    - Dedicated entity: Total solar production is known. Subtract consumption
+      and adjust for battery to get surplus.
 
     For ASYMMETRIC inverters: Solar/battery power is a flexible pool.
     For SYMMETRIC inverters: Solar/battery power is fixed per-phase.
@@ -269,9 +274,32 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
     else:
         max_per_phase = float('inf')
 
-    # Build constraint dict based on inverter type
-    if site.inverter_supports_asymmetric:
-        # ASYMMETRIC: Solar/battery power is a flexible pool that can be allocated to any phase
+    if site.solar_is_derived:
+        # DERIVED FROM GRID: Export current IS the solar surplus per phase.
+        # No consumption subtraction needed (export is already net).
+        # No battery adjustment needed (grid readings already reflect battery).
+        if site.inverter_supports_asymmetric:
+            # Total export is the available pool (inverter can shift between phases)
+            total_pool = site.export_current.total if site.export_current else 0
+            phase_a_limit = min(total_pool, max_per_phase) if site.export_current.a is not None else 0
+            phase_b_limit = min(total_pool, max_per_phase) if site.export_current.b is not None else 0
+            phase_c_limit = min(total_pool, max_per_phase) if site.export_current.c is not None else 0
+            constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, total_pool)
+        else:
+            # Symmetric: per-phase export = per-phase surplus
+            phase_a_available = min(site.export_current.a or 0, max_per_phase) if site.export_current.a is not None else 0
+            phase_b_available = min(site.export_current.b or 0, max_per_phase) if site.export_current.b is not None else 0
+            phase_c_available = min(site.export_current.c or 0, max_per_phase) if site.export_current.c is not None else 0
+            constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
+
+        # Apply total inverter limit if configured
+        if site.inverter_max_power:
+            max_total = site.inverter_max_power / site.voltage
+            if constraints.ABC > max_total:
+                constraints = constraints.scale(max_total / constraints.ABC)
+
+    elif site.inverter_supports_asymmetric:
+        # DEDICATED ENTITY + ASYMMETRIC: Solar/battery power is a flexible pool
 
         # Calculate total solar production
         solar_total_current = site.solar_production_total / site.voltage if site.solar_production_total else 0
@@ -282,13 +310,11 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
         # Handle battery charging/discharging (affects inverter output)
         if site.battery_soc is not None and site.battery_soc_target is not None:
             if site.battery_soc < site.battery_soc_target:
-                # Battery charges first - reduce inverter output available for EV
                 if site.battery_max_charge_power:
                     battery_charge_current = site.battery_max_charge_power / site.voltage
                     inverter_output = max(0, inverter_output - battery_charge_current)
 
             elif site.battery_soc > site.battery_soc_target:
-                # Battery can discharge - add to inverter output
                 if site.battery_max_discharge_power:
                     battery_discharge_current = site.battery_max_discharge_power / site.voltage
                     inverter_output += battery_discharge_current
@@ -298,7 +324,7 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
             max_total = site.inverter_max_power / site.voltage
             inverter_output = min(inverter_output, max_total)
 
-        # NOW subtract total consumption to get what's available for charger
+        # Subtract total consumption to get what's available for charger
         solar_available = max(0, inverter_output - site.consumption.total)
 
         # Per-phase constraints: limited by (inverter per-phase max - consumption on that phase)
@@ -308,11 +334,10 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
 
         constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, solar_available)
     else:
-        # SYMMETRIC: Solar/battery power is fixed per-phase
-        # Calculate solar per phase (evenly distributed)
+        # DEDICATED ENTITY + SYMMETRIC: Solar/battery power is fixed per-phase
         solar_per_phase_current = (site.solar_production_total / site.num_phases) / site.voltage if site.solar_production_total else 0
 
-        # Subtract consumption per phase (non-existent phases get 0)
+        # Subtract consumption per phase
         phase_a_available = max(0, solar_per_phase_current - site.consumption.a) if site.consumption.a is not None else 0
         phase_b_available = max(0, solar_per_phase_current - site.consumption.b) if site.consumption.b is not None else 0
         phase_c_available = max(0, solar_per_phase_current - site.consumption.c) if site.consumption.c is not None else 0
@@ -320,7 +345,6 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
         # Handle battery charging/discharging (distributed per phase)
         if site.battery_soc is not None and site.battery_soc_target is not None:
             if site.battery_soc < site.battery_soc_target:
-                # Battery charges first - reduce available per phase
                 if site.battery_max_charge_power:
                     battery_charge_current = site.battery_max_charge_power / site.voltage
                     battery_current_per_phase = battery_charge_current / site.num_phases
@@ -329,7 +353,6 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
                     phase_c_available = max(0, phase_c_available - battery_current_per_phase)
 
             elif site.battery_soc > site.battery_soc_target:
-                # Battery can discharge - add to available per phase (only existing phases)
                 if site.battery_max_discharge_power:
                     battery_discharge_current = site.battery_max_discharge_power / site.voltage
                     battery_current_per_phase = battery_discharge_current / site.num_phases
@@ -353,7 +376,7 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
             if constraints.ABC > max_total:
                 constraints = constraints.scale(max_total / constraints.ABC)
 
-    _LOGGER.debug(f"Solar available constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}")
+    _LOGGER.debug(f"Solar available constraints ({'derived' if site.solar_is_derived else 'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}")
 
     return constraints
 

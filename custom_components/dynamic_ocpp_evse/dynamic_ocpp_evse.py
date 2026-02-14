@@ -108,10 +108,14 @@ def run_hub_calculation(sensor):
 
     # Solar production: use dedicated entity if configured, otherwise derive from grid meter
     solar_production_entity = get_entry_value(hub_entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
+    solar_is_derived = not solar_production_entity
     if solar_production_entity:
         solar_production_total = _read_entity(solar_production_entity, 0)
     else:
-        solar_production_total = (consumption_pv.total + export_pv.total) * voltage
+        # With only a grid CT we cannot determine total solar production.
+        # We can only observe export (surplus). Store export power for display;
+        # the engine will use per-phase export directly as solar surplus.
+        solar_production_total = total_export_power
 
     # --- Read battery data from HA entities ---
     battery_soc_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
@@ -173,6 +177,7 @@ def run_hub_calculation(sensor):
         consumption=PhaseValues(phase_a_consumption, phase_b_consumption, phase_c_consumption),
         export_current=PhaseValues(phase_a_export_current, phase_b_export_current, phase_c_export_current),
         solar_production_total=solar_production_total,
+        solar_is_derived=solar_is_derived,
         battery_soc=float(battery_soc) if battery_soc is not None else None,
         battery_power=float(battery_power) if battery_power is not None else None,
         battery_soc_min=float(battery_soc_min) if battery_soc_min is not None else None,
@@ -312,31 +317,45 @@ def run_hub_calculation(sensor):
 
         site.chargers.append(charger)
 
-    # Subtract charger draws from consumption before running the engine.
+    # Subtract charger draws from grid readings before running the engine.
     # Grid CTs measure total site current INCLUDING charger draws. Without this
     # adjustment, the engine double-counts charger power as both "consumption"
     # and "charger demand", leading to under-allocation or false pauses.
+    # We reconstruct the raw grid current, subtract charger draws, then re-split
+    # into consumption/export — this correctly reveals hidden export on phases
+    # where the charger was consuming solar surplus.
     total_charger_l1 = sum(c.l1_current for c in site.chargers)
     total_charger_l2 = sum(c.l2_current for c in site.chargers)
     total_charger_l3 = sum(c.l3_current for c in site.chargers)
 
     if total_charger_l1 > 0 or total_charger_l2 > 0 or total_charger_l3 > 0:
-        adj_a = max(0, site.consumption.a - total_charger_l1) if site.consumption.a is not None else None
-        adj_b = max(0, site.consumption.b - total_charger_l2) if site.consumption.b is not None else None
-        adj_c = max(0, site.consumption.c - total_charger_l3) if site.consumption.c is not None else None
-        site.consumption = PhaseValues(adj_a, adj_b, adj_c)
+        def _adjust_phase(consumption, export, charger_draw):
+            if consumption is None:
+                return None, None
+            # Reconstruct raw grid current (positive = import)
+            raw_grid = consumption - (export or 0)
+            # Remove charger draw to get "true" grid without charger
+            true_grid = raw_grid - charger_draw
+            return max(0.0, true_grid), max(0.0, -true_grid)
+
+        adj_cons_a, adj_exp_a = _adjust_phase(site.consumption.a, site.export_current.a, total_charger_l1)
+        adj_cons_b, adj_exp_b = _adjust_phase(site.consumption.b, site.export_current.b, total_charger_l2)
+        adj_cons_c, adj_exp_c = _adjust_phase(site.consumption.c, site.export_current.c, total_charger_l3)
+
+        site.consumption = PhaseValues(adj_cons_a, adj_cons_b, adj_cons_c)
+        site.export_current = PhaseValues(adj_exp_a, adj_exp_b, adj_exp_c)
         _LOGGER.debug(
-            "Adjusted consumption (subtracted charger draws L1=%.1fA L2=%.1fA L3=%.1fA): A=%s B=%s C=%s",
-            total_charger_l1, total_charger_l2, total_charger_l3, adj_a, adj_b, adj_c,
+            "Adjusted grid (subtracted charger L1=%.1fA L2=%.1fA L3=%.1fA): "
+            "consumption=(%s, %s, %s), export=(%s, %s, %s)",
+            total_charger_l1, total_charger_l2, total_charger_l3,
+            adj_cons_a, adj_cons_b, adj_cons_c, adj_exp_a, adj_exp_b, adj_exp_c,
         )
 
-        # Recalculate derived solar production to match adjusted consumption.
-        # solar = consumption + export must hold; without this, the engine sees
-        # fake solar surplus equal to the charger's own draw.
-        if not solar_production_entity:
-            site.solar_production_total = (site.consumption.total + site.export_current.total) * site.voltage
+        # Update derived solar to match adjusted export
+        if solar_is_derived:
+            site.solar_production_total = site.export_current.total * site.voltage
             _LOGGER.debug(
-                "Recalculated solar_production_total after feedback adjustment: %.1fW",
+                "Recalculated derived solar_production_total after feedback: %.1fW",
                 site.solar_production_total,
             )
 
