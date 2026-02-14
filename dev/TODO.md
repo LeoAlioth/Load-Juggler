@@ -65,6 +65,8 @@
 
 23. - [x] **Round current values in calculation engine** — Added `round(..., 1)` to all `allocated_current` and `available_current` assignments in `target_calculator.py` (priority, shared, strict, optimized distributions + `_set_available_current_for_chargers`). Values are now rounded to 1 decimal at the source, not just at display time in `sensor.py`. 70/70 + 26/26 tests passing.
 
+24. - [x] **Total EVSE Power shows 0** — `dynamic_ocpp_evse.py` read per-phase currents from entity attributes (`l1_current`, `l2_current`, `l3_current`) that don't exist on most OCPP integrations. Fixed: try per-phase attributes first (multiple naming conventions via `_read_phase_attr` helper), fall back to entity state value distributed across configured phases.
+
 ## In Progress
 
 ## Backlog
