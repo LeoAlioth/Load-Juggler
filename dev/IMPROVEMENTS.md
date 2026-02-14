@@ -3,8 +3,8 @@
 This document is used for keeping notes of ideas for future implementations in no particular order. As long as the developer does not expicitly say to start implementing them, you can just use this as a reference for what might come, if that has any effect on current decisions. This will also keep any discussions about ideas. This way you can plan them easier with the developer.
 
 ## Supports for chargers with multiple plugs
-**Status:** Not yet implemented  
-**Complexity:** Medium  
+**Status:** Not yet implemented
+**Complexity:** Medium
 
 ### Current State
 - Each charger is a single config entry with one OCPP connection
@@ -48,17 +48,18 @@ Behavior:
 ---
 
 ## Moving charge mode selection from the site to the individual EVSE
-**Status:** Not yet implemented  
-**Complexity:** High  
+**Status:** Not yet implemented (const `CONF_CHARGER_CHARGING_MODE_ENTITY_ID` declared but unused)
+**Complexity:** High
 
 ### Current State
 - Charging mode is set per-site (hub)
 - All chargers under a hub use the same mode
+- `CONF_CHARGER_CHARGING_MODE_ENTITY_ID` exists in const.py as a placeholder
 
 ### Design Questions & Solutions
 
 #### Problem 1: Mixed Mode Priority Conflicts
-**Scenario:** Charger 1 (priority 1) = Eco, Charger 2 (priority 2) = Standard  
+**Scenario:** Charger 1 (priority 1) = Eco, Charger 2 (priority 2) = Standard
 **Question:** If very little power is available, should Charger 1 get minimum rate while Charger 2 gets more?
 
 **Analysis:**
@@ -76,101 +77,28 @@ So a charger on Standard mode, always gets priority over a charger in eco mode.
 2. Modify `_determine_target_power()` to accept per-charger modes
 3. Update distribution functions to handle mixed-mode constraints
 4. Create new constraint types for each mode's power pool
+5. Wire up config flow to use `CONF_CHARGER_CHARGING_MODE_ENTITY_ID`
+6. Create per-charger charging mode select entity
 
 ---
 
-## Adding support for "dumb" EVSE - smart sockets
-**Status:** Not yet implemented  
-**Complexity:** Medium  
+## ~~Adding support for "dumb" EVSE - smart sockets~~
+**Status:** Implemented (v2.0)
 
-### Use Cases
-- 3-phase smart EVSE + single-phase "granny charger" on smart plug
-- Smart plug without energy monitoring (just on/off)
-- Smart plug with energy monitoring (actual power reading)
-
-### Configuration Changes Needed
-
-#### For Plugs Without Power Monitoring
-```
-New config fields for charger entry:
-- device_type: evse | plug
-- device_power_rating_watts: int (for non-monitoring plugs)
-
-Behavior:
-- Use device_power_rating_watts as both min_current and max_current
-- When allocated >= minimum, turn plug ON
-- When allocated < minimum, turn plug OFF
-```
-
-#### For Plugs With Power Monitoring
-```
-New config fields:
-- device_power_entity_id: sensor entity with actual power draw
-- use_actual_consumption: boolean (default true)
-
-Behavior:
-- Read actual power from sensor
-- Track consumption during charging session
-- Update max_current dynamically based on measured load
-```
-
-### Implementation Approach
-
-**Step 1: Extend ChargerContext**
-```python
-@dataclass
-class ChargerContext:
-    device_type: str = "evse"  # evse or plug
-    device_power_rating_watts: float | None = None  # For non-monitoring plugs
-    device_power_entity_id: str | None = None  # For monitoring plugs
-    
-    @property
-    def min_current(self) -> float:
-        if self.device_type == "plug" and self.device_power_rating_watts:
-            return self.device_power_rating_watts / voltage
-        return self._min_current
-        
-    @property
-    def max_current(self) -> float:
-        # If monitoring, use measured power + some margin
-        if self.device_type == "plug" and self.device_power_entity_id:
-            actual_power = read_sensor(self.device_power_entity_id)
-            return actual_power / voltage * 1.2  # 20% safety margin
-        return self._max_current
-```
-
-**Step 2: Add Plug Control Entity**
-- Create `switch.{charger_id}_enabled` for non-monitoring plugs
-- When allocated_current >= min_current → switch ON
-- When allocated_current < min_current → switch OFF
-
-**Step 3: Handle Status Reporting**
-- Plugs without monitoring: status = "Charging" when switch is ON
-- Plugs with monitoring: status derived from actual power draw
-
-### Example Configuration
-
-```
-Charger 1 (Main EVSE - 3-phase):
-- device_type: evse
-- max_current: 32A
-- priority: 1
-
-Charger 2 (Granny Charger - smart plug w/o monitoring):
-- device_type: plug  
-- device_power_rating_watts: 1500W (≈6.5A)
-- priority: 2
-
-Behavior:
-- Solar available = 7kW total
-- Main EVSE gets first 32A per phase (up to its limit)
-- If remainder > 6.5A, granny charger turns ON
-```
+Implemented as TODO item 13 ("Smart Plug / Relay Support"). Key decisions made:
+- `device_type` field on charger entries: `"evse"` or `"plug"`
+- Plugs modeled as `ChargerContext` with `min_current == max_current == power_rating / (voltage * phases)`
+- Binary on/off behavior falls out naturally from the engine's min-current threshold
+- Config flow has device type selection step, plug-specific config with `_plug_schema()`
+- `sensor.py` branches on device_type — plugs use `switch.turn_on/off`, EVSEs use OCPP profiles
+- Supports `connected_to_phase` for phase-aware allocation
+- Optional power monitoring entity for more reliable status detection
+- 6 test scenarios in `test_scenarios_plugs.yaml`, all passing
 
 ---
 
 ## Making this a general load management project
-**Status:** Not yet implemented  
+**Status:** Phase 1 complete (smart plug support), Phases 2-3 not started
 **Complexity:** High (but incremental path possible)
 
 ### Vision
@@ -190,6 +118,20 @@ The current architecture is already quite general:
 | `min_current` / `max_current` | `min_power` / `max_power` |
 | Charging mode | Control strategy |
 | Priority distribution | Load prioritization |
+
+### Progress
+
+**Phase 1: Smart Plug Support** — Done. See "Adding support for smart sockets" above.
+
+**Phase 2: General Load Type** (higher effort, not started)
+- Create separate `Load` entity type alongside `Charger`
+- Each load has its own control entities
+- Unified priority-based distribution across all loads
+
+**Phase 3: Temperature-Based Control** (high effort, not started)
+- Read temperature sensors
+- Implement thermal models
+- Schedule heating/cooling based on excess availability
 
 ### Control Strategies for Non-EV Loads
 
@@ -228,44 +170,27 @@ Thermal parameters needed:
 ### Proposed Load Context Extension
 
 ```python
-@dataclass  
+@dataclass
 class LoadContext:
     load_id: str
     entity_id: str  # Control entity (switch, number, input_select)
-    
+
     # Power limits
     min_power_watts: float
     max_power_watts: float
-    
+
     # Thermal properties (for temperature-based loads)
     thermal_time_constant_hours: float | None = None
     target_temperature_c: float | None = None
     temperature_hysteresis_c: float = 1.0
-    
+
     # Current state
     current_power_watts: float = 0
     current_temperature_c: float | None = None
-    
+
     # Mode-specific behavior
     excess_mode_temp_offset_c: float = 2.0  # How much to deviate in excess mode
 ```
-
-### Implementation Path
-
-**Phase 1: Smart Plug Support** (medium effort)
-- Add plug device type to ChargerContext
-- Control non-EV devices via existing switch infrastructure
-- Treat them as "loads" with fixed power ratings
-
-**Phase 2: General Load Type** (higher effort)
-- Create separate `Load` entity type alongside `Charger`
-- Each load has its own control entities
-- Unified priority-based distribution across all loads
-
-**Phase 3: Temperature-Based Control** (high effort)
-- Read temperature sensors
-- Implement thermal models
-- Schedule heating/cooling based on excess availability
 
 ### Example Configuration
 
@@ -282,15 +207,15 @@ Loads:
    - excess_temp_boost: 25°C
 
 2. Heat Pump
-   - max_power: 2000W  
+   - max_power: 2000W
    - priority: 2
    - target_temp: 21°C
    - excess_temp_offset: -2°C (pre-cool)
-   
+
 3. EV Charger
    - max_current: 32A
    - priority: 3
-   
+
 Behavior:
 - If export = 15kW, first allocate to hot water tank (3.5kW)
 - Remaining 11.5kW → heat pump gets 2kW
@@ -299,46 +224,13 @@ Behavior:
 
 ---
 
-## Adding an entity selection for actual solar power in the config_flow
+## ~~Adding an entity selection for actual solar power in the config_flow~~
 
-**Status:** Not yet implemented  
-**Complexity:** Low  
+**Status:** Implemented (v2.0)
 
-### Current State
-Solar production is derived from: `consumption + export_current`
-
-This works well when you have a single meter at the grid connection point.
-
-### When Dedicated Solar Entity Is Useful
-
-1. **Inverter-side metering**: Some systems report solar production separately from grid consumption
-2. **Multiple inverters**: Need to know which solar is available vs grid power
-3. **Better excess detection**: Direct solar measurement can be more accurate than derived values
-
-### Potential Improvements with Dedicated Entity
-
-**Current approach (derived):**
-```
-Solar = Consumption + Export
-→ Could overestimate if grid import happens simultaneously
-→ Could underestimate if inverter has internal consumption
-```
-
-**With dedicated solar entity:**
-```
-Solar = direct measurement
-Excess = Solar - Consumption (more accurate for self-consumption optimization)
-```
-
-### Implementation
-
-Add optional config field:
-```python
-CONF_SOLAR_POWER_ENTITY_ID: "sensor.{entity_id}_solar_power"
-```
-
-When provided, use this directly instead of deriving from consumption+export.
-
-### Recommendation
-
-**Low priority implementation** - useful but not essential. The derived approach works well for most sites, and having a dedicated solar meter isn't universal.
+Implemented as TODO item 12 ("Dedicated Solar Power Entity"). Key decisions made:
+- Added `CONF_SOLAR_PRODUCTION_ENTITY_ID` as optional field in hub grid schema
+- When configured, `dynamic_ocpp_evse.py` reads the solar entity directly instead of deriving from `consumption + export`
+- Dropdown in config flow lists power-class sensor entities
+- Falls back to the derived approach when the entity is not configured
+- 3 test scenarios in `test_scenarios_solar_entity.yaml`, all passing
