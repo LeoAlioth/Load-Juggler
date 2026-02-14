@@ -442,8 +442,10 @@ def _determine_target_power(
         if site.battery_soc is not None and site.battery_soc < site.battery_soc_min:
             return PhaseConstraints.zeros()
 
-        # Calculate sum of minimum charge rates
-        sum_minimums_total = sum(c.min_current * c.phases for c in site.chargers)
+        # Calculate sum of minimum charge rates (active chargers only)
+        active = [c for c in site.chargers
+                  if c.connector_status not in ("Available", "Unknown", "Unavailable")]
+        sum_minimums_total = sum(c.min_current * c.phases for c in active)
         sum_minimums_per_phase = sum_minimums_total / site.num_phases
 
         minimums = PhaseConstraints.from_per_phase(

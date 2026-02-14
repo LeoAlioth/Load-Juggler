@@ -82,7 +82,8 @@ RAMP_DOWN_PER_CYCLE = 3.0  # 0.2 A/s * 15s
 def scale_site_values(site, t):
     """Scale dynamic site values by factor t (0.0 to 1.0) for cold-start ramp-up.
 
-    Scales consumption, export_current, and solar_production_total.
+    Scales household consumption and solar_production_total.
+    Export is NOT scaled — it's computed from scratch each cycle by the CT sim.
     Preserves None for non-existent phases.  Config values (voltage, breaker
     rating, battery SOC, etc.) are NOT scaled.
     """
@@ -93,11 +94,6 @@ def scale_site_values(site, t):
         site.consumption.a * t if site.consumption.a is not None else None,
         site.consumption.b * t if site.consumption.b is not None else None,
         site.consumption.c * t if site.consumption.c is not None else None,
-    )
-    site.export_current = PhaseValues(
-        site.export_current.a * t if site.export_current.a is not None else None,
-        site.export_current.b * t if site.export_current.b is not None else None,
-        site.export_current.c * t if site.export_current.c is not None else None,
     )
 
 
@@ -114,6 +110,113 @@ def apply_ramp_rate(prev_limit, target):
         return round(prev_limit + min(delta, RAMP_UP_PER_CYCLE), 1)
     else:
         return round(prev_limit + max(delta, -RAMP_DOWN_PER_CYCLE), 1)
+
+
+def _fmt_phase(value):
+    """Format a phase value for trace output."""
+    return f"{value:.1f}A" if value is not None else "-"
+
+
+def set_charger_phase_currents(charger, commanded_limit):
+    """Set charger l1/l2/l3_current from commanded limit based on phase mask."""
+    charger.l1_current = 0
+    charger.l2_current = 0
+    charger.l3_current = 0
+    if commanded_limit <= 0:
+        return
+    mask = (charger.active_phases_mask or "").upper()
+    if "A" in mask:
+        charger.l1_current = commanded_limit
+    if "B" in mask:
+        charger.l2_current = commanded_limit
+    if "C" in mask:
+        charger.l3_current = commanded_limit
+
+
+def compute_battery_grid_effect(site):
+    """Compute battery's per-phase effect on the grid CT reading.
+
+    Returns current in Amps per phase:
+      positive = battery charging (increases grid import)
+      negative = battery discharging (decreases grid import)
+      0 = idle or no battery configured
+
+    Uses the same simplification as the engine: charge/discharge at max power
+    when SOC is below/above target.
+    """
+    if (site.battery_soc is None or site.battery_soc_target is None
+            or site.battery_soc_target == 0):
+        return 0.0
+    num_phases = site.num_phases or 1
+    if site.battery_soc < site.battery_soc_target:
+        charge = site.battery_max_charge_power or 0
+        return (charge / site.voltage / num_phases) if charge > 0 else 0.0
+    elif site.battery_soc > site.battery_soc_target:
+        discharge = site.battery_max_discharge_power or 0
+        return -(discharge / site.voltage / num_phases) if discharge > 0 else 0.0
+    return 0.0
+
+
+def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
+    """Compute grid CT readings from physical inputs.
+
+    Grid CT measures: net = household - solar_per_phase + battery_per_phase + charger_draw
+    Positive net = importing from grid, negative net = exporting to grid.
+    Then decomposed for the engine: consumption = max(0, net), export = max(0, -net).
+
+    Updates site.consumption and site.export_current.
+    solar_production_total is NOT changed — the engine needs the actual
+    production value for inverter limit calculations.
+
+    Returns (ct_net_a, ct_net_b, ct_net_c, solar_per_phase) for trace output.
+    """
+    num_phases = household.active_count or 1
+    solar_per_phase = (site.solar_production_total / num_phases / site.voltage
+                       if site.solar_production_total and site.voltage else 0.0)
+    battery_per_phase = compute_battery_grid_effect(site)
+
+    def _ct(household_a, solar_pp, bat_pp, charger_draw):
+        if household_a is None:
+            return None, None, None
+        net = household_a - solar_pp + bat_pp + charger_draw
+        return net, max(0.0, net), max(0.0, -net)
+
+    ct_a_net, ct_a_cons, ct_a_exp = _ct(household.a, solar_per_phase, battery_per_phase, charger_l1)
+    ct_b_net, ct_b_cons, ct_b_exp = _ct(household.b, solar_per_phase, battery_per_phase, charger_l2)
+    ct_c_net, ct_c_cons, ct_c_exp = _ct(household.c, solar_per_phase, battery_per_phase, charger_l3)
+
+    site.consumption = PhaseValues(ct_a_cons, ct_b_cons, ct_c_cons)
+    site.export_current = PhaseValues(ct_a_exp, ct_b_exp, ct_c_exp)
+
+    return ct_a_net, ct_b_net, ct_c_net, solar_per_phase
+
+
+def apply_feedback_adjustment(site):
+    """Replicate dynamic_ocpp_evse.py feedback loop.
+
+    Subtracts charger l1/l2/l3_current from grid CT readings to recover
+    the true household consumption/export before charger was drawing.
+    solar_production_total is NOT touched — simulate_grid_ct already set it
+    from the true YAML value.
+    """
+    total_l1 = sum(c.l1_current for c in site.chargers)
+    total_l2 = sum(c.l2_current for c in site.chargers)
+    total_l3 = sum(c.l3_current for c in site.chargers)
+
+    if total_l1 > 0 or total_l2 > 0 or total_l3 > 0:
+        def _adjust(cons, exp, draw):
+            if cons is None:
+                return None, None
+            raw_grid = cons - (exp or 0)
+            true_grid = raw_grid - draw
+            return max(0.0, true_grid), max(0.0, -true_grid)
+
+        adj_a_cons, adj_a_exp = _adjust(site.consumption.a, site.export_current.a, total_l1)
+        adj_b_cons, adj_b_exp = _adjust(site.consumption.b, site.export_current.b, total_l2)
+        adj_c_cons, adj_c_exp = _adjust(site.consumption.c, site.export_current.c, total_l3)
+
+        site.consumption = PhaseValues(adj_a_cons, adj_b_cons, adj_c_cons)
+        site.export_current = PhaseValues(adj_a_exp, adj_b_exp, adj_c_exp)
 
 
 def check_stability(history, tolerance=0.5):
@@ -147,34 +250,29 @@ def load_scenarios(yaml_file):
 
 
 def build_site_from_scenario(scenario):
-    """Build SiteContext from scenario dict."""
+    """Build SiteContext from scenario dict.
+
+    YAML values represent physical reality:
+    - phase_X_consumption: household load on that phase (Amps)
+    - solar_production: total solar production (Watts)
+    - battery_*: battery state and limits
+
+    The simulation loop converts these to grid CT values before feeding
+    to the engine, matching the production data flow.
+    """
     site_data = scenario['site']
     voltage = site_data.get('voltage', 230)
 
-    # Solar production + per-phase consumption (None = phase doesn't exist)
+    # Per-phase household consumption (None = phase doesn't exist)
     solar_total = site_data.get('solar_production', 0)
-    solar_production_direct = site_data.get('solar_production_direct', False)
     phase_a_cons = site_data.get('phase_a_consumption')
     phase_b_cons = site_data.get('phase_b_consumption')
     phase_c_cons = site_data.get('phase_c_consumption')
 
-    # Infer num_phases from which consumption values are provided
-    active_phases = sum(1 for v in [phase_a_cons, phase_b_cons, phase_c_cons] if v is not None)
-    if active_phases == 0:
-        active_phases = 1
-
-    # Export current: use explicit per-phase values if provided, otherwise derive from solar
-    if 'phase_a_export' in site_data or 'phase_b_export' in site_data or 'phase_c_export' in site_data:
-        # Explicit export values (used with solar_production_direct to test independent solar reading)
-        phase_a_export = site_data.get('phase_a_export') if phase_a_cons is not None else None
-        phase_b_export = site_data.get('phase_b_export') if phase_b_cons is not None else None
-        phase_c_export = site_data.get('phase_c_export') if phase_c_cons is not None else None
-    else:
-        # Derive export from solar (existing behavior)
-        solar_per_phase_amps = (solar_total / active_phases) / voltage if voltage > 0 and solar_total > 0 else 0
-        phase_a_export = max(0, solar_per_phase_amps - phase_a_cons) if phase_a_cons is not None else None
-        phase_b_export = max(0, solar_per_phase_amps - phase_b_cons) if phase_b_cons is not None else None
-        phase_c_export = max(0, solar_per_phase_amps - phase_c_cons) if phase_c_cons is not None else None
+    # Export starts at zero — will be computed by CT simulation in the loop
+    phase_a_export = 0.0 if phase_a_cons is not None else None
+    phase_b_export = 0.0 if phase_b_cons is not None else None
+    phase_c_export = 0.0 if phase_c_cons is not None else None
 
     site = SiteContext(
         voltage=voltage,
@@ -182,7 +280,7 @@ def build_site_from_scenario(scenario):
         consumption=PhaseValues(phase_a_cons, phase_b_cons, phase_c_cons),
         export_current=PhaseValues(phase_a_export, phase_b_export, phase_c_export),
         solar_production_total=solar_total,
-        solar_is_derived=site_data.get('solar_is_derived', False),
+        solar_is_derived=True,
         battery_soc=site_data.get('battery_soc'),
         battery_soc_min=site_data.get('battery_soc_min', 20),
         battery_soc_target=site_data.get('battery_soc_target', 80),
@@ -256,7 +354,7 @@ def build_site_from_scenario(scenario):
 # Core simulation
 # ---------------------------------------------------------------------------
 
-def run_scenario_simulation(scenario, verbose=False):
+def run_scenario_simulation(scenario, verbose=False, trace=False):
     """Run 30-cycle simulation for a scenario.
 
     Cycles 0-4:   Site values ramp from 0 to target (cold start).
@@ -270,24 +368,42 @@ def run_scenario_simulation(scenario, verbose=False):
     history = []
 
     for cycle in range(TOTAL_CYCLES):
-        # 1. Build site with full target values from YAML
+        # 1. Build site from YAML (household consumption, solar production, battery)
         site = build_site_from_scenario(scenario)
 
-        # 2. Scale values for cold-start ramp-up (cycles 0-4)
+        # 2. Scale household + solar for cold-start ramp-up (cycles 0-4)
         if cycle < RAMP_UP_CYCLES:
             t = (cycle + 1) / RAMP_UP_CYCLES
             scale_site_values(site, t)
 
-        # 3. Run calculation engine
+        # Save household consumption before CT simulation overwrites it
+        household = PhaseValues(site.consumption.a, site.consumption.b, site.consumption.c)
+
+        # 3. Set charger l1/l2/l3_current from previous commanded limits
+        for charger in site.chargers:
+            set_charger_phase_currents(charger, commanded_limits.get(charger.entity_id, 0))
+
+        # 4. Compute grid CT values from physical inputs
+        #    net = household - solar_per_phase + battery_per_phase + charger_draw
+        charger_l1 = sum(c.l1_current for c in site.chargers)
+        charger_l2 = sum(c.l2_current for c in site.chargers)
+        charger_l3 = sum(c.l3_current for c in site.chargers)
+        ct_a_net, ct_b_net, ct_c_net, solar_pp = simulate_grid_ct(
+            site, household, charger_l1, charger_l2, charger_l3)
+
+        # 5. Apply feedback: subtract charger draws (replicates dynamic_ocpp_evse.py)
+        apply_feedback_adjustment(site)
+
+        # 6. Run calculation engine
         calculate_all_charger_targets(site)
 
-        # 4. Apply ramp rate limiting to engine targets
+        # 7. Apply ramp rate limiting to engine targets
         for charger in site.chargers:
             target = charger.allocated_current
             prev = commanded_limits.get(charger.entity_id, 0)
             commanded_limits[charger.entity_id] = apply_ramp_rate(prev, target)
 
-        # 5. Record history
+        # 8. Record history
         history.append({
             'cycle': cycle,
             'engine_targets': {c.entity_id: c.allocated_current for c in site.chargers},
@@ -299,7 +415,37 @@ def run_scenario_simulation(scenario, verbose=False):
             for charger in site.chargers:
                 eid = charger.entity_id
                 parts.append(f"{eid}={commanded_limits[eid]:.1f}A(t={charger.allocated_current:.1f})")
-            print(f"  Cycle {cycle:2d}: {', '.join(parts)}")
+            line = f"  Cycle {cycle:2d}: {', '.join(parts)}"
+            if trace:
+                def _fmt_signed(v):
+                    return f"{v:+.1f}" if v is not None else "-"
+                # Grid CT: signed net per phase (positive=import, negative=export)
+                grid_str = f"grid=({_fmt_signed(ct_a_net)}/{_fmt_signed(ct_b_net)}/{_fmt_signed(ct_c_net)})"
+                # Inverter: per-phase current + solar/battery power in watts
+                inv_a = f"{solar_pp:.1f}A" if household.a is not None else "-"
+                inv_b = f"{solar_pp:.1f}A" if household.b is not None else "-"
+                inv_c = f"{solar_pp:.1f}A" if household.c is not None else "-"
+                inv_detail = f"solar={site.solar_production_total:.0f}W"
+                bat_effect = compute_battery_grid_effect(site)
+                if bat_effect != 0:
+                    bat_watts = bat_effect * site.voltage * (household.active_count or 1)
+                    inv_detail += f" bat={bat_watts:+.0f}W"
+                inv_str = f"inverter=({inv_a}/{inv_b}/{inv_c} {inv_detail})"
+                # Household load from YAML
+                house_str = f"house=({_fmt_phase(household.a)}/{_fmt_phase(household.b)}/{_fmt_phase(household.c)})"
+                # Sum of charger draws per phase
+                ch_sum_str = f"ch_sum=({charger_l1:.1f}/{charger_l2:.1f}/{charger_l3:.1f})"
+                # Battery: per-phase current in (A/B/C) format + SOC
+                bat_str = ""
+                if site.battery_soc is not None:
+                    ba = _fmt_signed(bat_effect) if household.a is not None else "-"
+                    bb = _fmt_signed(bat_effect) if household.b is not None else "-"
+                    bc = _fmt_signed(bat_effect) if household.c is not None else "-"
+                    bat_str = f"bat=({ba}/{bb}/{bc} soc={site.battery_soc:.0f}%)"
+                line += f"  | {grid_str} {inv_str} {house_str} {ch_sum_str}"
+                if bat_str:
+                    line += f" {bat_str}"
+            print(line)
 
     # --- Validate engine targets from last cycle against expected values ---
     passed, errors = validate_results(scenario, site)
@@ -355,7 +501,7 @@ def validate_results(scenario, site):
 # Test runner
 # ---------------------------------------------------------------------------
 
-def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, filter_verified=None):
+def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, trace=False, filter_verified=None):
     """Run all test scenarios with 30-cycle simulation."""
     all_scenarios = load_scenarios(yaml_file)
 
@@ -383,7 +529,7 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, filter_v
         description = scenario['description']
         is_verified = scenario.get('human_verified', False)
 
-        passed, errors, history = run_scenario_simulation(scenario, verbose=verbose)
+        passed, errors, history = run_scenario_simulation(scenario, verbose=verbose, trace=trace)
 
         if passed:
             passed_count += 1
@@ -450,7 +596,7 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, filter_v
     return failed_count == 0
 
 
-def run_single_scenario(scenario_name, yaml_file='dev/tests/test_scenarios.yaml'):
+def run_single_scenario(scenario_name, yaml_file='dev/tests/test_scenarios.yaml', trace=False):
     """Run a single scenario by name with verbose simulation output."""
     scenarios = load_scenarios(yaml_file)
 
@@ -461,7 +607,7 @@ def run_single_scenario(scenario_name, yaml_file='dev/tests/test_scenarios.yaml'
             print(f"Description: {scenario['description']}")
             print(f"{'='*70}\n")
 
-            passed, errors, history = run_scenario_simulation(scenario, verbose=True)
+            passed, errors, history = run_scenario_simulation(scenario, verbose=True, trace=trace)
 
             # Print final state summary
             last = history[-1]
@@ -524,8 +670,9 @@ if __name__ == "__main__":
             combined.extend(data.get("scenarios", []))
         return combined
 
-    # Parse filter_verified from command line
+    # Parse flags from command line
     filter_verified = None
+    trace = False
     args = sys.argv[1:]
 
     if '--verified' in args:
@@ -538,6 +685,10 @@ if __name__ == "__main__":
         filter_verified = None
         args.remove('--all')
 
+    if '--trace' in args:
+        trace = True
+        args.remove('--trace')
+
     if len(args) > 0:
         arg = args[0]
         p = Path(arg)
@@ -547,13 +698,13 @@ if __name__ == "__main__":
                 tmp = Path(__file__).parent / "scenarios_combined_temp.yaml"
                 with open(tmp, "w", encoding="utf-8") as fh:
                     yaml.safe_dump({"scenarios": combined}, fh)
-                success = run_tests(yaml_file=str(tmp), verbose=True, filter_verified=filter_verified)
+                success = run_tests(yaml_file=str(tmp), verbose=True, trace=trace, filter_verified=filter_verified)
                 try:
                     tmp.unlink()
                 except Exception:
                     pass
             elif p.is_file():
-                success = run_tests(yaml_file=str(p), verbose=True, filter_verified=filter_verified)
+                success = run_tests(yaml_file=str(p), verbose=True, trace=trace, filter_verified=filter_verified)
             else:
                 print(f"Path '{arg}' is not a file or directory")
                 success = False
@@ -572,7 +723,7 @@ if __name__ == "__main__":
                 for sc in data.get("scenarios", []):
                     if sc.get("name") == arg:
                         found = True
-                        success = run_single_scenario(arg, yaml_file=str(f))
+                        success = run_single_scenario(arg, yaml_file=str(f), trace=trace)
                         break
                 if found:
                     break
@@ -586,13 +737,13 @@ if __name__ == "__main__":
             tmp = Path(__file__).parent / "scenarios_combined_temp.yaml"
             with open(tmp, "w", encoding="utf-8") as fh:
                 yaml.safe_dump({"scenarios": combined}, fh)
-            success = run_tests(yaml_file=str(tmp), verbose=True, filter_verified=filter_verified)
+            success = run_tests(yaml_file=str(tmp), verbose=True, trace=trace, filter_verified=filter_verified)
             try:
                 tmp.unlink()
             except Exception:
                 pass
         else:
-            success = run_tests(verbose=True, filter_verified=filter_verified)
+            success = run_tests(verbose=True, trace=trace, filter_verified=filter_verified)
 
     # Print end timestamp and duration
     end_time = datetime.now()

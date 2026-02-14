@@ -94,10 +94,14 @@
 
 33. - [x] **Multi-cycle test simulation** — Revamped `run_tests.py` to run every scenario through a 30-cycle simulation (5 ramp-up + 20 warmup + 5 stability check) instead of single-shot calculation. Added ramp rate limiting simulation (1.5 A/cycle up, 3.0 A/cycle down, matching `sensor.py` constants). Cold start from zero with linear interpolation to target values. Stability check verifies convergence over last 5 cycles. Removed old `apply_charging_feedback`, `detect_oscillation`, `run_scenario_with_iterations` and the single-shot vs multi-iteration split. `iterations` YAML field now ignored. 70/70 + 57/57 tests passing.
 
+34. - [x] **Test trace output** — Added `--trace` CLI flag to `run_tests.py`. When enabled, each cycle prints simulated grid CT readings (what the meter would show with charger draws), per-phase export, solar production, per-phase charger draws, and battery state (SOC + power). Trace format: `ct=(A/B/C) exp=(A/B/C) solar=XW draws=(A/B/C) bat(soc=X%,pwr=XW)`. Also added `solar_is_derived` to the hub state debug log line in `dynamic_ocpp_evse.py` for future production debugging.
+
+35. - [x] **Eco mode: inactive chargers inflating minimums** — `_determine_target_power()` in `target_calculator.py` summed `min_current * phases` for ALL chargers, including inactive ones (Available/Unknown/Unavailable). An inactive smart plug with ~15.6A equivalent current inflated `sum_minimums_per_phase` from 6A to 11.2A, causing the active EVSE to charge at 8.8A instead of 6A at night. Fixed: filter to active chargers only. (fixes ISSUES.md #9)
+
 ## In Progress
 
 ## Backlog
 
 ### Other
 
-34. - [ ] **Icon submission** — Submit `icon.png` to [HA brands repo](https://github.com/home-assistant/brands) (see dev/ISSUES.md)
+36. - [ ] **Icon submission** — Submit `icon.png` to [HA brands repo](https://github.com/home-assistant/brands) (see dev/ISSUES.md)

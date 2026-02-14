@@ -164,9 +164,9 @@ def run_hub_calculation(sensor):
 
     _LOGGER.debug(
         "Hub state read: phases=%d, phase_a=%sA (entity=%s), phase_b=%sA, phase_c=%sA, "
-        "export=%.1fA, battery_soc=%s, mode=%s, dist=%s",
+        "export=%.1fA, battery_soc=%s, mode=%s, dist=%s, solar_is_derived=%s",
         consumption_pv.active_count, raw_phase_a, phase_a_entity, raw_phase_b, raw_phase_c,
-        total_export_current, battery_soc, charging_mode, distribution_mode
+        total_export_current, battery_soc, charging_mode, distribution_mode, solar_is_derived
     )
     
     # Build site context
