@@ -36,17 +36,25 @@ jobs:
       - name: Set up variables
         id: vars
         run: |
-          # Use GITHUB_REF_NAME (short ref) if available, otherwise parse GITHUB_REF
-          if [ -n "$GITHUB_REF_NAME" ]; then
-            TAG_NAME="$GITHUB_REF_NAME"
-          else
-            TAG_NAME="${GITHUB_REF##*/}"
-          fi
-          
-          echo "Detected tag: $TAG_NAME"
           echo "GITHUB_REF: $GITHUB_REF"
           echo "GITHUB_REF_NAME: $GITHUB_REF_NAME"
-          
+
+          if echo "$GITHUB_REF" | grep -q "^refs/tags/"; then
+            # Triggered by tag push — use the tag name directly
+            TAG_NAME="$GITHUB_REF_NAME"
+          else
+            # Manual dispatch on a branch — read version from manifest.json
+            TAG_NAME=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
+            echo "Manual trigger: read version '$TAG_NAME' from manifest.json"
+          fi
+
+          # Validate TAG_NAME looks like a version (starts with v or digit)
+          if ! echo "$TAG_NAME" | grep -qE '^(v?[0-9])'; then
+            echo "ERROR: TAG_NAME '$TAG_NAME' does not look like a version tag — aborting"
+            exit 1
+          fi
+
+          echo "Using tag: $TAG_NAME"
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
 
       - name: Create ZIP archive
