@@ -44,6 +44,27 @@
     - Engine reads slider: `dynamic_ocpp_evse.py` reads power from `number.{entity_id}_device_power` entity, falls back to `CONF_PLUG_POWER_RATING`.
     - Power monitor auto-adjust: When plug has power monitoring and is actively drawing, rolling average of last 5 readings updates both the engine calculation and the Device Power slider.
 
+20. - [x] **Missing translations** — Added missing translation entries in `en.json` and `sl.json`:
+    - `solar_production_entity_id` in `reconfigure_hub_grid` and `options.hub_grid` sections.
+    - New `device_type`, `plug_config`, `reconfigure_plug` steps in `config.step`.
+    - New `plug` step in `options.step`.
+
+21. - [x] **Current rate limiting** — Re-added ramp rate limiting (lost in v2 refactor) in `sensor.py` EVSE branch:
+    - Ramp up: max 0.1 A/s (1.5A per cycle at 15s). Ramp down: max 0.2 A/s (3A per cycle at 15s).
+    - Only applies when both previous and current limits > 0 (pause→resume is instant).
+    - Constants `RAMP_UP_RATE`, `RAMP_DOWN_RATE` in `const.py`.
+    - 3 integration tests in `test_sensor_update.py`.
+
+22. - [x] **Auto-reset for non-compliant chargers** — Detects when EVSE ignores charging profiles and automatically triggers reset:
+    - `_check_profile_compliance()` in `sensor.py` compares `current_offered` entity against last commanded limit.
+    - Tolerance = `RAMP_DOWN_RATE * update_frequency` (3A at 15s default) — dynamically adapts.
+    - Triggers `reset_ocpp_evse` after 5 consecutive mismatched cycles. 120s cooldown after reset.
+    - Guards: EVSE only, car plugged in, limit > 0, dynamic control on.
+    - Constants `AUTO_RESET_MISMATCH_THRESHOLD`, `AUTO_RESET_COOLDOWN_SECONDS` in `const.py`.
+    - 5 integration tests in `test_sensor_update.py`. 58/58 passing.
+
+23. - [x] **Round current values in calculation engine** — Added `round(..., 1)` to all `allocated_current` and `available_current` assignments in `target_calculator.py` (priority, shared, strict, optimized distributions + `_set_available_current_for_chargers`). Values are now rounded to 1 decimal at the source, not just at display time in `sensor.py`. 70/70 + 26/26 tests passing.
+
 ## In Progress
 
 ## Backlog

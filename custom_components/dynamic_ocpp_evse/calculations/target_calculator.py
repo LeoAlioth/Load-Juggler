@@ -99,9 +99,9 @@ def _set_available_current_for_chargers(
       after active chargers are deducted. Each idle charger independently sees
       the same remaining pool (hypothetical, no deduction between idle chargers).
     """
-    # Active chargers: available = allocated
+    # Active chargers: available = allocated (already rounded)
     for charger in active_chargers:
-        charger.available_current = charger.allocated_current
+        charger.available_current = round(charger.allocated_current, 1)
 
     # Calculate remaining constraints after active allocations
     remaining = target_constraints.copy()
@@ -117,7 +117,7 @@ def _set_available_current_for_chargers(
             continue
         available = remaining.get_available(mask)
         if available >= charger.min_current:
-            charger.available_current = min(charger.max_current, available)
+            charger.available_current = round(min(charger.max_current, available), 1)
         else:
             charger.available_current = 0
 
@@ -512,13 +512,13 @@ def _distribute_per_phase_priority(site: SiteContext, constraints: PhaseConstrai
 
         mask = charger.active_phases_mask
         if not mask:
-            charger.allocated_current = allocated[charger.entity_id]
+            charger.allocated_current = round(allocated[charger.entity_id], 1)
             continue
 
         charger_available = remaining.get_available(mask)
         wanted_additional = charger.max_current - allocated[charger.entity_id]
         additional = min(wanted_additional, charger_available)
-        charger.allocated_current = allocated[charger.entity_id] + additional
+        charger.allocated_current = round(allocated[charger.entity_id] + additional, 1)
         remaining = remaining.deduct(additional, mask)
 
 
@@ -570,7 +570,7 @@ def _distribute_per_phase_shared(site: SiteContext, constraints: PhaseConstraint
             remaining = remaining.deduct(additional, mask)
 
     for charger in charging_chargers:
-        charger.allocated_current = allocated[charger.entity_id]
+        charger.allocated_current = round(allocated[charger.entity_id], 1)
 
     for charger in site.chargers:
         if charger not in charging_chargers:
@@ -592,7 +592,7 @@ def _distribute_per_phase_strict(site: SiteContext, constraints: PhaseConstraint
             continue
 
         charger_available = remaining.get_available(mask)
-        charger.allocated_current = min(charger.max_current, charger_available)
+        charger.allocated_current = round(min(charger.max_current, charger_available), 1)
         remaining = remaining.deduct(charger.allocated_current, mask)
 
 
@@ -626,7 +626,7 @@ def _distribute_per_phase_optimized(site: SiteContext, constraints: PhaseConstra
                     can_reduce = max(0, wanted - charger.min_current)
                     wanted -= min(reduction_needed, can_reduce)
 
-        charger.allocated_current = wanted
-        remaining = remaining.deduct(wanted, mask)
+        charger.allocated_current = round(wanted, 1)
+        remaining = remaining.deduct(charger.allocated_current, mask)
 
 

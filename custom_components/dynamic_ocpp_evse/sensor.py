@@ -132,6 +132,9 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self._pause_started_at = None  # datetime when charge pause started
         self._last_set_current = 0
         self._last_set_power = None
+        self._last_commanded_limit = None  # Amps, after rate-limiting (for ramp + compliance)
+        self._mismatch_count = 0           # consecutive non-compliant cycles
+        self._last_auto_reset_at = None    # datetime of last auto-reset
         self._target_evse = None
         self._target_evse_standard = None
         self._target_evse_eco = None
@@ -171,6 +174,8 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             "last_set_power": self._last_set_power,
             "charger_priority": get_entry_value(self.config_entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
             "hub_entry_id": self.config_entry.data.get(CONF_HUB_ENTRY_ID),
+            "auto_reset_mismatch_count": self._mismatch_count,
+            "last_auto_reset": self._last_auto_reset_at,
         }
         return attrs
 
@@ -224,6 +229,92 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             return None
         except Exception:
             return None
+
+    async def _check_profile_compliance(self, limit: float, dynamic_control_on: bool) -> None:
+        """Check if the charger is following commanded profiles and auto-reset if not.
+
+        Compares the previous cycle's commanded limit against the charger's
+        current_offered entity. Triggers reset_ocpp_evse after sustained mismatch.
+        """
+        # Guard: only when dynamic control is on and we're actively charging
+        if not dynamic_control_on or limit <= 0:
+            self._mismatch_count = 0
+            return
+
+        # Guard: skip first cycle (no previous command to compare)
+        if self._last_commanded_limit is None or self._last_commanded_limit <= 0:
+            return
+
+        # Guard: cooldown after last reset
+        if self._last_auto_reset_at is not None:
+            elapsed = (datetime.now() - self._last_auto_reset_at).total_seconds()
+            if elapsed < AUTO_RESET_COOLDOWN_SECONDS:
+                self._mismatch_count = 0
+                return
+
+        # Guard: car must be plugged in
+        charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
+        connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
+        connector_status_state = self.hass.states.get(connector_status_entity)
+        connector_status = connector_status_state.state if connector_status_state else "unknown"
+        if connector_status in ("Available", "unknown", "unavailable"):
+            self._mismatch_count = 0
+            return
+
+        # Read current_offered from OCPP entity
+        current_offered_entity_id = self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID)
+        if not current_offered_entity_id:
+            return
+
+        current_offered_state = self.hass.states.get(current_offered_entity_id)
+        if not current_offered_state or current_offered_state.state in ("unknown", "unavailable", None, ""):
+            return
+
+        try:
+            current_offered = float(current_offered_state.state)
+        except (ValueError, TypeError):
+            return
+
+        # Tolerance = max ramp-down per cycle (dynamically adapts to update_frequency)
+        update_freq = get_entry_value(self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
+        tolerance = RAMP_DOWN_RATE * update_freq
+
+        diff = abs(current_offered - self._last_commanded_limit)
+        if diff > tolerance:
+            self._mismatch_count += 1
+            _LOGGER.debug(
+                "Profile mismatch for %s: commanded=%.1fA, offered=%.1fA, diff=%.1fA "
+                "(cycle %d/%d)",
+                self._attr_name, self._last_commanded_limit, current_offered,
+                diff, self._mismatch_count, AUTO_RESET_MISMATCH_THRESHOLD,
+            )
+        else:
+            if self._mismatch_count > 0:
+                _LOGGER.debug(
+                    "Profile compliance restored for %s (was at %d cycles)",
+                    self._attr_name, self._mismatch_count,
+                )
+            self._mismatch_count = 0
+            return
+
+        # Check if threshold reached
+        if self._mismatch_count >= AUTO_RESET_MISMATCH_THRESHOLD:
+            _LOGGER.info(
+                "Auto-reset triggered for %s: charger offered %.1fA but we commanded "
+                "%.1fA for %d consecutive cycles",
+                self._attr_name, current_offered, self._last_commanded_limit,
+                self._mismatch_count,
+            )
+            self._mismatch_count = 0
+            self._last_auto_reset_at = datetime.now()
+
+            try:
+                await self.hass.services.async_call(
+                    DOMAIN, "reset_ocpp_evse",
+                    {"entry_id": self.config_entry.entry_id},
+                )
+            except Exception as e:
+                _LOGGER.error("Auto-reset service call failed for %s: %s", self._attr_name, e)
 
     async def async_update(self):
         """Fetch new state data for the sensor asynchronously."""
@@ -389,6 +480,23 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
 
             else:
                 # OCPP EVSE — send charging profile
+
+                # Rate-limit current changes (only when actively charging both cycles)
+                if self._last_commanded_limit is not None and self._last_commanded_limit > 0 and limit > 0:
+                    update_freq = get_entry_value(self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
+                    max_up = RAMP_UP_RATE * update_freq
+                    max_down = RAMP_DOWN_RATE * update_freq
+                    delta = limit - self._last_commanded_limit
+                    if delta > max_up:
+                        limit = round(self._last_commanded_limit + max_up, 1)
+                        _LOGGER.debug("Rate-limited ramp UP for %s: %.1fA (max +%.1fA/cycle)", self._attr_name, limit, max_up)
+                    elif delta < -max_down:
+                        limit = round(self._last_commanded_limit - max_down, 1)
+                        _LOGGER.debug("Rate-limited ramp DOWN for %s: %.1fA (max -%.1fA/cycle)", self._attr_name, limit, max_down)
+
+                # Check if charger is following our profiles (auto-reset detection)
+                await self._check_profile_compliance(limit, dynamic_control_on)
+
                 profile_timeout = get_entry_value(self.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)
                 stack_level = get_entry_value(self.config_entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
                 profile_validity_mode = get_entry_value(self.config_entry, CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE)
@@ -517,6 +625,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                     blocking=False,
                 )
 
+                self._last_commanded_limit = limit  # Store for next cycle's ramp + compliance
                 self._last_update = datetime.utcnow()
         except Exception as e:
             _LOGGER.error(f"Error updating Dynamic OCPP EVSE Charger Sensor {self._attr_name}: {e}", exc_info=True)

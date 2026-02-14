@@ -920,3 +920,299 @@ async def test_power_buffer_reduces_grid_available(
         f"power_buffer=2000W ({target_buf:.1f}A) should give less than "
         f"power_buffer=0 ({target_no_buf:.1f}A)"
     )
+
+
+# ── Rate limiting tests ──────────────────────────────────────────────
+
+
+async def test_rate_limit_ramp_up_capped(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that ramp-up is capped at RAMP_UP_RATE * update_frequency per cycle.
+
+    With update_frequency=15s and RAMP_UP_RATE=0.1 A/s, max ramp-up is 1.5A.
+    If previous limit was 6A and engine wants 16A, the profile should be 7.5A.
+    """
+    from custom_components.dynamic_ocpp_evse.const import RAMP_UP_RATE
+
+    _set_ha_states(hass)
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    # Simulate previous cycle sent 6A
+    sensor._last_commanded_limit = 6.0
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
+        await sensor.async_update()
+
+        ocpp_calls = [
+            c for c in mock_call.call_args_list
+            if c[0][0] == "ocpp" and c[0][1] == "set_charge_rate"
+        ]
+        assert len(ocpp_calls) == 1
+        profile = ocpp_calls[0][0][2]["custom_profile"]
+        limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
+
+        # Engine would allocate 16A (max), but rate limit caps at 6 + 1.5 = 7.5A
+        max_allowed = 6.0 + RAMP_UP_RATE * 15
+        assert limit <= max_allowed, (
+            f"Rate-limited ramp-up should be <= {max_allowed}A, got {limit}A"
+        )
+        assert limit > 6.0, f"Limit should have increased from 6A, got {limit}A"
+
+
+async def test_rate_limit_ramp_down_capped(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that ramp-down is capped at RAMP_DOWN_RATE * update_frequency per cycle.
+
+    With update_frequency=15s and RAMP_DOWN_RATE=0.2 A/s, max ramp-down is 3.0A.
+    If previous limit was 16A and engine wants 6A, the profile should be 13A.
+    """
+    from custom_components.dynamic_ocpp_evse.const import RAMP_DOWN_RATE
+
+    _set_ha_states(hass)
+    # Switch to Solar mode with grid importing — engine will want 0A (no surplus)
+    # But we need it to want *some* current below 16A, so use Standard with low breaker
+    # Actually simpler: just set _last_commanded_limit high
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    # Simulate previous cycle sent 16A, but engine wants much less
+    sensor._last_commanded_limit = 16.0
+
+    # Override to Eco mode with battery SOC below target — gives min_current (6A)
+    hass.states.async_set("select.test_hub_charging_mode", "Eco")
+    hass.states.async_set("sensor.battery_soc", "50")
+    hass.states.async_set("number.test_hub_home_battery_soc_target", "90")
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
+        await sensor.async_update()
+
+        ocpp_calls = [
+            c for c in mock_call.call_args_list
+            if c[0][0] == "ocpp" and c[0][1] == "set_charge_rate"
+        ]
+        assert len(ocpp_calls) == 1
+        profile = ocpp_calls[0][0][2]["custom_profile"]
+        limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
+
+        # Engine wants 6A (eco min), but ramp-down caps at 16 - 3 = 13A
+        min_allowed = 16.0 - RAMP_DOWN_RATE * 15
+        assert limit >= min_allowed, (
+            f"Rate-limited ramp-down should be >= {min_allowed}A, got {limit}A"
+        )
+        assert limit < 16.0, f"Limit should have decreased from 16A, got {limit}A"
+
+
+async def test_rate_limit_not_applied_on_resume_from_pause(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that rate limiting is NOT applied when resuming from pause (0 → N).
+
+    When _last_commanded_limit is 0 (pause), the charger should jump directly
+    to the calculated value without rate limiting.
+    """
+    _set_ha_states(hass)
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    # Simulate coming out of pause
+    sensor._last_commanded_limit = 0.0
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
+        await sensor.async_update()
+
+        ocpp_calls = [
+            c for c in mock_call.call_args_list
+            if c[0][0] == "ocpp" and c[0][1] == "set_charge_rate"
+        ]
+        assert len(ocpp_calls) == 1
+        profile = ocpp_calls[0][0][2]["custom_profile"]
+        limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
+
+        # Should jump directly to full allocation (16A max), not be rate-limited
+        assert limit > 1.5, (
+            f"Resume from pause should NOT rate-limit, got {limit}A (would be 1.5 if limited)"
+        )
+
+
+# ── Auto-reset detection tests ───────────────────────────────────────
+
+
+async def test_auto_reset_mismatch_counter_increments(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that mismatch counter increments when current_offered differs."""
+    _set_ha_states(hass)
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    # Simulate: last cycle we sent 16A
+    sensor._last_commanded_limit = 16.0
+
+    # But charger is offering 0A (stuck / ignoring us)
+    hass.states.async_set(
+        "sensor.test_charger_current_offered", "0.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await sensor.async_update()
+
+    assert sensor._mismatch_count >= 1, (
+        f"Mismatch count should be >= 1, got {sensor._mismatch_count}"
+    )
+
+
+async def test_auto_reset_counter_resets_on_compliance(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that mismatch counter resets when charger becomes compliant."""
+    _set_ha_states(hass)
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    sensor._mismatch_count = 3  # Simulate prior mismatches
+    sensor._last_commanded_limit = 16.0
+
+    # Charger is offering 16A — matches what we sent
+    hass.states.async_set(
+        "sensor.test_charger_current_offered", "16.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await sensor.async_update()
+
+    assert sensor._mismatch_count == 0, (
+        f"Mismatch count should reset to 0 when compliant, got {sensor._mismatch_count}"
+    )
+
+
+async def test_auto_reset_triggers_after_threshold(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that auto-reset fires after sustained mismatch reaches threshold."""
+    from custom_components.dynamic_ocpp_evse.const import AUTO_RESET_MISMATCH_THRESHOLD
+
+    _set_ha_states(hass)
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    # Pre-set mismatch count to one below threshold
+    sensor._mismatch_count = AUTO_RESET_MISMATCH_THRESHOLD - 1
+    sensor._last_commanded_limit = 16.0
+
+    # Charger offering 0A — big mismatch
+    hass.states.async_set(
+        "sensor.test_charger_current_offered", "0.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
+        await sensor.async_update()
+
+        # Check that reset_ocpp_evse was called
+        reset_calls = [
+            c for c in mock_call.call_args_list
+            if len(c[0]) >= 2 and c[0][0] == DOMAIN and c[0][1] == "reset_ocpp_evse"
+        ]
+        assert len(reset_calls) == 1, (
+            f"Auto-reset should have been triggered, got {len(reset_calls)} calls"
+        )
+        assert sensor._last_auto_reset_at is not None
+
+
+async def test_auto_reset_cooldown_prevents_retrigger(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that cooldown prevents immediate re-triggering after reset."""
+    from custom_components.dynamic_ocpp_evse.const import AUTO_RESET_MISMATCH_THRESHOLD
+
+    _set_ha_states(hass)
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    # Simulate: just reset recently
+    sensor._last_auto_reset_at = datetime.now()
+    sensor._last_commanded_limit = 16.0
+    sensor._mismatch_count = AUTO_RESET_MISMATCH_THRESHOLD + 5  # Would trigger
+
+    # Charger still offering 0A
+    hass.states.async_set(
+        "sensor.test_charger_current_offered", "0.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
+        await sensor.async_update()
+
+        # Should NOT trigger reset during cooldown
+        reset_calls = [
+            c for c in mock_call.call_args_list
+            if len(c[0]) >= 2 and c[0][0] == DOMAIN and c[0][1] == "reset_ocpp_evse"
+        ]
+        assert len(reset_calls) == 0, (
+            f"Should NOT reset during cooldown, got {len(reset_calls)} reset calls"
+        )
+
+
+async def test_auto_reset_skips_when_car_not_plugged_in(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Test that auto-reset check is skipped when connector is Available."""
+    _set_ha_states(hass)
+    # Car not plugged in
+    hass.states.async_set("sensor.test_charger_status_connector", "Available")
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    sensor._mismatch_count = 10  # Would normally trigger
+    sensor._last_commanded_limit = 16.0
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
+        await sensor.async_update()
+
+        # Counter should be reset (car not plugged in)
+        assert sensor._mismatch_count == 0, (
+            "Mismatch count should reset when car not plugged in"
+        )
+
+        # No reset should have been triggered
+        reset_calls = [
+            c for c in mock_call.call_args_list
+            if len(c[0]) >= 2 and c[0][0] == DOMAIN and c[0][1] == "reset_ocpp_evse"
+        ]
+        assert len(reset_calls) == 0

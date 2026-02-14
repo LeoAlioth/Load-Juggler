@@ -96,6 +96,14 @@ DEFAULT_BATTERY_MAX_POWER = 5000
 DEFAULT_BATTERY_SOC_MIN = 20  # Default minimum SOC (20%)
 DEFAULT_BATTERY_SOC_HYSTERESIS = 3  # Default hysteresis (3%)
 
+# Current ramp rates (A per second) — limits how fast the commanded current changes
+RAMP_UP_RATE = 0.1       # Max 0.1 A/s ramp up
+RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
+
+# Auto-reset detection — triggers reset_ocpp_evse when charger ignores profiles
+AUTO_RESET_MISMATCH_THRESHOLD = 5    # consecutive mismatched cycles before reset
+AUTO_RESET_COOLDOWN_SECONDS = 120    # seconds to wait after reset before checking again
+
 # Charge rate unit configuration (per charger)
 CONF_CHARGE_RATE_UNIT = "charge_rate_unit"
 CHARGE_RATE_UNIT_AUTO = "auto"
