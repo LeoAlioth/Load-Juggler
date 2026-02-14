@@ -159,18 +159,36 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Build schema with only battery fields."""
         return self._hub_schema(defaults, include_grid=False, include_battery=True)
 
-    def _charger_schema(self, defaults: dict | None = None, include_auto_unit: bool = True) -> vol.Schema:
+    def _charger_schema(self, defaults: dict | None = None, detected_unit: str | None = None) -> vol.Schema:
+        """Build schema for EVSE charger configuration.
+
+        Args:
+            defaults: Pre-filled values (from existing config or initial defaults).
+            detected_unit: Charge rate unit detected via OCPP (A or W), or None.
+        """
         defaults = defaults or {}
         unit_options = [
             {"value": CHARGE_RATE_UNIT_AMPS, "label": "Amperes (A)"},
             {"value": CHARGE_RATE_UNIT_WATTS, "label": "Watts (W)"},
         ]
-        if include_auto_unit:
-            detected_unit = self._detect_charge_rate_unit(
-                self._selected_charger["current_offered_entity"]
-            )
-            unit_hint = f" (detected: {detected_unit})" if detected_unit else ""
-            unit_options.insert(0, {"value": CHARGE_RATE_UNIT_AUTO, "label": f"Auto-detect{unit_hint}"})
+
+        # Determine default for charge rate unit:
+        # - Use existing config value if it's a concrete unit (A or W)
+        # - Fall back to OCPP-detected value
+        # - If neither available, leave empty for user to choose
+        stored_unit = defaults.get(CONF_CHARGE_RATE_UNIT)
+        if stored_unit in (CHARGE_RATE_UNIT_AMPS, CHARGE_RATE_UNIT_WATTS):
+            unit_default = stored_unit
+        elif detected_unit:
+            unit_default = detected_unit
+        else:
+            unit_default = None
+
+        # Build the charge rate unit field — with or without a default
+        if unit_default:
+            charge_rate_field = vol.Required(CONF_CHARGE_RATE_UNIT, default=unit_default)
+        else:
+            charge_rate_field = vol.Required(CONF_CHARGE_RATE_UNIT)
 
         return vol.Schema({
             vol.Required(
@@ -185,10 +203,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
                 default=defaults.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT),
             ): int,
-            vol.Required(
-                CONF_CHARGE_RATE_UNIT,
-                default=defaults.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT),
-            ): selector({"select": {"options": unit_options, "mode": "dropdown"}}),
+            charge_rate_field: selector({"select": {"options": unit_options, "mode": "dropdown"}}),
             vol.Required(
                 CONF_PROFILE_VALIDITY_MODE,
                 default=defaults.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE),
@@ -781,40 +796,75 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         
         return chargers
 
-    def _detect_charge_rate_unit(self, current_offered_entity: str) -> str:
+    async def _detect_charge_rate_unit(self, ocpp_device_id: str) -> str | None:
         """
         Detect the charge rate unit supported by the OCPP charger.
-        
-        Checks the unit_of_measurement attribute of the current_offered sensor.
-        Falls back to Amperes if detection fails.
-        
-        Args:
-            current_offered_entity: Entity ID of the current_offered sensor
-            
+
+        Queries the charger via OCPP GetConfiguration for the
+        ChargingScheduleAllowedChargingRateUnit key.
+
         Returns:
-            "A" for Amperes, "W" for Watts
+            "A" for Amperes, "W" for Watts, None if detection fails.
         """
+        if not ocpp_device_id:
+            _LOGGER.debug("No OCPP device ID — cannot detect charge rate unit")
+            return None
+
+        if not self.hass.services.has_service("ocpp", "get_configuration"):
+            _LOGGER.debug("ocpp.get_configuration service not available")
+            return None
+
         try:
-            # Get the current_offered sensor state
-            sensor_state = self.hass.states.get(current_offered_entity)
-            if sensor_state:
-                # Check the unit of measurement
-                unit = sensor_state.attributes.get("unit_of_measurement")
-                _LOGGER.info(f"Detected charge rate unit from {current_offered_entity}: {unit}")
-                
-                if unit == "W":
-                    return CHARGE_RATE_UNIT_WATTS
-                elif unit == "A":
-                    return CHARGE_RATE_UNIT_AMPS
-                else:
-                    _LOGGER.warning(f"Unknown unit '{unit}' for {current_offered_entity}, defaulting to Amperes")
-                    return CHARGE_RATE_UNIT_AMPS
-            else:
-                _LOGGER.warning(f"Could not get state for {current_offered_entity}, defaulting to Amperes")
+            response = await self.hass.services.async_call(
+                "ocpp",
+                "get_configuration",
+                {
+                    "devid": ocpp_device_id,
+                    "ocpp_key": "ChargingScheduleAllowedChargingRateUnit",
+                },
+                blocking=True,
+                return_response=True,
+            )
+
+            if not response:
+                _LOGGER.debug("Empty response from ocpp.get_configuration")
+                return None
+
+            # Parse the response — handle multiple possible formats
+            value = None
+            if isinstance(response, dict):
+                # Direct key-value: {"ChargingScheduleAllowedChargingRateUnit": "Current"}
+                value = response.get("ChargingScheduleAllowedChargingRateUnit")
+                # Or nested: {"value": "Current"}
+                if value is None:
+                    value = response.get("value")
+                # Or list format: {"configurationKey": [{"key": ..., "value": ...}]}
+                if value is None:
+                    for item in response.get("configurationKey", []):
+                        if isinstance(item, dict) and item.get("key") == "ChargingScheduleAllowedChargingRateUnit":
+                            value = item.get("value")
+                            break
+
+            if not value:
+                _LOGGER.debug("Could not parse charge rate unit from OCPP response: %s", response)
+                return None
+
+            value = str(value).strip()
+            _LOGGER.info("OCPP ChargingScheduleAllowedChargingRateUnit = %s", value)
+
+            if "Current" in value and "Power" in value:
+                return CHARGE_RATE_UNIT_AMPS  # Both supported — prefer Amps
+            elif "Power" in value:
+                return CHARGE_RATE_UNIT_WATTS
+            elif "Current" in value:
                 return CHARGE_RATE_UNIT_AMPS
+            else:
+                _LOGGER.warning("Unrecognised ChargingScheduleAllowedChargingRateUnit value: %s", value)
+                return None
+
         except Exception as e:
-            _LOGGER.error(f"Error detecting charge rate unit: {e}, defaulting to Amperes")
-            return CHARGE_RATE_UNIT_AMPS
+            _LOGGER.warning("Could not detect charge rate unit via OCPP: %s", e)
+            return None
 
     async def async_step_charger_config(
         self, user_input: dict[str, Any] | None = None
@@ -822,6 +872,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Charger step 3: Configure charger settings."""
         errors: dict[str, str] = {}
         
+        # Detect charge rate unit via OCPP (used for form defaults and re-validation)
+        ocpp_device_id = self._selected_charger.get("device_id")
+        detected_unit = await self._detect_charge_rate_unit(ocpp_device_id)
+
         if user_input is not None:
             user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
@@ -830,7 +884,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if errors:
                 return self.async_show_form(
                     step_id="charger_config",
-                    data_schema=self._charger_schema(self._data, include_auto_unit=True),
+                    data_schema=self._charger_schema(self._data, detected_unit=detected_unit),
                     errors=errors,
                     description_placeholders={
                         "charger_name": self._selected_charger["name"],
@@ -839,15 +893,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     },
                     last_step=True,
                 )
-            
-            # Auto-detect charge rate unit if set to "auto"
-            if user_input.get(CONF_CHARGE_RATE_UNIT) == CHARGE_RATE_UNIT_AUTO:
-                detected_unit = self._detect_charge_rate_unit(
-                    self._selected_charger["current_offered_entity"]
-                )
-                self._data[CONF_CHARGE_RATE_UNIT] = detected_unit
-                _LOGGER.info(f"Auto-detected charge rate unit: {detected_unit}")
-            
+
             self._data[ENTRY_TYPE] = ENTRY_TYPE_CHARGER
             self._data[CONF_CHARGER_ID] = self._selected_charger["id"]
             self._data[CONF_OCPP_DEVICE_ID] = self._selected_charger.get("device_id")
@@ -903,14 +949,13 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_CHARGER_PRIORITY: next_priority,
                 CONF_EVSE_MINIMUM_CHARGE_CURRENT: DEFAULT_MIN_CHARGE_CURRENT,
                 CONF_EVSE_MAXIMUM_CHARGE_CURRENT: DEFAULT_MAX_CHARGE_CURRENT,
-                CONF_CHARGE_RATE_UNIT: CHARGE_RATE_UNIT_AUTO,
                 CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
                 CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
                 CONF_OCPP_PROFILE_TIMEOUT: DEFAULT_OCPP_PROFILE_TIMEOUT,
                 CONF_CHARGE_PAUSE_DURATION: DEFAULT_CHARGE_PAUSE_DURATION,
                 CONF_STACK_LEVEL: DEFAULT_STACK_LEVEL,
             },
-            include_auto_unit=True,
+            detected_unit=detected_unit,
         )
         
         return self.async_show_form(
@@ -1007,6 +1052,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         defaults = {**entry.data, **entry.options}
 
+        # Try OCPP detection so user can see/re-detect the correct value
+        ocpp_device_id = entry.data.get(CONF_OCPP_DEVICE_ID)
+        detected_unit = await self._detect_charge_rate_unit(ocpp_device_id)
+
         if user_input is not None:
             user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
@@ -1015,7 +1064,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if errors:
                 return self.async_show_form(
                     step_id="reconfigure_charger",
-                    data_schema=self._charger_schema(self._data, include_auto_unit=False),
+                    data_schema=self._charger_schema(self._data, detected_unit=detected_unit),
                     errors=errors,
                     last_step=True,
                 )
@@ -1025,7 +1074,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             return self.async_abort(reason="reconfigure_successful")
 
-        data_schema = self._charger_schema(defaults, include_auto_unit=False)
+        data_schema = self._charger_schema(defaults, detected_unit=detected_unit)
         
         return self.async_show_form(
             step_id="reconfigure_charger",
@@ -1128,9 +1177,10 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         defaults = {**self.config_entry.data, **self.config_entry.options}
         flow = DynamicOcppEvseConfigFlow()
         flow.hass = self.hass
-        flow._selected_charger = {
-            "current_offered_entity": defaults.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID),
-        }
+
+        # Try OCPP detection for charge rate unit
+        ocpp_device_id = self.config_entry.data.get(CONF_OCPP_DEVICE_ID)
+        detected_unit = await flow._detect_charge_rate_unit(ocpp_device_id)
 
         if user_input is not None:
             user_input = flow._normalize_optional_inputs(user_input)
@@ -1139,7 +1189,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             if errors:
                 return self.async_show_form(
                     step_id="charger",
-                    data_schema=flow._charger_schema(self._data, include_auto_unit=False),
+                    data_schema=flow._charger_schema(self._data, detected_unit=detected_unit),
                     errors=errors,
                 )
             return self.async_create_entry(
@@ -1147,7 +1197,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
                 data={**self.config_entry.options, **self._data},
             )
 
-        data_schema = flow._charger_schema(defaults, include_auto_unit=False)
+        data_schema = flow._charger_schema(defaults, detected_unit=detected_unit)
         return self.async_show_form(
             step_id="charger",
             data_schema=data_schema,

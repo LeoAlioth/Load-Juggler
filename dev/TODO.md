@@ -23,6 +23,8 @@
     - `run_tests.py`: `device_type` + `power_rating` support in YAML scenarios.
     - 6 test scenarios in `test_scenarios_plugs.yaml`. 70/70 passing.
 
+14. - [x] **Charge rate unit detection via OCPP** — Replaced unreliable sensor UoM detection with OCPP `GetConfiguration` query for `ChargingScheduleAllowedChargingRateUnit`. Config flow detects and pre-fills the dropdown; if detection fails the field is left empty for the user to choose. Detection also available in reconfigure/options flows. Sensor.py has cached OCPP fallback for legacy "auto" entries. (fixes ISSUES.md #2)
+
 ## In Progress
 
 ## Backlog

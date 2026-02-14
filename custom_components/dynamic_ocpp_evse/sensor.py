@@ -188,6 +188,42 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         """Return the device class."""
         return "current"
 
+    async def _detect_charge_rate_unit_ocpp(self, ocpp_device_id: str) -> str | None:
+        """Query OCPP charger for ChargingScheduleAllowedChargingRateUnit."""
+        if not ocpp_device_id:
+            return None
+        if not self.hass.services.has_service("ocpp", "get_configuration"):
+            return None
+        try:
+            response = await self.hass.services.async_call(
+                "ocpp", "get_configuration",
+                {"devid": ocpp_device_id, "ocpp_key": "ChargingScheduleAllowedChargingRateUnit"},
+                blocking=True,
+                return_response=True,
+            )
+            if not response or not isinstance(response, dict):
+                return None
+            value = response.get("ChargingScheduleAllowedChargingRateUnit")
+            if value is None:
+                value = response.get("value")
+            if value is None:
+                for item in response.get("configurationKey", []):
+                    if isinstance(item, dict) and item.get("key") == "ChargingScheduleAllowedChargingRateUnit":
+                        value = item.get("value")
+                        break
+            if not value:
+                return None
+            value = str(value).strip()
+            if "Current" in value and "Power" in value:
+                return CHARGE_RATE_UNIT_AMPS
+            elif "Power" in value:
+                return CHARGE_RATE_UNIT_WATTS
+            elif "Current" in value:
+                return CHARGE_RATE_UNIT_AMPS
+            return None
+        except Exception:
+            return None
+
     async def async_update(self):
         """Fetch new state data for the sensor asynchronously."""
         try:
@@ -344,26 +380,23 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 # Get charge rate unit from config (A or W)
                 charge_rate_unit = get_entry_value(self.config_entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
 
-                # If set to auto or not recognized, detect from sensor
-                if charge_rate_unit == CHARGE_RATE_UNIT_AUTO or charge_rate_unit not in [CHARGE_RATE_UNIT_AMPS, CHARGE_RATE_UNIT_WATTS]:
-                    _LOGGER.debug(f"Auto-detecting charge rate unit for {self._attr_name}")
-                    current_offered_entity = self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID)
-                    if current_offered_entity:
-                        sensor_state = self.hass.states.get(current_offered_entity)
-                        if sensor_state:
-                            unit = sensor_state.attributes.get("unit_of_measurement")
-                            if unit == "W":
-                                charge_rate_unit = CHARGE_RATE_UNIT_WATTS
-                                _LOGGER.info(f"Auto-detected charge rate unit: Watts (W) for {self._attr_name}")
-                            else:
-                                charge_rate_unit = CHARGE_RATE_UNIT_AMPS
-                                _LOGGER.info(f"Auto-detected charge rate unit: Amperes (A) for {self._attr_name}")
-                        else:
-                            _LOGGER.warning(f"Could not get state for {current_offered_entity}, defaulting to Amperes")
-                            charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+                # Legacy fallback: if still set to "auto" (pre-OCPP detection), try
+                # querying the charger via OCPP and cache the result for future cycles.
+                if charge_rate_unit not in (CHARGE_RATE_UNIT_AMPS, CHARGE_RATE_UNIT_WATTS):
+                    # Check instance cache first
+                    cached = getattr(self, "_cached_charge_rate_unit", None)
+                    if cached:
+                        charge_rate_unit = cached
                     else:
-                        _LOGGER.warning(f"No current_offered entity configured, defaulting to Amperes")
-                        charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+                        ocpp_device_id = self.config_entry.data.get(CONF_OCPP_DEVICE_ID)
+                        detected = await self._detect_charge_rate_unit_ocpp(ocpp_device_id)
+                        if detected:
+                            charge_rate_unit = detected
+                            self._cached_charge_rate_unit = detected
+                            _LOGGER.info("OCPP-detected charge rate unit: %s for %s", detected, self._attr_name)
+                        else:
+                            charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+                            _LOGGER.warning("Could not detect charge rate unit for %s, defaulting to Amperes", self._attr_name)
 
                 # Convert limit based on charge rate unit
                 if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:

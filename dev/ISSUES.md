@@ -2,4 +2,4 @@
 
 1. **Icon not shown in HA/HACS** — HA does not load `icon.png` from the custom component directory. The icon must be submitted as a PR to the [Home Assistant brands repo](https://github.com/home-assistant/brands). The `icon.png` file exists at `custom_components/dynamic_ocpp_evse/icon.png` and is ready to submit.
 
-2. **Atomatic detection of charge rate unit** During the setup process of the ocpp enabled evse, the logic for detecting whether the charger supports A, W, or both does not seem to work. Also, If it cant be detected, it should be left empty for the user to choose.
+2. ~~**Automatic detection of charge rate unit**~~ **FIXED** — Detection now queries the charger via OCPP `GetConfiguration` for the `ChargingScheduleAllowedChargingRateUnit` key (returns `"Current"`, `"Power"`, or `"Current,Power"`). If detection succeeds, the value is pre-filled in the dropdown. If it fails, the field is left empty for the user to choose. Detection also runs in reconfigure/options flows. Removed the old unreliable sensor UoM-based detection.
