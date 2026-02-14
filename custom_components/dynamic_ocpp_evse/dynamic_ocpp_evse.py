@@ -184,6 +184,7 @@ def run_hub_calculation(sensor):
     else:
         chargers = get_chargers_for_hub(hass, hub_entry_id)
     
+    plug_auto_power = {}  # {entry_id: averaged_power_watts} for auto-adjusted plugs
     for entry in chargers:
         device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         charger_entity_id = entry.data.get(CONF_ENTITY_ID, f"charger_{entry.entry_id}")
@@ -191,10 +192,14 @@ def run_hub_calculation(sensor):
 
         if device_type == DEVICE_TYPE_PLUG:
             # Smart plug / relay — binary on/off device with fixed power rating
-            power_rating = get_entry_value(entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
+            # Read power rating: prefer Device Power slider entity, fall back to config
+            device_power_entity = f"number.{charger_entity_id}_device_power"
+            slider_power = _read_entity(device_power_entity, None)
+            config_power = get_entry_value(entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
+            power_rating = slider_power if slider_power is not None and slider_power > 0 else config_power
+
             connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A")
             phases = len(connected_to_phase)
-            equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
 
             # Determine connector status from plug switch state
             plug_switch_entity = entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
@@ -205,10 +210,29 @@ def run_hub_calculation(sensor):
             if power_monitor_entity:
                 power_draw = _read_entity(power_monitor_entity, 0)
                 connector_status = "Charging" if power_draw > 10 else "Available"
+
+                # Auto-adjust power rating from monitored draw (rolling average)
+                if power_draw > 10:
+                    if DOMAIN not in hass.data:
+                        hass.data[DOMAIN] = {}
+                    avg_key = f"plug_power_avg_{entry.entry_id}"
+                    readings = hass.data[DOMAIN].get(avg_key, [])
+                    readings.append(power_draw)
+                    if len(readings) > 5:
+                        readings = readings[-5:]
+                    hass.data[DOMAIN][avg_key] = readings
+                    power_rating = sum(readings) / len(readings)
+                    plug_auto_power[entry.entry_id] = round(power_rating, 0)
+                    _LOGGER.debug(
+                        "Plug %s: auto-adjusted power rating to %.0fW (avg of %d readings)",
+                        charger_entity_id, power_rating, len(readings),
+                    )
             elif plug_switch_state:
                 connector_status = "Charging" if plug_switch_state.state == "on" else "Available"
             else:
                 connector_status = "Charging"  # Default to active if we can't determine
+
+            equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
 
             charger = ChargerContext(
                 charger_id=entry.entry_id,
@@ -320,6 +344,9 @@ def run_hub_calculation(sensor):
         "charger_targets": charger_targets,
         "charger_available": charger_available,
         "distribution_mode": site.distribution_mode,
+
+        # Auto-detected plug power ratings (for updating Device Power slider)
+        "plug_auto_power": plug_auto_power,
     }
 
     return result

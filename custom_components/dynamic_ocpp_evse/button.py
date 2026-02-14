@@ -4,7 +4,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
-from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID
+from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,11 +42,13 @@ class ResetButton(ButtonEntity):
         """Return device information about this charger."""
         from . import get_hub_for_charger
         hub_entry = get_hub_for_charger(self._hass, self._entry.entry_id)
+        device_type = self._entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
         return {
             "identifiers": {(DOMAIN, self._entry.entry_id)},
             "name": self._entry.data.get(CONF_NAME),
             "manufacturer": "Dynamic OCPP EVSE",
-            "model": "EV Charger",
+            "model": model,
             "via_device": (DOMAIN, hub_entry.entry_id) if hub_entry else None,
         }
 

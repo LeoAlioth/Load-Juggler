@@ -7,17 +7,22 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from .const import (
-    DOMAIN, 
-    ENTRY_TYPE, 
-    ENTRY_TYPE_HUB, 
+    DOMAIN,
+    ENTRY_TYPE,
+    ENTRY_TYPE_HUB,
     ENTRY_TYPE_CHARGER,
     CONF_NAME,
     CONF_ENTITY_ID,
-    CONF_MIN_CURRENT, 
-    CONF_MAX_CURRENT, 
-    CONF_EVSE_MINIMUM_CHARGE_CURRENT, 
-    CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 
+    CONF_MIN_CURRENT,
+    CONF_MAX_CURRENT,
+    CONF_EVSE_MINIMUM_CHARGE_CURRENT,
+    CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
     CONF_POWER_BUFFER,
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_EVSE,
+    DEVICE_TYPE_PLUG,
+    CONF_PLUG_POWER_RATING,
+    DEFAULT_PLUG_POWER_RATING,
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_BATTERY_MAX_POWER,
@@ -56,11 +61,18 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         _LOGGER.info(f"Setting up hub number entities: {[entity.unique_id for entity in entities]}")
     
     elif entry_type == ENTRY_TYPE_CHARGER:
-        # Charger entities: Min Current, Max Current
-        entities = [
-            EVSEMinCurrentSlider(hass, config_entry, name, entity_id),
-            EVSEMaxCurrentSlider(hass, config_entry, name, entity_id),
-        ]
+        device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        if device_type == DEVICE_TYPE_PLUG:
+            # Plug entities: Device Power slider only (no min/max current)
+            entities = [
+                PlugDevicePowerSlider(hass, config_entry, name, entity_id),
+            ]
+        else:
+            # EVSE entities: Min Current, Max Current
+            entities = [
+                EVSEMinCurrentSlider(hass, config_entry, name, entity_id),
+                EVSEMaxCurrentSlider(hass, config_entry, name, entity_id),
+            ]
         _LOGGER.info(f"Setting up charger number entities: {[entity.unique_id for entity in entities]}")
     
     else:
@@ -112,7 +124,7 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
             except (ValueError, TypeError):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-        
+
         # Write initial state
         self.async_write_ha_state()
 
@@ -123,9 +135,9 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
 
 class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
     """Slider for maximum current (charger-level)."""
-    
+
     _attr_entity_category = EntityCategory.CONFIG
-    
+
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
@@ -166,6 +178,63 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
         self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
+        self._attr_native_value = value
+        self.async_write_ha_state()
+
+
+class PlugDevicePowerSlider(NumberEntity, RestoreEntity):
+    """Slider for device power rating in Watts (smart plug devices).
+
+    The engine reads this entity's state to determine the plug's power draw
+    for allocation calculations. When a power monitor is configured, the
+    engine auto-updates this value with the averaged measured draw.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
+        self.hass = hass
+        self.config_entry = config_entry
+        self._attr_name = f"{name} Device Power"
+        self._attr_unique_id = f"{entity_id}_device_power"
+        power_rating = get_entry_value(config_entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
+        self._attr_native_min_value = 100
+        self._attr_native_max_value = power_rating
+        self._attr_native_step = 100
+        self._attr_native_value = power_rating
+        self._attr_native_unit_of_measurement = "W"
+        self._attr_icon = "mdi:power-plug"
+
+    @property
+    def device_info(self):
+        """Return device information about this plug."""
+        from . import get_hub_for_charger
+        hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "Smart Plug",
+            "via_device": (DOMAIN, hub_entry.entry_id) if hub_entry else None,
+        }
+
+    async def async_added_to_hass(self) -> None:
+        """Restore last state when added to hass."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
+            try:
+                self._attr_native_value = float(last_state.state)
+                _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
+            except (ValueError, TypeError):
+                _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
+
+        # Write initial state
+        self.async_write_ha_state()
+
+    async def async_set_native_value(self, value: float) -> None:
+        # Clamp to step and range
+        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
         self.async_write_ha_state()
 

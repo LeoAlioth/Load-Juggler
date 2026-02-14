@@ -37,6 +37,13 @@
     - `_calculate_solar_available()` → `_calculate_solar_surplus()` (calculates surplus after consumption)
     - `_calculate_available_current()` → `_set_available_current_for_chargers()` (mutates charger objects)
 
+19. - [x] **Smart Plug UX improvements** — Five changes to improve the plug user experience:
+    - Device info model: Returns "Smart Plug" instead of "EV Charger" for plug devices across all entity files (`sensor.py`, `number.py`, `switch.py`, `button.py`).
+    - Current rounding: All current (A) values (`_allocated_current`, `_state`) rounded to 1 decimal in `sensor.py`.
+    - Device Power slider: New `PlugDevicePowerSlider` entity in `number.py` (W, 100-10000, step 100). Replaces min/max current sliders for plugs.
+    - Engine reads slider: `dynamic_ocpp_evse.py` reads power from `number.{entity_id}_device_power` entity, falls back to `CONF_PLUG_POWER_RATING`.
+    - Power monitor auto-adjust: When plug has power monitoring and is actively drawing, rolling average of last 5 readings updates both the engine calculation and the Device Power slider.
+
 ## In Progress
 
 ## Backlog

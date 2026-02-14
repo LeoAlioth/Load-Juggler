@@ -142,12 +142,13 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
     @property
     def device_info(self):
         """Return device information about this charger."""
-        hub_entity_id = self.hub_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+        device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
         return {
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
             "name": self.config_entry.data.get(CONF_NAME),
             "manufacturer": "Dynamic OCPP EVSE",
-            "model": "EV Charger",
+            "model": model,
             "via_device": (DOMAIN, self.hub_entry.entry_id),
         }
 
@@ -295,8 +296,8 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
 
             # Get this charger's allocated and available current from engine output
             charger_available = hub_data.get("charger_available", {})
-            self._allocated_current = charger_targets.get(self.config_entry.entry_id, 0)
-            self._state = charger_available.get(self.config_entry.entry_id, self._allocated_current)
+            self._allocated_current = round(charger_targets.get(self.config_entry.entry_id, 0), 1)
+            self._state = round(charger_available.get(self.config_entry.entry_id, self._allocated_current), 1)
 
             # Update global allocations so the allocated current sensor can read them
             if DOMAIN not in self.hass.data:
@@ -368,6 +369,21 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                         {"entity_id": plug_switch_entity},
                         blocking=False,
                     )
+
+                # Auto-update Device Power slider from power monitoring average
+                plug_auto_power = hub_data.get("plug_auto_power", {})
+                auto_power = plug_auto_power.get(self.config_entry.entry_id)
+                if auto_power is not None:
+                    charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
+                    device_power_entity = f"number.{charger_entity_id}_device_power"
+                    try:
+                        await self.hass.services.async_call(
+                            "number", "set_value",
+                            {"entity_id": device_power_entity, "value": auto_power},
+                            blocking=False,
+                        )
+                    except Exception as e:
+                        _LOGGER.debug(f"Could not update device power slider: {e}")
 
                 self._last_update = datetime.utcnow()
 
@@ -521,11 +537,13 @@ class DynamicOcppEvseAllocatedCurrentSensor(SensorEntity):
     @property
     def device_info(self):
         """Return device information about this charger."""
+        device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
         return {
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
             "name": self.config_entry.data.get(CONF_NAME),
             "manufacturer": "Dynamic OCPP EVSE",
-            "model": "EV Charger",
+            "model": model,
             "via_device": (DOMAIN, self.hub_entry.entry_id),
         }
 
