@@ -33,7 +33,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._entity_cache = list(entity_registry.entities.keys())
         return self._entity_cache
 
-    def _current_power_entities(self) -> list[str]:
+    def _get_current_and_power_entities(self) -> list[str]:
         current_power_entities: list[str] = []
         for state in self.hass.states.async_all():
             entity_id = state.entity_id
@@ -43,7 +43,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     current_power_entities.append(entity_id)
         return sorted({entity for entity in current_power_entities if entity})
 
-    def _battery_power_entities(self) -> tuple[list[str], list[str]]:
+    def _battery_and_power_entities(self) -> tuple[list[str], list[str]]:
         battery_entities = []
         power_entities = []
         for state in self.hass.states.async_all():
@@ -64,7 +64,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _build_hub_grid_schema(self, defaults: dict | None = None) -> list[tuple]:
         """Build grid/electrical fields as a reusable list."""
         defaults = defaults or {}
-        current_power_entities = self._current_power_entities()
+        current_power_entities = self._get_current_and_power_entities()
         optional_current_options = self._optional_entity_options(current_power_entities)
         
         return [
@@ -104,14 +104,14 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SOLAR_PRODUCTION_ENTITY_ID,
                 default=normalize_optional_entity(defaults.get(CONF_SOLAR_PRODUCTION_ENTITY_ID)) or "",
             ), selector({"select": {"options": self._optional_entity_options(
-                self._battery_power_entities()[1]  # power entities list
+                self._battery_and_power_entities()[1]  # power entities list
             ), "mode": "dropdown"}})),
         ]
 
     def _build_hub_battery_schema(self, defaults: dict | None = None) -> list[tuple]:
         """Build battery fields as a reusable list."""
         defaults = defaults or {}
-        battery_entities, power_entities = self._battery_power_entities()
+        battery_entities, power_entities = self._battery_and_power_entities()
         
         return [
             (vol.Optional(
@@ -238,7 +238,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Build schema for smart plug / relay configuration."""
         defaults = defaults or {}
         power_monitor_options = self._optional_entity_options(
-            self._battery_power_entities()[1]  # power sensor entities
+            self._battery_and_power_entities()[1]  # power sensor entities
         )
         phase_options = [
             {"value": "A", "label": "Phase A"},
@@ -499,7 +499,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             
             # Generate entity IDs for hub-created entities
             entity_id = self._data.get(CONF_ENTITY_ID)
-            self._data[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
+            self._data[CONF_CHARGING_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
             self._data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
             self._data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
             self._data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"

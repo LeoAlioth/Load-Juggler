@@ -54,7 +54,7 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     site_limit_constraints = _calculate_site_limit(site)
     _LOGGER.debug(f"Step 1 - Site limit constraints: {site_limit_constraints}")
 
-    solar_constraints = _calculate_solar_available(site)
+    solar_constraints = _calculate_solar_surplus(site)
     _LOGGER.debug(f"Step 2 - Solar available constraints: {solar_constraints}")
 
     excess_constraints = _calculate_excess_available(site)
@@ -76,7 +76,7 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
         charger.allocated_current = 0
 
     # Step 6: Calculate available current for all chargers
-    _calculate_available_current(all_chargers, active_chargers, inactive_chargers, target_constraints)
+    _set_available_current_for_chargers(all_chargers, active_chargers, inactive_chargers, target_constraints)
 
     for charger in all_chargers:
         _LOGGER.debug(
@@ -85,7 +85,7 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
         )
 
 
-def _calculate_available_current(
+def _set_available_current_for_chargers(
     all_chargers: list,
     active_chargers: list,
     inactive_chargers: list,
@@ -248,7 +248,7 @@ def _calculate_site_limit(site: SiteContext) -> PhaseConstraints:
     return constraints
 
 
-def _calculate_solar_available(site: SiteContext) -> PhaseConstraints:
+def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
     """
     Step 2: Calculate solar available power.
 
@@ -466,14 +466,14 @@ def _distribute_power(site: SiteContext, target_constraints: PhaseConstraints) -
         _LOGGER.debug(f"Charger {charger.entity_id}: mask={charger.active_phases_mask}, phases={charger.phases}")
 
     mode = site.distribution_mode.lower() if site.distribution_mode else "priority"
-    
-    if mode == "priority":
+
+    if "priority" in mode:
         _distribute_per_phase_priority(site, target_constraints)
-    elif mode == "shared":
+    elif "shared" in mode:
         _distribute_per_phase_shared(site, target_constraints)
-    elif mode == "strict":
+    elif "strict" in mode:
         _distribute_per_phase_strict(site, target_constraints)
-    elif mode == "optimized":
+    elif "optimized" in mode:
         _distribute_per_phase_optimized(site, target_constraints)
     else:
         _LOGGER.warning(f"Unknown distribution mode '{mode}', using priority")

@@ -24,6 +24,18 @@
     - 6 test scenarios in `test_scenarios_plugs.yaml`. 70/70 passing.
 
 14. - [x] **Charge rate unit detection via OCPP** — Replaced unreliable sensor UoM detection with OCPP `GetConfiguration` query for `ChargingScheduleAllowedChargingRateUnit`. Config flow detects and pre-fills the dropdown; if detection fails the field is left empty for the user to choose. Detection also available in reconfigure/options flows. Sensor.py has cached OCPP fallback for legacy "auto" entries. (fixes ISSUES.md #2)
+15. - [x] **Distribution mode string mismatch** — `target_calculator.py` matched `"optimized"` / `"strict"` exactly, but HA select entity stores `"Sequential - Optimized"` / `"Sequential - Strict"`. Changed to substring matching. (fixes ISSUES.md #3)
+16. - [x] **Reset service hardcoded 3 phases** — `__init__.py` used `voltage * 3` for Watts conversion regardless of charger phases. Now reads `CONF_PHASES` from charger config entry. (fixes ISSUES.md #4)
+17. - [x] **PhaseConstraints.copy() robustness** — Replaced manual field-by-field copy with `dataclasses.replace(self)`.
+18. - [x] **Rename misleading variable/function names** — Fixed typos and clarified names across the codebase:
+    - `CONF_CHARING_MODE` → `CONF_CHARGING_MODE` (typo)
+    - `CONF_CHARGIN_MODE_ENTITY_ID` → `CONF_CHARGING_MODE_ENTITY_ID` (typo)
+    - `CONF_AVAILABLE_CURRENT` → `CONF_TOTAL_ALLOCATED_CURRENT` (stores sum of allocations, not available)
+    - `calculate_available_current_for_hub()` → `run_hub_calculation()` (does much more than calculate available current)
+    - `_battery_power_entities()` → `_battery_and_power_entities()` (returns battery AND power entities)
+    - `_current_power_entities()` → `_get_current_and_power_entities()` (returns current AND power sensors)
+    - `_calculate_solar_available()` → `_calculate_solar_surplus()` (calculates surplus after consumption)
+    - `_calculate_available_current()` → `_set_available_current_for_chargers()` (mutates charger objects)
 
 ## In Progress
 

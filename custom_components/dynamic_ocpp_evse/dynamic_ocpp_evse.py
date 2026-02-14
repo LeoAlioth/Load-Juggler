@@ -14,21 +14,22 @@ from .calculations import (
 from .const import *
 
 
-def calculate_available_current_for_hub(sensor):
+def run_hub_calculation(sensor):
     """
-    Calculate available current for a hub.
+    Run the hub calculation: read HA states, build SiteContext, calculate targets.
 
     This is the main entry point for Home Assistant sensor updates.
-    Reads HA entity states from hub config and builds a SiteContext.
+    Reads HA entity states from hub config, builds a SiteContext, runs the
+    calculation engine, and returns results for all chargers.
 
     Args:
         sensor: The HA sensor object containing config, hub_entry, and hass
 
     Returns:
         dict with calculated values including:
-            - CONF_AVAILABLE_CURRENT: Total available current (A)
+            - CONF_TOTAL_ALLOCATED_CURRENT: Total allocated current (A)
             - CONF_PHASES: Number of phases
-            - CONF_CHARING_MODE: Current charging mode
+            - CONF_CHARGING_MODE: Current charging mode
             - charger_targets: per-charger target currents
             - Other site/charger data
     """
@@ -262,8 +263,8 @@ def calculate_available_current_for_hub(sensor):
     charger_targets = {c.charger_id: c.allocated_current for c in site.chargers}
     charger_available = {c.charger_id: c.available_current for c in site.chargers}
 
-    # Total available current = sum of all charger targets
-    total_available = sum(charger_targets.values())
+    # Total allocated current = sum of all charger targets
+    total_allocated = sum(charger_targets.values())
 
     # Compute derived values for hub sensors
     # Grid headroom: how much more we can import per phase before hitting breaker
@@ -286,9 +287,9 @@ def calculate_available_current_for_hub(sensor):
 
     # Build result dict
     result = {
-        CONF_AVAILABLE_CURRENT: round(total_available, 1),
+        CONF_TOTAL_ALLOCATED_CURRENT: round(total_allocated, 1),
         CONF_PHASES: site.num_phases,
-        CONF_CHARING_MODE: site.charging_mode,
+        CONF_CHARGING_MODE: site.charging_mode,
         "calc_used": "calculate_all_charger_targets",
 
         # Site-level data for hub sensor
@@ -329,5 +330,5 @@ __all__ = [
     "ChargerContext",
     "PhaseValues",
     "calculate_all_charger_targets",
-    "calculate_available_current_for_hub",
+    "run_hub_calculation",
 ]

@@ -82,8 +82,8 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
      ├─ _calculate_grid_limit()      (grid capacity based on breaker rating)
      └─ _calculate_inverter_limit()  (solar + battery for Standard mode)
    ↓
-2. Calculate solar available power (includes battery charge/discharge)
-   → _calculate_solar_available()
+2. Calculate solar surplus power (includes battery charge/discharge)
+   → _calculate_solar_surplus()
    ↓
 3. Calculate excess available power (Excess mode only)
    → _calculate_excess_available()

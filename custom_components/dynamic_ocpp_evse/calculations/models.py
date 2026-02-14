@@ -5,7 +5,7 @@ Pure Python dataclasses that can be used in tests.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -338,11 +338,7 @@ class PhaseConstraints:
         return r
 
     def copy(self) -> PhaseConstraints:
-        return PhaseConstraints(
-            A=self.A, B=self.B, C=self.C,
-            AB=self.AB, AC=self.AC, BC=self.BC,
-            ABC=self.ABC,
-        )
+        return replace(self)
 
     def __repr__(self) -> str:
         return (f"PC(A={self.A:.1f}, B={self.B:.1f}, C={self.C:.1f}, "

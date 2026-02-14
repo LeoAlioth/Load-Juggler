@@ -33,7 +33,7 @@ CONF_POWER_BUFFER_ENTITY_ID = "power_buffer_entity_id"
 CONF_POWER_BUFFER = "power_buffer"
 
 # Hub entity IDs (created by hub)
-CONF_CHARGIN_MODE_ENTITY_ID = "charging_mode_entity_id"
+CONF_CHARGING_MODE_ENTITY_ID = "charging_mode_entity_id"
 
 # Charger-specific configuration keys
 CONF_HUB_ENTRY_ID = "hub_entry_id"
@@ -64,8 +64,8 @@ DEFAULT_PLUG_POWER_RATING = 2000
 
 # sensor attributes
 CONF_PHASES = "phases"
-CONF_CHARING_MODE = "charging_mode"
-CONF_AVAILABLE_CURRENT = "available_current"
+CONF_CHARGING_MODE = "charging_mode"
+CONF_TOTAL_ALLOCATED_CURRENT = "total_allocated_current"
 CONF_PHASE_A_CURRENT = "phase_a_current"
 CONF_PHASE_B_CURRENT = "phase_b_current"
 CONF_PHASE_C_CURRENT = "phase_c_current"

@@ -34,7 +34,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_HYSTERESIS,
-    CONF_CHARGIN_MODE_ENTITY_ID,
+    CONF_CHARGING_MODE_ENTITY_ID,
     CONF_BATTERY_SOC_TARGET_ENTITY_ID,
     CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
     CONF_POWER_BUFFER_ENTITY_ID,
@@ -372,12 +372,31 @@ async def test_options_flow_hub_saves_changes(
     mock_hub_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test that submitting hub options actually updates the config entry."""
+    """Test that submitting hub options actually updates the config entry.
+
+    The hub options flow has two steps: hub_grid (electrical) → hub (battery).
+    """
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
-    # Provide battery entities for the schema
+    # Provide sensor entities for the grid and battery schemas
+    hass.states.async_set(
+        "sensor.inverter_phase_a", "5.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.inverter_phase_b", "4.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.inverter_phase_c", "3.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.grid_power_limit", "8050",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
     hass.states.async_set(
         "sensor.battery_soc", "65",
         {"device_class": "battery", "unit_of_measurement": "%"},
@@ -387,11 +406,27 @@ async def test_options_flow_hub_saves_changes(
         {"device_class": "power", "unit_of_measurement": "W"},
     )
 
+    # Step 1: hub_grid (electrical settings)
     result = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "hub_grid"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_INVERT_PHASES: False,
+            CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_EXCESS_EXPORT_THRESHOLD: 13000,
+        },
+    )
+
+    # Step 2: hub (battery settings)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub"
 
-    # Submit new battery settings
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={

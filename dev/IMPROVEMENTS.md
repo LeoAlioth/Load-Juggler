@@ -68,57 +68,8 @@ Behavior:
   - `mode urgency`: Standard > Eco > Solar > Excess
 
 **Proposed Solution 1: Mode-Aware Priority**
-```
-Combine priority and mode into a single ranking:
-
-rank = (priority * 10) + mode_priority
-
-Where mode_priority:
-- Standard = 4
-- Eco = 3  
-- Solar = 2
-- Excess = 1
-
-Example:
-- Charger 1: priority=1, Eco → rank = 1*10 + 3 = 13
-- Charger 2: priority=2, Standard → rank = 2*10 + 4 = 24
-
-Charger 1 charges first (lower rank wins)
-```
-
-**Proposed Solution 2: Mode as Power Level Constraint**
-```
-Each mode defines a "target" current level:
-- Standard: max_current
-- Eco: min_current when no solar, max when solar available
-- Solar: whatever solar can provide (capped at max)
-- Excess: only activates above threshold
-
-Distribution then maximizes the sum of:
-- priority_weight * (allocated / target)
-```
-
-#### Problem 2: Solar Mode with Mixed Chargers
-**Scenario:** Charger 1 = Solar, Charger 2 = Standard  
-**Question:** If solar is available but Charger 1 isn't using it all, should Charger 2 get the remainder?
-
-**Analysis:** This depends on whether you want to prioritize "solar self-consumption" or "charger priority."
-
-**Proposed Solution: Mode-Based Pooling**
-```
-Separate power pools by mode:
-
-1. Solar pool = available solar power (after battery charge)
-   - Available to: Solar, Eco modes
-   - Priority order within pool
-
-2. Grid pool = available grid power up to breaker limit
-   - Available to: Standard, Eco, Excess modes
-   - Priority order within pool
-
-3. Excess pool = export above threshold
-   - Available to: Excess mode only
-```
+We take charging modes as a priority, and only use the priority numbers to solve within the same charge mode.
+So a charger on Standard mode, always gets priority over a charger in eco mode.
 
 #### Implementation Steps (for future)
 1. Add `charging_mode` field to `ChargerContext`

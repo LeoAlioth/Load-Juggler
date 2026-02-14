@@ -4,7 +4,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from datetime import timedelta, datetime
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from .dynamic_ocpp_evse import calculate_available_current_for_hub
+from .dynamic_ocpp_evse import run_hub_calculation
 from .const import *
 from .helpers import get_entry_value
 from . import get_hub_for_charger
@@ -61,9 +61,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         temp_sensor = DynamicOcppEvseChargerSensor(hass, config_entry, hub_entry, name, entity_id, None)
         await temp_sensor.async_update()
         return {
-            CONF_AVAILABLE_CURRENT: temp_sensor._state,
+            CONF_TOTAL_ALLOCATED_CURRENT: temp_sensor._state,
             CONF_PHASES: temp_sensor._phases,
-            CONF_CHARING_MODE: temp_sensor._charging_mode,
+            CONF_CHARGING_MODE: temp_sensor._charging_mode,
             "calc_used": temp_sensor._calc_used,
             "allocated_current": temp_sensor._allocated_current,
         }
@@ -236,11 +236,11 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             self.hub_entry = hub_entry
             
             # Calculate total available current at hub level
-            hub_data = calculate_available_current_for_hub(self)
+            hub_data = run_hub_calculation(self)
             
             # Store charger-level calculation results
             self._phases = hub_data.get(CONF_PHASES)
-            self._charging_mode = hub_data.get(CONF_CHARING_MODE)
+            self._charging_mode = hub_data.get(CONF_CHARGING_MODE)
             self._calc_used = hub_data.get("calc_used")
             charger_max_available = hub_data.get("charger_max_available", 0)
             self._target_evse = hub_data.get("target_evse")
