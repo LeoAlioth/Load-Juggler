@@ -100,6 +100,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_EXCESS_EXPORT_THRESHOLD,
                 default=defaults.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD),
             ), int),
+            (vol.Optional(
+                CONF_SOLAR_PRODUCTION_ENTITY_ID,
+                default=normalize_optional_entity(defaults.get(CONF_SOLAR_PRODUCTION_ENTITY_ID)) or "",
+            ), selector({"select": {"options": self._optional_entity_options(
+                self._battery_power_entities()[1]  # power entities list
+            ), "mode": "dropdown"}})),
         ]
 
     def _build_hub_battery_schema(self, defaults: dict | None = None) -> list[tuple]:
@@ -213,6 +219,48 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ): int,
         })
 
+    def _plug_schema(self, defaults: dict | None = None) -> vol.Schema:
+        """Build schema for smart plug / relay configuration."""
+        defaults = defaults or {}
+        power_monitor_options = self._optional_entity_options(
+            self._battery_power_entities()[1]  # power sensor entities
+        )
+        phase_options = [
+            {"value": "A", "label": "Phase A"},
+            {"value": "B", "label": "Phase B"},
+            {"value": "C", "label": "Phase C"},
+            {"value": "AB", "label": "Phase A+B"},
+            {"value": "BC", "label": "Phase B+C"},
+            {"value": "AC", "label": "Phase A+C"},
+            {"value": "ABC", "label": "Phase A+B+C"},
+        ]
+        return vol.Schema({
+            vol.Required(
+                CONF_PLUG_SWITCH_ENTITY_ID,
+                default=defaults.get(CONF_PLUG_SWITCH_ENTITY_ID),
+            ): selector({"entity": {"domain": "switch"}}),
+            vol.Required(
+                CONF_PLUG_POWER_RATING,
+                default=defaults.get(CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING),
+            ): int,
+            vol.Required(
+                CONF_CONNECTED_TO_PHASE,
+                default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
+            ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
+            vol.Required(
+                CONF_CHARGER_PRIORITY,
+                default=defaults.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
+            ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
+            vol.Optional(
+                CONF_PLUG_POWER_MONITOR_ENTITY_ID,
+                default=normalize_optional_entity(defaults.get(CONF_PLUG_POWER_MONITOR_ENTITY_ID)) or "",
+            ): selector({"select": {"options": power_monitor_options, "mode": "dropdown"}}),
+            vol.Required(
+                CONF_UPDATE_FREQUENCY,
+                default=defaults.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY),
+            ): int,
+        })
+
     def _normalize_optional_inputs(self, data: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(data)
         for key in [
@@ -220,6 +268,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_PHASE_C_CURRENT_ENTITY_ID,
             CONF_BATTERY_SOC_ENTITY_ID,
             CONF_BATTERY_POWER_ENTITY_ID,
+            CONF_SOLAR_PRODUCTION_ENTITY_ID,
+            CONF_PLUG_POWER_MONITOR_ENTITY_ID,
         ]:
             if key in normalized:
                 normalized[key] = normalize_optional_entity(normalized.get(key))
@@ -390,11 +440,20 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Find max import power sensor
             default_max_import_power = next((entity_id for entity_id in entity_ids if re.match(r'sensor\..*power_limit.*', entity_id)), None)
 
+            # Find solar production sensor (power device class)
+            default_solar_production = next(
+                (entity_id for entity_id in entity_ids
+                 if re.match(r'sensor\..*solar.*(?:production|power|generation).*', entity_id, re.IGNORECASE)
+                 and entity_id.startswith("sensor.")),
+                None
+            )
+
             data_schema = self._hub_grid_schema({
                 CONF_PHASE_A_CURRENT_ENTITY_ID: default_phase_a,
                 CONF_PHASE_B_CURRENT_ENTITY_ID: default_phase_b,
                 CONF_PHASE_C_CURRENT_ENTITY_ID: default_phase_c,
                 CONF_MAX_IMPORT_POWER_ENTITY_ID: default_max_import_power,
+                CONF_SOLAR_PRODUCTION_ENTITY_ID: default_solar_production,
                 CONF_MAIN_BREAKER_RATING: DEFAULT_MAIN_BREAKER_RATING,
                 CONF_INVERT_PHASES: False,
                 CONF_PHASE_VOLTAGE: DEFAULT_PHASE_VOLTAGE,
@@ -508,32 +567,129 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Charger step 1: Select which hub to add charger to."""
         errors: dict[str, str] = {}
         hubs = self._get_hub_entries()
-        
+
         if user_input is not None:
             self._data[CONF_HUB_ENTRY_ID] = user_input["hub_entry_id"]
-            return await self.async_step_discover_chargers()
-        
+            return await self.async_step_device_type()
+
         # If only one hub, skip selection
         if len(hubs) == 1:
             self._data[CONF_HUB_ENTRY_ID] = hubs[0].entry_id
-            return await self.async_step_discover_chargers()
-        
+            return await self.async_step_device_type()
+
         hub_options = [
             {"value": entry.entry_id, "label": entry.title}
             for entry in hubs
         ]
-        
+
         data_schema = vol.Schema({
             vol.Required("hub_entry_id"): selector({
                 "select": {"options": hub_options}
             })
         })
-        
+
         return self.async_show_form(
             step_id="select_hub",
             data_schema=data_schema,
             errors=errors,
             last_step=False
+        )
+
+    async def async_step_device_type(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Charger step 1b: Choose device type (OCPP EVSE or Smart Plug/Relay)."""
+        if user_input is not None:
+            device_type = user_input.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+            if device_type == DEVICE_TYPE_PLUG:
+                return await self.async_step_plug_config()
+            return await self.async_step_discover_chargers()
+
+        data_schema = vol.Schema({
+            vol.Required(CONF_DEVICE_TYPE, default=DEVICE_TYPE_EVSE): selector({
+                "select": {
+                    "options": [
+                        {"value": DEVICE_TYPE_EVSE, "label": "OCPP Charger (EVSE)"},
+                        {"value": DEVICE_TYPE_PLUG, "label": "Smart Plug / Relay"},
+                    ],
+                    "mode": "list",
+                }
+            })
+        })
+
+        return self.async_show_form(
+            step_id="device_type",
+            data_schema=data_schema,
+            last_step=False,
+        )
+
+    async def async_step_plug_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Smart plug configuration step."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            user_input = self._normalize_optional_inputs(user_input)
+            self._data.update(user_input)
+
+            plug_name = self._data.get(CONF_NAME, "Smart Plug")
+            plug_entity_id = self._data.get(CONF_ENTITY_ID, "smart_plug")
+
+            static_data = {
+                CONF_ENTITY_ID: plug_entity_id,
+                CONF_NAME: plug_name,
+                ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+                CONF_DEVICE_TYPE: DEVICE_TYPE_PLUG,
+                CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
+                CONF_PLUG_SWITCH_ENTITY_ID: self._data.get(CONF_PLUG_SWITCH_ENTITY_ID),
+            }
+            options_data = {k: v for k, v in self._data.items() if k not in static_data}
+
+            result = self.async_create_entry(
+                title=f"{plug_name} Smart Plug",
+                data=static_data,
+            )
+
+            async def _seed_plug_options():
+                await asyncio.sleep(0.1)
+                for entry in self.hass.config_entries.async_entries(DOMAIN):
+                    if (entry.data.get(CONF_ENTITY_ID) == plug_entity_id
+                            and entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG):
+                        try:
+                            self.hass.config_entries.async_update_entry(
+                                entry,
+                                options={**entry.options, **options_data},
+                            )
+                        except Exception:
+                            _LOGGER.exception("Failed to seed options for plug entry")
+                        break
+
+            asyncio.create_task(_seed_plug_options())
+            return result
+
+        existing_chargers = self._get_charger_entries()
+        next_priority = len(existing_chargers) + 1
+
+        # Name + entity_id fields, then the plug-specific schema
+        name_schema = vol.Schema({
+            vol.Required(CONF_NAME, default="Smart Plug"): str,
+            vol.Required(CONF_ENTITY_ID, default="smart_plug"): str,
+        })
+        plug_fields = self._plug_schema({
+            CONF_CHARGER_PRIORITY: next_priority,
+            CONF_PLUG_POWER_RATING: DEFAULT_PLUG_POWER_RATING,
+            CONF_CONNECTED_TO_PHASE: "A",
+            CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+        })
+        # Merge both schemas
+        combined = vol.Schema({**name_schema.schema, **plug_fields.schema})
+
+        return self.async_show_form(
+            step_id="plug_config",
+            data_schema=combined,
+            errors=errors,
+            last_step=True,
         )
 
     async def async_step_discover_chargers(
@@ -785,6 +941,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Legacy entries without entry_type are hubs
         if not entry_type or entry_type == ENTRY_TYPE_HUB:
             return await self.async_step_reconfigure_hub_grid()
+        elif entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG:
+            return await self.async_step_reconfigure_plug()
         else:
             return await self.async_step_reconfigure_charger()
 
@@ -876,6 +1034,32 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=True
         )
 
+    async def async_step_reconfigure_plug(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Reconfigure smart plug settings."""
+        errors: dict[str, str] = {}
+        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
+        defaults = {**entry.data, **entry.options}
+
+        if user_input is not None:
+            user_input = self._normalize_optional_inputs(user_input)
+            self._data.update(user_input)
+            self.hass.config_entries.async_update_entry(
+                entry,
+                options={**entry.options, **self._data},
+            )
+            return self.async_abort(reason="reconfigure_successful")
+
+        data_schema = self._plug_schema(defaults)
+
+        return self.async_show_form(
+            step_id="reconfigure_plug",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=True,
+        )
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
@@ -895,6 +1079,8 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         if entry_type == ENTRY_TYPE_HUB:
             return await self.async_step_hub_grid()
         if entry_type == ENTRY_TYPE_CHARGER:
+            if self.config_entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG:
+                return await self.async_step_plug()
             return await self.async_step_charger()
         return self.async_abort(reason="entry_not_found")
 
@@ -964,6 +1150,27 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         data_schema = flow._charger_schema(defaults, include_auto_unit=False)
         return self.async_show_form(
             step_id="charger",
+            data_schema=data_schema,
+            errors=errors,
+        )
+
+    async def async_step_plug(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
+        errors: dict[str, str] = {}
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+        flow = DynamicOcppEvseConfigFlow()
+        flow.hass = self.hass
+
+        if user_input is not None:
+            user_input = flow._normalize_optional_inputs(user_input)
+            self._data.update(user_input)
+            return self.async_create_entry(
+                title="",
+                data={**self.config_entry.options, **self._data},
+            )
+
+        data_schema = flow._plug_schema(defaults)
+        return self.async_show_form(
+            step_id="plug",
             data_schema=data_schema,
             errors=errors,
         )

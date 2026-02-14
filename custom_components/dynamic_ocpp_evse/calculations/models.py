@@ -16,12 +16,13 @@ class ChargerContext:
     # Identity
     charger_id: str  # Config entry ID
     entity_id: str   # Entity ID (e.g., "my_charger")
-    
+
     # Configuration
     min_current: float
     max_current: float
     phases: int  # 1 or 3 (EVSE hardware capability)
     priority: int = 1  # For distribution (lower = higher priority)
+    device_type: str = "evse"  # "evse" (OCPP) or "plug" (smart plug/relay)
     
     # Active car connection (detected from OCPP or configured)
     car_phases: int = None  # 1, 2, or 3 (actual car OBC phases detected)
@@ -63,23 +64,52 @@ class ChargerContext:
 
 @dataclass
 class PhaseValues:
-    """Per-phase values (A, B, C) with convenience properties."""
-    a: float = 0.0
-    b: float = 0.0
-    c: float = 0.0
+    """Per-phase values (A, B, C) with convenience properties.
+
+    None means the phase does not physically exist on the site.
+    0.0 means the phase exists but has no load.
+    """
+    a: float | None = None
+    b: float | None = None
+    c: float | None = None
 
     @property
     def total(self) -> float:
-        return self.a + self.b + self.c
+        return sum(v for v in (self.a, self.b, self.c) if v is not None)
+
+    @property
+    def active_count(self) -> int:
+        """Number of phases that physically exist (non-None)."""
+        return sum(1 for v in (self.a, self.b, self.c) if v is not None)
+
+    @property
+    def active_mask(self) -> str:
+        """Phase mask string for existing phases, e.g. 'A', 'AB', 'ABC'."""
+        return ''.join(
+            p for p, v in [('A', self.a), ('B', self.b), ('C', self.c)]
+            if v is not None
+        )
 
     def __neg__(self) -> PhaseValues:
-        return PhaseValues(-self.a, -self.b, -self.c)
+        return PhaseValues(
+            -self.a if self.a is not None else None,
+            -self.b if self.b is not None else None,
+            -self.c if self.c is not None else None,
+        )
 
     def clamp_min(self, v: float = 0.0) -> PhaseValues:
-        return PhaseValues(max(v, self.a), max(v, self.b), max(v, self.c))
+        return PhaseValues(
+            max(v, self.a) if self.a is not None else None,
+            max(v, self.b) if self.b is not None else None,
+            max(v, self.c) if self.c is not None else None,
+        )
 
     def __repr__(self) -> str:
-        return f"PV(a={self.a:.1f}, b={self.b:.1f}, c={self.c:.1f})"
+        parts = []
+        for name, val in [('a', self.a), ('b', self.b), ('c', self.c)]:
+            if val is not None:
+                parts.append(f"{name}={val:.1f}")
+        return f"PV({', '.join(parts)})"
 
 
 @dataclass
@@ -88,7 +118,6 @@ class SiteContext:
     # Grid/Power configuration
     voltage: float = 230
     main_breaker_rating: float = 63
-    num_phases: int = 3
 
     # Per-phase readings from site meter (Amps)
     grid_current: PhaseValues = field(default_factory=PhaseValues)     # raw meter (+ import, - export)
@@ -124,6 +153,12 @@ class SiteContext:
 
     # Chargers at this site
     chargers: list[ChargerContext] = field(default_factory=list)
+
+    @property
+    def num_phases(self) -> int:
+        """Number of phases at this site, derived from consumption data."""
+        count = self.consumption.active_count
+        return count if count > 0 else 1
 
     @property
     def total_export_current(self) -> float:

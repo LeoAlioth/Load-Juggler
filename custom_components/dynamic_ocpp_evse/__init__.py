@@ -270,7 +270,7 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data[DOMAIN]["charger_allocations"][entry.entry_id] = 0
     
     # Forward setup to charger platforms
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "number", "button", "select"])
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "number", "button", "select", "switch"])
     
     return True
 
@@ -407,9 +407,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     
     elif entry_type == ENTRY_TYPE_CHARGER:
         # Unload charger platforms
-        for domain in ["sensor", "number", "button", "select"]:
+        for domain in ["sensor", "number", "button", "select", "switch"]:
             await hass.config_entries.async_forward_entry_unload(entry, domain)
-        
+
         # Remove charger from hub's list
         hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
         if hub_entry_id in hass.data[DOMAIN]["hubs"]:

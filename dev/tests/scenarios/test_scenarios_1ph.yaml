@@ -12,13 +12,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 2300  # 10A at 230V
       phase_a_consumption: 2.0  # Home load
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: null
       battery_soc_min: null
       battery_soc_target: null
@@ -44,13 +43,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 1150  # 5A at 230V
       phase_a_consumption: 1.0  # Home load
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: null
       battery_soc_min: null
       battery_soc_target: null

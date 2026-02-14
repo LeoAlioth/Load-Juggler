@@ -128,16 +128,19 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
 
     Grid power is per-phase and CANNOT be reallocated between phases.
     """
-    # Calculate per-phase limits
-    phase_a_limit = max(0, site.main_breaker_rating - site.consumption.a)
-    phase_b_limit = max(0, site.main_breaker_rating - site.consumption.b)
-    phase_c_limit = max(0, site.main_breaker_rating - site.consumption.c)
+    # Calculate per-phase limits (only for phases that physically exist)
+    phase_a_limit = max(0, site.main_breaker_rating - site.consumption.a) if site.consumption.a is not None else 0
+    phase_b_limit = max(0, site.main_breaker_rating - site.consumption.b) if site.consumption.b is not None else 0
+    phase_c_limit = max(0, site.main_breaker_rating - site.consumption.c) if site.consumption.c is not None else 0
 
     # If grid charging not allowed (and has battery), limited to export only
     if not site.allow_grid_charging and site.battery_soc is not None:
-        phase_a_limit = min(phase_a_limit, site.export_current.a)
-        phase_b_limit = min(phase_b_limit, site.export_current.b)
-        phase_c_limit = min(phase_c_limit, site.export_current.c)
+        if site.export_current.a is not None:
+            phase_a_limit = min(phase_a_limit, site.export_current.a)
+        if site.export_current.b is not None:
+            phase_b_limit = min(phase_b_limit, site.export_current.b)
+        if site.export_current.c is not None:
+            phase_c_limit = min(phase_c_limit, site.export_current.c)
 
     # Calculate total available (sum of all phases)
     total_limit = phase_a_limit + phase_b_limit + phase_c_limit
@@ -172,8 +175,6 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     For ASYMMETRIC inverters: Solar+battery power can be allocated to any phase.
     For SYMMETRIC inverters: Solar+battery power is fixed per-phase.
     """
-    num_active_phases = site.num_phases if site.num_phases > 0 else 1
-
     # Calculate solar current
     solar_current = site.solar_production_total / site.voltage if site.solar_production_total else 0
 
@@ -198,18 +199,18 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
 
     if site.inverter_supports_asymmetric:
         # ASYMMETRIC: Inverter power can be allocated to any phase
-        phase_a_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.a))
-        phase_b_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.b))
-        phase_c_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.c))
+        phase_a_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.a)) if site.consumption.a is not None else 0
+        phase_b_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.b)) if site.consumption.b is not None else 0
+        phase_c_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.c)) if site.consumption.c is not None else 0
 
         constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, total_inverter_current)
     else:
         # SYMMETRIC: Inverter power is fixed per-phase
-        inverter_per_phase = total_inverter_current / num_active_phases
+        inverter_per_phase = total_inverter_current / site.num_phases
 
-        phase_a_available = min(inverter_per_phase, max_per_phase)
-        phase_b_available = min(inverter_per_phase, max_per_phase)
-        phase_c_available = min(inverter_per_phase, max_per_phase)
+        phase_a_available = min(inverter_per_phase, max_per_phase) if site.consumption.a is not None else 0
+        phase_b_available = min(inverter_per_phase, max_per_phase) if site.consumption.b is not None else 0
+        phase_c_available = min(inverter_per_phase, max_per_phase) if site.consumption.c is not None else 0
 
         constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
 
@@ -262,8 +263,6 @@ def _calculate_solar_available(site: SiteContext) -> PhaseConstraints:
     For ASYMMETRIC inverters: Solar/battery power is a flexible pool.
     For SYMMETRIC inverters: Solar/battery power is fixed per-phase.
     """
-    num_active_phases = site.num_phases if site.num_phases > 0 else 1
-
     # Determine per-phase limit (inverter constraint)
     if site.inverter_max_power_per_phase:
         max_per_phase = site.inverter_max_power_per_phase / site.voltage
@@ -303,20 +302,20 @@ def _calculate_solar_available(site: SiteContext) -> PhaseConstraints:
         solar_available = max(0, inverter_output - site.consumption.total)
 
         # Per-phase constraints: limited by (inverter per-phase max - consumption on that phase)
-        phase_a_limit = min(solar_available, max(0, max_per_phase - site.consumption.a))
-        phase_b_limit = min(solar_available, max(0, max_per_phase - site.consumption.b))
-        phase_c_limit = min(solar_available, max(0, max_per_phase - site.consumption.c))
+        phase_a_limit = min(solar_available, max(0, max_per_phase - site.consumption.a)) if site.consumption.a is not None else 0
+        phase_b_limit = min(solar_available, max(0, max_per_phase - site.consumption.b)) if site.consumption.b is not None else 0
+        phase_c_limit = min(solar_available, max(0, max_per_phase - site.consumption.c)) if site.consumption.c is not None else 0
 
         constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, solar_available)
     else:
         # SYMMETRIC: Solar/battery power is fixed per-phase
         # Calculate solar per phase (evenly distributed)
-        solar_per_phase_current = (site.solar_production_total / num_active_phases) / site.voltage if site.solar_production_total else 0
+        solar_per_phase_current = (site.solar_production_total / site.num_phases) / site.voltage if site.solar_production_total else 0
 
-        # Subtract consumption per phase
-        phase_a_available = max(0, solar_per_phase_current - site.consumption.a)
-        phase_b_available = max(0, solar_per_phase_current - site.consumption.b)
-        phase_c_available = max(0, solar_per_phase_current - site.consumption.c)
+        # Subtract consumption per phase (non-existent phases get 0)
+        phase_a_available = max(0, solar_per_phase_current - site.consumption.a) if site.consumption.a is not None else 0
+        phase_b_available = max(0, solar_per_phase_current - site.consumption.b) if site.consumption.b is not None else 0
+        phase_c_available = max(0, solar_per_phase_current - site.consumption.c) if site.consumption.c is not None else 0
 
         # Handle battery charging/discharging (distributed per phase)
         if site.battery_soc is not None:
@@ -324,19 +323,22 @@ def _calculate_solar_available(site: SiteContext) -> PhaseConstraints:
                 # Battery charges first - reduce available per phase
                 if site.battery_max_charge_power:
                     battery_charge_current = site.battery_max_charge_power / site.voltage
-                    battery_current_per_phase = battery_charge_current / num_active_phases
+                    battery_current_per_phase = battery_charge_current / site.num_phases
                     phase_a_available = max(0, phase_a_available - battery_current_per_phase)
                     phase_b_available = max(0, phase_b_available - battery_current_per_phase)
                     phase_c_available = max(0, phase_c_available - battery_current_per_phase)
 
             elif site.battery_soc > site.battery_soc_target:
-                # Battery can discharge - add to available per phase
+                # Battery can discharge - add to available per phase (only existing phases)
                 if site.battery_max_discharge_power:
                     battery_discharge_current = site.battery_max_discharge_power / site.voltage
-                    battery_current_per_phase = battery_discharge_current / num_active_phases
-                    phase_a_available += battery_current_per_phase
-                    phase_b_available += battery_current_per_phase
-                    phase_c_available += battery_current_per_phase
+                    battery_current_per_phase = battery_discharge_current / site.num_phases
+                    if site.consumption.a is not None:
+                        phase_a_available += battery_current_per_phase
+                    if site.consumption.b is not None:
+                        phase_b_available += battery_current_per_phase
+                    if site.consumption.c is not None:
+                        phase_c_available += battery_current_per_phase
 
         # Apply per-phase inverter limits
         phase_a_available = min(phase_a_available, max_per_phase)
@@ -376,18 +378,17 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
             max_per_phase = float('inf')
 
         if site.inverter_supports_asymmetric:
-            phase_a_limit = min(total_available, max(0, max_per_phase - site.consumption.a))
-            phase_b_limit = min(total_available, max(0, max_per_phase - site.consumption.b))
-            phase_c_limit = min(total_available, max(0, max_per_phase - site.consumption.c))
+            phase_a_limit = min(total_available, max(0, max_per_phase - site.consumption.a)) if site.consumption.a is not None else 0
+            phase_b_limit = min(total_available, max(0, max_per_phase - site.consumption.b)) if site.consumption.b is not None else 0
+            phase_c_limit = min(total_available, max(0, max_per_phase - site.consumption.c)) if site.consumption.c is not None else 0
 
             constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, total_available)
         else:
-            num_active_phases = site.num_phases if site.num_phases > 0 else 1
-            per_phase_available = total_available / num_active_phases
+            per_phase_available = total_available / site.num_phases
 
-            phase_a = min(per_phase_available, max_per_phase)
-            phase_b = min(per_phase_available, max_per_phase)
-            phase_c = min(per_phase_available, max_per_phase)
+            phase_a = min(per_phase_available, max_per_phase) if site.consumption.a is not None else 0
+            phase_b = min(per_phase_available, max_per_phase) if site.consumption.b is not None else 0
+            phase_c = min(per_phase_available, max_per_phase) if site.consumption.c is not None else 0
 
             constraints = PhaseConstraints.from_per_phase(phase_a, phase_b, phase_c)
 
@@ -420,11 +421,12 @@ def _determine_target_power(
 
         # Calculate sum of minimum charge rates
         sum_minimums_total = sum(c.min_current * c.phases for c in site.chargers)
-        num_active_phases = site.num_phases if site.num_phases > 0 else 1
-        sum_minimums_per_phase = sum_minimums_total / num_active_phases
+        sum_minimums_per_phase = sum_minimums_total / site.num_phases
 
         minimums = PhaseConstraints.from_per_phase(
-            sum_minimums_per_phase, sum_minimums_per_phase, sum_minimums_per_phase
+            sum_minimums_per_phase if site.consumption.a is not None else 0,
+            sum_minimums_per_phase if site.consumption.b is not None else 0,
+            sum_minimums_per_phase if site.consumption.c is not None else 0,
         )
 
         # Battery between min and target - charge at minimum only

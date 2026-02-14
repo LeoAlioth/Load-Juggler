@@ -63,42 +63,44 @@ def calculate_available_current_for_hub(sensor):
     phase_b_entity = get_entry_value(hub_entry, CONF_PHASE_B_CURRENT_ENTITY_ID, None)
     phase_c_entity = get_entry_value(hub_entry, CONF_PHASE_C_CURRENT_ENTITY_ID, None)
 
-    raw_phase_a = _read_entity(phase_a_entity, 0)
-    raw_phase_b = _read_entity(phase_b_entity, 0)
-    raw_phase_c = _read_entity(phase_c_entity, 0)
+    # Read raw phase values - None if entity not configured (phase doesn't exist)
+    raw_phase_a = _read_entity(phase_a_entity, 0) if phase_a_entity else None
+    raw_phase_b = _read_entity(phase_b_entity, 0) if phase_b_entity else None
+    raw_phase_c = _read_entity(phase_c_entity, 0) if phase_c_entity else None
 
-    # Determine num_phases from configured entities
-    num_phases = 1
-    if phase_b_entity and phase_c_entity:
-        num_phases = 3
-    elif phase_b_entity or phase_c_entity:
-        num_phases = 2
-
-    # Apply inversion if configured (some sensors report export as negative)
+    # Apply inversion if configured (only for existing phases)
     if invert_phases:
-        raw_phase_a = -raw_phase_a
-        raw_phase_b = -raw_phase_b
-        raw_phase_c = -raw_phase_c
+        if raw_phase_a is not None:
+            raw_phase_a = -raw_phase_a
+        if raw_phase_b is not None:
+            raw_phase_b = -raw_phase_b
+        if raw_phase_c is not None:
+            raw_phase_c = -raw_phase_c
 
     # Split into consumption (import, positive) and export (surplus, positive)
     # Convention: raw > 0 means importing from grid, raw < 0 means exporting
-    phase_a_consumption = max(0, raw_phase_a)
-    phase_b_consumption = max(0, raw_phase_b)
-    phase_c_consumption = max(0, raw_phase_c)
+    # None = phase doesn't physically exist
+    phase_a_consumption = max(0, raw_phase_a) if raw_phase_a is not None else None
+    phase_b_consumption = max(0, raw_phase_b) if raw_phase_b is not None else None
+    phase_c_consumption = max(0, raw_phase_c) if raw_phase_c is not None else None
 
-    phase_a_export_current = max(0, -raw_phase_a)
-    phase_b_export_current = max(0, -raw_phase_b)
-    phase_c_export_current = max(0, -raw_phase_c)
+    phase_a_export_current = max(0, -raw_phase_a) if raw_phase_a is not None else None
+    phase_b_export_current = max(0, -raw_phase_b) if raw_phase_b is not None else None
+    phase_c_export_current = max(0, -raw_phase_c) if raw_phase_c is not None else None
 
-    total_export_current = phase_a_export_current + phase_b_export_current + phase_c_export_current
+    # Use PhaseValues for clean aggregation (sums non-None values only)
+    consumption_pv = PhaseValues(phase_a_consumption, phase_b_consumption, phase_c_consumption)
+    export_pv = PhaseValues(phase_a_export_current, phase_b_export_current, phase_c_export_current)
+
+    total_export_current = export_pv.total
     total_export_power = total_export_current * voltage if voltage > 0 else 0
 
-    # Solar production = consumption + export (total power flowing from inverter)
-    solar_production_total = (
-        (phase_a_consumption + phase_a_export_current +
-         phase_b_consumption + phase_b_export_current +
-         phase_c_consumption + phase_c_export_current) * voltage
-    )
+    # Solar production: use dedicated entity if configured, otherwise derive from grid meter
+    solar_production_entity = get_entry_value(hub_entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
+    if solar_production_entity:
+        solar_production_total = _read_entity(solar_production_entity, 0)
+    else:
+        solar_production_total = (consumption_pv.total + export_pv.total) * voltage
 
     # --- Read battery data from HA entities ---
     battery_soc_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
@@ -142,9 +144,9 @@ def calculate_available_current_for_hub(sensor):
         max_grid_import_power = max(0, max_grid_import_power - power_buffer)
 
     _LOGGER.debug(
-        "Hub state read: phases=%d, phase_a=%.1fA (entity=%s), phase_b=%.1fA, phase_c=%.1fA, "
+        "Hub state read: phases=%d, phase_a=%sA (entity=%s), phase_b=%sA, phase_c=%sA, "
         "export=%.1fA, battery_soc=%s, mode=%s, dist=%s",
-        num_phases, raw_phase_a, phase_a_entity, raw_phase_b, raw_phase_c,
+        consumption_pv.active_count, raw_phase_a, phase_a_entity, raw_phase_b, raw_phase_c,
         total_export_current, battery_soc, charging_mode, distribution_mode
     )
     
@@ -152,7 +154,6 @@ def calculate_available_current_for_hub(sensor):
     site = SiteContext(
         voltage=voltage,
         main_breaker_rating=main_breaker_rating,
-        num_phases=num_phases,
         grid_current=PhaseValues(raw_phase_a, raw_phase_b, raw_phase_c),
         consumption=PhaseValues(phase_a_consumption, phase_b_consumption, phase_c_consumption),
         export_current=PhaseValues(phase_a_export_current, phase_b_export_current, phase_c_export_current),
@@ -183,42 +184,74 @@ def calculate_available_current_for_hub(sensor):
         chargers = get_chargers_for_hub(hass, hub_entry_id)
     
     for entry in chargers:
-        min_current = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
-        max_current = get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+        device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        charger_entity_id = entry.data.get(CONF_ENTITY_ID, f"charger_{entry.entry_id}")
         priority = get_entry_value(entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
 
-        # Get charger phases from entry or detect
-        phases = int(get_entry_value(entry, CONF_PHASES, 3) or 3)
+        if device_type == DEVICE_TYPE_PLUG:
+            # Smart plug / relay — binary on/off device with fixed power rating
+            power_rating = get_entry_value(entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
+            connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A")
+            phases = len(connected_to_phase)
+            equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
 
-        # Read connector status from HA entity
-        charger_entity_id = entry.data.get(CONF_ENTITY_ID, f"charger_{entry.entry_id}")
-        connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
-        connector_status_state = hass.states.get(connector_status_entity)
-        connector_status = connector_status_state.state if connector_status_state else "Unknown"
+            # Determine connector status from plug switch state
+            plug_switch_entity = entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
+            plug_switch_state = hass.states.get(plug_switch_entity) if plug_switch_entity else None
 
-        # Create charger context with actual connector status
-        charger = ChargerContext(
-            charger_id=entry.entry_id,
-            entity_id=charger_entity_id,
-            min_current=min_current,
-            max_current=max_current,
-            phases=phases,
-            priority=priority,
-            connector_status=connector_status,
-        )
+            # Check power monitor if available (more reliable than switch state)
+            power_monitor_entity = get_entry_value(entry, CONF_PLUG_POWER_MONITOR_ENTITY_ID, None)
+            if power_monitor_entity:
+                power_draw = _read_entity(power_monitor_entity, 0)
+                connector_status = "Charging" if power_draw > 10 else "Available"
+            elif plug_switch_state:
+                connector_status = "Charging" if plug_switch_state.state == "on" else "Available"
+            else:
+                connector_status = "Charging"  # Default to active if we can't determine
 
-        # Get OCPP data for this charger
-        evse_import = entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
-        if evse_import:
-            evse_state = hass.states.get(evse_import)
-            if evse_state and evse_state.state not in ['unknown', 'unavailable', None]:
-                try:
-                    current_value = float(evse_state.state)
-                    charger.l1_current = float(evse_state.attributes.get('l1_current', 0) or 0)
-                    charger.l2_current = float(evse_state.attributes.get('l2_current', 0) or 0)
-                    charger.l3_current = float(evse_state.attributes.get('l3_current', 0) or 0)
-                except (ValueError, TypeError):
-                    pass
+            charger = ChargerContext(
+                charger_id=entry.entry_id,
+                entity_id=charger_entity_id,
+                min_current=equivalent_current,
+                max_current=equivalent_current,
+                phases=phases,
+                priority=priority,
+                active_phases_mask=connected_to_phase,
+                connector_status=connector_status,
+                device_type=DEVICE_TYPE_PLUG,
+            )
+        else:
+            # OCPP EVSE — standard charger with current modulation
+            min_current = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+            max_current = get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+            phases = int(get_entry_value(entry, CONF_PHASES, 3) or 3)
+
+            # Read connector status from OCPP entity
+            connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
+            connector_status_state = hass.states.get(connector_status_entity)
+            connector_status = connector_status_state.state if connector_status_state else "Unknown"
+
+            charger = ChargerContext(
+                charger_id=entry.entry_id,
+                entity_id=charger_entity_id,
+                min_current=min_current,
+                max_current=max_current,
+                phases=phases,
+                priority=priority,
+                connector_status=connector_status,
+            )
+
+            # Get OCPP data for this charger
+            evse_import = entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
+            if evse_import:
+                evse_state = hass.states.get(evse_import)
+                if evse_state and evse_state.state not in ['unknown', 'unavailable', None]:
+                    try:
+                        charger.l1_current = float(evse_state.attributes.get('l1_current', 0) or 0)
+                        charger.l2_current = float(evse_state.attributes.get('l2_current', 0) or 0)
+                        charger.l3_current = float(evse_state.attributes.get('l3_current', 0) or 0)
+                    except (ValueError, TypeError):
+                        pass
 
         site.chargers.append(charger)
     
@@ -234,9 +267,9 @@ def calculate_available_current_for_hub(sensor):
 
     # Compute derived values for hub sensors
     # Grid headroom: how much more we can import per phase before hitting breaker
-    grid_headroom_a = max(0, main_breaker_rating - phase_a_consumption) * voltage
-    grid_headroom_b = max(0, main_breaker_rating - phase_b_consumption) * voltage if num_phases >= 2 else 0
-    grid_headroom_c = max(0, main_breaker_rating - phase_c_consumption) * voltage if num_phases >= 3 else 0
+    grid_headroom_a = max(0, main_breaker_rating - phase_a_consumption) * voltage if phase_a_consumption is not None else 0
+    grid_headroom_b = max(0, main_breaker_rating - phase_b_consumption) * voltage if phase_b_consumption is not None else 0
+    grid_headroom_c = max(0, main_breaker_rating - phase_c_consumption) * voltage if phase_c_consumption is not None else 0
     site_grid_available_power = round(grid_headroom_a + grid_headroom_b + grid_headroom_c, 0)
 
     # Battery discharge power available for EV charging
@@ -265,19 +298,17 @@ def calculate_available_current_for_hub(sensor):
         "battery_power": battery_power,
         "available_battery_power": available_battery_power,
         # Per-phase available current for EV = breaker headroom + solar surplus
-        "site_available_current_phase_a": round(main_breaker_rating - raw_phase_a, 1),
-        "site_available_current_phase_b": round(main_breaker_rating - raw_phase_b, 1) if num_phases >= 2 else 0,
-        "site_available_current_phase_c": round(main_breaker_rating - raw_phase_c, 1) if num_phases >= 3 else 0,
+        "site_available_current_phase_a": round(main_breaker_rating - raw_phase_a, 1) if raw_phase_a is not None else 0,
+        "site_available_current_phase_b": round(main_breaker_rating - raw_phase_b, 1) if raw_phase_b is not None else 0,
+        "site_available_current_phase_c": round(main_breaker_rating - raw_phase_c, 1) if raw_phase_c is not None else 0,
         # Total site available power = sum of per-phase available * voltage
         "total_site_available_power": round(
-            (main_breaker_rating - raw_phase_a) * voltage
-            + ((main_breaker_rating - raw_phase_b) * voltage if num_phases >= 2 else 0)
-            + ((main_breaker_rating - raw_phase_c) * voltage if num_phases >= 3 else 0),
+            (max(0, main_breaker_rating - raw_phase_a) * voltage if raw_phase_a is not None else 0)
+            + (max(0, main_breaker_rating - raw_phase_b) * voltage if raw_phase_b is not None else 0)
+            + (max(0, main_breaker_rating - raw_phase_c) * voltage if raw_phase_c is not None else 0),
             0,
         ),
-        "net_site_consumption": round(
-            (phase_a_consumption + phase_b_consumption + phase_c_consumption) * voltage, 0
-        ),
+        "net_site_consumption": round(consumption_pv.total * voltage, 0),
         "site_grid_available_power": site_grid_available_power,
         "site_battery_available_power": available_battery_power,
         "total_evse_power": total_evse_power,

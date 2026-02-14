@@ -349,6 +349,7 @@ Behavior:
 ---
 
 ## Adding an entity selection for actual solar power in the config_flow
+
 **Status:** Not yet implemented  
 **Complexity:** Low  
 

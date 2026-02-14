@@ -10,7 +10,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 17250
-      num_phases: 3
+
       distribution_mode: priority
       charging_mode: Standard
       solar_production: 0
@@ -44,7 +44,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 17250
-      num_phases: 3
+
       distribution_mode: priority
       charging_mode: Standard
       solar_production: 0
@@ -87,7 +87,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 17250
-      num_phases: 3
+
       distribution_mode: priority
       charging_mode: Standard
       solar_production: 0
@@ -130,7 +130,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 17250
-      num_phases: 3
+
       distribution_mode: priority
       charging_mode: Standard
       solar_production: 0
@@ -173,7 +173,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 17250
-      num_phases: 3
+
       distribution_mode: priority
       charging_mode: Standard
       solar_production: 0
@@ -217,13 +217,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 5750
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 2.0
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: null
       battery_soc_min: null
       battery_soc_target: null
@@ -251,13 +250,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 5750
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 2.0
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: null
       battery_soc_min: null
       battery_soc_target: null
@@ -294,13 +292,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 5750
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: null
       battery_soc_min: null
       battery_soc_target: null
@@ -337,13 +334,12 @@ scenarios:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 5750
-      num_phases: 1
+
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 3450  # 15A
       phase_a_consumption: 3.0
-      phase_b_consumption: 0.0
-      phase_c_consumption: 0.0
+
       battery_soc: null
       battery_soc_min: null
       battery_soc_target: null

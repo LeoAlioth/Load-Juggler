@@ -67,27 +67,17 @@ def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
         site: SiteContext with chargers that have allocated_current set
         initial_solar: Total solar production (W)
         initial_consumption_per_phase: [phase_a, phase_b, phase_c] consumption (A)
+            Values are None for phases that don't physically exist.
     """
     voltage = site.voltage
-    num_phases = site.num_phases if site.num_phases > 0 else 1
 
-    # Solar per phase (evenly distributed across active phases)
-    if num_phases == 1:
-        # Single-phase: all solar goes to phase A
-        solar_per_phase_a = initial_solar / voltage if voltage > 0 else 0
-        solar_per_phase_b = 0
-        solar_per_phase_c = 0
-    else:
-        # Three-phase: solar evenly distributed
-        solar_per_phase = initial_solar / num_phases / voltage if voltage > 0 else 0
-        solar_per_phase_a = solar_per_phase
-        solar_per_phase_b = solar_per_phase
-        solar_per_phase_c = solar_per_phase
+    # Solar per phase (evenly distributed across existing phases)
+    solar_per_phase = initial_solar / site.num_phases / voltage if voltage > 0 else 0
 
-    # Start with initial consumption
-    phase_a_load = initial_consumption_per_phase[0]
-    phase_b_load = initial_consumption_per_phase[1]
-    phase_c_load = initial_consumption_per_phase[2]
+    # Start with initial consumption (None = phase doesn't exist, use 0 for load calc)
+    phase_a_load = initial_consumption_per_phase[0] if initial_consumption_per_phase[0] is not None else 0
+    phase_b_load = initial_consumption_per_phase[1] if initial_consumption_per_phase[1] is not None else 0
+    phase_c_load = initial_consumption_per_phase[2] if initial_consumption_per_phase[2] is not None else 0
 
     # Add charger loads based on their actual phase connections
     for charger in site.chargers:
@@ -127,11 +117,11 @@ def apply_charging_feedback(site, initial_solar, initial_consumption_per_phase):
             phase_b_load += charger.allocated_current
             phase_c_load += charger.allocated_current
 
-    # Calculate new export per phase (solar - total_load)
+    # Calculate new export per phase (solar - total_load), preserving None for non-existent phases
     site.export_current = PhaseValues(
-        max(0, solar_per_phase_a - phase_a_load),
-        max(0, solar_per_phase_b - phase_b_load),
-        max(0, solar_per_phase_c - phase_c_load),
+        max(0, solar_per_phase - phase_a_load) if initial_consumption_per_phase[0] is not None else None,
+        max(0, solar_per_phase - phase_b_load) if initial_consumption_per_phase[1] is not None else None,
+        max(0, solar_per_phase - phase_c_load) if initial_consumption_per_phase[2] is not None else None,
     )
 
 
@@ -183,30 +173,33 @@ def build_site_from_scenario(scenario):
     site_data = scenario['site']
     voltage = site_data.get('voltage', 230)
     
-    # Solar production + per-phase consumption format
+    # Solar production + per-phase consumption (None = phase doesn't exist)
     solar_total = site_data.get('solar_production', 0)
-    phase_a_cons = site_data.get('phase_a_consumption', 0)
-    phase_b_cons = site_data.get('phase_b_consumption', 0)
-    phase_c_cons = site_data.get('phase_c_consumption', 0)
-    num_phases = site_data.get('num_phases', 3)
-    
-    # Calculate initial export per phase (solar evenly distributed)
-    if num_phases == 1:
-        # Single-phase: all solar goes to phase A
-        solar_per_phase_amps = solar_total / voltage if voltage > 0 else 0
-        phase_a_export = max(0, solar_per_phase_amps - phase_a_cons)
-        phase_b_export = 0
-        phase_c_export = 0
+    solar_production_direct = site_data.get('solar_production_direct', False)
+    phase_a_cons = site_data.get('phase_a_consumption')
+    phase_b_cons = site_data.get('phase_b_consumption')
+    phase_c_cons = site_data.get('phase_c_consumption')
+
+    # Infer num_phases from which consumption values are provided
+    active_phases = sum(1 for v in [phase_a_cons, phase_b_cons, phase_c_cons] if v is not None)
+    if active_phases == 0:
+        active_phases = 1
+
+    # Export current: use explicit per-phase values if provided, otherwise derive from solar
+    if 'phase_a_export' in site_data or 'phase_b_export' in site_data or 'phase_c_export' in site_data:
+        # Explicit export values (used with solar_production_direct to test independent solar reading)
+        phase_a_export = site_data.get('phase_a_export') if phase_a_cons is not None else None
+        phase_b_export = site_data.get('phase_b_export') if phase_b_cons is not None else None
+        phase_c_export = site_data.get('phase_c_export') if phase_c_cons is not None else None
     else:
-        # Multi-phase: solar evenly distributed across active phases
-        solar_per_phase_amps = (solar_total / num_phases) / voltage if voltage > 0 else 0
-        phase_a_export = max(0, solar_per_phase_amps - phase_a_cons)
-        phase_b_export = max(0, solar_per_phase_amps - phase_b_cons)
-        phase_c_export = max(0, solar_per_phase_amps - phase_c_cons)
-    
+        # Derive export from solar (existing behavior)
+        solar_per_phase_amps = (solar_total / active_phases) / voltage if voltage > 0 and solar_total > 0 else 0
+        phase_a_export = max(0, solar_per_phase_amps - phase_a_cons) if phase_a_cons is not None else None
+        phase_b_export = max(0, solar_per_phase_amps - phase_b_cons) if phase_b_cons is not None else None
+        phase_c_export = max(0, solar_per_phase_amps - phase_c_cons) if phase_c_cons is not None else None
+
     site = SiteContext(
         voltage=voltage,
-        num_phases=num_phases,
         main_breaker_rating=site_data.get('main_breaker_rating', 63),
         consumption=PhaseValues(phase_a_cons, phase_b_cons, phase_c_cons),
         export_current=PhaseValues(phase_a_export, phase_b_export, phase_c_export),
@@ -252,13 +245,26 @@ def build_site_from_scenario(scenario):
         # For identification in charger_id
         connected_phase = charger_data.get('connected_to_phase') if phases == 1 else None
         
+        # Determine device type and current limits
+        device_type = charger_data.get("device_type", "evse")
+        if device_type == "plug":
+            # Smart plug: compute equivalent current from power rating
+            power_rating = charger_data.get("power_rating", 2000)
+            equiv_current = round(power_rating / (voltage * phases), 1)
+            min_current = equiv_current
+            max_current = equiv_current
+        else:
+            min_current = charger_data.get("min_current", 6)
+            max_current = charger_data.get("max_current", 16)
+
         charger = ChargerContext(
             charger_id=f"charger_{idx}",
             entity_id=charger_data.get("entity_id", f"charger_{idx}"),
-            min_current=charger_data.get("min_current", 6),
-            max_current=charger_data.get("max_current", 16),
+            min_current=min_current,
+            max_current=max_current,
             phases=charger_data.get("phases", 1),
             priority=charger_data.get("priority", idx),
+            device_type=device_type,
             # New fields for phase tracking and connector status
             car_phases=charger_data.get("car_phases"),  # None = default to phases
             active_phases_mask=active_phases_mask,  # Set from connected_to_phase or YAML
@@ -286,12 +292,12 @@ def run_scenario_with_iterations(scenario, verbose=False):
     iterations = scenario.get('iterations', 1)
     site_data = scenario['site']
     
-    # Store initial conditions for feedback
+    # Store initial conditions for feedback (None = phase doesn't exist)
     initial_solar = site_data.get('solar_production', 0)
     initial_consumption = [
-        site_data.get('phase_a_consumption', 0),
-        site_data.get('phase_b_consumption', 0),
-        site_data.get('phase_c_consumption', 0),
+        site_data.get('phase_a_consumption'),
+        site_data.get('phase_b_consumption'),
+        site_data.get('phase_c_consumption'),
     ]
     
     history = []
