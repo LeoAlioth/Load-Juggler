@@ -224,6 +224,70 @@ Behavior:
 
 ---
 
+## Derived solar surplus with battery awareness
+
+**Status:** Not yet implemented
+**Complexity:** Low-Medium
+
+### Problem
+
+When `solar_is_derived=True` (no dedicated solar entity) and a battery system is present, self-consumption zeroes out grid export. The engine's derived path uses `export_current` directly as surplus → sees 0 → can't allocate power to chargers. Currently forces battery users to configure a dedicated solar entity.
+
+### Insight
+
+Solar surplus can be computed from observable data even without a dedicated solar entity:
+
+```
+solar_surplus = grid_export + battery_charge_power + charger_draws
+```
+
+This is mathematically exact for surplus (solar minus household), because:
+- `solar - household = grid_export + battery_charge + charger_draws`
+- Charger draws are already recovered by the feedback loop (subtracted from grid → revealed as export)
+- Battery charge power is available from `site.battery_power` entity (already in SiteContext, just unused)
+
+### Example
+
+- Solar: 10kW, Household: 2kW, Battery charges at 8kW
+- Grid CT shows 0 (self-consumption balanced)
+- Charger starts at 6A (1.38kW), battery reduces to 6.62kW
+- After feedback: export = 6A (charger draw revealed)
+- Current engine: surplus = 6A (only sees charger's own reflection)
+- With fix: surplus = 6A + 6.62kW/230V = 6A + 28.8A = 34.8A → correctly sees full surplus
+
+### Proposed Changes
+
+**Engine (`target_calculator.py`)** — In `_calculate_solar_surplus()` derived path:
+```python
+if site.solar_is_derived:
+    surplus_per_phase = export_per_phase
+    # Battery charge is solar power absorbed by self-consumption — add it back
+    if site.battery_power is not None and site.battery_power < 0:
+        battery_charge_current = abs(site.battery_power) / site.voltage / num_phases
+        surplus_per_phase += battery_charge_current
+```
+
+**Engine (`_calculate_inverter_limit()`)** — Same principle: battery discharge in derived mode can be accounted for since we have the actual battery power reading.
+
+**Production code** — No changes needed. `battery_power` is already read from the entity and passed to `SiteContext`.
+
+**Test simulation** — Could revert to `solar_is_derived=True` for all scenarios since the engine would handle battery correctly in derived mode.
+
+### Mode-Specific Behavior
+
+The engine already handles mode-specific battery priority in the non-derived path. With this change, the derived path would also need to consider:
+- **Solar/Excess mode**: Add full battery_charge back (charger should use all available solar)
+- **Eco mode**: Add battery_charge back only if SOC >= target (battery charges first)
+- **Standard mode**: Not surplus-based, uses `_calculate_inverter_limit()` instead
+
+### Benefits
+- Battery users don't need a dedicated solar entity (simpler setup)
+- Uses data already available in the model (`site.battery_power`)
+- Minimal code change (a few lines in the derived path)
+- Backwards compatible (only activates when battery_power is available)
+
+---
+
 ## ~~Adding an entity selection for actual solar power in the config_flow~~
 
 **Status:** Implemented (v2.0)

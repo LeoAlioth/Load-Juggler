@@ -288,8 +288,12 @@ def build_site_from_scenario(scenario):
         export_current=PhaseValues(phase_a_export, phase_b_export, phase_c_export),
         solar_production_total=solar_total,
         # Battery systems need a dedicated solar entity (solar_is_derived=False)
-        # because self-consumption masks export. Non-battery systems use derived
-        # solar (export = surplus) which works without a dedicated entity.
+        # because self-consumption masks export from the grid CT. The engine
+        # DOES have battery power/SOC entities available, but in derived mode
+        # it correctly skips its own battery adjustments (grid readings already
+        # reflect battery effects). The problem is that with no export visible,
+        # the engine has no surplus to work with. Non-battery systems use
+        # derived solar (export = surplus) which works without a dedicated entity.
         solar_is_derived=(site_data.get('battery_soc') is None),
         battery_soc=site_data.get('battery_soc'),
         battery_soc_min=site_data.get('battery_soc_min', 20),
@@ -364,6 +368,91 @@ def build_site_from_scenario(scenario):
 # Core simulation
 # ---------------------------------------------------------------------------
 
+def print_scenario_params(scenario):
+    """Print scenario parameters for trace/verbose output."""
+    site_data = scenario['site']
+    chargers = scenario['chargers']
+
+    # Site basics
+    voltage = site_data.get('voltage', 230)
+    breaker = site_data.get('main_breaker_rating', 63)
+    mode = site_data.get('charging_mode', '?')
+    dist = site_data.get('distribution_mode', 'priority')
+    solar = site_data.get('solar_production', 0)
+    max_import = site_data.get('max_import_power')
+
+    # Phases from consumption
+    cons_parts = []
+    for ph, key in [('A', 'phase_a_consumption'), ('B', 'phase_b_consumption'), ('C', 'phase_c_consumption')]:
+        val = site_data.get(key)
+        if val is not None:
+            cons_parts.append(f"{ph}={val}A")
+    cons_str = '/'.join(cons_parts) if cons_parts else 'none'
+    num_phases = len(cons_parts) or 1
+
+    has_battery = site_data.get('battery_soc') is not None
+    solar_is_derived = not has_battery
+
+    print(f"  Site: {voltage}V {breaker}A breaker {num_phases}ph | Solar {solar}W (derived={solar_is_derived}) | Mode: {mode}/{dist}")
+    if max_import:
+        print(f"        Max import: {max_import}W")
+    print(f"  Consumption: {cons_str}")
+
+    # Battery
+    if has_battery:
+        soc = site_data.get('battery_soc')
+        soc_min = site_data.get('battery_soc_min', 20)
+        soc_target = site_data.get('battery_soc_target', 80)
+        charge = site_data.get('battery_max_charge_power', 5000)
+        discharge = site_data.get('battery_max_discharge_power', 5000)
+        print(f"  Battery: soc={soc}% min={soc_min}% target={soc_target}% | charge={charge}W discharge={discharge}W")
+
+    # Inverter
+    inv_max = site_data.get('inverter_max_power')
+    inv_pp = site_data.get('inverter_max_power_per_phase')
+    inv_asym = site_data.get('inverter_supports_asymmetric', False)
+    if inv_max or inv_pp or inv_asym:
+        parts = []
+        if inv_max:
+            parts.append(f"max={inv_max}W")
+        if inv_pp:
+            parts.append(f"per_phase={inv_pp}W")
+        parts.append(f"asymmetric={inv_asym}")
+        print(f"  Inverter: {' '.join(parts)}")
+
+    # Excess threshold
+    excess_thresh = site_data.get('excess_export_threshold')
+    if excess_thresh and mode.lower() == 'excess':
+        print(f"  Excess threshold: {excess_thresh}W")
+
+    # Chargers
+    for ch in chargers:
+        eid = ch.get('entity_id', '?')
+        dev_type = ch.get('device_type', 'evse')
+        phases = ch.get('phases', 1)
+        priority = ch.get('priority', 0)
+        status = ch.get('connector_status', 'Charging' if ch.get('active') is not False else 'Available')
+        mask = ch.get('active_phases_mask') or ch.get('connected_to_phase') or ('ABC' if phases == 3 else 'AB' if phases == 2 else '?')
+
+        if dev_type == 'plug':
+            power = ch.get('power_rating', 2000)
+            print(f"  Charger {eid}: plug {power}W {phases}ph mask={mask} prio={priority} [{status}]")
+        else:
+            min_c = ch.get('min_current', 6)
+            max_c = ch.get('max_current', 16)
+            print(f"  Charger {eid}: {min_c}-{max_c}A {phases}ph mask={mask} prio={priority} [{status}]")
+
+    # Expected
+    expected = scenario.get('expected', {})
+    exp_parts = []
+    for eid, vals in expected.items():
+        alloc = vals.get('allocated', '?')
+        exp_parts.append(f"{eid}={alloc}A")
+    if exp_parts:
+        print(f"  Expected: {', '.join(exp_parts)}")
+    print()
+
+
 def run_scenario_simulation(scenario, verbose=False, trace=False):
     """Run 30-cycle simulation for a scenario.
 
@@ -374,6 +463,9 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
 
     Returns (passed, errors, history).
     """
+    if verbose:
+        print_scenario_params(scenario)
+
     commanded_limits = {}  # entity_id -> current commanded limit
     history = []
 
@@ -546,6 +638,12 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, trace=Fa
         description = scenario['description']
         is_verified = scenario.get('human_verified', False)
 
+        if verbose:
+            print(f"\n{'='*70}")
+            print(f"Running: {name}")
+            print(f"Description: {description}")
+            print(f"{'='*70}")
+
         passed, errors, history = run_scenario_simulation(scenario, verbose=verbose, trace=trace)
 
         if passed:
@@ -572,8 +670,8 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, trace=Fa
             'history': history,
         })
 
+        prefix = "UNVERIFIED " if not is_verified else ""
         if verbose or not passed:
-            prefix = "UNVERIFIED " if not is_verified else ""
             print(f"{prefix}{status} {name}")
             for error in errors:
                 print(f"  {error}")
@@ -650,6 +748,12 @@ class TeeOutput:
     def __init__(self, log_file):
         self.terminal = sys.stdout
         self.log = open(log_file, 'w', encoding='utf-8')
+        # Reconfigure terminal for UTF-8 if possible (Windows cp1252 fix)
+        if hasattr(self.terminal, 'reconfigure'):
+            try:
+                self.terminal.reconfigure(encoding='utf-8')
+            except Exception:
+                pass
 
     def write(self, message):
         self.terminal.write(message)
