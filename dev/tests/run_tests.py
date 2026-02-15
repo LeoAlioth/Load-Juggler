@@ -536,7 +536,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
                 inv_b = f"{solar_pp:.1f}A" if household.b is not None else "-"
                 inv_c = f"{solar_pp:.1f}A" if household.c is not None else "-"
                 inv_detail = f"solar={site.solar_production_total:.0f}W"
-                if bat_pp != 0:
+                if site.battery_soc is not None:
                     bat_watts = bat_pp * site.voltage * (household.active_count or 1)
                     inv_detail += f" bat={bat_watts:+.0f}W"
                 inv_str = f"inverter=({inv_a}/{inv_b}/{inv_c} {inv_detail})"

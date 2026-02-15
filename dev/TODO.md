@@ -118,14 +118,11 @@
     - `test_sensor_update.py`: Removed solar surplus assertions.
     - Deleted `test_scenarios_solar_entity.yaml.disabled`.
 
+41. - [x] **Update trace test output format** — Changed battery display condition from `bat_pp != 0` to `site.battery_soc is not None`. Battery watts now always shown in inverter section when battery is configured (even when 0W). Trailing `bat=(...)` section also shown only when battery is configured.
+
 ## In Progress
 
 ## Backlog
-
-1. - [ ] **Update trace test output format**
-regardless if there is battry power, output the following format:
-  Cycle  5: charger_1=16.7A(t=16.7)  | grid=(+0.7/-0.3/-0.3) inverter=(18.0A/18.0A/18.0A solar=10626W bat=+874W) house=(2.0A/1.0A/1.0A) ch_sum=(15.4/15.4/15.4) bat=(+1.3/+1.3/+1.3 soc=85%)
-of course, skip the battery output if the scenario does not have it configured.
 
 ## Other
 
