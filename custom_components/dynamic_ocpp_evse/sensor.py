@@ -400,8 +400,6 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 # NEW: Site power balance
                 "total_evse_power": hub_data.get("total_evse_power"),
                 "net_site_consumption": hub_data.get("net_site_consumption"),
-                "solar_surplus_power": hub_data.get("solar_surplus_power"),
-                "solar_surplus_current": hub_data.get("solar_surplus_current"),
                 "last_update": datetime.utcnow(),
             }
 
@@ -841,7 +839,7 @@ HUB_SENSOR_DEFINITIONS = [
         "hub_data_key": "net_site_consumption",
         "unit": "W",
         "device_class": "power",
-        "icon": "mdi:home-import-outline",
+        "icon": "mdi:home-lightning-bolt-outline",
         "decimals": 0,
     },
     {
@@ -898,24 +896,6 @@ HUB_SENSOR_DEFINITIONS = [
         "device_class": "power",
         "icon": "mdi:ev-station",
         "decimals": 0,
-    },
-    {
-        "name_suffix": "Solar Surplus Power",
-        "unique_id_suffix": "solar_surplus_power",
-        "hub_data_key": "solar_surplus_power",
-        "unit": "W",
-        "device_class": "power",
-        "icon": "mdi:solar-power",
-        "decimals": 0,
-    },
-    {
-        "name_suffix": "Solar Surplus Current",
-        "unique_id_suffix": "solar_surplus_current",
-        "hub_data_key": "solar_surplus_current",
-        "unit": "A",
-        "device_class": "current",
-        "icon": "mdi:solar-power",
-        "decimals": 2,
     },
 ]
 

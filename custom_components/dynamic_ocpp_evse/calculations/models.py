@@ -124,9 +124,8 @@ class SiteContext:
     consumption: PhaseValues = field(default_factory=PhaseValues)      # max(0, grid_current) per phase
     export_current: PhaseValues = field(default_factory=PhaseValues)   # max(0, -grid_current) per phase
 
-    # Solar
+    # Solar (always derived from grid meter — export IS the surplus)
     solar_production_total: float = 0
-    solar_is_derived: bool = False  # True = derived from grid meter (export IS the surplus)
     
     # Battery
     battery_soc: float | None = None

@@ -155,6 +155,7 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
     num_phases = household.active_count or 1
     solar_per_phase = (site.solar_production_total / num_phases / site.voltage
                        if site.solar_production_total and site.voltage else 0.0)
+    solar_total = solar_per_phase * num_phases  # Total solar current (Amps)
 
     # Raw demand per phase (without battery)
     def _raw(h, draw):
@@ -173,6 +174,12 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
         if total_raw > 0 and site.battery_soc > (site.battery_soc_min or 0):
             # Deficit: battery discharges to cover it
             max_discharge = (site.battery_max_discharge_power or 0) / site.voltage
+            # Inverter output cap: battery discharge goes through the inverter.
+            # If solar already uses all inverter capacity, battery can't discharge.
+            if site.inverter_max_power:
+                inverter_max_current = site.inverter_max_power / site.voltage
+                inverter_headroom = max(0, inverter_max_current - solar_total)
+                max_discharge = min(max_discharge, inverter_headroom)
             discharge = min(total_raw, max_discharge)
             battery_per_phase = -(discharge / num_phases)
         elif total_raw < 0 and site.battery_soc < BATTERY_FULL_SOC:
@@ -195,6 +202,12 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
     site.consumption = PhaseValues(ct_a_cons, ct_b_cons, ct_c_cons)
     site.export_current = PhaseValues(ct_a_exp, ct_b_exp, ct_c_exp)
 
+    # Set battery_power for engine battery awareness in derived mode.
+    # Convention: positive = discharging, negative = charging.
+    # battery_per_phase: positive = charging (adds demand), negative = discharging.
+    if site.battery_soc is not None:
+        site.battery_power = -battery_per_phase * site.voltage * num_phases
+
     return ct_a_net, ct_b_net, ct_c_net, solar_per_phase, battery_per_phase
 
 
@@ -203,8 +216,8 @@ def apply_feedback_adjustment(site):
 
     Subtracts charger l1/l2/l3_current from grid CT readings to recover
     the true household consumption/export before charger was drawing.
-    solar_production_total is NOT touched — simulate_grid_ct already set it
-    from the true YAML value.
+    In derived mode, recalculates solar_production_total from adjusted export
+    (matches production code behavior).
     """
     total_l1 = sum(c.l1_current for c in site.chargers)
     total_l2 = sum(c.l2_current for c in site.chargers)
@@ -224,6 +237,10 @@ def apply_feedback_adjustment(site):
 
         site.consumption = PhaseValues(adj_a_cons, adj_b_cons, adj_c_cons)
         site.export_current = PhaseValues(adj_a_exp, adj_b_exp, adj_c_exp)
+
+    # Recalculate solar_production_total from adjusted export.
+    # Matches production code: dynamic_ocpp_evse.py feedback loop.
+    site.solar_production_total = site.export_current.total * site.voltage
 
 
 def check_stability(history, tolerance=0.5):
@@ -287,14 +304,6 @@ def build_site_from_scenario(scenario):
         consumption=PhaseValues(phase_a_cons, phase_b_cons, phase_c_cons),
         export_current=PhaseValues(phase_a_export, phase_b_export, phase_c_export),
         solar_production_total=solar_total,
-        # Battery systems need a dedicated solar entity (solar_is_derived=False)
-        # because self-consumption masks export from the grid CT. The engine
-        # DOES have battery power/SOC entities available, but in derived mode
-        # it correctly skips its own battery adjustments (grid readings already
-        # reflect battery effects). The problem is that with no export visible,
-        # the engine has no surplus to work with. Non-battery systems use
-        # derived solar (export = surplus) which works without a dedicated entity.
-        solar_is_derived=(site_data.get('battery_soc') is None),
         battery_soc=site_data.get('battery_soc'),
         battery_soc_min=site_data.get('battery_soc_min', 20),
         battery_soc_target=site_data.get('battery_soc_target', 80),
@@ -391,9 +400,8 @@ def print_scenario_params(scenario):
     num_phases = len(cons_parts) or 1
 
     has_battery = site_data.get('battery_soc') is not None
-    solar_is_derived = not has_battery
 
-    print(f"  Site: {voltage}V {breaker}A breaker {num_phases}ph | Solar {solar}W (derived={solar_is_derived}) | Mode: {mode}/{dist}")
+    print(f"  Site: {voltage}V {breaker}A breaker {num_phases}ph | Solar {solar}W | Mode: {mode}/{dist}")
     if max_import:
         print(f"        Max import: {max_import}W")
     print(f"  Consumption: {cons_str}")
@@ -496,24 +504,16 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         # 5. Apply feedback: subtract charger draws (replicates dynamic_ocpp_evse.py)
         apply_feedback_adjustment(site)
 
-        # 5b. For non-derived solar (battery scenarios with dedicated solar entity):
-        # Restore true household consumption. The feedback loop zeros out
-        # consumption when charger draws > grid import, but the non-derived
-        # engine path needs real household consumption for surplus = solar - consumption.
-        # In derived mode this is unnecessary: the engine uses export directly.
-        if not site.solar_is_derived:
-            site.consumption = PhaseValues(household.a, household.b, household.c)
-
-        # 6. Run calculation engine
+        # 7. Run calculation engine
         calculate_all_charger_targets(site)
 
-        # 7. Apply ramp rate limiting to engine targets
+        # 8. Apply ramp rate limiting to engine targets
         for charger in site.chargers:
             target = charger.allocated_current
             prev = commanded_limits.get(charger.entity_id, 0)
             commanded_limits[charger.entity_id] = apply_ramp_rate(prev, target)
 
-        # 8. Record history
+        # 9. Record history
         history.append({
             'cycle': cycle,
             'engine_targets': {c.entity_id: c.allocated_current for c in site.chargers},

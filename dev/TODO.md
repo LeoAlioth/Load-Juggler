@@ -98,12 +98,35 @@
 
 35. - [x] **Eco mode: inactive chargers inflating minimums** — `_determine_target_power()` in `target_calculator.py` summed `min_current * phases` for ALL chargers, including inactive ones (Available/Unknown/Unavailable). An inactive smart plug with ~15.6A equivalent current inflated `sum_minimums_per_phase` from 6A to 11.2A, causing the active EVSE to charge at 8.8A instead of 6A at night. Fixed: filter to active chargers only. (fixes ISSUES.md #9)
 
-36. - [x] **Self-consumption battery model in test simulation** — Replaced the old `compute_battery_grid_effect()` (which always charged/discharged at max power based on SOC vs target) with a realistic self-consumption model in `simulate_grid_ct()`. Battery now dynamically responds to actual demand: deficit → discharge min(deficit, max_discharge) if SOC > min_soc; surplus → charge min(surplus, max_charge) if SOC < 97%. Grid CT shows near-zero for battery systems (matching real inverter behavior). Battery scenarios use `solar_is_derived=False` (dedicated solar entity required) with household consumption restored after feedback to prevent the non-derived engine path from over-estimating surplus. 67/67 tests passing.
+36. - [x] **Self-consumption battery model in test simulation** — Replaced the old `compute_battery_grid_effect()` (which always charged/discharged at max power based on SOC vs target) with a realistic self-consumption model in `simulate_grid_ct()`. Battery now dynamically responds to actual demand: deficit → discharge min(deficit, max_discharge) if SOC > min_soc; surplus → charge min(surplus, max_charge) if SOC < 97%. Grid CT shows near-zero for battery systems (matching real inverter behavior). 67/67 tests passing.
+
+37. - [x] **Battery-aware derived solar mode** — Engine now uses `site.battery_power` in derived mode to recover surplus hidden by self-consumption. Two adjustments in `_calculate_solar_surplus()`: (1) battery charge-back: when battery is charging (battery_power < 0), adds absorbed solar power back to surplus; (2) discharge potential: when SOC > target, adds unused discharge capacity. Same principle in `_calculate_inverter_limit()` for Standard mode. Test sim sets `battery_power` from `simulate_grid_ct()`, all scenarios use `solar_is_derived=True`, removed step 5b consumption restoration hack. 3 asymmetric inverter scenarios updated for derived mode behavior (per-phase consumption not available in derived mode → slightly different allocation). 67/67 tests passing.
+
+38. - [x] **Test trace scenario parameters** — Added `print_scenario_params()` to display scenario configuration (site, consumption, battery, inverter, chargers, expected values) at the start of each simulation in verbose/trace mode. Fixed Windows CP-1252 Unicode encoding in `TeeOutput`. Also added scenario name/description headers in batch run output.
+
+39. - [x] **Inverter output cap for battery discharge** — Fixed inverter over-allocation in derived mode. Battery discharge goes through the inverter; when solar already maxes out inverter capacity, no room for additional discharge. Changes: (1) Engine: `_calculate_solar_surplus()` derived path now limits `discharge_potential` by `inverter_headroom = inverter_max - estimated_solar` and caps final pool at `inverter_max - household`. (2) Model: Added `household_consumption_total` to `SiteContext` — simulation sets true household, production code estimates from pre-feedback consumption. (3) Simulation: `simulate_grid_ct()` limits battery discharge by `max(0, inverter_max - solar_total)`. (4) Production: `dynamic_ocpp_evse.py` sets `household_consumption_total = max(0, consumption - charger_draws)` before feedback. Scenario `total-limit-hit` corrected from 16.7A to 15.7A; `per-phase-limit-hit` updated from 14.3A to 16.7A (correct pool allocation). 67/67 tests passing.
+
+40. - [x] **Remove dedicated solar entity & simplify site sensors** — Removed the dual code path (derived vs dedicated solar entity) across the entire stack. All solar surplus is now derived from grid CT export current + battery power. Changes:
+    - `const.py`: Removed `CONF_SOLAR_PRODUCTION_ENTITY_ID`.
+    - `models.py`: Removed `solar_is_derived` flag from `SiteContext`.
+    - `target_calculator.py`: Removed non-derived paths from `_calculate_inverter_limit()` and `_calculate_solar_surplus()`. Only the derived (grid CT-based) path remains. Asymmetric inverter logic preserved intact.
+    - `dynamic_ocpp_evse.py`: Removed solar entity reading, always derives `solar_production_total` from export. Removed `solar_is_derived` guard in feedback loop. `net_site_consumption` now uses raw grid values (positive=import, negative=export). Removed `solar_surplus_power`/`solar_surplus_current` from result dict. Removed `household_consumption_total` assignment.
+    - `config_flow.py`: Removed solar entity from grid schema, normalization, and auto-detection.
+    - `sensor.py`: Removed Solar Surplus Power/Current sensor definitions. Updated Net Site Consumption icon to `mdi:home-lightning-bolt-outline`.
+    - `translations`: Removed `solar_production_entity_id` from en.json and sl.json.
+    - `run_tests.py`: Removed `solar_is_derived` from SiteContext construction, feedback adjustment, and trace output. Removed `household_consumption_total` assignment.
+    - `test_sensor_update.py`: Removed solar surplus assertions.
+    - Deleted `test_scenarios_solar_entity.yaml.disabled`.
 
 ## In Progress
 
 ## Backlog
 
-### Other
+1. - [ ] **Update trace test output format**
+regardless if there is battry power, output the following format:
+  Cycle  5: charger_1=16.7A(t=16.7)  | grid=(+0.7/-0.3/-0.3) inverter=(18.0A/18.0A/18.0A solar=10626W bat=+874W) house=(2.0A/1.0A/1.0A) ch_sum=(15.4/15.4/15.4) bat=(+1.3/+1.3/+1.3 soc=85%)
+of course, skip the battery output if the scenario does not have it configured.
 
-37. - [ ] **Icon submission** — Submit `icon.png` to [HA brands repo](https://github.com/home-assistant/brands) (see dev/ISSUES.md)
+## Other
+
+1. - [ ] **Icon submission** — Submit `icon.png` to [HA brands repo](https://github.com/home-assistant/brands) (see dev/ISSUES.md)

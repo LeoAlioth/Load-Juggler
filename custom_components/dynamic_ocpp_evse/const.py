@@ -18,7 +18,6 @@ CONF_INVERT_PHASES = "invert_phases"
 CONF_MAX_IMPORT_POWER_ENTITY_ID = "max_import_power_entity_id"
 CONF_PHASE_VOLTAGE = "phase_voltage"
 CONF_EXCESS_EXPORT_THRESHOLD = "excess_export_threshold"  # Maximum allowed export before charging starts in Excess mode
-CONF_SOLAR_PRODUCTION_ENTITY_ID = "solar_production_entity_id"  # Optional direct solar production sensor (W)
 
 # Inverter configuration (hub-level)
 CONF_INVERTER_MAX_POWER = "inverter_max_power"  # Total inverter capacity (W)

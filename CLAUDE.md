@@ -106,7 +106,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 - Electrical: voltage, num_phases, main_breaker_rating
 - Per-phase: consumption (PhaseValues), export_current (PhaseValues), grid_current (PhaseValues)
-- Solar: solar_production_total
+- Solar: solar_production_total (always derived from grid CT export)
 - Derived: total_export_current, total_export_power (computed properties)
 - Battery: battery_soc, battery_soc_min, battery_soc_target, battery_max_charge/discharge_power
 - Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric
@@ -204,6 +204,10 @@ python dev/tests/run_tests.py --unverified dev/tests/scenarios
 
 # Run a single scenario by name
 python dev/tests/run_tests.py "scenario-name"
+
+# Run a single test with a detailed output
+python dev/tests/run_tests.py "scenario-name" --trace
+
 ```
 
 Test results are written to `dev/tests/test_results.log`.

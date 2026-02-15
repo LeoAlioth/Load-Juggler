@@ -41,7 +41,7 @@
                     "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
                     "phase_voltage": "Napetost na fazo v voltih",
                     "excess_export_threshold": "Prag presežne izvozne moči (W), pri katerem se začne polnjenje v načinu Excess",
-                    "solar_production_entity_id": "Senzor proizvodnje sončne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)",
+
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije (sekunde)"
                 }
             },
@@ -127,7 +127,7 @@
                     "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
                     "phase_voltage": "Napetost na fazo v voltih",
                     "excess_export_threshold": "Prag presežne izvozne moči (W)",
-                    "solar_production_entity_id": "Senzor proizvodnje sončne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)",
+
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije (sekunde)"
                 }
             },
@@ -205,7 +205,7 @@
                     "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
                     "phase_voltage": "Napetost na fazo v voltih",
                     "excess_export_threshold": "Prag presežne izvozne moči (W)",
-                    "solar_production_entity_id": "Senzor proizvodnje sončne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)",
+
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije (sekunde)"
                 }
             },

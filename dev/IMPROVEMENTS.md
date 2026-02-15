@@ -224,10 +224,9 @@ Behavior:
 
 ---
 
-## Derived solar surplus with battery awareness
+## ~~Derived solar surplus with battery awareness~~
 
-**Status:** Not yet implemented
-**Complexity:** Low-Medium
+**Status:** Implemented (TODO #37, #39)
 
 ### Problem
 
@@ -280,11 +279,22 @@ The engine already handles mode-specific battery priority in the non-derived pat
 - **Eco mode**: Add battery_charge back only if SOC >= target (battery charges first)
 - **Standard mode**: Not surplus-based, uses `_calculate_inverter_limit()` instead
 
+### Inverter Output Cap (TODO #39)
+
+Battery discharge goes through the inverter. If solar already maxes out inverter capacity, battery can't physically discharge more. TODO #39 added:
+- `household_consumption_total` field on SiteContext (true household from simulation, best-estimate from production)
+- Engine limits `discharge_potential` by `inverter_headroom = inverter_max - estimated_solar`
+- Engine caps final pool at `inverter_max - household` (not just `inverter_max`)
+- Simulation limits battery discharge in `simulate_grid_ct()` by `inverter_max - solar_total`
+
+**Known limitation**: In production (derived mode), when the site is exporting on all phases, the CT reads `consumption = 0`. The true household is hidden in the reduced export and cannot be determined from CT data alone. The engine uses `household_consumption_total` which is 0 in this case — slightly over-allocating by the household amount (typically 2-5A). Using a dedicated solar entity fully resolves this.
+
 ### Benefits
 - Battery users don't need a dedicated solar entity (simpler setup)
 - Uses data already available in the model (`site.battery_power`)
 - Minimal code change (a few lines in the derived path)
 - Backwards compatible (only activates when battery_power is available)
+- Inverter output never exceeded in simulation (physical accuracy)
 
 ---
 

@@ -768,8 +768,6 @@ async def test_result_dict_all_keys_populated(
         "site_grid_available_power",
         "site_battery_available_power",
         "total_evse_power",
-        "solar_surplus_power",
-        "solar_surplus_current",
         "charger_targets",
         "distribution_mode",
     }
@@ -819,10 +817,6 @@ async def test_result_dict_values_are_reasonable(
     # Grid headroom (same as available since no export):
     # (25-5)*230 + (25-4.5)*230 + (25-3.8)*230 = 4600 + 4715 + 4876 = 14191
     assert result["site_grid_available_power"] > 14000
-    # No export → solar surplus = 0
-    assert result["solar_surplus_power"] == 0
-    assert result["solar_surplus_current"] == 0
-
     # --- Battery ---
     assert result["battery_soc"] == 80.0
     assert result["battery_power"] == -500.0  # charging at 500W

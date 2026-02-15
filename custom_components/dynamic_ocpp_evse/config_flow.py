@@ -101,12 +101,6 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 default=defaults.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD),
             ), int),
             (vol.Optional(
-                CONF_SOLAR_PRODUCTION_ENTITY_ID,
-                default=normalize_optional_entity(defaults.get(CONF_SOLAR_PRODUCTION_ENTITY_ID)) or "",
-            ), selector({"select": {"options": self._optional_entity_options(
-                self._battery_and_power_entities()[1]  # power entities list
-            ), "mode": "dropdown"}})),
-            (vol.Optional(
                 CONF_SITE_UPDATE_FREQUENCY,
                 default=defaults.get(CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY),
             ), selector({"number": {"min": 1, "max": 60, "step": 1, "mode": "box", "unit_of_measurement": "s"}})),
@@ -311,7 +305,6 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_PHASE_C_CURRENT_ENTITY_ID,
             CONF_BATTERY_SOC_ENTITY_ID,
             CONF_BATTERY_POWER_ENTITY_ID,
-            CONF_SOLAR_PRODUCTION_ENTITY_ID,
             CONF_PLUG_POWER_MONITOR_ENTITY_ID,
         ]:
             if key in normalized:
@@ -483,20 +476,11 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Find max import power sensor
             default_max_import_power = next((entity_id for entity_id in entity_ids if re.match(r'sensor\..*power_limit.*', entity_id)), None)
 
-            # Find solar production sensor (power device class)
-            default_solar_production = next(
-                (entity_id for entity_id in entity_ids
-                 if re.match(r'sensor\..*solar.*(?:production|power|generation).*', entity_id, re.IGNORECASE)
-                 and entity_id.startswith("sensor.")),
-                None
-            )
-
             data_schema = self._hub_grid_schema({
                 CONF_PHASE_A_CURRENT_ENTITY_ID: default_phase_a,
                 CONF_PHASE_B_CURRENT_ENTITY_ID: default_phase_b,
                 CONF_PHASE_C_CURRENT_ENTITY_ID: default_phase_c,
                 CONF_MAX_IMPORT_POWER_ENTITY_ID: default_max_import_power,
-                CONF_SOLAR_PRODUCTION_ENTITY_ID: default_solar_production,
                 CONF_MAIN_BREAKER_RATING: DEFAULT_MAIN_BREAKER_RATING,
                 CONF_INVERT_PHASES: False,
                 CONF_PHASE_VOLTAGE: DEFAULT_PHASE_VOLTAGE,
