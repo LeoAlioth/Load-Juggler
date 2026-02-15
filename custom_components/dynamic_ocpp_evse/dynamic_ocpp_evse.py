@@ -259,8 +259,28 @@ def run_hub_calculation(sensor):
             )
         else:
             # OCPP EVSE — standard charger with current modulation
-            min_current = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
-            max_current = get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+            # Read min_current from the number entity (runtime value set by user)
+            min_current_entity = f"number.{charger_entity_id}_min_current"
+            min_current_state = hass.states.get(min_current_entity)
+            if min_current_state and min_current_state.state not in ('unknown', 'unavailable', None, ''):
+                try:
+                    min_current = float(min_current_state.state)
+                except (ValueError, TypeError):
+                    min_current = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+            else:
+                min_current = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+            
+            # Read max_current from the number entity (runtime value set by user)
+            max_current_entity = f"number.{charger_entity_id}_max_current"
+            max_current_state = hass.states.get(max_current_entity)
+            if max_current_state and max_current_state.state not in ('unknown', 'unavailable', None, ''):
+                try:
+                    max_current = float(max_current_state.state)
+                except (ValueError, TypeError):
+                    max_current = get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+            else:
+                max_current = get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+            
             phases = int(get_entry_value(entry, CONF_PHASES, 3) or 3)
 
             # Read connector status from OCPP entity
@@ -276,6 +296,11 @@ def run_hub_calculation(sensor):
                 phases=phases,
                 priority=priority,
                 connector_status=connector_status,
+            )
+            
+            _LOGGER.debug(
+                f"EVSE {charger_entity_id}: min_current={min_current}A (from {min_current_entity}), "
+                f"max_current={max_current}A (from {max_current_entity})"
             )
 
             # Get OCPP current draw for this charger
