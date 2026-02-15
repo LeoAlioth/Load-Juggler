@@ -329,6 +329,37 @@ Automatically detect the physical phase mapping at runtime by correlating charge
 
 ---
 
+## Automatic grid current inversion detection
+**Status:** Not yet implemented (manual toggle available via `invert_phases`)
+**Complexity:** Low–Medium
+
+### Current State
+- Users manually toggle `invert_phases` in the hub grid config step
+- Some grid CTs measure import as positive, others as negative — depends on clamp orientation
+- Getting this wrong inverts the entire system's understanding of import vs export, causing completely wrong behavior (e.g., charging at full power when exporting, pausing when importing)
+
+### Proposed Approach
+Detect the correct polarity automatically by observing grid CT behavior when a charger starts or stops:
+
+1. **Charger start event**: When a charger begins drawing power, grid import should increase (CT reading goes more positive). If the CT reading goes more negative instead, the polarity is inverted.
+2. **Charger stop event**: When a charger stops, grid import should decrease. Same logic in reverse.
+3. **Correlation check**: Compare the sign of the CT delta with the expected direction based on the charger event.
+
+### Technical Considerations
+- Only needs one clear start/stop event to determine polarity with high confidence
+- Household load fluctuations add noise — use the charger's known draw magnitude as a threshold (delta must be at least 50% of charger draw to be conclusive)
+- Could run once on first charger connection and store the result
+- Should warn the user if detected polarity differs from configured `invert_phases` setting rather than silently overriding
+- Works best with larger charger draws (3-phase 16A = ~11kW is unmistakable vs household noise)
+
+### Implementation Steps (for future)
+1. Track grid CT readings before and after charger start/stop events in `dynamic_ocpp_evse.py`
+2. Compare delta sign with expected direction
+3. If mismatch detected, create a persistent notification suggesting the user toggle `invert_phases`
+4. Optionally: auto-correct with a "trust auto-detection" config option
+
+---
+
 ## ~~Adding an entity selection for actual solar power in the config_flow~~
 
 **Status:** Implemented (v2.0)

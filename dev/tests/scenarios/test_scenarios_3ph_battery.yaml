@@ -589,7 +589,6 @@ scenarios:
       voltage: 230
       main_breaker_rating: 32
       max_import_power: 22080
-
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 12420  # 54A total - high enough to test per-phase limit
@@ -604,6 +603,7 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 4140  # 18A per phase limit (the constraint being tested)
       inverter_max_power: 12420  # 54A total (high, not constraining)
+      solar_production_direct: true
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -621,7 +621,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 32
       max_import_power: 22080
-
+      solar_production_direct: true
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 11500  # 50A total (matches inverter max to test total limit)
@@ -749,7 +749,7 @@ scenarios:
       voltage: 230
       main_breaker_rating: 32
       max_import_power: 22080
-
+      solar_production_direct: true
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 14950  # 65A total
