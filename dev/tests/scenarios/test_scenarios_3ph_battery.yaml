@@ -591,6 +591,7 @@ scenarios:
       max_import_power: 22080
       distribution_mode: priority
       charging_mode: Solar
+      inverter_output_sensors: true
       solar_production: 12420  # 54A total - high enough to test per-phase limit
       phase_a_consumption: 2.0
       phase_b_consumption: 1.0
@@ -750,6 +751,7 @@ scenarios:
       main_breaker_rating: 32
       max_import_power: 22080
       solar_production_direct: true
+      inverter_output_sensors: true
       distribution_mode: priority
       charging_mode: Solar
       solar_production: 14950  # 65A total

@@ -46,11 +46,15 @@
             },
             "hub_inverter": {
                 "title": "Inverter Configuration",
-                "description": "Configure inverter power limits (optional — set to 0 to leave unconstrained)",
+                "description": "Configure inverter power limits and per-phase output sensors (optional — set power to 0 to leave unconstrained)",
                 "data": {
                     "inverter_max_power": "Total inverter power capacity (W)",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase (W)",
-                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding"
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology"
                 }
             },
             "hub_battery": {
@@ -153,7 +157,11 @@
                 "data": {
                     "inverter_max_power": "Total inverter power capacity (W)",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase (W)",
-                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding"
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology"
                 }
             },
             "reconfigure_hub_battery": {
@@ -246,7 +254,11 @@
                 "data": {
                     "inverter_max_power": "Total inverter power capacity (W)",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase (W)",
-                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding"
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology"
                 }
             },
             "hub": {

@@ -142,6 +142,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _build_hub_inverter_schema(self, defaults: dict | None = None) -> list[tuple]:
         """Build inverter configuration fields as a reusable list."""
         defaults = defaults or {}
+        current_power_entities = self._get_current_and_power_entities()
+        optional_cp_options = self._optional_entity_options(current_power_entities)
+        topology_options = [
+            {"value": WIRING_TOPOLOGY_PARALLEL, "label": "Parallel (AC-coupled / no battery)"},
+            {"value": WIRING_TOPOLOGY_SERIES, "label": "Series (Hybrid / battery)"},
+        ]
         return [
             (vol.Optional(
                 CONF_INVERTER_MAX_POWER,
@@ -155,6 +161,22 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_INVERTER_SUPPORTS_ASYMMETRIC,
                 default=defaults.get(CONF_INVERTER_SUPPORTS_ASYMMETRIC, False),
             ), bool),
+            (vol.Optional(
+                CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+                default=normalize_optional_entity(defaults.get(CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID)) or "",
+            ), selector({"select": {"options": optional_cp_options, "mode": "dropdown"}})),
+            (vol.Optional(
+                CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+                default=normalize_optional_entity(defaults.get(CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID)) or "",
+            ), selector({"select": {"options": optional_cp_options, "mode": "dropdown"}})),
+            (vol.Optional(
+                CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+                default=normalize_optional_entity(defaults.get(CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID)) or "",
+            ), selector({"select": {"options": optional_cp_options, "mode": "dropdown"}})),
+            (vol.Required(
+                CONF_WIRING_TOPOLOGY,
+                default=defaults.get(CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY),
+            ), selector({"select": {"options": topology_options, "mode": "dropdown"}})),
         ]
 
     def _hub_schema(self, defaults: dict | None = None, include_grid: bool = True, include_battery: bool = True, include_inverter: bool = False) -> vol.Schema:
@@ -340,6 +362,9 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_BATTERY_POWER_ENTITY_ID,
             CONF_SOLAR_PRODUCTION_ENTITY_ID,
             CONF_PLUG_POWER_MONITOR_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
         ]:
             if key in normalized:
                 normalized[key] = normalize_optional_entity(normalized.get(key))
@@ -611,6 +636,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
 
             # Normalize inverter power values: 0 means "not configured" → store as None
@@ -620,10 +646,62 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             return await self.async_step_hub_battery()
 
+        # Auto-detect per-phase inverter output entities
+        INVERTER_OUTPUT_PATTERNS = [
+            {
+                "name": "Solarman/Deye - output current",
+                "patterns": {
+                    "phase_a": r'sensor\..*(?:output|inverter)_(?:current_)?(?:l1|1|phase_?a).*',
+                    "phase_b": r'sensor\..*(?:output|inverter)_(?:current_)?(?:l2|2|phase_?b).*',
+                    "phase_c": r'sensor\..*(?:output|inverter)_(?:current_)?(?:l3|3|phase_?c).*',
+                },
+            },
+            {
+                "name": "SolarEdge - AC current",
+                "patterns": {
+                    "phase_a": r'sensor\..*i.*ac_current_a.*',
+                    "phase_b": r'sensor\..*i.*ac_current_b.*',
+                    "phase_c": r'sensor\..*i.*ac_current_c.*',
+                },
+            },
+            {
+                "name": "Fronius/Huawei - phase power",
+                "patterns": {
+                    "phase_a": r'sensor\..*inverter.*(?:power|current).*(?:phase_?a|l1|_1).*',
+                    "phase_b": r'sensor\..*inverter.*(?:power|current).*(?:phase_?b|l2|_2).*',
+                    "phase_c": r'sensor\..*inverter.*(?:power|current).*(?:phase_?c|l3|_3).*',
+                },
+            },
+        ]
+
+        entity_ids = self._get_entity_registry_ids()
+        default_inv_a = None
+        default_inv_b = None
+        default_inv_c = None
+
+        for pattern_set in INVERTER_OUTPUT_PATTERNS:
+            a_match = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_a"], eid)), None)
+            b_match = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_b"], eid)), None)
+            c_match = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_c"], eid)), None)
+            if a_match and b_match and c_match:
+                default_inv_a = a_match
+                default_inv_b = b_match
+                default_inv_c = c_match
+                break
+
+        # Auto-detect wiring topology from battery presence in previous steps
+        default_topology = DEFAULT_WIRING_TOPOLOGY
+        if self._data.get(CONF_BATTERY_SOC_ENTITY_ID):
+            default_topology = WIRING_TOPOLOGY_SERIES
+
         data_schema = self._hub_inverter_schema({
             CONF_INVERTER_MAX_POWER: 0,
             CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
             CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: default_inv_a,
+            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: default_inv_b,
+            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: default_inv_c,
+            CONF_WIRING_TOPOLOGY: default_topology,
         })
 
         return self.async_show_form(
@@ -1174,6 +1252,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         defaults = {**entry.data, **entry.options}
 
         if user_input is not None:
+            user_input = self._normalize_optional_inputs(user_input)
             self._data.update(user_input)
             # Normalize: 0 means "not configured" → store as None
             for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
@@ -1356,6 +1435,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         flow.hass = self.hass
 
         if user_input is not None:
+            user_input = flow._normalize_optional_inputs(user_input)
             self._data.update(user_input)
             # Normalize: 0 means "not configured" → store as None
             for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:

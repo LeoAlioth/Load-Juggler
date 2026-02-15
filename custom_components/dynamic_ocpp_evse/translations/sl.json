@@ -46,11 +46,15 @@
             },
             "hub_inverter": {
                 "title": "Konfiguracija razsmernika",
-                "description": "Nastavite omejitve moči razsmernika (neobvezno — nastavite na 0 za brez omejitev)",
+                "description": "Nastavite omejitve moči razsmernika in senzorje izhoda po fazah (neobvezno — nastavite moč na 0 za brez omejitev)",
                 "data": {
                     "inverter_max_power": "Skupna moč razsmernika (W)",
                     "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
-                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz"
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz",
+                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
+                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
+                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
+                    "wiring_topology": "Topologija ožičenja"
                 }
             },
             "hub_battery": {
@@ -153,7 +157,11 @@
                 "data": {
                     "inverter_max_power": "Skupna moč razsmernika (W)",
                     "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
-                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz"
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz",
+                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
+                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
+                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
+                    "wiring_topology": "Topologija ožičenja"
                 }
             },
             "reconfigure_hub_battery": {
@@ -246,7 +254,11 @@
                 "data": {
                     "inverter_max_power": "Skupna moč razsmernika (W)",
                     "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
-                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz"
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz",
+                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
+                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
+                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
+                    "wiring_topology": "Topologija ožičenja"
                 }
             },
             "hub": {

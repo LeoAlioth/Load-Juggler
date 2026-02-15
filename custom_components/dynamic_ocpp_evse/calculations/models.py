@@ -138,6 +138,11 @@ class SiteContext:
     solar_production_total: float = 0
     solar_is_derived: bool = True  # True = derived from grid meter, False = dedicated entity
     household_consumption_total: float | None = None  # Computed when solar entity available (W)
+    household_consumption: PhaseValues | None = None  # Per-phase household (A), from inverter entities
+
+    # Wiring topology + per-phase inverter output
+    wiring_topology: str = "parallel"  # "parallel" or "series"
+    inverter_output_per_phase: PhaseValues | None = None  # Raw inverter output readings (A)
 
     # Battery
     battery_soc: float | None = None

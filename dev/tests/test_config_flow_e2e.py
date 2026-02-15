@@ -42,6 +42,11 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_SUPPORTS_ASYMMETRIC,
+    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+    CONF_WIRING_TOPOLOGY,
+    DEFAULT_WIRING_TOPOLOGY,
     CONF_CHARGER_PRIORITY,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
@@ -153,6 +158,10 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
             CONF_INVERTER_MAX_POWER: 10000,
             CONF_INVERTER_MAX_POWER_PER_PHASE: 4000,
             CONF_INVERTER_SUPPORTS_ASYMMETRIC: True,
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "",
+            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: "",
+            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: "",
+            CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -240,6 +249,10 @@ async def test_hub_creation_single_phase(hass: HomeAssistant):
             CONF_INVERTER_MAX_POWER: 0,
             CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
             CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "",
+            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: "",
+            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: "",
+            CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -505,6 +518,10 @@ async def test_options_flow_hub_saves_changes(
             CONF_INVERTER_MAX_POWER: 8000,
             CONF_INVERTER_MAX_POWER_PER_PHASE: 3000,
             CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "",
+            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: "",
+            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: "",
+            CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
         },
     )
 

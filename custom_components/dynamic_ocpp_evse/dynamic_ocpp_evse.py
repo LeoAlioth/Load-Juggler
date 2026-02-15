@@ -135,6 +135,37 @@ def run_hub_calculation(sensor):
     inverter_max_power = get_entry_value(hub_entry, CONF_INVERTER_MAX_POWER, None)
     inverter_max_power_per_phase = get_entry_value(hub_entry, CONF_INVERTER_MAX_POWER_PER_PHASE, None)
     inverter_supports_asymmetric = get_entry_value(hub_entry, CONF_INVERTER_SUPPORTS_ASYMMETRIC, False)
+    wiring_topology = get_entry_value(hub_entry, CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY)
+
+    # --- Read per-phase inverter output entities (optional) ---
+    inv_out_a_entity = get_entry_value(hub_entry, CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID, None)
+    inv_out_b_entity = get_entry_value(hub_entry, CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID, None)
+    inv_out_c_entity = get_entry_value(hub_entry, CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID, None)
+    inverter_output_per_phase = None
+
+    if inv_out_a_entity:
+        def _read_inverter_output(entity_id):
+            """Read inverter output, auto-detecting A vs W and converting to A."""
+            if not entity_id:
+                return None
+            st = hass.states.get(entity_id)
+            if not st or st.state in ('unknown', 'unavailable', None, ''):
+                return None
+            try:
+                value = abs(float(st.state))
+            except (ValueError, TypeError):
+                return None
+            # Auto-detect unit from entity attributes
+            unit = st.attributes.get("unit_of_measurement", "").upper()
+            if unit == "W" and voltage > 0:
+                value = value / voltage  # Convert W → A
+            return value
+
+        inv_a = _read_inverter_output(inv_out_a_entity)
+        inv_b = _read_inverter_output(inv_out_b_entity)
+        inv_c = _read_inverter_output(inv_out_c_entity)
+        if inv_a is not None:
+            inverter_output_per_phase = PhaseValues(inv_a, inv_b, inv_c)
 
     # --- Read charging and distribution mode from HA select entities ---
     hub_entity_id = hub_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
@@ -186,6 +217,8 @@ def run_hub_calculation(sensor):
         inverter_max_power=float(inverter_max_power) if inverter_max_power is not None else None,
         inverter_max_power_per_phase=float(inverter_max_power_per_phase) if inverter_max_power_per_phase is not None else None,
         inverter_supports_asymmetric=inverter_supports_asymmetric,
+        wiring_topology=wiring_topology,
+        inverter_output_per_phase=inverter_output_per_phase,
         excess_export_threshold=excess_threshold,
         allow_grid_charging=allow_grid_charging,
         power_buffer=power_buffer,
@@ -403,6 +436,40 @@ def run_hub_calculation(sensor):
         _LOGGER.debug(
             "Computed household_consumption_total=%.1fW (solar=%.1fW + bat=%.1fW - export=%.1fW)",
             site.household_consumption_total, solar_production_total, bp, export_power_after_feedback,
+        )
+
+    # Compute per-phase household from inverter output entities (after feedback).
+    # This gives the engine exact per-phase household for asymmetric inverter limits.
+    if site.inverter_output_per_phase is not None:
+        ch_a = ch_b = ch_c = 0.0
+        for c in site.chargers:
+            a_d, b_d, c_d = c.get_site_phase_draw()
+            ch_a += a_d
+            ch_b += b_d
+            ch_c += c_d
+
+        if site.wiring_topology == WIRING_TOPOLOGY_PARALLEL:
+            # Parallel: household = grid_consumption + inverter_output - grid_export (after feedback)
+            def _hh_par(inv_out, cons, exp):
+                if cons is None:
+                    return None
+                return max(0, (cons or 0) + (inv_out or 0) - (exp or 0))
+            hh_a = _hh_par(site.inverter_output_per_phase.a, site.consumption.a, site.export_current.a)
+            hh_b = _hh_par(site.inverter_output_per_phase.b, site.consumption.b, site.export_current.b)
+            hh_c = _hh_par(site.inverter_output_per_phase.c, site.consumption.c, site.export_current.c)
+        else:
+            # Series: household = inverter_output - charger_draws (per phase)
+            hh_a = max(0, (site.inverter_output_per_phase.a or 0) - ch_a) if site.consumption.a is not None else None
+            hh_b = max(0, (site.inverter_output_per_phase.b or 0) - ch_b) if site.consumption.b is not None else None
+            hh_c = max(0, (site.inverter_output_per_phase.c or 0) - ch_c) if site.consumption.c is not None else None
+
+        site.household_consumption = PhaseValues(hh_a, hh_b, hh_c)
+        _LOGGER.debug(
+            "Per-phase household from inverter output (%s): A=%.1fA B=%.1fA C=%.1fA",
+            site.wiring_topology,
+            hh_a if hh_a is not None else 0,
+            hh_b if hh_b is not None else 0,
+            hh_c if hh_c is not None else 0,
         )
 
     # Calculate targets (includes distribution)

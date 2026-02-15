@@ -24,6 +24,13 @@ CONF_SOLAR_PRODUCTION_ENTITY_ID = "solar_production_entity_id"  # Optional direc
 CONF_INVERTER_MAX_POWER = "inverter_max_power"  # Total inverter capacity (W)
 CONF_INVERTER_MAX_POWER_PER_PHASE = "inverter_max_power_per_phase"  # Per-phase inverter limit (W)
 CONF_INVERTER_SUPPORTS_ASYMMETRIC = "inverter_supports_asymmetric"  # Can balance power across phases
+CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID = "inverter_output_phase_a_entity_id"  # Per-phase inverter output sensor
+CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID = "inverter_output_phase_b_entity_id"
+CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID = "inverter_output_phase_c_entity_id"
+CONF_WIRING_TOPOLOGY = "wiring_topology"  # "parallel" or "series"
+WIRING_TOPOLOGY_PARALLEL = "parallel"  # Inverter feeds in parallel (AC-coupled, no battery typical)
+WIRING_TOPOLOGY_SERIES = "series"  # Everything flows through inverter (hybrid, battery typical)
+DEFAULT_WIRING_TOPOLOGY = WIRING_TOPOLOGY_PARALLEL
 
 # Battery support configuration constants (hub-level)
 CONF_BATTERY_POWER_ENTITY_ID = "battery_power_entity_id"

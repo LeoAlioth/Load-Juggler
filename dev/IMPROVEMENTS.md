@@ -298,6 +298,204 @@ Battery discharge goes through the inverter. If solar already maxes out inverter
 
 ---
 
+## ~~Per-phase inverter output entities + wiring topology~~
+**Status:** Implemented (TODO #44)
+**Complexity:** Medium–High
+**Solves:** Asymmetric inverter over-allocation (2 failing test scenarios), per-phase household invisibility
+
+### Problem
+
+When the site is fully self-consuming (battery absorbs all surplus), the grid CT reads `consumption = 0` on all phases. The true per-phase household (e.g., 2A on A, 1A on B, 1A on C) is invisible. The engine's asymmetric inverter path sets `per_phase_limit = max_per_phase` without subtracting household, causing over-allocation of ~1-2A on the most loaded phase. This is documented as a "known limitation" in the battery awareness section above.
+
+A single solar power entity gives us `household_consumption_total` (the total), but not the per-phase breakdown. To properly enforce `per_phase_limit = max_per_phase - household_per_phase`, we need per-phase data.
+
+### Solution: 3 per-phase inverter output entities
+
+Replace the single solar power entity with 3 inverter output entities (L1, L2, L3) as the primary data source. Keep the single solar entity as a fallback.
+
+Two distinct wiring topologies determine what the inverter output measures:
+
+#### Parallel wiring (AC-coupled, typically non-battery systems)
+```
+Grid CT ──── Main panel ──┬── House loads
+                          ├── Chargers
+                          └── Inverter (solar feeds INTO panel)
+```
+- Inverter output = **solar generation only**
+- If solar = 0, inverter reads 0 regardless of loads
+- Per-phase household derivation: `household_per_phase = consumption + inverter_output - export` (after feedback)
+- Simplest case: inverter output directly gives per-phase solar
+
+#### Series wiring (hybrid inverter, typically battery systems)
+```
+Grid CT ──── Inverter ──── Main panel ──┬── House loads
+                                        └── Chargers
+```
+- Inverter output = **total load on house side** (household + chargers)
+- All current flows through the inverter (solar + battery + grid import)
+- Per-phase household derivation: `household_per_phase = inverter_output_per_phase - charger_draws_per_phase`
+- Most direct: inverter tells us total load, we subtract what we already know (charger draws)
+
+### Data hierarchy (best → worst)
+
+| Level | Data source | Per-phase household | Accuracy |
+|-------|-------------|-------------------|----------|
+| 1 | 3 inverter output entities | Exact (parallel or series formula) | Perfect |
+| 2 | Single solar entity | `total / num_phases` (uniform estimate) | Good (~1A error) |
+| 3 | Derived from CT only | 0 when self-consuming | Poor (full household invisible) |
+
+### Config flow changes
+
+**Inverter step** — add 3 optional entity selectors + wiring mode:
+```
+Existing fields:
+  - inverter_max_power (W)
+  - inverter_max_power_per_phase (W)
+  - inverter_supports_asymmetric (bool)
+
+New fields:
+  - inverter_l1_output_entity_id (optional, current or power sensor)
+  - inverter_l2_output_entity_id (optional, current or power sensor)
+  - inverter_l3_output_entity_id (optional, current or power sensor)
+  - inverter_wiring_series (bool, default: False)
+    → Only shown when inverter output entities are configured
+    → Default could be auto-set: True when battery entities are configured, False otherwise
+```
+
+**Solar entity (battery step)** — kept as fallback. When 3 per-phase entities are configured, the single solar entity is redundant (solar total can be derived).
+
+### Auto-detection patterns
+
+```python
+INVERTER_OUTPUT_PATTERNS = [
+    {
+        "name": "Fronius",
+        "patterns": {
+            "l1": r'sensor\..*inverter.*(?:ac_current|current).*(?:phase_1|_l1|_a).*',
+            "l2": r'sensor\..*inverter.*(?:ac_current|current).*(?:phase_2|_l2|_b).*',
+            "l3": r'sensor\..*inverter.*(?:ac_current|current).*(?:phase_3|_l3|_c).*',
+        },
+    },
+    {
+        "name": "SolarEdge inverter",
+        "patterns": {
+            "l1": r'sensor\..*(?:i1|inverter).*ac_current_a.*',
+            "l2": r'sensor\..*(?:i1|inverter).*ac_current_b.*',
+            "l3": r'sensor\..*(?:i1|inverter).*ac_current_c.*',
+        },
+    },
+    {
+        "name": "Huawei/FusionSolar",
+        "patterns": {
+            "l1": r'sensor\..*inverter.*phase_a.*(?:current|power).*',
+            "l2": r'sensor\..*inverter.*phase_b.*(?:current|power).*',
+            "l3": r'sensor\..*inverter.*phase_c.*(?:current|power).*',
+        },
+    },
+    {
+        "name": "Solarman/Deye output",
+        "patterns": {
+            "l1": r'sensor\..*(?:output|inverter).*(?:l1|_1).*(?:current|power).*',
+            "l2": r'sensor\..*(?:output|inverter).*(?:l2|_2).*(?:current|power).*',
+            "l3": r'sensor\..*(?:output|inverter).*(?:l3|_3).*(?:current|power).*',
+        },
+    },
+    {
+        "name": "SMA",
+        "patterns": {
+            "l1": r'sensor\.sma.*phase.*l1.*current.*',
+            "l2": r'sensor\.sma.*phase.*l2.*current.*',
+            "l3": r'sensor\.sma.*phase.*l3.*current.*',
+        },
+    },
+    {
+        "name": "GoodWe",
+        "patterns": {
+            "l1": r'sensor\..*(?:goodwe|gw).*output.*(?:current|power).*(?:l1|_1|_r).*',
+            "l2": r'sensor\..*(?:goodwe|gw).*output.*(?:current|power).*(?:l2|_2|_s).*',
+            "l3": r'sensor\..*(?:goodwe|gw).*output.*(?:current|power).*(?:l3|_3|_t).*',
+        },
+    },
+]
+```
+
+Wiring mode auto-detection:
+- If battery entities are configured (SOC, battery power) → suggest series (hybrid inverter likely)
+- If no battery entities → suggest parallel (AC-coupled solar likely)
+
+### Model changes
+
+**SiteContext** — add new fields:
+```python
+# Per-phase inverter output (from dedicated entities)
+inverter_l1_output: float | None = None  # Current (A) or power converted to current
+inverter_l2_output: float | None = None
+inverter_l3_output: float | None = None
+inverter_wiring_series: bool = False  # True = series (hybrid), False = parallel (AC-coupled)
+```
+
+**Computed per-phase household** — new helper method or computed in `dynamic_ocpp_evse.py`:
+```python
+# Parallel: household = grid_consumption + inverter_output - grid_export (per phase, after feedback)
+# Series:   household = inverter_output - charger_draws (per phase)
+```
+
+Store result as `PhaseValues` on SiteContext:
+```python
+household_consumption: PhaseValues | None = None  # Per-phase household (A)
+```
+
+This replaces the scalar `household_consumption_total` with per-phase granularity. The total can be derived as `.total`.
+
+### Engine changes
+
+**`_calculate_solar_surplus()` asymmetric path** — use per-phase household when available:
+```python
+if site.inverter_supports_asymmetric:
+    total_pool = export_total + battery_adjustment_total
+    if site.household_consumption is not None:
+        # Exact per-phase household from inverter output entities
+        h_a = site.household_consumption.a or 0
+        h_b = site.household_consumption.b or 0
+        h_c = site.household_consumption.c or 0
+    elif site.household_consumption_total is not None:
+        # Uniform estimate from single solar entity
+        h_a = h_b = h_c = (site.household_consumption_total / site.voltage) / num_phases
+    else:
+        # CT only — household invisible when self-consuming
+        h_a = site.consumption.a or 0
+        h_b = site.consumption.b or 0
+        h_c = site.consumption.c or 0
+
+    phase_a_limit = min(total_pool, max(0, max_per_phase - h_a))
+    phase_b_limit = min(total_pool, max(0, max_per_phase - h_b))
+    phase_c_limit = min(total_pool, max(0, max_per_phase - h_c))
+```
+
+Same pattern applies to `_calculate_inverter_limit()` for the Standard mode path.
+
+### Test simulation changes
+
+**`run_tests.py`** — new YAML fields:
+```yaml
+site:
+  inverter_l1_output: 18.0  # A (or W, auto-converted)
+  inverter_l2_output: 18.0
+  inverter_l3_output: 18.0
+  inverter_wiring_series: false
+```
+
+Simulation computes per-phase household from these values using the parallel/series formula, sets `site.household_consumption = PhaseValues(...)`.
+
+### Interaction with existing features
+
+- **Single solar entity**: Still works as fallback (level 2 accuracy). When per-phase entities are configured, solar entity becomes redundant.
+- **Derived mode** (no entities): Still works as before (level 3 accuracy). Battery awareness still helps recover total surplus.
+- **Symmetric inverters**: Per-phase household is less critical (symmetric path uses per-phase export which already reflects household). Still beneficial for consistency.
+- **Phase mapping**: Charger draws are already mapped to site phases. `get_site_phase_draw()` used in household computation for series mode.
+
+---
+
 ## Automatic L1/L2/L3 → A/B/C phase mapping detection
 **Status:** Not yet implemented (manual configuration available)
 **Complexity:** Medium

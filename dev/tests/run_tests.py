@@ -214,6 +214,24 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
     if site.battery_soc is not None:
         site.battery_power = -battery_per_phase * site.voltage * num_phases
 
+    # Update per-phase inverter output to reflect actual physical state.
+    # Parallel: inverter output = solar per phase (inverter only carries solar)
+    # Series: inverter output = household + charger draws per phase (all loads go through inverter)
+    if site.inverter_output_per_phase is not None:
+        if site.wiring_topology == 'parallel':
+            site.inverter_output_per_phase = PhaseValues(
+                solar_per_phase if household.a is not None else None,
+                solar_per_phase if household.b is not None else None,
+                solar_per_phase if household.c is not None else None,
+            )
+        else:
+            # Series: everything downstream goes through inverter
+            site.inverter_output_per_phase = PhaseValues(
+                ((household.a or 0) + charger_l1) if household.a is not None else None,
+                ((household.b or 0) + charger_l2) if household.b is not None else None,
+                ((household.c or 0) + charger_l3) if household.c is not None else None,
+            )
+
     return ct_a_net, ct_b_net, ct_c_net, solar_per_phase, battery_per_phase
 
 
@@ -263,6 +281,30 @@ def apply_feedback_adjustment(site):
             export_power = site.export_current.total * site.voltage
             bp = float(site.battery_power) if site.battery_power is not None else 0
             site.household_consumption_total = max(0, site.solar_production_total + bp - export_power)
+
+    # Per-phase household from inverter output entities
+    if site.inverter_output_per_phase is not None:
+        if site.wiring_topology == 'parallel':
+            # Parallel: household = grid_consumption + inverter_output - grid_export (after feedback)
+            def _hh_par(inv_out, cons, exp):
+                if cons is None:
+                    return None
+                return max(0, (cons or 0) + (inv_out or 0) - (exp or 0))
+            hh_a = _hh_par(site.inverter_output_per_phase.a, site.consumption.a, site.export_current.a)
+            hh_b = _hh_par(site.inverter_output_per_phase.b, site.consumption.b, site.export_current.b)
+            hh_c = _hh_par(site.inverter_output_per_phase.c, site.consumption.c, site.export_current.c)
+        else:
+            # Series: household = inverter_output - charger_draws (per phase)
+            ch_a = ch_b = ch_c = 0.0
+            for c in site.chargers:
+                a_d, b_d, c_d = c.get_site_phase_draw()
+                ch_a += a_d
+                ch_b += b_d
+                ch_c += c_d
+            hh_a = max(0, (site.inverter_output_per_phase.a or 0) - ch_a) if site.consumption.a is not None else None
+            hh_b = max(0, (site.inverter_output_per_phase.b or 0) - ch_b) if site.consumption.b is not None else None
+            hh_c = max(0, (site.inverter_output_per_phase.c or 0) - ch_c) if site.consumption.c is not None else None
+        site.household_consumption = PhaseValues(hh_a, hh_b, hh_c)
 
 
 def check_stability(history, tolerance=0.5):
@@ -341,7 +383,29 @@ def build_site_from_scenario(scenario):
         inverter_max_power=site_data.get('inverter_max_power'),
         inverter_max_power_per_phase=site_data.get('inverter_max_power_per_phase'),
         inverter_supports_asymmetric=site_data.get('inverter_supports_asymmetric', False),
+        wiring_topology=site_data.get('wiring_topology', 'parallel'),
     )
+
+    # Per-phase inverter output: explicit values or auto-derived from simulation
+    inv_out_a = site_data.get('inverter_output_phase_a')
+    inv_out_b = site_data.get('inverter_output_phase_b')
+    inv_out_c = site_data.get('inverter_output_phase_c')
+    inverter_output_sensors = site_data.get('inverter_output_sensors', False)
+
+    if inv_out_a is not None:
+        # Explicit per-phase values provided in YAML
+        site.inverter_output_per_phase = PhaseValues(inv_out_a, inv_out_b, inv_out_c)
+    elif inverter_output_sensors:
+        # Auto-derive per-phase inverter output during simulation.
+        # Auto-detect wiring topology: series for battery sites, parallel otherwise
+        if 'wiring_topology' not in site_data:
+            site.wiring_topology = 'series' if site.battery_soc is not None else 'parallel'
+        # Initialize with zeros for active phases (simulate_grid_ct updates each cycle)
+        site.inverter_output_per_phase = PhaseValues(
+            0.0 if phase_a_cons is not None else None,
+            0.0 if phase_b_cons is not None else None,
+            0.0 if phase_c_cons is not None else None,
+        )
 
     # Set site-level charging mode (first charger's mode, or from site if specified)
     if 'charging_mode' in site_data:

@@ -137,6 +137,17 @@
     - **Phase mapping feature**: New `CONF_CHARGER_L1_PHASE`, `CONF_CHARGER_L2_PHASE`, `CONF_CHARGER_L3_PHASE` constants. `ChargerContext` gets `l1_phase`/`l2_phase`/`l3_phase` fields with `get_site_phase_draw()` helper. `active_phases_mask` now derived from mapping. Feedback loop in `dynamic_ocpp_evse.py` uses phase mapping instead of assuming L1=A. Test simulation (`run_tests.py`) updated with phase mapping support. 3 phase mapping test scenarios.
     - Files: `const.py`, `models.py`, `config_flow.py`, `dynamic_ocpp_evse.py`, `en.json`, `sl.json`, `run_tests.py`, `test_config_flow.py`, `test_config_flow_e2e.py`, `conftest.py`.
 
+44. - [x] **Per-phase inverter output entities + wiring topology** — Fixed asymmetric inverter over-allocation (2 failing test scenarios) by adding per-phase inverter output entity support. Changes:
+    - `const.py`: 7 new constants (`CONF_INVERTER_OUTPUT_PHASE_A/B/C_ENTITY_ID`, `CONF_WIRING_TOPOLOGY`, `WIRING_TOPOLOGY_PARALLEL/SERIES`, `DEFAULT_WIRING_TOPOLOGY`).
+    - `models.py`: 3 new `SiteContext` fields (`household_consumption: PhaseValues`, `wiring_topology: str`, `inverter_output_per_phase: PhaseValues`).
+    - `target_calculator.py`: New `_get_household_per_phase()` helper with 3-tier fallback (per-phase inverter entities → single solar uniform → CT consumption). Updated 3 asymmetric paths (`_calculate_solar_surplus`, `_calculate_inverter_limit`, `_calculate_excess_available`) to subtract per-phase household from `max_per_phase`.
+    - `config_flow.py`: Extended inverter step with 3 optional entity selectors + topology dropdown. Auto-detection patterns for SolarEdge, Solarman/Deye, Fronius/Huawei. Normalization + all 3 flows (initial, reconfigure, options).
+    - `dynamic_ocpp_evse.py`: Reads 3 inverter output entities with auto-detect A vs W unit conversion. Computes per-phase household via parallel/series formulas after feedback adjustment.
+    - `run_tests.py`: `inverter_output_sensors: true` YAML flag auto-derives per-phase inverter output with auto-topology detection (series for battery sites, parallel for non-battery).
+    - Translations (en.json + sl.json): New inverter step labels in all 3 sections.
+    - `test_config_flow_e2e.py`: Updated hub inverter step inputs with new fields.
+    - 70/70 pure Python + 57/57 WSL integration tests passing.
+
 ## In Progress
 
 ## Backlog
