@@ -133,62 +133,69 @@ def set_charger_phase_currents(charger, commanded_limit):
         charger.l3_current = commanded_limit
 
 
-def compute_battery_grid_effect(site):
-    """Compute battery's per-phase effect on the grid CT reading.
-
-    Returns current in Amps per phase:
-      positive = battery charging (increases grid import)
-      negative = battery discharging (decreases grid import)
-      0 = idle or no battery configured
-
-    Uses the same simplification as the engine: charge/discharge at max power
-    when SOC is below/above target.
-    """
-    if (site.battery_soc is None or site.battery_soc_target is None
-            or site.battery_soc_target == 0):
-        return 0.0
-    num_phases = site.num_phases or 1
-    if site.battery_soc < site.battery_soc_target:
-        charge = site.battery_max_charge_power or 0
-        return (charge / site.voltage / num_phases) if charge > 0 else 0.0
-    elif site.battery_soc > site.battery_soc_target:
-        discharge = site.battery_max_discharge_power or 0
-        return -(discharge / site.voltage / num_phases) if discharge > 0 else 0.0
-    return 0.0
+BATTERY_FULL_SOC = 97  # Battery considered full above this SOC
 
 
 def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
-    """Compute grid CT readings from physical inputs.
+    """Compute grid CT readings using self-consumption battery model.
 
-    Grid CT measures: net = household - solar_per_phase + battery_per_phase + charger_draw
-    Positive net = importing from grid, negative net = exporting to grid.
-    Then decomposed for the engine: consumption = max(0, net), export = max(0, -net).
+    Physical model:
+    1. Raw demand per phase = household - solar + charger_draw
+    2. Battery responds to minimize grid flow (self-consumption):
+       - Deficit (raw > 0): discharges min(deficit, max_discharge) if SOC > min_soc
+       - Surplus (raw < 0): charges min(surplus, max_charge) if SOC < 97%
+    3. Grid CT = raw demand + battery effect
 
-    Updates site.consumption and site.export_current.
-    solar_production_total is NOT changed — the engine needs the actual
-    production value for inverter limit calculations.
+    Positive net = importing, negative net = exporting.
+    Decomposed for engine: consumption = max(0, net), export = max(0, -net).
+    solar_production_total is NOT changed.
 
-    Returns (ct_net_a, ct_net_b, ct_net_c, solar_per_phase) for trace output.
+    Returns (ct_net_a, ct_net_b, ct_net_c, solar_per_phase, battery_per_phase).
     """
     num_phases = household.active_count or 1
     solar_per_phase = (site.solar_production_total / num_phases / site.voltage
                        if site.solar_production_total and site.voltage else 0.0)
-    battery_per_phase = compute_battery_grid_effect(site)
 
-    def _ct(household_a, solar_pp, bat_pp, charger_draw):
-        if household_a is None:
+    # Raw demand per phase (without battery)
+    def _raw(h, draw):
+        return (h - solar_per_phase + draw) if h is not None else None
+
+    raw_a = _raw(household.a, charger_l1)
+    raw_b = _raw(household.b, charger_l2)
+    raw_c = _raw(household.c, charger_l3)
+
+    # Total raw demand across active phases
+    total_raw = sum(v for v in [raw_a, raw_b, raw_c] if v is not None)
+
+    # Self-consumption battery: buffer to minimize grid flow
+    battery_per_phase = 0.0
+    if site.battery_soc is not None:
+        if total_raw > 0 and site.battery_soc > (site.battery_soc_min or 0):
+            # Deficit: battery discharges to cover it
+            max_discharge = (site.battery_max_discharge_power or 0) / site.voltage
+            discharge = min(total_raw, max_discharge)
+            battery_per_phase = -(discharge / num_phases)
+        elif total_raw < 0 and site.battery_soc < BATTERY_FULL_SOC:
+            # Surplus: battery charges from it
+            max_charge = (site.battery_max_charge_power or 0) / site.voltage
+            charge = min(abs(total_raw), max_charge)
+            battery_per_phase = charge / num_phases
+
+    # Grid CT = raw + battery effect
+    def _ct(raw_val):
+        if raw_val is None:
             return None, None, None
-        net = household_a - solar_pp + bat_pp + charger_draw
+        net = raw_val + battery_per_phase
         return net, max(0.0, net), max(0.0, -net)
 
-    ct_a_net, ct_a_cons, ct_a_exp = _ct(household.a, solar_per_phase, battery_per_phase, charger_l1)
-    ct_b_net, ct_b_cons, ct_b_exp = _ct(household.b, solar_per_phase, battery_per_phase, charger_l2)
-    ct_c_net, ct_c_cons, ct_c_exp = _ct(household.c, solar_per_phase, battery_per_phase, charger_l3)
+    ct_a_net, ct_a_cons, ct_a_exp = _ct(raw_a)
+    ct_b_net, ct_b_cons, ct_b_exp = _ct(raw_b)
+    ct_c_net, ct_c_cons, ct_c_exp = _ct(raw_c)
 
     site.consumption = PhaseValues(ct_a_cons, ct_b_cons, ct_c_cons)
     site.export_current = PhaseValues(ct_a_exp, ct_b_exp, ct_c_exp)
 
-    return ct_a_net, ct_b_net, ct_c_net, solar_per_phase
+    return ct_a_net, ct_b_net, ct_c_net, solar_per_phase, battery_per_phase
 
 
 def apply_feedback_adjustment(site):
@@ -280,7 +287,10 @@ def build_site_from_scenario(scenario):
         consumption=PhaseValues(phase_a_cons, phase_b_cons, phase_c_cons),
         export_current=PhaseValues(phase_a_export, phase_b_export, phase_c_export),
         solar_production_total=solar_total,
-        solar_is_derived=True,
+        # Battery systems need a dedicated solar entity (solar_is_derived=False)
+        # because self-consumption masks export. Non-battery systems use derived
+        # solar (export = surplus) which works without a dedicated entity.
+        solar_is_derived=(site_data.get('battery_soc') is None),
         battery_soc=site_data.get('battery_soc'),
         battery_soc_min=site_data.get('battery_soc_min', 20),
         battery_soc_target=site_data.get('battery_soc_target', 80),
@@ -388,11 +398,19 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         charger_l1 = sum(c.l1_current for c in site.chargers)
         charger_l2 = sum(c.l2_current for c in site.chargers)
         charger_l3 = sum(c.l3_current for c in site.chargers)
-        ct_a_net, ct_b_net, ct_c_net, solar_pp = simulate_grid_ct(
+        ct_a_net, ct_b_net, ct_c_net, solar_pp, bat_pp = simulate_grid_ct(
             site, household, charger_l1, charger_l2, charger_l3)
 
         # 5. Apply feedback: subtract charger draws (replicates dynamic_ocpp_evse.py)
         apply_feedback_adjustment(site)
+
+        # 5b. For non-derived solar (battery scenarios with dedicated solar entity):
+        # Restore true household consumption. The feedback loop zeros out
+        # consumption when charger draws > grid import, but the non-derived
+        # engine path needs real household consumption for surplus = solar - consumption.
+        # In derived mode this is unnecessary: the engine uses export directly.
+        if not site.solar_is_derived:
+            site.consumption = PhaseValues(household.a, household.b, household.c)
 
         # 6. Run calculation engine
         calculate_all_charger_targets(site)
@@ -426,9 +444,8 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
                 inv_b = f"{solar_pp:.1f}A" if household.b is not None else "-"
                 inv_c = f"{solar_pp:.1f}A" if household.c is not None else "-"
                 inv_detail = f"solar={site.solar_production_total:.0f}W"
-                bat_effect = compute_battery_grid_effect(site)
-                if bat_effect != 0:
-                    bat_watts = bat_effect * site.voltage * (household.active_count or 1)
+                if bat_pp != 0:
+                    bat_watts = bat_pp * site.voltage * (household.active_count or 1)
                     inv_detail += f" bat={bat_watts:+.0f}W"
                 inv_str = f"inverter=({inv_a}/{inv_b}/{inv_c} {inv_detail})"
                 # Household load from YAML
@@ -438,9 +455,9 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
                 # Battery: per-phase current in (A/B/C) format + SOC
                 bat_str = ""
                 if site.battery_soc is not None:
-                    ba = _fmt_signed(bat_effect) if household.a is not None else "-"
-                    bb = _fmt_signed(bat_effect) if household.b is not None else "-"
-                    bc = _fmt_signed(bat_effect) if household.c is not None else "-"
+                    ba = _fmt_signed(bat_pp) if household.a is not None else "-"
+                    bb = _fmt_signed(bat_pp) if household.b is not None else "-"
+                    bc = _fmt_signed(bat_pp) if household.c is not None else "-"
                     bat_str = f"bat=({ba}/{bb}/{bc} soc={site.battery_soc:.0f}%)"
                 line += f"  | {grid_str} {inv_str} {house_str} {ch_sum_str}"
                 if bat_str:
