@@ -91,7 +91,7 @@ The integration will automatically detect and suggest appropriate sensors based 
 4. **Battery Configuration** (optional): Set up battery SOC, power sensors, and charge/discharge limits
 5. **Charging Parameters**: Set minimum and maximum charging currents
 
-Most fields should auto-populate during setup. If they do not, please report that, with the ids of entities that should be selected, so i can improve searching.
+Most fields should auto-populate during setup. If they do not, please report that, with the ids of entities that should be selected, so I can improve searching.
 
 **Important**: Generally, the EVSE has some charge profiles set, and those might not be compatible with the ones this integration creates. After first install, call the reset_ocpp_evse action via the **Reset OCPP EVSE** button.
 
