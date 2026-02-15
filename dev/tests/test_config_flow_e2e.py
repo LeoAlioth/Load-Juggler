@@ -29,6 +29,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     CONF_EXCESS_EXPORT_THRESHOLD,
+    CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
@@ -44,6 +45,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_CHARGER_PRIORITY,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
+    CONF_CHARGER_L1_PHASE,
+    CONF_CHARGER_L2_PHASE,
+    CONF_CHARGER_L3_PHASE,
     CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
     CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
     CONF_CHARGE_RATE_UNIT,
@@ -72,7 +76,7 @@ from custom_components.dynamic_ocpp_evse.const import (
 
 
 async def test_hub_creation_full_flow(hass: HomeAssistant):
-    """Walk through user → hub_info → hub_grid → hub_battery and verify the created entry."""
+    """Walk through user → hub_info → hub_grid → hub_inverter → hub_battery and verify the created entry."""
 
     # Provide mock sensor entities so the entity selector can find them
     hass.states.async_set(
@@ -140,29 +144,30 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
         },
     )
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_battery"
-
-    # Step 4: hub_battery → provide battery settings
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
-            CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
-            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
-            CONF_BATTERY_SOC_HYSTERESIS: 3,
-        },
-    )
-    assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_inverter"
 
-    # Step 5: hub_inverter → provide inverter settings → creates entry
+    # Step 4: hub_inverter → provide inverter settings
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             CONF_INVERTER_MAX_POWER: 10000,
             CONF_INVERTER_MAX_POWER_PER_PHASE: 4000,
             CONF_INVERTER_SUPPORTS_ASYMMETRIC: True,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "hub_battery"
+
+    # Step 5: hub_battery → provide battery settings → creates entry
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "",
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_BATTERY_SOC_HYSTERESIS: 3,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -226,20 +231,6 @@ async def test_hub_creation_single_phase(hass: HomeAssistant):
             CONF_EXCESS_EXPORT_THRESHOLD: 5000,
         },
     )
-    assert result["step_id"] == "hub_battery"
-
-    # No battery
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_BATTERY_SOC_ENTITY_ID: "",
-            CONF_BATTERY_POWER_ENTITY_ID: "",
-            CONF_BATTERY_MAX_CHARGE_POWER: 0,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: 0,
-            CONF_BATTERY_SOC_HYSTERESIS: 3,
-        },
-    )
-    assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_inverter"
 
     # No inverter limits
@@ -249,6 +240,21 @@ async def test_hub_creation_single_phase(hass: HomeAssistant):
             CONF_INVERTER_MAX_POWER: 0,
             CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
             CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "hub_battery"
+
+    # No battery
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "",
+            CONF_BATTERY_SOC_ENTITY_ID: "",
+            CONF_BATTERY_POWER_ENTITY_ID: "",
+            CONF_BATTERY_MAX_CHARGE_POWER: 0,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 0,
+            CONF_BATTERY_SOC_HYSTERESIS: 3,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -276,7 +282,7 @@ async def test_charger_discovery_creates_entry(
     mock_hub_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test charger creation through integration discovery source."""
+    """Test charger creation through integration discovery source (3 steps)."""
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
@@ -287,7 +293,7 @@ async def test_charger_discovery_creates_entry(
         {"device_class": "current", "unit_of_measurement": "A"},
     )
 
-    # Discovery triggers charger_config directly
+    # Discovery triggers charger_info
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": "integration_discovery"},
@@ -301,15 +307,38 @@ async def test_charger_discovery_creates_entry(
         },
     )
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "charger_config"
+    assert result["step_id"] == "charger_info"
 
-    # Submit charger settings
+    # Step 1: charger_info — name, entity_id, priority
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
+            CONF_NAME: "Wallbox Pro",
+            CONF_ENTITY_ID: "wallbox",
             CONF_CHARGER_PRIORITY: 1,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger_current"
+
+    # Step 2: charger_current — current limits and phase mapping
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 32,
+            CONF_CHARGER_L1_PHASE: "A",
+            CONF_CHARGER_L2_PHASE: "B",
+            CONF_CHARGER_L3_PHASE: "C",
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger_timing"
+
+    # Step 3: charger_timing — creates entry
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
             CONF_CHARGE_RATE_UNIT: "A",
             CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
             CONF_UPDATE_FREQUENCY: 10,
@@ -355,21 +384,37 @@ async def test_charger_discovery_duplicate_aborts(
         "current_offered_entity": "sensor.wallbox_current_offered",
     }
 
-    # First discovery → charger_config form
+    # First discovery → charger_info form
     result1 = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": "integration_discovery"},
         data=discovery_data,
     )
     assert result1["type"] == FlowResultType.FORM
+    assert result1["step_id"] == "charger_info"
 
-    # Complete first charger
+    # Complete first charger (3 steps)
     result1 = await hass.config_entries.flow.async_configure(
         result1["flow_id"],
         user_input={
+            CONF_NAME: "Wallbox Dup",
+            CONF_ENTITY_ID: "wallbox_dup",
             CONF_CHARGER_PRIORITY: 1,
+        },
+    )
+    result1 = await hass.config_entries.flow.async_configure(
+        result1["flow_id"],
+        user_input={
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+            CONF_CHARGER_L1_PHASE: "A",
+            CONF_CHARGER_L2_PHASE: "B",
+            CONF_CHARGER_L3_PHASE: "C",
+        },
+    )
+    result1 = await hass.config_entries.flow.async_configure(
+        result1["flow_id"],
+        user_input={
             CONF_CHARGE_RATE_UNIT: "A",
             CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
             CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
@@ -401,7 +446,7 @@ async def test_options_flow_hub_saves_changes(
 ):
     """Test that submitting hub options actually updates the config entry.
 
-    The hub options flow has two steps: hub_grid (electrical) → hub (battery).
+    The hub options flow has three steps: hub_grid → hub_inverter → hub (battery).
     """
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
@@ -450,22 +495,7 @@ async def test_options_flow_hub_saves_changes(
         },
     )
 
-    # Step 2: hub (battery settings)
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub"
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
-            CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
-            CONF_BATTERY_MAX_CHARGE_POWER: 7000,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: 7000,
-            CONF_BATTERY_SOC_HYSTERESIS: 5,
-        },
-    )
-
-    # Step 3: hub_inverter (inverter settings)
+    # Step 2: hub_inverter (inverter settings)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_inverter"
 
@@ -475,6 +505,22 @@ async def test_options_flow_hub_saves_changes(
             CONF_INVERTER_MAX_POWER: 8000,
             CONF_INVERTER_MAX_POWER_PER_PHASE: 3000,
             CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
+        },
+    )
+
+    # Step 3: hub (battery settings) — saves
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "hub"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "",
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
+            CONF_BATTERY_MAX_CHARGE_POWER: 7000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 7000,
+            CONF_BATTERY_SOC_HYSTERESIS: 5,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -494,7 +540,7 @@ async def test_options_flow_charger_saves_changes(
     mock_charger_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test that submitting charger options updates the config entry."""
+    """Test that submitting charger options updates the config entry (3 steps)."""
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
@@ -503,17 +549,40 @@ async def test_options_flow_charger_saves_changes(
     await hass.config_entries.async_setup(mock_charger_entry.entry_id)
     await hass.async_block_till_done()
 
+    # Step 1: charger (priority only)
     result = await hass.config_entries.options.async_init(mock_charger_entry.entry_id)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger"
 
-    # Submit new charger settings
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
             CONF_CHARGER_PRIORITY: 2,
+        },
+    )
+
+    # Step 2: charger_current
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger_current"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 8,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 32,
+            CONF_CHARGER_L1_PHASE: "A",
+            CONF_CHARGER_L2_PHASE: "B",
+            CONF_CHARGER_L3_PHASE: "C",
+        },
+    )
+
+    # Step 3: charger_timing — saves
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger_timing"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
             CONF_CHARGE_RATE_UNIT: "A",
             CONF_PROFILE_VALIDITY_MODE: "absolute",
             CONF_UPDATE_FREQUENCY: 30,
@@ -536,7 +605,7 @@ async def test_options_flow_charger_validates(
     mock_charger_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test that charger options flow validates min/max current."""
+    """Test that charger options flow validates min/max current on charger_current step."""
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
@@ -545,21 +614,30 @@ async def test_options_flow_charger_validates(
     await hass.config_entries.async_setup(mock_charger_entry.entry_id)
     await hass.async_block_till_done()
 
+    # Step 1: charger (priority)
     result = await hass.config_entries.options.async_init(mock_charger_entry.entry_id)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger"
 
-    # Submit invalid: min > max
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
             CONF_CHARGER_PRIORITY: 1,
+        },
+    )
+
+    # Step 2: charger_current — submit invalid: min > max
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger_current"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 32,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 6,
-            CONF_CHARGE_RATE_UNIT: "A",
-            CONF_PROFILE_VALIDITY_MODE: "relative",
-            CONF_UPDATE_FREQUENCY: 15,
-            CONF_OCPP_PROFILE_TIMEOUT: 120,
-            CONF_CHARGE_PAUSE_DURATION: 180,
-            CONF_STACK_LEVEL: 3,
+            CONF_CHARGER_L1_PHASE: "A",
+            CONF_CHARGER_L2_PHASE: "B",
+            CONF_CHARGER_L3_PHASE: "C",
         },
     )
     # Should re-show form with errors

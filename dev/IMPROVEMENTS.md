@@ -298,6 +298,37 @@ Battery discharge goes through the inverter. If solar already maxes out inverter
 
 ---
 
+## Automatic L1/L2/L3 → A/B/C phase mapping detection
+**Status:** Not yet implemented (manual configuration available)
+**Complexity:** Medium
+
+### Current State
+- Users manually configure L1→A, L2→B, L3→C mapping per charger in config flow
+- Default mapping assumes L1=A, L2=B, L3=C
+
+### Proposed Approach
+Automatically detect the physical phase mapping at runtime by correlating charger current changes with grid CT readings:
+
+1. When a charger starts drawing on L1, observe which site phase (A/B/C) CT reading increases
+2. Repeat for L2 and L3 by modulating charger current
+3. Build the mapping table from observed correlations
+
+### Technical Considerations
+- Requires the charger to be actively charging (can't detect mapping when idle)
+- Grid CT readings include household loads — need to filter out noise
+- Could run as a one-time calibration step or continuous background detection
+- May need statistical confidence threshold before applying mapping
+- Should only override manual config if user opts in
+
+### Implementation Steps (for future)
+1. Add "auto-detect" option to phase mapping config (alongside manual A/B/C dropdowns)
+2. Create detection routine that commands small current changes on specific OCPP phases
+3. Correlate grid CT delta with commanded phase to build mapping
+4. Store detected mapping in config entry options
+5. Add UI feedback showing detected vs configured mapping
+
+---
+
 ## ~~Adding an entity selection for actual solar power in the config_flow~~
 
 **Status:** Implemented (v2.0)

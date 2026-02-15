@@ -18,6 +18,7 @@ CONF_INVERT_PHASES = "invert_phases"
 CONF_MAX_IMPORT_POWER_ENTITY_ID = "max_import_power_entity_id"
 CONF_PHASE_VOLTAGE = "phase_voltage"
 CONF_EXCESS_EXPORT_THRESHOLD = "excess_export_threshold"  # Maximum allowed export before charging starts in Excess mode
+CONF_SOLAR_PRODUCTION_ENTITY_ID = "solar_production_entity_id"  # Optional direct solar production sensor (W)
 
 # Inverter configuration (hub-level)
 CONF_INVERTER_MAX_POWER = "inverter_max_power"  # Total inverter capacity (W)
@@ -66,6 +67,11 @@ CONF_PLUG_POWER_RATING = "plug_power_rating"  # Fixed power draw in watts
 CONF_PLUG_POWER_MONITOR_ENTITY_ID = "plug_power_monitor_entity_id"  # Optional power monitoring sensor
 CONF_CONNECTED_TO_PHASE = "connected_to_phase"  # Which phase(s) the device is wired to
 DEFAULT_PLUG_POWER_RATING = 2000
+
+# OCPP charger L1/L2/L3 → site phase mapping
+CONF_CHARGER_L1_PHASE = "charger_l1_phase"
+CONF_CHARGER_L2_PHASE = "charger_l2_phase"
+CONF_CHARGER_L3_PHASE = "charger_l3_phase"
 
 # sensor attributes
 CONF_PHASES = "phases"

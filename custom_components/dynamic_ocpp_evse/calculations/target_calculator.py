@@ -171,8 +171,13 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     apply to their combined output.
 
     Battery discharge is added when SOC >= battery_soc_min.
-    solar_current already reflects actual battery effects in the grid readings.
-    Adds the REMAINING discharge capacity (max - actual) to avoid double-counting.
+
+    In derived mode (solar from grid CT): solar_current already reflects battery
+    effects in the grid readings. Adds REMAINING discharge capacity to avoid
+    double-counting.
+
+    With dedicated solar entity: solar_current is the raw inverter output.
+    battery_power may not be available or embedded, so use full max_discharge.
 
     For ASYMMETRIC inverters: Solar+battery power can be allocated to any phase.
     For SYMMETRIC inverters: Solar+battery power is fixed per-phase.
@@ -185,14 +190,17 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     if (site.battery_soc is not None and
         site.battery_soc >= (site.battery_soc_min or 0) and
         site.battery_max_discharge_power):
-        if site.battery_power is not None:
-            # solar_current already includes the actual battery effect in
-            # grid readings. Add the REMAINING discharge capacity
-            # (max_discharge - actual_effect).
+        if site.solar_is_derived and site.battery_power is not None:
+            # Derived mode: solar_current includes actual battery effect.
+            # Add only the REMAINING discharge capacity.
             # battery_power: positive=discharging, negative=charging
             actual_effect = site.battery_power / site.voltage  # positive if already discharging
             max_discharge = site.battery_max_discharge_power / site.voltage
             battery_current = max(0, max_discharge - actual_effect)
+        elif not site.solar_is_derived:
+            # Dedicated solar entity: solar_current is raw inverter output,
+            # battery effect not embedded. Use full max discharge.
+            battery_current = site.battery_max_discharge_power / site.voltage
 
     # Total inverter output (solar + battery)
     total_inverter_current = solar_current + battery_current
@@ -309,11 +317,17 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
 
     # Limit discharge by inverter headroom
     if site.inverter_max_power and discharge_potential > 0:
-        export_total = site.export_current.total if site.export_current else 0
-        base_pool = export_total + charge_back
-        household = site.consumption.total or 0
-        estimated_solar = base_pool + household
-        inverter_headroom = max(0, (site.inverter_max_power / site.voltage) - estimated_solar)
+        inverter_max_current = site.inverter_max_power / site.voltage
+        if site.household_consumption_total is not None:
+            # Accurate: solar entity provides true household consumption
+            estimated_solar = site.solar_production_total / site.voltage
+        else:
+            # Estimate from CT readings (derived mode)
+            export_total = site.export_current.total if site.export_current else 0
+            base_pool = export_total + charge_back
+            household = site.consumption.total or 0
+            estimated_solar = base_pool + household
+        inverter_headroom = max(0, inverter_max_current - estimated_solar)
         discharge_potential = min(discharge_potential, inverter_headroom)
 
     battery_adjustment_total = charge_back + discharge_potential
@@ -339,7 +353,11 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
     # Apply total inverter limit if configured, accounting for household
     if site.inverter_max_power:
         max_total = site.inverter_max_power / site.voltage
-        household = site.consumption.total or 0
+        if site.household_consumption_total is not None:
+            # Accurate household from solar entity + battery + CT energy balance
+            household = site.household_consumption_total / site.voltage
+        else:
+            household = site.consumption.total or 0
         max_for_chargers = max(0, max_total - household)
         if constraints.ABC > max_for_chargers:
             constraints = constraints.scale(max_for_chargers / constraints.ABC)

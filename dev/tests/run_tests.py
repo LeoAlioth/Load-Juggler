@@ -118,18 +118,24 @@ def _fmt_phase(value):
 
 
 def set_charger_phase_currents(charger, commanded_limit):
-    """Set charger l1/l2/l3_current from commanded limit based on phase mask."""
+    """Set charger l1/l2/l3_current from commanded limit based on phase mapping.
+
+    Uses the charger's L1/L2/L3 → site phase mapping (l1_phase, l2_phase, l3_phase)
+    to determine which OCPP phases are active. L1 is always used; L2/L3 depend on
+    the charger's active_phases_mask containing the corresponding site phases.
+    """
     charger.l1_current = 0
     charger.l2_current = 0
     charger.l3_current = 0
     if commanded_limit <= 0:
         return
     mask = (charger.active_phases_mask or "").upper()
-    if "A" in mask:
+    # L1 is always active if its mapped site phase is in the mask
+    if charger.l1_phase in mask:
         charger.l1_current = commanded_limit
-    if "B" in mask:
+    if charger.l2_phase in mask:
         charger.l2_current = commanded_limit
-    if "C" in mask:
+    if charger.l3_phase in mask:
         charger.l3_current = commanded_limit
 
 
@@ -214,14 +220,23 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
 def apply_feedback_adjustment(site):
     """Replicate dynamic_ocpp_evse.py feedback loop.
 
-    Subtracts charger l1/l2/l3_current from grid CT readings to recover
-    the true household consumption/export before charger was drawing.
-    In derived mode, recalculates solar_production_total from adjusted export
-    (matches production code behavior).
+    Subtracts charger draws from grid CT readings (mapped to site phases via
+    get_site_phase_draw()) to recover the true household consumption/export
+    before charger was drawing.
+    In derived mode, recalculates solar_production_total from adjusted export.
+    In dedicated solar entity mode, computes household_consumption_total instead.
     """
-    total_l1 = sum(c.l1_current for c in site.chargers)
-    total_l2 = sum(c.l2_current for c in site.chargers)
-    total_l3 = sum(c.l3_current for c in site.chargers)
+    # Use phase mapping to get site-phase draws (A, B, C)
+    total_phase_a = total_phase_b = total_phase_c = 0.0
+    for c in site.chargers:
+        a_draw, b_draw, c_draw = c.get_site_phase_draw()
+        total_phase_a += a_draw
+        total_phase_b += b_draw
+        total_phase_c += c_draw
+
+    total_l1 = total_phase_a
+    total_l2 = total_phase_b
+    total_l3 = total_phase_c
 
     if total_l1 > 0 or total_l2 > 0 or total_l3 > 0:
         def _adjust(cons, exp, draw):
@@ -238,9 +253,16 @@ def apply_feedback_adjustment(site):
         site.consumption = PhaseValues(adj_a_cons, adj_b_cons, adj_c_cons)
         site.export_current = PhaseValues(adj_a_exp, adj_b_exp, adj_c_exp)
 
-    # Recalculate solar_production_total from adjusted export.
-    # Matches production code: dynamic_ocpp_evse.py feedback loop.
-    site.solar_production_total = site.export_current.total * site.voltage
+    # Derived mode: recalculate solar_production_total from adjusted export.
+    if site.solar_is_derived:
+        site.solar_production_total = site.export_current.total * site.voltage
+    else:
+        # Dedicated solar entity mode: compute household_consumption_total
+        # via energy balance: household = solar + battery_power - export
+        if site.solar_production_total > 0:
+            export_power = site.export_current.total * site.voltage
+            bp = float(site.battery_power) if site.battery_power is not None else 0
+            site.household_consumption_total = max(0, site.solar_production_total + bp - export_power)
 
 
 def check_stability(history, tolerance=0.5):
@@ -298,12 +320,16 @@ def build_site_from_scenario(scenario):
     phase_b_export = 0.0 if phase_b_cons is not None else None
     phase_c_export = 0.0 if phase_c_cons is not None else None
 
+    # Solar entity mode: solar_production_direct means user has a dedicated sensor
+    solar_is_derived = not site_data.get('solar_production_direct', False)
+
     site = SiteContext(
         voltage=voltage,
         main_breaker_rating=site_data.get('main_breaker_rating', 63),
         consumption=PhaseValues(phase_a_cons, phase_b_cons, phase_c_cons),
         export_current=PhaseValues(phase_a_export, phase_b_export, phase_c_export),
         solar_production_total=solar_total,
+        solar_is_derived=solar_is_derived,
         battery_soc=site_data.get('battery_soc'),
         battery_soc_min=site_data.get('battery_soc_min', 20),
         battery_soc_target=site_data.get('battery_soc_target', 80),
@@ -360,6 +386,9 @@ def build_site_from_scenario(scenario):
             device_type=device_type,
             car_phases=charger_data.get("car_phases"),
             active_phases_mask=active_phases_mask,
+            l1_phase=charger_data.get("l1_phase", "A"),
+            l2_phase=charger_data.get("l2_phase", "B"),
+            l3_phase=charger_data.get("l3_phase", "C"),
             connector_status=charger_data.get("connector_status",
                                               "Available" if charger_data.get("active") is False else "Charging"),
             l1_current=charger_data.get("l1_current", 0),
@@ -442,13 +471,21 @@ def print_scenario_params(scenario):
         status = ch.get('connector_status', 'Charging' if ch.get('active') is not False else 'Available')
         mask = ch.get('active_phases_mask') or ch.get('connected_to_phase') or ('ABC' if phases == 3 else 'AB' if phases == 2 else '?')
 
+        # Phase mapping (only show if non-default)
+        l1p = ch.get('l1_phase', 'A')
+        l2p = ch.get('l2_phase', 'B')
+        l3p = ch.get('l3_phase', 'C')
+        phase_map_str = ""
+        if l1p != 'A' or l2p != 'B' or l3p != 'C':
+            phase_map_str = f" map=L1→{l1p}/L2→{l2p}/L3→{l3p}"
+
         if dev_type == 'plug':
             power = ch.get('power_rating', 2000)
-            print(f"  Charger {eid}: plug {power}W {phases}ph mask={mask} prio={priority} [{status}]")
+            print(f"  Charger {eid}: plug {power}W {phases}ph mask={mask} prio={priority}{phase_map_str} [{status}]")
         else:
             min_c = ch.get('min_current', 6)
             max_c = ch.get('max_current', 16)
-            print(f"  Charger {eid}: {min_c}-{max_c}A {phases}ph mask={mask} prio={priority} [{status}]")
+            print(f"  Charger {eid}: {min_c}-{max_c}A {phases}ph mask={mask} prio={priority}{phase_map_str} [{status}]")
 
     # Expected
     expected = scenario.get('expected', {})
@@ -495,11 +532,15 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
 
         # 4. Compute grid CT values from physical inputs
         #    net = household - solar_per_phase + battery_per_phase + charger_draw
-        charger_l1 = sum(c.l1_current for c in site.chargers)
-        charger_l2 = sum(c.l2_current for c in site.chargers)
-        charger_l3 = sum(c.l3_current for c in site.chargers)
+        #    Map charger L1/L2/L3 draws to site phases A/B/C via phase mapping
+        charger_phase_a = charger_phase_b = charger_phase_c = 0.0
+        for c in site.chargers:
+            a_draw, b_draw, c_draw = c.get_site_phase_draw()
+            charger_phase_a += a_draw
+            charger_phase_b += b_draw
+            charger_phase_c += c_draw
         ct_a_net, ct_b_net, ct_c_net, solar_pp, bat_pp = simulate_grid_ct(
-            site, household, charger_l1, charger_l2, charger_l3)
+            site, household, charger_phase_a, charger_phase_b, charger_phase_c)
 
         # 5. Apply feedback: subtract charger draws (replicates dynamic_ocpp_evse.py)
         apply_feedback_adjustment(site)
@@ -542,8 +583,8 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
                 inv_str = f"inverter=({inv_a}/{inv_b}/{inv_c} {inv_detail})"
                 # Household load from YAML
                 house_str = f"house=({_fmt_phase(household.a)}/{_fmt_phase(household.b)}/{_fmt_phase(household.c)})"
-                # Sum of charger draws per phase
-                ch_sum_str = f"ch_sum=({charger_l1:.1f}/{charger_l2:.1f}/{charger_l3:.1f})"
+                # Sum of charger draws per site phase (mapped from L1/L2/L3)
+                ch_sum_str = f"ch_sum=({charger_phase_a:.1f}/{charger_phase_b:.1f}/{charger_phase_c:.1f})"
                 # Battery: per-phase current in (A/B/C) format + SOC
                 bat_str = ""
                 if site.battery_soc is not None:

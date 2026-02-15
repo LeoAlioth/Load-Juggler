@@ -106,7 +106,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 - Electrical: voltage, num_phases, main_breaker_rating
 - Per-phase: consumption (PhaseValues), export_current (PhaseValues), grid_current (PhaseValues)
-- Solar: solar_production_total (always derived from grid CT export)
+- Solar: solar_production_total (derived from grid CT export, or from dedicated entity), solar_is_derived, household_consumption_total
 - Derived: total_export_current, total_export_power (computed properties)
 - Battery: battery_soc, battery_soc_min, battery_soc_target, battery_max_charge/discharge_power
 - Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric
@@ -242,6 +242,7 @@ Scenario files in `dev/tests/scenarios/`:
 - `test_scenarios_1ph_battery.yaml` — Single-phase with battery
 - `test_scenarios_3ph.yaml` — Three-phase scenarios
 - `test_scenarios_3ph_battery.yaml` — Three-phase with battery
+- `test_scenarios_solar_entity.yaml` — Direct solar production entity (inverter limit enforcement)
 
 ### HA Integration Tests (WSL/Linux)
 

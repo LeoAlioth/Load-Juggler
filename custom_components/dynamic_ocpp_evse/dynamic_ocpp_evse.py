@@ -106,8 +106,13 @@ def run_hub_calculation(sensor):
     total_export_current = export_pv.total
     total_export_power = total_export_current * voltage if voltage > 0 else 0
 
-    # Solar production: always derived from grid meter export
-    solar_production_total = total_export_power
+    # Solar production: use dedicated entity if configured, otherwise derive from grid meter
+    solar_production_entity = get_entry_value(hub_entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
+    solar_is_derived = not solar_production_entity
+    if solar_production_entity:
+        solar_production_total = _read_entity(solar_production_entity, 0)
+    else:
+        solar_production_total = total_export_power
 
     # --- Read battery data from HA entities ---
     battery_soc_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
@@ -156,11 +161,11 @@ def run_hub_calculation(sensor):
 
     _LOGGER.debug(
         "Hub state read: phases=%d, phase_a=%sA (entity=%s), phase_b=%sA, phase_c=%sA, "
-        "export=%.1fA, battery_soc=%s, mode=%s, dist=%s",
+        "export=%.1fA, battery_soc=%s, mode=%s, dist=%s, solar_is_derived=%s",
         consumption_pv.active_count, raw_phase_a, phase_a_entity, raw_phase_b, raw_phase_c,
-        total_export_current, battery_soc, charging_mode, distribution_mode
+        total_export_current, battery_soc, charging_mode, distribution_mode, solar_is_derived
     )
-    
+
     # Build site context
     site = SiteContext(
         voltage=voltage,
@@ -169,6 +174,7 @@ def run_hub_calculation(sensor):
         consumption=PhaseValues(phase_a_consumption, phase_b_consumption, phase_c_consumption),
         export_current=PhaseValues(phase_a_export_current, phase_b_export_current, phase_c_export_current),
         solar_production_total=solar_production_total,
+        solar_is_derived=solar_is_derived,
         battery_soc=float(battery_soc) if battery_soc is not None else None,
         battery_power=float(battery_power) if battery_power is not None else None,
         battery_soc_min=float(battery_soc_min) if battery_soc_min is not None else None,
@@ -288,6 +294,11 @@ def run_hub_calculation(sensor):
             connector_status_state = hass.states.get(connector_status_entity)
             connector_status = connector_status_state.state if connector_status_state else "Unknown"
 
+            # Read L1/L2/L3 → site phase mapping
+            l1_phase = get_entry_value(entry, CONF_CHARGER_L1_PHASE, "A")
+            l2_phase = get_entry_value(entry, CONF_CHARGER_L2_PHASE, "B")
+            l3_phase = get_entry_value(entry, CONF_CHARGER_L3_PHASE, "C")
+
             charger = ChargerContext(
                 charger_id=entry.entry_id,
                 entity_id=charger_entity_id,
@@ -296,6 +307,9 @@ def run_hub_calculation(sensor):
                 phases=phases,
                 priority=priority,
                 connector_status=connector_status,
+                l1_phase=l1_phase,
+                l2_phase=l2_phase,
+                l3_phase=l3_phase,
             )
             
             _LOGGER.debug(
@@ -340,11 +354,15 @@ def run_hub_calculation(sensor):
     # We reconstruct the raw grid current, subtract charger draws, then re-split
     # into consumption/export — this correctly reveals hidden export on phases
     # where the charger was consuming solar surplus.
-    total_charger_l1 = sum(c.l1_current for c in site.chargers)
-    total_charger_l2 = sum(c.l2_current for c in site.chargers)
-    total_charger_l3 = sum(c.l3_current for c in site.chargers)
+    # Map charger L1/L2/L3 draws to site phases A/B/C using phase mapping
+    total_phase_a = total_phase_b = total_phase_c = 0.0
+    for c in site.chargers:
+        a_draw, b_draw, c_draw = c.get_site_phase_draw()
+        total_phase_a += a_draw
+        total_phase_b += b_draw
+        total_phase_c += c_draw
 
-    if total_charger_l1 > 0 or total_charger_l2 > 0 or total_charger_l3 > 0:
+    if total_phase_a > 0 or total_phase_b > 0 or total_phase_c > 0:
         def _adjust_phase(consumption, export, charger_draw):
             if consumption is None:
                 return None, None
@@ -354,24 +372,37 @@ def run_hub_calculation(sensor):
             true_grid = raw_grid - charger_draw
             return max(0.0, true_grid), max(0.0, -true_grid)
 
-        adj_cons_a, adj_exp_a = _adjust_phase(site.consumption.a, site.export_current.a, total_charger_l1)
-        adj_cons_b, adj_exp_b = _adjust_phase(site.consumption.b, site.export_current.b, total_charger_l2)
-        adj_cons_c, adj_exp_c = _adjust_phase(site.consumption.c, site.export_current.c, total_charger_l3)
+        adj_cons_a, adj_exp_a = _adjust_phase(site.consumption.a, site.export_current.a, total_phase_a)
+        adj_cons_b, adj_exp_b = _adjust_phase(site.consumption.b, site.export_current.b, total_phase_b)
+        adj_cons_c, adj_exp_c = _adjust_phase(site.consumption.c, site.export_current.c, total_phase_c)
 
         site.consumption = PhaseValues(adj_cons_a, adj_cons_b, adj_cons_c)
         site.export_current = PhaseValues(adj_exp_a, adj_exp_b, adj_exp_c)
         _LOGGER.debug(
-            "Adjusted grid (subtracted charger L1=%.1fA L2=%.1fA L3=%.1fA): "
+            "Adjusted grid (subtracted charger A=%.1fA B=%.1fA C=%.1fA): "
             "consumption=(%s, %s, %s), export=(%s, %s, %s)",
-            total_charger_l1, total_charger_l2, total_charger_l3,
+            total_phase_a, total_phase_b, total_phase_c,
             adj_cons_a, adj_cons_b, adj_cons_c, adj_exp_a, adj_exp_b, adj_exp_c,
         )
 
-        # Update solar to match adjusted export
-        site.solar_production_total = site.export_current.total * site.voltage
+        # Update derived solar to match adjusted export
+        if solar_is_derived:
+            site.solar_production_total = site.export_current.total * site.voltage
+            _LOGGER.debug(
+                "Recalculated derived solar_production_total after feedback: %.1fW",
+                site.solar_production_total,
+            )
+
+    # Compute household_consumption_total when solar entity provides ground truth.
+    # Energy balance: solar + battery_power = household + grid_export (after feedback)
+    # household = solar + battery_power - grid_export_power
+    if not solar_is_derived and solar_production_total > 0:
+        export_power_after_feedback = site.export_current.total * site.voltage
+        bp = float(battery_power) if battery_power is not None else 0
+        site.household_consumption_total = max(0, solar_production_total + bp - export_power_after_feedback)
         _LOGGER.debug(
-            "Recalculated solar_production_total after feedback: %.1fW",
-            site.solar_production_total,
+            "Computed household_consumption_total=%.1fW (solar=%.1fW + bat=%.1fW - export=%.1fW)",
+            site.household_consumption_total, solar_production_total, bp, export_power_after_feedback,
         )
 
     # Calculate targets (includes distribution)
@@ -433,6 +464,8 @@ def run_hub_calculation(sensor):
         "site_grid_available_power": site_grid_available_power,
         "site_battery_available_power": available_battery_power,
         "total_evse_power": total_evse_power,
+        "solar_surplus_power": round(total_export_power, 0),
+        "solar_surplus_current": round(total_export_current, 2),
 
         # Per-charger targets — these are the final allocations from the engine
         "charger_targets": charger_targets,

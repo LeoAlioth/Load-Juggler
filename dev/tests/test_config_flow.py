@@ -18,6 +18,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_CHARGER_PRIORITY,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
+    CONF_CHARGER_L1_PHASE,
+    CONF_CHARGER_L2_PHASE,
+    CONF_CHARGER_L3_PHASE,
     CONF_CHARGE_RATE_UNIT,
     CONF_PROFILE_VALIDITY_MODE,
     CONF_UPDATE_FREQUENCY,
@@ -77,14 +80,14 @@ async def test_hub_info_step(hass: HomeAssistant):
     assert result["step_id"] == "hub_grid"
 
 
-async def test_charger_config_validation_min_exceeds_max(
+async def test_charger_current_validation_min_exceeds_max(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
 ):
-    """Test that charger config rejects min_current > max_current."""
+    """Test that charger_current step rejects min_current > max_current."""
     mock_hub_entry.add_to_hass(hass)
 
-    # Use integration_discovery source to go directly to charger_config
+    # Discovery lands on charger_info
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": "integration_discovery"},
@@ -99,21 +102,29 @@ async def test_charger_config_validation_min_exceeds_max(
     )
 
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "charger_config"
+    assert result["step_id"] == "charger_info"
 
-    # Submit with min > max
+    # Step 1: charger_info — submit name/id/priority
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
+            CONF_NAME: "Test Charger",
+            CONF_ENTITY_ID: "test_charger",
             CONF_CHARGER_PRIORITY: 1,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger_current"
+
+    # Step 2: charger_current — submit with min > max
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 32,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
-            CONF_CHARGE_RATE_UNIT: "A",
-            CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
-            CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
-            CONF_OCPP_PROFILE_TIMEOUT: DEFAULT_OCPP_PROFILE_TIMEOUT,
-            CONF_CHARGE_PAUSE_DURATION: DEFAULT_CHARGE_PAUSE_DURATION,
-            CONF_STACK_LEVEL: DEFAULT_STACK_LEVEL,
+            CONF_CHARGER_L1_PHASE: "A",
+            CONF_CHARGER_L2_PHASE: "B",
+            CONF_CHARGER_L3_PHASE: "C",
         },
     )
 
@@ -121,11 +132,11 @@ async def test_charger_config_validation_min_exceeds_max(
     assert result["errors"] == {"base": "min_exceeds_max"}
 
 
-async def test_charger_config_validation_zero_current(
+async def test_charger_current_validation_zero_current(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
 ):
-    """Test that charger config rejects zero current values."""
+    """Test that charger_current step rejects zero current values."""
     mock_hub_entry.add_to_hass(hass)
 
     result = await hass.config_entries.flow.async_init(
@@ -141,18 +152,28 @@ async def test_charger_config_validation_zero_current(
         },
     )
 
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger_info"
+
+    # Step 1: charger_info
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
+            CONF_NAME: "Test Charger 2",
+            CONF_ENTITY_ID: "test_charger_2",
             CONF_CHARGER_PRIORITY: 1,
+        },
+    )
+
+    # Step 2: charger_current — submit with zero current
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 0,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
-            CONF_CHARGE_RATE_UNIT: "A",
-            CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
-            CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
-            CONF_OCPP_PROFILE_TIMEOUT: DEFAULT_OCPP_PROFILE_TIMEOUT,
-            CONF_CHARGE_PAUSE_DURATION: DEFAULT_CHARGE_PAUSE_DURATION,
-            CONF_STACK_LEVEL: DEFAULT_STACK_LEVEL,
+            CONF_CHARGER_L1_PHASE: "A",
+            CONF_CHARGER_L2_PHASE: "B",
+            CONF_CHARGER_L3_PHASE: "C",
         },
     )
 
@@ -164,7 +185,7 @@ async def test_charger_config_creates_entry(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
 ):
-    """Test that valid charger config creates a config entry."""
+    """Test that valid charger config creates a config entry via 3 steps."""
     mock_hub_entry.add_to_hass(hass)
 
     result = await hass.config_entries.flow.async_init(
@@ -180,12 +201,39 @@ async def test_charger_config_creates_entry(
         },
     )
 
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger_info"
+
+    # Step 1: charger_info
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
+            CONF_NAME: "Valid Charger",
+            CONF_ENTITY_ID: "valid_charger",
             CONF_CHARGER_PRIORITY: 1,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger_current"
+
+    # Step 2: charger_current
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+            CONF_CHARGER_L1_PHASE: "A",
+            CONF_CHARGER_L2_PHASE: "B",
+            CONF_CHARGER_L3_PHASE: "C",
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger_timing"
+
+    # Step 3: charger_timing — creates entry
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
             CONF_CHARGE_RATE_UNIT: "A",
             CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
             CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,

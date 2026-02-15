@@ -120,6 +120,23 @@
 
 41. - [x] **Update trace test output format** — Changed battery display condition from `bat_pp != 0` to `site.battery_soc is not None`. Battery watts now always shown in inverter section when battery is configured (even when 0W). Trailing `bat=(...)` section also shown only when battery is configured.
 
+42. - [x] **Restore dedicated solar entity for inverter limit enforcement** — Commit 481ca84 removed the solar entity option (item 40), but derived-only mode can't enforce inverter limits when household loads are invisible to the grid CT (e.g. 6kW inverter, CT=0A, battery charging 4kW, house=2kW → engine estimates household=0, overallocates inverter). Restored with minimal branching approach (no dual code paths):
+    - `const.py`: Re-added `CONF_SOLAR_PRODUCTION_ENTITY_ID`.
+    - `models.py`: Re-added `solar_is_derived: bool = True` and `household_consumption_total: float | None = None` to `SiteContext`.
+    - `target_calculator.py`: Two small changes in `_calculate_solar_surplus()` — inverter headroom check and final inverter limit check use accurate `household_consumption_total` when available (from solar entity energy balance), otherwise fall back to derived estimates. `_calculate_inverter_limit()` battery branch: derived mode uses remaining discharge capacity, dedicated mode uses full max_discharge.
+    - `dynamic_ocpp_evse.py`: Reads solar entity when configured, computes `household_consumption_total = solar + battery_power - export` via energy balance after feedback. Only recalculates `solar_production_total` when `solar_is_derived`. Re-added `solar_surplus_power`/`solar_surplus_current` to result dict.
+    - `config_flow.py`: Re-added solar entity selector to grid schema, normalization list, and auto-detection regex.
+    - `sensor.py`: Re-added Solar Surplus Power/Current hub sensor definitions and hub_data propagation.
+    - `translations`: Re-added `solar_production_entity_id` labels in en.json and sl.json (hub_grid, reconfigure_hub_grid, options hub_grid).
+    - `run_tests.py`: Support `solar_production_direct: true` YAML flag, conditional feedback (derived vs dedicated), household_consumption_total computation.
+    - 4 new test scenarios in `test_scenarios_solar_entity.yaml` including the core inverter limit enforcement scenario. 68/71 tests passing (3 pre-existing failures in asymmetric inverter tests).
+
+43. - [x] **Config flow restructuring + charger phase mapping** — Two changes:
+    - **Hub flow reorder**: Grid → Inverter → Battery (was Grid → Battery → Inverter). Solar entity selector moved from grid step to battery step (relevant only with batteries). Entry creation logic moved to battery step (final step). Applied to all 3 flows: initial setup, reconfigure, and options.
+    - **Charger flow split into 3 steps**: (1) `charger_info` — editable name/entity_id (pre-filled from OCPP discovery) + priority. (2) `charger_current` — min/max current limits + L1/L2/L3 → A/B/C phase mapping dropdowns. (3) `charger_timing` — charge rate unit, profile validity mode, update frequency, timeouts, stack level. Applied to all 3 flows.
+    - **Phase mapping feature**: New `CONF_CHARGER_L1_PHASE`, `CONF_CHARGER_L2_PHASE`, `CONF_CHARGER_L3_PHASE` constants. `ChargerContext` gets `l1_phase`/`l2_phase`/`l3_phase` fields with `get_site_phase_draw()` helper. `active_phases_mask` now derived from mapping. Feedback loop in `dynamic_ocpp_evse.py` uses phase mapping instead of assuming L1=A. Test simulation (`run_tests.py`) updated with phase mapping support. 3 phase mapping test scenarios.
+    - Files: `const.py`, `models.py`, `config_flow.py`, `dynamic_ocpp_evse.py`, `en.json`, `sl.json`, `run_tests.py`, `test_config_flow.py`, `test_config_flow_e2e.py`, `conftest.py`.
+
 ## In Progress
 
 ## Backlog

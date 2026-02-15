@@ -1,0 +1,113 @@
+# Test scenarios: Phase mapping (L1/L2/L3 → A/B/C non-default)
+# Verifies that charger draws are correctly mapped to site phases
+# when physical wiring differs from the default L1=A, L2=B, L3=C.
+
+scenarios:
+
+  - name: "3ph-1c-solar-phase-mapping-rotated"
+    description: "3-phase charger with rotated phase mapping (L1→B, L2→C, L3→A)"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      charging_mode: Solar
+      solar_production: 5520  # 24A total, 8A per phase
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, 21A surplus → 7A/phase
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 5666
+      inverter_max_power: 17000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "B"
+        l2_phase: "C"
+        l3_phase: "A"
+    expected:
+      charger_1:
+        allocated: 7.0  # Same result as default mapping — 7A per phase from solar surplus
+
+  - name: "3ph-2c-solar-phase-mapping-swapped"
+    description: "Two chargers: one with swapped phases, one default. Solar priority distribution."
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      charging_mode: Solar
+      solar_production: 7590  # 33A total, 11A/phase
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, 30A surplus → 10A/phase
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 5666
+      inverter_max_power: 17000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "C"
+        l2_phase: "A"
+        l3_phase: "B"
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        connected_to_phase: "A"
+    expected:
+      charger_1:
+        allocated: 10.0  # Same as non-mapped: 10A/phase, takes all available leaving <6A for charger_2
+      charger_2:
+        allocated: 0  # Can't get minimum 6A on phase A
+
+  - name: "3ph-1c-standard-phase-mapping-default"
+    description: "Default mapping (L1=A, L2=B, L3=C) should behave identically to no mapping"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 5.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 4.0  # 12A total household
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+    expected:
+      charger_1:
+        allocated: 16.0  # Standard mode: max current, limited by breaker: 25-5=20A available on phase A, 16A max
