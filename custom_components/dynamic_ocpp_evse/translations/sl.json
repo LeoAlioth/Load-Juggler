@@ -40,18 +40,40 @@
                     "invert_phases": "Obrni odčitke toka, če se uvoz meri kot negativen",
                     "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
                     "phase_voltage": "Napetost na fazo v voltih",
-                    "excess_export_threshold": "Prag presežne izvozne moči (W), pri katerem se začne polnjenje v načinu Excess"
+                    "excess_export_threshold": "Prag presežne izvozne moči (W), pri katerem se začne polnjenje v načinu Excess",
+                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije (sekunde)"
+                }
+            },
+            "hub_inverter": {
+                "title": "Konfiguracija razsmernika",
+                "description": "Nastavite omejitve moči razsmernika in senzorje izhoda po fazah (neobvezno — nastavite moč na 0 za brez omejitev)",
+                "data": {
+                    "inverter_max_power": "Skupna moč razsmernika (W)",
+                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz",
+                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
+                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
+                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
+                    "wiring_topology": "Topologija ožičenja"
                 }
             },
             "hub_battery": {
-                "title": "Konfiguracija baterije",
-                "description": "Nastavite nastavitve domače baterije (neobvezno)",
+                "title": "Konfiguracija baterije in sončne elektrarne",
+                "description": "Nastavite nastavitve domače baterije in sončne proizvodnje (neobvezno)",
                 "data": {
+                    "solar_production_entity_id": "Senzor proizvodnje solarne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)",
                     "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
                     "battery_power_entity_id": "Senzor, ki meri moč baterije (pozitivno=praznjenje, negativno=polnjenje)",
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
                     "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih",
                     "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
+                }
+            },
+            "device_type": {
+                "title": "Vrsta naprave",
+                "description": "Izberite vrsto naprave, ki jo želite dodati",
+                "data": {
+                    "device_type": "Vrsta naprave"
                 }
             },
             "select_hub": {
@@ -61,6 +83,20 @@
                     "hub_entry_id": "Domači električni hub"
                 }
             },
+            "plug_config": {
+                "title": "Konfiguracija pametne vtičnice",
+                "description": "Nastavite nastavitve za vašo pametno vtičnico ali rele",
+                "data": {
+                    "name": "Ime za to napravo",
+                    "entity_id": "Predpona ID entitete",
+                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
+                    "plug_power_rating": "Največja nazivna moč (W)",
+                    "connected_to_phase": "Priključena na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja prioriteta)",
+                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno — omogoča samodejno zaznavo dejanske porabe)",
+                    "update_frequency": "Frekvenca posodabljanja v sekundah"
+                }
+            },
             "discover_chargers": {
                 "title": "Odkriti polnilniki",
                 "description": "Izberite OCPP polnilnik za konfiguracijo",
@@ -68,13 +104,30 @@
                     "charger": "Razpoložljivi OCPP polnilniki"
                 }
             },
-            "charger_config": {
-                "title": "Konfiguracija polnilnika",
-                "description": "Nastavite nastavitve za {charger_name}\n\nZaznane OCPP entitete:\n- Uvoz toka: {current_import}\n- Ponujeni tok: {current_offered}",
+            "charger_info": {
+                "title": "Podatki o polnilniku",
+                "description": "Nastavite identiteto polnilnika za {charger_name}\n\nZaznane OCPP entitete:\n- Uvoz toka: {current_import}\n- Ponujeni tok: {current_offered}",
                 "data": {
-                    "charger_priority": "Prioriteta polnilnika (1 = najvišja prioriteta)",
-                    "evse_minimum_charge_current": "Minimalni tok polnjenja EVSE (A)",
-                    "evse_maximum_charge_current": "Maksimalni tok polnjenja EVSE (A)",
+                    "name": "Ime polnilnika",
+                    "entity_id": "Predpona ID entitete",
+                    "charger_priority": "Prioriteta polnilnika (1 = najvišja prioriteta)"
+                }
+            },
+            "charger_current": {
+                "title": "Tok in preslikava faz",
+                "description": "Nastavite omejitve toka in preslikavo L1/L2/L3 na faze lokacije",
+                "data": {
+                    "evse_minimum_charge_current": "Minimalni tok polnjenja (A)",
+                    "evse_maximum_charge_current": "Maksimalni tok polnjenja (A)",
+                    "charger_l1_phase": "L1 polnilnika priključen na fazo",
+                    "charger_l2_phase": "L2 polnilnika priključen na fazo",
+                    "charger_l3_phase": "L3 polnilnika priključen na fazo"
+                }
+            },
+            "charger_timing": {
+                "title": "Enote in časovne nastavitve",
+                "description": "Nastavite enoto hitrosti polnjenja in časovne nastavitve",
+                "data": {
                     "charge_rate_unit": "Enota hitrosti polnjenja (Samodejno priporočeno)",
                     "profile_validity_mode": "Način veljavnosti profila polnjenja",
                     "update_frequency": "Frekvenca posodabljanja v sekundah",
@@ -94,13 +147,28 @@
                     "invert_phases": "Obrni odčitke toka, če se uvoz meri kot negativen",
                     "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
                     "phase_voltage": "Napetost na fazo v voltih",
-                    "excess_export_threshold": "Prag presežne izvozne moči (W)"
+                    "excess_export_threshold": "Prag presežne izvozne moči (W)",
+                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije (sekunde)"
+                }
+            },
+            "reconfigure_hub_inverter": {
+                "title": "Ponovno konfiguriraj nastavitve razsmernika",
+                "description": "Posodobite konfiguracijo razsmernika",
+                "data": {
+                    "inverter_max_power": "Skupna moč razsmernika (W)",
+                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz",
+                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
+                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
+                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
+                    "wiring_topology": "Topologija ožičenja"
                 }
             },
             "reconfigure_hub_battery": {
-                "title": "Ponovno konfiguriraj nastavitve baterije",
-                "description": "Posodobite konfiguracijo baterije",
+                "title": "Ponovno konfiguriraj nastavitve baterije in sončne elektrarne",
+                "description": "Posodobite konfiguracijo baterije in sončne proizvodnje",
                 "data": {
+                    "solar_production_entity_id": "Senzor proizvodnje solarne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)",
                     "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
                     "battery_power_entity_id": "Senzor, ki meri moč baterije",
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
@@ -108,13 +176,40 @@
                     "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
                 }
             },
+            "reconfigure_plug": {
+                "title": "Ponovno konfiguriraj pametno vtičnico",
+                "description": "Posodobite nastavitve pametne vtičnice",
+                "data": {
+                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
+                    "plug_power_rating": "Največja nazivna moč (W)",
+                    "connected_to_phase": "Priključena na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja prioriteta)",
+                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno — omogoča samodejno zaznavo dejanske porabe)",
+                    "update_frequency": "Frekvenca posodabljanja v sekundah"
+                }
+            },
             "reconfigure_charger": {
                 "title": "Ponovno konfiguriraj polnilnik",
-                "description": "Posodobite nastavitve polnilnika",
+                "description": "Posodobite prioriteto polnilnika",
                 "data": {
-                    "charger_priority": "Prioriteta polnilnika (1 = najvišja prioriteta)",
-                    "evse_minimum_charge_current": "Minimalni tok polnjenja EVSE (A)",
-                    "evse_maximum_charge_current": "Maksimalni tok polnjenja EVSE (A)",
+                    "charger_priority": "Prioriteta polnilnika (1 = najvišja prioriteta)"
+                }
+            },
+            "reconfigure_charger_current": {
+                "title": "Ponovno konfiguriraj tok in faze",
+                "description": "Posodobite omejitve toka in preslikavo faz",
+                "data": {
+                    "evse_minimum_charge_current": "Minimalni tok polnjenja (A)",
+                    "evse_maximum_charge_current": "Maksimalni tok polnjenja (A)",
+                    "charger_l1_phase": "L1 polnilnika priključen na fazo",
+                    "charger_l2_phase": "L2 polnilnika priključen na fazo",
+                    "charger_l3_phase": "L3 polnilnika priključen na fazo"
+                }
+            },
+            "reconfigure_charger_timing": {
+                "title": "Ponovno konfiguriraj enote in čase",
+                "description": "Posodobite enoto hitrosti polnjenja in časovne nastavitve",
+                "data": {
                     "charge_rate_unit": "Enota hitrosti polnjenja (A=Amperi, W=Vati)",
                     "profile_validity_mode": "Način veljavnosti profila polnjenja",
                     "update_frequency": "Frekvenca posodabljanja v sekundah",
@@ -149,13 +244,28 @@
                     "invert_phases": "Obrni odčitke toka, če se uvoz meri kot negativen",
                     "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
                     "phase_voltage": "Napetost na fazo v voltih",
-                    "excess_export_threshold": "Prag presežne izvozne moči (W)"
+                    "excess_export_threshold": "Prag presežne izvozne moči (W)",
+                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije (sekunde)"
+                }
+            },
+            "hub_inverter": {
+                "title": "Posodobi nastavitve razsmernika",
+                "description": "Posodobite konfiguracijo razsmernika",
+                "data": {
+                    "inverter_max_power": "Skupna moč razsmernika (W)",
+                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz",
+                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
+                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
+                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
+                    "wiring_topology": "Topologija ožičenja"
                 }
             },
             "hub": {
-                "title": "Posodobi nastavitve baterije",
-                "description": "Posodobite konfiguracijo baterije",
+                "title": "Posodobi nastavitve baterije in sončne elektrarne",
+                "description": "Posodobite konfiguracijo baterije in sončne proizvodnje",
                 "data": {
+                    "solar_production_entity_id": "Senzor proizvodnje solarne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)",
                     "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
                     "battery_power_entity_id": "Senzor, ki meri moč baterije",
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
@@ -163,13 +273,40 @@
                     "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
                 }
             },
-            "charger": {
-                "title": "Posodobi nastavitve polnilnika",
-                "description": "Posodobite nastavitve polnilnika",
+            "plug": {
+                "title": "Posodobi nastavitve pametne vtičnice",
+                "description": "Posodobite nastavitve pametne vtičnice",
                 "data": {
-                    "charger_priority": "Prioriteta polnilnika (1 = najvišja prioriteta)",
-                    "evse_minimum_charge_current": "Minimalni tok polnjenja EVSE (A)",
-                    "evse_maximum_charge_current": "Maksimalni tok polnjenja EVSE (A)",
+                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
+                    "plug_power_rating": "Največja nazivna moč (W)",
+                    "connected_to_phase": "Priključena na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja prioriteta)",
+                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno — omogoča samodejno zaznavo dejanske porabe)",
+                    "update_frequency": "Frekvenca posodabljanja v sekundah"
+                }
+            },
+            "charger": {
+                "title": "Posodobi prioriteto polnilnika",
+                "description": "Posodobite prioriteto polnilnika",
+                "data": {
+                    "charger_priority": "Prioriteta polnilnika (1 = najvišja prioriteta)"
+                }
+            },
+            "charger_current": {
+                "title": "Posodobi tok in faze",
+                "description": "Posodobite omejitve toka in preslikavo faz",
+                "data": {
+                    "evse_minimum_charge_current": "Minimalni tok polnjenja (A)",
+                    "evse_maximum_charge_current": "Maksimalni tok polnjenja (A)",
+                    "charger_l1_phase": "L1 polnilnika priključen na fazo",
+                    "charger_l2_phase": "L2 polnilnika priključen na fazo",
+                    "charger_l3_phase": "L3 polnilnika priključen na fazo"
+                }
+            },
+            "charger_timing": {
+                "title": "Posodobi enote in čase",
+                "description": "Posodobite enoto hitrosti polnjenja in časovne nastavitve",
+                "data": {
                     "charge_rate_unit": "Enota hitrosti polnjenja (A=Amperi, W=Vati)",
                     "profile_validity_mode": "Način veljavnosti profila polnjenja",
                     "update_frequency": "Frekvenca posodabljanja v sekundah",

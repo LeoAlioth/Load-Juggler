@@ -54,7 +54,7 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     site_limit_constraints = _calculate_site_limit(site)
     _LOGGER.debug(f"Step 1 - Site limit constraints: {site_limit_constraints}")
 
-    solar_constraints = _calculate_solar_available(site)
+    solar_constraints = _calculate_solar_surplus(site)
     _LOGGER.debug(f"Step 2 - Solar available constraints: {solar_constraints}")
 
     excess_constraints = _calculate_excess_available(site)
@@ -76,7 +76,7 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
         charger.allocated_current = 0
 
     # Step 6: Calculate available current for all chargers
-    _calculate_available_current(all_chargers, active_chargers, inactive_chargers, target_constraints)
+    _set_available_current_for_chargers(all_chargers, active_chargers, inactive_chargers, target_constraints)
 
     for charger in all_chargers:
         _LOGGER.debug(
@@ -85,7 +85,7 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
         )
 
 
-def _calculate_available_current(
+def _set_available_current_for_chargers(
     all_chargers: list,
     active_chargers: list,
     inactive_chargers: list,
@@ -99,9 +99,9 @@ def _calculate_available_current(
       after active chargers are deducted. Each idle charger independently sees
       the same remaining pool (hypothetical, no deduction between idle chargers).
     """
-    # Active chargers: available = allocated
+    # Active chargers: available = allocated (already rounded)
     for charger in active_chargers:
-        charger.available_current = charger.allocated_current
+        charger.available_current = round(charger.allocated_current, 1)
 
     # Calculate remaining constraints after active allocations
     remaining = target_constraints.copy()
@@ -117,7 +117,7 @@ def _calculate_available_current(
             continue
         available = remaining.get_available(mask)
         if available >= charger.min_current:
-            charger.available_current = min(charger.max_current, available)
+            charger.available_current = round(min(charger.max_current, available), 1)
         else:
             charger.available_current = 0
 
@@ -162,6 +162,34 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
     return PhaseConstraints.from_per_phase(phase_a_limit, phase_b_limit, phase_c_limit)
 
 
+def _get_household_per_phase(site: SiteContext) -> tuple[float, float, float]:
+    """Get per-phase household consumption in Amps using best available data.
+
+    Data hierarchy (best → worst):
+    1. Per-phase household_consumption (from per-phase inverter output entities) — exact
+    2. household_consumption_total (from single solar entity) — uniform estimate
+    3. consumption from grid CT — visible only when site is importing, 0 when self-consuming
+    """
+    if site.household_consumption is not None:
+        return (
+            site.household_consumption.a or 0,
+            site.household_consumption.b or 0,
+            site.household_consumption.c or 0,
+        )
+    if site.household_consumption_total is not None:
+        uniform = (site.household_consumption_total / site.voltage) / (site.num_phases or 1)
+        return (
+            uniform if site.consumption.a is not None else 0,
+            uniform if site.consumption.b is not None else 0,
+            uniform if site.consumption.c is not None else 0,
+        )
+    return (
+        site.consumption.a or 0,
+        site.consumption.b or 0,
+        site.consumption.c or 0,
+    )
+
+
 def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     """
     Calculate inverter power limit (solar + battery for Standard mode).
@@ -170,7 +198,14 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     Solar and battery share the same inverter, so per-phase and total inverter limits
     apply to their combined output.
 
-    Battery can discharge when SOC >= battery_soc_min.
+    Battery discharge is added when SOC >= battery_soc_min.
+
+    In derived mode (solar from grid CT): solar_current already reflects battery
+    effects in the grid readings. Adds REMAINING discharge capacity to avoid
+    double-counting.
+
+    With dedicated solar entity: solar_current is the raw inverter output.
+    battery_power may not be available or embedded, so use full max_discharge.
 
     For ASYMMETRIC inverters: Solar+battery power can be allocated to any phase.
     For SYMMETRIC inverters: Solar+battery power is fixed per-phase.
@@ -181,9 +216,19 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     # Calculate battery discharge current (if available)
     battery_current = 0
     if (site.battery_soc is not None and
-        site.battery_soc >= site.battery_soc_min and
+        site.battery_soc >= (site.battery_soc_min or 0) and
         site.battery_max_discharge_power):
-        battery_current = site.battery_max_discharge_power / site.voltage
+        if site.solar_is_derived and site.battery_power is not None:
+            # Derived mode: solar_current includes actual battery effect.
+            # Add only the REMAINING discharge capacity.
+            # battery_power: positive=discharging, negative=charging
+            actual_effect = site.battery_power / site.voltage  # positive if already discharging
+            max_discharge = site.battery_max_discharge_power / site.voltage
+            battery_current = max(0, max_discharge - actual_effect)
+        elif not site.solar_is_derived:
+            # Dedicated solar entity: solar_current is raw inverter output,
+            # battery effect not embedded. Use full max discharge.
+            battery_current = site.battery_max_discharge_power / site.voltage
 
     # Total inverter output (solar + battery)
     total_inverter_current = solar_current + battery_current
@@ -199,9 +244,12 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
 
     if site.inverter_supports_asymmetric:
         # ASYMMETRIC: Inverter power can be allocated to any phase
-        phase_a_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.a)) if site.consumption.a is not None else 0
-        phase_b_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.b)) if site.consumption.b is not None else 0
-        phase_c_limit = min(total_inverter_current, max(0, max_per_phase - site.consumption.c)) if site.consumption.c is not None else 0
+        # Per-phase household limits how much of the inverter's per-phase capacity
+        # is available for chargers (household uses some of the per-phase headroom)
+        hh_a, hh_b, hh_c = _get_household_per_phase(site)
+        phase_a_limit = min(total_inverter_current, max(0, max_per_phase - hh_a)) if site.consumption.a is not None else 0
+        phase_b_limit = min(total_inverter_current, max(0, max_per_phase - hh_b)) if site.consumption.b is not None else 0
+        phase_c_limit = min(total_inverter_current, max(0, max_per_phase - hh_c)) if site.consumption.c is not None else 0
 
         constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, total_inverter_current)
     else:
@@ -248,17 +296,15 @@ def _calculate_site_limit(site: SiteContext) -> PhaseConstraints:
     return constraints
 
 
-def _calculate_solar_available(site: SiteContext) -> PhaseConstraints:
+def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
     """
     Step 2: Calculate solar available power.
 
     Returns PhaseConstraints for ALL phase combinations.
 
-    Considers:
-    - Solar export per phase after consumption
-    - Battery charging (if SOC < target)
-    - Battery discharge (if SOC > target)
-    - Inverter limits (per-phase and total)
+    Export current IS the measured surplus per phase (derived from grid CT).
+    If battery_power data is available and battery is charging, add it back
+    to surplus — self-consumption hides this solar power from the grid CT.
 
     For ASYMMETRIC inverters: Solar/battery power is a flexible pool.
     For SYMMETRIC inverters: Solar/battery power is fixed per-phase.
@@ -269,89 +315,87 @@ def _calculate_solar_available(site: SiteContext) -> PhaseConstraints:
     else:
         max_per_phase = float('inf')
 
-    # Build constraint dict based on inverter type
+    # Export current IS the solar surplus per phase.
+    # No consumption subtraction needed (export is already net).
+    #
+    # Battery awareness (self-consumption systems):
+    # 1. Battery CHARGE hides surplus from export — add it back.
+    #    (solar power absorbed by battery is available if charger draws instead)
+    # 2. Battery DISCHARGE potential when SOC > target — add remaining capacity.
+    #    (self-consumption keeps battery idle unless there's demand, but the
+    #    charger CAN create that demand, making the discharge available)
+    #
+    # Inverter headroom constraint on discharge:
+    #    Battery discharge goes through the inverter. If solar already maxes out
+    #    the inverter, there's no room for additional battery discharge.
+    #    base_pool (export + charge_back) ≈ solar - household.
+    #    estimated_solar ≈ base_pool + household.
+    #    Discharge headroom = inverter_max - estimated_solar.
+    charge_back = 0
+    discharge_potential = 0
+
+    if site.battery_power is not None:
+        # Charge absorption: battery_power < 0 = charging
+        if site.battery_power < 0:
+            charge_back = abs(site.battery_power) / site.voltage
+        # Discharge potential: unused discharge capacity when SOC > target
+        if (site.battery_soc is not None and site.battery_soc_target is not None and
+                site.battery_soc > site.battery_soc_target and
+                site.battery_max_discharge_power):
+            actual_discharge = max(0, site.battery_power) / site.voltage
+            max_discharge = site.battery_max_discharge_power / site.voltage
+            discharge_potential = max(0, max_discharge - actual_discharge)
+
+    # Limit discharge by inverter headroom
+    if site.inverter_max_power and discharge_potential > 0:
+        inverter_max_current = site.inverter_max_power / site.voltage
+        if site.household_consumption_total is not None:
+            # Accurate: solar entity provides true household consumption
+            estimated_solar = site.solar_production_total / site.voltage
+        else:
+            # Estimate from CT readings (derived mode)
+            export_total = site.export_current.total if site.export_current else 0
+            base_pool = export_total + charge_back
+            household = site.consumption.total or 0
+            estimated_solar = base_pool + household
+        inverter_headroom = max(0, inverter_max_current - estimated_solar)
+        discharge_potential = min(discharge_potential, inverter_headroom)
+
+    battery_adjustment_total = charge_back + discharge_potential
+
+    battery_adjustment_per_phase = battery_adjustment_total / (
+        site.export_current.active_count or site.consumption.active_count or 1
+    ) if battery_adjustment_total else 0
+
     if site.inverter_supports_asymmetric:
-        # ASYMMETRIC: Solar/battery power is a flexible pool that can be allocated to any phase
-
-        # Calculate total solar production
-        solar_total_current = site.solar_production_total / site.voltage if site.solar_production_total else 0
-
-        # Calculate total inverter output (solar + battery, respecting inverter limits)
-        inverter_output = solar_total_current
-
-        # Handle battery charging/discharging (affects inverter output)
-        if site.battery_soc is not None:
-            if site.battery_soc < site.battery_soc_target:
-                # Battery charges first - reduce inverter output available for EV
-                if site.battery_max_charge_power:
-                    battery_charge_current = site.battery_max_charge_power / site.voltage
-                    inverter_output = max(0, inverter_output - battery_charge_current)
-
-            elif site.battery_soc > site.battery_soc_target:
-                # Battery can discharge - add to inverter output
-                if site.battery_max_discharge_power:
-                    battery_discharge_current = site.battery_max_discharge_power / site.voltage
-                    inverter_output += battery_discharge_current
-
-        # Apply total inverter limit to OUTPUT (solar + battery combined)
-        if site.inverter_max_power:
-            max_total = site.inverter_max_power / site.voltage
-            inverter_output = min(inverter_output, max_total)
-
-        # NOW subtract total consumption to get what's available for charger
-        solar_available = max(0, inverter_output - site.consumption.total)
-
-        # Per-phase constraints: limited by (inverter per-phase max - consumption on that phase)
-        phase_a_limit = min(solar_available, max(0, max_per_phase - site.consumption.a)) if site.consumption.a is not None else 0
-        phase_b_limit = min(solar_available, max(0, max_per_phase - site.consumption.b)) if site.consumption.b is not None else 0
-        phase_c_limit = min(solar_available, max(0, max_per_phase - site.consumption.c)) if site.consumption.c is not None else 0
-
-        constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, solar_available)
+        # Total export + battery adjustment is the available pool
+        total_pool = (site.export_current.total if site.export_current else 0) + battery_adjustment_total
+        # Per-phase household limits how much of the inverter's per-phase capacity
+        # is available for chargers (household uses some of the per-phase headroom)
+        hh_a, hh_b, hh_c = _get_household_per_phase(site)
+        phase_a_limit = min(total_pool, max(0, max_per_phase - hh_a)) if site.export_current.a is not None else 0
+        phase_b_limit = min(total_pool, max(0, max_per_phase - hh_b)) if site.export_current.b is not None else 0
+        phase_c_limit = min(total_pool, max(0, max_per_phase - hh_c)) if site.export_current.c is not None else 0
+        constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, total_pool)
     else:
-        # SYMMETRIC: Solar/battery power is fixed per-phase
-        # Calculate solar per phase (evenly distributed)
-        solar_per_phase_current = (site.solar_production_total / site.num_phases) / site.voltage if site.solar_production_total else 0
-
-        # Subtract consumption per phase (non-existent phases get 0)
-        phase_a_available = max(0, solar_per_phase_current - site.consumption.a) if site.consumption.a is not None else 0
-        phase_b_available = max(0, solar_per_phase_current - site.consumption.b) if site.consumption.b is not None else 0
-        phase_c_available = max(0, solar_per_phase_current - site.consumption.c) if site.consumption.c is not None else 0
-
-        # Handle battery charging/discharging (distributed per phase)
-        if site.battery_soc is not None:
-            if site.battery_soc < site.battery_soc_target:
-                # Battery charges first - reduce available per phase
-                if site.battery_max_charge_power:
-                    battery_charge_current = site.battery_max_charge_power / site.voltage
-                    battery_current_per_phase = battery_charge_current / site.num_phases
-                    phase_a_available = max(0, phase_a_available - battery_current_per_phase)
-                    phase_b_available = max(0, phase_b_available - battery_current_per_phase)
-                    phase_c_available = max(0, phase_c_available - battery_current_per_phase)
-
-            elif site.battery_soc > site.battery_soc_target:
-                # Battery can discharge - add to available per phase (only existing phases)
-                if site.battery_max_discharge_power:
-                    battery_discharge_current = site.battery_max_discharge_power / site.voltage
-                    battery_current_per_phase = battery_discharge_current / site.num_phases
-                    if site.consumption.a is not None:
-                        phase_a_available += battery_current_per_phase
-                    if site.consumption.b is not None:
-                        phase_b_available += battery_current_per_phase
-                    if site.consumption.c is not None:
-                        phase_c_available += battery_current_per_phase
-
-        # Apply per-phase inverter limits
-        phase_a_available = min(phase_a_available, max_per_phase)
-        phase_b_available = min(phase_b_available, max_per_phase)
-        phase_c_available = min(phase_c_available, max_per_phase)
-
-        # Apply total inverter limit if configured
+        # Symmetric: per-phase export + battery adjustment = per-phase surplus
+        phase_a_available = min((site.export_current.a or 0) + battery_adjustment_per_phase, max_per_phase) if site.export_current.a is not None else 0
+        phase_b_available = min((site.export_current.b or 0) + battery_adjustment_per_phase, max_per_phase) if site.export_current.b is not None else 0
+        phase_c_available = min((site.export_current.c or 0) + battery_adjustment_per_phase, max_per_phase) if site.export_current.c is not None else 0
         constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
 
-        if site.inverter_max_power:
-            max_total = site.inverter_max_power / site.voltage
-            if constraints.ABC > max_total:
-                constraints = constraints.scale(max_total / constraints.ABC)
+    # Apply total inverter limit if configured, accounting for household
+    if site.inverter_max_power:
+        max_total = site.inverter_max_power / site.voltage
+        if site.household_consumption is not None:
+            household = site.household_consumption.total
+        elif site.household_consumption_total is not None:
+            household = site.household_consumption_total / site.voltage
+        else:
+            household = site.consumption.total or 0
+        max_for_chargers = max(0, max_total - household)
+        if constraints.ABC > max_for_chargers:
+            constraints = constraints.scale(max_for_chargers / constraints.ABC)
 
     _LOGGER.debug(f"Solar available constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}")
 
@@ -378,9 +422,10 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
             max_per_phase = float('inf')
 
         if site.inverter_supports_asymmetric:
-            phase_a_limit = min(total_available, max(0, max_per_phase - site.consumption.a)) if site.consumption.a is not None else 0
-            phase_b_limit = min(total_available, max(0, max_per_phase - site.consumption.b)) if site.consumption.b is not None else 0
-            phase_c_limit = min(total_available, max(0, max_per_phase - site.consumption.c)) if site.consumption.c is not None else 0
+            hh_a, hh_b, hh_c = _get_household_per_phase(site)
+            phase_a_limit = min(total_available, max(0, max_per_phase - hh_a)) if site.consumption.a is not None else 0
+            phase_b_limit = min(total_available, max(0, max_per_phase - hh_b)) if site.consumption.b is not None else 0
+            phase_c_limit = min(total_available, max(0, max_per_phase - hh_c)) if site.consumption.c is not None else 0
 
             constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, total_available)
         else:
@@ -419,8 +464,10 @@ def _determine_target_power(
         if site.battery_soc is not None and site.battery_soc < site.battery_soc_min:
             return PhaseConstraints.zeros()
 
-        # Calculate sum of minimum charge rates
-        sum_minimums_total = sum(c.min_current * c.phases for c in site.chargers)
+        # Calculate sum of minimum charge rates (active chargers only)
+        active = [c for c in site.chargers
+                  if c.connector_status not in ("Available", "Unknown", "Unavailable")]
+        sum_minimums_total = sum(c.min_current * c.phases for c in active)
         sum_minimums_per_phase = sum_minimums_total / site.num_phases
 
         minimums = PhaseConstraints.from_per_phase(
@@ -430,7 +477,7 @@ def _determine_target_power(
         )
 
         # Battery between min and target - charge at minimum only
-        if site.battery_soc is not None and site.battery_soc < site.battery_soc_target:
+        if site.battery_soc is not None and site.battery_soc_target is not None and site.battery_soc < site.battery_soc_target:
             return minimums.element_min(site_limit_constraints)
         else:
             # Battery >= target or no battery - use max of solar and minimums, capped at site limit
@@ -438,7 +485,7 @@ def _determine_target_power(
             return target.element_min(site_limit_constraints)
 
     elif mode == CHARGING_MODE_SOLAR:
-        if site.battery_soc is not None and site.battery_soc < site.battery_soc_target:
+        if site.battery_soc is not None and site.battery_soc_target is not None and site.battery_soc < site.battery_soc_target:
             return PhaseConstraints.zeros()
         return solar_constraints
 
@@ -466,14 +513,14 @@ def _distribute_power(site: SiteContext, target_constraints: PhaseConstraints) -
         _LOGGER.debug(f"Charger {charger.entity_id}: mask={charger.active_phases_mask}, phases={charger.phases}")
 
     mode = site.distribution_mode.lower() if site.distribution_mode else "priority"
-    
-    if mode == "priority":
+
+    if "priority" in mode:
         _distribute_per_phase_priority(site, target_constraints)
-    elif mode == "shared":
+    elif "shared" in mode:
         _distribute_per_phase_shared(site, target_constraints)
-    elif mode == "strict":
+    elif "strict" in mode:
         _distribute_per_phase_strict(site, target_constraints)
-    elif mode == "optimized":
+    elif "optimized" in mode:
         _distribute_per_phase_optimized(site, target_constraints)
     else:
         _LOGGER.warning(f"Unknown distribution mode '{mode}', using priority")
@@ -512,13 +559,13 @@ def _distribute_per_phase_priority(site: SiteContext, constraints: PhaseConstrai
 
         mask = charger.active_phases_mask
         if not mask:
-            charger.allocated_current = allocated[charger.entity_id]
+            charger.allocated_current = round(allocated[charger.entity_id], 1)
             continue
 
         charger_available = remaining.get_available(mask)
         wanted_additional = charger.max_current - allocated[charger.entity_id]
         additional = min(wanted_additional, charger_available)
-        charger.allocated_current = allocated[charger.entity_id] + additional
+        charger.allocated_current = round(allocated[charger.entity_id] + additional, 1)
         remaining = remaining.deduct(additional, mask)
 
 
@@ -570,7 +617,7 @@ def _distribute_per_phase_shared(site: SiteContext, constraints: PhaseConstraint
             remaining = remaining.deduct(additional, mask)
 
     for charger in charging_chargers:
-        charger.allocated_current = allocated[charger.entity_id]
+        charger.allocated_current = round(allocated[charger.entity_id], 1)
 
     for charger in site.chargers:
         if charger not in charging_chargers:
@@ -592,7 +639,7 @@ def _distribute_per_phase_strict(site: SiteContext, constraints: PhaseConstraint
             continue
 
         charger_available = remaining.get_available(mask)
-        charger.allocated_current = min(charger.max_current, charger_available)
+        charger.allocated_current = round(min(charger.max_current, charger_available), 1)
         remaining = remaining.deduct(charger.allocated_current, mask)
 
 
@@ -626,7 +673,7 @@ def _distribute_per_phase_optimized(site: SiteContext, constraints: PhaseConstra
                     can_reduce = max(0, wanted - charger.min_current)
                     wanted -= min(reduction_needed, can_reduce)
 
-        charger.allocated_current = wanted
-        remaining = remaining.deduct(wanted, mask)
+        charger.allocated_current = round(wanted, 1)
+        remaining = remaining.deduct(charger.allocated_current, mask)
 
 

@@ -40,13 +40,28 @@
                     "invert_phases": "Invert current readings if import measures as negative",
                     "max_import_power_entity_id": "Sensor for maximum import power allowed",
                     "phase_voltage": "Voltage per phase in volts",
-                    "excess_export_threshold": "Excess Export Power Threshold (W) at which charging starts in Excess mode"
+                    "excess_export_threshold": "Excess Export Power Threshold (W) at which charging starts in Excess mode",
+                    "site_update_frequency": "Site sensor refresh rate (seconds)"
+                }
+            },
+            "hub_inverter": {
+                "title": "Inverter Configuration",
+                "description": "Configure inverter power limits and per-phase output sensors (optional — set power to 0 to leave unconstrained)",
+                "data": {
+                    "inverter_max_power": "Total inverter power capacity (W)",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase (W)",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology"
                 }
             },
             "hub_battery": {
-                "title": "Battery Configuration",
-                "description": "Configure home battery settings (optional)",
+                "title": "Battery & Solar Configuration",
+                "description": "Configure home battery and solar production settings (optional)",
                 "data": {
+                    "solar_production_entity_id": "Solar power production sensor (optional — leave 'None' to derive from grid meter)",
                     "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
                     "battery_power_entity_id": "Sensor that measures battery power (positive=discharge, negative=charge)",
                     "battery_max_charge_power": "Maximum battery charge power in Watts",
@@ -61,6 +76,27 @@
                     "hub_entry_id": "Home Electrical Hub"
                 }
             },
+            "device_type": {
+                "title": "Device Type",
+                "description": "Select the type of device you want to add",
+                "data": {
+                    "device_type": "Device type"
+                }
+            },
+            "plug_config": {
+                "title": "Smart Plug Configuration",
+                "description": "Configure settings for your smart plug or relay",
+                "data": {
+                    "name": "Name for this device",
+                    "entity_id": "Entity ID prefix",
+                    "plug_switch_entity_id": "Switch entity that controls the plug on/off",
+                    "plug_power_rating": "Maximum power rating (W)",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest priority)",
+                    "plug_power_monitor_entity_id": "Power monitoring sensor (optional — enables auto-detection of actual power draw)",
+                    "update_frequency": "Update frequency in seconds"
+                }
+            },
             "discover_chargers": {
                 "title": "Discovered Chargers",
                 "description": "Select an OCPP charger to configure",
@@ -68,13 +104,30 @@
                     "charger": "Available OCPP Chargers"
                 }
             },
-            "charger_config": {
-                "title": "Charger Configuration",
-                "description": "Configure settings for {charger_name}\n\nDetected OCPP entities:\n- Current Import: {current_import}\n- Current Offered: {current_offered}",
+            "charger_info": {
+                "title": "Charger Info",
+                "description": "Set up the charger identity for {charger_name}\n\nDetected OCPP entities:\n- Current Import: {current_import}\n- Current Offered: {current_offered}",
                 "data": {
-                    "charger_priority": "Charger Priority (1 = highest priority)",
-                    "evse_minimum_charge_current": "EVSE Minimum Charge Current (A)",
-                    "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
+                    "name": "Charger name",
+                    "entity_id": "Entity ID prefix",
+                    "charger_priority": "Charger Priority (1 = highest priority)"
+                }
+            },
+            "charger_current": {
+                "title": "Current & Phase Mapping",
+                "description": "Configure current limits and L1/L2/L3 to site phase mapping",
+                "data": {
+                    "evse_minimum_charge_current": "Minimum Charge Current (A)",
+                    "evse_maximum_charge_current": "Maximum Charge Current (A)",
+                    "charger_l1_phase": "Charger L1 connected to site phase",
+                    "charger_l2_phase": "Charger L2 connected to site phase",
+                    "charger_l3_phase": "Charger L3 connected to site phase"
+                }
+            },
+            "charger_timing": {
+                "title": "Units & Timing",
+                "description": "Configure charge rate unit and timing settings",
+                "data": {
                     "charge_rate_unit": "Charge Rate Unit (Auto-detect recommended)",
                     "profile_validity_mode": "Charging Profile Validity Mode",
                     "update_frequency": "Update frequency in seconds",
@@ -94,13 +147,28 @@
                     "invert_phases": "Invert current readings if import measures as negative",
                     "max_import_power_entity_id": "Sensor for maximum import power allowed",
                     "phase_voltage": "Voltage per phase in volts",
-                    "excess_export_threshold": "Excess Export Power Threshold (W)"
+                    "excess_export_threshold": "Excess Export Power Threshold (W)",
+                    "site_update_frequency": "Site sensor refresh rate (seconds)"
+                }
+            },
+            "reconfigure_hub_inverter": {
+                "title": "Reconfigure Inverter Settings",
+                "description": "Update your inverter configuration",
+                "data": {
+                    "inverter_max_power": "Total inverter power capacity (W)",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase (W)",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology"
                 }
             },
             "reconfigure_hub_battery": {
-                "title": "Reconfigure Battery Settings",
-                "description": "Update your battery configuration",
+                "title": "Reconfigure Battery & Solar Settings",
+                "description": "Update your battery and solar configuration",
                 "data": {
+                    "solar_production_entity_id": "Solar power production sensor (optional — leave 'None' to derive from grid meter)",
                     "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
                     "battery_power_entity_id": "Sensor that measures battery power",
                     "battery_max_charge_power": "Maximum battery charge power in Watts",
@@ -108,13 +176,40 @@
                     "battery_soc_hysteresis": "Battery SOC hysteresis (%) to prevent oscillation at thresholds"
                 }
             },
+            "reconfigure_plug": {
+                "title": "Reconfigure Smart Plug",
+                "description": "Update smart plug settings",
+                "data": {
+                    "plug_switch_entity_id": "Switch entity that controls the plug on/off",
+                    "plug_power_rating": "Maximum power rating (W)",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest priority)",
+                    "plug_power_monitor_entity_id": "Power monitoring sensor (optional — enables auto-detection of actual power draw)",
+                    "update_frequency": "Update frequency in seconds"
+                }
+            },
             "reconfigure_charger": {
                 "title": "Reconfigure Charger",
-                "description": "Update charger settings",
+                "description": "Update charger priority",
                 "data": {
-                    "charger_priority": "Charger Priority (1 = highest priority)",
-                    "evse_minimum_charge_current": "EVSE Minimum Charge Current (A)",
-                    "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
+                    "charger_priority": "Charger Priority (1 = highest priority)"
+                }
+            },
+            "reconfigure_charger_current": {
+                "title": "Reconfigure Current & Phases",
+                "description": "Update current limits and phase mapping",
+                "data": {
+                    "evse_minimum_charge_current": "Minimum Charge Current (A)",
+                    "evse_maximum_charge_current": "Maximum Charge Current (A)",
+                    "charger_l1_phase": "Charger L1 connected to site phase",
+                    "charger_l2_phase": "Charger L2 connected to site phase",
+                    "charger_l3_phase": "Charger L3 connected to site phase"
+                }
+            },
+            "reconfigure_charger_timing": {
+                "title": "Reconfigure Units & Timing",
+                "description": "Update charge rate unit and timing settings",
+                "data": {
                     "charge_rate_unit": "Charge Rate Unit (A=Amperes, W=Watts)",
                     "profile_validity_mode": "Charging Profile Validity Mode",
                     "update_frequency": "Update frequency in seconds",
@@ -149,13 +244,28 @@
                     "invert_phases": "Invert current readings if import measures as negative",
                     "max_import_power_entity_id": "Sensor for maximum import power allowed",
                     "phase_voltage": "Voltage per phase in volts",
-                    "excess_export_threshold": "Excess Export Power Threshold (W)"
+                    "excess_export_threshold": "Excess Export Power Threshold (W)",
+                    "site_update_frequency": "Site sensor refresh rate (seconds)"
+                }
+            },
+            "hub_inverter": {
+                "title": "Update Inverter Settings",
+                "description": "Update your inverter configuration",
+                "data": {
+                    "inverter_max_power": "Total inverter power capacity (W)",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase (W)",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase feeding",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology"
                 }
             },
             "hub": {
-                "title": "Update Battery Settings",
-                "description": "Update your battery configuration",
+                "title": "Update Battery & Solar Settings",
+                "description": "Update your battery and solar configuration",
                 "data": {
+                    "solar_production_entity_id": "Solar power production sensor (optional — leave 'None' to derive from grid meter)",
                     "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
                     "battery_power_entity_id": "Sensor that measures battery power",
                     "battery_max_charge_power": "Maximum battery charge power in Watts",
@@ -163,13 +273,40 @@
                     "battery_soc_hysteresis": "Battery SOC hysteresis (%) to prevent oscillation at thresholds"
                 }
             },
-            "charger": {
-                "title": "Update Charger Settings",
-                "description": "Update charger settings",
+            "plug": {
+                "title": "Update Smart Plug Settings",
+                "description": "Update smart plug settings",
                 "data": {
-                    "charger_priority": "Charger Priority (1 = highest priority)",
-                    "evse_minimum_charge_current": "EVSE Minimum Charge Current (A)",
-                    "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
+                    "plug_switch_entity_id": "Switch entity that controls the plug on/off",
+                    "plug_power_rating": "Maximum power rating (W)",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest priority)",
+                    "plug_power_monitor_entity_id": "Power monitoring sensor (optional — enables auto-detection of actual power draw)",
+                    "update_frequency": "Update frequency in seconds"
+                }
+            },
+            "charger": {
+                "title": "Update Charger Priority",
+                "description": "Update charger priority",
+                "data": {
+                    "charger_priority": "Charger Priority (1 = highest priority)"
+                }
+            },
+            "charger_current": {
+                "title": "Update Current & Phases",
+                "description": "Update current limits and phase mapping",
+                "data": {
+                    "evse_minimum_charge_current": "Minimum Charge Current (A)",
+                    "evse_maximum_charge_current": "Maximum Charge Current (A)",
+                    "charger_l1_phase": "Charger L1 connected to site phase",
+                    "charger_l2_phase": "Charger L2 connected to site phase",
+                    "charger_l3_phase": "Charger L3 connected to site phase"
+                }
+            },
+            "charger_timing": {
+                "title": "Update Units & Timing",
+                "description": "Update charge rate unit and timing settings",
+                "data": {
                     "charge_rate_unit": "Charge Rate Unit (A=Amperes, W=Watts)",
                     "profile_validity_mode": "Charging Profile Validity Mode",
                     "update_frequency": "Update frequency in seconds",

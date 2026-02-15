@@ -5,7 +5,7 @@ Pure Python dataclasses that can be used in tests.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,27 +30,29 @@ class ChargerContext:
     connector_status: str = "Charging"  # OCPP status: Default to active for backward compatibility
     
     def __post_init__(self):
-        """Set default phase mask based on charger phases if not explicitly provided.
-        
-        Defaults:
-        - 3-phase: 'ABC' (all three phases)
-        - 2-phase: 'AB' (phases A and B)
-        - 1-phase: 'A' (phase A)
-        
-        These can be overridden by explicitly setting connected_to_phase in config.
+        """Set default phase mask from L1/L2/L3 → site phase mapping.
+
+        For OCPP chargers, the mapping determines which site phases the charger
+        occupies. For smart plugs, active_phases_mask is set explicitly via
+        connected_to_phase in config and this default is skipped.
         """
         if self.active_phases_mask is None:
             if self.phases == 3:
-                self.active_phases_mask = 'ABC'
+                self.active_phases_mask = "".join(sorted({self.l1_phase, self.l2_phase, self.l3_phase}))
             elif self.phases == 2:
-                self.active_phases_mask = 'AB'
+                self.active_phases_mask = "".join(sorted({self.l1_phase, self.l2_phase}))
             elif self.phases == 1:
-                self.active_phases_mask = 'A'
+                self.active_phases_mask = self.l1_phase
     
+    # L1/L2/L3 → site phase mapping (configurable, default L1=A, L2=B, L3=C)
+    l1_phase: str = "A"
+    l2_phase: str = "B"
+    l3_phase: str = "C"
+
     # Per-phase current readings (from OCPP L1/L2/L3 attributes)
-    l1_current: float = 0  # Phase A current (A)
-    l2_current: float = 0  # Phase B current (A)
-    l3_current: float = 0  # Phase C current (A)
+    l1_current: float = 0  # L1 current (A) — maps to l1_phase
+    l2_current: float = 0  # L2 current (A) — maps to l2_phase
+    l3_current: float = 0  # L3 current (A) — maps to l3_phase
     
     # Calculated values (populated during calculation)
     allocated_current: float = 0   # What the charger actually gets (sent via OCPP)
@@ -60,6 +62,14 @@ class ChargerContext:
     ocpp_device_id: str = None
     stack_level: int = 2
     charge_rate_unit: str = "auto"  # "amps", "watts", or "auto"
+
+    def get_site_phase_draw(self) -> tuple[float, float, float]:
+        """Map L1/L2/L3 current to site phases A/B/C using phase mapping."""
+        draw = {"A": 0.0, "B": 0.0, "C": 0.0}
+        draw[self.l1_phase] += self.l1_current
+        draw[self.l2_phase] += self.l2_current
+        draw[self.l3_phase] += self.l3_current
+        return draw["A"], draw["B"], draw["C"]
 
 
 @dataclass
@@ -126,7 +136,14 @@ class SiteContext:
 
     # Solar
     solar_production_total: float = 0
-    
+    solar_is_derived: bool = True  # True = derived from grid meter, False = dedicated entity
+    household_consumption_total: float | None = None  # Computed when solar entity available (W)
+    household_consumption: PhaseValues | None = None  # Per-phase household (A), from inverter entities
+
+    # Wiring topology + per-phase inverter output
+    wiring_topology: str = "parallel"  # "parallel" or "series"
+    inverter_output_per_phase: PhaseValues | None = None  # Raw inverter output readings (A)
+
     # Battery
     battery_soc: float | None = None
     battery_power: float | None = None  # Positive = discharging, Negative = charging
@@ -338,11 +355,7 @@ class PhaseConstraints:
         return r
 
     def copy(self) -> PhaseConstraints:
-        return PhaseConstraints(
-            A=self.A, B=self.B, C=self.C,
-            AB=self.AB, AC=self.AC, BC=self.BC,
-            ABC=self.ABC,
-        )
+        return replace(self)
 
     def __repr__(self) -> str:
         return (f"PC(A={self.A:.1f}, B={self.B:.1f}, C={self.C:.1f}, "

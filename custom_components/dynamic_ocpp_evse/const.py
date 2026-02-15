@@ -20,6 +20,18 @@ CONF_PHASE_VOLTAGE = "phase_voltage"
 CONF_EXCESS_EXPORT_THRESHOLD = "excess_export_threshold"  # Maximum allowed export before charging starts in Excess mode
 CONF_SOLAR_PRODUCTION_ENTITY_ID = "solar_production_entity_id"  # Optional direct solar production sensor (W)
 
+# Inverter configuration (hub-level)
+CONF_INVERTER_MAX_POWER = "inverter_max_power"  # Total inverter capacity (W)
+CONF_INVERTER_MAX_POWER_PER_PHASE = "inverter_max_power_per_phase"  # Per-phase inverter limit (W)
+CONF_INVERTER_SUPPORTS_ASYMMETRIC = "inverter_supports_asymmetric"  # Can balance power across phases
+CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID = "inverter_output_phase_a_entity_id"  # Per-phase inverter output sensor
+CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID = "inverter_output_phase_b_entity_id"
+CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID = "inverter_output_phase_c_entity_id"
+CONF_WIRING_TOPOLOGY = "wiring_topology"  # "parallel" or "series"
+WIRING_TOPOLOGY_PARALLEL = "parallel"  # Inverter feeds in parallel (AC-coupled, no battery typical)
+WIRING_TOPOLOGY_SERIES = "series"  # Everything flows through inverter (hybrid, battery typical)
+DEFAULT_WIRING_TOPOLOGY = WIRING_TOPOLOGY_PARALLEL
+
 # Battery support configuration constants (hub-level)
 CONF_BATTERY_POWER_ENTITY_ID = "battery_power_entity_id"
 CONF_BATTERY_SOC_ENTITY_ID = "battery_soc_entity_id"
@@ -33,7 +45,7 @@ CONF_POWER_BUFFER_ENTITY_ID = "power_buffer_entity_id"
 CONF_POWER_BUFFER = "power_buffer"
 
 # Hub entity IDs (created by hub)
-CONF_CHARGIN_MODE_ENTITY_ID = "charging_mode_entity_id"
+CONF_CHARGING_MODE_ENTITY_ID = "charging_mode_entity_id"
 
 # Charger-specific configuration keys
 CONF_HUB_ENTRY_ID = "hub_entry_id"
@@ -48,6 +60,7 @@ CONF_EVSE_MAXIMUM_CHARGE_CURRENT = "evse_maximum_charge_current"  # defaults to 
 CONF_MIN_CURRENT_ENTITY_ID = "min_current_entity_id"
 CONF_MAX_CURRENT_ENTITY_ID = "max_current_entity_id"
 CONF_UPDATE_FREQUENCY = "update_frequency"
+CONF_SITE_UPDATE_FREQUENCY = "site_update_frequency"  # Hub-level: how often site sensors refresh
 CONF_OCPP_PROFILE_TIMEOUT = "ocpp_profile_timeout"
 CONF_CHARGE_PAUSE_DURATION = "charge_pause_duration"
 CONF_STACK_LEVEL = "stack_level"
@@ -62,10 +75,15 @@ CONF_PLUG_POWER_MONITOR_ENTITY_ID = "plug_power_monitor_entity_id"  # Optional p
 CONF_CONNECTED_TO_PHASE = "connected_to_phase"  # Which phase(s) the device is wired to
 DEFAULT_PLUG_POWER_RATING = 2000
 
+# OCPP charger L1/L2/L3 → site phase mapping
+CONF_CHARGER_L1_PHASE = "charger_l1_phase"
+CONF_CHARGER_L2_PHASE = "charger_l2_phase"
+CONF_CHARGER_L3_PHASE = "charger_l3_phase"
+
 # sensor attributes
 CONF_PHASES = "phases"
-CONF_CHARING_MODE = "charging_mode"
-CONF_AVAILABLE_CURRENT = "available_current"
+CONF_CHARGING_MODE = "charging_mode"
+CONF_TOTAL_ALLOCATED_CURRENT = "total_allocated_current"
 CONF_PHASE_A_CURRENT = "phase_a_current"
 CONF_PHASE_B_CURRENT = "phase_b_current"
 CONF_PHASE_C_CURRENT = "phase_c_current"
@@ -87,6 +105,7 @@ DEFAULT_MAX_CHARGE_CURRENT = 16
 DEFAULT_PHASE_VOLTAGE = 230
 DEFAULT_MAIN_BREAKER_RATING = 25
 DEFAULT_UPDATE_FREQUENCY = 15
+DEFAULT_SITE_UPDATE_FREQUENCY = 5  # Fast site info refresh (seconds)
 DEFAULT_OCPP_PROFILE_TIMEOUT = 120
 DEFAULT_CHARGE_PAUSE_DURATION = 180
 DEFAULT_STACK_LEVEL = 3
@@ -95,6 +114,14 @@ DEFAULT_EXCESS_EXPORT_THRESHOLD = 13000
 DEFAULT_BATTERY_MAX_POWER = 5000
 DEFAULT_BATTERY_SOC_MIN = 20  # Default minimum SOC (20%)
 DEFAULT_BATTERY_SOC_HYSTERESIS = 3  # Default hysteresis (3%)
+
+# Current ramp rates (A per second) — limits how fast the commanded current changes
+RAMP_UP_RATE = 0.1       # Max 0.1 A/s ramp up
+RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
+
+# Auto-reset detection — triggers reset_ocpp_evse when charger ignores profiles
+AUTO_RESET_MISMATCH_THRESHOLD = 5    # consecutive mismatched cycles before reset
+AUTO_RESET_COOLDOWN_SECONDS = 120    # seconds to wait after reset before checking again
 
 # Charge rate unit configuration (per charger)
 CONF_CHARGE_RATE_UNIT = "charge_rate_unit"

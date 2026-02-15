@@ -5,7 +5,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID, CONF_HUB_ENTRY_ID
+from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID, CONF_HUB_ENTRY_ID, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG
 from .helpers import get_entry_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,11 +121,13 @@ class DynamicControlSwitch(SwitchEntity, RestoreEntity):
 
     @property
     def device_info(self):
+        device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
         return {
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
             "name": self.config_entry.data.get(CONF_NAME),
             "manufacturer": "Dynamic OCPP EVSE",
-            "model": "EV Charger",
+            "model": model,
             "via_device": (DOMAIN, self.hub_entry.entry_id) if self.hub_entry else None,
         }
 

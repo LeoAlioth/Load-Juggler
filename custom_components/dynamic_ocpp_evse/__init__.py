@@ -35,8 +35,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         # Generate entity IDs for hub-created entities if not present
         entity_id = new_data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
-        if CONF_CHARGIN_MODE_ENTITY_ID not in new_data:
-            new_data[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
+        if CONF_CHARGING_MODE_ENTITY_ID not in new_data:
+            new_data[CONF_CHARGING_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
         if CONF_BATTERY_SOC_TARGET_ENTITY_ID not in new_data:
             new_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
         if CONF_ALLOW_GRID_CHARGING_ENTITY_ID not in new_data:
@@ -140,14 +140,14 @@ async def async_setup(hass: HomeAssistant, config: dict):
         
         # Convert limit if using Watts
         if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
-            # Need to get hub config for voltage/phases
+            # Need to get hub config for voltage and charger config for phases
             hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
             if hub_entry_id:
                 hub_entry = hass.config_entries.async_get_entry(hub_entry_id)
                 if hub_entry:
                     voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
-                    # Assume 3 phases for reset
-                    limit_for_charger = round(evse_minimum_charge_current * voltage * 3, 1)
+                    charger_phases = int(entry.data.get(CONF_PHASES, 3) or 3)
+                    limit_for_charger = round(evse_minimum_charge_current * voltage * charger_phases, 1)
                     rate_unit = "W"
                 else:
                     limit_for_charger = evse_minimum_charge_current
@@ -383,7 +383,7 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
     # Update the config entry to ensure it has the required entity IDs
     updated_data = dict(entry.data)
     updated_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
-    updated_data[CONF_CHARGIN_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
+    updated_data[CONF_CHARGING_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
     updated_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
     updated_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
     updated_data["integration_version"] = INTEGRATION_VERSION

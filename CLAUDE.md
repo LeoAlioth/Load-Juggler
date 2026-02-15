@@ -76,14 +76,15 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 ```text
 0. Refresh SiteContext (done externally in HA integration)
+   → Subtract charger draws from consumption (feedback loop correction)
    ↓
 1. Calculate absolute site limits (per-phase physical constraints)
    → _calculate_site_limit()
      ├─ _calculate_grid_limit()      (grid capacity based on breaker rating)
      └─ _calculate_inverter_limit()  (solar + battery for Standard mode)
    ↓
-2. Calculate solar available power (includes battery charge/discharge)
-   → _calculate_solar_available()
+2. Calculate solar surplus power (includes battery charge/discharge)
+   → _calculate_solar_surplus()
    ↓
 3. Calculate excess available power (Excess mode only)
    → _calculate_excess_available()
@@ -105,7 +106,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 - Electrical: voltage, num_phases, main_breaker_rating
 - Per-phase: consumption (PhaseValues), export_current (PhaseValues), grid_current (PhaseValues)
-- Solar: solar_production_total
+- Solar: solar_production_total (derived from grid CT export, or from dedicated entity), solar_is_derived, household_consumption_total
 - Derived: total_export_current, total_export_power (computed properties)
 - Battery: battery_soc, battery_soc_min, battery_soc_target, battery_max_charge/discharge_power
 - Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric
@@ -183,6 +184,7 @@ Four distribution modes for multi-charger setups: **Shared** (equal split), **Pr
 4. **Minimum current**: Chargers need >= min_current or get 0 (can't charge below minimum)
 5. **Phase assignment defaults**: Don't default to "A" — only set when explicitly specified
 6. **Legacy code**: This is version 2.0.0 — legacy compatibility should be removed as users are expected to reconfigure the integration
+7. **Grid CT consumption includes charger draws**: Grid current sensors measure TOTAL site import, which includes charger power. `dynamic_ocpp_evse.py` subtracts each charger's l1/l2/l3_current from `site.consumption` before calling the engine (step 0). Without this, the engine double-counts charger power as both "consumption" and "charger demand", leading to under-allocation or false pauses. Hub sensor display values intentionally show the raw (unadjusted) grid readings.
 
 ## Testing and Debugging
 
@@ -202,6 +204,10 @@ python dev/tests/run_tests.py --unverified dev/tests/scenarios
 
 # Run a single scenario by name
 python dev/tests/run_tests.py "scenario-name"
+
+# Run a single test with a detailed output
+python dev/tests/run_tests.py "scenario-name" --trace
+
 ```
 
 Test results are written to `dev/tests/test_results.log`.
@@ -236,6 +242,7 @@ Scenario files in `dev/tests/scenarios/`:
 - `test_scenarios_1ph_battery.yaml` — Single-phase with battery
 - `test_scenarios_3ph.yaml` — Three-phase scenarios
 - `test_scenarios_3ph_battery.yaml` — Three-phase with battery
+- `test_scenarios_solar_entity.yaml` — Direct solar production entity (inverter limit enforcement)
 
 ### HA Integration Tests (WSL/Linux)
 
