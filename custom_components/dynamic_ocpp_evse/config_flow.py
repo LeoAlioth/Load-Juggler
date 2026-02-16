@@ -66,7 +66,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             (vol.Required(
                 CONF_MAIN_BREAKER_RATING,
                 default=defaults.get(CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING),
-            ), int),
+            ), selector({"number": {"min": 1, "max": 200, "step": 1, "mode": "box", "unit_of_measurement": "A"}})),
             (vol.Required(
                 CONF_INVERT_PHASES,
                 default=defaults.get(CONF_INVERT_PHASES, False),
@@ -78,11 +78,11 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             (vol.Required(
                 CONF_PHASE_VOLTAGE,
                 default=defaults.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE),
-            ), int),
+            ), selector({"number": {"min": 100, "max": 400, "step": 1, "mode": "box", "unit_of_measurement": "V"}})),
             (vol.Required(
                 CONF_EXCESS_EXPORT_THRESHOLD,
                 default=defaults.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD),
-            ), int),
+            ), selector({"number": {"min": 0, "max": 50000, "step": 100, "mode": "box", "unit_of_measurement": "W"}})),
             (vol.Optional(
                 CONF_SITE_UPDATE_FREQUENCY,
                 default=defaults.get(CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY),
@@ -109,11 +109,11 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             (vol.Optional(
                 CONF_BATTERY_MAX_CHARGE_POWER,
                 default=defaults.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER),
-            ), int),
+            ), selector({"number": {"min": 0, "max": 50000, "step": 100, "mode": "box", "unit_of_measurement": "W"}})),
             (vol.Optional(
                 CONF_BATTERY_MAX_DISCHARGE_POWER,
                 default=defaults.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER),
-            ), int),
+            ), selector({"number": {"min": 0, "max": 50000, "step": 100, "mode": "box", "unit_of_measurement": "W"}})),
             (vol.Optional(
                 CONF_BATTERY_SOC_HYSTERESIS,
                 default=defaults.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS),
@@ -218,11 +218,11 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_EVSE_MINIMUM_CHARGE_CURRENT,
                 default=defaults.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT),
-            ): int,
+            ): selector({"number": {"min": 6, "max": 80, "step": 1, "mode": "box", "unit_of_measurement": "A"}}),
             vol.Required(
                 CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
                 default=defaults.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT),
-            ): int,
+            ): selector({"number": {"min": 6, "max": 80, "step": 1, "mode": "box", "unit_of_measurement": "A"}}),
             vol.Required(
                 CONF_CHARGER_L1_PHASE,
                 default=defaults.get(CONF_CHARGER_L1_PHASE, "A"),
@@ -276,19 +276,19 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_UPDATE_FREQUENCY,
                 default=defaults.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY),
-            ): int,
+            ): selector({"number": {"min": 5, "max": 300, "step": 1, "mode": "box", "unit_of_measurement": "s"}}),
             vol.Required(
                 CONF_OCPP_PROFILE_TIMEOUT,
                 default=defaults.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT),
-            ): int,
+            ): selector({"number": {"min": 30, "max": 600, "step": 1, "mode": "box", "unit_of_measurement": "s"}}),
             vol.Required(
                 CONF_CHARGE_PAUSE_DURATION,
                 default=defaults.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION),
-            ): int,
+            ): selector({"number": {"min": 0, "max": 600, "step": 1, "mode": "box", "unit_of_measurement": "s"}}),
             vol.Required(
                 CONF_STACK_LEVEL,
                 default=defaults.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL),
-            ): int,
+            ): selector({"number": {"min": 0, "max": 10, "step": 1, "mode": "box"}}),
         })
 
     def _plug_schema(self, defaults: dict | None = None) -> vol.Schema:
@@ -311,7 +311,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_PLUG_POWER_RATING,
                 default=defaults.get(CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING),
-            ): int,
+            ): selector({"number": {"min": 100, "max": 25000, "step": 100, "mode": "box", "unit_of_measurement": "W"}}),
             vol.Required(
                 CONF_CONNECTED_TO_PHASE,
                 default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
@@ -327,7 +327,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_UPDATE_FREQUENCY,
                 default=defaults.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY),
-            ): int,
+            ): selector({"number": {"min": 5, "max": 300, "step": 1, "mode": "box", "unit_of_measurement": "s"}}),
         })
 
     # Optional entity keys grouped by config step (for entity selector clearing)
