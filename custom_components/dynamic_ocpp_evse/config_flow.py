@@ -1295,6 +1295,18 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             self._data.update(user_input)
             return await self.async_step_hub_inverter()
 
+        # Auto-detect empty grid CT entity fields
+        phase_keys = {
+            "phase_a": CONF_PHASE_A_CURRENT_ENTITY_ID,
+            "phase_b": CONF_PHASE_B_CURRENT_ENTITY_ID,
+            "phase_c": CONF_PHASE_C_CURRENT_ENTITY_ID,
+        }
+        if any(not defaults.get(k) for k in phase_keys.values()):
+            ct_detected = f._auto_detect_phase_entities(PHASE_PATTERNS)
+            for phase, conf_key in phase_keys.items():
+                if not defaults.get(conf_key):
+                    defaults[conf_key] = ct_detected[phase]
+
         return self.async_show_form(
             step_id="hub_grid",
             data_schema=f._hub_grid_schema(defaults),
@@ -1320,6 +1332,18 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             if inverter_defaults.get(key) is None:
                 inverter_defaults[key] = 0
 
+        # Auto-detect empty inverter output entity fields
+        inv_keys = {
+            "phase_a": CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+            "phase_b": CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+            "phase_c": CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+        }
+        if any(not inverter_defaults.get(k) for k in inv_keys.values()):
+            inv_detected = f._auto_detect_phase_entities(INVERTER_OUTPUT_PATTERNS)
+            for phase, conf_key in inv_keys.items():
+                if not inverter_defaults.get(conf_key):
+                    inverter_defaults[conf_key] = inv_detected[phase]
+
         return self.async_show_form(
             step_id="hub_inverter",
             data_schema=f._hub_inverter_schema(inverter_defaults),
@@ -1338,6 +1362,16 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
                 title="",
                 data={**self.config_entry.options, **self._data},
             )
+
+        # Auto-detect empty battery/solar entity fields
+        auto_detect_map = {
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: SOLAR_PRODUCTION_PATTERNS,
+            CONF_BATTERY_SOC_ENTITY_ID: BATTERY_SOC_PATTERNS,
+            CONF_BATTERY_POWER_ENTITY_ID: BATTERY_POWER_PATTERNS,
+        }
+        for conf_key, patterns in auto_detect_map.items():
+            if not defaults.get(conf_key):
+                defaults[conf_key] = f._auto_detect_entity(patterns)
 
         return self.async_show_form(
             step_id="hub",
