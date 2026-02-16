@@ -73,7 +73,7 @@ scenarios:
         max_current: 16
         phases: 1
         priority: 2
-        connected_to_phase: "A"
+        l1_phase: "A"
     expected:
       charger_1:
         allocated: 10.0  # Same as non-mapped: 10A/phase, takes all available leaving <6A for charger_2

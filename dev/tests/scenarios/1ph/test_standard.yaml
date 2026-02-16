@@ -1,0 +1,97 @@
+# Test scenarios: Standard mode, single-phase sites, no battery
+
+scenarios:
+
+  - name: "1ph-1c-standard-no-bat-basic"
+    description: "Standard mode basic — charger max limited by max_current"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 5.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 16.0  # 35A breaker - 5A consumption = 30A available, capped at max 16A
+
+  - name: "1ph-1c-standard-no-bat-breaker-limited"
+    description: "Standard mode — breaker limits charger below max_current"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 16
+      max_import_power: 3680
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 5.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 11.0  # 16A breaker - 5A consumption = 11A available
+
+  - name: "1ph-2c-standard-no-bat-prio"
+    description: "Standard mode, two chargers, priority distribution"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 5750
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 3.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+    expected:
+      charger_1:
+        allocated: 16.0  # 25A - 3A = 22A total. Both fit minimums (12A). Prio 1 gets max 16A.
+      charger_2:
+        allocated: 6.0  # 22A - 16A = 6A remaining, exactly at minimum

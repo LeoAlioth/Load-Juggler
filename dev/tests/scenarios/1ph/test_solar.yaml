@@ -1,9 +1,6 @@
-# Test scenarios: Single-phase sites WITHOUT battery
-# All comments and formatting preserved
+# Test scenarios: Solar mode, single-phase sites, no battery
 
 scenarios:
-
-  
 
   - name: "1ph-1c-solar-prio-no-bat-normal"
     description: "Single phase, 1 charger, solar mode, no battery"
@@ -35,7 +32,7 @@ scenarios:
     expected: # Manually verified expected result
       charger_1:
         allocated: 8.0  # 10A solar - 2A consumption = 8A
-  
+
   - name: "1ph-1c-solar-prio-no-bat-insufficient"
     description: "Single phase, 1 charger, insufficient solar (below min)"
     human_verified: True

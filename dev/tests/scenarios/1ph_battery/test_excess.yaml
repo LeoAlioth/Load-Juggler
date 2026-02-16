@@ -1,0 +1,63 @@
+# Test scenarios: Excess mode, single-phase sites, with battery
+
+scenarios:
+
+  - name: "1ph-1c-excess-bat-above-threshold"
+    description: "Excess mode with battery, export above threshold"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Excess
+      solar_production: 4600  # 20A
+      phase_a_consumption: 2.0
+      excess_export_threshold: 2300  # 10A
+      battery_soc: 97  # Battery nearly full, not absorbing
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4600  # 20A
+      battery_max_discharge_power: 4600  # 20A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 8.0  # Export = (20-2)*230 = 4140W. Excess = (4140-2300)/230 = 8A
+
+  - name: "1ph-1c-excess-bat-below-threshold"
+    description: "Excess mode with battery, export below threshold — no charging"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Excess
+      solar_production: 2760  # 12A
+      phase_a_consumption: 5.0
+      excess_export_threshold: 4600  # 20A
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4600  # 20A
+      battery_max_discharge_power: 4600  # 20A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 0.0  # Export = (12-5)*230 = 1610W < 4600W threshold → no charging

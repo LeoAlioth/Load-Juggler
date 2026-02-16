@@ -148,6 +148,22 @@
     - `test_config_flow_e2e.py`: Updated hub inverter step inputs with new fields.
     - 70/70 pure Python + 57/57 WSL integration tests passing.
 
+45. - [x] **Unify phase mapping format + reorganize test scenarios** — Two changes:
+    - **Phase mapping unification**: Replaced all `connected_to_phase` usage in YAML scenarios with explicit `l1_phase`/`l2_phase`/`l3_phase` fields. Removed `connected_to_phase` parsing logic from `run_tests.py` (including `active_phases_mask` derivation — now handled by `ChargerContext.__post_init__()`).
+    - **Scenario file reorganization**: Split 7 flat YAML files into 5 subfolders with 19 files organized by site type × charging mode:
+      - `1ph/` — test_solar (2), test_eco/standard/excess (empty templates)
+      - `1ph_battery/` — test_solar (8), test_eco/standard/excess (empty templates)
+      - `3ph/` — test_solar (8), test_eco (1), test_standard/excess (empty templates)
+      - `3ph_battery/` — test_solar (21), test_eco (7), test_standard (3), test_excess (2)
+      - `features/` — test_available (9), test_plugs (6), test_phase_mapping (3)
+    - `run_tests.py`: Changed `p.glob("*.yaml")` to `p.rglob("*.yaml")` for recursive subdirectory scanning.
+    - 70/70 tests passing.
+
+46. - [x] **Populate empty scenario files + file path in test output** — Two changes:
+    - **21 new test scenarios** across 8 previously-empty files: 1ph/ (eco: 3, standard: 3, excess: 3), 1ph_battery/ (eco: 4, standard: 3, excess: 2), 3ph/ (standard: 3, excess: 2). All marked `human_verified: false`.
+    - **Source file path in test output**: `run_tests.py` now tracks and displays the source YAML file path alongside scenario names in both batch (`[3ph_battery/test_solar.yaml] scenario-name`) and single-scenario modes.
+    - 93/93 tests passing (67 verified + 26 unverified).
+
 ## In Progress
 
 ## Backlog

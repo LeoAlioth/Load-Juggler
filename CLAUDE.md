@@ -146,7 +146,7 @@ The `calculations/` directory is pure Python and can be imported/tested independ
 
 ### Phase-Specific Allocation
 
-When chargers have explicit phase assignments (e.g., `connected_to_phase: "B"`):
+When chargers have explicit phase assignments (e.g., `l1_phase: "B"`):
 
 - All distribution uses PhaseConstraints — per-phase limits are enforced automatically
 - Each phase is allocated independently via `_distribute_power()`
@@ -230,19 +230,21 @@ scenarios:
         max_current: 16
         phases: 3
         priority: 1
-        connected_to_phase: "A"
+        l1_phase: "A"
     expected:
       charger_1:
         target: 10.0
 ```
 
-Scenario files in `dev/tests/scenarios/`:
+Scenario files in `dev/tests/scenarios/` (organized by site type × charging mode):
 
-- `test_scenarios_1ph.yaml` — Single-phase scenarios
-- `test_scenarios_1ph_battery.yaml` — Single-phase with battery
-- `test_scenarios_3ph.yaml` — Three-phase scenarios
-- `test_scenarios_3ph_battery.yaml` — Three-phase with battery
-- `test_scenarios_solar_entity.yaml` — Direct solar production entity (inverter limit enforcement)
+```
+1ph/            — Single-phase, no battery (test_solar, test_eco, test_standard, test_excess)
+1ph_battery/    — Single-phase with battery (test_solar, test_eco, test_standard, test_excess)
+3ph/            — Three-phase, no battery (test_solar, test_eco, test_standard, test_excess)
+3ph_battery/    — Three-phase with battery (test_solar, test_eco, test_standard, test_excess)
+features/       — Cross-cutting tests (test_available, test_plugs, test_phase_mapping)
+```
 
 ### HA Integration Tests (WSL/Linux)
 

@@ -1,0 +1,103 @@
+# Test scenarios: Standard mode, three-phase sites, no battery
+
+scenarios:
+
+  - name: "3ph-1c-standard-no-bat-basic"
+    description: "Standard mode basic — charger limited by max_current"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 3.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 3.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 5750  # 25A
+      inverter_max_power: 17250  # 75A
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 16.0  # 25A breaker - 3A = 22A per phase, capped at max 16A
+
+  - name: "3ph-1c-standard-no-bat-asymmetric-consumption"
+    description: "Standard mode with asymmetric household load — worst phase limits"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 10.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 3.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 5750  # 25A
+      inverter_max_power: 17250  # 75A
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 15.0  # Phase A: 25-10=15A, Phase B: 25-3=22A, Phase C: 25-3=22A → min=15A
+
+  - name: "3ph-2c-standard-no-bat-prio"
+    description: "Standard mode, two 3-phase chargers, priority distribution"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 5750  # 25A
+      inverter_max_power: 17250  # 75A
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+    expected:
+      charger_1:
+        allocated: 16.0  # 25A - 2A = 23A per phase. Both fit minimums (12A). Prio 1 gets max 16A.
+      charger_2:
+        allocated: 7.0  # 23A - 16A = 7A remaining per phase
