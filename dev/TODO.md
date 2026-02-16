@@ -64,6 +64,8 @@
 55. - [x] User documentation / setup guide (README.md rewrite: quick start, config reference, services & automations, troubleshooting FAQ)
 56. - [x] Entity selector UX — replaced raw entity ID dropdowns with proper HA entity selectors for optional fields; added per-step clearing support via `_normalize_optional_inputs(step_entity_keys)`
 57. - [x] Extract auto-detection patterns — moved PHASE_PATTERNS and INVERTER_OUTPUT_PATTERNS to `detection_patterns.py`
+58. - [x] Auto-detect battery SOC, battery power, and solar production entities — added BATTERY_SOC_PATTERNS, BATTERY_POWER_PATTERNS, SOLAR_PRODUCTION_PATTERNS; wired into `async_step_hub_battery` via `_auto_detect_entity()`
+59. - [x] Per-brand detection pattern files — restructured `detection_patterns.py` → `detection_patterns/` package with 12 brand files (SolarEdge, Solarman/Deye, Fronius, Huawei, Enphase, Victron, Sofar, Sungrow, SMA, GoodWe, Growatt, Fox ESS) + generic catch-all
 
 ## Other
 

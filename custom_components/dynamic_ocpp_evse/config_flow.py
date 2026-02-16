@@ -9,7 +9,10 @@ from homeassistant.helpers.entity_registry import async_get as async_get_entity_
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from typing import Any
 from .const import *
-from .detection_patterns import PHASE_PATTERNS, INVERTER_OUTPUT_PATTERNS
+from .detection_patterns import (
+    PHASE_PATTERNS, INVERTER_OUTPUT_PATTERNS,
+    BATTERY_SOC_PATTERNS, BATTERY_POWER_PATTERNS, SOLAR_PRODUCTION_PATTERNS,
+)
 from .helpers import normalize_optional_entity, validate_charger_settings
 
 _LOGGER = logging.getLogger(__name__)
@@ -373,6 +376,15 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return {"phase_a": a, "phase_b": b, "phase_c": c}
         return {"phase_a": None, "phase_b": None, "phase_c": None}
 
+    def _auto_detect_entity(self, pattern_sets: list[dict]) -> str | None:
+        """Auto-detect a single entity from pattern sets. Returns first match."""
+        entity_ids = self._get_entity_registry_ids()
+        for pattern_set in pattern_sets:
+            match = next((eid for eid in entity_ids if re.match(pattern_set["pattern"], eid)), None)
+            if match:
+                return match
+        return None
+
     def _create_entry_and_seed_options(
         self, title: str, static_data: dict, options_data: dict
     ) -> config_entries.FlowResult:
@@ -573,19 +585,11 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 static_data[CONF_NAME], static_data, options_data
             )
 
-        # Auto-detect solar production sensor
-        entity_ids = self._get_entity_registry_ids()
-        default_solar_production = next(
-            (entity_id for entity_id in entity_ids
-             if re.match(r'sensor\..*solar.*(?:production|power|generation).*', entity_id, re.IGNORECASE)
-             and entity_id.startswith("sensor.")),
-            None
-        )
-
+        # Auto-detect solar / battery entities
         data_schema = self._hub_battery_schema({
-            CONF_SOLAR_PRODUCTION_ENTITY_ID: default_solar_production,
-            CONF_BATTERY_SOC_ENTITY_ID: None,
-            CONF_BATTERY_POWER_ENTITY_ID: None,
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: self._auto_detect_entity(SOLAR_PRODUCTION_PATTERNS),
+            CONF_BATTERY_SOC_ENTITY_ID: self._auto_detect_entity(BATTERY_SOC_PATTERNS),
+            CONF_BATTERY_POWER_ENTITY_ID: self._auto_detect_entity(BATTERY_POWER_PATTERNS),
             CONF_BATTERY_MAX_CHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
             CONF_BATTERY_MAX_DISCHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
             CONF_BATTERY_SOC_HYSTERESIS: DEFAULT_BATTERY_SOC_HYSTERESIS,
