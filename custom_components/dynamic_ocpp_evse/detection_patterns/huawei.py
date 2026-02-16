@@ -28,3 +28,11 @@ BATTERY_POWER = [
 SOLAR_PRODUCTION = [
     {"name": "Huawei", "pattern": r'sensor\..*inverter_input_power$'},
 ]
+
+BATTERY_MAX_CHARGE_POWER = [
+    {"name": "Huawei", "pattern": r'sensor\..*battery_maximum_charge_power$'},
+]
+
+BATTERY_MAX_DISCHARGE_POWER = [
+    {"name": "Huawei", "pattern": r'sensor\..*battery_maximum_discharge_power$'},
+]

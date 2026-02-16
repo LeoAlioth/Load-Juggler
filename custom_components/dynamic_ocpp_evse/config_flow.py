@@ -11,8 +11,9 @@ from .const import *
 from .detection_patterns import (
     PHASE_PATTERNS, INVERTER_OUTPUT_PATTERNS,
     BATTERY_SOC_PATTERNS, BATTERY_POWER_PATTERNS, SOLAR_PRODUCTION_PATTERNS,
+    BATTERY_MAX_CHARGE_POWER_PATTERNS, BATTERY_MAX_DISCHARGE_POWER_PATTERNS,
 )
-from .helpers import normalize_optional_entity, validate_charger_settings
+from .helpers import normalize_optional_entity, prettify_name, validate_charger_settings
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -384,6 +385,24 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return match
         return None
 
+    def _auto_detect_entity_value(
+        self, pattern_sets: list[dict], factor: float = 1.0
+    ) -> int | None:
+        """Auto-detect an entity and read its numeric state value.
+
+        Returns int(state * factor), or None if not found / not numeric.
+        """
+        entity_id = self._auto_detect_entity(pattern_sets)
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if not state:
+            return None
+        try:
+            return int(float(state.state) * factor)
+        except (ValueError, TypeError):
+            return None
+
     def _create_entry_and_seed_options(
         self, title: str, static_data: dict, options_data: dict
     ) -> config_entries.FlowResult:
@@ -558,13 +577,20 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 static_data[CONF_NAME], static_data, options_data
             )
 
-        # Auto-detect solar / battery entities
+        # Auto-detect solar / battery entities and power limits
+        _POWER_FACTOR = 0.9  # 90% of detected limit for safe headroom
         data_schema = self._hub_battery_schema({
             CONF_SOLAR_PRODUCTION_ENTITY_ID: self._auto_detect_entity(SOLAR_PRODUCTION_PATTERNS),
             CONF_BATTERY_SOC_ENTITY_ID: self._auto_detect_entity(BATTERY_SOC_PATTERNS),
             CONF_BATTERY_POWER_ENTITY_ID: self._auto_detect_entity(BATTERY_POWER_PATTERNS),
-            CONF_BATTERY_MAX_CHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
+            CONF_BATTERY_MAX_CHARGE_POWER: (
+                self._auto_detect_entity_value(BATTERY_MAX_CHARGE_POWER_PATTERNS, _POWER_FACTOR)
+                or DEFAULT_BATTERY_MAX_POWER
+            ),
+            CONF_BATTERY_MAX_DISCHARGE_POWER: (
+                self._auto_detect_entity_value(BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR)
+                or DEFAULT_BATTERY_MAX_POWER
+            ),
             CONF_BATTERY_SOC_HYSTERESIS: DEFAULT_BATTERY_SOC_HYSTERESIS,
         })
 
@@ -593,9 +619,9 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         default_inv_b = inv_detected["phase_b"]
         default_inv_c = inv_detected["phase_c"]
 
-        # Auto-detect wiring topology from battery presence in previous steps
+        # Auto-detect wiring topology: series if battery entities are detected
         default_topology = DEFAULT_WIRING_TOPOLOGY
-        if self._data.get(CONF_BATTERY_SOC_ENTITY_ID):
+        if self._auto_detect_entity(BATTERY_SOC_PATTERNS):
             default_topology = WIRING_TOPOLOGY_SERIES
 
         data_schema = self._hub_inverter_schema({
@@ -822,13 +848,13 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 current_offered_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_OFFERED}"
                 if current_offered_id in entity_registry.entities:
                     # Get device info if available
-                    device_name = base_name.replace("_", " ").title()
+                    device_name = prettify_name(base_name)
                     device_id = None
-                    
+
                     if entity.device_id:
                         device = device_registry.async_get(entity.device_id)
                         if device:
-                            device_name = device.name or device_name
+                            device_name = prettify_name(device.name) if device.name else device_name
                             device_id = device.id
                     
                     chargers.append({
@@ -1344,6 +1370,12 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
                 if not inverter_defaults.get(conf_key):
                     inverter_defaults[conf_key] = inv_detected[phase]
 
+        # Suggest series topology if battery entities exist and topology is at default
+        if inverter_defaults.get(CONF_WIRING_TOPOLOGY) == DEFAULT_WIRING_TOPOLOGY:
+            has_battery = defaults.get(CONF_BATTERY_SOC_ENTITY_ID) or f._auto_detect_entity(BATTERY_SOC_PATTERNS)
+            if has_battery:
+                inverter_defaults[CONF_WIRING_TOPOLOGY] = WIRING_TOPOLOGY_SERIES
+
         return self.async_show_form(
             step_id="hub_inverter",
             data_schema=f._hub_inverter_schema(inverter_defaults),
@@ -1372,6 +1404,18 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         for conf_key, patterns in auto_detect_map.items():
             if not defaults.get(conf_key):
                 defaults[conf_key] = f._auto_detect_entity(patterns)
+
+        # Auto-detect battery power limits when at default
+        _POWER_FACTOR = 0.9
+        power_detect_map = {
+            CONF_BATTERY_MAX_CHARGE_POWER: BATTERY_MAX_CHARGE_POWER_PATTERNS,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: BATTERY_MAX_DISCHARGE_POWER_PATTERNS,
+        }
+        for conf_key, patterns in power_detect_map.items():
+            if defaults.get(conf_key) == DEFAULT_BATTERY_MAX_POWER:
+                detected = f._auto_detect_entity_value(patterns, _POWER_FACTOR)
+                if detected:
+                    defaults[conf_key] = detected
 
         return self.async_show_form(
             step_id="hub",

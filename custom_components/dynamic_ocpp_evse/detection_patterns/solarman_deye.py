@@ -56,3 +56,14 @@ BATTERY_POWER = [
 SOLAR_PRODUCTION = [
     {"name": "Solarman/Deye", "pattern": r'sensor\..*_total_dc_power$'},
 ]
+
+# Battery max charge/discharge power (number entities with inverter program limits)
+BATTERY_MAX_CHARGE_POWER = [
+    {"name": "Solarman/Deye", "pattern": r'number\..*(?:battery.*charge.*power|charge.*power.*limit)'},
+    {"name": "Solarman/Deye (program)", "pattern": r'number\..*inverter_program.*charge.*power'},
+]
+
+BATTERY_MAX_DISCHARGE_POWER = [
+    {"name": "Solarman/Deye", "pattern": r'number\..*(?:battery.*discharge.*power|discharge.*power.*limit)'},
+    {"name": "Solarman/Deye (program)", "pattern": r'number\..*inverter_program.*discharge.*power'},
+]

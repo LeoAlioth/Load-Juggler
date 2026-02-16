@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import logging
 import voluptuous as vol
 from .const import *
-from .helpers import get_entry_value
+from .helpers import get_entry_value, prettify_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -419,13 +419,13 @@ async def _discover_and_notify_chargers(hass: HomeAssistant, hub_entry_id: str):
             current_offered_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_OFFERED}"
             if current_offered_id in entity_registry.entities:
                 # Get device info if available
-                device_name = base_name.replace("_", " ").title()
+                device_name = prettify_name(base_name)
                 device_id = None
-                
+
                 if entity.device_id:
                     device = device_registry.async_get(entity.device_id)
                     if device:
-                        device_name = device.name or device_name
+                        device_name = prettify_name(device.name) if device.name else device_name
                         device_id = device.id
                 
                 discovered_chargers.append({

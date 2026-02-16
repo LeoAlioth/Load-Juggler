@@ -66,6 +66,13 @@
 57. - [x] Extract auto-detection patterns — moved PHASE_PATTERNS and INVERTER_OUTPUT_PATTERNS to `detection_patterns.py`
 58. - [x] Auto-detect battery SOC, battery power, and solar production entities — added BATTERY_SOC_PATTERNS, BATTERY_POWER_PATTERNS, SOLAR_PRODUCTION_PATTERNS; wired into `async_step_hub_battery` via `_auto_detect_entity()`
 59. - [x] Per-brand detection pattern files — restructured `detection_patterns.py` → `detection_patterns/` package with 12 brand files (SolarEdge, Solarman/Deye, Fronius, Huawei, Enphase, Victron, Sofar, Sungrow, SMA, GoodWe, Growatt, Fox ESS) + generic catch-all
+60. - [x] Fix false-positive battery detection — removed generic `battery_level$` pattern (matched phones), narrowed Sungrow pattern, tightened generic `battery_power` pattern
+61. - [x] Auto-detect battery max charge/discharge power — reads Deye/Huawei number/sensor entities with 0.9 safety factor; added `_auto_detect_entity_value()` method
+62. - [x] Options flow auto-detection — empty entity fields now get auto-detection suggestions when re-opening hub settings; battery power limits auto-detected when at default
+63. - [x] Wiring topology auto-detect — suggests "series" when battery SOC entities detected (initial flow + options flow); fixed dead code in initial flow
+
+64. - [x] Charger name prettification — `prettify_name()` helper replaces underscores and applies title-case only when all lowercase; applied to both discovery paths (`__init__.py`, `config_flow.py`)
+65. - [x] EVSE charging status sensor — new `DynamicOcppEvseChargerStatusSensor` shows reason for not charging (Not Connected, Paused: Xs, Insufficient Solar/Power, No Excess, Battery Priority, etc.)
 
 ## Other
 

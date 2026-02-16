@@ -17,13 +17,21 @@ INVERTER_OUTPUT = [
 
 BATTERY_SOC = [
     {"name": "Generic", "pattern": r'sensor\..*battery_soc$'},
-    {"name": "Generic (level)", "pattern": r'sensor\..*battery_level$'},
     {"name": "Generic (broad)", "pattern": r'sensor\..*battery.*(?:soc|state_of_charge).*'},
+    # Note: battery_level$ excluded — matches phones/tablets/laptops.
 ]
 
 BATTERY_POWER = [
-    {"name": "Generic", "pattern": r'sensor\..*battery_power$'},
-    {"name": "Generic (broad)", "pattern": r'sensor\..*battery.*power.*'},
+    {"name": "Generic", "pattern": r'sensor\..*(?:_battery_power|battery_charge.*power)$'},
+    # Note: broad battery.*power excluded — matches non-energy devices.
+]
+
+BATTERY_MAX_CHARGE_POWER = [
+    {"name": "Generic", "pattern": r'(?:number|sensor)\..*(?:max.*charge.*power|charge.*power.*(?:limit|max))'},
+]
+
+BATTERY_MAX_DISCHARGE_POWER = [
+    {"name": "Generic", "pattern": r'(?:number|sensor)\..*(?:max.*discharge.*power|discharge.*power.*(?:limit|max))'},
 ]
 
 SOLAR_PRODUCTION = [

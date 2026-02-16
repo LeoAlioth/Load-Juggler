@@ -11,7 +11,8 @@ Each brand is defined in its own module. To add support for a new brand:
   Each entry has a ``patterns`` dict with keys phase_a / phase_b / phase_c.
   Tried in order — first complete 3-phase match wins.
 
-**Single-entity patterns** (BATTERY_SOC, BATTERY_POWER, SOLAR_PRODUCTION):
+**Single-entity patterns** (BATTERY_SOC, BATTERY_POWER, SOLAR_PRODUCTION,
+  BATTERY_MAX_CHARGE_POWER, BATTERY_MAX_DISCHARGE_POWER):
   Each entry has a single ``pattern`` regex.  First match wins.
 """
 
@@ -60,3 +61,5 @@ INVERTER_OUTPUT_PATTERNS = _collect("INVERTER_OUTPUT")
 BATTERY_SOC_PATTERNS = _collect("BATTERY_SOC")
 BATTERY_POWER_PATTERNS = _collect("BATTERY_POWER")
 SOLAR_PRODUCTION_PATTERNS = _collect("SOLAR_PRODUCTION")
+BATTERY_MAX_CHARGE_POWER_PATTERNS = _collect("BATTERY_MAX_CHARGE_POWER")
+BATTERY_MAX_DISCHARGE_POWER_PATTERNS = _collect("BATTERY_MAX_DISCHARGE_POWER")

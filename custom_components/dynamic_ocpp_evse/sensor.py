@@ -90,7 +90,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     )
     sensor.coordinator = coordinator
     allocated_sensor = DynamicOcppEvseAllocatedCurrentSensor(hass, config_entry, hub_entry, name, entity_id)
-    async_add_entities([sensor, allocated_sensor])
+    status_sensor = DynamicOcppEvseChargerStatusSensor(hass, config_entry, hub_entry, name, entity_id)
+    async_add_entities([sensor, allocated_sensor, status_sensor])
 
     # Start the first update
     await coordinator.async_config_entry_first_refresh()
@@ -153,6 +154,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self._target_evse_eco = None
         self._target_evse_solar = None
         self._target_evse_excess = None
+        self._charging_status = "Unknown"
         self.coordinator = coordinator
 
     @property
@@ -670,6 +672,44 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 else:
                     limit = round(self._allocated_current, 1)
 
+            # Determine charging status reason
+            connector_entity = f"sensor.{charger_entity_id}_status_connector"
+            connector_state = self.hass.states.get(connector_entity)
+            connector_status = connector_state.state if connector_state else "unknown"
+
+            if connector_status in ("Available", "unknown", "unavailable"):
+                self._charging_status = "Not Connected"
+            elif not dynamic_control_on:
+                self._charging_status = "Dynamic Control Off"
+            elif self._pause_started_at is not None and limit == 0:
+                pause_dur = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
+                elapsed = (datetime.now() - self._pause_started_at).total_seconds()
+                remaining = max(0, int(pause_dur - elapsed))
+                self._charging_status = f"Paused: {remaining}s"
+            elif limit > 0:
+                self._charging_status = "Charging"
+            else:
+                mode = self._charging_mode
+                bat_soc = hub_data.get("battery_soc")
+                bat_target = hub_data.get("battery_soc_target")
+                bat_below_target = (bat_soc is not None and bat_target is not None
+                                    and bat_soc < bat_target)
+                if mode in ("Solar", "Eco") and bat_below_target:
+                    self._charging_status = "Battery Priority"
+                elif mode == "Solar":
+                    self._charging_status = "Insufficient Solar"
+                elif mode == "Eco":
+                    self._charging_status = "Insufficient Solar"
+                elif mode == "Excess":
+                    self._charging_status = "No Excess"
+                else:
+                    self._charging_status = "Insufficient Power"
+
+            # Publish charging status for the status sensor to read
+            if "charger_status" not in self.hass.data.get(DOMAIN, {}):
+                self.hass.data.setdefault(DOMAIN, {})["charger_status"] = {}
+            self.hass.data[DOMAIN]["charger_status"][self.config_entry.entry_id] = self._charging_status
+
             # Send device command
             device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
             if device_type == DEVICE_TYPE_PLUG:
@@ -731,6 +771,48 @@ class DynamicOcppEvseAllocatedCurrentSensor(SensorEntity):
             allocations = self.hass.data.get(DOMAIN, {}).get("charger_allocations", {})
             value = allocations.get(self.config_entry.entry_id, 0)
             self._state = round(float(value), 1)
+        except Exception as e:
+            _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+
+
+class DynamicOcppEvseChargerStatusSensor(SensorEntity):
+    """Sensor showing the current charging status reason for a charger."""
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id):
+        """Initialize the charging status sensor."""
+        self.hass = hass
+        self.config_entry = config_entry
+        self.hub_entry = hub_entry
+        self._attr_name = f"{name} Charging Status"
+        self._attr_unique_id = f"{entity_id}_charging_status"
+        self._state = "Unknown"
+
+    @property
+    def device_info(self):
+        """Return device information about this charger."""
+        device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": model,
+            "via_device": (DOMAIN, self.hub_entry.entry_id),
+        }
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def icon(self):
+        return "mdi:information-outline"
+
+    async def async_update(self):
+        """Read charging status from hass.data (populated by the charger sensor)."""
+        try:
+            status = self.hass.data.get(DOMAIN, {}).get("charger_status", {})
+            self._state = status.get(self.config_entry.entry_id, "Unknown")
         except Exception as e:
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
 

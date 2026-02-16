@@ -17,7 +17,10 @@ GRID_CT = [
 ]
 
 BATTERY_SOC = [
-    {"name": "Sungrow", "pattern": r'sensor\..*_battery_level$'},
+    # Sungrow Modbus entities typically have no prefix: sensor.battery_level
+    # or a short prefix: sensor.sungrow_battery_level.
+    # Avoid matching phones (sensor.pixel_7_pro_battery_level).
+    {"name": "Sungrow", "pattern": r'sensor\.(?:battery_level|sungrow.*_battery_level)$'},
 ]
 
 SOLAR_PRODUCTION = [
