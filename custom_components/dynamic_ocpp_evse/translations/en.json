@@ -316,5 +316,73 @@
                 }
             }
         }
+    },
+    "services": {
+        "reset_ocpp_evse": {
+            "name": "Reset OCPP EVSE",
+            "description": "Clear charging profiles and reset the charger to minimum current.",
+            "fields": {
+                "entry_id": {
+                    "name": "Charger Config Entry ID",
+                    "description": "The config entry ID of the charger to reset."
+                }
+            }
+        },
+        "set_charging_mode": {
+            "name": "Set Charging Mode",
+            "description": "Change the charging mode for a hub (site).",
+            "fields": {
+                "entry_id": {
+                    "name": "Hub Config Entry ID",
+                    "description": "The config entry ID of the hub."
+                },
+                "mode": {
+                    "name": "Charging Mode",
+                    "description": "The charging mode to set (Standard, Eco, Solar, Excess)."
+                }
+            }
+        },
+        "set_distribution_mode": {
+            "name": "Set Distribution Mode",
+            "description": "Change the power distribution mode for a hub (site).",
+            "fields": {
+                "entry_id": {
+                    "name": "Hub Config Entry ID",
+                    "description": "The config entry ID of the hub."
+                },
+                "mode": {
+                    "name": "Distribution Mode",
+                    "description": "The distribution mode to set (Shared, Priority, Sequential - Optimized, Sequential - Strict)."
+                }
+            }
+        },
+        "set_max_current": {
+            "name": "Set Max Current",
+            "description": "Change the maximum charging current for a charger.",
+            "fields": {
+                "entry_id": {
+                    "name": "Charger Config Entry ID",
+                    "description": "The config entry ID of the charger."
+                },
+                "current": {
+                    "name": "Maximum Current",
+                    "description": "The maximum current in Amps."
+                }
+            }
+        },
+        "set_min_current": {
+            "name": "Set Min Current",
+            "description": "Change the minimum charging current for a charger.",
+            "fields": {
+                "entry_id": {
+                    "name": "Charger Config Entry ID",
+                    "description": "The config entry ID of the charger."
+                },
+                "current": {
+                    "name": "Minimum Current",
+                    "description": "The minimum current in Amps."
+                }
+            }
+        }
     }
 }

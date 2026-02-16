@@ -23,18 +23,25 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
 
-        # Check if a battery is configured (any battery entity present)
+        # Check which optional hardware is configured
         has_battery = bool(get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID, None))
+        has_phase_b = bool(get_entry_value(config_entry, CONF_PHASE_B_CURRENT_ENTITY_ID, None))
+        has_phase_c = bool(get_entry_value(config_entry, CONF_PHASE_C_CURRENT_ENTITY_ID, None))
 
         entities = [DynamicOcppEvseHubSensor(hass, config_entry, name, entity_id)]
         # Create individual hub data sensors from definitions
         for defn in HUB_SENSOR_DEFINITIONS:
             if defn.get("requires_battery") and not has_battery:
                 continue
+            if defn.get("requires_phase") == "B" and not has_phase_b:
+                continue
+            if defn.get("requires_phase") == "C" and not has_phase_c:
+                continue
             entities.append(DynamicOcppEvseHubDataSensor(hass, config_entry, name, entity_id, defn))
 
         async_add_entities(entities)
-        _LOGGER.info(f"Setting up hub sensors for {name} (battery={'yes' if has_battery else 'no'})")
+        phases = "A" + ("B" if has_phase_b else "") + ("C" if has_phase_c else "")
+        _LOGGER.info(f"Setting up hub sensors for {name} (battery={'yes' if has_battery else 'no'}, phases={phases})")
         return
     
     # Only set up charger sensors for charger entries
@@ -864,6 +871,7 @@ HUB_SENSOR_DEFINITIONS = [
         "device_class": "current",
         "icon": "mdi:current-ac",
         "decimals": 1,
+        "requires_phase": "B",
     },
     {
         "name_suffix": "Site Available Current Phase C",
@@ -873,6 +881,7 @@ HUB_SENSOR_DEFINITIONS = [
         "device_class": "current",
         "icon": "mdi:current-ac",
         "decimals": 1,
+        "requires_phase": "C",
     },
     {
         "name_suffix": "Site Battery Available Power",

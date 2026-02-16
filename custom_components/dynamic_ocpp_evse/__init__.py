@@ -1,4 +1,4 @@
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.config_entries import ConfigEntry, SOURCE_INTEGRATION_DISCOVERY
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
@@ -8,6 +8,7 @@ from homeassistant.helpers.entity_registry import async_get as async_get_entity_
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from datetime import datetime, timedelta
 import logging
+import voluptuous as vol
 from .const import *
 from .helpers import get_entry_value
 
@@ -194,6 +195,123 @@ async def async_setup(hass: HomeAssistant, config: dict):
         await script.async_run(context=call.context)
 
     hass.services.async_register(DOMAIN, "reset_ocpp_evse", handle_reset_service)
+
+    # --- Helper to find an entity by unique_id suffix within a config entry ---
+    def _find_entity_state(entity_id_suffix: str, config_entry_id: str):
+        """Find an entity's HA entity_id by matching unique_id pattern."""
+        entity_registry = async_get_entity_registry(hass)
+        for eid, entity in entity_registry.entities.items():
+            if (entity.config_entry_id == config_entry_id
+                    and entity.platform == DOMAIN
+                    and entity.unique_id.endswith(entity_id_suffix)):
+                return eid
+        return None
+
+    # --- set_charging_mode service ---
+    async def handle_set_charging_mode(call: ServiceCall):
+        """Set the charging mode for a hub."""
+        entry_id = call.data["entry_id"]
+        mode = call.data["mode"]
+
+        entity_id = _find_entity_state("_charging_mode", entry_id)
+        if not entity_id:
+            _LOGGER.error("Could not find charging mode entity for hub %s", entry_id)
+            return
+
+        await hass.services.async_call(
+            "select", "select_option",
+            {"entity_id": entity_id, "option": mode},
+            blocking=True,
+        )
+
+    hass.services.async_register(
+        DOMAIN, "set_charging_mode", handle_set_charging_mode,
+        schema=vol.Schema({
+            vol.Required("entry_id"): cv.string,
+            vol.Required("mode"): vol.In([
+                CHARGING_MODE_STANDARD, CHARGING_MODE_ECO,
+                CHARGING_MODE_SOLAR, CHARGING_MODE_EXCESS,
+            ]),
+        }),
+    )
+
+    # --- set_distribution_mode service ---
+    async def handle_set_distribution_mode(call: ServiceCall):
+        """Set the distribution mode for a hub."""
+        entry_id = call.data["entry_id"]
+        mode = call.data["mode"]
+
+        entity_id = _find_entity_state("_distribution_mode", entry_id)
+        if not entity_id:
+            _LOGGER.error("Could not find distribution mode entity for hub %s", entry_id)
+            return
+
+        await hass.services.async_call(
+            "select", "select_option",
+            {"entity_id": entity_id, "option": mode},
+            blocking=True,
+        )
+
+    hass.services.async_register(
+        DOMAIN, "set_distribution_mode", handle_set_distribution_mode,
+        schema=vol.Schema({
+            vol.Required("entry_id"): cv.string,
+            vol.Required("mode"): vol.In([
+                DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
+                DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
+            ]),
+        }),
+    )
+
+    # --- set_max_current service ---
+    async def handle_set_max_current(call: ServiceCall):
+        """Set the max current for a charger."""
+        entry_id = call.data["entry_id"]
+        current = call.data["current"]
+
+        entity_id = _find_entity_state("_max_current", entry_id)
+        if not entity_id:
+            _LOGGER.error("Could not find max current entity for charger %s", entry_id)
+            return
+
+        await hass.services.async_call(
+            "number", "set_value",
+            {"entity_id": entity_id, "value": current},
+            blocking=True,
+        )
+
+    hass.services.async_register(
+        DOMAIN, "set_max_current", handle_set_max_current,
+        schema=vol.Schema({
+            vol.Required("entry_id"): cv.string,
+            vol.Required("current"): vol.Coerce(float),
+        }),
+    )
+
+    # --- set_min_current service ---
+    async def handle_set_min_current(call: ServiceCall):
+        """Set the min current for a charger."""
+        entry_id = call.data["entry_id"]
+        current = call.data["current"]
+
+        entity_id = _find_entity_state("_min_current", entry_id)
+        if not entity_id:
+            _LOGGER.error("Could not find min current entity for charger %s", entry_id)
+            return
+
+        await hass.services.async_call(
+            "number", "set_value",
+            {"entity_id": entity_id, "value": current},
+            blocking=True,
+        )
+
+    hass.services.async_register(
+        DOMAIN, "set_min_current", handle_set_min_current,
+        schema=vol.Schema({
+            vol.Required("entry_id"): cv.string,
+            vol.Required("current"): vol.Coerce(float),
+        }),
+    )
 
     return True
 

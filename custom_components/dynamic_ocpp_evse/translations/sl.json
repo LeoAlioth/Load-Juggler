@@ -316,5 +316,73 @@
                 }
             }
         }
+    },
+    "services": {
+        "reset_ocpp_evse": {
+            "name": "Ponastavi OCPP EVSE",
+            "description": "Počisti profile polnjenja in ponastavi polnilnico na minimalni tok.",
+            "fields": {
+                "entry_id": {
+                    "name": "ID konfiguracije polnilnice",
+                    "description": "ID konfiguracijske enote polnilnice za ponastavitev."
+                }
+            }
+        },
+        "set_charging_mode": {
+            "name": "Nastavi način polnjenja",
+            "description": "Spremeni način polnjenja za vozlišče (lokacijo).",
+            "fields": {
+                "entry_id": {
+                    "name": "ID konfiguracije vozlišča",
+                    "description": "ID konfiguracijske enote vozlišča."
+                },
+                "mode": {
+                    "name": "Način polnjenja",
+                    "description": "Način polnjenja za nastavitev (Standard, Eco, Solar, Excess)."
+                }
+            }
+        },
+        "set_distribution_mode": {
+            "name": "Nastavi način distribucije",
+            "description": "Spremeni način distribucije moči za vozlišče (lokacijo).",
+            "fields": {
+                "entry_id": {
+                    "name": "ID konfiguracije vozlišča",
+                    "description": "ID konfiguracijske enote vozlišča."
+                },
+                "mode": {
+                    "name": "Način distribucije",
+                    "description": "Način distribucije za nastavitev (Shared, Priority, Sequential - Optimized, Sequential - Strict)."
+                }
+            }
+        },
+        "set_max_current": {
+            "name": "Nastavi maksimalni tok",
+            "description": "Spremeni maksimalni tok polnjenja za polnilnico.",
+            "fields": {
+                "entry_id": {
+                    "name": "ID konfiguracije polnilnice",
+                    "description": "ID konfiguracijske enote polnilnice."
+                },
+                "current": {
+                    "name": "Maksimalni tok",
+                    "description": "Maksimalni tok v amperih."
+                }
+            }
+        },
+        "set_min_current": {
+            "name": "Nastavi minimalni tok",
+            "description": "Spremeni minimalni tok polnjenja za polnilnico.",
+            "fields": {
+                "entry_id": {
+                    "name": "ID konfiguracije polnilnice",
+                    "description": "ID konfiguracijske enote polnilnice."
+                },
+                "current": {
+                    "name": "Minimalni tok",
+                    "description": "Minimalni tok v amperih."
+                }
+            }
+        }
     }
 }

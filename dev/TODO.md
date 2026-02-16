@@ -59,6 +59,10 @@
 
 ## Backlog
 
+53. - [x] Hide Phase B/C sensors on single-phase sites (requires_phase flag in sensor definitions)
+54. - [x] Expose HA service actions (set_charging_mode, set_distribution_mode, set_max_current + services.yaml + translations)
+55. - [x] User documentation / setup guide (README.md rewrite: quick start, config reference, services & automations, troubleshooting FAQ)
+
 ## Other
 
 1. - [ ] **Icon submission** — Submit `icon.png` to [HA brands repo](https://github.com/home-assistant/brands) (see dev/ISSUES.md)

@@ -156,6 +156,92 @@ Detect the correct polarity automatically by observing grid CT behavior when a c
 - Should warn the user if detected polarity differs from configured setting rather than silently overriding
 
 
-## Check github issues and discussions for possible improvements
-https://github.com/LeoAlioth/Dynamic_OCPP_EVSE/issues and https://github.com/LeoAlioth/Dynamic_OCPP_EVSE/discussions
-read throug them, figure out what is still relevant, and create either TODOs for trivial improvements and note other things in improvements.md
+## ~~Relative time OCPP charging profiles~~ DONE
+**Status:** Implemented — `CONF_PROFILE_VALIDITY_MODE` (Absolute/Relative) per-charger in config flow, with `duration`-based profiles in `sensor.py` line 453-470.
+**Source:** GitHub issue #18 (Charge Offered instability)
+
+---
+
+## Conditional entity visibility based on configuration
+**Status:** Partially implemented (battery entities already conditional)
+**Complexity:** Low (remaining items)
+**Source:** GitHub issue #13 (control panel and useful tips)
+
+### Already Done
+Battery entities are hidden when no battery is configured (`has_battery` check):
+- Battery SOC Target slider, Battery SOC Min slider, Allow Grid Charging switch (number.py, switch.py)
+- Battery SOC, Battery Power, Available Battery Power, Site Battery Available Power sensors (sensor.py `requires_battery` flag)
+- Smart plug vs EVSE entities already branch correctly (Device Power slider vs Min/Max Current sliders)
+
+### Remaining Candidates
+- **Phase B/C available current sensors** — always created but useless on 1-phase sites (always 0). Could hide when only Phase A entity is configured in the hub.
+- Solar surplus sensors are legitimately always-visible (derived from grid CT export even without dedicated solar entity).
+
+---
+
+## Expose HA service actions for automations
+**Status:** Partially available (select entity workaround exists)
+**Complexity:** Low
+**Source:** GitHub discussion #8 (Time of day / free power)
+
+### Current State
+Users can change charging mode via HA automations by targeting the select entity directly (e.g., `select.set_option` on the charging mode entity). This works but isn't discoverable — users expect to find actions under the device/integration in the automation editor.
+
+### Proposed Approach
+Register HA services under the integration domain:
+- `dynamic_ocpp_evse.set_charging_mode` (mode: Standard/Eco/Solar/Excess)
+- `dynamic_ocpp_evse.set_max_current` (current: float)
+- `dynamic_ocpp_evse.pause_charging` / `resume_charging`
+
+### Technical Considerations
+- Services are registered in `__init__.py` via `hass.services.async_register()`
+- Each service needs a schema and handler function
+- Low effort since the underlying entity operations already exist
+
+---
+
+## User documentation / setup guide
+**Status:** Not yet created
+**Complexity:** Low (writing, not code)
+**Source:** GitHub issues #9, #11
+
+### Content Needed
+Several users have asked about:
+- Initial setup workflow (install integration → configure hub → add charger → start charging)
+- What each charging mode does in practice (especially with/without battery)
+- What "Allow grid charging" does (only relevant for battery systems)
+- How to automate charging modes (time-of-day, tariff-based)
+- How min/max current settings interact with charging modes
+- Troubleshooting: charger rejecting profiles, current not adjusting
+
+### Proposed Approach
+Create a `docs/` directory or a wiki page with:
+1. Quick start guide
+2. Configuration reference
+3. Charging modes explained (with/without battery)
+4. Common automations (time-based, tariff-based)
+5. Troubleshooting FAQ
+
+---
+
+## GitHub issue triage (reviewed 2026-02-16)
+
+### Can be closed (fixed in v2.0.0)
+- **#3** — `UnboundLocalError: target_evse` + deprecated methods → v1.1.1 code, fully rewritten in v2.0.0
+- **#7** — Single phase installation validation error → fixed since v1.2.1 (phases 2/3 optional)
+- **#12** — Multi-charger support → implemented in v2.0.0
+- **#14** — Huawei charger rejecting Amps profiles → charge rate unit auto-detection added (TODO #14)
+
+### Need follow-up testing on v2.0.0
+- **#18** — Charge Offered instability (clock drift) → needs relative time profile mode (see improvement above)
+- **#19** — Solar mode not working → likely fixed by v2.0.0 solar refactoring; user testing v2.0.0-pre release
+
+### Feature requests (tracked as improvements above)
+- **#13** — Conditional entity visibility, control panel
+- **#11** — User guide / documentation
+- **#9** — "Allow grid charging" documentation
+
+### Discussions
+- **#8** — Time-of-day charging → resolved via select entity workaround; HA actions improvement noted above
+- **#5** — HomeWizard P1 + WallBox setup → user testing v2.0.0
+- **#4** — Helper setting clarification → old v1.x question, resolved
