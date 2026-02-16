@@ -447,6 +447,19 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
     return PhaseConstraints.zeros()
 
 
+def _calculate_active_minimums(site: SiteContext) -> PhaseConstraints:
+    """Calculate PhaseConstraints for the sum of minimum charge rates of active chargers."""
+    active = [c for c in site.chargers
+              if c.connector_status not in ("Available", "Unknown", "Unavailable")]
+    sum_minimums_total = sum(c.min_current * c.phases for c in active)
+    sum_minimums_per_phase = sum_minimums_total / site.num_phases
+    return PhaseConstraints.from_per_phase(
+        sum_minimums_per_phase if site.consumption.a is not None else 0,
+        sum_minimums_per_phase if site.consumption.b is not None else 0,
+        sum_minimums_per_phase if site.consumption.c is not None else 0,
+    )
+
+
 def _determine_target_power(
     site: SiteContext,
     site_limit_constraints: PhaseConstraints,
@@ -464,17 +477,7 @@ def _determine_target_power(
         return site_limit_constraints
 
     elif mode == CHARGING_MODE_ECO:
-        # Calculate sum of minimum charge rates (active chargers only)
-        active = [c for c in site.chargers
-                  if c.connector_status not in ("Available", "Unknown", "Unavailable")]
-        sum_minimums_total = sum(c.min_current * c.phases for c in active)
-        sum_minimums_per_phase = sum_minimums_total / site.num_phases
-
-        minimums = PhaseConstraints.from_per_phase(
-            sum_minimums_per_phase if site.consumption.a is not None else 0,
-            sum_minimums_per_phase if site.consumption.b is not None else 0,
-            sum_minimums_per_phase if site.consumption.c is not None else 0,
-        )
+        minimums = _calculate_active_minimums(site)
 
         # Battery between min and target - charge at minimum only
         if site.battery_soc is not None and site.battery_soc_target is not None and site.battery_soc < site.battery_soc_target:
@@ -493,16 +496,7 @@ def _determine_target_power(
         # If there's any excess over threshold, guarantee at least min_current
         # to avoid wasting export when inverter would otherwise throttle
         if excess_constraints.ABC > 0:
-            active = [c for c in site.chargers
-                      if c.connector_status not in ("Available", "Unknown", "Unavailable")]
-            sum_minimums_total = sum(c.min_current * c.phases for c in active)
-            sum_minimums_per_phase = sum_minimums_total / site.num_phases
-
-            minimums = PhaseConstraints.from_per_phase(
-                sum_minimums_per_phase if site.consumption.a is not None else 0,
-                sum_minimums_per_phase if site.consumption.b is not None else 0,
-                sum_minimums_per_phase if site.consumption.c is not None else 0,
-            )
+            minimums = _calculate_active_minimums(site)
             target = excess_constraints.element_max(minimums)
             return target.element_min(site_limit_constraints)
         return excess_constraints

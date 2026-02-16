@@ -6,7 +6,7 @@ scenarios:
 
   - name: "3ph-1c-solar-phase-mapping-rotated"
     description: "3-phase charger with rotated phase mapping (L1→B, L2→C, L3→A)"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -40,7 +40,7 @@ scenarios:
 
   - name: "3ph-2c-solar-phase-mapping-swapped"
     description: "Two chargers: one with swapped phases, one default. Solar priority distribution."
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -82,7 +82,7 @@ scenarios:
 
   - name: "3ph-1c-standard-phase-mapping-default"
     description: "Default mapping (L1=A, L2=B, L3=C) should behave identically to no mapping"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 25

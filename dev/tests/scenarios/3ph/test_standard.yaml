@@ -35,11 +35,11 @@ scenarios:
 
   - name: "3ph-1c-standard-no-bat-asymmetric-consumption"
     description: "Standard mode with asymmetric household load — worst phase limits"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 25
-      max_import_power: 15000 # 60A total, but one phase has only 25A - 10A = 15A available
+      max_import_power: 17250
       distribution_mode: priority
       charging_mode: Standard
       solar_production: 0
@@ -67,7 +67,7 @@ scenarios:
 
   - name: "3ph-1c-standard-no-bat-asymmetric-consumption-low-import-limit"
     description: "Standard mode with asymmetric household load — worst phase limits and low total import limit"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -98,7 +98,7 @@ scenarios:
 
   - name: "3ph-2c-standard-no-bat-prio"
     description: "Standard mode, two 3-phase chargers, priority distribution"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 25

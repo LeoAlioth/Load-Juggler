@@ -52,6 +52,7 @@
 48. - [x] Eco mode: charge at minimum when battery below min SOC + wire allow_grid_charging in tests
 49. - [x] Grid/inverter/solar limit: replace proportional scaling with combination-field capping
 50. - [x] Use PhaseConstraints.normalize() for combination-field cascading (removes 3x repeated pattern)
+51. - [x] Remove unused methods (PhaseValues: active_mask, __neg__, clamp_min; PhaseConstraints: __sub__, scale) + extract _calculate_active_minimums() helper
 
 ## In Progress
 
