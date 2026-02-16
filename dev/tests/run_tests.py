@@ -62,6 +62,7 @@ _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator
 # Convenience aliases for the rest of this file
 from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext, PhaseValues
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
+from custom_components.dynamic_ocpp_evse.calculations.utils import compute_household_per_phase
 
 # ---------------------------------------------------------------------------
 # Simulation constants
@@ -283,28 +284,9 @@ def apply_feedback_adjustment(site):
             site.household_consumption_total = max(0, site.solar_production_total + bp - export_power)
 
     # Per-phase household from inverter output entities
-    if site.inverter_output_per_phase is not None:
-        if site.wiring_topology == 'parallel':
-            # Parallel: household = grid_consumption + inverter_output - grid_export (after feedback)
-            def _hh_par(inv_out, cons, exp):
-                if cons is None:
-                    return None
-                return max(0, (cons or 0) + (inv_out or 0) - (exp or 0))
-            hh_a = _hh_par(site.inverter_output_per_phase.a, site.consumption.a, site.export_current.a)
-            hh_b = _hh_par(site.inverter_output_per_phase.b, site.consumption.b, site.export_current.b)
-            hh_c = _hh_par(site.inverter_output_per_phase.c, site.consumption.c, site.export_current.c)
-        else:
-            # Series: household = inverter_output - charger_draws (per phase)
-            ch_a = ch_b = ch_c = 0.0
-            for c in site.chargers:
-                a_d, b_d, c_d = c.get_site_phase_draw()
-                ch_a += a_d
-                ch_b += b_d
-                ch_c += c_d
-            hh_a = max(0, (site.inverter_output_per_phase.a or 0) - ch_a) if site.consumption.a is not None else None
-            hh_b = max(0, (site.inverter_output_per_phase.b or 0) - ch_b) if site.consumption.b is not None else None
-            hh_c = max(0, (site.inverter_output_per_phase.c or 0) - ch_c) if site.consumption.c is not None else None
-        site.household_consumption = PhaseValues(hh_a, hh_b, hh_c)
+    household = compute_household_per_phase(site, site.wiring_topology)
+    if household is not None:
+        site.household_consumption = household
 
 
 def check_stability(history, tolerance=0.5):
