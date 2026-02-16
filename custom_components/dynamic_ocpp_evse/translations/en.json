@@ -41,7 +41,8 @@
                     "phase_c_current_entity_id": "Sensor for phase C current (optional - set to 'None' for single/two-phase)",
                     "main_breaker_rating": "Main breaker rating (per phase)",
                     "invert_phases": "Invert current readings",
-                    "max_import_power_entity_id": "Sensor for maximum import power allowed",
+                    "enable_max_import_power": "Enable max import power limit",
+                    "max_import_power_entity_id": "Sensor for maximum import power (optional override)",
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
                     "site_update_frequency": "Site sensor refresh rate"
@@ -49,7 +50,8 @@
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
                     "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
-                    "max_import_power_entity_id": "Optional — for dynamic grid import limits enforced by your grid operator. Most users can leave this empty.",
+                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to disable the limit entirely.",
+                    "max_import_power_entity_id": "Advanced — use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider.",
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "excess_export_threshold": "In Excess mode, EV charging only starts when grid export exceeds this value. Set to your desired minimum export before charging begins.",
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers."
@@ -57,7 +59,7 @@
             },
             "hub_inverter": {
                 "title": "Inverter Configuration",
-                "description": "Configure inverter power limits and per-phase output sensors (optional — set power to 0 to leave unconstrained)",
+                "description": "Configure inverter power limits and per-phase output sensors (optional — set power to 0 to leave unconstrained)\n\nBattery max discharge power: {battery_power_hint}",
                 "data": {
                     "inverter_max_power": "Total inverter power capacity",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase",
@@ -196,7 +198,8 @@
                     "phase_c_current_entity_id": "Sensor for phase C current (optional)",
                     "main_breaker_rating": "Main breaker rating (per phase)",
                     "invert_phases": "Invert current readings",
-                    "max_import_power_entity_id": "Sensor for maximum import power allowed",
+                    "enable_max_import_power": "Enable max import power limit",
+                    "max_import_power_entity_id": "Sensor for maximum import power (optional override)",
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
                     "site_update_frequency": "Site sensor refresh rate"
@@ -204,7 +207,8 @@
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
                     "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
-                    "max_import_power_entity_id": "Optional — for dynamic grid import limits enforced by your grid operator. Most users can leave this empty.",
+                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to disable the limit entirely.",
+                    "max_import_power_entity_id": "Advanced — use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider.",
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "excess_export_threshold": "In Excess mode, EV charging only starts when grid export exceeds this value. Set to your desired minimum export before charging begins.",
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers."
@@ -212,7 +216,7 @@
             },
             "reconfigure_hub_inverter": {
                 "title": "Reconfigure Inverter Settings",
-                "description": "Update your inverter configuration",
+                "description": "Update your inverter configuration\n\nBattery max discharge power: {battery_power_hint}",
                 "data": {
                     "inverter_max_power": "Total inverter power capacity",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase",
@@ -339,7 +343,8 @@
                     "phase_c_current_entity_id": "Sensor for phase C current (optional)",
                     "main_breaker_rating": "Main breaker rating (per phase)",
                     "invert_phases": "Invert current readings",
-                    "max_import_power_entity_id": "Sensor for maximum import power allowed",
+                    "enable_max_import_power": "Enable max import power limit",
+                    "max_import_power_entity_id": "Sensor for maximum import power (optional override)",
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
                     "site_update_frequency": "Site sensor refresh rate"
@@ -347,7 +352,8 @@
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
                     "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
-                    "max_import_power_entity_id": "Optional — for dynamic grid import limits enforced by your grid operator. Most users can leave this empty.",
+                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to disable the limit entirely.",
+                    "max_import_power_entity_id": "Advanced — use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider.",
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "excess_export_threshold": "In Excess mode, EV charging only starts when grid export exceeds this value. Set to your desired minimum export before charging begins.",
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers."
@@ -355,7 +361,7 @@
             },
             "hub_inverter": {
                 "title": "Update Inverter Settings",
-                "description": "Update your inverter configuration",
+                "description": "Update your inverter configuration\n\nBattery max discharge power: {battery_power_hint}",
                 "data": {
                     "inverter_max_power": "Total inverter power capacity",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase",

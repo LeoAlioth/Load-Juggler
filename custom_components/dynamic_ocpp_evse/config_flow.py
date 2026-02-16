@@ -16,6 +16,8 @@ from .detection_patterns import (
 from .helpers import normalize_optional_entity, prettify_name, validate_charger_settings
 
 _LOGGER = logging.getLogger(__name__)
+_POWER_FACTOR = 0.9  # 90% of detected limit for safe headroom
+
 
 class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Dynamic OCPP EVSE."""
@@ -72,8 +74,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 default=defaults.get(CONF_INVERT_PHASES, False),
             ), bool),
             (vol.Required(
+                CONF_ENABLE_MAX_IMPORT_POWER,
+                default=defaults.get(CONF_ENABLE_MAX_IMPORT_POWER, True),
+            ), bool),
+            (self._optional_entity_field(
                 CONF_MAX_IMPORT_POWER_ENTITY_ID,
-                default=defaults.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
+                defaults.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
             ), selector({"entity": {"domain": ["sensor", "input_number"], "device_class": "power"}})),
             (vol.Required(
                 CONF_PHASE_VOLTAGE,
@@ -331,7 +337,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         })
 
     # Optional entity keys grouped by config step (for entity selector clearing)
-    _GRID_ENTITY_KEYS = [CONF_PHASE_B_CURRENT_ENTITY_ID, CONF_PHASE_C_CURRENT_ENTITY_ID]
+    _GRID_ENTITY_KEYS = [CONF_PHASE_B_CURRENT_ENTITY_ID, CONF_PHASE_C_CURRENT_ENTITY_ID, CONF_MAX_IMPORT_POWER_ENTITY_ID]
     _BATTERY_ENTITY_KEYS = [CONF_SOLAR_PRODUCTION_ENTITY_ID, CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID]
     _INVERTER_ENTITY_KEYS = [CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID, CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID, CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID]
     _PLUG_ENTITY_KEYS = [CONF_PLUG_POWER_MONITOR_ENTITY_ID]
@@ -521,15 +527,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if not default_phase_c:
                         default_phase_c = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_c"], eid)), None)
 
-            # Find max import power sensor
-            entity_ids = self._get_entity_registry_ids()
-            default_max_import_power = next((eid for eid in entity_ids if re.match(r'sensor\..*power_limit.*', eid)), None)
-
             data_schema = self._hub_grid_schema({
                 CONF_PHASE_A_CURRENT_ENTITY_ID: default_phase_a,
                 CONF_PHASE_B_CURRENT_ENTITY_ID: default_phase_b,
                 CONF_PHASE_C_CURRENT_ENTITY_ID: default_phase_c,
-                CONF_MAX_IMPORT_POWER_ENTITY_ID: default_max_import_power,
                 CONF_MAIN_BREAKER_RATING: DEFAULT_MAIN_BREAKER_RATING,
                 CONF_INVERT_PHASES: False,
                 CONF_PHASE_VOLTAGE: DEFAULT_PHASE_VOLTAGE,
@@ -578,7 +579,6 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         # Auto-detect solar / battery entities and power limits
-        _POWER_FACTOR = 0.9  # 90% of detected limit for safe headroom
         data_schema = self._hub_battery_schema({
             CONF_SOLAR_PRODUCTION_ENTITY_ID: self._auto_detect_entity(SOLAR_PRODUCTION_PATTERNS),
             CONF_BATTERY_SOC_ENTITY_ID: self._auto_detect_entity(BATTERY_SOC_PATTERNS),
@@ -634,11 +634,16 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_WIRING_TOPOLOGY: default_topology,
         })
 
+        # Auto-detect battery discharge power for description hint
+        battery_hint = self._auto_detect_entity_value(BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR)
+        hint_text = f"{battery_hint}W detected" if battery_hint else "not detected"
+
         return self.async_show_form(
             step_id="hub_inverter",
             data_schema=data_schema,
             errors=errors,
-            last_step=False
+            last_step=False,
+            description_placeholders={"battery_power_hint": hint_text},
         )
 
     # ==================== CHARGER CONFIGURATION STEPS ====================
@@ -1160,11 +1165,16 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         data_schema = self._hub_inverter_schema(inverter_defaults)
 
+        # Auto-detect battery discharge power for description hint
+        battery_hint = self._auto_detect_entity_value(BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR)
+        hint_text = f"{battery_hint}W detected" if battery_hint else "not detected"
+
         return self.async_show_form(
             step_id="reconfigure_hub_inverter",
             data_schema=data_schema,
             errors=errors,
-            last_step=False
+            last_step=False,
+            description_placeholders={"battery_power_hint": hint_text},
         )
 
     async def async_step_reconfigure_charger(
@@ -1376,10 +1386,15 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             if has_battery:
                 inverter_defaults[CONF_WIRING_TOPOLOGY] = WIRING_TOPOLOGY_SERIES
 
+        # Auto-detect battery discharge power for description hint
+        battery_hint = f._auto_detect_entity_value(BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR)
+        hint_text = f"{battery_hint}W detected" if battery_hint else "not detected"
+
         return self.async_show_form(
             step_id="hub_inverter",
             data_schema=f._hub_inverter_schema(inverter_defaults),
             errors=errors,
+            description_placeholders={"battery_power_hint": hint_text},
         )
 
     async def async_step_hub(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1406,7 +1421,6 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
                 defaults[conf_key] = f._auto_detect_entity(patterns)
 
         # Auto-detect battery power limits when at default
-        _POWER_FACTOR = 0.9
         power_detect_map = {
             CONF_BATTERY_MAX_CHARGE_POWER: BATTERY_MAX_CHARGE_POWER_PATTERNS,
             CONF_BATTERY_MAX_DISCHARGE_POWER: BATTERY_MAX_DISCHARGE_POWER_PATTERNS,

@@ -127,9 +127,15 @@ def run_hub_calculation(sensor):
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
     battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
 
-    # --- Read max grid import power from HA entity ---
+    # --- Read max grid import power (entity override → slider → None) ---
+    enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
     max_import_power_entity = get_entry_value(hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
-    max_grid_import_power = _read_entity(hass, max_import_power_entity, None) if max_import_power_entity else None
+    if max_import_power_entity:
+        max_grid_import_power = _read_entity(hass, max_import_power_entity, None)
+    elif enable_max_import:
+        max_grid_import_power = _read_entity(hass, f"number.{hub_entity_id}_max_import_power", None)
+    else:
+        max_grid_import_power = None
 
     # --- Read inverter configuration ---
     inverter_max_power = get_entry_value(hub_entry, CONF_INVERTER_MAX_POWER, None)

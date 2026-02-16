@@ -74,12 +74,10 @@
 65. - [x] EVSE charging status sensor — new `DynamicOcppEvseChargerStatusSensor` shows reason for not charging (Not Connected, Paused: Xs, Insufficient Solar/Power, No Excess, Battery Priority, etc.)
 66. - [x] **`data_description` help text — all steps**: Added per-field help text to Grid, Inverter, Battery, Charger timing, Charger info, Charger current, and Plug steps (both en.json and sl.json). Covers initial flow, reconfigure flow, and options flow.
 67. - [x] **Raw `int` → number selectors with min/max/unit**: Replaced bare `int` fields with `selector({"number": {...}})` across all steps — `main_breaker_rating`, `phase_voltage`, `excess_export_threshold`, `battery_max_charge/discharge_power`, `evse_min/max_charge_current`, `update_frequency`, `ocpp_profile_timeout`, `charge_pause_duration`, `stack_level`, `plug_power_rating`. Shortened data labels (units now shown by selectors).
+68. - [x] **Max import power → checkbox + slider + optional entity**: Added `enable_max_import_power` checkbox (default: checked). When enabled and no entity selected, creates `MaxImportPowerSlider` number entity (default = breaker × phases × voltage). Entity selector kept as optional override for power users. Removed unreliable auto-detection. `dynamic_ocpp_evse.py` reads entity → slider → None fallback chain.
+69. - [x] **Inverter power UX: battery power hint**: Added `description_placeholders` with auto-detected battery max discharge power to all inverter steps (initial, reconfigure, options). Shows "{value}W detected" or "not detected".
 
 ## Backlog
-
-68. - [ ] **Max import power → checkbox + slider + optional entity**: Add a checkbox ("Enable max import power limit", **default: checked**). When enabled and no entity selected, auto-create a runtime number entity slider (like `power_buffer`) with default value = `main_breaker * phases * voltage`. Keep the entity selector as optional for power users who want to link a template sensor instead. Make entity selector field optional (`vol.Optional`), remove unreliable auto-detection (`sensor.*power_limit.*`). Read slider or entity value in `dynamic_ocpp_evse.py` (entity takes precedence over slider when both exist).
-69. - [ ] Inverter power UX: dynamic step description with detected battery power hint (run `_auto_detect_entity_value(BATTERY_MAX_DISCHARGE_POWER_PATTERNS)` in inverter step, show in `description_placeholders`)
-70. - [ ] Inverter power UX: auto-derive `inverter_max_power_per_phase` from `inverter_max_power / num_phases` when user fills in total but leaves per-phase at 0
 
 ## Other
 

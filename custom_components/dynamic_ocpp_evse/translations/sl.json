@@ -41,7 +41,8 @@
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno - nastavite na 'None' za eno/dvofazno)",
                     "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
                     "invert_phases": "Obrni odčitke toka",
-                    "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
+                    "enable_max_import_power": "Omogoči omejitev maksimalne uvozne moči",
+                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
                     "phase_voltage": "Napetost na fazo",
                     "excess_export_threshold": "Prag izvoza za način Excess",
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije"
@@ -49,7 +50,8 @@
                 "data_description": {
                     "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
                     "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
-                    "max_import_power_entity_id": "Neobvezno — za dinamične omejitve uvoza, ki jih zahteva vaš operater omrežja. Večina uporabnikov to lahko pusti prazno.",
+                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odkljukajte za popolno onemogočitev omejitve.",
+                    "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom."
@@ -57,7 +59,7 @@
             },
             "hub_inverter": {
                 "title": "Konfiguracija razsmernika",
-                "description": "Nastavite omejitve moči razsmernika in senzorje izhoda po fazah (neobvezno — nastavite moč na 0 za brez omejitev)",
+                "description": "Nastavite omejitve moči razsmernika in senzorje izhoda po fazah (neobvezno — nastavite moč na 0 za brez omejitev)\n\nMaksimalna moč praznjenja baterije: {battery_power_hint}",
                 "data": {
                     "inverter_max_power": "Skupna moč razsmernika",
                     "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo",
@@ -196,7 +198,8 @@
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
                     "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
                     "invert_phases": "Obrni odčitke toka",
-                    "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
+                    "enable_max_import_power": "Omogoči omejitev maksimalne uvozne moči",
+                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
                     "phase_voltage": "Napetost na fazo",
                     "excess_export_threshold": "Prag izvoza za način Excess",
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije"
@@ -204,7 +207,8 @@
                 "data_description": {
                     "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
                     "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
-                    "max_import_power_entity_id": "Neobvezno — za dinamične omejitve uvoza, ki jih zahteva vaš operater omrežja. Večina uporabnikov to lahko pusti prazno.",
+                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odkljukajte za popolno onemogočitev omejitve.",
+                    "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom."
@@ -212,7 +216,7 @@
             },
             "reconfigure_hub_inverter": {
                 "title": "Ponovno konfiguriraj nastavitve razsmernika",
-                "description": "Posodobite konfiguracijo razsmernika",
+                "description": "Posodobite konfiguracijo razsmernika\n\nMaksimalna moč praznjenja baterije: {battery_power_hint}",
                 "data": {
                     "inverter_max_power": "Skupna moč razsmernika",
                     "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo",
@@ -339,7 +343,8 @@
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
                     "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
                     "invert_phases": "Obrni odčitke toka",
-                    "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
+                    "enable_max_import_power": "Omogoči omejitev maksimalne uvozne moči",
+                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
                     "phase_voltage": "Napetost na fazo",
                     "excess_export_threshold": "Prag izvoza za način Excess",
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije"
@@ -347,7 +352,8 @@
                 "data_description": {
                     "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
                     "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
-                    "max_import_power_entity_id": "Neobvezno — za dinamične omejitve uvoza, ki jih zahteva vaš operater omrežja. Večina uporabnikov to lahko pusti prazno.",
+                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odkljukajte za popolno onemogočitev omejitve.",
+                    "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom."
@@ -355,7 +361,7 @@
             },
             "hub_inverter": {
                 "title": "Posodobi nastavitve razsmernika",
-                "description": "Posodobite konfiguracijo razsmernika",
+                "description": "Posodobite konfiguracijo razsmernika\n\nMaksimalna moč praznjenja baterije: {battery_power_hint}",
                 "data": {
                     "inverter_max_power": "Skupna moč razsmernika",
                     "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo",
