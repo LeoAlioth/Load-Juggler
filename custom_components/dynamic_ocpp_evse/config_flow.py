@@ -1,6 +1,5 @@
 import re
 import logging
-import asyncio
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -388,36 +387,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _create_entry_and_seed_options(
         self, title: str, static_data: dict, options_data: dict
     ) -> config_entries.FlowResult:
-        """Create a config entry and seed options via async task.
-
-        HA creates the entry with data only; options must be seeded after
-        the entry is registered. This helper handles the async seeding pattern.
-        """
-        result = self.async_create_entry(title=title, data=static_data)
-
-        entity_id = static_data.get(CONF_ENTITY_ID)
-        entry_type = static_data.get(ENTRY_TYPE)
-        device_type = static_data.get(CONF_DEVICE_TYPE)
-
-        async def _seed():
-            await asyncio.sleep(0.1)
-            for entry in self.hass.config_entries.async_entries(DOMAIN):
-                if entry.data.get(CONF_ENTITY_ID) != entity_id:
-                    continue
-                if entry.data.get(ENTRY_TYPE) != entry_type:
-                    continue
-                if device_type and entry.data.get(CONF_DEVICE_TYPE) != device_type:
-                    continue
-                try:
-                    self.hass.config_entries.async_update_entry(
-                        entry, options={**entry.options, **options_data}
-                    )
-                except Exception:
-                    _LOGGER.exception("Failed to seed options for %s entry", entry_type)
-                break
-
-        asyncio.create_task(_seed())
-        return result
+        """Create a config entry with options set directly."""
+        return self.async_create_entry(
+            title=title, data=static_data, options=options_data
+        )
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
