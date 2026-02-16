@@ -151,16 +151,13 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_inverter"
 
-    # Step 4: hub_inverter → provide inverter settings
+    # Step 4: hub_inverter → provide inverter settings (no inverter output entities)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             CONF_INVERTER_MAX_POWER: 10000,
             CONF_INVERTER_MAX_POWER_PER_PHASE: 4000,
             CONF_INVERTER_SUPPORTS_ASYMMETRIC: True,
-            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "",
-            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: "",
-            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: "",
             CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
         },
     )
@@ -171,7 +168,6 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
-            CONF_SOLAR_PRODUCTION_ENTITY_ID: "",
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
             CONF_BATTERY_MAX_CHARGE_POWER: 5000,
@@ -226,13 +222,11 @@ async def test_hub_creation_single_phase(hass: HomeAssistant):
             CONF_ENTITY_ID: "hub_1ph",
         },
     )
-    # Single-phase: only phase A, B and C left empty
+    # Single-phase: only phase A, B and C left empty (omitted = no selection)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_current",
-            CONF_PHASE_B_CURRENT_ENTITY_ID: "",
-            CONF_PHASE_C_CURRENT_ENTITY_ID: "",
             CONF_MAIN_BREAKER_RATING: 25,
             CONF_INVERT_PHASES: False,
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
@@ -242,29 +236,23 @@ async def test_hub_creation_single_phase(hass: HomeAssistant):
     )
     assert result["step_id"] == "hub_inverter"
 
-    # No inverter limits
+    # No inverter limits (omit optional entity fields)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             CONF_INVERTER_MAX_POWER: 0,
             CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
             CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
-            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "",
-            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: "",
-            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: "",
             CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
         },
     )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_battery"
 
-    # No battery
+    # No battery (omit optional entity fields)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
-            CONF_SOLAR_PRODUCTION_ENTITY_ID: "",
-            CONF_BATTERY_SOC_ENTITY_ID: "",
-            CONF_BATTERY_POWER_ENTITY_ID: "",
             CONF_BATTERY_MAX_CHARGE_POWER: 0,
             CONF_BATTERY_MAX_DISCHARGE_POWER: 0,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
@@ -518,9 +506,6 @@ async def test_options_flow_hub_saves_changes(
             CONF_INVERTER_MAX_POWER: 8000,
             CONF_INVERTER_MAX_POWER_PER_PHASE: 3000,
             CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
-            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "",
-            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: "",
-            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: "",
             CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
         },
     )
@@ -532,7 +517,6 @@ async def test_options_flow_hub_saves_changes(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
-            CONF_SOLAR_PRODUCTION_ENTITY_ID: "",
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
             CONF_BATTERY_MAX_CHARGE_POWER: 7000,

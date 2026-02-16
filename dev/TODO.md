@@ -62,6 +62,8 @@
 53. - [x] Hide Phase B/C sensors on single-phase sites (requires_phase flag in sensor definitions)
 54. - [x] Expose HA service actions (set_charging_mode, set_distribution_mode, set_max_current + services.yaml + translations)
 55. - [x] User documentation / setup guide (README.md rewrite: quick start, config reference, services & automations, troubleshooting FAQ)
+56. - [x] Entity selector UX — replaced raw entity ID dropdowns with proper HA entity selectors for optional fields; added per-step clearing support via `_normalize_optional_inputs(step_entity_keys)`
+57. - [x] Extract auto-detection patterns — moved PHASE_PATTERNS and INVERTER_OUTPUT_PATTERNS to `detection_patterns.py`
 
 ## Other
 
