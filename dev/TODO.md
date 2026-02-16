@@ -50,6 +50,8 @@
 46. - [x] Populate empty scenario files + file path in test output (93 scenarios)
 47. - [x] Excess mode minimum current fallback
 48. - [x] Eco mode: charge at minimum when battery below min SOC + wire allow_grid_charging in tests
+49. - [x] Grid/inverter/solar limit: replace proportional scaling with combination-field capping
+50. - [x] Use PhaseConstraints.normalize() for combination-field cascading (removes 3x repeated pattern)
 
 ## In Progress
 

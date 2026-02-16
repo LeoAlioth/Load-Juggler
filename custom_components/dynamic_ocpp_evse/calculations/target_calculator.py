@@ -154,9 +154,7 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
         max_import_current = site.max_grid_import_power / site.voltage
         available_for_evs = max(0, max_import_current - total_consumption)
         constraints.ABC = min(constraints.ABC, available_for_evs)
-        constraints.AB = min(constraints.AB, available_for_evs)
-        constraints.AC = min(constraints.AC, available_for_evs)
-        constraints.BC = min(constraints.BC, available_for_evs)
+        constraints = constraints.normalize()
 
     return constraints
 
@@ -277,11 +275,8 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     # Cap combination fields (not per-phase) — same principle as grid limit.
     if site.inverter_max_power:
         max_total_current = site.inverter_max_power / site.voltage
-        if constraints.ABC > max_total_current:
-            constraints.ABC = max_total_current
-            constraints.AB = min(constraints.AB, max_total_current)
-            constraints.AC = min(constraints.AC, max_total_current)
-            constraints.BC = min(constraints.BC, max_total_current)
+        constraints.ABC = min(constraints.ABC, max_total_current)
+        constraints = constraints.normalize()
 
     return constraints
 
@@ -407,11 +402,8 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
         else:
             household = site.consumption.total or 0
         max_for_chargers = max(0, max_total - household)
-        if constraints.ABC > max_for_chargers:
-            constraints.ABC = max_for_chargers
-            constraints.AB = min(constraints.AB, max_for_chargers)
-            constraints.AC = min(constraints.AC, max_for_chargers)
-            constraints.BC = min(constraints.BC, max_for_chargers)
+        constraints.ABC = min(constraints.ABC, max_for_chargers)
+        constraints = constraints.normalize()
 
     _LOGGER.debug(f"Solar available constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}")
 
