@@ -53,6 +53,7 @@
 49. - [x] Grid/inverter/solar limit: replace proportional scaling with combination-field capping
 50. - [x] Use PhaseConstraints.normalize() for combination-field cascading (removes 3x repeated pattern)
 51. - [x] Remove unused methods (PhaseValues: active_mask, __neg__, clamp_min; PhaseConstraints: __sub__, scale) + extract _calculate_active_minimums() helper
+52. - [x] Codebase refactoring: extract _send_plug_command/_send_ocpp_command, _allocate_minimums, _build_inverter_constraints; consolidate _read_entity; reuse _get_household_per_phase; unify element_min/element_max
 
 ## In Progress
 

@@ -187,20 +187,27 @@ def _get_household_per_phase(site: SiteContext) -> tuple[float, float, float]:
     )
 
 
-def _asymmetric_per_phase_limits(
-    site: SiteContext, total_pool: float, max_per_phase: float
-) -> tuple[float, float, float]:
-    """Calculate per-phase limits for asymmetric inverter paths.
+def _build_inverter_constraints(site: SiteContext, total_pool: float) -> PhaseConstraints:
+    """Build PhaseConstraints for inverter-limited power (solar/battery/excess).
 
-    Subtracts per-phase household from max_per_phase, caps at total_pool,
-    and returns 0 for non-existent phases.
+    For ASYMMETRIC inverters: power is a flexible pool, per-phase capped by
+    inverter_max_power_per_phase minus household.
+    For SYMMETRIC inverters: power is fixed per-phase (total_pool / num_phases),
+    capped by inverter_max_power_per_phase.
     """
-    hh_a, hh_b, hh_c = _get_household_per_phase(site)
-    return (
-        min(total_pool, max(0, max_per_phase - hh_a)) if site.consumption.a is not None else 0,
-        min(total_pool, max(0, max_per_phase - hh_b)) if site.consumption.b is not None else 0,
-        min(total_pool, max(0, max_per_phase - hh_c)) if site.consumption.c is not None else 0,
-    )
+    max_per_phase = site.inverter_max_power_per_phase / site.voltage if site.inverter_max_power_per_phase else float('inf')
+    if site.inverter_supports_asymmetric:
+        hh_a, hh_b, hh_c = _get_household_per_phase(site)
+        phase_a = min(total_pool, max(0, max_per_phase - hh_a)) if site.consumption.a is not None else 0
+        phase_b = min(total_pool, max(0, max_per_phase - hh_b)) if site.consumption.b is not None else 0
+        phase_c = min(total_pool, max(0, max_per_phase - hh_c)) if site.consumption.c is not None else 0
+        return PhaseConstraints.from_pool(phase_a, phase_b, phase_c, total_pool)
+    else:
+        per_phase = total_pool / site.num_phases
+        phase_a = min(per_phase, max_per_phase) if site.consumption.a is not None else 0
+        phase_b = min(per_phase, max_per_phase) if site.consumption.b is not None else 0
+        phase_c = min(per_phase, max_per_phase) if site.consumption.c is not None else 0
+        return PhaseConstraints.from_per_phase(phase_a, phase_b, phase_c)
 
 
 def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
@@ -249,27 +256,7 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     if total_inverter_current == 0:
         return PhaseConstraints.zeros()
 
-    # Determine per-phase limit (inverter constraint)
-    if site.inverter_max_power_per_phase:
-        max_per_phase = site.inverter_max_power_per_phase / site.voltage
-    else:
-        max_per_phase = float('inf')
-
-    if site.inverter_supports_asymmetric:
-        # ASYMMETRIC: Inverter power can be allocated to any phase
-        # Per-phase household limits how much of the inverter's per-phase capacity
-        # is available for chargers (household uses some of the per-phase headroom)
-        phase_a_limit, phase_b_limit, phase_c_limit = _asymmetric_per_phase_limits(site, total_inverter_current, max_per_phase)
-        constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, total_inverter_current)
-    else:
-        # SYMMETRIC: Inverter power is fixed per-phase
-        inverter_per_phase = total_inverter_current / site.num_phases
-
-        phase_a_available = min(inverter_per_phase, max_per_phase) if site.consumption.a is not None else 0
-        phase_b_available = min(inverter_per_phase, max_per_phase) if site.consumption.b is not None else 0
-        phase_c_available = min(inverter_per_phase, max_per_phase) if site.consumption.c is not None else 0
-
-        constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
+    constraints = _build_inverter_constraints(site, total_inverter_current)
 
     # Apply total inverter power limit if configured.
     # Cap combination fields (not per-phase) — same principle as grid limit.
@@ -319,12 +306,6 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
     For ASYMMETRIC inverters: Solar/battery power is a flexible pool.
     For SYMMETRIC inverters: Solar/battery power is fixed per-phase.
     """
-    # Determine per-phase limit (inverter constraint)
-    if site.inverter_max_power_per_phase:
-        max_per_phase = site.inverter_max_power_per_phase / site.voltage
-    else:
-        max_per_phase = float('inf')
-
     # Export current IS the solar surplus per phase.
     # No consumption subtraction needed (export is already net).
     #
@@ -377,13 +358,11 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
         site.export_current.active_count or site.consumption.active_count or 1
     ) if battery_adjustment_total else 0
 
+    max_per_phase = site.inverter_max_power_per_phase / site.voltage if site.inverter_max_power_per_phase else float('inf')
+
     if site.inverter_supports_asymmetric:
-        # Total export + battery adjustment is the available pool
         total_pool = (site.export_current.total if site.export_current else 0) + battery_adjustment_total
-        # Per-phase household limits how much of the inverter's per-phase capacity
-        # is available for chargers (household uses some of the per-phase headroom)
-        phase_a_limit, phase_b_limit, phase_c_limit = _asymmetric_per_phase_limits(site, total_pool, max_per_phase)
-        constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, total_pool)
+        constraints = _build_inverter_constraints(site, total_pool)
     else:
         # Symmetric: per-phase export + battery adjustment = per-phase surplus
         phase_a_available = min((site.export_current.a or 0) + battery_adjustment_per_phase, max_per_phase) if site.export_current.a is not None else 0
@@ -395,12 +374,7 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
     # Cap combination fields (not per-phase) — same principle as grid limit.
     if site.inverter_max_power:
         max_total = site.inverter_max_power / site.voltage
-        if site.household_consumption is not None:
-            household = site.household_consumption.total
-        elif site.household_consumption_total is not None:
-            household = site.household_consumption_total / site.voltage
-        else:
-            household = site.consumption.total or 0
+        household = sum(_get_household_per_phase(site))
         max_for_chargers = max(0, max_total - household)
         constraints.ABC = min(constraints.ABC, max_for_chargers)
         constraints = constraints.normalize()
@@ -424,22 +398,7 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
         available_power = site.total_export_power - site.excess_export_threshold
         total_available = available_power / site.voltage if site.voltage > 0 else 0
 
-        if site.inverter_max_power_per_phase:
-            max_per_phase = site.inverter_max_power_per_phase / site.voltage
-        else:
-            max_per_phase = float('inf')
-
-        if site.inverter_supports_asymmetric:
-            phase_a_limit, phase_b_limit, phase_c_limit = _asymmetric_per_phase_limits(site, total_available, max_per_phase)
-            constraints = PhaseConstraints.from_pool(phase_a_limit, phase_b_limit, phase_c_limit, total_available)
-        else:
-            per_phase_available = total_available / site.num_phases
-
-            phase_a = min(per_phase_available, max_per_phase) if site.consumption.a is not None else 0
-            phase_b = min(per_phase_available, max_per_phase) if site.consumption.b is not None else 0
-            phase_c = min(per_phase_available, max_per_phase) if site.consumption.c is not None else 0
-
-            constraints = PhaseConstraints.from_per_phase(phase_a, phase_b, phase_c)
+        constraints = _build_inverter_constraints(site, total_available)
 
         _LOGGER.debug(f"Excess available constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}")
         return constraints
@@ -536,29 +495,33 @@ def _distribute_power(site: SiteContext, target_constraints: PhaseConstraints) -
         _distribute_per_phase_priority(site, target_constraints)
 
 
-def _distribute_per_phase_priority(site: SiteContext, constraints: PhaseConstraints) -> None:
-    """
-    PRIORITY mode: Pass 1 allocate minimum by priority, Pass 2 give remainder by priority.
-    """
-    chargers_by_priority = sorted(site.chargers, key=lambda c: c.priority)
-    remaining = constraints.copy()
+def _allocate_minimums(
+    chargers: list[ChargerContext], remaining: PhaseConstraints
+) -> tuple[dict[str, float], PhaseConstraints]:
+    """Allocate minimum current to chargers that fit. Returns (allocated dict, remaining constraints)."""
     allocated = {}
-
-    # Pass 1: Allocate minimum to all chargers (by priority)
-    for charger in chargers_by_priority:
+    for charger in chargers:
         mask = charger.active_phases_mask
         if not mask:
             _LOGGER.error(f"Charger {charger.entity_id} has no phase mask!")
             allocated[charger.entity_id] = 0
             continue
 
-        charger_available = remaining.get_available(mask)
-
-        if charger_available >= charger.min_current:
+        if remaining.get_available(mask) >= charger.min_current:
             allocated[charger.entity_id] = charger.min_current
             remaining = remaining.deduct(charger.min_current, mask)
         else:
             allocated[charger.entity_id] = 0
+
+    return allocated, remaining
+
+
+def _distribute_per_phase_priority(site: SiteContext, constraints: PhaseConstraints) -> None:
+    """
+    PRIORITY mode: Pass 1 allocate minimum by priority, Pass 2 give remainder by priority.
+    """
+    chargers_by_priority = sorted(site.chargers, key=lambda c: c.priority)
+    allocated, remaining = _allocate_minimums(chargers_by_priority, constraints.copy())
 
     # Pass 2: Allocate remainder by priority
     for charger in chargers_by_priority:
@@ -582,24 +545,7 @@ def _distribute_per_phase_shared(site: SiteContext, constraints: PhaseConstraint
     """
     SHARED mode: Pass 1 allocate minimum to all, Pass 2 split remainder equally.
     """
-    remaining = constraints.copy()
-    allocated = {}
-
-    # Pass 1: Allocate minimum to all
-    for charger in site.chargers:
-        mask = charger.active_phases_mask
-        if not mask:
-            _LOGGER.error(f"Charger {charger.entity_id} has no phase mask!")
-            allocated[charger.entity_id] = 0
-            continue
-
-        charger_available = remaining.get_available(mask)
-
-        if charger_available >= charger.min_current:
-            allocated[charger.entity_id] = charger.min_current
-            remaining = remaining.deduct(charger.min_current, mask)
-        else:
-            allocated[charger.entity_id] = 0
+    allocated, remaining = _allocate_minimums(site.chargers, constraints.copy())
 
     charging_chargers = [c for c in site.chargers if allocated.get(c.entity_id, 0) > 0]
     if not charging_chargers:

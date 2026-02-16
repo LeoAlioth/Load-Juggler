@@ -217,19 +217,18 @@ class PhaseConstraints:
             ABC=self.ABC + other.ABC,
         )
 
-    def element_min(self, other: PhaseConstraints) -> PhaseConstraints:
+    def _element_op(self, other: PhaseConstraints, op) -> PhaseConstraints:
         return PhaseConstraints(
-            A=min(self.A, other.A), B=min(self.B, other.B), C=min(self.C, other.C),
-            AB=min(self.AB, other.AB), AC=min(self.AC, other.AC), BC=min(self.BC, other.BC),
-            ABC=min(self.ABC, other.ABC),
+            A=op(self.A, other.A), B=op(self.B, other.B), C=op(self.C, other.C),
+            AB=op(self.AB, other.AB), AC=op(self.AC, other.AC), BC=op(self.BC, other.BC),
+            ABC=op(self.ABC, other.ABC),
         )
 
+    def element_min(self, other: PhaseConstraints) -> PhaseConstraints:
+        return self._element_op(other, min)
+
     def element_max(self, other: PhaseConstraints) -> PhaseConstraints:
-        return PhaseConstraints(
-            A=max(self.A, other.A), B=max(self.B, other.B), C=max(self.C, other.C),
-            AB=max(self.AB, other.AB), AC=max(self.AC, other.AC), BC=max(self.BC, other.BC),
-            ABC=max(self.ABC, other.ABC),
-        )
+        return self._element_op(other, max)
 
     def get_available(self, mask: str) -> float:
         """Get per-phase current available for a charger with given phase mask.

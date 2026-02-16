@@ -154,3 +154,8 @@ Detect the correct polarity automatically by observing grid CT behavior when a c
 - Only needs one clear start/stop event to determine polarity with high confidence
 - Household load fluctuations add noise — use the charger's known draw magnitude as a threshold
 - Should warn the user if detected polarity differs from configured setting rather than silently overriding
+
+
+## Check github issues and discussions for possible improvements
+https://github.com/LeoAlioth/Dynamic_OCPP_EVSE/issues and https://github.com/LeoAlioth/Dynamic_OCPP_EVSE/discussions
+read throug them, figure out what is still relevant, and create either TODOs for trivial improvements and note other things in improvements.md
