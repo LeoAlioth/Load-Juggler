@@ -366,6 +366,7 @@ def build_site_from_scenario(scenario):
         inverter_max_power_per_phase=site_data.get('inverter_max_power_per_phase'),
         inverter_supports_asymmetric=site_data.get('inverter_supports_asymmetric', False),
         wiring_topology=site_data.get('wiring_topology', 'parallel'),
+        allow_grid_charging=site_data.get('allow_grid_charging', True),
     )
 
     # Per-phase inverter output: explicit values or auto-derived from simulation

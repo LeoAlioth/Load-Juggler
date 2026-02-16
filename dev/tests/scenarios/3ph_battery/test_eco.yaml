@@ -35,8 +35,8 @@ scenarios:
         allocated: 10 # available is 15A+18A from battery - 3A load = 30A. Even distribution so 10A per phase is available.
 
   - name: "3ph-1c-eco-prio-with-bat-low-soc"
-    description: "Eco mode with battery below minimum"
-    human_verified: True
+    description: "Eco mode with battery below minimum — charges at minimum from grid"
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 25
@@ -64,7 +64,7 @@ scenarios:
         priority: 1
     expected: # Manually verified expected result
       charger_1:
-        allocated: 0  # Battery too low = no charging
+        allocated: 6  # Battery below min → Eco still guarantees minimum from grid
 
   - name: "3ph-1c-eco-prio-with-bat-mid-soc"
     description: "Eco mode with battery between min and target"
@@ -139,7 +139,7 @@ scenarios:
 
   - name: "3ph-1c-eco-no-grid-low-battery"
     description: "No grid charging with battery below minimum"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 32
@@ -168,7 +168,7 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        allocated: 0  # Battery too low, Eco mode blocks charging
+        allocated: 0  # allow_grid_charging=false + battery below min (no discharge) → no power source
 
   - name: "3ph-1c-eco-battery-at-exact-min"
     description: "Battery SOC exactly at minimum threshold"

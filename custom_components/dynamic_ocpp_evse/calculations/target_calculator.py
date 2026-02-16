@@ -142,24 +142,23 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
         if site.export_current.c is not None:
             phase_c_limit = min(phase_c_limit, site.export_current.c)
 
-    # Calculate total available (sum of all phases)
-    total_limit = phase_a_limit + phase_b_limit + phase_c_limit
+    constraints = PhaseConstraints.from_per_phase(phase_a_limit, phase_b_limit, phase_c_limit)
 
     # Apply max grid import power limit (if configured)
     # This is a total (all-phase) constraint from the grid operator / smart meter.
     # Power buffer has already been subtracted before reaching SiteContext.
+    # Applied as a cap on combination fields (ABC, AB, AC, BC) — NOT by scaling
+    # per-phase limits, which would be overly conservative for multi-phase chargers.
     if site.max_grid_import_power is not None:
         total_consumption = site.consumption.total
         max_import_current = site.max_grid_import_power / site.voltage
         available_for_evs = max(0, max_import_current - total_consumption)
-        if total_limit > available_for_evs and total_limit > 0:
-            scale = available_for_evs / total_limit
-            phase_a_limit *= scale
-            phase_b_limit *= scale
-            phase_c_limit *= scale
-            total_limit = available_for_evs
+        constraints.ABC = min(constraints.ABC, available_for_evs)
+        constraints.AB = min(constraints.AB, available_for_evs)
+        constraints.AC = min(constraints.AC, available_for_evs)
+        constraints.BC = min(constraints.BC, available_for_evs)
 
-    return PhaseConstraints.from_per_phase(phase_a_limit, phase_b_limit, phase_c_limit)
+    return constraints
 
 
 def _get_household_per_phase(site: SiteContext) -> tuple[float, float, float]:
@@ -274,11 +273,15 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
 
         constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
 
-    # Apply total inverter power limit if configured
+    # Apply total inverter power limit if configured.
+    # Cap combination fields (not per-phase) — same principle as grid limit.
     if site.inverter_max_power:
         max_total_current = site.inverter_max_power / site.voltage
         if constraints.ABC > max_total_current:
-            constraints = constraints.scale(max_total_current / constraints.ABC)
+            constraints.ABC = max_total_current
+            constraints.AB = min(constraints.AB, max_total_current)
+            constraints.AC = min(constraints.AC, max_total_current)
+            constraints.BC = min(constraints.BC, max_total_current)
 
     return constraints
 
@@ -393,7 +396,8 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
         phase_c_available = min((site.export_current.c or 0) + battery_adjustment_per_phase, max_per_phase) if site.export_current.c is not None else 0
         constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
 
-    # Apply total inverter limit if configured, accounting for household
+    # Apply total inverter limit if configured, accounting for household.
+    # Cap combination fields (not per-phase) — same principle as grid limit.
     if site.inverter_max_power:
         max_total = site.inverter_max_power / site.voltage
         if site.household_consumption is not None:
@@ -404,7 +408,10 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
             household = site.consumption.total or 0
         max_for_chargers = max(0, max_total - household)
         if constraints.ABC > max_for_chargers:
-            constraints = constraints.scale(max_for_chargers / constraints.ABC)
+            constraints.ABC = max_for_chargers
+            constraints.AB = min(constraints.AB, max_for_chargers)
+            constraints.AC = min(constraints.AC, max_for_chargers)
+            constraints.BC = min(constraints.BC, max_for_chargers)
 
     _LOGGER.debug(f"Solar available constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}")
 
@@ -465,10 +472,6 @@ def _determine_target_power(
         return site_limit_constraints
 
     elif mode == CHARGING_MODE_ECO:
-        # Battery below minimum - protect battery (no charging)
-        if site.battery_soc is not None and site.battery_soc < site.battery_soc_min:
-            return PhaseConstraints.zeros()
-
         # Calculate sum of minimum charge rates (active chargers only)
         active = [c for c in site.chargers
                   if c.connector_status not in ("Available", "Unknown", "Unavailable")]
@@ -495,6 +498,21 @@ def _determine_target_power(
         return solar_constraints
 
     elif mode == CHARGING_MODE_EXCESS:
+        # If there's any excess over threshold, guarantee at least min_current
+        # to avoid wasting export when inverter would otherwise throttle
+        if excess_constraints.ABC > 0:
+            active = [c for c in site.chargers
+                      if c.connector_status not in ("Available", "Unknown", "Unavailable")]
+            sum_minimums_total = sum(c.min_current * c.phases for c in active)
+            sum_minimums_per_phase = sum_minimums_total / site.num_phases
+
+            minimums = PhaseConstraints.from_per_phase(
+                sum_minimums_per_phase if site.consumption.a is not None else 0,
+                sum_minimums_per_phase if site.consumption.b is not None else 0,
+                sum_minimums_per_phase if site.consumption.c is not None else 0,
+            )
+            target = excess_constraints.element_max(minimums)
+            return target.element_min(site_limit_constraints)
         return excess_constraints
 
     else:

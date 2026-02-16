@@ -170,7 +170,7 @@ Four distribution modes for multi-charger setups: **Shared** (equal split), **Pr
 
 ### Adding New Features
 
-1. **Charging Mode**: Add to `calculations/modes/`, inherit from `base.py`
+1. **Charging Mode**: Add to `_determine_target_power()` in `target_calculator.py`
 2. **Distribution Mode**: Add to `target_calculator.py` as `_distribute_<mode>()`
 3. **Test Scenarios**: Create YAML scenarios in `dev/tests/scenarios/`
 4. **Documentation**: Update CHARGE_MODES_GUIDE.md, README.md
@@ -211,17 +211,17 @@ python dev/tests/run_tests.py "scenario-name" --trace
 
 Test results are written to `dev/tests/test_results.log`.
 
+**IMPORTANT**: When creating new or modifying existing test scenarios, always set `human_verified: false`. Only the developer marks scenarios as verified after manual review.
+
 Scenario YAML format:
 
 ```yaml
 scenarios:
   - name: "test-name"
     description: "What this tests"
-    verified: true
-    iterations: 1
+    human_verified: false
     site:
       voltage: 230
-      num_phases: 3
       charging_mode: Solar
     chargers:
       - entity_id: "charger_1"
@@ -232,7 +232,7 @@ scenarios:
         l1_phase: "A"
     expected:
       charger_1:
-        target: 10.0
+        allocated: 10.0
 ```
 
 Scenario files in `dev/tests/scenarios/` (organized by site type × charging mode):

@@ -4,7 +4,7 @@ scenarios:
 
   - name: "1ph-1c-standard-bat-above-target"
     description: "Standard mode with battery above target — max from all sources"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -33,11 +33,11 @@ scenarios:
 
   - name: "1ph-1c-standard-bat-night"
     description: "Standard mode at night with battery — grid + battery"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 25
-      max_import_power: 5750
+      max_import_power: 2300  # 10A 
       distribution_mode: priority
       charging_mode: Standard
       solar_production: 0
@@ -58,11 +58,11 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        allocated: 32.0  # Standard: grid(25A) + battery(20A) - consumption(3A) = 42A, capped at max 32A
+        allocated: 27.0  # Standard: grid(10A) + battery(20A) - consumption(3A) = 27A
 
   - name: "1ph-1c-standard-bat-heavy-consumption"
     description: "Standard mode with high household consumption"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 25

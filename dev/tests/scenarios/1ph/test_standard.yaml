@@ -4,7 +4,7 @@ scenarios:
 
   - name: "1ph-1c-standard-no-bat-basic"
     description: "Standard mode basic — charger max limited by max_current"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -33,7 +33,7 @@ scenarios:
 
   - name: "1ph-1c-standard-no-bat-breaker-limited"
     description: "Standard mode — breaker limits charger below max_current"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 16
@@ -62,14 +62,14 @@ scenarios:
 
   - name: "1ph-2c-standard-no-bat-prio"
     description: "Standard mode, two chargers, priority distribution"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 5750
       distribution_mode: priority
       charging_mode: Standard
-      solar_production: 0
+      solar_production: 460 # 2A
       phase_a_consumption: 3.0
       battery_soc: null
       battery_soc_min: null
@@ -92,6 +92,6 @@ scenarios:
         priority: 2
     expected:
       charger_1:
-        allocated: 16.0  # 25A - 3A = 22A total. Both fit minimums (12A). Prio 1 gets max 16A.
+        allocated: 16.0  # 27A - 3A = 24A total. Both fit minimums (12A). Prio 1 gets max 16A.
       charger_2:
-        allocated: 6.0  # 22A - 16A = 6A remaining, exactly at minimum
+        allocated: 8.0  # 24A - 16A = 8A remaining, exactly at minimum

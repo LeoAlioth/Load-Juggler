@@ -4,7 +4,7 @@ scenarios:
 
   - name: "1ph-1c-eco-bat-above-target"
     description: "Eco with battery above target — uses solar surplus + battery discharge"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -32,8 +32,8 @@ scenarios:
         allocated: 27.0  # Solar 10A + battery 20A - consumption 3A = 27A. Eco above target = max(surplus, min).
 
   - name: "1ph-1c-eco-bat-below-min"
-    description: "Eco with battery below minimum SOC — no charging"
-    human_verified: false
+    description: "Eco with battery below minimum SOC — charges at minimum from grid"
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -58,11 +58,11 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        allocated: 0.0  # Battery below min → Eco blocks all charging
+        allocated: 6.0  # Battery below min → Eco still guarantees minimum from grid
 
   - name: "1ph-1c-eco-bat-between-min-target"
     description: "Eco with battery between min and target — minimum current only"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -81,17 +81,17 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
-        min_current: 6
+        min_current: 8
         max_current: 16
         phases: 1
         priority: 1
     expected:
       charger_1:
-        allocated: 6.0  # Battery between min and target → Eco only allows minimum current
+        allocated: 8.0  # Battery between min and target → Eco only allows minimum current
 
   - name: "1ph-1c-eco-bat-at-target-good-solar"
     description: "Eco with battery at target and good solar — surplus allocation"
-    human_verified: false
+    human_verified: true
     site:
       voltage: 230
       main_breaker_rating: 35
