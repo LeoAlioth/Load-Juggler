@@ -1,25 +1,37 @@
 {
-    "css.format.enable": false
-
-
     // --- Cline settings for this specific project ---
 
     // 1. Set the API provider to 'lmstudio'
     "cline.apiProvider": "lmstudio",
 
     // 2. Specify the model you have loaded in LM Studio
-    "cline.model": "qwen/qwen3-coder-next",
+    //    Ensure this exactly matches the model ID in LM Studio
+    "cline.model": "openai/gpt-oss-20b",
 
     // 3. (Optional) LM Studio Base URL - only needed if you've changed LM Studio's default port.
     //    Default is http://localhost:1234/v1.
-    "cline.lmstudio.baseUrl": "http://192.168.1.80:1234",
+    // "cline.lmstudio.baseUrl": "http://localhost:1234/v1", // Uncomment if your port is different
 
-    // 4. Enable compact prompts for better performance with local models. This is crucial.
-    "cline.useCompactPrompt": false,
+    // 4. Enable Auto Compact (useCompactPrompt) for efficient context management
+    "cline.useCompactPrompt": true,
 
-    // 5. (Optional) Adjust other settings like temperature or max tokens for this project
+    // 5. CRITICAL: Set the request timeout to a high value (5 minutes initially)
+    //    This gives LM Studio enough time to process long prompts.
+    "cline.requestTimeout": 1200000, // 300,000 milliseconds = 5 minutes
+                                    // If you still see "Client disconnected", increase to 600000 (10 minutes)
+
+    // --- Other Cline interaction/behavior settings (from .clinerules) ---
+    // These are examples of settings you might add here if Cline exposes them directly
     // "cline.temperature": 0.5,
-    // "cline.maxTokens": 4096,
-    // "cline.contextWindow": 262144 // Match this to your LM Studio setting
+    // "cline.maxTokens": 4096, // Max tokens the model generates in its response
+    // "cline.topP": 0.9,
+    // "cline.topK": 40,
 
+
+    // You can add any other VS Code settings specific to this project here
+    // For example:
+    // "editor.tabSize": 2,
+    // "files.exclude": {
+    //     "**/.git": true
+    // }
 }

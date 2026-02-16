@@ -83,7 +83,39 @@ After installation, go to Settings -> Add Integration and search for `Dynamic OC
 
 The integration will automatically detect and suggest appropriate sensors based on your system:
 
-### Configuration options
+-1. **Phase Current/Power Sensors**: The integration will automatically detect phase sensors from supported inverters
+-2. **EVSE Sensors**: Select your EVSE current import and offered sensors from the OCPP integration
+-3. **Power Limits**: Configure your maximum import power and main breaker rating
+-4. **Battery Configuration (optional)**: Set up battery SOC, power sensors, and charge/discharge limits
+-5. **Charging Parameters**: Set minimum and maximum charging currents
++1. **Phase Current/Power Sensors**: The integration will automatically detect phase sensors from supported inverters
++2. **EVSE Sensors**: Select your EVSE current import and offered sensors from the OCPP integration
++3. **Power Limits**: Configure your maximum import power and main breaker rating
++4. **Battery Configuration (optional)**: Set up battery SOC, power sensors, and charge/discharge limits
++5. **Charging Parameters**: Set minimum and maximum charging currents
++
++#### Detailed configuration field reference
++| Field | Description | Example |
++|---|---|---|
++| `phase_a_current_entity_id` | Sensor for phase A current (A or W) | `sensor.phase_a_current` |
++| `phase_b_current_entity_id` | Sensor for phase B current | `sensor.phase_b_current` |
++| `phase_c_current_entity_id` | Sensor for phase C current | `sensor.phase_c_current` |
++| `main_breaker_rating` | Rated power of the main breaker (W) | `6000` |
++| `max_import_power_entity_id` | Entity providing max import power | `input_number.max_import_power` |
++| `phase_voltage` | Voltage per phase (V) | `230` |
++| `excess_export_threshold` | Threshold for excess export to trigger charging (W) | `5000` |
++| `battery_soc_entity_id` | Battery state of charge sensor | `sensor.battery_soc` |
++| `battery_power_entity_id` | Battery power sensor (positive = charge, negative = discharge) | `sensor.battery_power` |
++| `battery_soc_target_entity_id` | Desired SOC target number | `number.battery_soc_target` |
++| `battery_max_charge_power` | Max battery charging power (W) | `5000` |
++| `battery_max_discharge_power` | Max battery discharging power (W) | `4000` |
++| `distribution_mode` | Distribution strategy: Shared or Priority | `select.distribution_mode_shared` |
++| `charger_priority` | Priority order of chargers | `1` |
++| `evse_minimum_charge_current` | Minimum charge current for EVSE (A) | `6.0` |
++| `evse_maximum_charge_current` | Maximum charge current for EVSE (A) | `16.0` |
++| `charge_rate_unit` | Unit for charging rate: auto, A, or W | `auto` |
++| `profile_validity_mode` | Profile validity: relative or absolute | `relative` |
++| `allow_grid_charging_entity_id` | Switch to allow grid charging when battery low | `switch.allow_grid_charging` |
 
 1. **Phase Current/Power Sensors**: The integration will automatically detect phase sensors from supported inverters
 2. **EVSE Sensors**: Select your EVSE current import and offered sensors from the OCPP integration
