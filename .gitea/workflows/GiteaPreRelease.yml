@@ -74,7 +74,7 @@ jobs:
         run: |
           echo "Cleaning up previous dev releases..."
           # Match both old format (dev-*) and new format (*-dev.*)
-          DEV_PATTERN='(^dev-|.*-dev\.)'
+          DEV_PATTERN='(^dev-|.*-dev\\.)'
 
           # Delete previous dev releases from Gitea
           echo "Fetching Gitea releases..."
@@ -134,7 +134,7 @@ jobs:
           fi
 
           # Match both old format (VERSION-pre-*) and new format (VERSION-rc.*)
-          RC_PATTERN="${VERSION}-(pre-|rc\\.)"
+          RC_PATTERN="${VERSION}"'-(pre-|rc\\.)'
           echo "Cleaning up pre-release releases matching: ${RC_PATTERN}"
 
           # Delete previous pre-releases with same version from Gitea
