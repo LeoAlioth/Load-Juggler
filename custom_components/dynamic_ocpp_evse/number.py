@@ -158,6 +158,7 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
         self._write_to_charger_data(self._attr_native_value)
 
     async def async_set_native_value(self, value: float) -> None:
+        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
         self.async_write_ha_state()
         self._write_to_charger_data(value)
@@ -215,6 +216,7 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
         self._write_to_charger_data(self._attr_native_value)
 
     async def async_set_native_value(self, value: float) -> None:
+        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
         self.async_write_ha_state()
         self._write_to_charger_data(value)
