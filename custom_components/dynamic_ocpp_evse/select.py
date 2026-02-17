@@ -71,10 +71,16 @@ class DynamicOcppEvseChargingModeSelect(SelectEntity, RestoreEntity):
         }
         return icons.get(self._attr_current_option, "mdi:flash")
 
+    def _write_to_hub_data(self, value):
+        """Write charging mode to shared hub data."""
+        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
+        if hub_data is not None:
+            hub_data["charging_mode"] = value
+
     async def async_added_to_hass(self) -> None:
         """Restore last state when added to hass."""
         await super().async_added_to_hass()
-        
+
         # Try to restore the last state
         last_state = await self.async_get_last_state()
         if last_state is not None and last_state.state in self._attr_options:
@@ -82,15 +88,17 @@ class DynamicOcppEvseChargingModeSelect(SelectEntity, RestoreEntity):
             _LOGGER.debug(f"Restored charging mode to: {self._attr_current_option}")
         else:
             _LOGGER.debug(f"No valid state to restore, using default: {self._attr_current_option}")
-        
+
         # Write initial state
         self.async_write_ha_state()
+        self._write_to_hub_data(self._attr_current_option)
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
         if option in self._attr_options:
             self._attr_current_option = option
             self.async_write_ha_state()
+            self._write_to_hub_data(option)
             _LOGGER.info(f"Charging mode changed to: {option}")
         else:
             _LOGGER.error(f"Invalid option selected: {option}")
@@ -134,10 +142,16 @@ class DynamicOcppEvseDistributionModeSelect(SelectEntity, RestoreEntity):
         }
         return icons.get(self._attr_current_option, "mdi:share-variant")
 
+    def _write_to_hub_data(self, value):
+        """Write distribution mode to shared hub data."""
+        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
+        if hub_data is not None:
+            hub_data["distribution_mode"] = value
+
     async def async_added_to_hass(self) -> None:
         """Restore last state when added to hass."""
         await super().async_added_to_hass()
-        
+
         # Try to restore the last state
         last_state = await self.async_get_last_state()
         if last_state is not None and last_state.state in self._attr_options:
@@ -145,15 +159,17 @@ class DynamicOcppEvseDistributionModeSelect(SelectEntity, RestoreEntity):
             _LOGGER.debug(f"Restored distribution mode to: {self._attr_current_option}")
         else:
             _LOGGER.debug(f"No valid state to restore, using default: {self._attr_current_option}")
-        
+
         # Write initial state
         self.async_write_ha_state()
+        self._write_to_hub_data(self._attr_current_option)
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
         if option in self._attr_options:
             self._attr_current_option = option
             self.async_write_ha_state()
+            self._write_to_hub_data(option)
             _LOGGER.info(f"Distribution mode changed to: {option}")
         else:
             _LOGGER.error(f"Invalid distribution mode selected: {option}")

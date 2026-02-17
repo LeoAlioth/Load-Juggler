@@ -346,10 +346,15 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up a hub config entry."""
     _LOGGER.info("Setting up hub entry: %s", entry.title)
     
-    # Store hub data
+    # Store hub data (runtime state written by entities, read by calculation)
     hass.data[DOMAIN]["hubs"][entry.entry_id] = {
         "entry": entry,
         "chargers": [],  # List of charger entry_ids linked to this hub
+        "charging_mode": CHARGING_MODE_STANDARD,
+        "distribution_mode": DEFAULT_DISTRIBUTION_MODE,
+        "allow_grid_charging": True,
+        "power_buffer": 0,
+        "max_import_power": None,
     }
     
     # Check if entities need migration
@@ -375,10 +380,14 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
         _LOGGER.error("Hub entry %s not found for charger %s", hub_entry_id, entry.title)
         return False
     
-    # Store charger data
+    # Store charger data (runtime state written by entities, read by calculation)
     hass.data[DOMAIN]["chargers"][entry.entry_id] = {
         "entry": entry,
         "hub_entry_id": hub_entry_id,
+        "min_current": None,
+        "max_current": None,
+        "device_power": None,
+        "dynamic_control": True,
     }
     
     # Link charger to hub

@@ -127,16 +127,14 @@ def run_hub_calculation(sensor):
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
     battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
 
-    # --- Hub entity ID (needed for slider/select/switch entity IDs) ---
-    hub_entity_id = hub_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
-
-    # --- Read max grid import power (entity override → slider → None) ---
+    # --- Read max grid import power (entity override → shared hub data → None) ---
     enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
     max_import_power_entity = get_entry_value(hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
     if max_import_power_entity:
         max_grid_import_power = _read_entity(hass, max_import_power_entity, None)
     elif enable_max_import:
-        max_grid_import_power = _read_entity(hass, f"number.{hub_entity_id}_max_import_power", None)
+        hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
+        max_grid_import_power = hub_rt.get("max_import_power", None)
     else:
         max_grid_import_power = None
 
@@ -176,22 +174,12 @@ def run_hub_calculation(sensor):
         if inv_a is not None:
             inverter_output_per_phase = PhaseValues(inv_a, inv_b, inv_c)
 
-    # --- Read charging and distribution mode from HA select entities ---
-    charging_mode_entity = f"select.{hub_entity_id}_charging_mode"
-    charging_mode_state = hass.states.get(charging_mode_entity)
-    charging_mode = charging_mode_state.state if charging_mode_state and charging_mode_state.state else "Standard"
-
-    distribution_mode_entity = f"select.{hub_entity_id}_distribution_mode"
-    distribution_mode_state = hass.states.get(distribution_mode_entity)
-    distribution_mode = distribution_mode_state.state if distribution_mode_state and distribution_mode_state.state else "Priority"
-
-    # --- Read allow_grid_charging switch and power_buffer number ---
-    allow_grid_entity = f"switch.{hub_entity_id}_allow_grid_charging"
-    allow_grid_state = hass.states.get(allow_grid_entity)
-    allow_grid_charging = allow_grid_state.state != "off" if allow_grid_state else True
-
-    power_buffer_entity = f"number.{hub_entity_id}_power_buffer"
-    power_buffer = _read_entity(hass, power_buffer_entity, 0)
+    # --- Read runtime state from shared hub data ---
+    hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
+    charging_mode = hub_runtime.get("charging_mode", CHARGING_MODE_STANDARD)
+    distribution_mode = hub_runtime.get("distribution_mode", DEFAULT_DISTRIBUTION_MODE)
+    allow_grid_charging = hub_runtime.get("allow_grid_charging", True)
+    power_buffer = hub_runtime.get("power_buffer", 0)
 
     # Apply power buffer to reduce effective max grid import power
     if max_grid_import_power is not None and power_buffer > 0:
@@ -287,9 +275,9 @@ def run_hub_calculation(sensor):
 
         if device_type == DEVICE_TYPE_PLUG:
             # Smart load — binary on/off device with fixed power rating
-            # Read power rating: prefer Device Power slider entity, fall back to config
-            device_power_entity = f"number.{charger_entity_id}_device_power"
-            slider_power = _read_entity(hass, device_power_entity, None)
+            # Read power rating: prefer shared charger data, fall back to config
+            charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
+            slider_power = charger_rt.get("device_power", None)
             config_power = get_entry_value(entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
             power_rating = slider_power if slider_power is not None and slider_power > 0 else config_power
 
@@ -348,16 +336,11 @@ def run_hub_calculation(sensor):
             )
         else:
             # OCPP EVSE — standard charger with current modulation
-            min_current_entity = f"number.{charger_entity_id}_min_current"
-            min_current = _read_entity(
-                hass, min_current_entity,
-                get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT),
-            )
-            max_current_entity = f"number.{charger_entity_id}_max_current"
-            max_current = _read_entity(
-                hass, max_current_entity,
-                get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT),
-            )
+            charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
+            config_min = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+            config_max = get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+            min_current = charger_rt.get("min_current") or config_min
+            max_current = charger_rt.get("max_current") or config_max
             
             phases = int(get_entry_value(entry, CONF_PHASES, 3) or 3)
 

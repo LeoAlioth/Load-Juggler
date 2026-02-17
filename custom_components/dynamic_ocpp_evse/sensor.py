@@ -360,20 +360,13 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 blocking=False,
             )
 
-        # Auto-update Device Power slider from power monitoring average
+        # Auto-update device power from power monitoring average
         plug_auto_power = hub_data.get("plug_auto_power", {})
         auto_power = plug_auto_power.get(self.config_entry.entry_id)
         if auto_power is not None:
-            charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
-            device_power_entity = f"number.{charger_entity_id}_device_power"
-            try:
-                await self.hass.services.async_call(
-                    "number", "set_value",
-                    {"entity_id": device_power_entity, "value": auto_power},
-                    blocking=False,
-                )
-            except Exception as e:
-                _LOGGER.debug(f"Could not update device power slider: {e}")
+            charger_data = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id)
+            if charger_data is not None:
+                charger_data["device_power"] = auto_power
 
         self._last_update = datetime.now(timezone.utc)
         self._last_command_time = now_mono
@@ -639,9 +632,8 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
 
             # Check if dynamic control is disabled — if so, charge at max
             charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
-            dynamic_control_entity = f"switch.{charger_entity_id}_dynamic_control"
-            dynamic_control_state = self.hass.states.get(dynamic_control_entity)
-            dynamic_control_on = dynamic_control_state.state != "off" if dynamic_control_state else True
+            charger_rt = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id, {})
+            dynamic_control_on = charger_rt.get("dynamic_control", True)
 
             if not dynamic_control_on:
                 limit = round(float(max_charge_current), 1)

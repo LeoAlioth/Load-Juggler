@@ -51,6 +51,7 @@
 47. - [x] Phase mapping help text update
 48. - [x] Rename "Smart Plug" → "Smart Load"
 49. - [x] Hub debug logging (raw reads, feedback, per-charger, allocation)
+50. - [x] Fix entity state lookup bug — use `hass.data[DOMAIN]` shared store instead of entity ID guessing
 
 ## In Progress
 

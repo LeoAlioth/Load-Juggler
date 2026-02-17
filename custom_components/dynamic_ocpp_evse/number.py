@@ -105,9 +105,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
 class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
     """Slider for minimum current (charger-level)."""
-    
+
     _attr_entity_category = EntityCategory.CONFIG
-    
+
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
@@ -119,6 +119,12 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
         self._attr_native_value = get_entry_value(config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
+
+    def _write_to_charger_data(self, value):
+        """Write min_current to shared charger data."""
+        charger_data = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id)
+        if charger_data is not None:
+            charger_data["min_current"] = value
 
     @property
     def device_info(self):
@@ -146,10 +152,12 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
 
         # Write initial state
         self.async_write_ha_state()
+        self._write_to_charger_data(self._attr_native_value)
 
     async def async_set_native_value(self, value: float) -> None:
         self._attr_native_value = value
         self.async_write_ha_state()
+        self._write_to_charger_data(value)
 
 
 class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
@@ -169,6 +177,12 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
 
+    def _write_to_charger_data(self, value):
+        """Write max_current to shared charger data."""
+        charger_data = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id)
+        if charger_data is not None:
+            charger_data["max_current"] = value
+
     @property
     def device_info(self):
         """Return device information about this charger."""
@@ -192,13 +206,15 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
             except (ValueError, TypeError):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-        
+
         # Write initial state
         self.async_write_ha_state()
+        self._write_to_charger_data(self._attr_native_value)
 
     async def async_set_native_value(self, value: float) -> None:
         self._attr_native_value = value
         self.async_write_ha_state()
+        self._write_to_charger_data(value)
 
 
 class PlugDevicePowerSlider(NumberEntity, RestoreEntity):
@@ -223,6 +239,12 @@ class PlugDevicePowerSlider(NumberEntity, RestoreEntity):
         self._attr_native_value = power_rating
         self._attr_native_unit_of_measurement = "W"
         self._attr_icon = "mdi:power-plug"
+
+    def _write_to_charger_data(self, value):
+        """Write device_power to shared charger data."""
+        charger_data = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id)
+        if charger_data is not None:
+            charger_data["device_power"] = value
 
     @property
     def device_info(self):
@@ -250,12 +272,14 @@ class PlugDevicePowerSlider(NumberEntity, RestoreEntity):
 
         # Write initial state
         self.async_write_ha_state()
+        self._write_to_charger_data(self._attr_native_value)
 
     async def async_set_native_value(self, value: float) -> None:
         # Clamp to step and range
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
         self.async_write_ha_state()
+        self._write_to_charger_data(value)
 
 
 # ==================== HUB NUMBER ENTITIES ====================
@@ -366,14 +390,14 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
 
 class PowerBufferSlider(NumberEntity, RestoreEntity):
     """Slider for power buffer in Watts (0-5000W, step 100) (hub-level).
-    
+
     This buffer reduces the target charging power in Standard mode to prevent
     frequent charging stops. If the buffered target is below minimum charge rate,
     the system can use up to the full available power.
     """
-    
+
     _attr_entity_category = EntityCategory.CONFIG
-    
+
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
@@ -385,6 +409,12 @@ class PowerBufferSlider(NumberEntity, RestoreEntity):
         self._attr_native_value = 0  # Default: no buffer
         self._attr_native_unit_of_measurement = "W"
         self._attr_icon = "mdi:buffer"
+
+    def _write_to_hub_data(self, value):
+        """Write power_buffer to shared hub data."""
+        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
+        if hub_data is not None:
+            hub_data["power_buffer"] = value
 
     @property
     def device_info(self):
@@ -406,12 +436,14 @@ class PowerBufferSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
             except (ValueError, TypeError):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-        
+
         # Write initial state
         self.async_write_ha_state()
+        self._write_to_hub_data(self._attr_native_value)
 
     async def async_set_native_value(self, value: float) -> None:
         # Clamp to step and range
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
         self.async_write_ha_state()
+        self._write_to_hub_data(value)

@@ -74,16 +74,24 @@ class AllowGridChargingSwitch(SwitchEntity, RestoreEntity):
         """Return true if grid charging is allowed."""
         return self._state
 
+    def _write_to_hub_data(self, value):
+        """Write allow_grid_charging to shared hub data."""
+        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
+        if hub_data is not None:
+            hub_data["allow_grid_charging"] = value
+
     async def async_turn_on(self, **kwargs):
         """Turn on grid charging."""
         self._state = True
         self.async_write_ha_state()
+        self._write_to_hub_data(True)
         _LOGGER.info("Grid charging enabled")
 
     async def async_turn_off(self, **kwargs):
         """Turn off grid charging."""
         self._state = False
         self.async_write_ha_state()
+        self._write_to_hub_data(False)
         _LOGGER.info("Grid charging disabled")
 
     async def async_added_to_hass(self):
@@ -99,6 +107,7 @@ class AllowGridChargingSwitch(SwitchEntity, RestoreEntity):
             _LOGGER.debug(f"No state to restore for {self._attr_name}, using default: True")
 
         self.async_write_ha_state()
+        self._write_to_hub_data(self._state)
 
 
 class DynamicControlSwitch(SwitchEntity, RestoreEntity):
@@ -135,14 +144,22 @@ class DynamicControlSwitch(SwitchEntity, RestoreEntity):
     def is_on(self):
         return self._state
 
+    def _write_to_charger_data(self, value):
+        """Write dynamic_control to shared charger data."""
+        charger_data = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id)
+        if charger_data is not None:
+            charger_data["dynamic_control"] = value
+
     async def async_turn_on(self, **kwargs):
         self._state = True
         self.async_write_ha_state()
+        self._write_to_charger_data(True)
         _LOGGER.info("Dynamic control enabled for %s", self._attr_name)
 
     async def async_turn_off(self, **kwargs):
         self._state = False
         self.async_write_ha_state()
+        self._write_to_charger_data(False)
         _LOGGER.info("Dynamic control disabled for %s — charger will use max current", self._attr_name)
 
     async def async_added_to_hass(self):
@@ -153,3 +170,4 @@ class DynamicControlSwitch(SwitchEntity, RestoreEntity):
         else:
             self._state = True
         self.async_write_ha_state()
+        self._write_to_charger_data(self._state)
