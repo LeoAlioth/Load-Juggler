@@ -3,7 +3,7 @@ import time
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .dynamic_ocpp_evse import run_hub_calculation
 from .const import *
@@ -375,7 +375,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             except Exception as e:
                 _LOGGER.debug(f"Could not update device power slider: {e}")
 
-        self._last_update = datetime.utcnow()
+        self._last_update = datetime.now(timezone.utc)
         self._last_command_time = now_mono
 
     async def _send_ocpp_command(self, limit: float, hub_entry, dynamic_control_on: bool, now_mono: float) -> None:
@@ -436,7 +436,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
 
         # Build charging profile based on validity mode
         if profile_validity_mode == PROFILE_VALIDITY_MODE_ABSOLUTE:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             valid_from = now.strftime("%Y-%m-%dT%H:%M:%SZ")
             valid_to = (now + timedelta(seconds=profile_timeout)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -524,7 +524,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         )
 
         self._last_commanded_limit = limit  # Store for next cycle's ramp + compliance
-        self._last_update = datetime.utcnow()
+        self._last_update = datetime.now(timezone.utc)
         self._last_command_time = now_mono
 
     async def async_update(self):
@@ -601,7 +601,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 # Solar surplus
                 "solar_surplus_power": hub_data.get("solar_surplus_power"),
                 "solar_surplus_current": hub_data.get("solar_surplus_current"),
-                "last_update": datetime.utcnow(),
+                "last_update": datetime.now(timezone.utc),
             }
 
             # Use pre-computed charger targets from the calculation engine
@@ -878,7 +878,7 @@ class DynamicOcppEvseHubSensor(SensorEntity):
 
             if hub_data:
                 self._total_site_available_power = hub_data.get("total_site_available_power")
-                self._last_update = hub_data.get("last_update", datetime.utcnow())
+                self._last_update = hub_data.get("last_update", datetime.now(timezone.utc))
         except Exception as e:
             _LOGGER.error(f"Error updating hub sensor {self._attr_name}: {e}", exc_info=True)
 

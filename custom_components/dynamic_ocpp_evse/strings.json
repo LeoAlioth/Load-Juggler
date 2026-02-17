@@ -1,4 +1,17 @@
 {
+    "entity": {
+        "select": {
+            "distribution_mode": {
+                "name": "Distribution Mode",
+                "state": {
+                    "shared": "Shared",
+                    "priority": "Priority",
+                    "sequential___optimized": "Sequential - Optimized",
+                    "sequential___strict": "Sequential - Strict"
+                }
+            }
+        }
+    },
     "config": {
         "step": {
             "user": {
@@ -14,6 +27,9 @@
                 "data": {
                     "name": "Name for this hub",
                     "entity_id": "Entity ID prefix for created entities"
+                },
+                "data_description": {
+                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power)."
                 }
             },
             "hub_grid": {
@@ -30,17 +46,53 @@
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
                     "site_update_frequency": "Site sensor refresh rate"
+                },
+                "data_description": {
+                    "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
+                    "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
+                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to disable the limit entirely.",
+                    "max_import_power_entity_id": "Advanced — use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider.",
+                    "phase_voltage": "Typically 230V in Europe, 120V in North America.",
+                    "excess_export_threshold": "In Excess mode, EV charging only starts when grid export exceeds this value. Set to your desired minimum export before charging begins.",
+                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers."
+                }
+            },
+            "hub_inverter": {
+                "title": "Inverter Configuration",
+                "description": "Configure inverter power limits and per-phase output sensors (optional — set power to 0 to leave unconstrained)\n\nBattery max discharge power: {battery_power_hint}",
+                "data": {
+                    "inverter_max_power": "Total inverter power capacity",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase output",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology"
+                },
+                "data_description": {
+                    "inverter_max_power": "Nameplate rated power from your inverter's datasheet. Set to 0 to skip inverter limits entirely.",
+                    "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase inverter limits.",
+                    "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
+                    "wiring_topology": "Parallel: inverter and grid feed independently (AC-coupled solar, no battery). Series: all power flows through the inverter (hybrid inverter with DC-coupled battery)."
                 }
             },
             "hub_battery": {
-                "title": "Battery Configuration",
-                "description": "Configure home battery settings (optional)",
+                "title": "Battery & Solar Configuration",
+                "description": "Configure home battery and solar production settings (optional)",
                 "data": {
-                    "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
-                    "battery_power_entity_id": "Sensor that measures battery power (positive=discharge, negative=charge)",
-                    "battery_max_charge_power": "Maximum battery charge power in Watts",
-                    "battery_max_discharge_power": "Maximum battery discharge power in Watts",
-                    "battery_soc_hysteresis": "Battery SOC hysteresis (%) to prevent oscillation at thresholds"
+                    "solar_production_entity_id": "Solar power production sensor",
+                    "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
+                    "battery_power_entity_id": "Battery power sensor",
+                    "battery_max_charge_power": "Maximum battery charge power",
+                    "battery_max_discharge_power": "Maximum battery discharge power",
+                    "battery_soc_hysteresis": "Battery SOC hysteresis"
+                },
+                "data_description": {
+                    "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
+                    "battery_power_entity_id": "Positive values = battery discharging, negative values = battery charging.",
+                    "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
+                    "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%."
                 }
             },
             "select_hub": {
@@ -50,6 +102,35 @@
                     "hub_entry_id": "Home Electrical Hub"
                 }
             },
+            "device_type": {
+                "title": "Device Type",
+                "description": "Select the type of device you want to add",
+                "data": {
+                    "device_type": "Device type"
+                }
+            },
+            "plug_config": {
+                "title": "Smart Plug Configuration",
+                "description": "Configure settings for your smart plug or relay",
+                "data": {
+                    "name": "Name for this device",
+                    "entity_id": "Entity ID prefix",
+                    "plug_switch_entity_id": "Switch entity that controls the plug on/off",
+                    "plug_power_rating": "Power rating",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest)",
+                    "plug_power_monitor_entity_id": "Power monitoring sensor (optional)",
+                    "update_frequency": "Update frequency"
+                },
+                "data_description": {
+                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power).",
+                    "plug_power_rating": "The power this device draws when turned on. Used for allocation calculations. Ignored when a power monitor sensor is configured.",
+                    "connected_to_phase": "Which electrical phase(s) this plug is wired to. Determines which phase capacity is used in calculations.",
+                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
+                    "update_frequency": "How often to re-evaluate whether this plug should be turned on or off."
+                }
+            },
             "discover_chargers": {
                 "title": "Discovered Chargers",
                 "description": "Select an OCPP charger to configure",
@@ -57,19 +138,55 @@
                     "charger": "Available OCPP Chargers"
                 }
             },
-            "charger_config": {
-                "title": "Charger Configuration",
-                "description": "Configure settings for {charger_name}\n\nDetected OCPP entities:\n- Current Import: {current_import}\n- Current Offered: {current_offered}",
+            "charger_info": {
+                "title": "Charger Info",
+                "description": "Set up the charger identity for {charger_name}\n\nDetected OCPP entities:\n- Current Import: {current_import}\n- Current Offered: {current_offered}",
                 "data": {
-                    "charger_priority": "Charger Priority (1 = highest priority)",
-                    "evse_minimum_charge_current": "EVSE Minimum Charge Current (A)",
-                    "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
-                    "charge_rate_unit": "Charge Rate Unit (Auto-detect recommended)",
-                    "profile_validity_mode": "Charging Profile Validity Mode",
-                    "update_frequency": "Update frequency in seconds",
-                    "ocpp_profile_timeout": "OCPP profile timeout in seconds",
-                    "charge_pause_duration": "Charge pause duration in seconds",
-                    "stack_level": "OCPP Stack Level"
+                    "name": "Charger name",
+                    "entity_id": "Entity ID prefix",
+                    "charger_priority": "Priority (1 = highest)"
+                },
+                "data_description": {
+                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power).",
+                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes."
+                }
+            },
+            "charger_current": {
+                "title": "Current & Phase Mapping",
+                "description": "Configure current limits and how the charger's L1/L2/L3 terminals map to your site's electrical phases",
+                "data": {
+                    "evse_minimum_charge_current": "Minimum charge current",
+                    "evse_maximum_charge_current": "Maximum charge current",
+                    "charger_l1_phase": "Charger L1 → site phase",
+                    "charger_l2_phase": "Charger L2 → site phase",
+                    "charger_l3_phase": "Charger L3 → site phase"
+                },
+                "data_description": {
+                    "evse_minimum_charge_current": "The lowest current your charger supports. Check your charger's manual — most chargers support 6A.",
+                    "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual.",
+                    "charger_l1_phase": "Maps this charger's L1 terminal to a site phase. Most installations use the default A/B/C mapping. Only change if your electrician wired the charger differently.",
+                    "charger_l2_phase": "Maps this charger's L2 terminal to a site phase. Only change if your electrician wired the charger differently.",
+                    "charger_l3_phase": "Maps this charger's L3 terminal to a site phase. Only change if your electrician wired the charger differently."
+                }
+            },
+            "charger_timing": {
+                "title": "Units & Timing",
+                "description": "Configure charge rate unit and timing settings",
+                "data": {
+                    "charge_rate_unit": "Charge rate unit",
+                    "profile_validity_mode": "Profile validity mode",
+                    "update_frequency": "Update frequency",
+                    "ocpp_profile_timeout": "Profile timeout",
+                    "charge_pause_duration": "Charge pause duration",
+                    "stack_level": "OCPP stack level"
+                },
+                "data_description": {
+                    "charge_rate_unit": "Most OCPP chargers use Amperes. Some chargers (e.g., certain Wallbox models) require Watts instead.",
+                    "profile_validity_mode": "Absolute uses timestamps, Relative uses durations. Try Absolute first — switch to Relative if your charger doesn't respond correctly.",
+                    "update_frequency": "How often to send updated charging profiles to this charger.",
+                    "ocpp_profile_timeout": "How long a charging profile remains valid. The charger reverts to default behavior if no new profile is sent within this time.",
+                    "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
+                    "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level."
                 }
             },
             "reconfigure_hub_grid": {
@@ -86,32 +203,120 @@
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
                     "site_update_frequency": "Site sensor refresh rate"
+                },
+                "data_description": {
+                    "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
+                    "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
+                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to disable the limit entirely.",
+                    "max_import_power_entity_id": "Advanced — use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider.",
+                    "phase_voltage": "Typically 230V in Europe, 120V in North America.",
+                    "excess_export_threshold": "In Excess mode, EV charging only starts when grid export exceeds this value. Set to your desired minimum export before charging begins.",
+                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers."
+                }
+            },
+            "reconfigure_hub_inverter": {
+                "title": "Reconfigure Inverter Settings",
+                "description": "Update your inverter configuration\n\nBattery max discharge power: {battery_power_hint}",
+                "data": {
+                    "inverter_max_power": "Total inverter power capacity",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase output",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology"
+                },
+                "data_description": {
+                    "inverter_max_power": "Nameplate rated power from your inverter's datasheet. Set to 0 to skip inverter limits entirely.",
+                    "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase inverter limits.",
+                    "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
+                    "wiring_topology": "Parallel: inverter and grid feed independently (AC-coupled solar, no battery). Series: all power flows through the inverter (hybrid inverter with DC-coupled battery)."
                 }
             },
             "reconfigure_hub_battery": {
-                "title": "Reconfigure Battery Settings",
-                "description": "Update your battery configuration",
+                "title": "Reconfigure Battery & Solar Settings",
+                "description": "Update your battery and solar configuration",
                 "data": {
-                    "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
-                    "battery_power_entity_id": "Sensor that measures battery power",
-                    "battery_max_charge_power": "Maximum battery charge power in Watts",
-                    "battery_max_discharge_power": "Maximum battery discharge power in Watts",
-                    "battery_soc_hysteresis": "Battery SOC hysteresis (%) to prevent oscillation at thresholds"
+                    "solar_production_entity_id": "Solar power production sensor",
+                    "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
+                    "battery_power_entity_id": "Battery power sensor",
+                    "battery_max_charge_power": "Maximum battery charge power",
+                    "battery_max_discharge_power": "Maximum battery discharge power",
+                    "battery_soc_hysteresis": "Battery SOC hysteresis"
+                },
+                "data_description": {
+                    "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
+                    "battery_power_entity_id": "Positive values = battery discharging, negative values = battery charging.",
+                    "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
+                    "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%."
+                }
+            },
+            "reconfigure_plug": {
+                "title": "Reconfigure Smart Plug",
+                "description": "Update smart plug settings",
+                "data": {
+                    "plug_switch_entity_id": "Switch entity that controls the plug on/off",
+                    "plug_power_rating": "Power rating",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest)",
+                    "plug_power_monitor_entity_id": "Power monitoring sensor (optional)",
+                    "update_frequency": "Update frequency"
+                },
+                "data_description": {
+                    "plug_power_rating": "The power this device draws when turned on. Used for allocation calculations. Ignored when a power monitor sensor is configured.",
+                    "connected_to_phase": "Which electrical phase(s) this plug is wired to. Determines which phase capacity is used in calculations.",
+                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
+                    "update_frequency": "How often to re-evaluate whether this plug should be turned on or off."
                 }
             },
             "reconfigure_charger": {
                 "title": "Reconfigure Charger",
-                "description": "Update charger settings",
+                "description": "Update charger priority",
                 "data": {
-                    "charger_priority": "Charger Priority (1 = highest priority)",
-                    "evse_minimum_charge_current": "EVSE Minimum Charge Current (A)",
-                    "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
-                    "charge_rate_unit": "Charge Rate Unit (A=Amperes, W=Watts)",
-                    "profile_validity_mode": "Charging Profile Validity Mode",
-                    "update_frequency": "Update frequency in seconds",
-                    "ocpp_profile_timeout": "OCPP profile timeout in seconds",
-                    "charge_pause_duration": "Charge pause duration in seconds",
-                    "stack_level": "OCPP Stack Level"
+                    "charger_priority": "Priority (1 = highest)"
+                },
+                "data_description": {
+                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes."
+                }
+            },
+            "reconfigure_charger_current": {
+                "title": "Reconfigure Current & Phases",
+                "description": "Update current limits and phase mapping",
+                "data": {
+                    "evse_minimum_charge_current": "Minimum charge current",
+                    "evse_maximum_charge_current": "Maximum charge current",
+                    "charger_l1_phase": "Charger L1 → site phase",
+                    "charger_l2_phase": "Charger L2 → site phase",
+                    "charger_l3_phase": "Charger L3 → site phase"
+                },
+                "data_description": {
+                    "evse_minimum_charge_current": "The lowest current your charger supports. Check your charger's manual — most chargers support 6A.",
+                    "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual.",
+                    "charger_l1_phase": "Maps this charger's L1 terminal to a site phase. Most installations use the default A/B/C mapping. Only change if your electrician wired the charger differently.",
+                    "charger_l2_phase": "Maps this charger's L2 terminal to a site phase. Only change if your electrician wired the charger differently.",
+                    "charger_l3_phase": "Maps this charger's L3 terminal to a site phase. Only change if your electrician wired the charger differently."
+                }
+            },
+            "reconfigure_charger_timing": {
+                "title": "Reconfigure Units & Timing",
+                "description": "Update charge rate unit and timing settings",
+                "data": {
+                    "charge_rate_unit": "Charge rate unit",
+                    "profile_validity_mode": "Profile validity mode",
+                    "update_frequency": "Update frequency",
+                    "ocpp_profile_timeout": "Profile timeout",
+                    "charge_pause_duration": "Charge pause duration",
+                    "stack_level": "OCPP stack level"
+                },
+                "data_description": {
+                    "charge_rate_unit": "Most OCPP chargers use Amperes. Some chargers (e.g., certain Wallbox models) require Watts instead.",
+                    "profile_validity_mode": "Absolute uses timestamps, Relative uses durations. Try Absolute first — switch to Relative if your charger doesn't respond correctly.",
+                    "update_frequency": "How often to send updated charging profiles to this charger.",
+                    "ocpp_profile_timeout": "How long a charging profile remains valid. The charger reverts to default behavior if no new profile is sent within this time.",
+                    "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
+                    "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level."
                 }
             }
         },
@@ -143,32 +348,120 @@
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
                     "site_update_frequency": "Site sensor refresh rate"
+                },
+                "data_description": {
+                    "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
+                    "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
+                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to disable the limit entirely.",
+                    "max_import_power_entity_id": "Advanced — use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider.",
+                    "phase_voltage": "Typically 230V in Europe, 120V in North America.",
+                    "excess_export_threshold": "In Excess mode, EV charging only starts when grid export exceeds this value. Set to your desired minimum export before charging begins.",
+                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers."
+                }
+            },
+            "hub_inverter": {
+                "title": "Update Inverter Settings",
+                "description": "Update your inverter configuration\n\nBattery max discharge power: {battery_power_hint}",
+                "data": {
+                    "inverter_max_power": "Total inverter power capacity",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase output",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology"
+                },
+                "data_description": {
+                    "inverter_max_power": "Nameplate rated power from your inverter's datasheet. Set to 0 to skip inverter limits entirely.",
+                    "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase inverter limits.",
+                    "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
+                    "wiring_topology": "Parallel: inverter and grid feed independently (AC-coupled solar, no battery). Series: all power flows through the inverter (hybrid inverter with DC-coupled battery)."
                 }
             },
             "hub": {
-                "title": "Update Battery Settings",
-                "description": "Update your battery configuration",
+                "title": "Update Battery & Solar Settings",
+                "description": "Update your battery and solar configuration",
                 "data": {
-                    "battery_soc_entity_id": "Sensor that measures battery state of charge (SOC) in %",
-                    "battery_power_entity_id": "Sensor that measures battery power",
-                    "battery_max_charge_power": "Maximum battery charge power in Watts",
-                    "battery_max_discharge_power": "Maximum battery discharge power in Watts",
-                    "battery_soc_hysteresis": "Battery SOC hysteresis (%) to prevent oscillation at thresholds"
+                    "solar_production_entity_id": "Solar power production sensor",
+                    "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
+                    "battery_power_entity_id": "Battery power sensor",
+                    "battery_max_charge_power": "Maximum battery charge power",
+                    "battery_max_discharge_power": "Maximum battery discharge power",
+                    "battery_soc_hysteresis": "Battery SOC hysteresis"
+                },
+                "data_description": {
+                    "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
+                    "battery_power_entity_id": "Positive values = battery discharging, negative values = battery charging.",
+                    "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
+                    "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%."
+                }
+            },
+            "plug": {
+                "title": "Update Smart Plug Settings",
+                "description": "Update smart plug settings",
+                "data": {
+                    "plug_switch_entity_id": "Switch entity that controls the plug on/off",
+                    "plug_power_rating": "Power rating",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest)",
+                    "plug_power_monitor_entity_id": "Power monitoring sensor (optional)",
+                    "update_frequency": "Update frequency"
+                },
+                "data_description": {
+                    "plug_power_rating": "The power this device draws when turned on. Used for allocation calculations. Ignored when a power monitor sensor is configured.",
+                    "connected_to_phase": "Which electrical phase(s) this plug is wired to. Determines which phase capacity is used in calculations.",
+                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
+                    "update_frequency": "How often to re-evaluate whether this plug should be turned on or off."
                 }
             },
             "charger": {
-                "title": "Update Charger Settings",
-                "description": "Update charger settings",
+                "title": "Update Charger Priority",
+                "description": "Update charger priority",
                 "data": {
-                    "charger_priority": "Charger Priority (1 = highest priority)",
-                    "evse_minimum_charge_current": "EVSE Minimum Charge Current (A)",
-                    "evse_maximum_charge_current": "EVSE Maximum Charge Current (A)",
-                    "charge_rate_unit": "Charge Rate Unit (A=Amperes, W=Watts)",
-                    "profile_validity_mode": "Charging Profile Validity Mode",
-                    "update_frequency": "Update frequency in seconds",
-                    "ocpp_profile_timeout": "OCPP profile timeout in seconds",
-                    "charge_pause_duration": "Charge pause duration in seconds",
-                    "stack_level": "OCPP Stack Level"
+                    "charger_priority": "Priority (1 = highest)"
+                },
+                "data_description": {
+                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes."
+                }
+            },
+            "charger_current": {
+                "title": "Update Current & Phases",
+                "description": "Update current limits and phase mapping",
+                "data": {
+                    "evse_minimum_charge_current": "Minimum charge current",
+                    "evse_maximum_charge_current": "Maximum charge current",
+                    "charger_l1_phase": "Charger L1 → site phase",
+                    "charger_l2_phase": "Charger L2 → site phase",
+                    "charger_l3_phase": "Charger L3 → site phase"
+                },
+                "data_description": {
+                    "evse_minimum_charge_current": "The lowest current your charger supports. Check your charger's manual — most chargers support 6A.",
+                    "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual.",
+                    "charger_l1_phase": "Maps this charger's L1 terminal to a site phase. Most installations use the default A/B/C mapping. Only change if your electrician wired the charger differently.",
+                    "charger_l2_phase": "Maps this charger's L2 terminal to a site phase. Only change if your electrician wired the charger differently.",
+                    "charger_l3_phase": "Maps this charger's L3 terminal to a site phase. Only change if your electrician wired the charger differently."
+                }
+            },
+            "charger_timing": {
+                "title": "Update Units & Timing",
+                "description": "Update charge rate unit and timing settings",
+                "data": {
+                    "charge_rate_unit": "Charge rate unit",
+                    "profile_validity_mode": "Profile validity mode",
+                    "update_frequency": "Update frequency",
+                    "ocpp_profile_timeout": "Profile timeout",
+                    "charge_pause_duration": "Charge pause duration",
+                    "stack_level": "OCPP stack level"
+                },
+                "data_description": {
+                    "charge_rate_unit": "Most OCPP chargers use Amperes. Some chargers (e.g., certain Wallbox models) require Watts instead.",
+                    "profile_validity_mode": "Absolute uses timestamps, Relative uses durations. Try Absolute first — switch to Relative if your charger doesn't respond correctly.",
+                    "update_frequency": "How often to send updated charging profiles to this charger.",
+                    "ocpp_profile_timeout": "How long a charging profile remains valid. The charger reverts to default behavior if no new profile is sent within this time.",
+                    "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
+                    "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level."
                 }
             }
         }

@@ -4,7 +4,7 @@ scenarios:
 
   - name: "1ph-1c-excess-bat-above-threshold"
     description: "Excess mode with battery, export above threshold"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 35
