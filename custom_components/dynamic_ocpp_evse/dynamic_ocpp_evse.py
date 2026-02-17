@@ -127,6 +127,9 @@ def run_hub_calculation(sensor):
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
     battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
 
+    # --- Hub entity ID (needed for slider/select/switch entity IDs) ---
+    hub_entity_id = hub_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+
     # --- Read max grid import power (entity override → slider → None) ---
     enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
     max_import_power_entity = get_entry_value(hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
@@ -174,8 +177,6 @@ def run_hub_calculation(sensor):
             inverter_output_per_phase = PhaseValues(inv_a, inv_b, inv_c)
 
     # --- Read charging and distribution mode from HA select entities ---
-    hub_entity_id = hub_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
-
     charging_mode_entity = f"select.{hub_entity_id}_charging_mode"
     charging_mode_state = hass.states.get(charging_mode_entity)
     charging_mode = charging_mode_state.state if charging_mode_state and charging_mode_state.state else "Standard"
@@ -196,12 +197,49 @@ def run_hub_calculation(sensor):
     if max_grid_import_power is not None and power_buffer > 0:
         max_grid_import_power = max(0, max_grid_import_power - power_buffer)
 
+    # --- Block 1: Raw Entity Reads ---
+    def _fv(v):
+        """Format value for debug: None->'n/a', number->'12.3'."""
+        if v is None:
+            return "n/a"
+        if isinstance(v, (int, float)):
+            return f"{v:.1f}"
+        return str(v)
+
     _LOGGER.debug(
-        "Hub state read: phases=%d, phase_a=%sA (entity=%s), phase_b=%sA, phase_c=%sA, "
-        "export=%.1fA, battery_soc=%s, mode=%s, dist=%s, solar_is_derived=%s",
-        consumption_pv.active_count, raw_phase_a, phase_a_entity, raw_phase_b, raw_phase_c,
-        total_export_current, battery_soc, charging_mode, distribution_mode, solar_is_derived
+        "--- Hub Update --- CT: A=%sA B=%sA C=%sA (%dph, invert=%s) | "
+        "Solar: %sW (%s) | Export: %sA/%sW",
+        _fv(raw_phase_a), _fv(raw_phase_b), _fv(raw_phase_c),
+        consumption_pv.active_count, "on" if invert_phases else "off",
+        _fv(solar_production_total), solar_production_entity or "derived",
+        _fv(total_export_current), _fv(total_export_power),
     )
+    _extra = []
+    if battery_soc_entity:
+        _bat_dir = "chg" if (battery_power or 0) < 0 else ("dischg" if (battery_power or 0) > 0 else "idle")
+        _extra.append(
+            f"Bat: {_fv(battery_soc)}%/{_fv(battery_power)}W({_bat_dir}) "
+            f"min={_fv(battery_soc_min)}% tgt={_fv(battery_soc_target)}%"
+        )
+    if inverter_max_power or inverter_max_power_per_phase:
+        _extra.append(
+            f"Inv: {_fv(inverter_max_power)}W/{_fv(inverter_max_power_per_phase)}W/ph "
+            f"{'asym' if inverter_supports_asymmetric else 'sym'} {wiring_topology}"
+        )
+    _LOGGER.debug(
+        "  %s/%s grid_chg=%s buf=%sW max_import=%s%s",
+        charging_mode, distribution_mode,
+        "on" if allow_grid_charging else "off",
+        _fv(power_buffer),
+        f"{max_grid_import_power:.0f}W" if max_grid_import_power is not None else "unlimited",
+        (" | " + " | ".join(_extra)) if _extra else "",
+    )
+    if inverter_output_per_phase:
+        _LOGGER.debug(
+            "  Inverter output: A=%sA B=%sA C=%sA",
+            _fv(inverter_output_per_phase.a), _fv(inverter_output_per_phase.b),
+            _fv(inverter_output_per_phase.c),
+        )
 
     # Build site context
     site = SiteContext(
@@ -302,6 +340,12 @@ def run_hub_calculation(sensor):
                 connector_status=connector_status,
                 device_type=DEVICE_TYPE_PLUG,
             )
+            _LOGGER.debug(
+                "  Plug %s: %.0fW on %s prio=%d [%s]%s",
+                charger_entity_id, power_rating, connected_to_phase,
+                priority, connector_status,
+                " (auto-adj)" if entry.entry_id in plug_auto_power else "",
+            )
         else:
             # OCPP EVSE — standard charger with current modulation
             min_current_entity = f"number.{charger_entity_id}_min_current"
@@ -340,11 +384,6 @@ def run_hub_calculation(sensor):
                 l3_phase=l3_phase,
             )
             
-            _LOGGER.debug(
-                f"EVSE {charger_entity_id}: min_current={min_current}A (from {min_current_entity}), "
-                f"max_current={max_current}A (from {max_current_entity})"
-            )
-
             # Get OCPP current draw for this charger
             evse_import = entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
             if evse_import:
@@ -387,6 +426,18 @@ def run_hub_calculation(sensor):
                                 charger.l3_current = current_import
                     except (ValueError, TypeError):
                         pass
+
+            _LOGGER.debug(
+                "  EVSE %s: %s-%sA %dph(hw) L1->%s/L2->%s/L3->%s mask=%s(%dph) "
+                "prio=%d [%s] draw=L1:%s/L2:%s/L3:%s",
+                charger_entity_id,
+                _fv(min_current), _fv(max_current), phases,
+                l1_phase, l2_phase, l3_phase,
+                charger.active_phases_mask,
+                len(charger.active_phases_mask) if charger.active_phases_mask else 0,
+                priority, connector_status,
+                _fv(charger.l1_current), _fv(charger.l2_current), _fv(charger.l3_current),
+            )
 
         # Clamp active_phases_mask to only include phases that exist on the site.
         # Prevents a misconfigured 3-phase charger from getting 0A on a 1-phase
@@ -435,22 +486,40 @@ def run_hub_calculation(sensor):
         adj_cons_b, adj_exp_b = _adjust_phase(site.consumption.b, site.export_current.b, total_phase_b)
         adj_cons_c, adj_exp_c = _adjust_phase(site.consumption.c, site.export_current.c, total_phase_c)
 
+        # Warn when household consumption gets clamped to 0 by feedback.
+        # Normal on solar systems (charger draws from solar, not grid).
+        # Suspicious if charger readings are inflated (bug #71).
+        for _ph, _raw_cons, _raw_exp, _draw, _adj_cons in [
+            ("A", site.consumption.a, site.export_current.a, total_phase_a, adj_cons_a),
+            ("B", site.consumption.b, site.export_current.b, total_phase_b, adj_cons_b),
+            ("C", site.consumption.c, site.export_current.c, total_phase_c, adj_cons_c),
+        ]:
+            if _raw_cons is not None and _draw > 0 and _adj_cons == 0 and _raw_cons > 0:
+                _raw_grid = _raw_cons - (_raw_exp or 0)
+                _LOGGER.warning(
+                    "Phase %s: household -> 0 after feedback "
+                    "(raw_grid=%.1fA - charger=%.1fA = %.1fA)",
+                    _ph, _raw_grid, _draw, _raw_grid - _draw,
+                )
+
         site.consumption = PhaseValues(adj_cons_a, adj_cons_b, adj_cons_c)
         site.export_current = PhaseValues(adj_exp_a, adj_exp_b, adj_exp_c)
-        _LOGGER.debug(
-            "Adjusted grid (subtracted charger A=%.1fA B=%.1fA C=%.1fA): "
-            "consumption=(%s, %s, %s), export=(%s, %s, %s)",
-            total_phase_a, total_phase_b, total_phase_c,
-            adj_cons_a, adj_cons_b, adj_cons_c, adj_exp_a, adj_exp_b, adj_exp_c,
-        )
 
         # Update derived solar to match adjusted export
+        _solar_note = ""
         if solar_is_derived:
             site.solar_production_total = site.export_current.total * site.voltage
-            _LOGGER.debug(
-                "Recalculated derived solar_production_total after feedback: %.1fW",
-                site.solar_production_total,
-            )
+            _solar_note = f" | Solar(derived)={site.solar_production_total:.0f}W"
+
+        # --- Block 2: Post-Feedback Summary ---
+        _LOGGER.debug(
+            "--- Feedback --- Subtracted A=%.1f B=%.1f C=%.1fA -> "
+            "cons=(%s/%s/%s) exp=(%s/%s/%s)%s",
+            total_phase_a, total_phase_b, total_phase_c,
+            _fv(adj_cons_a), _fv(adj_cons_b), _fv(adj_cons_c),
+            _fv(adj_exp_a), _fv(adj_exp_b), _fv(adj_exp_c),
+            _solar_note,
+        )
 
     # Compute household_consumption_total when solar entity provides ground truth.
     # Energy balance: solar + battery_power = household + grid_export (after feedback)

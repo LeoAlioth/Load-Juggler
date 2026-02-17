@@ -79,9 +79,11 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     _set_available_current_for_chargers(all_chargers, active_chargers, inactive_chargers, target_constraints)
 
     for charger in all_chargers:
+        _draw = charger.l1_current + charger.l2_current + charger.l3_current
         _LOGGER.debug(
-            f"Final - {charger.entity_id}: allocated={charger.allocated_current:.1f}A, "
-            f"available={charger.available_current:.1f}A"
+            f"Final -- {charger.entity_id}: allocated={charger.allocated_current:.1f}A "
+            f"available={charger.available_current:.1f}A | "
+            f"draw={_draw:.1f}A (L1:{charger.l1_current:.1f} L2:{charger.l2_current:.1f} L3:{charger.l3_current:.1f})"
         )
 
 
@@ -478,7 +480,13 @@ def _distribute_power(site: SiteContext, target_constraints: PhaseConstraints) -
     _LOGGER.debug(f"Distribution constraints: {target_constraints}")
 
     for charger in site.chargers:
-        _LOGGER.debug(f"Charger {charger.entity_id}: mask={charger.active_phases_mask}, phases={charger.phases}")
+        _eff_ph = len(charger.active_phases_mask) if charger.active_phases_mask else 0
+        _draw = charger.l1_current + charger.l2_current + charger.l3_current
+        _LOGGER.debug(
+            f"  {charger.entity_id}: mask={charger.active_phases_mask}({_eff_ph}ph) "
+            f"hw={charger.phases}ph {charger.min_current:.0f}-{charger.max_current:.0f}A "
+            f"prio={charger.priority} [{charger.connector_status}] draw={_draw:.1f}A"
+        )
 
     mode = site.distribution_mode.lower() if site.distribution_mode else "priority"
 

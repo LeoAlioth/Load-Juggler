@@ -84,12 +84,14 @@
 
 3. - [ ] **[FEATURE] Auto-detect power monitoring sensor for plugs** — Add detection patterns for common smart plug power monitoring entities (Shelly, Sonoff, Tasmota). Wire into `async_step_plug_config` via `_auto_detect_entity()`.
 
-4. - [ ] **[FEATURE] Improve hub debug logging** — Restructure debug output into two clear blocks:
-    - **Block 1 — Raw entity reads** (`dynamic_ocpp_evse.py`): All values as read from HA entities before any processing.
-    - **Block 2 — Derived/computed values** (`dynamic_ocpp_evse.py`): All values after feedback loop and derivations.
-    - **Allocation line** (`target_calculator.py`): Add `current_import` and `current_offered` to the Final allocation line.
-    - **Charger info line** (`target_calculator.py`): Show effective vs configured, e.g. `mask=A (1ph), hw_phases=3`.
-    - **Household clamp warning** (`dynamic_ocpp_evse.py`): Log warning when household clamps to 0 due to feedback overcorrection.
+4. - [x] **[FEATURE] Improve hub debug logging** — Restructured debug output into two clear blocks:
+    - **Block 1 — Raw entity reads** (`dynamic_ocpp_evse.py`): Grid CT, solar, export, battery, inverter, config in 2-3 lines.
+    - **Block 2 — Post-feedback summary** (`dynamic_ocpp_evse.py`): Subtracted draws, adjusted cons/exp, derived solar.
+    - **Per-charger summary** (`dynamic_ocpp_evse.py`): EVSE shows mask, hw phases, mapping, draw. Plug shows power, phase.
+    - **Allocation line** (`target_calculator.py`): Shows per-phase draw (L1/L2/L3) alongside allocated/available.
+    - **Charger info line** (`target_calculator.py`): Shows `mask=A(1ph) hw=3ph 6-16A prio=1 [status] draw=10.0A`.
+    - **Household clamp warning** (`dynamic_ocpp_evse.py`): Warns when household -> 0 due to feedback overcorrection.
+    - **Bug fix**: `hub_entity_id` was used before definition (line 136 vs 177) — moved earlier.
 
 ## Backlog
 
