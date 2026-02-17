@@ -366,14 +366,14 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
 
 class PowerBufferSlider(NumberEntity, RestoreEntity):
     """Slider for power buffer in Watts (0-5000W, step 100) (hub-level).
-
+    
     This buffer reduces the target charging power in Standard mode to prevent
     frequent charging stops. If the buffered target is below minimum charge rate,
     the system can use up to the full available power.
     """
-
+    
     _attr_entity_category = EntityCategory.CONFIG
-
+    
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
@@ -406,74 +406,12 @@ class PowerBufferSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
             except (ValueError, TypeError):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-
+        
         # Write initial state
         self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
         # Clamp to step and range
-        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
-        self._attr_native_value = value
-        self.async_write_ha_state()
-
-
-class MaxImportPowerSlider(NumberEntity, RestoreEntity):
-    """Slider for maximum import power in Watts (hub-level).
-
-    Created when the 'Enable max import power limit' checkbox is checked
-    and no external entity is selected. Default = main_breaker * phases * voltage.
-    Power users can override this with an entity selector instead.
-    """
-
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_name = f"{name} Max Import Power"
-        self._attr_unique_id = f"{entity_id}_max_import_power"
-
-        breaker = get_entry_value(config_entry, CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING)
-        voltage = get_entry_value(config_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
-        num_phases = 1
-        if get_entry_value(config_entry, CONF_PHASE_B_CURRENT_ENTITY_ID, None):
-            num_phases += 1
-        if get_entry_value(config_entry, CONF_PHASE_C_CURRENT_ENTITY_ID, None):
-            num_phases += 1
-
-        default_power = breaker * num_phases * voltage
-        self._attr_native_min_value = 0
-        self._attr_native_max_value = max(default_power * 2, 50000)
-        self._attr_native_step = 100
-        self._attr_native_value = default_power
-        self._attr_native_unit_of_measurement = "W"
-        self._attr_icon = "mdi:transmission-tower-import"
-
-    @property
-    def device_info(self):
-        """Return device information about this hub."""
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Electrical System Hub",
-        }
-
-    async def async_added_to_hass(self) -> None:
-        """Restore last state when added to hass."""
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
-            try:
-                self._attr_native_value = float(last_state.state)
-                _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
-            except (ValueError, TypeError):
-                _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-
-        # Write initial state
-        self.async_write_ha_state()
-
-    async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
         self.async_write_ha_state()

@@ -41,7 +41,9 @@
                     "phase_c_current_entity_id": "Sensor for phase C current (optional - set to 'None' for single/two-phase)",
                     "main_breaker_rating": "Main breaker rating (per phase)",
                     "invert_phases": "Invert current readings",
-                    "enable_max_import_power": "Enable max import power limit",
+                    "enable_max_import_power": "Create max import power limit slider
+
+",
                     "max_import_power_entity_id": "Sensor for maximum import power (optional override)",
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
@@ -198,7 +200,9 @@
                     "phase_c_current_entity_id": "Sensor for phase C current (optional)",
                     "main_breaker_rating": "Main breaker rating (per phase)",
                     "invert_phases": "Invert current readings",
-                    "enable_max_import_power": "Enable max import power limit",
+                    "enable_max_import_power": "Create max import power limit slider
+
+",
                     "max_import_power_entity_id": "Sensor for maximum import power (optional override)",
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
@@ -343,7 +347,9 @@
                     "phase_c_current_entity_id": "Sensor for phase C current (optional)",
                     "main_breaker_rating": "Main breaker rating (per phase)",
                     "invert_phases": "Invert current readings",
-                    "enable_max_import_power": "Enable max import power limit",
+                    "enable_max_import_power": "Create max import power limit slider
+
+",
                     "max_import_power_entity_id": "Sensor for maximum import power (optional override)",
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
