@@ -337,8 +337,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         await _setup_hub_entry(hass, entry)
     elif entry_type == ENTRY_TYPE_CHARGER:
         await _setup_charger_entry(hass, entry)
-    
+
+    # Reload entry when options change (e.g. battery entities added/removed)
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+
     return True
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry):
+    """Reload the config entry when options are changed."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
