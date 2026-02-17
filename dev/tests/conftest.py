@@ -63,7 +63,7 @@ def mock_hub_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         version=2,
-        minor_version=1,
+        minor_version=2,
         title="Dynamic OCPP EVSE",
         data={
             CONF_NAME: "Dynamic OCPP EVSE",
@@ -98,7 +98,7 @@ def mock_charger_entry(mock_hub_entry: MockConfigEntry) -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         version=2,
-        minor_version=1,
+        minor_version=2,
         title="Wallbox Charger",
         data={
             CONF_ENTITY_ID: "wallbox_1",
@@ -121,7 +121,7 @@ def mock_charger_entry(mock_hub_entry: MockConfigEntry) -> MockConfigEntry:
             CONF_PROFILE_VALIDITY_MODE: "relative",
             CONF_UPDATE_FREQUENCY: 15,
             CONF_OCPP_PROFILE_TIMEOUT: 120,
-            CONF_CHARGE_PAUSE_DURATION: 180,
+            CONF_CHARGE_PAUSE_DURATION: 3,
             CONF_STACK_LEVEL: 3,
         },
     )

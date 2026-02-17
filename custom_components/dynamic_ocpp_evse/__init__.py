@@ -22,8 +22,8 @@ INTEGRATION_VERSION = "2.0.0"
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old entry to new version."""
-    _LOGGER.info("Migrating from version %s.%s to version 2.1", 
-                 entry.version, 
+    _LOGGER.info("Migrating from version %s.%s to version 2.2",
+                 entry.version,
                  getattr(entry, 'minor_version', 0))
 
     if entry.version < 2:
@@ -65,16 +65,16 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             data=new_data,
             options=options,
             version=2,
-            minor_version=1
+            minor_version=2
         )
-        
+
         _LOGGER.info(
-            "Migration to version 2.1 successful. Legacy entry converted to hub. "
+            "Migration to version 2.2 successful. Legacy entry converted to hub. "
             "You will need to add chargers separately after migration."
         )
-        
+
         return True
-    
+
     # Handle minor version updates if version is already 2
     if entry.version == 2 and getattr(entry, 'minor_version', 0) < 1:
         options = dict(entry.options)
@@ -99,8 +99,25 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             minor_version=1
         )
         _LOGGER.info("Updated minor version to 1 and seeded options")
+
+    # Migrate 2.1 → 2.2: convert charge_pause_duration from seconds to minutes
+    if entry.version == 2 and getattr(entry, 'minor_version', 0) < 2:
+        options = dict(entry.options)
+        old_pause = options.get(CONF_CHARGE_PAUSE_DURATION)
+        if old_pause is not None and old_pause > 10:
+            # Value is in seconds (old format) — convert to minutes
+            new_pause = max(1, round(old_pause / 60))
+            options[CONF_CHARGE_PAUSE_DURATION] = new_pause
+            _LOGGER.info("Migrated charge_pause_duration from %ds to %dmin", old_pause, new_pause)
+
+        hass.config_entries.async_update_entry(
+            entry,
+            options=options,
+            minor_version=2
+        )
+        _LOGGER.info("Updated minor version to 2")
         return True
-    
+
     return True
 
 

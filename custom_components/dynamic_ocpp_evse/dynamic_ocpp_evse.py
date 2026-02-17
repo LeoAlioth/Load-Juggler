@@ -705,7 +705,7 @@ def run_hub_calculation(sensor):
     )
     if inv_notif:
         auto_notifications.append(inv_notif)
-    if get_entry_value(hub_entry, CONF_AUTO_DETECT_PHASE_MAPPING, False):
+    if get_entry_value(hub_entry, CONF_AUTO_DETECT_PHASE_MAPPING, True):
         auto_notifications.extend(
             check_phase_mapping(
                 auto_detect_state, smoothed_phases, site.chargers,

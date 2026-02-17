@@ -79,6 +79,8 @@
 
 75. - [x] Auto-detect grid CT inversion — correlates charger draw vs grid current, fires persistent notification after 10/15 inverted signals
 76. - [x] Auto-detect phase mapping — correlates total charger draw vs per-phase grid deltas, fires persistent notification on mismatch (opt-in via config flow)
+77. - [x] Solar/Excess grace period (anti-flicker) — configurable hold-at-min timer before pausing when mode conditions drop, respects site limits for immediate stop
+78. - [x] Charge pause duration unit change — seconds → minutes for consistency, with migration from v2.1 to v2.2
 
 ## In Progress
 

@@ -170,9 +170,9 @@ async def test_migration_v1_to_v2(
     await hass.config_entries.async_setup(legacy_entry.entry_id)
     await hass.async_block_till_done()
 
-    # After migration, entry should be v2.1
+    # After migration, entry should be v2.2
     assert legacy_entry.version == 2
-    assert legacy_entry.minor_version == 1
+    assert legacy_entry.minor_version == 2
 
     # Should be marked as hub
     assert legacy_entry.data[ENTRY_TYPE] == ENTRY_TYPE_HUB
@@ -190,7 +190,7 @@ async def test_migration_v2_minor_update(
     hass: HomeAssistant,
     mock_setup,
 ):
-    """Test migration from v2.0 to v2.1 (minor version update)."""
+    """Test migration from v2.0 to v2.2 (minor version update)."""
     v2_entry = MockConfigEntry(
         domain=DOMAIN,
         version=2,
@@ -208,7 +208,7 @@ async def test_migration_v2_minor_update(
     await hass.config_entries.async_setup(v2_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert v2_entry.minor_version == 1
+    assert v2_entry.minor_version == 2
     # Options should be seeded from data with defaults
     assert v2_entry.options[CONF_EVSE_MINIMUM_CHARGE_CURRENT] == 6
     assert v2_entry.options[CONF_CHARGE_RATE_UNIT] == DEFAULT_CHARGE_RATE_UNIT
@@ -222,7 +222,7 @@ async def test_legacy_entry_without_type(
     no_type_entry = MockConfigEntry(
         domain=DOMAIN,
         version=2,
-        minor_version=1,
+        minor_version=2,
         title="No Type Entry",
         data={
             CONF_ENTITY_ID: "no_type",
