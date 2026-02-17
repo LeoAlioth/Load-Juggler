@@ -6,30 +6,26 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
+from .entity_mixins import HubEntityMixin, ChargerEntityMixin
 from .const import (
-    DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_CHARGER,
     CONF_NAME,
     CONF_ENTITY_ID,
-    CONF_MIN_CURRENT,
-    CONF_MAX_CURRENT,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
-    CONF_POWER_BUFFER,
-    CONF_DEVICE_TYPE,
-    DEVICE_TYPE_EVSE,
-    DEVICE_TYPE_PLUG,
     CONF_PLUG_POWER_RATING,
     DEFAULT_PLUG_POWER_RATING,
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_MAX_CHARGE_CURRENT,
-    DEFAULT_BATTERY_MAX_POWER,
     DEFAULT_BATTERY_SOC_MIN,
     DEFAULT_BATTERY_SOC_TARGET,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_POWER_ENTITY_ID,
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_EVSE,
+    DEVICE_TYPE_PLUG,
     CONF_ENABLE_MAX_IMPORT_POWER,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_MAIN_BREAKER_RATING,
@@ -49,15 +45,15 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     entry_type = config_entry.data.get(ENTRY_TYPE)
     name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
     entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
-    
+
     entities = []
-    
+
     if entry_type == ENTRY_TYPE_HUB:
         # Check if battery is configured
         battery_soc_entity = get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID)
         battery_power_entity = get_entry_value(config_entry, CONF_BATTERY_POWER_ENTITY_ID)
         has_battery = bool(battery_soc_entity or battery_power_entity)
-        
+
         # Always create Power Buffer (useful even without battery)
         entities.append(PowerBufferSlider(hass, config_entry, name, entity_id))
 
@@ -79,37 +75,34 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
             _LOGGER.info(f"Battery configured - creating battery number entities")
         else:
             _LOGGER.info(f"No battery configured - skipping battery number entities")
-        
+
         _LOGGER.info(f"Setting up hub number entities: {[entity.unique_id for entity in entities]}")
-    
+
     elif entry_type == ENTRY_TYPE_CHARGER:
         device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         if device_type == DEVICE_TYPE_PLUG:
-            # Plug entities: Device Power slider only (no min/max current)
-            entities = [
-                PlugDevicePowerSlider(hass, config_entry, name, entity_id),
-            ]
+            entities = [PlugDevicePowerSlider(hass, config_entry, name, entity_id)]
         else:
-            # EVSE entities: Min Current, Max Current
             entities = [
                 EVSEMinCurrentSlider(hass, config_entry, name, entity_id),
                 EVSEMaxCurrentSlider(hass, config_entry, name, entity_id),
             ]
         _LOGGER.info(f"Setting up charger number entities: {[entity.unique_id for entity in entities]}")
-    
+
     else:
         _LOGGER.debug("Skipping number setup for unknown entry type: %s", config_entry.title)
         return
-    
+
     async_add_entities(entities)
 
 
 # ==================== CHARGER NUMBER ENTITIES ====================
 
-class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
+class EVSEMinCurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
     """Slider for minimum current (charger-level)."""
 
     _attr_entity_category = EntityCategory.CONFIG
+    _charger_data_key = "min_current"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -123,39 +116,9 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
 
-    def _write_to_charger_data(self, value):
-        """Write min_current to shared charger data."""
-        charger_data = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id)
-        if charger_data is not None:
-            charger_data["min_current"] = value
-
-    @property
-    def device_info(self):
-        """Return device information about this charger."""
-        from . import get_hub_for_charger
-        hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "EV Charger",
-            "via_device": (DOMAIN, hub_entry.entry_id) if hub_entry else None,
-        }
-
     async def async_added_to_hass(self) -> None:
-        """Restore last state when added to hass."""
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
-            try:
-                self._attr_native_value = float(last_state.state)
-                _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
-            except (ValueError, TypeError):
-                _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-
-        # Write initial state
-        self.async_write_ha_state()
-        self._write_to_charger_data(self._attr_native_value)
+        await self._restore_and_publish_number()
 
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
@@ -164,10 +127,11 @@ class EVSEMinCurrentSlider(NumberEntity, RestoreEntity):
         self._write_to_charger_data(value)
 
 
-class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
+class EVSEMaxCurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
     """Slider for maximum current (charger-level)."""
 
     _attr_entity_category = EntityCategory.CONFIG
+    _charger_data_key = "max_current"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -181,39 +145,9 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
 
-    def _write_to_charger_data(self, value):
-        """Write max_current to shared charger data."""
-        charger_data = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id)
-        if charger_data is not None:
-            charger_data["max_current"] = value
-
-    @property
-    def device_info(self):
-        """Return device information about this charger."""
-        from . import get_hub_for_charger
-        hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "EV Charger",
-            "via_device": (DOMAIN, hub_entry.entry_id) if hub_entry else None,
-        }
-
     async def async_added_to_hass(self) -> None:
-        """Restore last state when added to hass."""
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
-            try:
-                self._attr_native_value = float(last_state.state)
-                _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
-            except (ValueError, TypeError):
-                _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-
-        # Write initial state
-        self.async_write_ha_state()
-        self._write_to_charger_data(self._attr_native_value)
+        await self._restore_and_publish_number()
 
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
@@ -222,15 +156,11 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
         self._write_to_charger_data(value)
 
 
-class PlugDevicePowerSlider(NumberEntity, RestoreEntity):
-    """Slider for device power rating in Watts (smart load devices).
-
-    The engine reads this entity's state to determine the plug's power draw
-    for allocation calculations. When a power monitor is configured, the
-    engine auto-updates this value with the averaged measured draw.
-    """
+class PlugDevicePowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+    """Slider for device power rating in Watts (smart load devices)."""
 
     _attr_entity_category = EntityCategory.CONFIG
+    _charger_data_key = "device_power"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -245,42 +175,11 @@ class PlugDevicePowerSlider(NumberEntity, RestoreEntity):
         self._attr_native_unit_of_measurement = "W"
         self._attr_icon = "mdi:power-plug"
 
-    def _write_to_charger_data(self, value):
-        """Write device_power to shared charger data."""
-        charger_data = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id)
-        if charger_data is not None:
-            charger_data["device_power"] = value
-
-    @property
-    def device_info(self):
-        """Return device information about this plug."""
-        from . import get_hub_for_charger
-        hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Smart Load",
-            "via_device": (DOMAIN, hub_entry.entry_id) if hub_entry else None,
-        }
-
     async def async_added_to_hass(self) -> None:
-        """Restore last state when added to hass."""
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
-            try:
-                self._attr_native_value = float(last_state.state)
-                _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
-            except (ValueError, TypeError):
-                _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-
-        # Write initial state
-        self.async_write_ha_state()
-        self._write_to_charger_data(self._attr_native_value)
+        await self._restore_and_publish_number()
 
     async def async_set_native_value(self, value: float) -> None:
-        # Clamp to step and range
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
         self.async_write_ha_state()
@@ -289,7 +188,7 @@ class PlugDevicePowerSlider(NumberEntity, RestoreEntity):
 
 # ==================== HUB NUMBER ENTITIES ====================
 
-class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
+class BatterySOCTargetSlider(HubEntityMixin, NumberEntity, RestoreEntity):
     """Slider for battery SOC target (0-100%, step 1) (hub-level).
 
     In Eco mode: Below target, charge at minimum rate. At/above target, charge at solar rate or full speed.
@@ -297,6 +196,7 @@ class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
     """
 
     _attr_entity_category = EntityCategory.CONFIG
+    _hub_data_key = "battery_soc_target"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -310,35 +210,9 @@ class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
         self._attr_native_unit_of_measurement = "%"
         self._attr_icon = "mdi:battery-charging-80"
 
-    def _write_to_hub_data(self, value):
-        """Write battery_soc_target to shared hub data."""
-        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
-        if hub_data is not None:
-            hub_data["battery_soc_target"] = value
-
-    @property
-    def device_info(self):
-        """Return device information about this hub."""
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Electrical System Hub",
-        }
-
     async def async_added_to_hass(self) -> None:
-        """Restore last state when added to hass."""
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
-            try:
-                self._attr_native_value = float(last_state.state)
-                _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
-            except (ValueError, TypeError):
-                _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-
-        self.async_write_ha_state()
-        self._write_to_hub_data(self._attr_native_value)
+        await self._restore_and_publish_number()
 
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
@@ -347,7 +221,7 @@ class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
         self._write_to_hub_data(value)
 
 
-class BatterySOCMinSlider(NumberEntity, RestoreEntity):
+class BatterySOCMinSlider(HubEntityMixin, NumberEntity, RestoreEntity):
     """Slider for minimum battery SOC (0-95%, step 1) (hub-level).
 
     Below this SOC level, EV charging will NOT occur in any mode.
@@ -355,6 +229,7 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
     """
 
     _attr_entity_category = EntityCategory.CONFIG
+    _hub_data_key = "battery_soc_min"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -364,39 +239,13 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
         self._attr_native_min_value = 0
         self._attr_native_max_value = 95
         self._attr_native_step = 1
-        self._attr_native_value = DEFAULT_BATTERY_SOC_MIN  # Default 20%
+        self._attr_native_value = DEFAULT_BATTERY_SOC_MIN
         self._attr_native_unit_of_measurement = "%"
         self._attr_icon = "mdi:battery-alert-variant-outline"
 
-    def _write_to_hub_data(self, value):
-        """Write battery_soc_min to shared hub data."""
-        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
-        if hub_data is not None:
-            hub_data["battery_soc_min"] = value
-
-    @property
-    def device_info(self):
-        """Return device information about this hub."""
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Electrical System Hub",
-        }
-
     async def async_added_to_hass(self) -> None:
-        """Restore last state when added to hass."""
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
-            try:
-                self._attr_native_value = float(last_state.state)
-                _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
-            except (ValueError, TypeError):
-                _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-
-        self.async_write_ha_state()
-        self._write_to_hub_data(self._attr_native_value)
+        await self._restore_and_publish_number()
 
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
@@ -405,15 +254,11 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
         self._write_to_hub_data(value)
 
 
-class PowerBufferSlider(NumberEntity, RestoreEntity):
-    """Slider for power buffer in Watts (0-5000W, step 100) (hub-level).
-
-    This buffer reduces the target charging power in Standard mode to prevent
-    frequent charging stops. If the buffered target is below minimum charge rate,
-    the system can use up to the full available power.
-    """
+class PowerBufferSlider(HubEntityMixin, NumberEntity, RestoreEntity):
+    """Slider for power buffer in Watts (0-5000W, step 100) (hub-level)."""
 
     _attr_entity_category = EntityCategory.CONFIG
+    _hub_data_key = "power_buffer"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -423,57 +268,26 @@ class PowerBufferSlider(NumberEntity, RestoreEntity):
         self._attr_native_min_value = 0
         self._attr_native_max_value = 5000
         self._attr_native_step = 100
-        self._attr_native_value = 0  # Default: no buffer
+        self._attr_native_value = 0
         self._attr_native_unit_of_measurement = "W"
         self._attr_icon = "mdi:buffer"
 
-    def _write_to_hub_data(self, value):
-        """Write power_buffer to shared hub data."""
-        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
-        if hub_data is not None:
-            hub_data["power_buffer"] = value
-
-    @property
-    def device_info(self):
-        """Return device information about this hub."""
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Electrical System Hub",
-        }
-
     async def async_added_to_hass(self) -> None:
-        """Restore last state when added to hass."""
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
-            try:
-                self._attr_native_value = float(last_state.state)
-                _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
-            except (ValueError, TypeError):
-                _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-
-        # Write initial state
-        self.async_write_ha_state()
-        self._write_to_hub_data(self._attr_native_value)
+        await self._restore_and_publish_number()
 
     async def async_set_native_value(self, value: float) -> None:
-        # Clamp to step and range
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
         self.async_write_ha_state()
         self._write_to_hub_data(value)
 
 
-class MaxImportPowerSlider(NumberEntity, RestoreEntity):
-    """Slider for maximum grid import power in Watts (hub-level).
-
-    Limits total power drawn from the grid. Useful when your electricity
-    contract has a lower limit than the physical breaker rating.
-    """
+class MaxImportPowerSlider(HubEntityMixin, NumberEntity, RestoreEntity):
+    """Slider for maximum grid import power in Watts (hub-level)."""
 
     _attr_entity_category = EntityCategory.CONFIG
+    _hub_data_key = "max_import_power"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -494,35 +308,9 @@ class MaxImportPowerSlider(NumberEntity, RestoreEntity):
         num_phases = 1 + (1 if has_phase_b else 0) + (1 if has_phase_c else 0)
         self._attr_native_value = round(voltage * breaker * num_phases / 100) * 100
 
-    def _write_to_hub_data(self, value):
-        """Write max_import_power to shared hub data."""
-        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
-        if hub_data is not None:
-            hub_data["max_import_power"] = value
-
-    @property
-    def device_info(self):
-        """Return device information about this hub."""
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Electrical System Hub",
-        }
-
     async def async_added_to_hass(self) -> None:
-        """Restore last state when added to hass."""
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
-            try:
-                self._attr_native_value = float(last_state.state)
-                _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
-            except (ValueError, TypeError):
-                _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-
-        self.async_write_ha_state()
-        self._write_to_hub_data(self._attr_native_value)
+        await self._restore_and_publish_number()
 
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
