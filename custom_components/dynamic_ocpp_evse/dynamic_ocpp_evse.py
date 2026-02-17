@@ -362,6 +362,21 @@ def run_hub_calculation(sensor):
                             charger.l1_current = l1 or 0
                             charger.l2_current = l2 or 0
                             charger.l3_current = l3 or 0
+
+                            # Clamp per-phase draws at max_current. Some OCPP chargers
+                            # (e.g. ZJBeny) intermittently report total 3-phase current
+                            # in per-phase attributes (40.5A instead of 13.5A on a 16A
+                            # charger). Without clamping, the feedback loop subtracts
+                            # 40+ amps from grid CT, massively overcorrecting.
+                            for attr in ('l1_current', 'l2_current', 'l3_current'):
+                                val = getattr(charger, attr)
+                                if val > max_current:
+                                    _LOGGER.warning(
+                                        "EVSE %s: %s=%.1fA exceeds max_current=%.1fA — "
+                                        "clamping (charger may be reporting total instead of per-phase)",
+                                        charger_entity_id, attr, val, max_current,
+                                    )
+                                    setattr(charger, attr, max_current)
                         else:
                             # No per-phase attributes — use entity state as per-phase current
                             current_import = float(evse_state.state)
@@ -372,6 +387,22 @@ def run_hub_calculation(sensor):
                                 charger.l3_current = current_import
                     except (ValueError, TypeError):
                         pass
+
+        # Clamp active_phases_mask to only include phases that exist on the site.
+        # Prevents a misconfigured 3-phase charger from getting 0A on a 1-phase
+        # site (min(A=30, B=0, C=0) = 0). Instead, mask is clamped to "A" and
+        # the charger operates as single-phase.
+        site_phases = {p for p, v in [("A", site.consumption.a), ("B", site.consumption.b), ("C", site.consumption.c)] if v is not None}
+        mask_phases = set(charger.active_phases_mask) if charger.active_phases_mask else set()
+        if mask_phases and not mask_phases.issubset(site_phases):
+            clamped = "".join(sorted(mask_phases & site_phases)) or charger.l1_phase
+            _LOGGER.warning(
+                "%s %s: phase mask %s includes phases not on site (%s) — clamping to %s",
+                "Plug" if charger.device_type == DEVICE_TYPE_PLUG else "EVSE",
+                charger_entity_id, charger.active_phases_mask,
+                "".join(sorted(site_phases)), clamped,
+            )
+            charger.active_phases_mask = clamped
 
         site.chargers.append(charger)
 

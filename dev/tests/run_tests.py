@@ -500,12 +500,22 @@ def print_scenario_params(scenario):
         phases = ch.get('phases', 1)
         priority = ch.get('priority', 0)
         status = ch.get('connector_status', 'Charging' if ch.get('active') is not False else 'Available')
-        mask = ch.get('active_phases_mask') or ch.get('connected_to_phase') or ('ABC' if phases == 3 else 'AB' if phases == 2 else '?')
-
-        # Phase mapping (only show if non-default)
+        # Phase mapping
         l1p = ch.get('l1_phase', 'A')
         l2p = ch.get('l2_phase', 'B')
         l3p = ch.get('l3_phase', 'C')
+
+        # Derive mask the same way ChargerContext.__post_init__ does
+        if ch.get('active_phases_mask'):
+            mask = ch['active_phases_mask']
+        elif ch.get('connected_to_phase'):
+            mask = ch['connected_to_phase']
+        elif phases == 3:
+            mask = "".join(sorted({l1p, l2p, l3p}))
+        elif phases == 2:
+            mask = "".join(sorted({l1p, l2p}))
+        else:
+            mask = l1p
         phase_map_str = ""
         if l1p != 'A' or l2p != 'B' or l3p != 'C':
             phase_map_str = f" map=L1→{l1p}/L2→{l2p}/L3→{l3p}"

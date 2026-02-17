@@ -212,15 +212,33 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
         })
 
-    def _charger_current_schema(self, defaults: dict | None = None) -> vol.Schema:
-        """Build schema for charger current limits and phase mapping."""
+    def _get_hub_phase_count(self, hub_entry_id: str | None = None) -> int:
+        """Get the number of phases configured on the hub."""
+        entry_id = hub_entry_id or self._data.get(CONF_HUB_ENTRY_ID)
+        if not entry_id:
+            return 3  # Default to 3 if unknown
+        hub_entry = self.hass.config_entries.async_get_entry(entry_id)
+        if not hub_entry:
+            return 3
+        count = 0
+        for key in (CONF_PHASE_A_CURRENT_ENTITY_ID, CONF_PHASE_B_CURRENT_ENTITY_ID, CONF_PHASE_C_CURRENT_ENTITY_ID):
+            val = hub_entry.options.get(key) or hub_entry.data.get(key)
+            if val:
+                count += 1
+        return max(count, 1)
+
+    def _charger_current_schema(self, defaults: dict | None = None, hub_phases: int = 3) -> vol.Schema:
+        """Build schema for charger current limits and phase mapping.
+
+        Only shows L2/L3 phase mapping fields when the hub has 2+/3+ phases.
+        """
         defaults = defaults or {}
         phase_options = [
             {"value": "A", "label": "Phase A"},
             {"value": "B", "label": "Phase B"},
             {"value": "C", "label": "Phase C"},
         ]
-        return vol.Schema({
+        fields = {
             vol.Required(
                 CONF_EVSE_MINIMUM_CHARGE_CURRENT,
                 default=defaults.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT),
@@ -233,15 +251,18 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_CHARGER_L1_PHASE,
                 default=defaults.get(CONF_CHARGER_L1_PHASE, "A"),
             ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
-            vol.Required(
+        }
+        if hub_phases >= 2:
+            fields[vol.Required(
                 CONF_CHARGER_L2_PHASE,
                 default=defaults.get(CONF_CHARGER_L2_PHASE, "B"),
-            ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
-            vol.Required(
+            )] = selector({"select": {"options": phase_options, "mode": "dropdown"}})
+        if hub_phases >= 3:
+            fields[vol.Required(
                 CONF_CHARGER_L3_PHASE,
                 default=defaults.get(CONF_CHARGER_L3_PHASE, "C"),
-            ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
-        })
+            )] = selector({"select": {"options": phase_options, "mode": "dropdown"}})
+        return vol.Schema(fields)
 
     def _charger_timing_schema(self, defaults: dict | None = None, detected_unit: str | None = None) -> vol.Schema:
         """Build schema for charger timing and unit configuration."""
@@ -979,15 +1000,22 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> config_entries.FlowResult:
         """Charger step 3b: Current limits and phase mapping."""
         errors: dict[str, str] = {}
+        hub_phases = self._get_hub_phase_count()
 
         if user_input is not None:
             self._data.update(user_input)
+            # Auto-fill hidden phase mappings to match L1 (prevents mask mismatch)
+            l1 = self._data.get(CONF_CHARGER_L1_PHASE, "A")
+            if hub_phases < 2:
+                self._data[CONF_CHARGER_L2_PHASE] = l1
+            if hub_phases < 3:
+                self._data[CONF_CHARGER_L3_PHASE] = l1
 
             validate_charger_settings(self._data, errors)
             if errors:
                 return self.async_show_form(
                     step_id="charger_current",
-                    data_schema=self._charger_current_schema(self._data),
+                    data_schema=self._charger_current_schema(self._data, hub_phases=hub_phases),
                     errors=errors,
                     last_step=False,
                 )
@@ -1000,7 +1028,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_CHARGER_L1_PHASE: "A",
             CONF_CHARGER_L2_PHASE: "B",
             CONF_CHARGER_L3_PHASE: "C",
-        })
+        }, hub_phases=hub_phases)
 
         return self.async_show_form(
             step_id="charger_current",
@@ -1211,21 +1239,29 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         defaults = {**entry.data, **entry.options}
+        hub_entry_id = defaults.get(CONF_HUB_ENTRY_ID)
+        hub_phases = self._get_hub_phase_count(hub_entry_id)
 
         if user_input is not None:
             self._data.update(user_input)
+            # Auto-fill hidden phase mappings to match L1
+            l1 = self._data.get(CONF_CHARGER_L1_PHASE, "A")
+            if hub_phases < 2:
+                self._data[CONF_CHARGER_L2_PHASE] = l1
+            if hub_phases < 3:
+                self._data[CONF_CHARGER_L3_PHASE] = l1
 
             validate_charger_settings(self._data, errors)
             if errors:
                 return self.async_show_form(
                     step_id="reconfigure_charger_current",
-                    data_schema=self._charger_current_schema(self._data),
+                    data_schema=self._charger_current_schema(self._data, hub_phases=hub_phases),
                     errors=errors,
                     last_step=False,
                 )
             return await self.async_step_reconfigure_charger_timing()
 
-        data_schema = self._charger_current_schema(defaults)
+        data_schema = self._charger_current_schema(defaults, hub_phases=hub_phases)
 
         return self.async_show_form(
             step_id="reconfigure_charger_current",
@@ -1463,21 +1499,29 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
         defaults = {**self.config_entry.data, **self.config_entry.options}
         f = self._schema_helper
+        hub_entry_id = defaults.get(CONF_HUB_ENTRY_ID)
+        hub_phases = f._get_hub_phase_count(hub_entry_id)
 
         if user_input is not None:
             self._data.update(user_input)
+            # Auto-fill hidden phase mappings to match L1
+            l1 = self._data.get(CONF_CHARGER_L1_PHASE, "A")
+            if hub_phases < 2:
+                self._data[CONF_CHARGER_L2_PHASE] = l1
+            if hub_phases < 3:
+                self._data[CONF_CHARGER_L3_PHASE] = l1
             validate_charger_settings(self._data, errors)
             if errors:
                 return self.async_show_form(
                     step_id="charger_current",
-                    data_schema=f._charger_current_schema(self._data),
+                    data_schema=f._charger_current_schema(self._data, hub_phases=hub_phases),
                     errors=errors,
                 )
             return await self.async_step_charger_timing()
 
         return self.async_show_form(
             step_id="charger_current",
-            data_schema=f._charger_current_schema(defaults),
+            data_schema=f._charger_current_schema(defaults, hub_phases=hub_phases),
             errors=errors,
         )
 

@@ -15,9 +15,9 @@
 11. - [x] All tests passing after refactor (61/61, 2026-02-14)
 12. - [x] Dedicated Solar Power Entity
 13. - [x] Smart Plug / Relay Support (device_type evse/plug)
-14. - [x] Charge rate unit detection via OCPP (fixes ISSUES.md #2)
-15. - [x] Distribution mode string mismatch (fixes ISSUES.md #3)
-16. - [x] Reset service hardcoded 3 phases (fixes ISSUES.md #4)
+14. - [x] Charge rate unit detection via OCPP
+15. - [x] Distribution mode string mismatch
+16. - [x] Reset service hardcoded 3 phases
 17. - [x] PhaseConstraints.copy() → dataclasses.replace()
 18. - [x] Rename misleading variable/function names
 19. - [x] Smart Plug UX improvements (device info, rounding, power slider, auto-adjust)
@@ -29,14 +29,14 @@
 25. - [x] Inverter configuration in config flow
 26. - [x] Grid consumption feedback loop (subtract charger draws from CT)
 27. - [x] Charge pause UX improvements (remaining seconds, mode change cancel)
-28. - [x] battery_soc_target None crash (fixes ISSUES.md #5)
-29. - [x] Charge rate unit case sensitivity (fixes ISSUES.md #6)
+28. - [x] battery_soc_target None crash
+29. - [x] Charge rate unit case sensitivity
 30. - [x] Eco mode fake solar surplus at night (partial — see #32)
 31. - [x] Dual-frequency update loop (site 5s, charger 15s)
 32. - [x] Derived solar production formula fix (CT-based, solar_is_derived flag)
 33. - [x] Multi-cycle test simulation (30-cycle with ramp limiting)
 34. - [x] Test trace output (--trace flag, per-cycle state)
-35. - [x] Eco mode: inactive chargers inflating minimums (fixes ISSUES.md #9)
+35. - [x] Eco mode: inactive chargers inflating minimums
 36. - [x] Self-consumption battery model in test simulation
 37. - [x] Battery-aware derived solar mode (battery_power in engine)
 38. - [x] Test trace scenario parameters display
@@ -52,32 +52,56 @@
 48. - [x] Eco mode: charge at minimum when battery below min SOC + wire allow_grid_charging in tests
 49. - [x] Grid/inverter/solar limit: replace proportional scaling with combination-field capping
 50. - [x] Use PhaseConstraints.normalize() for combination-field cascading (removes 3x repeated pattern)
-51. - [x] Remove unused methods (PhaseValues: active_mask, __neg__, clamp_min; PhaseConstraints: __sub__, scale) + extract _calculate_active_minimums() helper
-52. - [x] Codebase refactoring: extract _send_plug_command/_send_ocpp_command, _allocate_minimums, _build_inverter_constraints; consolidate _read_entity; reuse _get_household_per_phase; unify element_min/element_max
+51. - [x] Remove unused methods + extract _calculate_active_minimums() helper
+52. - [x] Codebase refactoring: extract helpers, consolidate _read_entity, unify element_min/element_max
+53. - [x] Hide Phase B/C sensors on single-phase sites
+54. - [x] Expose HA service actions (set_charging_mode, set_distribution_mode, set_max_current)
+55. - [x] User documentation / setup guide (README.md rewrite)
+56. - [x] Entity selector UX — proper HA entity selectors + per-step clearing
+57. - [x] Extract auto-detection patterns → `detection_patterns/` package with 12 brand files
+58. - [x] Auto-detect battery SOC, battery power, and solar production entities
+59. - [x] Per-brand detection pattern files
+60. - [x] Fix false-positive battery detection — removed generic `battery_level$` pattern
+61. - [x] Auto-detect battery max charge/discharge power
+62. - [x] Options flow auto-detection
+63. - [x] Wiring topology auto-detect
+64. - [x] Charger name prettification
+65. - [x] EVSE charging status sensor
+66. - [x] `data_description` help text — all steps
+67. - [x] Raw `int` → number selectors with min/max/unit
+68. - [x] Max import power → checkbox + slider + optional entity
+69. - [x] Inverter power UX: battery power hint
+70. - [x] **[BUG] stackLevel sent as Decimal instead of int** — Cast to `int()` in `sensor.py` and `__init__.py`.
+71. - [x] **[BUG] Feedback loop overcorrects — per-phase draw exceeds max_current** — Charger per-phase current readings can exceed max_current (cause unclear — possibly charger firmware reporting total instead of per-phase, or other OCPP entity issues). Clamped each per-phase draw at `max_current` in `dynamic_ocpp_evse.py` with a warning log.
+72. - [x] **[BUG] Battery power sensor false-positive auto-detection** — Added negative lookahead to generic `BATTERY_POWER` pattern to exclude mobile device entities (phones, tablets, laptops, watches).
+73. - [x] **[BUG] Hub-aware charger config flow — hide unavailable phases** — Config flow now hides L2/L3 phase mapping fields based on hub's phase count. Engine clamps `active_phases_mask` to site phases as safety net. Handles reconfigure and options flows. Works with split-phase (2-wire) systems.
 
 ## In Progress
 
-## Backlog
+1. - [ ] **[FEATURE] Phase mapping help text update** — Change data_description for `charger_l1/l2/l3_phase` to "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits." Apply to all 3 phases × 3 flows in `strings.json`, `en.json`, `sl.json`.
 
-53. - [x] Hide Phase B/C sensors on single-phase sites (requires_phase flag in sensor definitions)
-54. - [x] Expose HA service actions (set_charging_mode, set_distribution_mode, set_max_current + services.yaml + translations)
-55. - [x] User documentation / setup guide (README.md rewrite: quick start, config reference, services & automations, troubleshooting FAQ)
-56. - [x] Entity selector UX — replaced raw entity ID dropdowns with proper HA entity selectors for optional fields; added per-step clearing support via `_normalize_optional_inputs(step_entity_keys)`
-57. - [x] Extract auto-detection patterns — moved PHASE_PATTERNS and INVERTER_OUTPUT_PATTERNS to `detection_patterns.py`
-58. - [x] Auto-detect battery SOC, battery power, and solar production entities — added BATTERY_SOC_PATTERNS, BATTERY_POWER_PATTERNS, SOLAR_PRODUCTION_PATTERNS; wired into `async_step_hub_battery` via `_auto_detect_entity()`
-59. - [x] Per-brand detection pattern files — restructured `detection_patterns.py` → `detection_patterns/` package with 12 brand files (SolarEdge, Solarman/Deye, Fronius, Huawei, Enphase, Victron, Sofar, Sungrow, SMA, GoodWe, Growatt, Fox ESS) + generic catch-all
-60. - [x] Fix false-positive battery detection — removed generic `battery_level$` pattern (matched phones), narrowed Sungrow pattern, tightened generic `battery_power` pattern
-61. - [x] Auto-detect battery max charge/discharge power — reads Deye/Huawei number/sensor entities with 0.9 safety factor; added `_auto_detect_entity_value()` method
-62. - [x] Options flow auto-detection — empty entity fields now get auto-detection suggestions when re-opening hub settings; battery power limits auto-detected when at default
-63. - [x] Wiring topology auto-detect — suggests "series" when battery SOC entities detected (initial flow + options flow); fixed dead code in initial flow
-64. - [x] Charger name prettification — `prettify_name()` helper replaces underscores and applies title-case only when all lowercase; applied to both discovery paths (`__init__.py`, `config_flow.py`)
-65. - [x] EVSE charging status sensor — new `DynamicOcppEvseChargerStatusSensor` shows reason for not charging (Not Connected, Paused: Xs, Insufficient Solar/Power, No Excess, Battery Priority, etc.)
-66. - [x] **`data_description` help text — all steps**: Added per-field help text to Grid, Inverter, Battery, Charger timing, Charger info, Charger current, and Plug steps (both en.json and sl.json). Covers initial flow, reconfigure flow, and options flow.
-67. - [x] **Raw `int` → number selectors with min/max/unit**: Replaced bare `int` fields with `selector({"number": {...}})` across all steps — `main_breaker_rating`, `phase_voltage`, `excess_export_threshold`, `battery_max_charge/discharge_power`, `evse_min/max_charge_current`, `update_frequency`, `ocpp_profile_timeout`, `charge_pause_duration`, `stack_level`, `plug_power_rating`. Shortened data labels (units now shown by selectors).
-68. - [x] **Max import power → checkbox + slider + optional entity**: Added `enable_max_import_power` checkbox (default: checked). When enabled and no entity selected, creates `MaxImportPowerSlider` number entity (default = breaker × phases × voltage). Entity selector kept as optional override for power users. Removed unreliable auto-detection. `dynamic_ocpp_evse.py` reads entity → slider → None fallback chain.
-69. - [x] **Inverter power UX: battery power hint**: Added `description_placeholders` with auto-detected battery max discharge power to all inverter steps (initial, reconfigure, options). Shows "{value}W detected" or "not detected".
+2. - [ ] **[FEATURE] Rename "Smart Plug" → "Smart Load"** — Replace all user-facing occurrences in device model strings, config flow labels, step titles. Keep `DEVICE_TYPE_PLUG` internal name unchanged.
+
+3. - [ ] **[FEATURE] Auto-detect power monitoring sensor for plugs** — Add detection patterns for common smart plug power monitoring entities (Shelly, Sonoff, Tasmota). Wire into `async_step_plug_config` via `_auto_detect_entity()`.
+
+4. - [ ] **[FEATURE] Improve hub debug logging** — Restructure debug output into two clear blocks:
+    - **Block 1 — Raw entity reads** (`dynamic_ocpp_evse.py`): All values as read from HA entities before any processing.
+    - **Block 2 — Derived/computed values** (`dynamic_ocpp_evse.py`): All values after feedback loop and derivations.
+    - **Allocation line** (`target_calculator.py`): Add `current_import` and `current_offered` to the Final allocation line.
+    - **Charger info line** (`target_calculator.py`): Show effective vs configured, e.g. `mask=A (1ph), hw_phases=3`.
+    - **Household clamp warning** (`dynamic_ocpp_evse.py`): Log warning when household clamps to 0 due to feedback overcorrection.
 
 ## Backlog
+
+1. - [ ] **[FEATURE] Auto-detect grid inversion — shared infrastructure**: Create `auto_detect.py` module with `AutoDetector` class. Track per-charger previous-cycle state. Files: `auto_detect.py` (new), `dynamic_ocpp_evse.py`.
+
+2. - [ ] **[FEATURE] Auto-detect grid inversion — detection logic + config**: Add `CONF_AUTO_DETECT_INVERSION` to `const.py` (bool, default True). Fire `persistent_notification` when mismatch detected. Files: `const.py`, `auto_detect.py`, `dynamic_ocpp_evse.py`, `config_flow.py`, translations.
+
+3. - [ ] **[FEATURE] Auto-detect phase mapping — detection logic**: Add `CONF_AUTO_DETECT_PHASE_MAPPING` to `const.py` (bool, default False). Correlate charger L-phase draws with grid phase deltas. Files: `const.py`, `auto_detect.py`.
+
+4. - [ ] **[FEATURE] Auto-detect phase mapping — notification & application**: Fire persistent notification with detected vs configured mapping. Option to auto-update config entry. Files: `dynamic_ocpp_evse.py`, `config_flow.py`, translations.
+
+5. - [ ] **[FEATURE] Auto-detection unit tests**: Test `AutoDetector` with simulated update cycles. File: `dev/tests/test_auto_detect.py` (new).
 
 ## Other
 

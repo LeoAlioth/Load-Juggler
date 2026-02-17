@@ -1,0 +1,175 @@
+# Test scenarios: Phase mapping edge cases on single-phase sites
+# Verifies behavior when a charger has multi-phase mapping on a 1-phase site.
+#
+# Key insight: active_phases_mask is derived from the mapping, not from phases.
+# With phases=3 and l1=A, l2=A, l3=A → mask="A" (works fine).
+# With phases=3 and l1=A, l2=B, l3=C → mask="ABC" (broken on 1-phase site).
+# The config flow defaults to l2=B, l3=C, which creates a silent failure.
+
+scenarios:
+
+  # Baseline: correct 1-phase charger on 1-phase site
+  - name: "1ph-1c-standard-phases1-baseline"
+    description: "Baseline — 1-phase charger on 1-phase site, correctly configured"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 5.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 16.0  # 35A - 5A = 30A available, capped at max 16A
+
+  # Real-world working case: phases=3 but all mappings set to "A"
+  # This is what the debug log shows (mask=A, phases=3). It works because
+  # sorted({"A","A","A"}) = "A", so the engine treats it as single-phase.
+  - name: "1ph-1c-standard-phases3-all-mapped-to-A"
+    description: "phases=3 with all L1/L2/L3 mapped to A — works because mask becomes 'A'"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 5.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "A"
+        l3_phase: "A"
+    expected:
+      charger_1:
+        allocated: 16.0  # mask="A" (all mapped to same phase), works like 1-phase
+
+  # BUG SCENARIO: 3-phase charger on 1-phase site
+  # This is the real-world case where a user sets up a charger on a single-phase
+  # site but the config flow allows phases=3 (charger hardware capability).
+  # The engine gives 0A because min(A=30, B=0, C=0) = 0.
+  - name: "1ph-1c-standard-phases3-misconfigured"
+    description: "BUG: 3-phase charger config on 1-phase site — engine gives 0A, charger cannot charge"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 5.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+    expected:
+      charger_1:
+        allocated: 0  # min(A=30, B=0, C=0) = 0 — cannot charge!
+
+  # Same scenario with non-default phase mapping — still broken
+  - name: "1ph-1c-standard-phases3-rotated-mapping"
+    description: "BUG: 3-phase charger with rotated mapping on 1-phase site — still 0A"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 5.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "B"
+        l2_phase: "C"
+        l3_phase: "A"
+    expected:
+      charger_1:
+        allocated: 0  # sorted({'B','C','A'}) = "ABC", still min(A=30, B=0, C=0) = 0
+
+  # 2-phase charger on 1-phase site — also broken
+  - name: "1ph-1c-standard-phases2-misconfigured"
+    description: "BUG: 2-phase charger config on 1-phase site — engine gives 0A"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 5.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 2
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "B"
+    expected:
+      charger_1:
+        allocated: 0  # mask="AB", min(A=30, B=0, AB/2=15) = 0

@@ -22,7 +22,8 @@ BATTERY_SOC = [
 ]
 
 BATTERY_POWER = [
-    {"name": "Generic", "pattern": r'sensor\..*(?:_battery_power|battery_charge.*power)$'},
+    {"name": "Generic", "pattern": r'sensor\.(?!.*(?:phone|pixel|iphone|ipad|galaxy|oneplus|xiaomi|huawei_p|huawei_mate|samsung_|macbook|laptop|tablet|watch|ring)).*(?:_battery_power|battery_charge.*power)$'},
+    # Negative lookahead excludes mobile devices (phones, tablets, laptops, watches).
     # Note: broad battery.*power excluded — matches non-energy devices.
 ]
 

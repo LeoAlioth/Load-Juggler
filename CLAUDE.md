@@ -20,7 +20,7 @@ Dynamic OCPP EVSE is a Home Assistant custom component that provides intelligent
 
 **Improvement Ideas** `dev/IMPROVEMENTS.md` List of ideas for future imporovements and changes. Developer will prompt Claude to discuss and refine them.
 
-**TODOs** Keep track of TODOs as an ordered numbered list with checkmarks in `dev/TODO.md`. Before and after making code changes, make sure that the TODO is up to date. Mark steps completed as soon as they are done. Split TODOs into 3 parts. "Completed": ones which get cleaned up once no longer relevant, "In progress": the clearly defined ones we need to finish before reaching out back to the developer, "Backlog": upcoming things to do. More general ones, which should often be made more detailed when transitioning to "In progress".
+**TODOs** Keep track of TODOs as an ordered numbered list with checkmarks in `dev/TODO.md`. Before and after making code changes, make sure that the TODO is up to date. Mark steps completed as soon as they are done. Split TODOs into 3 parts. "Completed": ones which get cleaned up once no longer relevant, "In progress": the clearly defined ones we need to finish before reaching out back to the developer, "Backlog": upcoming things to do. More general ones, which should often be made more detailed when transitioning to "In progress". Each TODO must be tagged **[BUG]** or **[FEATURE]** to distinguish broken behavior from new functionality. Bugs are prioritized over features.
 
 ## Architecture
 

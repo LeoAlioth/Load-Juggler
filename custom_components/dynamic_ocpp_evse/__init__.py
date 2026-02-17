@@ -161,7 +161,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
             rate_unit = "A"
         
         # Stack level for reset should be 1 lower than regular operation
-        configured_stack_level = get_entry_value(entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
+        configured_stack_level = int(get_entry_value(entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
         reset_stack_level = max(1, configured_stack_level - 1)
 
         sequence = [

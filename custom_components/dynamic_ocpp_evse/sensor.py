@@ -396,8 +396,8 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         # Check if charger is following our profiles (auto-reset detection)
         await self._check_profile_compliance(limit, dynamic_control_on)
 
-        profile_timeout = get_entry_value(self.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)
-        stack_level = get_entry_value(self.config_entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
+        profile_timeout = int(get_entry_value(self.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT))
+        stack_level = int(get_entry_value(self.config_entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
         profile_validity_mode = get_entry_value(self.config_entry, CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE)
 
         # Get charge rate unit from config (A or W)
