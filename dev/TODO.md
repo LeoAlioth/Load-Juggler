@@ -69,6 +69,7 @@
 65. - [x] Fix entity selector clearing: `suggested_value` instead of `default` so X button truly clears the field
 66. - [x] Fix options flow Submit → Next button on non-final steps (`last_step=False/True`)
 67. - [x] Add Sony Xperia (`xq_`) phone exclusion to generic battery auto-detection patterns
+68. - [x] Reload config entry on options change — removes stale battery sliders/switch when battery entities are cleared
 
 ## In Progress
 
