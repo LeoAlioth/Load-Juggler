@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev
+      - 'dev-*'
       - pre-release
 
 jobs:
@@ -53,6 +54,9 @@ jobs:
             TAG_NAME="${VERSION}-dev.${TIMESTAMP}"
           elif [ "$BRANCH" = "pre-release" ]; then
             TAG_NAME="${VERSION}-rc.${TIMESTAMP}"
+          elif [[ "$BRANCH" == dev-* ]]; then
+            # Feature branches: 2.2.0-dev-glm.20260217.2112
+            TAG_NAME="${VERSION}-${BRANCH}.${TIMESTAMP}"
           else
             echo "Unsupported branch: $BRANCH"
             exit 1
@@ -166,6 +170,63 @@ jobs:
             "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
 
           echo "$GH_RELEASES" | jq -r '.[] | select(.tag_name | test("'"$RC_PATTERN"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
+            if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
+              echo "Deleting GitHub release: $RELEASE_TAG (ID: $RELEASE_ID)"
+              curl -s -X DELETE \
+                -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID"
+
+              echo "Deleting GitHub tag: $RELEASE_TAG"
+              curl -s -X DELETE \
+                -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/git/refs/tags/$RELEASE_TAG"
+            fi
+          done
+
+          echo "Cleanup complete!"
+
+      - name: Delete previous feature branch releases (dev-* branches only)
+        if: env.BRANCH != 'dev' && env.BRANCH != 'pre-release'
+        run: |
+          echo "Cleaning up previous releases for branch: $BRANCH"
+          # Escape branch name for regex use
+          ESCAPED_BRANCH=$(echo "$BRANCH" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
+          FEATURE_PATTERN=".*-${ESCAPED_BRANCH}\\."
+          echo "Using pattern: $FEATURE_PATTERN"
+
+          # Delete previous feature branch releases from Gitea
+          echo "Fetching Gitea releases..."
+          GITEA_RELEASES=$(curl -s \
+            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases")
+
+          echo "$GITEA_RELEASES" | jq -r '.[] | select(.tag_name | test("'"$FEATURE_PATTERN"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
+            if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
+              echo "Deleting Gitea release: $RELEASE_TAG (ID: $RELEASE_ID)"
+              curl -s -X DELETE \
+                -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+                "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID"
+
+              echo "Deleting Gitea tag: $RELEASE_TAG"
+              curl -s -X DELETE \
+                -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+                "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/tags/$RELEASE_TAG"
+            fi
+          done
+
+          # Delete previous feature branch releases from GitHub
+          echo "Fetching GitHub releases..."
+          GH_RELEASES=$(curl -s \
+            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
+
+          echo "$GH_RELEASES" | jq -r '.[] | select(.tag_name | test("'"$FEATURE_PATTERN"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
             if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
               echo "Deleting GitHub release: $RELEASE_TAG (ID: $RELEASE_ID)"
               curl -s -X DELETE \
