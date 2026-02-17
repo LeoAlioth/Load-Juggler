@@ -355,6 +355,8 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
         "allow_grid_charging": True,
         "power_buffer": 0,
         "max_import_power": None,
+        "battery_soc_target": DEFAULT_BATTERY_SOC_TARGET,
+        "battery_soc_min": DEFAULT_BATTERY_SOC_MIN,
     }
     
     # Check if entities need migration

@@ -52,6 +52,7 @@
 48. - [x] Rename "Smart Plug" → "Smart Load"
 49. - [x] Hub debug logging (raw reads, feedback, per-charger, allocation)
 50. - [x] Fix entity state lookup bug — use `hass.data[DOMAIN]` shared store instead of entity ID guessing
+51. - [x] Fix battery SOC target/min sliders not feeding into calculation + create missing MaxImportPowerSlider
 
 ## In Progress
 

@@ -153,6 +153,8 @@ def setup_domain_data(hass, hub_entry, charger_entry):
                 "allow_grid_charging": True,
                 "power_buffer": 0,
                 "max_import_power": None,
+                "battery_soc_target": 80,
+                "battery_soc_min": 20,
             },
         },
         "chargers": {
@@ -231,8 +233,8 @@ def _set_ha_states(hass, hub_entry):
     hub_data["distribution_mode"] = "Priority"
     hub_data["allow_grid_charging"] = True
     hub_data["power_buffer"] = 200
-    # Battery SOC target
-    hass.states.async_set("number.test_hub_home_battery_soc_target", "90")
+    hub_data["battery_soc_target"] = 90
+    hub_data["battery_soc_min"] = 20
 
 
 # ── Sensor creation tests ─────────────────────────────────────────────
@@ -1005,7 +1007,7 @@ async def test_rate_limit_ramp_down_capped(
     # Override to Eco mode with battery SOC below target — gives min_current (6A)
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Eco"
     hass.states.async_set("sensor.battery_soc", "50")
-    hass.states.async_set("number.test_hub_home_battery_soc_target", "90")
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["battery_soc_target"] = 90
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
         await sensor.async_update()

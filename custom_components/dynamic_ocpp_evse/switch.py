@@ -5,7 +5,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID, CONF_HUB_ENTRY_ID, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG
+from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID, CONF_HUB_ENTRY_ID, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG, CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID
 from .helpers import get_entry_value
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,8 +30,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
     # Hub-level switches
     # Check if battery is configured
-    battery_soc_entity = get_entry_value(config_entry, "battery_soc_entity_id")
-    battery_power_entity = get_entry_value(config_entry, "battery_power_entity_id")
+    battery_soc_entity = get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID)
+    battery_power_entity = get_entry_value(config_entry, CONF_BATTERY_POWER_ENTITY_ID)
     has_battery = bool(battery_soc_entity or battery_power_entity)
 
     if not has_battery:

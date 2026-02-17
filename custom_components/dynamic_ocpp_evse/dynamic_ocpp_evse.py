@@ -114,15 +114,13 @@ def run_hub_calculation(sensor):
     else:
         solar_production_total = total_export_power
 
-    # --- Read battery data from HA entities ---
+    # --- Read battery data from HA entities + shared hub data ---
     battery_soc_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
     battery_power_entity = get_entry_value(hub_entry, CONF_BATTERY_POWER_ENTITY_ID, None)
-    battery_soc_target_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_TARGET_ENTITY_ID, None)
 
     battery_soc = _read_entity(hass, battery_soc_entity, None) if battery_soc_entity else None
     battery_power = _read_entity(hass, battery_power_entity, None) if battery_power_entity else None
-    battery_soc_min = get_entry_value(hub_entry, CONF_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_MIN)
-    battery_soc_target = _read_entity(hass, battery_soc_target_entity, None) if battery_soc_target_entity else None
+    # battery_soc_target and battery_soc_min are read from hub_runtime (after line 178)
     battery_soc_hysteresis = get_entry_value(hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
     battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
@@ -180,6 +178,8 @@ def run_hub_calculation(sensor):
     distribution_mode = hub_runtime.get("distribution_mode", DEFAULT_DISTRIBUTION_MODE)
     allow_grid_charging = hub_runtime.get("allow_grid_charging", True)
     power_buffer = hub_runtime.get("power_buffer", 0)
+    battery_soc_target = hub_runtime.get("battery_soc_target", DEFAULT_BATTERY_SOC_TARGET)
+    battery_soc_min = hub_runtime.get("battery_soc_min", DEFAULT_BATTERY_SOC_MIN)
 
     # Apply power buffer to reduce effective max grid import power
     if max_grid_import_power is not None and power_buffer > 0:

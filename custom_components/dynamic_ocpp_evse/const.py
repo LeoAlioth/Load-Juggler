@@ -114,6 +114,7 @@ DEFAULT_CHARGER_PRIORITY = 1
 DEFAULT_EXCESS_EXPORT_THRESHOLD = 13000
 DEFAULT_BATTERY_MAX_POWER = 5000
 DEFAULT_BATTERY_SOC_MIN = 20  # Default minimum SOC (20%)
+DEFAULT_BATTERY_SOC_TARGET = 80  # Default SOC target (80%)
 DEFAULT_BATTERY_SOC_HYSTERESIS = 3  # Default hysteresis (3%)
 
 # Current ramp rates (A per second) — limits how fast the commanded current changes

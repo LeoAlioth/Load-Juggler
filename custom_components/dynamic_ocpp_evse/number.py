@@ -27,6 +27,9 @@ from .const import (
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_BATTERY_MAX_POWER,
     DEFAULT_BATTERY_SOC_MIN,
+    DEFAULT_BATTERY_SOC_TARGET,
+    CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_POWER_ENTITY_ID,
     CONF_ENABLE_MAX_IMPORT_POWER,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_MAIN_BREAKER_RATING,
@@ -51,8 +54,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     
     if entry_type == ENTRY_TYPE_HUB:
         # Check if battery is configured
-        battery_soc_entity = get_entry_value(config_entry, "battery_soc_entity_id")
-        battery_power_entity = get_entry_value(config_entry, "battery_power_entity_id")
+        battery_soc_entity = get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID)
+        battery_power_entity = get_entry_value(config_entry, CONF_BATTERY_POWER_ENTITY_ID)
         has_battery = bool(battery_soc_entity or battery_power_entity)
         
         # Always create Power Buffer (useful even without battery)
@@ -286,13 +289,13 @@ class PlugDevicePowerSlider(NumberEntity, RestoreEntity):
 
 class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
     """Slider for battery SOC target (0-100%, step 1) (hub-level).
-    
+
     In Eco mode: Below target, charge at minimum rate. At/above target, charge at solar rate or full speed.
     In Solar mode: Below target, do not charge. At/above target, charge at solar rate.
     """
-    
+
     _attr_entity_category = EntityCategory.CONFIG
-    
+
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
@@ -301,9 +304,15 @@ class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
         self._attr_native_min_value = 0
         self._attr_native_max_value = 100
         self._attr_native_step = 1
-        self._attr_native_value = 80  # Default SOC target
+        self._attr_native_value = DEFAULT_BATTERY_SOC_TARGET
         self._attr_native_unit_of_measurement = "%"
         self._attr_icon = "mdi:battery-charging-80"
+
+    def _write_to_hub_data(self, value):
+        """Write battery_soc_target to shared hub data."""
+        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
+        if hub_data is not None:
+            hub_data["battery_soc_target"] = value
 
     @property
     def device_info(self):
@@ -325,26 +334,26 @@ class BatterySOCTargetSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
             except (ValueError, TypeError):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-        
-        # Write initial state
+
         self.async_write_ha_state()
+        self._write_to_hub_data(self._attr_native_value)
 
     async def async_set_native_value(self, value: float) -> None:
-        # Clamp to range
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
         self._attr_native_value = value
         self.async_write_ha_state()
+        self._write_to_hub_data(value)
 
 
 class BatterySOCMinSlider(NumberEntity, RestoreEntity):
     """Slider for minimum battery SOC (0-95%, step 1) (hub-level).
-    
+
     Below this SOC level, EV charging will NOT occur in any mode.
     This is the absolute floor to protect the home battery.
     """
-    
+
     _attr_entity_category = EntityCategory.CONFIG
-    
+
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
@@ -357,6 +366,12 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
         self._attr_native_unit_of_measurement = "%"
         self._attr_icon = "mdi:battery-alert-variant-outline"
 
+    def _write_to_hub_data(self, value):
+        """Write battery_soc_min to shared hub data."""
+        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
+        if hub_data is not None:
+            hub_data["battery_soc_min"] = value
+
     @property
     def device_info(self):
         """Return device information about this hub."""
@@ -377,15 +392,15 @@ class BatterySOCMinSlider(NumberEntity, RestoreEntity):
                 _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
             except (ValueError, TypeError):
                 _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
-        
-        # Write initial state
+
         self.async_write_ha_state()
+        self._write_to_hub_data(self._attr_native_value)
 
     async def async_set_native_value(self, value: float) -> None:
-        # Clamp to range
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
         self._attr_native_value = value
         self.async_write_ha_state()
+        self._write_to_hub_data(value)
 
 
 class PowerBufferSlider(NumberEntity, RestoreEntity):
@@ -443,6 +458,71 @@ class PowerBufferSlider(NumberEntity, RestoreEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         # Clamp to step and range
+        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        self._write_to_hub_data(value)
+
+
+class MaxImportPowerSlider(NumberEntity, RestoreEntity):
+    """Slider for maximum grid import power in Watts (hub-level).
+
+    Limits total power drawn from the grid. Useful when your electricity
+    contract has a lower limit than the physical breaker rating.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
+        self.hass = hass
+        self.config_entry = config_entry
+        self._attr_name = f"{name} Max Import Power"
+        self._attr_unique_id = f"{entity_id}_max_import_power"
+        self._attr_native_min_value = 0
+        self._attr_native_max_value = 50000
+        self._attr_native_step = 100
+        self._attr_native_unit_of_measurement = "W"
+        self._attr_icon = "mdi:transmission-tower-import"
+
+        # Default to full breaker capacity
+        voltage = get_entry_value(config_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+        breaker = get_entry_value(config_entry, CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING)
+        has_phase_b = bool(get_entry_value(config_entry, CONF_PHASE_B_CURRENT_ENTITY_ID, None))
+        has_phase_c = bool(get_entry_value(config_entry, CONF_PHASE_C_CURRENT_ENTITY_ID, None))
+        num_phases = 1 + (1 if has_phase_b else 0) + (1 if has_phase_c else 0)
+        self._attr_native_value = round(voltage * breaker * num_phases / 100) * 100
+
+    def _write_to_hub_data(self, value):
+        """Write max_import_power to shared hub data."""
+        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
+        if hub_data is not None:
+            hub_data["max_import_power"] = value
+
+    @property
+    def device_info(self):
+        """Return device information about this hub."""
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": "Electrical System Hub",
+        }
+
+    async def async_added_to_hass(self) -> None:
+        """Restore last state when added to hass."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
+            try:
+                self._attr_native_value = float(last_state.state)
+                _LOGGER.debug(f"Restored {self._attr_name} to: {self._attr_native_value}")
+            except (ValueError, TypeError):
+                _LOGGER.debug(f"Could not restore {self._attr_name}, using default")
+
+        self.async_write_ha_state()
+        self._write_to_hub_data(self._attr_native_value)
+
+    async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
         self.async_write_ha_state()
