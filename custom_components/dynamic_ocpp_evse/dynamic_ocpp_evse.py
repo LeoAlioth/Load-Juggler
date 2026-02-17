@@ -382,7 +382,8 @@ def _apply_feedback_loop(site, solar_is_derived, voltage):
 
 def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
                       battery_soc, battery_soc_min, battery_max_discharge_power,
-                      battery_power, charger_targets, charger_available, plug_auto_power):
+                      battery_power, charger_targets, charger_available, charger_names,
+                      plug_auto_power):
     """Build the result dict returned by run_hub_calculation."""
     # Grid headroom per phase
     available_per_phase = []
@@ -440,19 +441,21 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
         "battery_soc_min": site.battery_soc_min,
         "battery_soc_target": site.battery_soc_target,
         "battery_power": battery_power,
-        "site_available_current_phase_a": available_per_phase[0],
-        "site_available_current_phase_b": available_per_phase[1],
-        "site_available_current_phase_c": available_per_phase[2],
+        "available_current_a": available_per_phase[0],
+        "available_current_b": available_per_phase[1],
+        "available_current_c": available_per_phase[2],
         "total_site_available_power": round(total_site_available, 0),
-        "net_site_consumption": round(net_consumption, 0),
-        "site_grid_available_power": round(grid_headroom, 0),
-        "battery_available_power": available_battery_power,
+        "grid_power": round(net_consumption, 0),
+        "available_grid_power": round(grid_headroom, 0),
+        "available_battery_power": available_battery_power,
         "total_evse_power": total_evse_power,
-        "solar_available_power": round(solar_available, 0),
+        "solar_power": round(site.solar_production_total or 0, 0),
+        "available_solar_power": round(solar_available, 0),
 
         # Per-charger targets
         "charger_targets": charger_targets,
         "charger_available": charger_available,
+        "charger_names": charger_names,
         "distribution_mode": site.distribution_mode,
 
         # Auto-detected plug power ratings
@@ -642,12 +645,14 @@ def run_hub_calculation(sensor):
 
     charger_targets = {c.charger_id: c.allocated_current for c in site.chargers}
     charger_available = {c.charger_id: c.available_current for c in site.chargers}
+    charger_names = {c.charger_id: c.entity_id for c in site.chargers}
 
     # --- Build result ---
     return _build_hub_result(
         site, raw_phases, voltage, main_breaker_rating,
         battery_soc, battery_soc_min, battery_max_discharge_power,
-        battery_power, charger_targets, charger_available, plug_auto_power,
+        battery_power, charger_targets, charger_available, charger_names,
+        plug_auto_power,
     )
 
 

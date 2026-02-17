@@ -64,6 +64,8 @@
 60. - [x] Split `run_hub_calculation()` into subfunctions (~560→~170 lines)
 61. - [x] Move rate limiting from OCPP command to allocated current level (smooth sensor display, bypass on mode change)
 62. - [x] Hub sensor cleanup: Solar Surplus → Solar Available Power (production - household), remove Solar Surplus Current, deduplicate battery sensors
+63. - [x] Debug log: show human-readable charger names instead of entry_id hashes in "Charger targets" line
+64. - [x] Hub sensor renames: shorter, consistent naming (Current X Power / Available X Power), add Current Solar Power sensor
 
 ## In Progress
 

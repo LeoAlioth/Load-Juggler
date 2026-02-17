@@ -559,17 +559,19 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                 "battery_soc_min": hub_data.get("battery_soc_min"),
                 "battery_soc_target": hub_data.get("battery_soc_target"),
                 "battery_power": hub_data.get("battery_power"),
-                # Site available per-phase current (A)
-                "site_available_current_phase_a": hub_data.get("site_available_current_phase_a"),
-                "site_available_current_phase_b": hub_data.get("site_available_current_phase_b"),
-                "site_available_current_phase_c": hub_data.get("site_available_current_phase_c"),
-                # Power breakdown
-                "battery_available_power": hub_data.get("battery_available_power"),
-                "site_grid_available_power": hub_data.get("site_grid_available_power"),
+                # Available per-phase current (A)
+                "available_current_a": hub_data.get("available_current_a"),
+                "available_current_b": hub_data.get("available_current_b"),
+                "available_current_c": hub_data.get("available_current_c"),
+                # Current power readings
+                "grid_power": hub_data.get("grid_power"),
+                "solar_power": hub_data.get("solar_power"),
+                # Available power breakdown
+                "available_grid_power": hub_data.get("available_grid_power"),
+                "available_solar_power": hub_data.get("available_solar_power"),
+                "available_battery_power": hub_data.get("available_battery_power"),
                 "total_site_available_power": hub_data.get("total_site_available_power"),
                 "total_evse_power": hub_data.get("total_evse_power"),
-                "net_site_consumption": hub_data.get("net_site_consumption"),
-                "solar_available_power": hub_data.get("solar_available_power"),
                 "last_update": datetime.now(timezone.utc),
             }
 
@@ -578,8 +580,9 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             charger_targets = hub_data.get("charger_targets", {})
 
             if charger_targets:
+                charger_names = hub_data.get("charger_names", {})
                 _LOGGER.debug("Charger targets: %s", ", ".join(
-                    [f"{k[-8:]}: {v:.1f}A" for k, v in charger_targets.items()]
+                    [f"{charger_names.get(k, k[-8:])}: {v:.1f}A" for k, v in charger_targets.items()]
                 ))
 
             # Get this charger's raw allocated current from engine output
@@ -852,7 +855,25 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_battery": True,
     },
     {
-        "name_suffix": "Battery Power",
+        "name_suffix": "Current Grid Power",
+        "unique_id_suffix": "net_site_consumption",
+        "hub_data_key": "grid_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:home-lightning-bolt-outline",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Current Solar Power",
+        "unique_id_suffix": "solar_power",
+        "hub_data_key": "solar_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:solar-power-variant",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Current Battery Power",
         "unique_id_suffix": "battery_power",
         "hub_data_key": "battery_power",
         "unit": "W",
@@ -862,27 +883,18 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_battery": True,
     },
     {
-        "name_suffix": "Net Site Consumption",
-        "unique_id_suffix": "net_site_consumption",
-        "hub_data_key": "net_site_consumption",
-        "unit": "W",
-        "device_class": "power",
-        "icon": "mdi:home-lightning-bolt-outline",
-        "decimals": 0,
-    },
-    {
-        "name_suffix": "Site Available Current Phase A",
+        "name_suffix": "Available Current A",
         "unique_id_suffix": "site_available_current_phase_a",
-        "hub_data_key": "site_available_current_phase_a",
+        "hub_data_key": "available_current_a",
         "unit": "A",
         "device_class": "current",
         "icon": "mdi:current-ac",
         "decimals": 1,
     },
     {
-        "name_suffix": "Site Available Current Phase B",
+        "name_suffix": "Available Current B",
         "unique_id_suffix": "site_available_current_phase_b",
-        "hub_data_key": "site_available_current_phase_b",
+        "hub_data_key": "available_current_b",
         "unit": "A",
         "device_class": "current",
         "icon": "mdi:current-ac",
@@ -890,9 +902,9 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_phase": "B",
     },
     {
-        "name_suffix": "Site Available Current Phase C",
+        "name_suffix": "Available Current C",
         "unique_id_suffix": "site_available_current_phase_c",
-        "hub_data_key": "site_available_current_phase_c",
+        "hub_data_key": "available_current_c",
         "unit": "A",
         "device_class": "current",
         "icon": "mdi:current-ac",
@@ -900,23 +912,32 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_phase": "C",
     },
     {
-        "name_suffix": "Battery Available Power",
+        "name_suffix": "Available Grid Power",
+        "unique_id_suffix": "site_grid_available_power",
+        "hub_data_key": "available_grid_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:transmission-tower",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Available Solar Power",
+        "unique_id_suffix": "solar_available_power",
+        "hub_data_key": "available_solar_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:solar-power",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Available Battery Power",
         "unique_id_suffix": "battery_available_power",
-        "hub_data_key": "battery_available_power",
+        "hub_data_key": "available_battery_power",
         "unit": "W",
         "device_class": "power",
         "icon": "mdi:battery-arrow-up",
         "decimals": 0,
         "requires_battery": True,
-    },
-    {
-        "name_suffix": "Site Grid Available Power",
-        "unique_id_suffix": "site_grid_available_power",
-        "hub_data_key": "site_grid_available_power",
-        "unit": "W",
-        "device_class": "power",
-        "icon": "mdi:transmission-tower",
-        "decimals": 0,
     },
     {
         "name_suffix": "Total EVSE Power",
@@ -925,15 +946,6 @@ HUB_SENSOR_DEFINITIONS = [
         "unit": "W",
         "device_class": "power",
         "icon": "mdi:ev-station",
-        "decimals": 0,
-    },
-    {
-        "name_suffix": "Solar Available Power",
-        "unique_id_suffix": "solar_available_power",
-        "hub_data_key": "solar_available_power",
-        "unit": "W",
-        "device_class": "power",
-        "icon": "mdi:solar-power",
         "decimals": 0,
     },
 ]

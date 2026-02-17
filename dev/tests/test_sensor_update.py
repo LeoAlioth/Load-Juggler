@@ -321,9 +321,9 @@ async def test_calculate_available_current_reads_ha_entities(
     )
 
     # Grid importing ~5A/phase with 25A breaker → ~20A available per phase
-    assert result.get("site_available_current_phase_a") == 20.0
-    assert result.get("site_available_current_phase_b") == 20.5
-    assert result.get("site_available_current_phase_c") == 21.2
+    assert result.get("available_current_a") == 20.0
+    assert result.get("available_current_b") == 20.5
+    assert result.get("available_current_c") == 21.2
 
     # Charger targets should contain our charger with a real allocation
     charger_targets = result.get("charger_targets", {})
@@ -432,8 +432,8 @@ async def test_hub_data_sensor_reads_values(
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         await charger_sensor.async_update()
 
-    # Create a hub data sensor for "net_site_consumption"
-    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "net_site_consumption")
+    # Create a hub data sensor for "grid_power"
+    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
     data_sensor = DynamicOcppEvseHubDataSensor(hass, hub_entry, "Test Hub", "test_hub", defn)
     await data_sensor.async_update()
 
@@ -781,16 +781,18 @@ async def test_result_dict_all_keys_populated(
         "battery_soc_min",
         "battery_soc_target",
         "battery_power",
-        "battery_available_power",
-        "site_available_current_phase_a",
-        "site_available_current_phase_b",
-        "site_available_current_phase_c",
+        "available_battery_power",
+        "available_current_a",
+        "available_current_b",
+        "available_current_c",
         "total_site_available_power",
-        "net_site_consumption",
-        "site_grid_available_power",
+        "grid_power",
+        "available_grid_power",
         "total_evse_power",
-        "solar_available_power",
+        "solar_power",
+        "available_solar_power",
         "charger_targets",
+        "charger_names",
         "distribution_mode",
     }
 
@@ -829,23 +831,23 @@ async def test_result_dict_values_are_reasonable(
     # --- Grid / phase values ---
     assert result[CONF_PHASES] == 3
     # Importing ~5A/phase with 25A breaker → ~20A available per phase
-    assert result["site_available_current_phase_a"] == 20.0
-    assert result["site_available_current_phase_b"] == 20.5
-    assert result["site_available_current_phase_c"] == 21.2
+    assert result["available_current_a"] == 20.0
+    assert result["available_current_b"] == 20.5
+    assert result["available_current_c"] == 21.2
     # Total site available: (20 + 20.5 + 21.2) * 230 ≈ 14191W
     assert result["total_site_available_power"] > 14000
     # Net consumption: (5.0 + 4.5 + 3.8) * 230 ≈ 3059W
-    assert 3000 < result["net_site_consumption"] < 3200
+    assert 3000 < result["grid_power"] < 3200
     # Grid headroom (same as available since no export):
     # (25-5)*230 + (25-4.5)*230 + (25-3.8)*230 = 4600 + 4715 + 4876 = 14191
-    assert result["site_grid_available_power"] > 14000
+    assert result["available_grid_power"] > 14000
     # --- Battery ---
     assert result["battery_soc"] == 80.0
     assert result["battery_power"] == -500.0  # charging at 500W
     assert result["battery_soc_min"] is not None
     assert result["battery_soc_target"] == 90.0
     # SOC 80% >= min 20% and battery_max_discharge = 5000 → available
-    assert result["battery_available_power"] == 5000
+    assert result["available_battery_power"] == 5000
 
     # --- EVSE ---
     # Charger drawing 10A on L1 → 10 * 230 = 2300W
@@ -1242,12 +1244,12 @@ async def test_feedback_loop_subtracts_charger_draw_from_consumption(
         f"With feedback loop fix, charger should get full 16A (max), got {target}A"
     )
 
-    # NOTE: The hub sensor display values (site_available_current_phase_a etc.)
+    # NOTE: The hub sensor display values (available_current_a etc.)
     # use the raw grid readings, NOT the adjusted consumption. This is intentional:
     # the display shows actual grid state, the engine uses adjusted values.
-    assert result["site_available_current_phase_a"] == 20.0
-    assert result["site_available_current_phase_b"] == 20.5
-    assert result["site_available_current_phase_c"] == 21.2
+    assert result["available_current_a"] == 20.0
+    assert result["available_current_b"] == 20.5
+    assert result["available_current_c"] == 21.2
 
 
 async def test_feedback_loop_with_constrained_breaker(
@@ -1296,9 +1298,9 @@ async def test_feedback_loop_with_constrained_breaker(
     )
 
     # Verify the display values still use raw readings (not adjusted)
-    assert result["site_available_current_phase_a"] == 20.0
-    assert result["site_available_current_phase_b"] == 20.5
-    assert result["site_available_current_phase_c"] == 21.2
+    assert result["available_current_a"] == 20.0
+    assert result["available_current_b"] == 20.5
+    assert result["available_current_c"] == 21.2
 
 
 async def test_charge_pause_cancelled_on_charging_mode_change(
