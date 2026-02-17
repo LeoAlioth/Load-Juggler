@@ -3,7 +3,6 @@ from homeassistant.config_entries import ConfigEntry, SOURCE_INTEGRATION_DISCOVE
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.script import Script
-from homeassistant.components.button import ButtonEntity
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from datetime import datetime, timedelta
@@ -161,7 +160,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
             rate_unit = "A"
         
         # Stack level for reset should be 1 lower than regular operation
-        configured_stack_level = get_entry_value(entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
+        configured_stack_level = int(get_entry_value(entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
         reset_stack_level = max(1, configured_stack_level - 1)
 
         sequence = [
@@ -346,10 +345,17 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up a hub config entry."""
     _LOGGER.info("Setting up hub entry: %s", entry.title)
     
-    # Store hub data
+    # Store hub data (runtime state written by entities, read by calculation)
     hass.data[DOMAIN]["hubs"][entry.entry_id] = {
         "entry": entry,
         "chargers": [],  # List of charger entry_ids linked to this hub
+        "charging_mode": CHARGING_MODE_STANDARD,
+        "distribution_mode": DEFAULT_DISTRIBUTION_MODE,
+        "allow_grid_charging": True,
+        "power_buffer": 0,
+        "max_import_power": None,
+        "battery_soc_target": DEFAULT_BATTERY_SOC_TARGET,
+        "battery_soc_min": DEFAULT_BATTERY_SOC_MIN,
     }
     
     # Check if entities need migration
@@ -375,10 +381,14 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
         _LOGGER.error("Hub entry %s not found for charger %s", hub_entry_id, entry.title)
         return False
     
-    # Store charger data
+    # Store charger data (runtime state written by entities, read by calculation)
     hass.data[DOMAIN]["chargers"][entry.entry_id] = {
         "entry": entry,
         "hub_entry_id": hub_entry_id,
+        "min_current": None,
+        "max_current": None,
+        "device_power": None,
+        "dynamic_control": True,
     }
     
     # Link charger to hub

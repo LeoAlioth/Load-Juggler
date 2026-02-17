@@ -8,6 +8,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .dynamic_ocpp_evse import run_hub_calculation
 from .const import *
 from .helpers import get_entry_value
+from .entity_mixins import HubEntityMixin, ChargerEntityMixin
 from . import get_hub_for_charger
 
 _LOGGER = logging.getLogger(__name__)
@@ -123,7 +124,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     config_entry.async_on_unload(config_entry.add_update_listener(async_update_listener))
 
 
-class DynamicOcppEvseChargerSensor(SensorEntity):
+class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
     """Representation of a Dynamic OCPP EVSE Charger Sensor."""
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id, coordinator):
@@ -133,6 +134,10 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self.hub_entry = hub_entry
         self._attr_name = f"{name} Available Current"
         self._attr_unique_id = f"{entity_id}_available_current"
+        # Pre-build OCPP entity IDs (used in multiple methods)
+        charger_entity_id = config_entry.data.get(CONF_ENTITY_ID)
+        self._connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
+        self._charge_control_entity = f"switch.{charger_entity_id}_charge_control"
         self._state = None
         self._phases = None
         self._detected_phases = None  # Remembered phase count from actual charging
@@ -156,19 +161,6 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self._target_evse_excess = None
         self._charging_status = "Unknown"
         self.coordinator = coordinator
-
-    @property
-    def device_info(self):
-        """Return device information about this charger."""
-        device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": model,
-            "via_device": (DOMAIN, self.hub_entry.entry_id),
-        }
 
     @property
     def state(self):
@@ -275,9 +267,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 return
 
         # Guard: car must be plugged in
-        charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
-        connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
-        connector_status_state = self.hass.states.get(connector_status_entity)
+        connector_status_state = self.hass.states.get(self._connector_status_entity)
         connector_status = connector_status_state.state if connector_status_state else "unknown"
         if connector_status in ("Available", "unknown", "unavailable"):
             self._mismatch_count = 0
@@ -339,41 +329,34 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 _LOGGER.error("Auto-reset service call failed for %s: %s", self._attr_name, e)
 
     async def _send_plug_command(self, limit: float, hub_data: dict, now_mono: float) -> None:
-        """Send on/off command to a smart plug / relay device."""
+        """Send on/off command to a smart load device."""
         plug_switch_entity = self.config_entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
         if not plug_switch_entity:
             _LOGGER.error(f"No switch entity configured for plug {self._attr_name}")
             return
 
         if limit > 0:
-            _LOGGER.debug(f"Smart plug {self._attr_name}: turning ON (limit={limit}A)")
+            _LOGGER.debug(f"Smart load {self._attr_name}: turning ON (limit={limit}A)")
             await self.hass.services.async_call(
                 "switch", "turn_on",
                 {"entity_id": plug_switch_entity},
                 blocking=False,
             )
         else:
-            _LOGGER.debug(f"Smart plug {self._attr_name}: turning OFF (limit=0)")
+            _LOGGER.debug(f"Smart load {self._attr_name}: turning OFF (limit=0)")
             await self.hass.services.async_call(
                 "switch", "turn_off",
                 {"entity_id": plug_switch_entity},
                 blocking=False,
             )
 
-        # Auto-update Device Power slider from power monitoring average
+        # Auto-update device power from power monitoring average
         plug_auto_power = hub_data.get("plug_auto_power", {})
         auto_power = plug_auto_power.get(self.config_entry.entry_id)
         if auto_power is not None:
-            charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
-            device_power_entity = f"number.{charger_entity_id}_device_power"
-            try:
-                await self.hass.services.async_call(
-                    "number", "set_value",
-                    {"entity_id": device_power_entity, "value": auto_power},
-                    blocking=False,
-                )
-            except Exception as e:
-                _LOGGER.debug(f"Could not update device power slider: {e}")
+            charger_data = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id)
+            if charger_data is not None:
+                charger_data["device_power"] = auto_power
 
         self._last_update = datetime.now(timezone.utc)
         self._last_command_time = now_mono
@@ -396,8 +379,8 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         # Check if charger is following our profiles (auto-reset detection)
         await self._check_profile_compliance(limit, dynamic_control_on)
 
-        profile_timeout = get_entry_value(self.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)
-        stack_level = get_entry_value(self.config_entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
+        profile_timeout = int(get_entry_value(self.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT))
+        stack_level = int(get_entry_value(self.config_entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
         profile_validity_mode = get_entry_value(self.config_entry, CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE)
 
         # Get charge rate unit from config (A or W)
@@ -488,29 +471,25 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
 
         # Check if charge_control switch is off and we have available current - turn it on
         # But only if a car is actually plugged in (connector status is not "Available")
-        charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
-        charge_control_switch = f"switch.{charger_entity_id}_charge_control"
-        charge_control_state = self.hass.states.get(charge_control_switch)
-
-        connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
-        connector_status_state = self.hass.states.get(connector_status_entity)
+        charge_control_state = self.hass.states.get(self._charge_control_entity)
+        connector_status_state = self.hass.states.get(self._connector_status_entity)
         connector_status = connector_status_state.state if connector_status_state else "unknown"
 
         car_plugged_in = connector_status not in ["Available", "unknown", "unavailable"]
 
-        _LOGGER.debug(f"Charge control check: entity={connector_status_entity}, status={connector_status}, car_plugged_in={car_plugged_in}, limit={limit}A, switch_state={charge_control_state.state if charge_control_state else 'not found'}")
+        _LOGGER.debug(f"Charge control check: entity={self._connector_status_entity}, status={connector_status}, car_plugged_in={car_plugged_in}, limit={limit}A, switch_state={charge_control_state.state if charge_control_state else 'not found'}")
 
         if charge_control_state and charge_control_state.state == "off" and limit > 0 and car_plugged_in:
-            _LOGGER.info(f"Charge control switch {charge_control_switch} is off but limit is {limit}A and car is plugged in (connector: {connector_status}) - turning on")
+            _LOGGER.info(f"Charge control switch {self._charge_control_entity} is off but limit is {limit}A and car is plugged in (connector: {connector_status}) - turning on")
             try:
                 await self.hass.services.async_call(
                     "switch", "turn_on",
-                    {"entity_id": charge_control_switch}
+                    {"entity_id": self._charge_control_entity}
                 )
             except Exception as e:
-                _LOGGER.warning(f"Failed to turn on charge_control switch {charge_control_switch}: {e}")
+                _LOGGER.warning(f"Failed to turn on charge_control switch {self._charge_control_entity}: {e}")
         elif charge_control_state and charge_control_state.state == "off" and limit > 0 and not car_plugged_in:
-            _LOGGER.debug(f"Charge control switch {charge_control_switch} is off with limit {limit}A, but no car plugged in (connector: {connector_status}) - not turning on")
+            _LOGGER.debug(f"Charge control switch {self._charge_control_entity} is off with limit {limit}A, but no car plugged in (connector: {connector_status}) - not turning on")
 
         # Call the OCPP set_charge_rate service with device_id
         await self.hass.services.async_call(
@@ -638,10 +617,8 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             max_charge_current = get_entry_value(self.config_entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
 
             # Check if dynamic control is disabled — if so, charge at max
-            charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
-            dynamic_control_entity = f"switch.{charger_entity_id}_dynamic_control"
-            dynamic_control_state = self.hass.states.get(dynamic_control_entity)
-            dynamic_control_on = dynamic_control_state.state != "off" if dynamic_control_state else True
+            charger_rt = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id, {})
+            dynamic_control_on = charger_rt.get("dynamic_control", True)
 
             if not dynamic_control_on:
                 limit = round(float(max_charge_current), 1)
@@ -673,8 +650,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                     limit = round(self._allocated_current, 1)
 
             # Determine charging status reason
-            connector_entity = f"sensor.{charger_entity_id}_status_connector"
-            connector_state = self.hass.states.get(connector_entity)
+            connector_state = self.hass.states.get(self._connector_status_entity)
             connector_status = connector_state.state if connector_state else "unknown"
 
             if connector_status in ("Available", "unknown", "unavailable"):
@@ -720,7 +696,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             _LOGGER.error(f"Error updating Dynamic OCPP EVSE Charger Sensor {self._attr_name}: {e}", exc_info=True)
 
 
-class DynamicOcppEvseAllocatedCurrentSensor(SensorEntity):
+class DynamicOcppEvseAllocatedCurrentSensor(ChargerEntityMixin, SensorEntity):
     """Sensor showing the allocated (commanded) current for a charger."""
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id):
@@ -731,19 +707,6 @@ class DynamicOcppEvseAllocatedCurrentSensor(SensorEntity):
         self._attr_name = f"{name} Allocated Current"
         self._attr_unique_id = f"{entity_id}_allocated_current"
         self._state = 0.0
-
-    @property
-    def device_info(self):
-        """Return device information about this charger."""
-        device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": model,
-            "via_device": (DOMAIN, self.hub_entry.entry_id),
-        }
 
     @property
     def state(self):
@@ -775,7 +738,7 @@ class DynamicOcppEvseAllocatedCurrentSensor(SensorEntity):
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
 
 
-class DynamicOcppEvseChargerStatusSensor(SensorEntity):
+class DynamicOcppEvseChargerStatusSensor(ChargerEntityMixin, SensorEntity):
     """Sensor showing the current charging status reason for a charger."""
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id):
@@ -786,19 +749,6 @@ class DynamicOcppEvseChargerStatusSensor(SensorEntity):
         self._attr_name = f"{name} Charging Status"
         self._attr_unique_id = f"{entity_id}_charging_status"
         self._state = "Unknown"
-
-    @property
-    def device_info(self):
-        """Return device information about this charger."""
-        device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": model,
-            "via_device": (DOMAIN, self.hub_entry.entry_id),
-        }
 
     @property
     def state(self):
@@ -817,7 +767,7 @@ class DynamicOcppEvseChargerStatusSensor(SensorEntity):
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
 
 
-class DynamicOcppEvseHubSensor(SensorEntity):
+class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
     """Hub-level sensor showing site-wide charging information."""
 
     def __init__(self, hass, config_entry, name, entity_id):
@@ -828,16 +778,6 @@ class DynamicOcppEvseHubSensor(SensorEntity):
         self._attr_unique_id = f"{entity_id}_site_info"
         self._total_site_available_power = None
         self._last_update = datetime.min
-
-    @property
-    def device_info(self):
-        """Return device information about this hub."""
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Electrical System Hub",
-        }
 
     @property
     def state(self):
@@ -1014,7 +954,7 @@ HUB_SENSOR_DEFINITIONS = [
 ]
 
 
-class DynamicOcppEvseHubDataSensor(SensorEntity):
+class DynamicOcppEvseHubDataSensor(HubEntityMixin, SensorEntity):
     """Generic hub data sensor driven by a definition dict."""
 
     def __init__(self, hass, config_entry, name, entity_id, defn):
@@ -1027,15 +967,6 @@ class DynamicOcppEvseHubDataSensor(SensorEntity):
         self._attr_device_class = defn["device_class"]
         self._attr_icon = defn["icon"]
         self._state = None
-
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Electrical System Hub",
-        }
 
     @property
     def state(self):

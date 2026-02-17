@@ -148,12 +148,23 @@ def setup_domain_data(hass, hub_entry, charger_entry):
             hub_entry.entry_id: {
                 "entry": hub_entry,
                 "chargers": [charger_entry.entry_id],
+                "charging_mode": "Standard",
+                "distribution_mode": "Priority",
+                "allow_grid_charging": True,
+                "power_buffer": 0,
+                "max_import_power": None,
+                "battery_soc_target": 80,
+                "battery_soc_min": 20,
             },
         },
         "chargers": {
             charger_entry.entry_id: {
                 "entry": charger_entry,
                 "hub_entry_id": hub_entry.entry_id,
+                "min_current": None,
+                "max_current": None,
+                "device_power": None,
+                "dynamic_control": True,
             },
         },
         "charger_allocations": {
@@ -162,7 +173,7 @@ def setup_domain_data(hass, hub_entry, charger_entry):
     }
 
 
-def _set_ha_states(hass):
+def _set_ha_states(hass, hub_entry):
     """Populate HA entity states simulating a real solar installation.
 
     This represents a 3-phase system with:
@@ -216,15 +227,14 @@ def _set_ha_states(hass):
     hass.states.async_set("sensor.test_charger_status_connector", "Charging")
     # Charge control switch — on
     hass.states.async_set("switch.test_charger_charge_control", "on")
-    # Hub-level selectors
-    hass.states.async_set("select.test_hub_charging_mode", "Standard")
-    hass.states.async_set("select.test_hub_distribution_mode", "Priority")
-    # Battery SOC target
-    hass.states.async_set("number.test_hub_home_battery_soc_target", "90")
-    # Allow grid charging switch
-    hass.states.async_set("switch.test_hub_allow_grid_charging", "on")
-    # Power buffer
-    hass.states.async_set("number.test_hub_power_buffer", "200")
+    # Hub-level runtime state (written to hass.data, not entity states)
+    hub_data = hass.data[DOMAIN]["hubs"][hub_entry.entry_id]
+    hub_data["charging_mode"] = "Standard"
+    hub_data["distribution_mode"] = "Priority"
+    hub_data["allow_grid_charging"] = True
+    hub_data["power_buffer"] = 200
+    hub_data["battery_soc_target"] = 90
+    hub_data["battery_soc_min"] = 20
 
 
 # ── Sensor creation tests ─────────────────────────────────────────────
@@ -290,7 +300,7 @@ async def test_calculate_available_current_reads_ha_entities(
         run_hub_calculation,
     )
 
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -335,7 +345,7 @@ async def test_charger_sensor_update_calls_ocpp(
     setup_domain_data,
 ):
     """Test that async_update sends an OCPP set_charge_rate service call."""
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -366,7 +376,7 @@ async def test_charger_sensor_update_writes_hub_data(
     setup_domain_data,
 ):
     """Test that async_update populates hass.data hub_data for hub sensor to read."""
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -389,7 +399,7 @@ async def test_hub_sensor_reads_hub_data(
     setup_domain_data,
 ):
     """Test that hub sensor reads values written by charger sensor."""
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     # First: run charger sensor to populate hub_data
     charger_sensor = DynamicOcppEvseChargerSensor(
@@ -413,7 +423,7 @@ async def test_hub_data_sensor_reads_values(
     setup_domain_data,
 ):
     """Test that individual hub data sensors read their specific values."""
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     # Populate hub_data via charger sensor
     charger_sensor = DynamicOcppEvseChargerSensor(
@@ -446,9 +456,9 @@ async def test_charge_pause_starts_when_below_minimum(
     is active (connector_status=Charging) but gets 0A because there is
     no solar power available — triggering the pause logic.
     """
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
     # Override to Solar mode — with grid importing there is no solar surplus
-    hass.states.async_set("select.test_hub_charging_mode", "Solar")
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Solar"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -474,9 +484,9 @@ async def test_charge_pause_holds_at_zero(
 
     Uses Solar mode with no export surplus so the charger gets 0A allocation.
     """
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
     # Override to Solar mode — charger gets 0A allocation
-    hass.states.async_set("select.test_hub_charging_mode", "Solar")
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Solar"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -502,7 +512,7 @@ async def test_no_ocpp_call_without_device_id(
     setup_domain_data,
 ):
     """Test that sensor skips OCPP call when OCPP device ID is missing."""
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     # Create a charger entry without OCPP device ID
     charger_entry_no_device = MockConfigEntry(
@@ -537,6 +547,10 @@ async def test_no_ocpp_call_without_device_id(
     hass.data[DOMAIN]["chargers"][charger_entry_no_device.entry_id] = {
         "entry": charger_entry_no_device,
         "hub_entry_id": hub_entry.entry_id,
+        "min_current": None,
+        "max_current": None,
+        "device_power": None,
+        "dynamic_control": True,
     }
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["chargers"].append(
         charger_entry_no_device.entry_id
@@ -568,7 +582,7 @@ async def test_relative_profile_format(
     setup_domain_data,
 ):
     """Test that a relative-mode profile has correct structure."""
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -597,7 +611,7 @@ async def test_absolute_profile_format(
     setup_domain_data,
 ):
     """Test that an absolute-mode profile has validFrom/validTo timestamps."""
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     # Create charger with absolute profile mode
     charger_absolute = MockConfigEntry(
@@ -631,6 +645,10 @@ async def test_absolute_profile_format(
     hass.data[DOMAIN]["chargers"][charger_absolute.entry_id] = {
         "entry": charger_absolute,
         "hub_entry_id": hub_entry.entry_id,
+        "min_current": None,
+        "max_current": None,
+        "device_power": None,
+        "dynamic_control": True,
     }
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["chargers"].append(
         charger_absolute.entry_id
@@ -666,7 +684,7 @@ async def test_watts_charge_rate_conversion(
     setup_domain_data,
 ):
     """Test that charge rate in Watts mode converts A to W correctly."""
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     charger_watts = MockConfigEntry(
         domain=DOMAIN,
@@ -699,6 +717,10 @@ async def test_watts_charge_rate_conversion(
     hass.data[DOMAIN]["chargers"][charger_watts.entry_id] = {
         "entry": charger_watts,
         "hub_entry_id": hub_entry.entry_id,
+        "min_current": None,
+        "max_current": None,
+        "device_power": None,
+        "dynamic_control": True,
     }
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["chargers"].append(
         charger_watts.entry_id
@@ -740,7 +762,7 @@ async def test_result_dict_all_keys_populated(
         run_hub_calculation,
     )
 
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -796,7 +818,7 @@ async def test_result_dict_values_are_reasonable(
         run_hub_calculation,
     )
 
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -850,7 +872,7 @@ async def test_allow_grid_charging_off_reduces_available(
     )
 
     # First: run with grid charging ON
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
     sensor_on = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
@@ -858,7 +880,7 @@ async def test_allow_grid_charging_off_reduces_available(
     target_on = result_on["charger_targets"].get(charger_entry.entry_id, 0)
 
     # Then: run with grid charging OFF
-    hass.states.async_set("switch.test_hub_allow_grid_charging", "off")
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["allow_grid_charging"] = False
     sensor_off = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
@@ -889,12 +911,12 @@ async def test_power_buffer_reduces_grid_available(
         run_hub_calculation,
     )
 
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
     # Set a low grid power limit so it becomes the binding constraint
     hass.states.async_set("sensor.grid_power_limit", "6000")
 
     # Run with power buffer = 0
-    hass.states.async_set("number.test_hub_power_buffer", "0")
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["power_buffer"] = 0
     sensor_no_buf = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
@@ -902,7 +924,7 @@ async def test_power_buffer_reduces_grid_available(
     target_no_buf = result_no_buf["charger_targets"].get(charger_entry.entry_id, 0)
 
     # Run with 2000W buffer → effective grid limit drops significantly
-    hass.states.async_set("number.test_hub_power_buffer", "2000")
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["power_buffer"] = 2000
     sensor_buf = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
@@ -932,7 +954,7 @@ async def test_rate_limit_ramp_up_capped(
     """
     from custom_components.dynamic_ocpp_evse.const import RAMP_UP_RATE
 
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -972,7 +994,7 @@ async def test_rate_limit_ramp_down_capped(
     """
     from custom_components.dynamic_ocpp_evse.const import RAMP_DOWN_RATE
 
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
     # Switch to Solar mode with grid importing — engine will want 0A (no surplus)
     # But we need it to want *some* current below 16A, so use Standard with low breaker
     # Actually simpler: just set _last_commanded_limit high
@@ -983,9 +1005,9 @@ async def test_rate_limit_ramp_down_capped(
     sensor._last_commanded_limit = 16.0
 
     # Override to Eco mode with battery SOC below target — gives min_current (6A)
-    hass.states.async_set("select.test_hub_charging_mode", "Eco")
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Eco"
     hass.states.async_set("sensor.battery_soc", "50")
-    hass.states.async_set("number.test_hub_home_battery_soc_target", "90")
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["battery_soc_target"] = 90
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
         await sensor.async_update()
@@ -1017,7 +1039,7 @@ async def test_rate_limit_not_applied_on_resume_from_pause(
     When _last_commanded_limit is 0 (pause), the charger should jump directly
     to the calculated value without rate limiting.
     """
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -1052,7 +1074,7 @@ async def test_auto_reset_mismatch_counter_increments(
     setup_domain_data,
 ):
     """Test that mismatch counter increments when current_offered differs."""
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -1081,7 +1103,7 @@ async def test_auto_reset_counter_resets_on_compliance(
     setup_domain_data,
 ):
     """Test that mismatch counter resets when charger becomes compliant."""
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -1112,7 +1134,7 @@ async def test_auto_reset_triggers_after_threshold(
     """Test that auto-reset fires after sustained mismatch reaches threshold."""
     from custom_components.dynamic_ocpp_evse.const import AUTO_RESET_MISMATCH_THRESHOLD
 
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -1150,7 +1172,7 @@ async def test_auto_reset_cooldown_prevents_retrigger(
     """Test that cooldown prevents immediate re-triggering after reset."""
     from custom_components.dynamic_ocpp_evse.const import AUTO_RESET_MISMATCH_THRESHOLD
 
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -1199,7 +1221,7 @@ async def test_feedback_loop_subtracts_charger_draw_from_consumption(
         run_hub_calculation,
     )
 
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -1242,7 +1264,7 @@ async def test_feedback_loop_with_constrained_breaker(
         run_hub_calculation,
     )
 
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
     # Charger drawing 4A on all 3 phases (instead of default 10/0/0)
     hass.states.async_set(
         "sensor.test_charger_current_import", "4.0",
@@ -1288,9 +1310,9 @@ async def test_charge_pause_cancelled_on_charging_mode_change(
     Start in Solar mode (no surplus → pause starts), then switch to Standard mode.
     The pause should be cancelled immediately on the mode change.
     """
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
     # Start in Solar mode — no export surplus → charger gets 0A → pause starts
-    hass.states.async_set("select.test_hub_charging_mode", "Solar")
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Solar"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -1303,7 +1325,7 @@ async def test_charge_pause_cancelled_on_charging_mode_change(
         assert sensor._prev_charging_mode == "Solar"
 
         # Switch to Standard mode
-        hass.states.async_set("select.test_hub_charging_mode", "Standard")
+        hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Standard"
 
         # Second update: mode changed → pause should be cancelled
         await sensor.async_update()
@@ -1325,9 +1347,9 @@ async def test_charge_pause_cancelled_on_distribution_mode_change(
     charging mode to Standard. The mode change cancels the pause, and Standard
     mode provides enough current to prevent a new pause from starting.
     """
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
     # Start in Solar mode — charger gets 0A → pause starts
-    hass.states.async_set("select.test_hub_charging_mode", "Solar")
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Solar"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -1340,8 +1362,8 @@ async def test_charge_pause_cancelled_on_distribution_mode_change(
         assert sensor._prev_distribution_mode == "Priority"
 
         # Switch distribution mode AND charging mode so charger gets current
-        hass.states.async_set("select.test_hub_distribution_mode", "Shared")
-        hass.states.async_set("select.test_hub_charging_mode", "Standard")
+        hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["distribution_mode"] = "Shared"
+        hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Standard"
 
         # Second update: distribution mode changed → pause cancelled,
         # Standard mode gives current → no new pause
@@ -1359,8 +1381,8 @@ async def test_charge_pause_remaining_seconds_attribute(
     setup_domain_data,
 ):
     """Test that pause_remaining_seconds attribute is populated during active pause."""
-    _set_ha_states(hass)
-    hass.states.async_set("select.test_hub_charging_mode", "Solar")
+    _set_ha_states(hass, hub_entry)
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Solar"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -1384,7 +1406,7 @@ async def test_auto_reset_skips_when_car_not_plugged_in(
     setup_domain_data,
 ):
     """Test that auto-reset check is skipped when connector is Available."""
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
     # Car not plugged in
     hass.states.async_set("sensor.test_charger_status_connector", "Available")
 
@@ -1431,7 +1453,7 @@ async def test_eco_mode_night_with_feedback_loop(
         run_hub_calculation,
     )
 
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
     # Night scenario: high consumption (includes charger draws), no export
     # Grid reads ~15A/phase import (consumption ~15A, export 0A)
     hass.states.async_set(
@@ -1461,7 +1483,7 @@ async def test_eco_mode_night_with_feedback_loop(
     hass.states.async_set("sensor.battery_soc", "unknown")
     hass.states.async_set("sensor.battery_power", "unknown")
     # Eco mode
-    hass.states.async_set("select.test_hub_charging_mode", "Eco")
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Eco"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -1493,7 +1515,7 @@ async def test_dual_frequency_throttles_ocpp_commands(
     but OCPP set_charge_rate commands are only sent when the charger's
     update_frequency (default 15s) has elapsed.
     """
-    _set_ha_states(hass)
+    _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None

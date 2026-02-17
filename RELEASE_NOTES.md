@@ -1,53 +1,35 @@
 # Release Notes
 
-## 2.0.0 (Pre-release)
+## 2.0.1 (Pre-release)
 
-**BREAKING**: Existing 1.x users must **remove and re-add** the integration. Legacy migrations have been removed.
-
-### Migration
-- Entity/device layout changed: chargers are organized into devices using device IDs.
-- Charging modes remain site-level (not per-charger), but configuration flow and entities changed.
+**BREAKING**: Existing 1.x users must **remove and re-add** the integration.
 
 ### New Features
-- **Multi-charger support** with 4 distribution modes:
-  - Shared (equal split), Priority (highest-priority first), Optimized (smart reduction to fit more chargers), Strict (sequential allocation).
-- **Smart plug / relay support**: new device type for non-OCPP controllable loads (e.g., granny charger plugged into a Shelly smart plug). Binary on/off control via `switch.turn_on`/`switch.turn_off`. Configurable power rating, phase assignment, and optional power monitoring sensor. The calculation engine treats plugs like any other charger — the fixed power rating naturally produces binary behavior through the min-current threshold.
-- **Dedicated solar power entity**: optional config field that points to a direct solar production sensor (W) instead of deriving solar from `consumption + export`. Improves accuracy for sites with inverter-side metering. Auto-detection for common solar sensor naming patterns.
-- **Available current display**: idle chargers now show how much current they would receive if they started charging, giving users visibility into headroom without an active session.
-- **Asymmetric inverter support**: flexible power pool across phases for solar, battery, and excess modes.
-- **Standard mode battery discharge**: combines grid + solar + battery when SOC >= minimum threshold.
-- **2-phase OBC charger support** for vehicles like VW eGolf, eUp, ID.3 base.
-- **Power-based charging**: send watts instead of amps with OCPP charge rate unit detection via `GetConfiguration` for `ChargingScheduleAllowedChargingRateUnit`. If detection fails, the field is left empty for the user to choose manually. Detection available during initial setup, reconfigure, and options flows.
-- **Per-phase constraint system** enforcing physical limits across all charger types (1ph, 2ph, 3ph) using constraint dicts with keys A, B, C, AB, AC, BC, ABC.
-- 4 charging modes with distinct behaviors:
-  - **Standard**: max speed from grid + solar + battery (when SOC >= min).
-  - **Eco**: prefer solar, fall back to grid minimum.
-  - **Solar**: solar-only (+ battery discharge when SOC > target).
-  - **Excess**: charge only when export exceeds configurable threshold.
-  - See `CHARGE_MODES_GUIDE.md` for full details.
-- 0.5A step sliders for fine-grained current control.
-- Updated configuration flow with profile validity modes.
+- **Multi-charger support** with 4 distribution modes (Shared, Priority, Optimized, Strict).
+- **Smart Load support**: non-OCPP controllable loads (e.g., granny charger behind a Shelly smart plug) with binary on/off control, configurable power rating, and phase assignment.
+- **4 charging modes**: Standard (grid + solar + battery), Eco (solar-first with grid fallback), Solar (solar-only), Excess (threshold-based export charging).
+- **Asymmetric inverter support**: flexible power pool across phases.
+- **Battery integration**: SOC thresholds, charge/discharge power limits, battery-aware solar derivation.
+- **2-phase OBC charger support** (e.g., VW eGolf, eUp, ID.3 base).
+- **Charger phase mapping (L1/L2/L3 → A/B/C)** with per-phase constraint enforcement.
+- **Power-based charging**: send watts instead of amps via OCPP charge rate unit auto-detection.
+- **Dedicated solar power entity**: direct inverter-side solar sensor instead of CT-derived.
+- **Entity auto-detection**: battery, solar, inverter, and wiring topology entities for 12 inverter brands.
+- **Max import power limiter**: cap grid import independently of breaker rating.
+- **HA service actions**: `set_charging_mode`, `set_distribution_mode`, `set_max_current`.
+- **Available current display** for idle chargers.
+- **EVSE charging status sensor**.
 
-### Architecture
-- New pure Python calculation engine (`calculations/`) with no Home Assistant dependencies, enabling standalone testing and debugging.
-- 5-step calculation pipeline: site limits, solar available, excess available, target power, distribution.
-- Phase handling uses `None` for non-existent phases (vs `0.0` for exists-with-no-load), enabling correct behavior for 1-phase and 2-phase sites without special-case code.
-- `SiteContext.num_phases` is a derived property from active consumption phases, eliminating redundant configuration.
+### Bug Fixes
+- Fixed charging instability from feedback loop oscillation (current rate limiting + dual-frequency updates).
+- Fixed grid CT feedback loop overcorrection when charger reports inflated per-phase draws.
 
-### Testing
-- 70 YAML-based test scenarios covering:
-  - 1-phase / 3-phase with and without battery
-  - Asymmetric inverters, mixed-phase chargers, 2-phase OBC
-  - All 4 distribution modes, oscillation stability
-  - Smart plug scenarios (binary on/off, mixed EVSE + plug)
-  - Direct solar entity vs derived solar
-  - Available current for idle chargers
-- HA integration tests: config flow, end-to-end setup, sensor update cycle, OCPP profile formats, charge pause logic.
-- Automated test suite with CI integration (runs on every push to dev/pre-release).
-
-### Other
-- Slovenian translation updated.
-- Gitea-based release automation for pre-release and release workflows.
+### UX Improvements
+- Redesigned configuration flow with contextual help text, entity pickers, and number selectors.
+- Phase mapping fields hidden on single-phase sites to prevent misconfiguration.
+- Charger names auto-prettified from OCPP entity IDs.
+- Phase B/C sensors hidden on single-phase sites.
+- Structured debug logging for easier remote troubleshooting.
 
 ---
 

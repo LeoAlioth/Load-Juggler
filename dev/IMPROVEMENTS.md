@@ -120,6 +120,76 @@ The current architecture is already quite general:
 
 ---
 
+## Minimum run timer for Solar/Excess modes (anti-flicker)
+**Status:** Not yet implemented (Excess mode had `_excess_charge_start_time` but it was removed)
+**Complexity:** Low
+
+### Problem
+In Solar and Excess modes, short transient events — a cloud passing for a few seconds, a startup surge from a large appliance — can cause the charger to pause immediately. This creates unnecessary charge/pause cycling that's bad for the charger and the car.
+
+**Excess mode** previously had `_excess_charge_start_time` as a minimum run timer, ensuring that once excess charging started it wouldn't stop immediately. This was removed but the concept is still valid.
+
+**Solar mode** has no such protection at all — a momentary dip below minimum current causes an immediate pause.
+
+### Proposed Approach
+Add a configurable minimum run timer that prevents a charging session from pausing until the timer expires. Once charging starts (or resumes from pause), it must run for at least N seconds before the system is allowed to pause again.
+
+### Technical Considerations
+- Default: 30–60 seconds (configurable via number entity or config flow)
+- Applies to Solar and Excess modes (and potentially Eco mode)
+- Should NOT prevent pausing when the user changes mode or an error occurs
+- Only applies to automatic solar-driven pauses, not manual control
+- Reuse the same mechanism for both modes (single `_charge_started_at` timestamp)
+
+---
+
+## Excess mode: battery site behavior & "truly excess" definition
+**Status:** Needs design refinement and test scenario updates
+**Complexity:** Medium
+
+### Current State
+
+**No-battery sites**: Apart from needing the minimum run timer (see above), these are straightforward — excess is whatever is being exported to the grid above the threshold.
+
+**Battery sites**: The current logic and test scenarios have gaps in how they define "excess" when a battery is present.
+
+### What "truly excess" means
+
+Solar power is only truly excess when it has **nowhere else to go**. On a battery site, solar first charges the battery. It only becomes excess when:
+
+1. **Battery SOC hits 100%** — battery is full, can't absorb any more. Should use 3% hysteresis (same as target/min SOC), so charging starts at 100% and the battery is allowed to drop to 97% before EV charging pauses. This prevents the EV from draining the battery — it lets the battery fill up completely first.
+2. **Battery max charge rate is exceeded** — solar production is higher than what the battery can absorb (e.g., 8kW solar but battery can only charge at 5kW). The 3kW overflow is excess.
+
+### Test scenario issue
+
+Current tests assume all solar gets exported when battery is at 97%. In reality, the inverter would still be charging the battery at that SOC (possibly at a reduced rate), exporting only part of the solar production. The test scenarios need updating to reflect this — at 97% SOC, most solar still goes to the battery.
+
+### Export threshold on battery vs non-battery sites
+
+The `excess_export_threshold` must be respected on **all** site types:
+
+- **Export allowed + threshold set**: Works naturally — export exceeds threshold → charge.
+- **No export allowed (threshold = 0)**: The inverter will never push power to the grid (except transients). In this case, excess must be detected differently — by looking at whether the battery charge rate is being capped, or battery SOC = 100%. The export threshold of 0 effectively means "any energy that the site physically can't use or store".
+
+### Open questions
+- How to detect excess on a no-export site? Battery charge rate saturation? SOC = 100%?
+- Should the threshold be applied differently when `allow_export = false`?
+- Do we need a separate config flag for "site allows grid export"?
+
+---
+
+## Charging profile IDs as config flow options
+**Status:** Not yet implemented
+**Complexity:** Low
+
+### Current State
+Charging profile IDs are hardcoded (`10` for reset, `11` for active profiles) to avoid conflicts with device-specific profiles. These values work for most chargers but some devices may use overlapping IDs.
+
+### Proposed Approach
+Expose `chargingProfileId` as an advanced config flow option with the current defaults (10/11). This allows users with non-standard chargers to pick IDs that don't conflict.
+
+---
+
 ## Automatic L1/L2/L3 → A/B/C phase mapping detection
 **Status:** Not yet implemented (manual configuration available via TODO #43)
 **Complexity:** Medium
