@@ -55,6 +55,13 @@
 51. - [x] Fix battery SOC target/min sliders not feeding into calculation + create missing MaxImportPowerSlider
 52. - [x] Fix EVSE min/max current sliders missing value clamping
 53. - [x] Remove unused `ButtonEntity` import from `__init__.py`
+54. - [x] Connector status entity ID deduplication in sensor.py
+55. - [x] Move `_read_inverter_output()` to module scope in dynamic_ocpp_evse.py
+56. - [x] Extract `HubEntityMixin` + `ChargerEntityMixin` into `entity_mixins.py`
+57. - [x] Deduplicate `_write_to_hub_data` / `_write_to_charger_data` via mixin `_hub_data_key`/`_charger_data_key`
+58. - [x] Deduplicate `async_added_to_hass` restore pattern via `_restore_and_publish_number()`
+59. - [x] Per-phase loops in `dynamic_ocpp_evse.py` (grid reads, feedback, headroom)
+60. - [x] Split `run_hub_calculation()` into subfunctions (~560→~170 lines)
 
 ## In Progress
 
@@ -71,20 +78,6 @@
 4. - [ ] **[FEATURE] Auto-detect phase mapping — notification & application**: Fire persistent notification with detected vs configured mapping. Option to auto-update config entry. Files: `dynamic_ocpp_evse.py`, `config_flow.py`, translations.
 
 5. - [ ] **[FEATURE] Auto-detection unit tests**: Test `AutoDetector` with simulated update cycles. File: `dev/tests/test_auto_detect.py` (new).
-
-6. - [ ] **[BUG] Connector status entity ID built 3× in sensor.py** — Extract `f"sensor.{charger_entity_id}_status_connector"` into a single variable or helper. Same for charge_control switch.
-
-7. - [ ] **[REFACTOR] Move `_read_inverter_output()` out of conditional block** — Currently defined inside `if inv_out_a_entity:` in `dynamic_ocpp_evse.py`. Move to function scope.
-
-8. - [ ] **[REFACTOR] Extract hub/charger base classes for entities** — `device_info`, `_write_to_hub_data`/`_write_to_charger_data`, and `async_added_to_hass` restore logic are duplicated ~15× across number.py, select.py, switch.py, sensor.py. Extract into `HubEntityMixin` and `ChargerEntityMixin`.
-
-9. - [ ] **[REFACTOR] Deduplicate `_write_to_hub_data` / `_write_to_charger_data`** — Identical 2-line body duplicated 11× across entity files. Only the key name differs. Move to base mixin with a parameterized key.
-
-10. - [ ] **[REFACTOR] Deduplicate `async_added_to_hass` restore pattern** — Identical float-restore + write-to-shared-data logic in every `RestoreEntity` subclass. Extract into a shared mixin method.
-
-11. - [ ] **[REFACTOR] Per-phase loop in `dynamic_ocpp_evse.py`** — Phase reads, inversion, consumption/export split, feedback adjustment, grid headroom are all tripled (`_a`, `_b`, `_c`). Refactor into phase loops or PhaseValues operations.
-
-12. - [ ] **[REFACTOR] Split `run_hub_calculation()` into subfunctions** — 563 lines covering config reads, site context build, charger processing, feedback loop, result dict. Extract into focused functions.
 
 ## Other
 
