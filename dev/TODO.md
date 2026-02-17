@@ -75,22 +75,14 @@
 71. - [x] Debug log shows both raw and smoothed values (smoothed(raw) format) for CT, solar, and battery power
 72. - [x] Auto-detect OCPP `MeterValueSampleInterval` and use as default charger update frequency in config flow
 73. - [x] Fix "Finishing"/"Faulted" connector status: treat as inactive (no power allocation), skip OCPP profiles and charge control toggle
+74. - [x] Auto-detect power monitoring sensor for smart plugs (Shelly, Sonoff, Tasmota, Kasa, Tuya) in config flow
+
+75. - [x] Auto-detect grid CT inversion — correlates charger draw vs grid current, fires persistent notification after 10/15 inverted signals
+76. - [x] Auto-detect phase mapping — correlates total charger draw vs per-phase grid deltas, fires persistent notification on mismatch (opt-in via config flow)
 
 ## In Progress
 
-1. - [ ] **[FEATURE] Auto-detect power monitoring sensor for plugs** — Add detection patterns for common smart plug power monitoring entities (Shelly, Sonoff, Tasmota). Wire into `async_step_plug_config` via `_auto_detect_entity()`.
-
 ## Backlog
-
-1. - [ ] **[FEATURE] Auto-detect grid inversion — shared infrastructure**: Create `auto_detect.py` module with `AutoDetector` class. Track per-charger previous-cycle state. Files: `auto_detect.py` (new), `dynamic_ocpp_evse.py`.
-
-2. - [ ] **[FEATURE] Auto-detect grid inversion — detection logic + config**: Add `CONF_AUTO_DETECT_INVERSION` to `const.py` (bool, default True). Fire `persistent_notification` when mismatch detected. Files: `const.py`, `auto_detect.py`, `dynamic_ocpp_evse.py`, `config_flow.py`, translations.
-
-3. - [ ] **[FEATURE] Auto-detect phase mapping — detection logic**: Add `CONF_AUTO_DETECT_PHASE_MAPPING` to `const.py` (bool, default False). Correlate charger L-phase draws with grid phase deltas. Files: `const.py`, `auto_detect.py`.
-
-4. - [ ] **[FEATURE] Auto-detect phase mapping — notification & application**: Fire persistent notification with detected vs configured mapping. Option to auto-update config entry. Files: `dynamic_ocpp_evse.py`, `config_flow.py`, translations.
-
-5. - [ ] **[FEATURE] Auto-detection unit tests**: Test `AutoDetector` with simulated update cycles. File: `dev/tests/test_auto_detect.py` (new).
 
 ## Other
 

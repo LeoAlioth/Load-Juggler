@@ -12,6 +12,7 @@ from .detection_patterns import (
     PHASE_PATTERNS, INVERTER_OUTPUT_PATTERNS,
     BATTERY_SOC_PATTERNS, BATTERY_POWER_PATTERNS, SOLAR_PRODUCTION_PATTERNS,
     BATTERY_MAX_CHARGE_POWER_PATTERNS, BATTERY_MAX_DISCHARGE_POWER_PATTERNS,
+    PLUG_POWER_MONITOR_PATTERNS,
 )
 from .helpers import normalize_optional_entity, prettify_name, validate_charger_settings
 
@@ -98,6 +99,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SITE_UPDATE_FREQUENCY,
                 default=defaults.get(CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY),
             ), selector({"number": {"min": 1, "max": 60, "step": 1, "mode": "box", "unit_of_measurement": "s"}})),
+            (vol.Required(
+                CONF_AUTO_DETECT_PHASE_MAPPING,
+                default=defaults.get(CONF_AUTO_DETECT_PHASE_MAPPING, False),
+            ), bool),
         ]
 
     def _build_hub_battery_schema(self, defaults: dict | None = None) -> list[tuple]:
@@ -561,6 +566,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_INVERT_PHASES: False,
                 CONF_PHASE_VOLTAGE: DEFAULT_PHASE_VOLTAGE,
                 CONF_EXCESS_EXPORT_THRESHOLD: DEFAULT_EXCESS_EXPORT_THRESHOLD,
+                CONF_AUTO_DETECT_PHASE_MAPPING: False,
             })
             
         except Exception as e:
@@ -798,6 +804,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_PLUG_POWER_RATING: DEFAULT_PLUG_POWER_RATING,
             CONF_CONNECTED_TO_PHASE: "A",
             CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+            CONF_PLUG_POWER_MONITOR_ENTITY_ID: self._auto_detect_entity(PLUG_POWER_MONITOR_PATTERNS),
         })
         # Merge both schemas
         combined = vol.Schema({**name_schema.schema, **plug_fields.schema})

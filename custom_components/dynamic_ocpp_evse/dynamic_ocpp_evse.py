@@ -16,6 +16,7 @@ from .calculations import (
 from .const import *
 from .calculations.utils import is_number, compute_household_per_phase
 from .helpers import get_entry_value
+from .auto_detect import check_inversion, check_phase_mapping
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -406,7 +407,7 @@ def _apply_feedback_loop(site, solar_is_derived, voltage):
 def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
                       battery_soc, battery_soc_min, battery_max_discharge_power,
                       battery_power, charger_targets, charger_available, charger_names,
-                      plug_auto_power):
+                      plug_auto_power, auto_detect_notifications=None):
     """Build the result dict returned by run_hub_calculation."""
     # Grid headroom per phase
     available_per_phase = []
@@ -483,6 +484,9 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
 
         # Auto-detected plug power ratings
         "plug_auto_power": plug_auto_power,
+
+        # Auto-detection notifications (inversion, phase mapping)
+        "auto_detect_notifications": auto_detect_notifications or [],
     }
 
 
@@ -692,12 +696,29 @@ def run_hub_calculation(sensor):
     charger_available = {c.charger_id: c.available_current for c in site.chargers}
     charger_names = {c.charger_id: c.entity_id for c in site.chargers}
 
+    # --- Auto-detection (inversion + phase mapping) ---
+    auto_detect_state = hub_runtime.setdefault("_auto_detect", {})
+    auto_notifications = []
+    inv_notif = check_inversion(
+        auto_detect_state, smoothed_phases, site.chargers,
+        hub_entry.entry_id, get_entry_value(hub_entry, CONF_NAME, "Hub"),
+    )
+    if inv_notif:
+        auto_notifications.append(inv_notif)
+    if get_entry_value(hub_entry, CONF_AUTO_DETECT_PHASE_MAPPING, False):
+        auto_notifications.extend(
+            check_phase_mapping(
+                auto_detect_state, smoothed_phases, site.chargers,
+                hub_entry.entry_id,
+            )
+        )
+
     # --- Build result ---
     return _build_hub_result(
         site, raw_phases, voltage, main_breaker_rating,
         battery_soc, battery_soc_min, battery_max_discharge_power,
         battery_power, charger_targets, charger_available, charger_names,
-        plug_auto_power,
+        plug_auto_power, auto_notifications,
     )
 
 

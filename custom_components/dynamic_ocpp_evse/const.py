@@ -62,6 +62,7 @@ CONF_MIN_CURRENT_ENTITY_ID = "min_current_entity_id"
 CONF_MAX_CURRENT_ENTITY_ID = "max_current_entity_id"
 CONF_UPDATE_FREQUENCY = "update_frequency"
 CONF_SITE_UPDATE_FREQUENCY = "site_update_frequency"  # Hub-level: how often site sensors refresh
+CONF_AUTO_DETECT_PHASE_MAPPING = "auto_detect_phase_mapping"  # Hub-level: detect L1/L2/L3 wiring mismatches
 CONF_OCPP_PROFILE_TIMEOUT = "ocpp_profile_timeout"
 CONF_CHARGE_PAUSE_DURATION = "charge_pause_duration"
 CONF_STACK_LEVEL = "stack_level"

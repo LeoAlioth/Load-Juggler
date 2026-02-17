@@ -30,6 +30,7 @@ from . import (
     growatt,
     foxess,
     generic,
+    smart_plugs,
 )
 
 # Brand modules in detection priority order.
@@ -63,3 +64,5 @@ BATTERY_POWER_PATTERNS = _collect("BATTERY_POWER")
 SOLAR_PRODUCTION_PATTERNS = _collect("SOLAR_PRODUCTION")
 BATTERY_MAX_CHARGE_POWER_PATTERNS = _collect("BATTERY_MAX_CHARGE_POWER")
 BATTERY_MAX_DISCHARGE_POWER_PATTERNS = _collect("BATTERY_MAX_DISCHARGE_POWER")
+# Smart plugs are not solar/inverter brands — collect directly.
+PLUG_POWER_MONITOR_PATTERNS = smart_plugs.PLUG_POWER_MONITOR

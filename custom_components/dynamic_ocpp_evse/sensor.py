@@ -524,7 +524,19 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             
             # Calculate total available current at hub level
             hub_data = run_hub_calculation(self)
-            
+
+            # Fire auto-detection notifications (inversion, phase mapping)
+            for notif in hub_data.get("auto_detect_notifications", []):
+                await self.hass.services.async_call(
+                    "persistent_notification", "create",
+                    {
+                        "title": notif["title"],
+                        "message": notif["message"],
+                        "notification_id": notif["notification_id"],
+                    },
+                )
+                _LOGGER.warning("AutoDetect notification: %s", notif["notification_id"])
+
             # Store charger-level calculation results
             self._phases = hub_data.get(CONF_PHASES)
             self._charging_mode = hub_data.get(CONF_CHARGING_MODE)
