@@ -79,7 +79,7 @@ def hub_entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         version=2,
-        minor_version=1,
+        minor_version=2,
         title="Test Hub",
         data={
             CONF_NAME: "Test Hub",
@@ -114,7 +114,7 @@ def charger_entry(hub_entry: MockConfigEntry) -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         version=2,
-        minor_version=1,
+        minor_version=2,
         title="Test Charger",
         data={
             CONF_ENTITY_ID: "test_charger",
@@ -134,7 +134,7 @@ def charger_entry(hub_entry: MockConfigEntry) -> MockConfigEntry:
             CONF_PROFILE_VALIDITY_MODE: "relative",
             CONF_UPDATE_FREQUENCY: 15,
             CONF_OCPP_PROFILE_TIMEOUT: 120,
-            CONF_CHARGE_PAUSE_DURATION: 180,
+            CONF_CHARGE_PAUSE_DURATION: 3,
             CONF_STACK_LEVEL: 3,
         },
     )
@@ -518,7 +518,7 @@ async def test_no_ocpp_call_without_device_id(
     charger_entry_no_device = MockConfigEntry(
         domain=DOMAIN,
         version=2,
-        minor_version=1,
+        minor_version=2,
         title="No Device Charger",
         data={
             CONF_ENTITY_ID: "no_device_charger",
@@ -538,7 +538,7 @@ async def test_no_ocpp_call_without_device_id(
             CONF_PROFILE_VALIDITY_MODE: "relative",
             CONF_UPDATE_FREQUENCY: 15,
             CONF_OCPP_PROFILE_TIMEOUT: 120,
-            CONF_CHARGE_PAUSE_DURATION: 180,
+            CONF_CHARGE_PAUSE_DURATION: 3,
             CONF_STACK_LEVEL: 3,
         },
     )
@@ -617,7 +617,7 @@ async def test_absolute_profile_format(
     charger_absolute = MockConfigEntry(
         domain=DOMAIN,
         version=2,
-        minor_version=1,
+        minor_version=2,
         title="Abs Charger",
         data={
             CONF_ENTITY_ID: "abs_charger",
@@ -637,7 +637,7 @@ async def test_absolute_profile_format(
             CONF_PROFILE_VALIDITY_MODE: "absolute",
             CONF_UPDATE_FREQUENCY: 15,
             CONF_OCPP_PROFILE_TIMEOUT: 120,
-            CONF_CHARGE_PAUSE_DURATION: 180,
+            CONF_CHARGE_PAUSE_DURATION: 3,
             CONF_STACK_LEVEL: 3,
         },
     )
@@ -689,7 +689,7 @@ async def test_watts_charge_rate_conversion(
     charger_watts = MockConfigEntry(
         domain=DOMAIN,
         version=2,
-        minor_version=1,
+        minor_version=2,
         title="Watts Charger",
         data={
             CONF_ENTITY_ID: "watts_charger",
@@ -709,7 +709,7 @@ async def test_watts_charge_rate_conversion(
             CONF_PROFILE_VALIDITY_MODE: "relative",
             CONF_UPDATE_FREQUENCY: 15,
             CONF_OCPP_PROFILE_TIMEOUT: 120,
-            CONF_CHARGE_PAUSE_DURATION: 180,
+            CONF_CHARGE_PAUSE_DURATION: 3,
             CONF_STACK_LEVEL: 3,
         },
     )
@@ -1404,7 +1404,7 @@ async def test_charge_pause_remaining_seconds_attribute(
     assert attrs["pause_active"] is True
     assert attrs["pause_remaining_seconds"] is not None
     assert attrs["pause_remaining_seconds"] > 0
-    assert attrs["pause_remaining_seconds"] <= 180  # Default pause duration
+    assert attrs["pause_remaining_seconds"] <= 180  # Default pause duration (3 min = 180s)
 
 
 async def test_auto_reset_skips_when_car_not_plugged_in(

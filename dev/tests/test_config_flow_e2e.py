@@ -61,6 +61,8 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_OCPP_PROFILE_TIMEOUT,
     CONF_CHARGE_PAUSE_DURATION,
     CONF_STACK_LEVEL,
+    CONF_SOLAR_GRACE_PERIOD,
+    DEFAULT_SOLAR_GRACE_PERIOD,
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
     DEFAULT_EXCESS_EXPORT_THRESHOLD,
@@ -146,6 +148,7 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
             CONF_PHASE_VOLTAGE: 230,
             CONF_EXCESS_EXPORT_THRESHOLD: 10000,
+            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -232,6 +235,7 @@ async def test_hub_creation_single_phase(hass: HomeAssistant):
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
             CONF_PHASE_VOLTAGE: 230,
             CONF_EXCESS_EXPORT_THRESHOLD: 5000,
+            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
         },
     )
     assert result["step_id"] == "hub_inverter"
@@ -344,7 +348,7 @@ async def test_charger_discovery_creates_entry(
             CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
             CONF_UPDATE_FREQUENCY: 10,
             CONF_OCPP_PROFILE_TIMEOUT: 120,
-            CONF_CHARGE_PAUSE_DURATION: 180,
+            CONF_CHARGE_PAUSE_DURATION: 3,
             CONF_STACK_LEVEL: 3,
         },
     )
@@ -493,6 +497,7 @@ async def test_options_flow_hub_saves_changes(
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
             CONF_PHASE_VOLTAGE: 230,
             CONF_EXCESS_EXPORT_THRESHOLD: 13000,
+            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
         },
     )
 
@@ -588,7 +593,7 @@ async def test_options_flow_charger_saves_changes(
             CONF_PROFILE_VALIDITY_MODE: "absolute",
             CONF_UPDATE_FREQUENCY: 30,
             CONF_OCPP_PROFILE_TIMEOUT: 240,
-            CONF_CHARGE_PAUSE_DURATION: 300,
+            CONF_CHARGE_PAUSE_DURATION: 5,
             CONF_STACK_LEVEL: 5,
         },
     )

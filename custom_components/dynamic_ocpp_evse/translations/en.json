@@ -46,7 +46,8 @@
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
                     "site_update_frequency": "Site sensor refresh rate",
-                    "auto_detect_phase_mapping": "Detect phase mapping mismatches (3-phase only)"
+                    "auto_detect_phase_mapping": "Detect phase mapping mismatches",
+                    "solar_grace_period": "Solar/Excess grace period"
                 },
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
@@ -56,7 +57,8 @@
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "excess_export_threshold": "In Excess mode, EV charging only starts when grid export exceeds this value. Set to your desired minimum export before charging begins.",
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
-                    "auto_detect_phase_mapping": "Monitors 3-phase charger current draws to detect incorrect L1/L2/L3 phase wiring. Only works during charging transients. Disable if false alerts occur."
+                    "auto_detect_phase_mapping": "Monitors charger current draws to detect incorrect phase wiring. Works for all charger types on multi-phase sites. Disable if false alerts occur.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
                 }
             },
             "hub_inverter": {
@@ -102,13 +104,6 @@
                 "description": "Select which electrical hub to add this charger to",
                 "data": {
                     "hub_entry_id": "Home Electrical Hub"
-                }
-            },
-            "device_type": {
-                "title": "Device Type",
-                "description": "Select the type of device you want to add",
-                "data": {
-                    "device_type": "Device type"
                 }
             },
             "plug_config": {
@@ -205,7 +200,8 @@
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
                     "site_update_frequency": "Site sensor refresh rate",
-                    "auto_detect_phase_mapping": "Detect phase mapping mismatches (3-phase only)"
+                    "auto_detect_phase_mapping": "Detect phase mapping mismatches",
+                    "solar_grace_period": "Solar/Excess grace period"
                 },
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
@@ -215,7 +211,8 @@
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "excess_export_threshold": "In Excess mode, EV charging only starts when grid export exceeds this value. Set to your desired minimum export before charging begins.",
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
-                    "auto_detect_phase_mapping": "Monitors 3-phase charger current draws to detect incorrect L1/L2/L3 phase wiring. Only works during charging transients. Disable if false alerts occur."
+                    "auto_detect_phase_mapping": "Monitors charger current draws to detect incorrect phase wiring. Works for all charger types on multi-phase sites. Disable if false alerts occur.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
                 }
             },
             "reconfigure_hub_inverter": {
@@ -352,7 +349,8 @@
                     "phase_voltage": "Phase voltage",
                     "excess_export_threshold": "Excess mode export threshold",
                     "site_update_frequency": "Site sensor refresh rate",
-                    "auto_detect_phase_mapping": "Detect phase mapping mismatches (3-phase only)"
+                    "auto_detect_phase_mapping": "Detect phase mapping mismatches",
+                    "solar_grace_period": "Solar/Excess grace period"
                 },
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
@@ -362,7 +360,8 @@
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "excess_export_threshold": "In Excess mode, EV charging only starts when grid export exceeds this value. Set to your desired minimum export before charging begins.",
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
-                    "auto_detect_phase_mapping": "Monitors 3-phase charger current draws to detect incorrect L1/L2/L3 phase wiring. Only works during charging transients. Disable if false alerts occur."
+                    "auto_detect_phase_mapping": "Monitors charger current draws to detect incorrect phase wiring. Works for all charger types on multi-phase sites. Disable if false alerts occur.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
                 }
             },
             "hub_inverter": {

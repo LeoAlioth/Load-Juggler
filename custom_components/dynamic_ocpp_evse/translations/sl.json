@@ -46,7 +46,8 @@
                     "phase_voltage": "Napetost na fazo",
                     "excess_export_threshold": "Prag izvoza za način Excess",
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije",
-                    "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju (samo 3-fazno)"
+                    "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
                 },
                 "data_description": {
                     "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
@@ -56,7 +57,8 @@
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom.",
-                    "auto_detect_phase_mapping": "Spremlja tokove 3-faznih polnilnikov za zaznavo nepravilnega ožičenja L1/L2/L3 faz. Deluje le med prehodnimi stanji polnjenja. Onemogočite ob lažnih opozorilih."
+                    "auto_detect_phase_mapping": "Spremlja tokove polnilnikov za zaznavo nepravilnega faznega ožičenja. Deluje za vse vrste polnilnikov na večfaznih lokacijah. Onemogočite ob lažnih opozorilih.",
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
                 }
             },
             "hub_inverter": {
@@ -95,13 +97,6 @@
                     "battery_max_charge_power": "Maksimalna moč, ki jo razsmernik uporabi za polnjenje baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
                     "battery_max_discharge_power": "Maksimalna moč, ki jo razsmernik lahko prazni iz baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%."
-                }
-            },
-            "device_type": {
-                "title": "Vrsta naprave",
-                "description": "Izberite vrsto naprave, ki jo želite dodati",
-                "data": {
-                    "device_type": "Vrsta naprave"
                 }
             },
             "select_hub": {
@@ -205,7 +200,8 @@
                     "phase_voltage": "Napetost na fazo",
                     "excess_export_threshold": "Prag izvoza za način Excess",
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije",
-                    "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju (samo 3-fazno)"
+                    "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
                 },
                 "data_description": {
                     "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
@@ -215,7 +211,8 @@
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom.",
-                    "auto_detect_phase_mapping": "Spremlja tokove 3-faznih polnilnikov za zaznavo nepravilnega ožičenja L1/L2/L3 faz. Deluje le med prehodnimi stanji polnjenja. Onemogočite ob lažnih opozorilih."
+                    "auto_detect_phase_mapping": "Spremlja tokove polnilnikov za zaznavo nepravilnega faznega ožičenja. Deluje za vse vrste polnilnikov na večfaznih lokacijah. Onemogočite ob lažnih opozorilih.",
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
                 }
             },
             "reconfigure_hub_inverter": {
@@ -352,7 +349,8 @@
                     "phase_voltage": "Napetost na fazo",
                     "excess_export_threshold": "Prag izvoza za način Excess",
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije",
-                    "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju (samo 3-fazno)"
+                    "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
                 },
                 "data_description": {
                     "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
@@ -362,7 +360,8 @@
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom.",
-                    "auto_detect_phase_mapping": "Spremlja tokove 3-faznih polnilnikov za zaznavo nepravilnega ožičenja L1/L2/L3 faz. Deluje le med prehodnimi stanji polnjenja. Onemogočite ob lažnih opozorilih."
+                    "auto_detect_phase_mapping": "Spremlja tokove polnilnikov za zaznavo nepravilnega faznega ožičenja. Deluje za vse vrste polnilnikov na večfaznih lokacijah. Onemogočite ob lažnih opozorilih.",
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
                 }
             },
             "hub_inverter": {

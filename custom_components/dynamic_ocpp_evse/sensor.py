@@ -146,6 +146,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         self._allocated_current = None
         self._last_update = datetime.min
         self._pause_started_at = None  # datetime when charge pause started
+        self._grace_started_at = None  # datetime when Solar/Excess grace period started
         self._prev_charging_mode = None   # for detecting mode changes to cancel pause
         self._prev_distribution_mode = None
         self._last_set_current = 0
@@ -174,9 +175,15 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         """Return charger-specific attributes only (site-level data is on hub sensor)."""
         pause_remaining = None
         if self._pause_started_at is not None:
-            pause_duration = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
+            pause_duration_min = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
             elapsed = (datetime.now() - self._pause_started_at).total_seconds()
-            pause_remaining = max(0, round(pause_duration - elapsed))
+            pause_remaining = max(0, round(pause_duration_min * 60 - elapsed))
+
+        grace_remaining = None
+        if self._grace_started_at is not None:
+            grace_period_min = get_entry_value(self.hub_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
+            elapsed = (datetime.now() - self._grace_started_at).total_seconds()
+            grace_remaining = max(0, round(grace_period_min * 60 - elapsed))
 
         attrs = {
             "state_class": "measurement",
@@ -186,6 +193,8 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             "last_update": self._last_update,
             "pause_active": self._pause_started_at is not None,
             "pause_remaining_seconds": pause_remaining,
+            "grace_active": self._grace_started_at is not None,
+            "grace_remaining_seconds": grace_remaining,
             "last_set_current": self._last_set_current,
             "last_set_power": self._last_set_power,
             "charger_priority": get_entry_value(self.config_entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
@@ -548,14 +557,18 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                 (self._prev_distribution_mode is not None and current_distribution_mode != self._prev_distribution_mode)
             )
 
-            # Cancel charge pause when user changes charging or distribution mode
-            if self._pause_started_at is not None and mode_changed:
-                _LOGGER.info(
-                    "Mode changed for %s (charging: %s→%s, distribution: %s→%s) — cancelling charge pause",
-                    self._attr_name, self._prev_charging_mode, self._charging_mode,
-                    self._prev_distribution_mode, current_distribution_mode,
-                )
-                self._pause_started_at = None
+            # Cancel charge pause and grace timer when user changes charging or distribution mode
+            if mode_changed:
+                if self._pause_started_at is not None:
+                    _LOGGER.info(
+                        "Mode changed for %s (charging: %s→%s, distribution: %s→%s) — cancelling charge pause",
+                        self._attr_name, self._prev_charging_mode, self._charging_mode,
+                        self._prev_distribution_mode, current_distribution_mode,
+                    )
+                    self._pause_started_at = None
+                if self._grace_started_at is not None:
+                    _LOGGER.info("Mode changed for %s — cancelling grace timer", self._attr_name)
+                    self._grace_started_at = None
 
             self._prev_charging_mode = self._charging_mode
             self._prev_distribution_mode = current_distribution_mode
@@ -652,6 +665,48 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             self._allocated_current = self._rate_limited_current
             self._state = self._rate_limited_current
 
+            # --- Grace timer for Solar/Excess modes (anti-flicker) ---
+            # When Solar/Excess conditions drop below minimum but site limits still
+            # allow charging, hold at min_current for a grace period before pausing.
+            min_charge_current = get_entry_value(self.config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+            grace_period_minutes = get_entry_value(hub_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
+            grace_period_seconds = grace_period_minutes * 60
+
+            if self._charging_mode in (CHARGING_MODE_SOLAR, CHARGING_MODE_EXCESS) and grace_period_seconds > 0:
+                if self._allocated_current < min_charge_current:
+                    # Engine says stop — check if site limits allow grace
+                    standard_target = self._target_evse_standard or 0
+                    if standard_target >= min_charge_current:
+                        # Site can support min_current — apply grace
+                        if self._grace_started_at is None:
+                            self._grace_started_at = datetime.now()
+                            _LOGGER.debug("Grace timer started for %s (mode=%s, grace=%dm)",
+                                          self._attr_name, self._charging_mode, grace_period_minutes)
+                        elapsed = (datetime.now() - self._grace_started_at).total_seconds()
+                        if elapsed < grace_period_seconds:
+                            # Override: charge at min_current during grace
+                            self._allocated_current = float(min_charge_current)
+                            self._state = self._allocated_current
+                        else:
+                            # Grace expired — let engine's 0 through (pause will kick in)
+                            _LOGGER.info("Grace timer expired for %s after %dm — allowing pause",
+                                         self._attr_name, grace_period_minutes)
+                            self._grace_started_at = None
+                    else:
+                        # Site limits don't support min_current — immediate stop
+                        if self._grace_started_at is not None:
+                            _LOGGER.info("Site limit violation for %s — cancelling grace timer", self._attr_name)
+                            self._grace_started_at = None
+                else:
+                    # Conditions recovered — reset grace timer
+                    if self._grace_started_at is not None:
+                        _LOGGER.debug("Grace timer reset for %s — conditions recovered", self._attr_name)
+                        self._grace_started_at = None
+            else:
+                # Not in Solar/Excess mode or grace disabled — reset
+                if self._grace_started_at is not None:
+                    self._grace_started_at = None
+
             # Update global allocations so the allocated current sensor can read them
             if DOMAIN not in self.hass.data:
                 self.hass.data[DOMAIN] = {}
@@ -682,7 +737,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             # Charge pause logic: hold at 0A for a configured duration when
             # allocated current drops below the charger's minimum
             elif self._allocated_current < min_charge_current:
-                pause_duration = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
+                pause_duration_s = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION) * 60
                 # Current below minimum — start or continue pause
                 if self._pause_started_at is None:
                     self._pause_started_at = datetime.now()
@@ -690,11 +745,11 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                 # While pausing (regardless of elapsed time), charger can't meet minimum
                 limit = 0
             else:
-                pause_duration = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
+                pause_duration_s = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION) * 60
                 # Current >= minimum — reset pause, charge normally
                 if self._pause_started_at is not None:
                     elapsed = (datetime.now() - self._pause_started_at).total_seconds()
-                    if elapsed < pause_duration:
+                    if elapsed < pause_duration_s:
                         # Still within pause window — hold at 0
                         limit = 0
                     else:
@@ -712,10 +767,15 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                 self._charging_status = "Not Connected"
             elif not dynamic_control_on:
                 self._charging_status = "Dynamic Control Off"
+            elif self._grace_started_at is not None and self._allocated_current >= min_charge_current:
+                grace_min = get_entry_value(hub_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
+                elapsed = (datetime.now() - self._grace_started_at).total_seconds()
+                remaining = max(0, int(grace_min * 60 - elapsed))
+                self._charging_status = f"Grace: {remaining}s"
             elif self._pause_started_at is not None and limit == 0:
-                pause_dur = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
+                pause_dur_s = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION) * 60
                 elapsed = (datetime.now() - self._pause_started_at).total_seconds()
-                remaining = max(0, int(pause_dur - elapsed))
+                remaining = max(0, int(pause_dur_s - elapsed))
                 self._charging_status = f"Paused: {remaining}s"
             elif limit > 0:
                 self._charging_status = "Charging"

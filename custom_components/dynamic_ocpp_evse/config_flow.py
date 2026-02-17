@@ -24,7 +24,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Dynamic OCPP EVSE."""
 
     VERSION = 2
-    MINOR_VERSION = 1
+    MINOR_VERSION = 2
 
    
 
@@ -101,8 +101,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ), selector({"number": {"min": 1, "max": 60, "step": 1, "mode": "box", "unit_of_measurement": "s"}})),
             (vol.Required(
                 CONF_AUTO_DETECT_PHASE_MAPPING,
-                default=defaults.get(CONF_AUTO_DETECT_PHASE_MAPPING, False),
+                default=defaults.get(CONF_AUTO_DETECT_PHASE_MAPPING, True),
             ), bool),
+            (vol.Required(
+                CONF_SOLAR_GRACE_PERIOD,
+                default=defaults.get(CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD),
+            ), selector({"number": {"min": 0, "max": 30, "step": 1, "mode": "box", "unit_of_measurement": "min"}})),
         ]
 
     def _build_hub_battery_schema(self, defaults: dict | None = None) -> list[tuple]:
@@ -321,7 +325,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_CHARGE_PAUSE_DURATION,
                 default=defaults.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION),
-            ): selector({"number": {"min": 0, "max": 600, "step": 1, "mode": "box", "unit_of_measurement": "s"}}),
+            ): selector({"number": {"min": 0, "max": 10, "step": 1, "mode": "box", "unit_of_measurement": "min"}}),
             vol.Required(
                 CONF_STACK_LEVEL,
                 default=defaults.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL),
@@ -451,38 +455,42 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Initial step: choose between hub or charger setup."""
+        """Initial step: choose hub, EVSE charger, or smart outlet."""
         errors: dict[str, str] = {}
-        
+
         # Check if any hubs exist
         hubs = self._get_hub_entries()
-        
+
         if user_input is not None:
             setup_type = user_input.get("setup_type")
             if setup_type == "hub":
                 return await self.async_step_hub_info()
-            elif setup_type == "charger":
+            elif setup_type in ("evse", "plug"):
                 if not hubs:
                     errors["base"] = "no_hub_configured"
                 else:
+                    self._data[CONF_DEVICE_TYPE] = (
+                        DEVICE_TYPE_EVSE if setup_type == "evse" else DEVICE_TYPE_PLUG
+                    )
                     return await self.async_step_select_hub()
-        
+
         # Build options based on existing hubs
         options = [
             {"value": "hub", "label": "Configure Home Electrical System (Hub)"},
         ]
         if hubs:
-            options.append({"value": "charger", "label": "Add a Charger"})
-        
+            options.append({"value": "evse", "label": "Add OCPP Charger (EVSE)"})
+            options.append({"value": "plug", "label": "Add Smart Outlet / Relay"})
+
         data_schema = vol.Schema({
-            vol.Required("setup_type", default="hub" if not hubs else "charger"): selector({
+            vol.Required("setup_type", default="hub" if not hubs else "evse"): selector({
                 "select": {
                     "options": options,
                     "mode": "list"
                 }
             })
         })
-        
+
         return self.async_show_form(
             step_id="user",
             data_schema=data_schema,
@@ -566,7 +574,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_INVERT_PHASES: False,
                 CONF_PHASE_VOLTAGE: DEFAULT_PHASE_VOLTAGE,
                 CONF_EXCESS_EXPORT_THRESHOLD: DEFAULT_EXCESS_EXPORT_THRESHOLD,
-                CONF_AUTO_DETECT_PHASE_MAPPING: False,
+                CONF_AUTO_DETECT_PHASE_MAPPING: True,
             })
             
         except Exception as e:
@@ -702,6 +710,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.context["title_placeholders"] = {"name": self._selected_charger["name"]}
         return await self.async_step_charger_info()
 
+    async def _route_after_hub_selection(self) -> config_entries.FlowResult:
+        """Route to the correct step after hub is selected."""
+        if self._data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG:
+            return await self.async_step_plug_config()
+        return await self.async_step_discover_chargers()
+
     async def async_step_select_hub(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
@@ -711,12 +725,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             self._data[CONF_HUB_ENTRY_ID] = user_input["hub_entry_id"]
-            return await self.async_step_device_type()
+            return await self._route_after_hub_selection()
 
         # If only one hub, skip selection
         if len(hubs) == 1:
             self._data[CONF_HUB_ENTRY_ID] = hubs[0].entry_id
-            return await self.async_step_device_type()
+            return await self._route_after_hub_selection()
 
         hub_options = [
             {"value": entry.entry_id, "label": entry.title}
@@ -734,34 +748,6 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
             errors=errors,
             last_step=False
-        )
-
-    async def async_step_device_type(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Charger step 1b: Choose device type (OCPP EVSE or Smart Load)."""
-        if user_input is not None:
-            device_type = user_input.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-            if device_type == DEVICE_TYPE_PLUG:
-                return await self.async_step_plug_config()
-            return await self.async_step_discover_chargers()
-
-        data_schema = vol.Schema({
-            vol.Required(CONF_DEVICE_TYPE, default=DEVICE_TYPE_EVSE): selector({
-                "select": {
-                    "options": [
-                        {"value": DEVICE_TYPE_EVSE, "label": "OCPP Charger (EVSE)"},
-                        {"value": DEVICE_TYPE_PLUG, "label": "Smart Load"},
-                    ],
-                    "mode": "list",
-                }
-            })
-        })
-
-        return self.async_show_form(
-            step_id="device_type",
-            data_schema=data_schema,
-            last_step=False,
         )
 
     async def async_step_plug_config(
