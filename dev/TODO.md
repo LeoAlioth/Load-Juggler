@@ -66,6 +66,9 @@
 62. - [x] Hub sensor cleanup: Solar Surplus → Solar Available Power (production - household), remove Solar Surplus Current, deduplicate battery sensors
 63. - [x] Debug log: show human-readable charger names instead of entry_id hashes in "Charger targets" line
 64. - [x] Hub sensor renames: shorter, consistent naming (Current X Power / Available X Power), add Current Solar Power sensor
+65. - [x] Fix entity selector clearing: `suggested_value` instead of `default` so X button truly clears the field
+66. - [x] Fix options flow Submit → Next button on non-final steps (`last_step=False/True`)
+67. - [x] Add Sony Xperia (`xq_`) phone exclusion to generic battery auto-detection patterns
 
 ## In Progress
 

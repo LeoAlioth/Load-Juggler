@@ -41,10 +41,15 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def _optional_entity_field(key: str, default_val):
-        """Create vol.Optional with default only when a valid entity ID exists."""
+        """Create vol.Optional with suggested_value so the user can truly clear it.
+
+        Using suggested_value instead of default lets the entity selector
+        be cleared with X — vol.Optional(default=...) would silently
+        re-fill the default on clear.
+        """
         val = normalize_optional_entity(default_val)
         if val:
-            return vol.Optional(key, default=val)
+            return vol.Optional(key, description={"suggested_value": val})
         return vol.Optional(key)
 
     def _build_hub_grid_schema(self, defaults: dict | None = None) -> list[tuple]:
@@ -1383,6 +1388,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="hub_grid",
             data_schema=f._hub_grid_schema(defaults),
             errors=errors,
+            last_step=False,
         )
 
     async def async_step_hub_inverter(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1431,6 +1437,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             data_schema=f._hub_inverter_schema(inverter_defaults),
             errors=errors,
             description_placeholders={"battery_power_hint": hint_text},
+            last_step=False,
         )
 
     async def async_step_hub(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1471,6 +1478,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="hub",
             data_schema=f._hub_battery_schema(defaults),
             errors=errors,
+            last_step=True,
         )
 
     async def async_step_charger(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1492,6 +1500,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="charger",
             data_schema=data_schema,
             errors=errors,
+            last_step=False,
         )
 
     async def async_step_charger_current(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1516,6 +1525,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
                     step_id="charger_current",
                     data_schema=f._charger_current_schema(self._data, hub_phases=hub_phases),
                     errors=errors,
+                    last_step=False,
                 )
             return await self.async_step_charger_timing()
 
@@ -1523,6 +1533,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="charger_current",
             data_schema=f._charger_current_schema(defaults, hub_phases=hub_phases),
             errors=errors,
+            last_step=False,
         )
 
     async def async_step_charger_timing(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1545,6 +1556,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="charger_timing",
             data_schema=f._charger_timing_schema(defaults, detected_unit=detected_unit),
             errors=errors,
+            last_step=True,
         )
 
     async def async_step_plug(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1564,5 +1576,6 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="plug",
             data_schema=f._plug_schema(defaults),
             errors=errors,
+            last_step=True,
         )
 
