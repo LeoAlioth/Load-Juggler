@@ -969,6 +969,59 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.warning("Could not detect charge rate unit via OCPP: %s", e)
             return None
 
+    async def _detect_meter_value_interval(self, ocpp_device_id: str) -> int | None:
+        """Detect the MeterValueSampleInterval from the OCPP charger.
+
+        This tells us how often the charger reports meter values, which is the
+        practical minimum interval for sending charging profile updates.
+
+        Returns:
+            Interval in seconds, or None if detection fails.
+        """
+        if not ocpp_device_id:
+            return None
+
+        if not self.hass.services.has_service("ocpp", "get_configuration"):
+            return None
+
+        try:
+            response = await self.hass.services.async_call(
+                "ocpp",
+                "get_configuration",
+                {
+                    "devid": ocpp_device_id,
+                    "ocpp_key": "MeterValueSampleInterval",
+                },
+                blocking=True,
+                return_response=True,
+            )
+
+            if not response:
+                return None
+
+            value = None
+            if isinstance(response, dict):
+                value = response.get("MeterValueSampleInterval")
+                if value is None:
+                    value = response.get("value")
+                if value is None:
+                    for item in response.get("configurationKey", []):
+                        if isinstance(item, dict) and item.get("key") == "MeterValueSampleInterval":
+                            value = item.get("value")
+                            break
+
+            if value is None:
+                return None
+
+            interval = int(value)
+            _LOGGER.info("OCPP MeterValueSampleInterval = %ds", interval)
+            # Clamp to our supported range (5–300s)
+            return max(5, min(300, interval))
+
+        except Exception as e:
+            _LOGGER.debug("Could not detect MeterValueSampleInterval via OCPP: %s", e)
+            return None
+
     async def async_step_charger_info(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
@@ -1048,9 +1101,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Charger step 3c: Units and timing configuration (final — creates entry)."""
         errors: dict[str, str] = {}
 
-        # Detect charge rate unit via OCPP
+        # Detect charger capabilities via OCPP
         ocpp_device_id = self._selected_charger.get("device_id")
         detected_unit = await self._detect_charge_rate_unit(ocpp_device_id)
+        detected_interval = await self._detect_meter_value_interval(ocpp_device_id)
 
         if user_input is not None:
             self._data.update(user_input)
@@ -1087,7 +1141,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data_schema = self._charger_timing_schema(
             {
                 CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
-                CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+                CONF_UPDATE_FREQUENCY: detected_interval or DEFAULT_UPDATE_FREQUENCY,
                 CONF_OCPP_PROFILE_TIMEOUT: DEFAULT_OCPP_PROFILE_TIMEOUT,
                 CONF_CHARGE_PAUSE_DURATION: DEFAULT_CHARGE_PAUSE_DURATION,
                 CONF_STACK_LEVEL: DEFAULT_STACK_LEVEL,

@@ -150,7 +150,8 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         self._prev_distribution_mode = None
         self._last_set_current = 0
         self._last_set_power = None
-        self._rate_limited_current = None   # Smoothed allocated current (updated every site cycle)
+        self._ema_current = None             # EMA-smoothed engine output
+        self._rate_limited_current = None   # Final output (after EMA + dead band + rate limit)
         self._last_commanded_limit = None   # Amps actually sent to charger (for compliance check)
         self._last_command_time: float = -float('inf')  # monotonic time of last OCPP/plug command
         self._mismatch_count = 0           # consecutive non-compliant cycles
@@ -588,30 +589,44 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             # Get this charger's raw allocated current from engine output
             raw_allocated = round(charger_targets.get(self.config_entry.entry_id, 0), 1)
 
-            # Rate-limit the allocated current for smooth display and commands.
-            # Skip rate limiting when: no previous value, resuming from 0, or mode changed.
-            if (self._rate_limited_current is not None
-                    and self._rate_limited_current > 0
-                    and raw_allocated > 0
-                    and not mode_changed):
-                site_freq = get_entry_value(hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY)
-                max_up = RAMP_UP_RATE * site_freq
-                max_down = RAMP_DOWN_RATE * site_freq
-                delta = raw_allocated - self._rate_limited_current
-                if delta > max_up:
-                    raw_allocated = round(self._rate_limited_current + max_up, 1)
-                    _LOGGER.debug("Rate-limited ramp UP for %s: %.1fA → %.1fA (max +%.1fA/cycle)",
-                                  self._attr_name, self._rate_limited_current, raw_allocated, max_up)
-                elif delta < -max_down:
-                    raw_allocated = round(self._rate_limited_current - max_down, 1)
-                    _LOGGER.debug("Rate-limited ramp DOWN for %s: %.1fA → %.1fA (max -%.1fA/cycle)",
-                                  self._attr_name, self._rate_limited_current, raw_allocated, max_down)
-            elif mode_changed:
-                _LOGGER.debug("Mode changed for %s — rate limit bypassed (allocated=%.1fA)", self._attr_name, raw_allocated)
+            # --- Smoothing pipeline: EMA → dead band → rate limit ---
+            # On mode change or first run: reset and pass through immediately.
+            if mode_changed or self._ema_current is None:
+                self._ema_current = raw_allocated
+                self._rate_limited_current = raw_allocated
+                if mode_changed:
+                    _LOGGER.debug("Mode changed for %s — smoothing reset (allocated=%.1fA)",
+                                  self._attr_name, raw_allocated)
+            elif raw_allocated == 0 or self._rate_limited_current == 0:
+                # Transitions to/from zero pass through immediately (pause/resume)
+                self._ema_current = raw_allocated
+                self._rate_limited_current = raw_allocated
+            else:
+                # Step 1: EMA smoothing on the raw engine output
+                self._ema_current = round(EMA_ALPHA * raw_allocated + (1 - EMA_ALPHA) * self._ema_current, 2)
 
-            self._rate_limited_current = raw_allocated
-            self._allocated_current = raw_allocated
-            self._state = raw_allocated
+                # Step 2: Dead band (Schmitt trigger) — ignore small oscillations
+                if abs(self._ema_current - self._rate_limited_current) < DEAD_BAND:
+                    pass  # Keep current value, skip rate limiter
+                else:
+                    # Step 3: Rate limiter — clamp the change per cycle
+                    site_freq = get_entry_value(hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY)
+                    max_up = RAMP_UP_RATE * site_freq
+                    max_down = RAMP_DOWN_RATE * site_freq
+                    target = self._ema_current
+                    delta = target - self._rate_limited_current
+                    if delta > max_up:
+                        target = self._rate_limited_current + max_up
+                        _LOGGER.debug("Ramp UP for %s: %.1fA → %.1fA (ema=%.1fA, max +%.1fA/cycle)",
+                                      self._attr_name, self._rate_limited_current, target, self._ema_current, max_up)
+                    elif delta < -max_down:
+                        target = self._rate_limited_current - max_down
+                        _LOGGER.debug("Ramp DOWN for %s: %.1fA → %.1fA (ema=%.1fA, max -%.1fA/cycle)",
+                                      self._attr_name, self._rate_limited_current, target, self._ema_current, max_down)
+                    self._rate_limited_current = round(target, 1)
+
+            self._allocated_current = self._rate_limited_current
+            self._state = self._rate_limited_current
 
             # Update global allocations so the allocated current sensor can read them
             if DOMAIN not in self.hass.data:

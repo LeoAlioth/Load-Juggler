@@ -106,7 +106,7 @@ DEFAULT_MAX_CHARGE_CURRENT = 16
 DEFAULT_PHASE_VOLTAGE = 230
 DEFAULT_MAIN_BREAKER_RATING = 25
 DEFAULT_UPDATE_FREQUENCY = 15
-DEFAULT_SITE_UPDATE_FREQUENCY = 5  # Fast site info refresh (seconds)
+DEFAULT_SITE_UPDATE_FREQUENCY = 2  # Fast site info refresh (seconds)
 DEFAULT_OCPP_PROFILE_TIMEOUT = 120
 DEFAULT_CHARGE_PAUSE_DURATION = 180
 DEFAULT_STACK_LEVEL = 3
@@ -120,6 +120,10 @@ DEFAULT_BATTERY_SOC_HYSTERESIS = 3  # Default hysteresis (3%)
 # Current ramp rates (A per second) — limits how fast the commanded current changes
 RAMP_UP_RATE = 0.1       # Max 0.1 A/s ramp up
 RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
+
+# EMA smoothing — exponential moving average on engine output before rate limiting
+EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothing)
+DEAD_BAND = 0.3          # Ignore changes smaller than this (Schmitt trigger, amps)
 
 # Auto-reset detection — triggers reset_ocpp_evse when charger ignores profiles
 AUTO_RESET_MISMATCH_THRESHOLD = 5    # consecutive mismatched cycles before reset

@@ -70,6 +70,10 @@
 66. - [x] Fix options flow Submit → Next button on non-final steps (`last_step=False/True`)
 67. - [x] Add Sony Xperia (`xq_`) phone exclusion to generic battery auto-detection patterns
 68. - [x] Reload config entry on options change — removes stale battery sliders/switch when battery entities are cleared
+69. - [x] EMA smoothing + Schmitt trigger dead band + faster site refresh (2s) to eliminate current oscillation
+70. - [x] Input-level EMA smoothing on grid CT, solar, battery power, and inverter output readings before engine
+71. - [x] Debug log shows both raw and smoothed values (smoothed(raw) format) for CT, solar, and battery power
+72. - [x] Auto-detect OCPP `MeterValueSampleInterval` and use as default charger update frequency in config flow
 
 ## In Progress
 

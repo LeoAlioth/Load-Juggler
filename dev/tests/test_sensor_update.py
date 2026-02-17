@@ -948,10 +948,13 @@ async def test_rate_limit_ramp_up_capped(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that ramp-up is capped at RAMP_UP_RATE * site_update_frequency per cycle.
+    """Test that ramp-up is capped by the smoothing pipeline (EMA + dead band + rate limit).
 
-    With site_update_frequency=5s and RAMP_UP_RATE=0.1 A/s, max ramp-up is 0.5A.
-    If previous smoothed value was 6A and engine wants 16A, the allocated should be 6.5A.
+    With EMA_ALPHA=0.3, DEAD_BAND=0.3, site_update_frequency=2s, RAMP_UP_RATE=0.1 A/s:
+    - Previous output was 6A, engine wants 16A.
+    - EMA: 0.3*16 + 0.7*6 = 9.0A
+    - Dead band: |9.0 - 6.0| = 3.0 > 0.3 → passes
+    - Rate limit: max_up = 0.1 * 2 = 0.2A → capped at 6.2A
     """
     from custom_components.dynamic_ocpp_evse.const import RAMP_UP_RATE, DEFAULT_SITE_UPDATE_FREQUENCY
 
@@ -960,9 +963,9 @@ async def test_rate_limit_ramp_up_capped(
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
-    # Simulate previous cycle had smoothed 6A
+    # Simulate previous cycle had output at 6A
+    sensor._ema_current = 6.0
     sensor._rate_limited_current = 6.0
-    # Need prev modes set so mode_changed = False
     sensor._prev_charging_mode = "Standard"
     sensor._prev_distribution_mode = "Priority"
 
@@ -977,7 +980,7 @@ async def test_rate_limit_ramp_up_capped(
         profile = ocpp_calls[0][0][2]["custom_profile"]
         limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
 
-        # Engine would allocate 16A (max), but rate limit caps at 6 + 0.5 = 6.5A
+        # Engine would allocate 16A (max), but smoothing pipeline caps the change
         max_allowed = 6.0 + RAMP_UP_RATE * DEFAULT_SITE_UPDATE_FREQUENCY
         assert limit <= max_allowed, (
             f"Rate-limited ramp-up should be <= {max_allowed}A, got {limit}A"
@@ -991,10 +994,10 @@ async def test_rate_limit_ramp_down_capped(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that ramp-down is capped at RAMP_DOWN_RATE * site_update_frequency per cycle.
+    """Test that ramp-down is capped by the smoothing pipeline.
 
-    With site_update_frequency=5s and RAMP_DOWN_RATE=0.2 A/s, max ramp-down is 1.0A.
-    If previous smoothed value was 16A and engine wants 6A, the allocated should be 15A.
+    Previous output was 16A, engine wants 6A (Eco min).
+    EMA pulls toward 6A, dead band passes, rate limit caps the per-cycle drop.
     """
     from custom_components.dynamic_ocpp_evse.const import RAMP_DOWN_RATE, DEFAULT_SITE_UPDATE_FREQUENCY
 
@@ -1002,9 +1005,9 @@ async def test_rate_limit_ramp_down_capped(
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
-    # Simulate previous cycle had smoothed 16A
+    # Simulate previous cycle had output at 16A
+    sensor._ema_current = 16.0
     sensor._rate_limited_current = 16.0
-    # Need prev modes set so mode_changed = False
     sensor._prev_charging_mode = "Eco"
     sensor._prev_distribution_mode = "Priority"
 
@@ -1024,7 +1027,7 @@ async def test_rate_limit_ramp_down_capped(
         profile = ocpp_calls[0][0][2]["custom_profile"]
         limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
 
-        # Engine wants 6A (eco min), but ramp-down caps at 16 - 1.0 = 15A
+        # Engine wants 6A (eco min), but ramp-down caps the per-cycle drop
         min_allowed = 16.0 - RAMP_DOWN_RATE * DEFAULT_SITE_UPDATE_FREQUENCY
         assert limit >= min_allowed, (
             f"Rate-limited ramp-down should be >= {min_allowed}A, got {limit}A"
@@ -1038,17 +1041,18 @@ async def test_rate_limit_not_applied_on_resume_from_pause(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that rate limiting is NOT applied when resuming from pause (0 → N).
+    """Test that smoothing is NOT applied when resuming from pause (0 → N).
 
     When _rate_limited_current is 0 (pause), the charger should jump directly
-    to the calculated value without rate limiting.
+    to the calculated value without any smoothing or rate limiting.
     """
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
-    # Simulate coming out of pause — rate_limited_current is 0
+    # Simulate coming out of pause — both EMA and rate_limited are 0
+    sensor._ema_current = 0.0
     sensor._rate_limited_current = 0.0
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
@@ -1062,9 +1066,9 @@ async def test_rate_limit_not_applied_on_resume_from_pause(
         profile = ocpp_calls[0][0][2]["custom_profile"]
         limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
 
-        # Should jump directly to full allocation (16A max), not be rate-limited
+        # Should jump directly to full allocation (16A max), not be smoothed
         assert limit > 1.5, (
-            f"Resume from pause should NOT rate-limit, got {limit}A (would be 1.5 if limited)"
+            f"Resume from pause should NOT rate-limit, got {limit}A (would be tiny if limited)"
         )
 
 
