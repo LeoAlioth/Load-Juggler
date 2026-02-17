@@ -369,6 +369,18 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         Rate limiting is already applied at the allocated current level
         (in async_update), so `limit` arrives pre-smoothed.
         """
+        # Skip OCPP commands for non-chargeable connector states
+        connector_state = self.hass.states.get(self._connector_status_entity)
+        connector_status = connector_state.state if connector_state else "unknown"
+        if connector_status in ("Finishing", "Faulted"):
+            _LOGGER.debug(
+                "Skipping OCPP command for %s — connector is %s",
+                self._attr_name, connector_status,
+            )
+            self._last_update = datetime.now(timezone.utc)
+            self._last_command_time = now_mono
+            return
+
         # Check if charger is following our profiles (auto-reset detection)
         await self._check_profile_compliance(limit, dynamic_control_on)
 

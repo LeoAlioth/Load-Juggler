@@ -74,6 +74,7 @@
 70. - [x] Input-level EMA smoothing on grid CT, solar, battery power, and inverter output readings before engine
 71. - [x] Debug log shows both raw and smoothed values (smoothed(raw) format) for CT, solar, and battery power
 72. - [x] Auto-detect OCPP `MeterValueSampleInterval` and use as default charger update frequency in config flow
+73. - [x] Fix "Finishing"/"Faulted" connector status: treat as inactive (no power allocation), skip OCPP profiles and charge control toggle
 
 ## In Progress
 
