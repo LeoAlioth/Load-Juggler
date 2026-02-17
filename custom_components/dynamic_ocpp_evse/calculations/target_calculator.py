@@ -42,7 +42,10 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     # Step 0: Filter active vs inactive chargers
     all_chargers = site.chargers
     active_chargers = [c for c in all_chargers
-                       if c.connector_status not in ["Available", "Unknown", "Unavailable"]]
+                       if c.connector_status not in [
+                           "Available", "Unknown", "Unavailable",
+                           "Finishing", "Faulted",
+                       ]]
     inactive_chargers = [c for c in all_chargers if c not in active_chargers]
 
     _LOGGER.debug(
@@ -411,7 +414,10 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
 def _calculate_active_minimums(site: SiteContext) -> PhaseConstraints:
     """Calculate PhaseConstraints for the sum of minimum charge rates of active chargers."""
     active = [c for c in site.chargers
-              if c.connector_status not in ("Available", "Unknown", "Unavailable")]
+              if c.connector_status not in (
+                  "Available", "Unknown", "Unavailable",
+                  "Finishing", "Faulted",
+              )]
     sum_minimums_total = sum(c.min_current * c.phases for c in active)
     sum_minimums_per_phase = sum_minimums_total / site.num_phases
     return PhaseConstraints.from_per_phase(

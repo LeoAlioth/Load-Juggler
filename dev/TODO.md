@@ -62,22 +62,27 @@
 58. - [x] Deduplicate `async_added_to_hass` restore pattern via `_restore_and_publish_number()`
 59. - [x] Per-phase loops in `dynamic_ocpp_evse.py` (grid reads, feedback, headroom)
 60. - [x] Split `run_hub_calculation()` into subfunctions (~560→~170 lines)
+61. - [x] Move rate limiting from OCPP command to allocated current level (smooth sensor display, bypass on mode change)
+62. - [x] Hub sensor cleanup: Solar Surplus → Solar Available Power (production - household), remove Solar Surplus Current, deduplicate battery sensors
+63. - [x] Debug log: show human-readable charger names instead of entry_id hashes in "Charger targets" line
+64. - [x] Hub sensor renames: shorter, consistent naming (Current X Power / Available X Power), add Current Solar Power sensor
+65. - [x] Fix entity selector clearing: `suggested_value` instead of `default` so X button truly clears the field
+66. - [x] Fix options flow Submit → Next button on non-final steps (`last_step=False/True`)
+67. - [x] Add Sony Xperia (`xq_`) phone exclusion to generic battery auto-detection patterns
+68. - [x] Reload config entry on options change — removes stale battery sliders/switch when battery entities are cleared
+69. - [x] EMA smoothing + Schmitt trigger dead band + faster site refresh (2s) to eliminate current oscillation
+70. - [x] Input-level EMA smoothing on grid CT, solar, battery power, and inverter output readings before engine
+71. - [x] Debug log shows both raw and smoothed values (smoothed(raw) format) for CT, solar, and battery power
+72. - [x] Auto-detect OCPP `MeterValueSampleInterval` and use as default charger update frequency in config flow
+73. - [x] Fix "Finishing"/"Faulted" connector status: treat as inactive (no power allocation), skip OCPP profiles and charge control toggle
+74. - [x] Auto-detect power monitoring sensor for smart plugs (Shelly, Sonoff, Tasmota, Kasa, Tuya) in config flow
+
+75. - [x] Auto-detect grid CT inversion — correlates charger draw vs grid current, fires persistent notification after 10/15 inverted signals
+76. - [x] Auto-detect phase mapping — correlates total charger draw vs per-phase grid deltas, fires persistent notification on mismatch (opt-in via config flow)
 
 ## In Progress
 
-1. - [ ] **[FEATURE] Auto-detect power monitoring sensor for plugs** — Add detection patterns for common smart plug power monitoring entities (Shelly, Sonoff, Tasmota). Wire into `async_step_plug_config` via `_auto_detect_entity()`.
-
 ## Backlog
-
-1. - [ ] **[FEATURE] Auto-detect grid inversion — shared infrastructure**: Create `auto_detect.py` module with `AutoDetector` class. Track per-charger previous-cycle state. Files: `auto_detect.py` (new), `dynamic_ocpp_evse.py`.
-
-2. - [ ] **[FEATURE] Auto-detect grid inversion — detection logic + config**: Add `CONF_AUTO_DETECT_INVERSION` to `const.py` (bool, default True). Fire `persistent_notification` when mismatch detected. Files: `const.py`, `auto_detect.py`, `dynamic_ocpp_evse.py`, `config_flow.py`, translations.
-
-3. - [ ] **[FEATURE] Auto-detect phase mapping — detection logic**: Add `CONF_AUTO_DETECT_PHASE_MAPPING` to `const.py` (bool, default False). Correlate charger L-phase draws with grid phase deltas. Files: `const.py`, `auto_detect.py`.
-
-4. - [ ] **[FEATURE] Auto-detect phase mapping — notification & application**: Fire persistent notification with detected vs configured mapping. Option to auto-update config entry. Files: `dynamic_ocpp_evse.py`, `config_flow.py`, translations.
-
-5. - [ ] **[FEATURE] Auto-detection unit tests**: Test `AutoDetector` with simulated update cycles. File: `dev/tests/test_auto_detect.py` (new).
 
 ## Other
 

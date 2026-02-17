@@ -16,11 +16,28 @@ from .calculations import (
 from .const import *
 from .calculations.utils import is_number, compute_household_per_phase
 from .helpers import get_entry_value
+from .auto_detect import check_inversion, check_phase_mapping
 
 _LOGGER = logging.getLogger(__name__)
 
 # Phase labels used for loop-based per-phase processing
 _PHASE_LABELS = ("A", "B", "C")
+
+
+def _smooth(ema_dict: dict, key: str, raw, alpha: float = EMA_ALPHA):
+    """Apply EMA smoothing to a sensor reading. Returns smoothed value.
+
+    State is stored in ema_dict[key] between calls. None values pass through.
+    """
+    if raw is None:
+        return None
+    prev = ema_dict.get(key)
+    if prev is None:
+        ema_dict[key] = float(raw)
+        return float(raw)
+    smoothed = alpha * float(raw) + (1 - alpha) * prev
+    ema_dict[key] = smoothed
+    return round(smoothed, 2)
 
 
 def _read_phase_attr(attrs: dict, keys: tuple) -> float | None:
@@ -70,6 +87,13 @@ def _fv(v):
     if isinstance(v, (int, float)):
         return f"{v:.1f}"
     return str(v)
+
+
+def _fv2(raw, smoothed):
+    """Format smoothed(raw) pair. Always shows both values."""
+    if raw is None:
+        return _fv(smoothed)
+    return f"{_fv(smoothed)}({_fv(raw)})"
 
 
 # ---------------------------------------------------------------------------
@@ -381,9 +405,9 @@ def _apply_feedback_loop(site, solar_is_derived, voltage):
 
 
 def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
-                      total_export_current, total_export_power,
                       battery_soc, battery_soc_min, battery_max_discharge_power,
-                      battery_power, charger_targets, charger_available, plug_auto_power):
+                      battery_power, charger_targets, charger_available, charger_names,
+                      plug_auto_power, auto_detect_notifications=None):
     """Build the result dict returned by run_hub_calculation."""
     # Grid headroom per phase
     available_per_phase = []
@@ -398,7 +422,7 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
         for r in raw_phases if r is not None
     )
 
-    # Grid available power
+    # Grid available power (based on consumption after feedback loop)
     grid_headroom = sum(
         max(0, main_breaker_rating - c) * voltage
         for c in (site.consumption.a, site.consumption.b, site.consumption.c) if c is not None
@@ -419,6 +443,17 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
     # Net site consumption
     net_consumption = sum(r for r in raw_phases if r is not None) * voltage
 
+    # Solar power available to chargers = solar production - household loads
+    # (household_consumption_total is set after feedback loop, so it excludes charger draws)
+    solar_available = 0
+    if site.solar_production_total and site.solar_production_total > 0:
+        household = getattr(site, 'household_consumption_total', None)
+        if household is not None:
+            solar_available = max(0, site.solar_production_total - household)
+        else:
+            # Derived solar mode: export IS the solar available (best approximation)
+            solar_available = max(0, site.solar_production_total)
+
     return {
         CONF_TOTAL_ALLOCATED_CURRENT: round(sum(charger_targets.values()), 1),
         CONF_PHASES: site.num_phases,
@@ -430,25 +465,28 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
         "battery_soc_min": site.battery_soc_min,
         "battery_soc_target": site.battery_soc_target,
         "battery_power": battery_power,
-        "available_battery_power": available_battery_power,
-        "site_available_current_phase_a": available_per_phase[0],
-        "site_available_current_phase_b": available_per_phase[1],
-        "site_available_current_phase_c": available_per_phase[2],
+        "available_current_a": available_per_phase[0],
+        "available_current_b": available_per_phase[1],
+        "available_current_c": available_per_phase[2],
         "total_site_available_power": round(total_site_available, 0),
-        "net_site_consumption": round(net_consumption, 0),
-        "site_grid_available_power": round(grid_headroom, 0),
-        "site_battery_available_power": available_battery_power,
+        "grid_power": round(net_consumption, 0),
+        "available_grid_power": round(grid_headroom, 0),
+        "available_battery_power": available_battery_power,
         "total_evse_power": total_evse_power,
-        "solar_surplus_power": round(total_export_power, 0),
-        "solar_surplus_current": round(total_export_current, 2),
+        "solar_power": round(site.solar_production_total or 0, 0),
+        "available_solar_power": round(solar_available, 0),
 
         # Per-charger targets
         "charger_targets": charger_targets,
         "charger_available": charger_available,
+        "charger_names": charger_names,
         "distribution_mode": site.distribution_mode,
 
         # Auto-detected plug power ratings
         "plug_auto_power": plug_auto_power,
+
+        # Auto-detection notifications (inversion, phase mapping)
+        "auto_detect_notifications": auto_detect_notifications or [],
     }
 
 
@@ -483,8 +521,18 @@ def run_hub_calculation(sensor):
     main_breaker_rating = get_entry_value(hub_entry, CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING)
     excess_threshold = get_entry_value(hub_entry, CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD)
 
-    # --- Read per-phase grid current ---
-    raw_phases, consumption_pv, export_pv = _read_grid_phases(hass, hub_entry)
+    # --- Read per-phase grid current (raw) ---
+    raw_phases, _, _ = _read_grid_phases(hass, hub_entry)
+
+    # --- Input EMA smoothing (grid CT, solar, battery power) ---
+    hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
+    ema_inputs = hub_runtime.setdefault("_ema_inputs", {})
+
+    smoothed_phases = [_smooth(ema_inputs, f"grid_{i}", r) for i, r in enumerate(raw_phases)]
+    consumption = [max(0, r) if r is not None else None for r in smoothed_phases]
+    export = [max(0, -r) if r is not None else None for r in smoothed_phases]
+    consumption_pv = PhaseValues(*consumption)
+    export_pv = PhaseValues(*export)
 
     total_export_current = export_pv.total
     total_export_power = total_export_current * voltage if voltage > 0 else 0
@@ -493,15 +541,18 @@ def run_hub_calculation(sensor):
     solar_production_entity = get_entry_value(hub_entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
     solar_is_derived = not solar_production_entity
     if solar_production_entity:
-        solar_production_total = _read_entity(hass, solar_production_entity, 0)
+        raw_solar = _read_entity(hass, solar_production_entity, 0)
+        solar_production_total = _smooth(ema_inputs, "solar", raw_solar)
     else:
+        raw_solar = None  # derived — no raw reading
         solar_production_total = total_export_power
 
     # --- Battery data ---
     battery_soc_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
     battery_power_entity = get_entry_value(hub_entry, CONF_BATTERY_POWER_ENTITY_ID, None)
     battery_soc = _read_entity(hass, battery_soc_entity, None) if battery_soc_entity else None
-    battery_power = _read_entity(hass, battery_power_entity, None) if battery_power_entity else None
+    raw_battery_power = _read_entity(hass, battery_power_entity, None) if battery_power_entity else None
+    battery_power = _smooth(ema_inputs, "battery_power", raw_battery_power) if battery_power_entity else None
     battery_soc_hysteresis = get_entry_value(hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
     battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
@@ -521,8 +572,15 @@ def run_hub_calculation(sensor):
     inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, \
         wiring_topology, inverter_output_per_phase = _read_inverter_config(hass, hub_entry, voltage)
 
-    # --- Runtime state from shared hub data ---
-    hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
+    # Smooth inverter output per-phase (if configured)
+    if inverter_output_per_phase is not None:
+        inv_smoothed = [
+            _smooth(ema_inputs, f"inv_{i}", getattr(inverter_output_per_phase, p))
+            for i, p in enumerate(("a", "b", "c"))
+        ]
+        inverter_output_per_phase = PhaseValues(*inv_smoothed)
+
+    # --- Runtime state from shared hub data (hub_runtime already fetched above) ---
     charging_mode = hub_runtime.get("charging_mode", CHARGING_MODE_STANDARD)
     distribution_mode = hub_runtime.get("distribution_mode", DEFAULT_DISTRIBUTION_MODE)
     allow_grid_charging = hub_runtime.get("allow_grid_charging", True)
@@ -539,16 +597,18 @@ def run_hub_calculation(sensor):
     _LOGGER.debug(
         "--- Hub Update --- CT: A=%sA B=%sA C=%sA (%dph, invert=%s) | "
         "Solar: %sW (%s) | Export: %sA/%sW",
-        _fv(raw_phases[0]), _fv(raw_phases[1]), _fv(raw_phases[2]),
+        _fv2(raw_phases[0], smoothed_phases[0]),
+        _fv2(raw_phases[1], smoothed_phases[1]),
+        _fv2(raw_phases[2], smoothed_phases[2]),
         consumption_pv.active_count, "on" if invert_phases else "off",
-        _fv(solar_production_total), solar_production_entity or "derived",
+        _fv2(raw_solar, solar_production_total), solar_production_entity or "derived",
         _fv(total_export_current), _fv(total_export_power),
     )
     _extra = []
     if battery_soc_entity:
         _bat_dir = "chg" if (battery_power or 0) < 0 else ("dischg" if (battery_power or 0) > 0 else "idle")
         _extra.append(
-            f"Bat: {_fv(battery_soc)}%/{_fv(battery_power)}W({_bat_dir}) "
+            f"Bat: {_fv(battery_soc)}%/{_fv2(raw_battery_power, battery_power)}W({_bat_dir}) "
             f"min={_fv(battery_soc_min)}% tgt={_fv(battery_soc_target)}%"
         )
     if inverter_max_power or inverter_max_power_per_phase:
@@ -634,13 +694,31 @@ def run_hub_calculation(sensor):
 
     charger_targets = {c.charger_id: c.allocated_current for c in site.chargers}
     charger_available = {c.charger_id: c.available_current for c in site.chargers}
+    charger_names = {c.charger_id: c.entity_id for c in site.chargers}
+
+    # --- Auto-detection (inversion + phase mapping) ---
+    auto_detect_state = hub_runtime.setdefault("_auto_detect", {})
+    auto_notifications = []
+    inv_notif = check_inversion(
+        auto_detect_state, smoothed_phases, site.chargers,
+        hub_entry.entry_id, get_entry_value(hub_entry, CONF_NAME, "Hub"),
+    )
+    if inv_notif:
+        auto_notifications.append(inv_notif)
+    if get_entry_value(hub_entry, CONF_AUTO_DETECT_PHASE_MAPPING, False):
+        auto_notifications.extend(
+            check_phase_mapping(
+                auto_detect_state, smoothed_phases, site.chargers,
+                hub_entry.entry_id,
+            )
+        )
 
     # --- Build result ---
     return _build_hub_result(
         site, raw_phases, voltage, main_breaker_rating,
-        total_export_current, total_export_power,
         battery_soc, battery_soc_min, battery_max_discharge_power,
-        battery_power, charger_targets, charger_available, plug_auto_power,
+        battery_power, charger_targets, charger_available, charger_names,
+        plug_auto_power, auto_notifications,
     )
 
 

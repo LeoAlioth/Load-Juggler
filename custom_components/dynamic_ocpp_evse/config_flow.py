@@ -12,6 +12,7 @@ from .detection_patterns import (
     PHASE_PATTERNS, INVERTER_OUTPUT_PATTERNS,
     BATTERY_SOC_PATTERNS, BATTERY_POWER_PATTERNS, SOLAR_PRODUCTION_PATTERNS,
     BATTERY_MAX_CHARGE_POWER_PATTERNS, BATTERY_MAX_DISCHARGE_POWER_PATTERNS,
+    PLUG_POWER_MONITOR_PATTERNS,
 )
 from .helpers import normalize_optional_entity, prettify_name, validate_charger_settings
 
@@ -41,10 +42,15 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def _optional_entity_field(key: str, default_val):
-        """Create vol.Optional with default only when a valid entity ID exists."""
+        """Create vol.Optional with suggested_value so the user can truly clear it.
+
+        Using suggested_value instead of default lets the entity selector
+        be cleared with X — vol.Optional(default=...) would silently
+        re-fill the default on clear.
+        """
         val = normalize_optional_entity(default_val)
         if val:
-            return vol.Optional(key, default=val)
+            return vol.Optional(key, description={"suggested_value": val})
         return vol.Optional(key)
 
     def _build_hub_grid_schema(self, defaults: dict | None = None) -> list[tuple]:
@@ -93,6 +99,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SITE_UPDATE_FREQUENCY,
                 default=defaults.get(CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY),
             ), selector({"number": {"min": 1, "max": 60, "step": 1, "mode": "box", "unit_of_measurement": "s"}})),
+            (vol.Required(
+                CONF_AUTO_DETECT_PHASE_MAPPING,
+                default=defaults.get(CONF_AUTO_DETECT_PHASE_MAPPING, False),
+            ), bool),
         ]
 
     def _build_hub_battery_schema(self, defaults: dict | None = None) -> list[tuple]:
@@ -556,6 +566,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_INVERT_PHASES: False,
                 CONF_PHASE_VOLTAGE: DEFAULT_PHASE_VOLTAGE,
                 CONF_EXCESS_EXPORT_THRESHOLD: DEFAULT_EXCESS_EXPORT_THRESHOLD,
+                CONF_AUTO_DETECT_PHASE_MAPPING: False,
             })
             
         except Exception as e:
@@ -793,6 +804,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_PLUG_POWER_RATING: DEFAULT_PLUG_POWER_RATING,
             CONF_CONNECTED_TO_PHASE: "A",
             CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+            CONF_PLUG_POWER_MONITOR_ENTITY_ID: self._auto_detect_entity(PLUG_POWER_MONITOR_PATTERNS),
         })
         # Merge both schemas
         combined = vol.Schema({**name_schema.schema, **plug_fields.schema})
@@ -964,6 +976,59 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _LOGGER.warning("Could not detect charge rate unit via OCPP: %s", e)
             return None
 
+    async def _detect_meter_value_interval(self, ocpp_device_id: str) -> int | None:
+        """Detect the MeterValueSampleInterval from the OCPP charger.
+
+        This tells us how often the charger reports meter values, which is the
+        practical minimum interval for sending charging profile updates.
+
+        Returns:
+            Interval in seconds, or None if detection fails.
+        """
+        if not ocpp_device_id:
+            return None
+
+        if not self.hass.services.has_service("ocpp", "get_configuration"):
+            return None
+
+        try:
+            response = await self.hass.services.async_call(
+                "ocpp",
+                "get_configuration",
+                {
+                    "devid": ocpp_device_id,
+                    "ocpp_key": "MeterValueSampleInterval",
+                },
+                blocking=True,
+                return_response=True,
+            )
+
+            if not response:
+                return None
+
+            value = None
+            if isinstance(response, dict):
+                value = response.get("MeterValueSampleInterval")
+                if value is None:
+                    value = response.get("value")
+                if value is None:
+                    for item in response.get("configurationKey", []):
+                        if isinstance(item, dict) and item.get("key") == "MeterValueSampleInterval":
+                            value = item.get("value")
+                            break
+
+            if value is None:
+                return None
+
+            interval = int(value)
+            _LOGGER.info("OCPP MeterValueSampleInterval = %ds", interval)
+            # Clamp to our supported range (5–300s)
+            return max(5, min(300, interval))
+
+        except Exception as e:
+            _LOGGER.debug("Could not detect MeterValueSampleInterval via OCPP: %s", e)
+            return None
+
     async def async_step_charger_info(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
@@ -1043,9 +1108,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Charger step 3c: Units and timing configuration (final — creates entry)."""
         errors: dict[str, str] = {}
 
-        # Detect charge rate unit via OCPP
+        # Detect charger capabilities via OCPP
         ocpp_device_id = self._selected_charger.get("device_id")
         detected_unit = await self._detect_charge_rate_unit(ocpp_device_id)
+        detected_interval = await self._detect_meter_value_interval(ocpp_device_id)
 
         if user_input is not None:
             self._data.update(user_input)
@@ -1082,7 +1148,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data_schema = self._charger_timing_schema(
             {
                 CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
-                CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+                CONF_UPDATE_FREQUENCY: detected_interval or DEFAULT_UPDATE_FREQUENCY,
                 CONF_OCPP_PROFILE_TIMEOUT: DEFAULT_OCPP_PROFILE_TIMEOUT,
                 CONF_CHARGE_PAUSE_DURATION: DEFAULT_CHARGE_PAUSE_DURATION,
                 CONF_STACK_LEVEL: DEFAULT_STACK_LEVEL,
@@ -1383,6 +1449,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="hub_grid",
             data_schema=f._hub_grid_schema(defaults),
             errors=errors,
+            last_step=False,
         )
 
     async def async_step_hub_inverter(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1431,6 +1498,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             data_schema=f._hub_inverter_schema(inverter_defaults),
             errors=errors,
             description_placeholders={"battery_power_hint": hint_text},
+            last_step=False,
         )
 
     async def async_step_hub(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1471,6 +1539,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="hub",
             data_schema=f._hub_battery_schema(defaults),
             errors=errors,
+            last_step=True,
         )
 
     async def async_step_charger(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1492,6 +1561,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="charger",
             data_schema=data_schema,
             errors=errors,
+            last_step=False,
         )
 
     async def async_step_charger_current(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1516,6 +1586,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
                     step_id="charger_current",
                     data_schema=f._charger_current_schema(self._data, hub_phases=hub_phases),
                     errors=errors,
+                    last_step=False,
                 )
             return await self.async_step_charger_timing()
 
@@ -1523,6 +1594,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="charger_current",
             data_schema=f._charger_current_schema(defaults, hub_phases=hub_phases),
             errors=errors,
+            last_step=False,
         )
 
     async def async_step_charger_timing(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1545,6 +1617,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="charger_timing",
             data_schema=f._charger_timing_schema(defaults, detected_unit=detected_unit),
             errors=errors,
+            last_step=True,
         )
 
     async def async_step_plug(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1564,5 +1637,6 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             step_id="plug",
             data_schema=f._plug_schema(defaults),
             errors=errors,
+            last_step=True,
         )
 

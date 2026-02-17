@@ -150,7 +150,9 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         self._prev_distribution_mode = None
         self._last_set_current = 0
         self._last_set_power = None
-        self._last_commanded_limit = None  # Amps, after rate-limiting (for ramp + compliance)
+        self._ema_current = None             # EMA-smoothed engine output
+        self._rate_limited_current = None   # Final output (after EMA + dead band + rate limit)
+        self._last_commanded_limit = None   # Amps actually sent to charger (for compliance check)
         self._last_command_time: float = -float('inf')  # monotonic time of last OCPP/plug command
         self._mismatch_count = 0           # consecutive non-compliant cycles
         self._last_auto_reset_at = None    # datetime of last auto-reset
@@ -362,19 +364,22 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         self._last_command_time = now_mono
 
     async def _send_ocpp_command(self, limit: float, hub_entry, dynamic_control_on: bool, now_mono: float) -> None:
-        """Send OCPP charging profile to an EVSE charger."""
-        # Rate-limit current changes (only when actively charging both cycles)
-        if self._last_commanded_limit is not None and self._last_commanded_limit > 0 and limit > 0:
-            update_freq = get_entry_value(self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
-            max_up = RAMP_UP_RATE * update_freq
-            max_down = RAMP_DOWN_RATE * update_freq
-            delta = limit - self._last_commanded_limit
-            if delta > max_up:
-                limit = round(self._last_commanded_limit + max_up, 1)
-                _LOGGER.debug("Rate-limited ramp UP for %s: %.1fA (max +%.1fA/cycle)", self._attr_name, limit, max_up)
-            elif delta < -max_down:
-                limit = round(self._last_commanded_limit - max_down, 1)
-                _LOGGER.debug("Rate-limited ramp DOWN for %s: %.1fA (max -%.1fA/cycle)", self._attr_name, limit, max_down)
+        """Send OCPP charging profile to an EVSE charger.
+
+        Rate limiting is already applied at the allocated current level
+        (in async_update), so `limit` arrives pre-smoothed.
+        """
+        # Skip OCPP commands for non-chargeable connector states
+        connector_state = self.hass.states.get(self._connector_status_entity)
+        connector_status = connector_state.state if connector_state else "unknown"
+        if connector_status in ("Finishing", "Faulted"):
+            _LOGGER.debug(
+                "Skipping OCPP command for %s — connector is %s",
+                self._attr_name, connector_status,
+            )
+            self._last_update = datetime.now(timezone.utc)
+            self._last_command_time = now_mono
+            return
 
         # Check if charger is following our profiles (auto-reset detection)
         await self._check_profile_compliance(limit, dynamic_control_on)
@@ -519,22 +524,38 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             
             # Calculate total available current at hub level
             hub_data = run_hub_calculation(self)
-            
+
+            # Fire auto-detection notifications (inversion, phase mapping)
+            for notif in hub_data.get("auto_detect_notifications", []):
+                await self.hass.services.async_call(
+                    "persistent_notification", "create",
+                    {
+                        "title": notif["title"],
+                        "message": notif["message"],
+                        "notification_id": notif["notification_id"],
+                    },
+                )
+                _LOGGER.warning("AutoDetect notification: %s", notif["notification_id"])
+
             # Store charger-level calculation results
             self._phases = hub_data.get(CONF_PHASES)
             self._charging_mode = hub_data.get(CONF_CHARGING_MODE)
             current_distribution_mode = hub_data.get("distribution_mode")
 
+            # Detect mode changes — used to cancel pause AND bypass rate limiting
+            mode_changed = (
+                (self._prev_charging_mode is not None and self._charging_mode != self._prev_charging_mode) or
+                (self._prev_distribution_mode is not None and current_distribution_mode != self._prev_distribution_mode)
+            )
+
             # Cancel charge pause when user changes charging or distribution mode
-            if self._pause_started_at is not None:
-                if (self._prev_charging_mode is not None and self._charging_mode != self._prev_charging_mode) or \
-                   (self._prev_distribution_mode is not None and current_distribution_mode != self._prev_distribution_mode):
-                    _LOGGER.info(
-                        "Mode changed for %s (charging: %s→%s, distribution: %s→%s) — cancelling charge pause",
-                        self._attr_name, self._prev_charging_mode, self._charging_mode,
-                        self._prev_distribution_mode, current_distribution_mode,
-                    )
-                    self._pause_started_at = None
+            if self._pause_started_at is not None and mode_changed:
+                _LOGGER.info(
+                    "Mode changed for %s (charging: %s→%s, distribution: %s→%s) — cancelling charge pause",
+                    self._attr_name, self._prev_charging_mode, self._charging_mode,
+                    self._prev_distribution_mode, current_distribution_mode,
+                )
+                self._pause_started_at = None
 
             self._prev_charging_mode = self._charging_mode
             self._prev_distribution_mode = current_distribution_mode
@@ -546,7 +567,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             self._target_evse_eco = hub_data.get("target_evse_eco")
             self._target_evse_solar = hub_data.get("target_evse_solar")
             self._target_evse_excess = hub_data.get("target_evse_excess")
-            
+
             if "excess_charge_start_time" in hub_data:
                 self._excess_charge_start_time = hub_data["excess_charge_start_time"]
             else:
@@ -563,23 +584,19 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                 "battery_soc_min": hub_data.get("battery_soc_min"),
                 "battery_soc_target": hub_data.get("battery_soc_target"),
                 "battery_power": hub_data.get("battery_power"),
+                # Available per-phase current (A)
+                "available_current_a": hub_data.get("available_current_a"),
+                "available_current_b": hub_data.get("available_current_b"),
+                "available_current_c": hub_data.get("available_current_c"),
+                # Current power readings
+                "grid_power": hub_data.get("grid_power"),
+                "solar_power": hub_data.get("solar_power"),
+                # Available power breakdown
+                "available_grid_power": hub_data.get("available_grid_power"),
+                "available_solar_power": hub_data.get("available_solar_power"),
                 "available_battery_power": hub_data.get("available_battery_power"),
-                # Site available per-phase current (A)
-                "site_available_current_phase_a": hub_data.get("site_available_current_phase_a"),
-                "site_available_current_phase_b": hub_data.get("site_available_current_phase_b"),
-                "site_available_current_phase_c": hub_data.get("site_available_current_phase_c"),
-                # Site battery available power (W)
-                "site_battery_available_power": hub_data.get("site_battery_available_power"),
-                # Site grid available power (W)
-                "site_grid_available_power": hub_data.get("site_grid_available_power"),
-                # Total site available power (W) - grid + battery
                 "total_site_available_power": hub_data.get("total_site_available_power"),
-                # NEW: Site power balance
                 "total_evse_power": hub_data.get("total_evse_power"),
-                "net_site_consumption": hub_data.get("net_site_consumption"),
-                # Solar surplus
-                "solar_surplus_power": hub_data.get("solar_surplus_power"),
-                "solar_surplus_current": hub_data.get("solar_surplus_current"),
                 "last_update": datetime.now(timezone.utc),
             }
 
@@ -588,14 +605,52 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             charger_targets = hub_data.get("charger_targets", {})
 
             if charger_targets:
+                charger_names = hub_data.get("charger_names", {})
                 _LOGGER.debug("Charger targets: %s", ", ".join(
-                    [f"{k[-8:]}: {v:.1f}A" for k, v in charger_targets.items()]
+                    [f"{charger_names.get(k, k[-8:])}: {v:.1f}A" for k, v in charger_targets.items()]
                 ))
 
-            # Get this charger's allocated and available current from engine output
-            charger_available = hub_data.get("charger_available", {})
-            self._allocated_current = round(charger_targets.get(self.config_entry.entry_id, 0), 1)
-            self._state = round(charger_available.get(self.config_entry.entry_id, self._allocated_current), 1)
+            # Get this charger's raw allocated current from engine output
+            raw_allocated = round(charger_targets.get(self.config_entry.entry_id, 0), 1)
+
+            # --- Smoothing pipeline: EMA → dead band → rate limit ---
+            # On mode change or first run: reset and pass through immediately.
+            if mode_changed or self._ema_current is None:
+                self._ema_current = raw_allocated
+                self._rate_limited_current = raw_allocated
+                if mode_changed:
+                    _LOGGER.debug("Mode changed for %s — smoothing reset (allocated=%.1fA)",
+                                  self._attr_name, raw_allocated)
+            elif raw_allocated == 0 or self._rate_limited_current == 0:
+                # Transitions to/from zero pass through immediately (pause/resume)
+                self._ema_current = raw_allocated
+                self._rate_limited_current = raw_allocated
+            else:
+                # Step 1: EMA smoothing on the raw engine output
+                self._ema_current = round(EMA_ALPHA * raw_allocated + (1 - EMA_ALPHA) * self._ema_current, 2)
+
+                # Step 2: Dead band (Schmitt trigger) — ignore small oscillations
+                if abs(self._ema_current - self._rate_limited_current) < DEAD_BAND:
+                    pass  # Keep current value, skip rate limiter
+                else:
+                    # Step 3: Rate limiter — clamp the change per cycle
+                    site_freq = get_entry_value(hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY)
+                    max_up = RAMP_UP_RATE * site_freq
+                    max_down = RAMP_DOWN_RATE * site_freq
+                    target = self._ema_current
+                    delta = target - self._rate_limited_current
+                    if delta > max_up:
+                        target = self._rate_limited_current + max_up
+                        _LOGGER.debug("Ramp UP for %s: %.1fA → %.1fA (ema=%.1fA, max +%.1fA/cycle)",
+                                      self._attr_name, self._rate_limited_current, target, self._ema_current, max_up)
+                    elif delta < -max_down:
+                        target = self._rate_limited_current - max_down
+                        _LOGGER.debug("Ramp DOWN for %s: %.1fA → %.1fA (ema=%.1fA, max -%.1fA/cycle)",
+                                      self._attr_name, self._rate_limited_current, target, self._ema_current, max_down)
+                    self._rate_limited_current = round(target, 1)
+
+            self._allocated_current = self._rate_limited_current
+            self._state = self._rate_limited_current
 
             # Update global allocations so the allocated current sensor can read them
             if DOMAIN not in self.hass.data:
@@ -839,7 +894,25 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_battery": True,
     },
     {
-        "name_suffix": "Battery Power",
+        "name_suffix": "Current Grid Power",
+        "unique_id_suffix": "net_site_consumption",
+        "hub_data_key": "grid_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:home-lightning-bolt-outline",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Current Solar Power",
+        "unique_id_suffix": "solar_power",
+        "hub_data_key": "solar_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:solar-power-variant",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Current Battery Power",
         "unique_id_suffix": "battery_power",
         "hub_data_key": "battery_power",
         "unit": "W",
@@ -849,46 +922,18 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_battery": True,
     },
     {
-        "name_suffix": "Available Battery Power",
-        "unique_id_suffix": "available_battery_power",
-        "hub_data_key": "available_battery_power",
-        "unit": "W",
-        "device_class": "power",
-        "icon": "mdi:battery-high",
-        "decimals": 0,
-        "requires_battery": True,
-    },
-    {
-        "name_suffix": "Total Site Available Power",
-        "unique_id_suffix": "total_site_available_power",
-        "hub_data_key": "total_site_available_power",
-        "unit": "W",
-        "device_class": "power",
-        "icon": "mdi:home-lightning-bolt",
-        "decimals": 0,
-    },
-    {
-        "name_suffix": "Net Site Consumption",
-        "unique_id_suffix": "net_site_consumption",
-        "hub_data_key": "net_site_consumption",
-        "unit": "W",
-        "device_class": "power",
-        "icon": "mdi:home-lightning-bolt-outline",
-        "decimals": 0,
-    },
-    {
-        "name_suffix": "Site Available Current Phase A",
+        "name_suffix": "Available Current A",
         "unique_id_suffix": "site_available_current_phase_a",
-        "hub_data_key": "site_available_current_phase_a",
+        "hub_data_key": "available_current_a",
         "unit": "A",
         "device_class": "current",
         "icon": "mdi:current-ac",
         "decimals": 1,
     },
     {
-        "name_suffix": "Site Available Current Phase B",
+        "name_suffix": "Available Current B",
         "unique_id_suffix": "site_available_current_phase_b",
-        "hub_data_key": "site_available_current_phase_b",
+        "hub_data_key": "available_current_b",
         "unit": "A",
         "device_class": "current",
         "icon": "mdi:current-ac",
@@ -896,9 +941,9 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_phase": "B",
     },
     {
-        "name_suffix": "Site Available Current Phase C",
+        "name_suffix": "Available Current C",
         "unique_id_suffix": "site_available_current_phase_c",
-        "hub_data_key": "site_available_current_phase_c",
+        "hub_data_key": "available_current_c",
         "unit": "A",
         "device_class": "current",
         "icon": "mdi:current-ac",
@@ -906,23 +951,32 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_phase": "C",
     },
     {
-        "name_suffix": "Site Battery Available Power",
-        "unique_id_suffix": "site_battery_available_power",
-        "hub_data_key": "site_battery_available_power",
+        "name_suffix": "Available Grid Power",
+        "unique_id_suffix": "site_grid_available_power",
+        "hub_data_key": "available_grid_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:transmission-tower",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Available Solar Power",
+        "unique_id_suffix": "solar_available_power",
+        "hub_data_key": "available_solar_power",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:solar-power",
+        "decimals": 0,
+    },
+    {
+        "name_suffix": "Available Battery Power",
+        "unique_id_suffix": "battery_available_power",
+        "hub_data_key": "available_battery_power",
         "unit": "W",
         "device_class": "power",
         "icon": "mdi:battery-arrow-up",
         "decimals": 0,
         "requires_battery": True,
-    },
-    {
-        "name_suffix": "Site Grid Available Power",
-        "unique_id_suffix": "site_grid_available_power",
-        "hub_data_key": "site_grid_available_power",
-        "unit": "W",
-        "device_class": "power",
-        "icon": "mdi:transmission-tower",
-        "decimals": 0,
     },
     {
         "name_suffix": "Total EVSE Power",
@@ -932,24 +986,6 @@ HUB_SENSOR_DEFINITIONS = [
         "device_class": "power",
         "icon": "mdi:ev-station",
         "decimals": 0,
-    },
-    {
-        "name_suffix": "Solar Surplus Power",
-        "unique_id_suffix": "solar_surplus_power",
-        "hub_data_key": "solar_surplus_power",
-        "unit": "W",
-        "device_class": "power",
-        "icon": "mdi:solar-power",
-        "decimals": 0,
-    },
-    {
-        "name_suffix": "Solar Surplus Current",
-        "unique_id_suffix": "solar_surplus_current",
-        "hub_data_key": "solar_surplus_current",
-        "unit": "A",
-        "device_class": "current",
-        "icon": "mdi:solar-power-variant",
-        "decimals": 2,
     },
 ]
 

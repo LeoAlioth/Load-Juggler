@@ -321,9 +321,9 @@ async def test_calculate_available_current_reads_ha_entities(
     )
 
     # Grid importing ~5A/phase with 25A breaker → ~20A available per phase
-    assert result.get("site_available_current_phase_a") == 20.0
-    assert result.get("site_available_current_phase_b") == 20.5
-    assert result.get("site_available_current_phase_c") == 21.2
+    assert result.get("available_current_a") == 20.0
+    assert result.get("available_current_b") == 20.5
+    assert result.get("available_current_c") == 21.2
 
     # Charger targets should contain our charger with a real allocation
     charger_targets = result.get("charger_targets", {})
@@ -432,8 +432,8 @@ async def test_hub_data_sensor_reads_values(
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         await charger_sensor.async_update()
 
-    # Create a hub data sensor for "total_site_available_power"
-    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "total_site_available_power")
+    # Create a hub data sensor for "grid_power"
+    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
     data_sensor = DynamicOcppEvseHubDataSensor(hass, hub_entry, "Test Hub", "test_hub", defn)
     await data_sensor.async_update()
 
@@ -782,15 +782,17 @@ async def test_result_dict_all_keys_populated(
         "battery_soc_target",
         "battery_power",
         "available_battery_power",
-        "site_available_current_phase_a",
-        "site_available_current_phase_b",
-        "site_available_current_phase_c",
+        "available_current_a",
+        "available_current_b",
+        "available_current_c",
         "total_site_available_power",
-        "net_site_consumption",
-        "site_grid_available_power",
-        "site_battery_available_power",
+        "grid_power",
+        "available_grid_power",
         "total_evse_power",
+        "solar_power",
+        "available_solar_power",
         "charger_targets",
+        "charger_names",
         "distribution_mode",
     }
 
@@ -829,16 +831,16 @@ async def test_result_dict_values_are_reasonable(
     # --- Grid / phase values ---
     assert result[CONF_PHASES] == 3
     # Importing ~5A/phase with 25A breaker → ~20A available per phase
-    assert result["site_available_current_phase_a"] == 20.0
-    assert result["site_available_current_phase_b"] == 20.5
-    assert result["site_available_current_phase_c"] == 21.2
+    assert result["available_current_a"] == 20.0
+    assert result["available_current_b"] == 20.5
+    assert result["available_current_c"] == 21.2
     # Total site available: (20 + 20.5 + 21.2) * 230 ≈ 14191W
     assert result["total_site_available_power"] > 14000
     # Net consumption: (5.0 + 4.5 + 3.8) * 230 ≈ 3059W
-    assert 3000 < result["net_site_consumption"] < 3200
+    assert 3000 < result["grid_power"] < 3200
     # Grid headroom (same as available since no export):
     # (25-5)*230 + (25-4.5)*230 + (25-3.8)*230 = 4600 + 4715 + 4876 = 14191
-    assert result["site_grid_available_power"] > 14000
+    assert result["available_grid_power"] > 14000
     # --- Battery ---
     assert result["battery_soc"] == 80.0
     assert result["battery_power"] == -500.0  # charging at 500W
@@ -846,7 +848,6 @@ async def test_result_dict_values_are_reasonable(
     assert result["battery_soc_target"] == 90.0
     # SOC 80% >= min 20% and battery_max_discharge = 5000 → available
     assert result["available_battery_power"] == 5000
-    assert result["site_battery_available_power"] == 5000
 
     # --- EVSE ---
     # Charger drawing 10A on L1 → 10 * 230 = 2300W
@@ -947,20 +948,26 @@ async def test_rate_limit_ramp_up_capped(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that ramp-up is capped at RAMP_UP_RATE * update_frequency per cycle.
+    """Test that ramp-up is capped by the smoothing pipeline (EMA + dead band + rate limit).
 
-    With update_frequency=15s and RAMP_UP_RATE=0.1 A/s, max ramp-up is 1.5A.
-    If previous limit was 6A and engine wants 16A, the profile should be 7.5A.
+    With EMA_ALPHA=0.3, DEAD_BAND=0.3, site_update_frequency=2s, RAMP_UP_RATE=0.1 A/s:
+    - Previous output was 6A, engine wants 16A.
+    - EMA: 0.3*16 + 0.7*6 = 9.0A
+    - Dead band: |9.0 - 6.0| = 3.0 > 0.3 → passes
+    - Rate limit: max_up = 0.1 * 2 = 0.2A → capped at 6.2A
     """
-    from custom_components.dynamic_ocpp_evse.const import RAMP_UP_RATE
+    from custom_components.dynamic_ocpp_evse.const import RAMP_UP_RATE, DEFAULT_SITE_UPDATE_FREQUENCY
 
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
-    # Simulate previous cycle sent 6A
-    sensor._last_commanded_limit = 6.0
+    # Simulate previous cycle had output at 6A
+    sensor._ema_current = 6.0
+    sensor._rate_limited_current = 6.0
+    sensor._prev_charging_mode = "Standard"
+    sensor._prev_distribution_mode = "Priority"
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
         await sensor.async_update()
@@ -973,8 +980,8 @@ async def test_rate_limit_ramp_up_capped(
         profile = ocpp_calls[0][0][2]["custom_profile"]
         limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
 
-        # Engine would allocate 16A (max), but rate limit caps at 6 + 1.5 = 7.5A
-        max_allowed = 6.0 + RAMP_UP_RATE * 15
+        # Engine would allocate 16A (max), but smoothing pipeline caps the change
+        max_allowed = 6.0 + RAMP_UP_RATE * DEFAULT_SITE_UPDATE_FREQUENCY
         assert limit <= max_allowed, (
             f"Rate-limited ramp-up should be <= {max_allowed}A, got {limit}A"
         )
@@ -987,24 +994,24 @@ async def test_rate_limit_ramp_down_capped(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that ramp-down is capped at RAMP_DOWN_RATE * update_frequency per cycle.
+    """Test that ramp-down is capped by the smoothing pipeline.
 
-    With update_frequency=15s and RAMP_DOWN_RATE=0.2 A/s, max ramp-down is 3.0A.
-    If previous limit was 16A and engine wants 6A, the profile should be 13A.
+    Previous output was 16A, engine wants 6A (Eco min).
+    EMA pulls toward 6A, dead band passes, rate limit caps the per-cycle drop.
     """
-    from custom_components.dynamic_ocpp_evse.const import RAMP_DOWN_RATE
+    from custom_components.dynamic_ocpp_evse.const import RAMP_DOWN_RATE, DEFAULT_SITE_UPDATE_FREQUENCY
 
     _set_ha_states(hass, hub_entry)
-    # Switch to Solar mode with grid importing — engine will want 0A (no surplus)
-    # But we need it to want *some* current below 16A, so use Standard with low breaker
-    # Actually simpler: just set _last_commanded_limit high
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
-    # Simulate previous cycle sent 16A, but engine wants much less
-    sensor._last_commanded_limit = 16.0
+    # Simulate previous cycle had output at 16A
+    sensor._ema_current = 16.0
+    sensor._rate_limited_current = 16.0
+    sensor._prev_charging_mode = "Eco"
+    sensor._prev_distribution_mode = "Priority"
 
-    # Override to Eco mode with battery SOC below target — gives min_current (6A)
+    # Eco mode with battery SOC below target — engine gives min_current (6A)
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Eco"
     hass.states.async_set("sensor.battery_soc", "50")
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["battery_soc_target"] = 90
@@ -1020,8 +1027,8 @@ async def test_rate_limit_ramp_down_capped(
         profile = ocpp_calls[0][0][2]["custom_profile"]
         limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
 
-        # Engine wants 6A (eco min), but ramp-down caps at 16 - 3 = 13A
-        min_allowed = 16.0 - RAMP_DOWN_RATE * 15
+        # Engine wants 6A (eco min), but ramp-down caps the per-cycle drop
+        min_allowed = 16.0 - RAMP_DOWN_RATE * DEFAULT_SITE_UPDATE_FREQUENCY
         assert limit >= min_allowed, (
             f"Rate-limited ramp-down should be >= {min_allowed}A, got {limit}A"
         )
@@ -1034,18 +1041,19 @@ async def test_rate_limit_not_applied_on_resume_from_pause(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that rate limiting is NOT applied when resuming from pause (0 → N).
+    """Test that smoothing is NOT applied when resuming from pause (0 → N).
 
-    When _last_commanded_limit is 0 (pause), the charger should jump directly
-    to the calculated value without rate limiting.
+    When _rate_limited_current is 0 (pause), the charger should jump directly
+    to the calculated value without any smoothing or rate limiting.
     """
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
-    # Simulate coming out of pause
-    sensor._last_commanded_limit = 0.0
+    # Simulate coming out of pause — both EMA and rate_limited are 0
+    sensor._ema_current = 0.0
+    sensor._rate_limited_current = 0.0
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
         await sensor.async_update()
@@ -1058,9 +1066,9 @@ async def test_rate_limit_not_applied_on_resume_from_pause(
         profile = ocpp_calls[0][0][2]["custom_profile"]
         limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
 
-        # Should jump directly to full allocation (16A max), not be rate-limited
+        # Should jump directly to full allocation (16A max), not be smoothed
         assert limit > 1.5, (
-            f"Resume from pause should NOT rate-limit, got {limit}A (would be 1.5 if limited)"
+            f"Resume from pause should NOT rate-limit, got {limit}A (would be tiny if limited)"
         )
 
 
@@ -1240,12 +1248,12 @@ async def test_feedback_loop_subtracts_charger_draw_from_consumption(
         f"With feedback loop fix, charger should get full 16A (max), got {target}A"
     )
 
-    # NOTE: The hub sensor display values (site_available_current_phase_a etc.)
+    # NOTE: The hub sensor display values (available_current_a etc.)
     # use the raw grid readings, NOT the adjusted consumption. This is intentional:
     # the display shows actual grid state, the engine uses adjusted values.
-    assert result["site_available_current_phase_a"] == 20.0
-    assert result["site_available_current_phase_b"] == 20.5
-    assert result["site_available_current_phase_c"] == 21.2
+    assert result["available_current_a"] == 20.0
+    assert result["available_current_b"] == 20.5
+    assert result["available_current_c"] == 21.2
 
 
 async def test_feedback_loop_with_constrained_breaker(
@@ -1294,9 +1302,9 @@ async def test_feedback_loop_with_constrained_breaker(
     )
 
     # Verify the display values still use raw readings (not adjusted)
-    assert result["site_available_current_phase_a"] == 20.0
-    assert result["site_available_current_phase_b"] == 20.5
-    assert result["site_available_current_phase_c"] == 21.2
+    assert result["available_current_a"] == 20.0
+    assert result["available_current_b"] == 20.5
+    assert result["available_current_c"] == 21.2
 
 
 async def test_charge_pause_cancelled_on_charging_mode_change(
