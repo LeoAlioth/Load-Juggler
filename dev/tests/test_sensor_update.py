@@ -432,8 +432,8 @@ async def test_hub_data_sensor_reads_values(
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         await charger_sensor.async_update()
 
-    # Create a hub data sensor for "total_site_available_power"
-    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "total_site_available_power")
+    # Create a hub data sensor for "net_site_consumption"
+    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "net_site_consumption")
     data_sensor = DynamicOcppEvseHubDataSensor(hass, hub_entry, "Test Hub", "test_hub", defn)
     await data_sensor.async_update()
 
@@ -781,15 +781,15 @@ async def test_result_dict_all_keys_populated(
         "battery_soc_min",
         "battery_soc_target",
         "battery_power",
-        "available_battery_power",
+        "battery_available_power",
         "site_available_current_phase_a",
         "site_available_current_phase_b",
         "site_available_current_phase_c",
         "total_site_available_power",
         "net_site_consumption",
         "site_grid_available_power",
-        "site_battery_available_power",
         "total_evse_power",
+        "solar_available_power",
         "charger_targets",
         "distribution_mode",
     }
@@ -845,8 +845,7 @@ async def test_result_dict_values_are_reasonable(
     assert result["battery_soc_min"] is not None
     assert result["battery_soc_target"] == 90.0
     # SOC 80% >= min 20% and battery_max_discharge = 5000 → available
-    assert result["available_battery_power"] == 5000
-    assert result["site_battery_available_power"] == 5000
+    assert result["battery_available_power"] == 5000
 
     # --- EVSE ---
     # Charger drawing 10A on L1 → 10 * 230 = 2300W
@@ -947,20 +946,23 @@ async def test_rate_limit_ramp_up_capped(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that ramp-up is capped at RAMP_UP_RATE * update_frequency per cycle.
+    """Test that ramp-up is capped at RAMP_UP_RATE * site_update_frequency per cycle.
 
-    With update_frequency=15s and RAMP_UP_RATE=0.1 A/s, max ramp-up is 1.5A.
-    If previous limit was 6A and engine wants 16A, the profile should be 7.5A.
+    With site_update_frequency=5s and RAMP_UP_RATE=0.1 A/s, max ramp-up is 0.5A.
+    If previous smoothed value was 6A and engine wants 16A, the allocated should be 6.5A.
     """
-    from custom_components.dynamic_ocpp_evse.const import RAMP_UP_RATE
+    from custom_components.dynamic_ocpp_evse.const import RAMP_UP_RATE, DEFAULT_SITE_UPDATE_FREQUENCY
 
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
-    # Simulate previous cycle sent 6A
-    sensor._last_commanded_limit = 6.0
+    # Simulate previous cycle had smoothed 6A
+    sensor._rate_limited_current = 6.0
+    # Need prev modes set so mode_changed = False
+    sensor._prev_charging_mode = "Standard"
+    sensor._prev_distribution_mode = "Priority"
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
         await sensor.async_update()
@@ -973,8 +975,8 @@ async def test_rate_limit_ramp_up_capped(
         profile = ocpp_calls[0][0][2]["custom_profile"]
         limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
 
-        # Engine would allocate 16A (max), but rate limit caps at 6 + 1.5 = 7.5A
-        max_allowed = 6.0 + RAMP_UP_RATE * 15
+        # Engine would allocate 16A (max), but rate limit caps at 6 + 0.5 = 6.5A
+        max_allowed = 6.0 + RAMP_UP_RATE * DEFAULT_SITE_UPDATE_FREQUENCY
         assert limit <= max_allowed, (
             f"Rate-limited ramp-up should be <= {max_allowed}A, got {limit}A"
         )
@@ -987,24 +989,24 @@ async def test_rate_limit_ramp_down_capped(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that ramp-down is capped at RAMP_DOWN_RATE * update_frequency per cycle.
+    """Test that ramp-down is capped at RAMP_DOWN_RATE * site_update_frequency per cycle.
 
-    With update_frequency=15s and RAMP_DOWN_RATE=0.2 A/s, max ramp-down is 3.0A.
-    If previous limit was 16A and engine wants 6A, the profile should be 13A.
+    With site_update_frequency=5s and RAMP_DOWN_RATE=0.2 A/s, max ramp-down is 1.0A.
+    If previous smoothed value was 16A and engine wants 6A, the allocated should be 15A.
     """
-    from custom_components.dynamic_ocpp_evse.const import RAMP_DOWN_RATE
+    from custom_components.dynamic_ocpp_evse.const import RAMP_DOWN_RATE, DEFAULT_SITE_UPDATE_FREQUENCY
 
     _set_ha_states(hass, hub_entry)
-    # Switch to Solar mode with grid importing — engine will want 0A (no surplus)
-    # But we need it to want *some* current below 16A, so use Standard with low breaker
-    # Actually simpler: just set _last_commanded_limit high
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
-    # Simulate previous cycle sent 16A, but engine wants much less
-    sensor._last_commanded_limit = 16.0
+    # Simulate previous cycle had smoothed 16A
+    sensor._rate_limited_current = 16.0
+    # Need prev modes set so mode_changed = False
+    sensor._prev_charging_mode = "Eco"
+    sensor._prev_distribution_mode = "Priority"
 
-    # Override to Eco mode with battery SOC below target — gives min_current (6A)
+    # Eco mode with battery SOC below target — engine gives min_current (6A)
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Eco"
     hass.states.async_set("sensor.battery_soc", "50")
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["battery_soc_target"] = 90
@@ -1020,8 +1022,8 @@ async def test_rate_limit_ramp_down_capped(
         profile = ocpp_calls[0][0][2]["custom_profile"]
         limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
 
-        # Engine wants 6A (eco min), but ramp-down caps at 16 - 3 = 13A
-        min_allowed = 16.0 - RAMP_DOWN_RATE * 15
+        # Engine wants 6A (eco min), but ramp-down caps at 16 - 1.0 = 15A
+        min_allowed = 16.0 - RAMP_DOWN_RATE * DEFAULT_SITE_UPDATE_FREQUENCY
         assert limit >= min_allowed, (
             f"Rate-limited ramp-down should be >= {min_allowed}A, got {limit}A"
         )
@@ -1036,7 +1038,7 @@ async def test_rate_limit_not_applied_on_resume_from_pause(
 ):
     """Test that rate limiting is NOT applied when resuming from pause (0 → N).
 
-    When _last_commanded_limit is 0 (pause), the charger should jump directly
+    When _rate_limited_current is 0 (pause), the charger should jump directly
     to the calculated value without rate limiting.
     """
     _set_ha_states(hass, hub_entry)
@@ -1044,8 +1046,8 @@ async def test_rate_limit_not_applied_on_resume_from_pause(
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
-    # Simulate coming out of pause
-    sensor._last_commanded_limit = 0.0
+    # Simulate coming out of pause — rate_limited_current is 0
+    sensor._rate_limited_current = 0.0
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
         await sensor.async_update()

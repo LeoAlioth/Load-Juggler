@@ -381,7 +381,6 @@ def _apply_feedback_loop(site, solar_is_derived, voltage):
 
 
 def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
-                      total_export_current, total_export_power,
                       battery_soc, battery_soc_min, battery_max_discharge_power,
                       battery_power, charger_targets, charger_available, plug_auto_power):
     """Build the result dict returned by run_hub_calculation."""
@@ -398,7 +397,7 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
         for r in raw_phases if r is not None
     )
 
-    # Grid available power
+    # Grid available power (based on consumption after feedback loop)
     grid_headroom = sum(
         max(0, main_breaker_rating - c) * voltage
         for c in (site.consumption.a, site.consumption.b, site.consumption.c) if c is not None
@@ -419,6 +418,17 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
     # Net site consumption
     net_consumption = sum(r for r in raw_phases if r is not None) * voltage
 
+    # Solar power available to chargers = solar production - household loads
+    # (household_consumption_total is set after feedback loop, so it excludes charger draws)
+    solar_available = 0
+    if site.solar_production_total and site.solar_production_total > 0:
+        household = getattr(site, 'household_consumption_total', None)
+        if household is not None:
+            solar_available = max(0, site.solar_production_total - household)
+        else:
+            # Derived solar mode: export IS the solar available (best approximation)
+            solar_available = max(0, site.solar_production_total)
+
     return {
         CONF_TOTAL_ALLOCATED_CURRENT: round(sum(charger_targets.values()), 1),
         CONF_PHASES: site.num_phases,
@@ -430,17 +440,15 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
         "battery_soc_min": site.battery_soc_min,
         "battery_soc_target": site.battery_soc_target,
         "battery_power": battery_power,
-        "available_battery_power": available_battery_power,
         "site_available_current_phase_a": available_per_phase[0],
         "site_available_current_phase_b": available_per_phase[1],
         "site_available_current_phase_c": available_per_phase[2],
         "total_site_available_power": round(total_site_available, 0),
         "net_site_consumption": round(net_consumption, 0),
         "site_grid_available_power": round(grid_headroom, 0),
-        "site_battery_available_power": available_battery_power,
+        "battery_available_power": available_battery_power,
         "total_evse_power": total_evse_power,
-        "solar_surplus_power": round(total_export_power, 0),
-        "solar_surplus_current": round(total_export_current, 2),
+        "solar_available_power": round(solar_available, 0),
 
         # Per-charger targets
         "charger_targets": charger_targets,
@@ -638,7 +646,6 @@ def run_hub_calculation(sensor):
     # --- Build result ---
     return _build_hub_result(
         site, raw_phases, voltage, main_breaker_rating,
-        total_export_current, total_export_power,
         battery_soc, battery_soc_min, battery_max_discharge_power,
         battery_power, charger_targets, charger_available, plug_auto_power,
     )

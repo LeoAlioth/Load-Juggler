@@ -62,6 +62,8 @@
 58. - [x] Deduplicate `async_added_to_hass` restore pattern via `_restore_and_publish_number()`
 59. - [x] Per-phase loops in `dynamic_ocpp_evse.py` (grid reads, feedback, headroom)
 60. - [x] Split `run_hub_calculation()` into subfunctions (~560→~170 lines)
+61. - [x] Move rate limiting from OCPP command to allocated current level (smooth sensor display, bypass on mode change)
+62. - [x] Hub sensor cleanup: Solar Surplus → Solar Available Power (production - household), remove Solar Surplus Current, deduplicate battery sensors
 
 ## In Progress
 
