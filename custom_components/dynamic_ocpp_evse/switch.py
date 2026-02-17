@@ -122,7 +122,7 @@ class DynamicControlSwitch(SwitchEntity, RestoreEntity):
     @property
     def device_info(self):
         device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
+        model = "Smart Load" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
         return {
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
             "name": self.config_entry.data.get(CONF_NAME),

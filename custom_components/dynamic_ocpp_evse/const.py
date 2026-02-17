@@ -66,7 +66,7 @@ CONF_OCPP_PROFILE_TIMEOUT = "ocpp_profile_timeout"
 CONF_CHARGE_PAUSE_DURATION = "charge_pause_duration"
 CONF_STACK_LEVEL = "stack_level"
 
-# Device type (charger-level) — EVSE (OCPP) or smart plug/relay
+# Device type (charger-level) — EVSE (OCPP) or smart load
 CONF_DEVICE_TYPE = "device_type"
 DEVICE_TYPE_EVSE = "evse"
 DEVICE_TYPE_PLUG = "plug"

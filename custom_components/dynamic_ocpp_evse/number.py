@@ -202,7 +202,7 @@ class EVSEMaxCurrentSlider(NumberEntity, RestoreEntity):
 
 
 class PlugDevicePowerSlider(NumberEntity, RestoreEntity):
-    """Slider for device power rating in Watts (smart plug devices).
+    """Slider for device power rating in Watts (smart load devices).
 
     The engine reads this entity's state to determine the plug's power draw
     for allocation calculations. When a power monitor is configured, the
@@ -233,7 +233,7 @@ class PlugDevicePowerSlider(NumberEntity, RestoreEntity):
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
             "name": self.config_entry.data.get(CONF_NAME),
             "manufacturer": "Dynamic OCPP EVSE",
-            "model": "Smart Plug",
+            "model": "Smart Load",
             "via_device": (DOMAIN, hub_entry.entry_id) if hub_entry else None,
         }
 

@@ -110,8 +110,8 @@
                 }
             },
             "plug_config": {
-                "title": "Smart Plug Configuration",
-                "description": "Configure settings for your smart plug or relay",
+                "title": "Smart Load Configuration",
+                "description": "Configure settings for your smart load device",
                 "data": {
                     "name": "Name for this device",
                     "entity_id": "Entity ID prefix",
@@ -164,9 +164,9 @@
                 "data_description": {
                     "evse_minimum_charge_current": "The lowest current your charger supports. Check your charger's manual — most chargers support 6A.",
                     "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual.",
-                    "charger_l1_phase": "Maps this charger's L1 terminal to a site phase. Most installations use the default A/B/C mapping. Only change if your electrician wired the charger differently.",
-                    "charger_l2_phase": "Maps this charger's L2 terminal to a site phase. Only change if your electrician wired the charger differently.",
-                    "charger_l3_phase": "Maps this charger's L3 terminal to a site phase. Only change if your electrician wired the charger differently."
+                    "charger_l1_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
+                    "charger_l2_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
+                    "charger_l3_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits."
                 }
             },
             "charger_timing": {
@@ -253,8 +253,8 @@
                 }
             },
             "reconfigure_plug": {
-                "title": "Reconfigure Smart Plug",
-                "description": "Update smart plug settings",
+                "title": "Reconfigure Smart Load",
+                "description": "Update smart load settings",
                 "data": {
                     "plug_switch_entity_id": "Switch entity that controls the plug on/off",
                     "plug_power_rating": "Power rating",
@@ -294,9 +294,9 @@
                 "data_description": {
                     "evse_minimum_charge_current": "The lowest current your charger supports. Check your charger's manual — most chargers support 6A.",
                     "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual.",
-                    "charger_l1_phase": "Maps this charger's L1 terminal to a site phase. Most installations use the default A/B/C mapping. Only change if your electrician wired the charger differently.",
-                    "charger_l2_phase": "Maps this charger's L2 terminal to a site phase. Only change if your electrician wired the charger differently.",
-                    "charger_l3_phase": "Maps this charger's L3 terminal to a site phase. Only change if your electrician wired the charger differently."
+                    "charger_l1_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
+                    "charger_l2_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
+                    "charger_l3_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits."
                 }
             },
             "reconfigure_charger_timing": {
@@ -398,8 +398,8 @@
                 }
             },
             "plug": {
-                "title": "Update Smart Plug Settings",
-                "description": "Update smart plug settings",
+                "title": "Update Smart Load Settings",
+                "description": "Update smart load settings",
                 "data": {
                     "plug_switch_entity_id": "Switch entity that controls the plug on/off",
                     "plug_power_rating": "Power rating",
@@ -439,9 +439,9 @@
                 "data_description": {
                     "evse_minimum_charge_current": "The lowest current your charger supports. Check your charger's manual — most chargers support 6A.",
                     "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual.",
-                    "charger_l1_phase": "Maps this charger's L1 terminal to a site phase. Most installations use the default A/B/C mapping. Only change if your electrician wired the charger differently.",
-                    "charger_l2_phase": "Maps this charger's L2 terminal to a site phase. Only change if your electrician wired the charger differently.",
-                    "charger_l3_phase": "Maps this charger's L3 terminal to a site phase. Only change if your electrician wired the charger differently."
+                    "charger_l1_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
+                    "charger_l2_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
+                    "charger_l3_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits."
                 }
             },
             "charger_timing": {

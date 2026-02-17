@@ -43,7 +43,7 @@ class ResetButton(ButtonEntity):
         from . import get_hub_for_charger
         hub_entry = get_hub_for_charger(self._hass, self._entry.entry_id)
         device_type = self._entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
+        model = "Smart Load" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
         return {
             "identifiers": {(DOMAIN, self._entry.entry_id)},
             "name": self._entry.data.get(CONF_NAME),

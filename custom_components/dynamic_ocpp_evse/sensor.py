@@ -161,7 +161,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
     def device_info(self):
         """Return device information about this charger."""
         device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
+        model = "Smart Load" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
         return {
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
             "name": self.config_entry.data.get(CONF_NAME),
@@ -339,21 +339,21 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 _LOGGER.error("Auto-reset service call failed for %s: %s", self._attr_name, e)
 
     async def _send_plug_command(self, limit: float, hub_data: dict, now_mono: float) -> None:
-        """Send on/off command to a smart plug / relay device."""
+        """Send on/off command to a smart load device."""
         plug_switch_entity = self.config_entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
         if not plug_switch_entity:
             _LOGGER.error(f"No switch entity configured for plug {self._attr_name}")
             return
 
         if limit > 0:
-            _LOGGER.debug(f"Smart plug {self._attr_name}: turning ON (limit={limit}A)")
+            _LOGGER.debug(f"Smart load {self._attr_name}: turning ON (limit={limit}A)")
             await self.hass.services.async_call(
                 "switch", "turn_on",
                 {"entity_id": plug_switch_entity},
                 blocking=False,
             )
         else:
-            _LOGGER.debug(f"Smart plug {self._attr_name}: turning OFF (limit=0)")
+            _LOGGER.debug(f"Smart load {self._attr_name}: turning OFF (limit=0)")
             await self.hass.services.async_call(
                 "switch", "turn_off",
                 {"entity_id": plug_switch_entity},
@@ -736,7 +736,7 @@ class DynamicOcppEvseAllocatedCurrentSensor(SensorEntity):
     def device_info(self):
         """Return device information about this charger."""
         device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
+        model = "Smart Load" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
         return {
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
             "name": self.config_entry.data.get(CONF_NAME),
@@ -791,7 +791,7 @@ class DynamicOcppEvseChargerStatusSensor(SensorEntity):
     def device_info(self):
         """Return device information about this charger."""
         device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
+        model = "Smart Load" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
         return {
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
             "name": self.config_entry.data.get(CONF_NAME),

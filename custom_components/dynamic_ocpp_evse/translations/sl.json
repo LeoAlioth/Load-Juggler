@@ -110,12 +110,12 @@
                 }
             },
             "plug_config": {
-                "title": "Konfiguracija pametne vtičnice",
-                "description": "Nastavite nastavitve za vašo pametno vtičnico ali rele",
+                "title": "Konfiguracija pametne obremenitve",
+                "description": "Nastavite nastavitve za vašo pametno obremenitev",
                 "data": {
                     "name": "Ime za to napravo",
                     "entity_id": "Predpona ID entitete",
-                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
+                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja napravo",
                     "plug_power_rating": "Nazivna moč",
                     "connected_to_phase": "Priključena na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
@@ -125,10 +125,10 @@
                 "data_description": {
                     "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power).",
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
-                    "connected_to_phase": "Na katero električno fazo je vtičnica priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
+                    "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
-                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo vtičnica vklopljena ali izklopljena."
+                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena."
                 }
             },
             "discover_chargers": {
@@ -164,9 +164,9 @@
                 "data_description": {
                     "evse_minimum_charge_current": "Najnižji tok, ki ga vaš polnilnik podpira. Preverite priročnik — večina polnilnikov podpira 6A.",
                     "evse_maximum_charge_current": "Najvišji tok, ki ga vaš polnilnik podpira. Preverite priročnik polnilnika.",
-                    "charger_l1_phase": "Preslika priključek L1 polnilnika na fazo lokacije. Večina inštalacij uporablja privzeto preslikavo A/B/C. Spremenite le, če je električar polnilnik priključil drugače.",
-                    "charger_l2_phase": "Preslika priključek L2 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače.",
-                    "charger_l3_phase": "Preslika priključek L3 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače."
+                    "charger_l1_phase": "Spremenite le, če je vaš polnilnik priključen drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
+                    "charger_l2_phase": "Spremenite le, če je vaš polnilnik priključen drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
+                    "charger_l3_phase": "Spremenite le, če je vaš polnilnik priključen drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah."
                 }
             },
             "charger_timing": {
@@ -253,10 +253,10 @@
                 }
             },
             "reconfigure_plug": {
-                "title": "Ponovno konfiguriraj pametno vtičnico",
-                "description": "Posodobite nastavitve pametne vtičnice",
+                "title": "Ponovno konfiguriraj pametno obremenitev",
+                "description": "Posodobite nastavitve pametne obremenitve",
                 "data": {
-                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
+                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja napravo",
                     "plug_power_rating": "Nazivna moč",
                     "connected_to_phase": "Priključena na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
@@ -265,10 +265,10 @@
                 },
                 "data_description": {
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
-                    "connected_to_phase": "Na katero električno fazo je vtičnica priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
+                    "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
-                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo vtičnica vklopljena ali izklopljena."
+                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena."
                 }
             },
             "reconfigure_charger": {
@@ -294,9 +294,9 @@
                 "data_description": {
                     "evse_minimum_charge_current": "Najnižji tok, ki ga vaš polnilnik podpira. Preverite priročnik — večina polnilnikov podpira 6A.",
                     "evse_maximum_charge_current": "Najvišji tok, ki ga vaš polnilnik podpira. Preverite priročnik polnilnika.",
-                    "charger_l1_phase": "Preslika priključek L1 polnilnika na fazo lokacije. Večina inštalacij uporablja privzeto preslikavo A/B/C. Spremenite le, če je električar polnilnik priključil drugače.",
-                    "charger_l2_phase": "Preslika priključek L2 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače.",
-                    "charger_l3_phase": "Preslika priključek L3 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače."
+                    "charger_l1_phase": "Spremenite le, če je vaš polnilnik priključen drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
+                    "charger_l2_phase": "Spremenite le, če je vaš polnilnik priključen drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
+                    "charger_l3_phase": "Spremenite le, če je vaš polnilnik priključen drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah."
                 }
             },
             "reconfigure_charger_timing": {
@@ -398,10 +398,10 @@
                 }
             },
             "plug": {
-                "title": "Posodobi nastavitve pametne vtičnice",
-                "description": "Posodobite nastavitve pametne vtičnice",
+                "title": "Posodobi nastavitve pametne obremenitve",
+                "description": "Posodobite nastavitve pametne obremenitve",
                 "data": {
-                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
+                    "plug_switch_entity_id": "Entiteta stikala, ki upravlja napravo",
                     "plug_power_rating": "Nazivna moč",
                     "connected_to_phase": "Priključena na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
@@ -410,10 +410,10 @@
                 },
                 "data_description": {
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
-                    "connected_to_phase": "Na katero električno fazo je vtičnica priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
+                    "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
-                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo vtičnica vklopljena ali izklopljena."
+                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena."
                 }
             },
             "charger": {
@@ -439,9 +439,9 @@
                 "data_description": {
                     "evse_minimum_charge_current": "Najnižji tok, ki ga vaš polnilnik podpira. Preverite priročnik — večina polnilnikov podpira 6A.",
                     "evse_maximum_charge_current": "Najvišji tok, ki ga vaš polnilnik podpira. Preverite priročnik polnilnika.",
-                    "charger_l1_phase": "Preslika priključek L1 polnilnika na fazo lokacije. Večina inštalacij uporablja privzeto preslikavo A/B/C. Spremenite le, če je električar polnilnik priključil drugače.",
-                    "charger_l2_phase": "Preslika priključek L2 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače.",
-                    "charger_l3_phase": "Preslika priključek L3 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače."
+                    "charger_l1_phase": "Spremenite le, če je vaš polnilnik priključen drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
+                    "charger_l2_phase": "Spremenite le, če je vaš polnilnik priključen drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
+                    "charger_l3_phase": "Spremenite le, če je vaš polnilnik priključen drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah."
                 }
             },
             "charger_timing": {

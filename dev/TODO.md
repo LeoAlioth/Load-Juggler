@@ -78,9 +78,9 @@
 
 ## In Progress
 
-1. - [ ] **[FEATURE] Phase mapping help text update** — Change data_description for `charger_l1/l2/l3_phase` to "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits." Apply to all 3 phases × 3 flows in `strings.json`, `en.json`, `sl.json`.
+1. - [x] **[FEATURE] Phase mapping help text update** — Updated `data_description` for all 3 phase mapping fields × 3 flows in `strings.json`, `en.json`, `sl.json`. New text: "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits."
 
-2. - [ ] **[FEATURE] Rename "Smart Plug" → "Smart Load"** — Replace all user-facing occurrences in device model strings, config flow labels, step titles. Keep `DEVICE_TYPE_PLUG` internal name unchanged.
+2. - [x] **[FEATURE] Rename "Smart Plug" → "Smart Load"** — Replaced all user-facing occurrences: device model strings (sensor.py, button.py, switch.py, number.py), config flow labels/defaults (config_flow.py), step titles/descriptions (strings.json, en.json, sl.json). Internal `DEVICE_TYPE_PLUG` unchanged.
 
 3. - [ ] **[FEATURE] Auto-detect power monitoring sensor for plugs** — Add detection patterns for common smart plug power monitoring entities (Shelly, Sonoff, Tasmota). Wire into `async_step_plug_config` via `_auto_detect_entity()`.
 

@@ -319,7 +319,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         })
 
     def _plug_schema(self, defaults: dict | None = None) -> vol.Schema:
-        """Build schema for smart plug / relay configuration."""
+        """Build schema for smart load configuration."""
         defaults = defaults or {}
         phase_options = [
             {"value": "A", "label": "Phase A"},
@@ -728,7 +728,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_device_type(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Charger step 1b: Choose device type (OCPP EVSE or Smart Plug/Relay)."""
+        """Charger step 1b: Choose device type (OCPP EVSE or Smart Load)."""
         if user_input is not None:
             device_type = user_input.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
             if device_type == DEVICE_TYPE_PLUG:
@@ -740,7 +740,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "select": {
                     "options": [
                         {"value": DEVICE_TYPE_EVSE, "label": "OCPP Charger (EVSE)"},
-                        {"value": DEVICE_TYPE_PLUG, "label": "Smart Plug / Relay"},
+                        {"value": DEVICE_TYPE_PLUG, "label": "Smart Load"},
                     ],
                     "mode": "list",
                 }
@@ -756,15 +756,15 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_plug_config(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Smart plug configuration step."""
+        """Smart load configuration step."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             user_input = self._normalize_optional_inputs(user_input, self._PLUG_ENTITY_KEYS)
             self._data.update(user_input)
 
-            plug_name = self._data.get(CONF_NAME, "Smart Plug")
-            plug_entity_id = self._data.get(CONF_ENTITY_ID, "smart_plug")
+            plug_name = self._data.get(CONF_NAME, "Smart Load")
+            plug_entity_id = self._data.get(CONF_ENTITY_ID, "smart_load")
 
             static_data = {
                 CONF_ENTITY_ID: plug_entity_id,
@@ -777,7 +777,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             options_data = {k: v for k, v in self._data.items() if k not in static_data}
 
             return self._create_entry_and_seed_options(
-                f"{plug_name} Smart Plug", static_data, options_data
+                f"{plug_name} Smart Load", static_data, options_data
             )
 
         existing_chargers = self._get_charger_entries()
@@ -785,8 +785,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Name + entity_id fields, then the plug-specific schema
         name_schema = vol.Schema({
-            vol.Required(CONF_NAME, default="Smart Plug"): str,
-            vol.Required(CONF_ENTITY_ID, default="smart_plug"): str,
+            vol.Required(CONF_NAME, default="Smart Load"): str,
+            vol.Required(CONF_ENTITY_ID, default="smart_load"): str,
         })
         plug_fields = self._plug_schema({
             CONF_CHARGER_PRIORITY: next_priority,
@@ -1301,7 +1301,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure_plug(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Reconfigure smart plug settings."""
+        """Reconfigure smart load settings."""
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         defaults = {**entry.data, **entry.options}

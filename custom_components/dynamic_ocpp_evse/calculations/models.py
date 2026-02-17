@@ -22,7 +22,7 @@ class ChargerContext:
     max_current: float
     phases: int  # 1 or 3 (EVSE hardware capability)
     priority: int = 1  # For distribution (lower = higher priority)
-    device_type: str = "evse"  # "evse" (OCPP) or "plug" (smart plug/relay)
+    device_type: str = "evse"  # "evse" (OCPP) or "plug" (smart load)
     
     # Active car connection (detected from OCPP or configured)
     car_phases: int = None  # 1, 2, or 3 (actual car OBC phases detected)
@@ -33,7 +33,7 @@ class ChargerContext:
         """Set default phase mask from L1/L2/L3 → site phase mapping.
 
         For OCPP chargers, the mapping determines which site phases the charger
-        occupies. For smart plugs, active_phases_mask is set explicitly via
+        occupies. For smart loads, active_phases_mask is set explicitly via
         connected_to_phase in config and this default is skipped.
         """
         if self.active_phases_mask is None:

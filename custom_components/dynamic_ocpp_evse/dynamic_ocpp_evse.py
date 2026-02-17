@@ -286,7 +286,7 @@ def run_hub_calculation(sensor):
         priority = get_entry_value(entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
 
         if device_type == DEVICE_TYPE_PLUG:
-            # Smart plug / relay — binary on/off device with fixed power rating
+            # Smart load — binary on/off device with fixed power rating
             # Read power rating: prefer Device Power slider entity, fall back to config
             device_power_entity = f"number.{charger_entity_id}_device_power"
             slider_power = _read_entity(hass, device_power_entity, None)
