@@ -92,28 +92,6 @@ class PhaseValues:
         """Number of phases that physically exist (non-None)."""
         return sum(1 for v in (self.a, self.b, self.c) if v is not None)
 
-    @property
-    def active_mask(self) -> str:
-        """Phase mask string for existing phases, e.g. 'A', 'AB', 'ABC'."""
-        return ''.join(
-            p for p, v in [('A', self.a), ('B', self.b), ('C', self.c)]
-            if v is not None
-        )
-
-    def __neg__(self) -> PhaseValues:
-        return PhaseValues(
-            -self.a if self.a is not None else None,
-            -self.b if self.b is not None else None,
-            -self.c if self.c is not None else None,
-        )
-
-    def clamp_min(self, v: float = 0.0) -> PhaseValues:
-        return PhaseValues(
-            max(v, self.a) if self.a is not None else None,
-            max(v, self.b) if self.b is not None else None,
-            max(v, self.c) if self.c is not None else None,
-        )
-
     def __repr__(self) -> str:
         parts = []
         for name, val in [('a', self.a), ('b', self.b), ('c', self.c)]:
@@ -239,33 +217,18 @@ class PhaseConstraints:
             ABC=self.ABC + other.ABC,
         )
 
-    def __sub__(self, other: PhaseConstraints) -> PhaseConstraints:
+    def _element_op(self, other: PhaseConstraints, op) -> PhaseConstraints:
         return PhaseConstraints(
-            A=self.A - other.A, B=self.B - other.B, C=self.C - other.C,
-            AB=self.AB - other.AB, AC=self.AC - other.AC, BC=self.BC - other.BC,
-            ABC=self.ABC - other.ABC,
-        )
-
-    def scale(self, factor: float) -> PhaseConstraints:
-        return PhaseConstraints(
-            A=self.A * factor, B=self.B * factor, C=self.C * factor,
-            AB=self.AB * factor, AC=self.AC * factor, BC=self.BC * factor,
-            ABC=self.ABC * factor,
+            A=op(self.A, other.A), B=op(self.B, other.B), C=op(self.C, other.C),
+            AB=op(self.AB, other.AB), AC=op(self.AC, other.AC), BC=op(self.BC, other.BC),
+            ABC=op(self.ABC, other.ABC),
         )
 
     def element_min(self, other: PhaseConstraints) -> PhaseConstraints:
-        return PhaseConstraints(
-            A=min(self.A, other.A), B=min(self.B, other.B), C=min(self.C, other.C),
-            AB=min(self.AB, other.AB), AC=min(self.AC, other.AC), BC=min(self.BC, other.BC),
-            ABC=min(self.ABC, other.ABC),
-        )
+        return self._element_op(other, min)
 
     def element_max(self, other: PhaseConstraints) -> PhaseConstraints:
-        return PhaseConstraints(
-            A=max(self.A, other.A), B=max(self.B, other.B), C=max(self.C, other.C),
-            AB=max(self.AB, other.AB), AC=max(self.AC, other.AC), BC=max(self.BC, other.BC),
-            ABC=max(self.ABC, other.ABC),
-        )
+        return self._element_op(other, max)
 
     def get_available(self, mask: str) -> float:
         """Get per-phase current available for a charger with given phase mask.

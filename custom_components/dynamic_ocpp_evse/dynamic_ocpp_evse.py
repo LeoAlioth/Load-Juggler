@@ -12,7 +12,7 @@ from .calculations import (
     calculate_all_charger_targets,
 )
 from .const import *
-from .calculations.utils import is_number
+from .calculations.utils import is_number, compute_household_per_phase
 
 
 def _read_phase_attr(attrs: dict, keys: tuple) -> float | None:
@@ -22,6 +22,19 @@ def _read_phase_attr(attrs: dict, keys: tuple) -> float | None:
         if val is not None and is_number(val):
             return float(val)
     return None
+
+
+def _read_entity(hass, entity_id: str, default=0):
+    """Read a numeric value from an HA entity, falling back to a default."""
+    if not entity_id:
+        return default
+    state = hass.states.get(entity_id)
+    if state and state.state not in ('unknown', 'unavailable', None, ''):
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            pass
+    return default
 
 
 def run_hub_calculation(sensor):
@@ -50,19 +63,6 @@ def run_hub_calculation(sensor):
     hass = sensor.hass
     hub_entry = sensor.hub_entry
 
-    # --- Helper to read a float from an HA entity state ---
-    def _read_entity(entity_id, default=0):
-        """Read a numeric value from an HA entity."""
-        if not entity_id:
-            return default
-        st = hass.states.get(entity_id)
-        if st and st.state not in ('unknown', 'unavailable', None, ''):
-            try:
-                return float(st.state)
-            except (ValueError, TypeError):
-                return default
-        return default
-
     # --- Read hub config values ---
     voltage = get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
     main_breaker_rating = get_entry_value(hub_entry, CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING)
@@ -75,9 +75,9 @@ def run_hub_calculation(sensor):
     phase_c_entity = get_entry_value(hub_entry, CONF_PHASE_C_CURRENT_ENTITY_ID, None)
 
     # Read raw phase values - None if entity not configured (phase doesn't exist)
-    raw_phase_a = _read_entity(phase_a_entity, 0) if phase_a_entity else None
-    raw_phase_b = _read_entity(phase_b_entity, 0) if phase_b_entity else None
-    raw_phase_c = _read_entity(phase_c_entity, 0) if phase_c_entity else None
+    raw_phase_a = _read_entity(hass, phase_a_entity, 0) if phase_a_entity else None
+    raw_phase_b = _read_entity(hass, phase_b_entity, 0) if phase_b_entity else None
+    raw_phase_c = _read_entity(hass, phase_c_entity, 0) if phase_c_entity else None
 
     # Apply inversion if configured (only for existing phases)
     if invert_phases:
@@ -110,7 +110,7 @@ def run_hub_calculation(sensor):
     solar_production_entity = get_entry_value(hub_entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
     solar_is_derived = not solar_production_entity
     if solar_production_entity:
-        solar_production_total = _read_entity(solar_production_entity, 0)
+        solar_production_total = _read_entity(hass, solar_production_entity, 0)
     else:
         solar_production_total = total_export_power
 
@@ -119,17 +119,23 @@ def run_hub_calculation(sensor):
     battery_power_entity = get_entry_value(hub_entry, CONF_BATTERY_POWER_ENTITY_ID, None)
     battery_soc_target_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_TARGET_ENTITY_ID, None)
 
-    battery_soc = _read_entity(battery_soc_entity, None) if battery_soc_entity else None
-    battery_power = _read_entity(battery_power_entity, None) if battery_power_entity else None
+    battery_soc = _read_entity(hass, battery_soc_entity, None) if battery_soc_entity else None
+    battery_power = _read_entity(hass, battery_power_entity, None) if battery_power_entity else None
     battery_soc_min = get_entry_value(hub_entry, CONF_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_MIN)
-    battery_soc_target = _read_entity(battery_soc_target_entity, None) if battery_soc_target_entity else None
+    battery_soc_target = _read_entity(hass, battery_soc_target_entity, None) if battery_soc_target_entity else None
     battery_soc_hysteresis = get_entry_value(hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
     battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
 
-    # --- Read max grid import power from HA entity ---
+    # --- Read max grid import power (entity override → slider → None) ---
+    enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
     max_import_power_entity = get_entry_value(hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
-    max_grid_import_power = _read_entity(max_import_power_entity, None) if max_import_power_entity else None
+    if max_import_power_entity:
+        max_grid_import_power = _read_entity(hass, max_import_power_entity, None)
+    elif enable_max_import:
+        max_grid_import_power = _read_entity(hass, f"number.{hub_entity_id}_max_import_power", None)
+    else:
+        max_grid_import_power = None
 
     # --- Read inverter configuration ---
     inverter_max_power = get_entry_value(hub_entry, CONF_INVERTER_MAX_POWER, None)
@@ -184,7 +190,7 @@ def run_hub_calculation(sensor):
     allow_grid_charging = allow_grid_state.state != "off" if allow_grid_state else True
 
     power_buffer_entity = f"number.{hub_entity_id}_power_buffer"
-    power_buffer = _read_entity(power_buffer_entity, 0)
+    power_buffer = _read_entity(hass, power_buffer_entity, 0)
 
     # Apply power buffer to reduce effective max grid import power
     if max_grid_import_power is not None and power_buffer > 0:
@@ -245,7 +251,7 @@ def run_hub_calculation(sensor):
             # Smart plug / relay — binary on/off device with fixed power rating
             # Read power rating: prefer Device Power slider entity, fall back to config
             device_power_entity = f"number.{charger_entity_id}_device_power"
-            slider_power = _read_entity(device_power_entity, None)
+            slider_power = _read_entity(hass, device_power_entity, None)
             config_power = get_entry_value(entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
             power_rating = slider_power if slider_power is not None and slider_power > 0 else config_power
 
@@ -259,7 +265,7 @@ def run_hub_calculation(sensor):
             # Check power monitor if available (more reliable than switch state)
             power_monitor_entity = get_entry_value(entry, CONF_PLUG_POWER_MONITOR_ENTITY_ID, None)
             if power_monitor_entity:
-                power_draw = _read_entity(power_monitor_entity, 0)
+                power_draw = _read_entity(hass, power_monitor_entity, 0)
                 connector_status = "Charging" if power_draw > 10 else "Available"
 
                 # Auto-adjust power rating from monitored draw (rolling average)
@@ -298,27 +304,16 @@ def run_hub_calculation(sensor):
             )
         else:
             # OCPP EVSE — standard charger with current modulation
-            # Read min_current from the number entity (runtime value set by user)
             min_current_entity = f"number.{charger_entity_id}_min_current"
-            min_current_state = hass.states.get(min_current_entity)
-            if min_current_state and min_current_state.state not in ('unknown', 'unavailable', None, ''):
-                try:
-                    min_current = float(min_current_state.state)
-                except (ValueError, TypeError):
-                    min_current = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
-            else:
-                min_current = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
-            
-            # Read max_current from the number entity (runtime value set by user)
+            min_current = _read_entity(
+                hass, min_current_entity,
+                get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT),
+            )
             max_current_entity = f"number.{charger_entity_id}_max_current"
-            max_current_state = hass.states.get(max_current_entity)
-            if max_current_state and max_current_state.state not in ('unknown', 'unavailable', None, ''):
-                try:
-                    max_current = float(max_current_state.state)
-                except (ValueError, TypeError):
-                    max_current = get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
-            else:
-                max_current = get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+            max_current = _read_entity(
+                hass, max_current_entity,
+                get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT),
+            )
             
             phases = int(get_entry_value(entry, CONF_PHASES, 3) or 3)
 
@@ -440,36 +435,15 @@ def run_hub_calculation(sensor):
 
     # Compute per-phase household from inverter output entities (after feedback).
     # This gives the engine exact per-phase household for asymmetric inverter limits.
-    if site.inverter_output_per_phase is not None:
-        ch_a = ch_b = ch_c = 0.0
-        for c in site.chargers:
-            a_d, b_d, c_d = c.get_site_phase_draw()
-            ch_a += a_d
-            ch_b += b_d
-            ch_c += c_d
-
-        if site.wiring_topology == WIRING_TOPOLOGY_PARALLEL:
-            # Parallel: household = grid_consumption + inverter_output - grid_export (after feedback)
-            def _hh_par(inv_out, cons, exp):
-                if cons is None:
-                    return None
-                return max(0, (cons or 0) + (inv_out or 0) - (exp or 0))
-            hh_a = _hh_par(site.inverter_output_per_phase.a, site.consumption.a, site.export_current.a)
-            hh_b = _hh_par(site.inverter_output_per_phase.b, site.consumption.b, site.export_current.b)
-            hh_c = _hh_par(site.inverter_output_per_phase.c, site.consumption.c, site.export_current.c)
-        else:
-            # Series: household = inverter_output - charger_draws (per phase)
-            hh_a = max(0, (site.inverter_output_per_phase.a or 0) - ch_a) if site.consumption.a is not None else None
-            hh_b = max(0, (site.inverter_output_per_phase.b or 0) - ch_b) if site.consumption.b is not None else None
-            hh_c = max(0, (site.inverter_output_per_phase.c or 0) - ch_c) if site.consumption.c is not None else None
-
-        site.household_consumption = PhaseValues(hh_a, hh_b, hh_c)
+    household = compute_household_per_phase(site, site.wiring_topology)
+    if household is not None:
+        site.household_consumption = household
         _LOGGER.debug(
             "Per-phase household from inverter output (%s): A=%.1fA B=%.1fA C=%.1fA",
             site.wiring_topology,
-            hh_a if hh_a is not None else 0,
-            hh_b if hh_b is not None else 0,
-            hh_c if hh_c is not None else 0,
+            household.a if household.a is not None else 0,
+            household.b if household.b is not None else 0,
+            household.c if household.c is not None else 0,
         )
 
     # Calculate targets (includes distribution)

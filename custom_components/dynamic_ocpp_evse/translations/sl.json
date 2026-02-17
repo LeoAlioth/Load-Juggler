@@ -27,6 +27,9 @@
                 "data": {
                     "name": "Ime za ta hub",
                     "entity_id": "Predpona ID entitete za ustvarjene entitete"
+                },
+                "data_description": {
+                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power)."
                 }
             },
             "hub_grid": {
@@ -36,37 +39,60 @@
                     "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (obvezno)",
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno - nastavite na 'None' za enofazno)",
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno - nastavite na 'None' za eno/dvofazno)",
-                    "main_breaker_rating": "Ocena glavnega odklopnika (na fazo v amperih)",
-                    "invert_phases": "Obrni odčitke toka, če se uvoz meri kot negativen",
-                    "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
-                    "phase_voltage": "Napetost na fazo v voltih",
-                    "excess_export_threshold": "Prag presežne izvozne moči (W), pri katerem se začne polnjenje v načinu Excess",
-                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije (sekunde)"
+                    "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
+                    "invert_phases": "Obrni odčitke toka",
+                    "enable_max_import_power": "Omogoči omejitev maksimalne uvozne moči",
+                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
+                    "phase_voltage": "Napetost na fazo",
+                    "excess_export_threshold": "Prag izvoza za način Excess",
+                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije"
+                },
+                "data_description": {
+                    "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
+                    "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
+                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odkljukajte za popolno onemogočitev omejitve.",
+                    "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
+                    "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
+                    "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
+                    "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom."
                 }
             },
             "hub_inverter": {
                 "title": "Konfiguracija razsmernika",
-                "description": "Nastavite omejitve moči razsmernika in senzorje izhoda po fazah (neobvezno — nastavite moč na 0 za brez omejitev)",
+                "description": "Nastavite omejitve moči razsmernika in senzorje izhoda po fazah (neobvezno — nastavite moč na 0 za brez omejitev)\n\nMaksimalna moč praznjenja baterije: {battery_power_hint}",
                 "data": {
-                    "inverter_max_power": "Skupna moč razsmernika (W)",
-                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
-                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz",
+                    "inverter_max_power": "Skupna moč razsmernika",
+                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrični izhod po fazah",
                     "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
                     "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
                     "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
                     "wiring_topology": "Topologija ožičenja"
+                },
+                "data_description": {
+                    "inverter_max_power": "Nazivna moč iz podatkovnega lista razsmernika. Nastavite na 0 za preskočitev omejitev razsmernika.",
+                    "inverter_max_power_per_phase": "Običajno skupna moč deljena s številom faz. Nastavite na 0 za preskočitev omejitev po fazah.",
+                    "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
+                    "wiring_topology": "Paralelno: razsmernik in omrežje napajata neodvisno (AC-sklopljena sončna, brez baterije). Zaporedno: vsa energija teče skozi razsmernik (hibridni razsmernik z DC-sklopljeno baterijo)."
                 }
             },
             "hub_battery": {
                 "title": "Konfiguracija baterije in sončne elektrarne",
                 "description": "Nastavite nastavitve domače baterije in sončne proizvodnje (neobvezno)",
                 "data": {
-                    "solar_production_entity_id": "Senzor proizvodnje solarne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)",
-                    "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
-                    "battery_power_entity_id": "Senzor, ki meri moč baterije (pozitivno=praznjenje, negativno=polnjenje)",
-                    "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
-                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih",
-                    "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
+                    "solar_production_entity_id": "Senzor proizvodnje solarne energije",
+                    "battery_soc_entity_id": "Senzor stanja napolnjenosti baterije (SOC)",
+                    "battery_power_entity_id": "Senzor moči baterije",
+                    "battery_max_charge_power": "Maksimalna moč polnjenja baterije",
+                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije",
+                    "battery_soc_hysteresis": "Histereza SOC baterije"
+                },
+                "data_description": {
+                    "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
+                    "battery_power_entity_id": "Pozitivne vrednosti = baterija se prazni, negativne vrednosti = baterija se polni.",
+                    "battery_max_charge_power": "Maksimalna moč, ki jo razsmernik uporabi za polnjenje baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
+                    "battery_max_discharge_power": "Maksimalna moč, ki jo razsmernik lahko prazni iz baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
+                    "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%."
                 }
             },
             "device_type": {
@@ -90,11 +116,19 @@
                     "name": "Ime za to napravo",
                     "entity_id": "Predpona ID entitete",
                     "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
-                    "plug_power_rating": "Največja nazivna moč (W)",
+                    "plug_power_rating": "Nazivna moč",
                     "connected_to_phase": "Priključena na fazo",
-                    "charger_priority": "Prioriteta (1 = najvišja prioriteta)",
-                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno — omogoča samodejno zaznavo dejanske porabe)",
-                    "update_frequency": "Frekvenca posodabljanja v sekundah"
+                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
+                    "update_frequency": "Frekvenca posodabljanja"
+                },
+                "data_description": {
+                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power).",
+                    "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
+                    "connected_to_phase": "Na katero električno fazo je vtičnica priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
+                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
+                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo vtičnica vklopljena ali izklopljena."
                 }
             },
             "discover_chargers": {
@@ -110,30 +144,49 @@
                 "data": {
                     "name": "Ime polnilnika",
                     "entity_id": "Predpona ID entitete",
-                    "charger_priority": "Prioriteta polnilnika (1 = najvišja prioriteta)"
+                    "charger_priority": "Prioriteta (1 = najvišja)"
+                },
+                "data_description": {
+                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power).",
+                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno."
                 }
             },
             "charger_current": {
                 "title": "Tok in preslikava faz",
-                "description": "Nastavite omejitve toka in preslikavo L1/L2/L3 na faze lokacije",
+                "description": "Nastavite omejitve toka in kako se priključki L1/L2/L3 polnilnika preslikajo na električne faze vaše lokacije",
                 "data": {
-                    "evse_minimum_charge_current": "Minimalni tok polnjenja (A)",
-                    "evse_maximum_charge_current": "Maksimalni tok polnjenja (A)",
-                    "charger_l1_phase": "L1 polnilnika priključen na fazo",
-                    "charger_l2_phase": "L2 polnilnika priključen na fazo",
-                    "charger_l3_phase": "L3 polnilnika priključen na fazo"
+                    "evse_minimum_charge_current": "Minimalni tok polnjenja",
+                    "evse_maximum_charge_current": "Maksimalni tok polnjenja",
+                    "charger_l1_phase": "L1 polnilnika → faza lokacije",
+                    "charger_l2_phase": "L2 polnilnika → faza lokacije",
+                    "charger_l3_phase": "L3 polnilnika → faza lokacije"
+                },
+                "data_description": {
+                    "evse_minimum_charge_current": "Najnižji tok, ki ga vaš polnilnik podpira. Preverite priročnik — večina polnilnikov podpira 6A.",
+                    "evse_maximum_charge_current": "Najvišji tok, ki ga vaš polnilnik podpira. Preverite priročnik polnilnika.",
+                    "charger_l1_phase": "Preslika priključek L1 polnilnika na fazo lokacije. Večina inštalacij uporablja privzeto preslikavo A/B/C. Spremenite le, če je električar polnilnik priključil drugače.",
+                    "charger_l2_phase": "Preslika priključek L2 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače.",
+                    "charger_l3_phase": "Preslika priključek L3 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače."
                 }
             },
             "charger_timing": {
                 "title": "Enote in časovne nastavitve",
                 "description": "Nastavite enoto hitrosti polnjenja in časovne nastavitve",
                 "data": {
-                    "charge_rate_unit": "Enota hitrosti polnjenja (Samodejno priporočeno)",
-                    "profile_validity_mode": "Način veljavnosti profila polnjenja",
-                    "update_frequency": "Frekvenca posodabljanja v sekundah",
-                    "ocpp_profile_timeout": "Časovna omejitev OCPP profila v sekundah",
-                    "charge_pause_duration": "Trajanje premora polnjenja v sekundah",
+                    "charge_rate_unit": "Enota hitrosti polnjenja",
+                    "profile_validity_mode": "Način veljavnosti profila",
+                    "update_frequency": "Frekvenca posodabljanja",
+                    "ocpp_profile_timeout": "Časovna omejitev profila",
+                    "charge_pause_duration": "Trajanje premora polnjenja",
                     "stack_level": "OCPP nivo sklada"
+                },
+                "data_description": {
+                    "charge_rate_unit": "Večina OCPP polnilnikov uporablja ampere. Nekateri (npr. nekateri modeli Wallbox) zahtevajo vate.",
+                    "profile_validity_mode": "Absolutni uporablja časovne žige, relativni uporablja trajanja. Najprej poskusite absolutni — preklopite na relativnega, če polnilnik ne reagira pravilno.",
+                    "update_frequency": "Kako pogosto se pošiljajo posodobljeni profili polnjenja temu polnilniku.",
+                    "ocpp_profile_timeout": "Koliko časa profil polnjenja ostane veljaven. Polnilnik se vrne na privzeto obnašanje, če v tem času ne prejme novega profila.",
+                    "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilnik drži na 0A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
+                    "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju."
                 }
             },
             "reconfigure_hub_grid": {
@@ -143,37 +196,60 @@
                     "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (obvezno)",
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno)",
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
-                    "main_breaker_rating": "Ocena glavnega odklopnika (na fazo v amperih)",
-                    "invert_phases": "Obrni odčitke toka, če se uvoz meri kot negativen",
-                    "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
-                    "phase_voltage": "Napetost na fazo v voltih",
-                    "excess_export_threshold": "Prag presežne izvozne moči (W)",
-                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije (sekunde)"
+                    "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
+                    "invert_phases": "Obrni odčitke toka",
+                    "enable_max_import_power": "Omogoči omejitev maksimalne uvozne moči",
+                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
+                    "phase_voltage": "Napetost na fazo",
+                    "excess_export_threshold": "Prag izvoza za način Excess",
+                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije"
+                },
+                "data_description": {
+                    "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
+                    "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
+                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odkljukajte za popolno onemogočitev omejitve.",
+                    "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
+                    "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
+                    "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
+                    "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom."
                 }
             },
             "reconfigure_hub_inverter": {
                 "title": "Ponovno konfiguriraj nastavitve razsmernika",
-                "description": "Posodobite konfiguracijo razsmernika",
+                "description": "Posodobite konfiguracijo razsmernika\n\nMaksimalna moč praznjenja baterije: {battery_power_hint}",
                 "data": {
-                    "inverter_max_power": "Skupna moč razsmernika (W)",
-                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
-                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz",
+                    "inverter_max_power": "Skupna moč razsmernika",
+                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrični izhod po fazah",
                     "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
                     "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
                     "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
                     "wiring_topology": "Topologija ožičenja"
+                },
+                "data_description": {
+                    "inverter_max_power": "Nazivna moč iz podatkovnega lista razsmernika. Nastavite na 0 za preskočitev omejitev razsmernika.",
+                    "inverter_max_power_per_phase": "Običajno skupna moč deljena s številom faz. Nastavite na 0 za preskočitev omejitev po fazah.",
+                    "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
+                    "wiring_topology": "Paralelno: razsmernik in omrežje napajata neodvisno (AC-sklopljena sončna, brez baterije). Zaporedno: vsa energija teče skozi razsmernik (hibridni razsmernik z DC-sklopljeno baterijo)."
                 }
             },
             "reconfigure_hub_battery": {
                 "title": "Ponovno konfiguriraj nastavitve baterije in sončne elektrarne",
                 "description": "Posodobite konfiguracijo baterije in sončne proizvodnje",
                 "data": {
-                    "solar_production_entity_id": "Senzor proizvodnje solarne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)",
-                    "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
-                    "battery_power_entity_id": "Senzor, ki meri moč baterije",
-                    "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
-                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih",
-                    "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
+                    "solar_production_entity_id": "Senzor proizvodnje solarne energije",
+                    "battery_soc_entity_id": "Senzor stanja napolnjenosti baterije (SOC)",
+                    "battery_power_entity_id": "Senzor moči baterije",
+                    "battery_max_charge_power": "Maksimalna moč polnjenja baterije",
+                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije",
+                    "battery_soc_hysteresis": "Histereza SOC baterije"
+                },
+                "data_description": {
+                    "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
+                    "battery_power_entity_id": "Pozitivne vrednosti = baterija se prazni, negativne vrednosti = baterija se polni.",
+                    "battery_max_charge_power": "Maksimalna moč, ki jo razsmernik uporabi za polnjenje baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
+                    "battery_max_discharge_power": "Maksimalna moč, ki jo razsmernik lahko prazni iz baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
+                    "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%."
                 }
             },
             "reconfigure_plug": {
@@ -181,41 +257,66 @@
                 "description": "Posodobite nastavitve pametne vtičnice",
                 "data": {
                     "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
-                    "plug_power_rating": "Največja nazivna moč (W)",
+                    "plug_power_rating": "Nazivna moč",
                     "connected_to_phase": "Priključena na fazo",
-                    "charger_priority": "Prioriteta (1 = najvišja prioriteta)",
-                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno — omogoča samodejno zaznavo dejanske porabe)",
-                    "update_frequency": "Frekvenca posodabljanja v sekundah"
+                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
+                    "update_frequency": "Frekvenca posodabljanja"
+                },
+                "data_description": {
+                    "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
+                    "connected_to_phase": "Na katero električno fazo je vtičnica priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
+                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
+                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo vtičnica vklopljena ali izklopljena."
                 }
             },
             "reconfigure_charger": {
                 "title": "Ponovno konfiguriraj polnilnik",
                 "description": "Posodobite prioriteto polnilnika",
                 "data": {
-                    "charger_priority": "Prioriteta polnilnika (1 = najvišja prioriteta)"
+                    "charger_priority": "Prioriteta (1 = najvišja)"
+                },
+                "data_description": {
+                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno."
                 }
             },
             "reconfigure_charger_current": {
                 "title": "Ponovno konfiguriraj tok in faze",
                 "description": "Posodobite omejitve toka in preslikavo faz",
                 "data": {
-                    "evse_minimum_charge_current": "Minimalni tok polnjenja (A)",
-                    "evse_maximum_charge_current": "Maksimalni tok polnjenja (A)",
-                    "charger_l1_phase": "L1 polnilnika priključen na fazo",
-                    "charger_l2_phase": "L2 polnilnika priključen na fazo",
-                    "charger_l3_phase": "L3 polnilnika priključen na fazo"
+                    "evse_minimum_charge_current": "Minimalni tok polnjenja",
+                    "evse_maximum_charge_current": "Maksimalni tok polnjenja",
+                    "charger_l1_phase": "L1 polnilnika → faza lokacije",
+                    "charger_l2_phase": "L2 polnilnika → faza lokacije",
+                    "charger_l3_phase": "L3 polnilnika → faza lokacije"
+                },
+                "data_description": {
+                    "evse_minimum_charge_current": "Najnižji tok, ki ga vaš polnilnik podpira. Preverite priročnik — večina polnilnikov podpira 6A.",
+                    "evse_maximum_charge_current": "Najvišji tok, ki ga vaš polnilnik podpira. Preverite priročnik polnilnika.",
+                    "charger_l1_phase": "Preslika priključek L1 polnilnika na fazo lokacije. Večina inštalacij uporablja privzeto preslikavo A/B/C. Spremenite le, če je električar polnilnik priključil drugače.",
+                    "charger_l2_phase": "Preslika priključek L2 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače.",
+                    "charger_l3_phase": "Preslika priključek L3 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače."
                 }
             },
             "reconfigure_charger_timing": {
                 "title": "Ponovno konfiguriraj enote in čase",
                 "description": "Posodobite enoto hitrosti polnjenja in časovne nastavitve",
                 "data": {
-                    "charge_rate_unit": "Enota hitrosti polnjenja (A=Amperi, W=Vati)",
-                    "profile_validity_mode": "Način veljavnosti profila polnjenja",
-                    "update_frequency": "Frekvenca posodabljanja v sekundah",
-                    "ocpp_profile_timeout": "Časovna omejitev OCPP profila v sekundah",
-                    "charge_pause_duration": "Trajanje premora polnjenja v sekundah",
+                    "charge_rate_unit": "Enota hitrosti polnjenja",
+                    "profile_validity_mode": "Način veljavnosti profila",
+                    "update_frequency": "Frekvenca posodabljanja",
+                    "ocpp_profile_timeout": "Časovna omejitev profila",
+                    "charge_pause_duration": "Trajanje premora polnjenja",
                     "stack_level": "OCPP nivo sklada"
+                },
+                "data_description": {
+                    "charge_rate_unit": "Večina OCPP polnilnikov uporablja ampere. Nekateri (npr. nekateri modeli Wallbox) zahtevajo vate.",
+                    "profile_validity_mode": "Absolutni uporablja časovne žige, relativni uporablja trajanja. Najprej poskusite absolutni — preklopite na relativnega, če polnilnik ne reagira pravilno.",
+                    "update_frequency": "Kako pogosto se pošiljajo posodobljeni profili polnjenja temu polnilniku.",
+                    "ocpp_profile_timeout": "Koliko časa profil polnjenja ostane veljaven. Polnilnik se vrne na privzeto obnašanje, če v tem času ne prejme novega profila.",
+                    "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilnik drži na 0A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
+                    "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju."
                 }
             }
         },
@@ -240,37 +341,60 @@
                     "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (obvezno)",
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno)",
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
-                    "main_breaker_rating": "Ocena glavnega odklopnika (na fazo v amperih)",
-                    "invert_phases": "Obrni odčitke toka, če se uvoz meri kot negativen",
-                    "max_import_power_entity_id": "Senzor za maksimalno dovoljeno uvozno moč",
-                    "phase_voltage": "Napetost na fazo v voltih",
-                    "excess_export_threshold": "Prag presežne izvozne moči (W)",
-                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije (sekunde)"
+                    "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
+                    "invert_phases": "Obrni odčitke toka",
+                    "enable_max_import_power": "Omogoči omejitev maksimalne uvozne moči",
+                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
+                    "phase_voltage": "Napetost na fazo",
+                    "excess_export_threshold": "Prag izvoza za način Excess",
+                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije"
+                },
+                "data_description": {
+                    "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
+                    "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
+                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odkljukajte za popolno onemogočitev omejitve.",
+                    "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
+                    "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
+                    "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
+                    "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom."
                 }
             },
             "hub_inverter": {
                 "title": "Posodobi nastavitve razsmernika",
-                "description": "Posodobite konfiguracijo razsmernika",
+                "description": "Posodobite konfiguracijo razsmernika\n\nMaksimalna moč praznjenja baterije: {battery_power_hint}",
                 "data": {
-                    "inverter_max_power": "Skupna moč razsmernika (W)",
-                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo (W)",
-                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrično napajanje faz",
+                    "inverter_max_power": "Skupna moč razsmernika",
+                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrični izhod po fazah",
                     "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
                     "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
                     "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
                     "wiring_topology": "Topologija ožičenja"
+                },
+                "data_description": {
+                    "inverter_max_power": "Nazivna moč iz podatkovnega lista razsmernika. Nastavite na 0 za preskočitev omejitev razsmernika.",
+                    "inverter_max_power_per_phase": "Običajno skupna moč deljena s številom faz. Nastavite na 0 za preskočitev omejitev po fazah.",
+                    "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
+                    "wiring_topology": "Paralelno: razsmernik in omrežje napajata neodvisno (AC-sklopljena sončna, brez baterije). Zaporedno: vsa energija teče skozi razsmernik (hibridni razsmernik z DC-sklopljeno baterijo)."
                 }
             },
             "hub": {
                 "title": "Posodobi nastavitve baterije in sončne elektrarne",
                 "description": "Posodobite konfiguracijo baterije in sončne proizvodnje",
                 "data": {
-                    "solar_production_entity_id": "Senzor proizvodnje solarne energije (neobvezno — pustite 'None' za izračun iz omrežnega merilnika)",
-                    "battery_soc_entity_id": "Senzor, ki meri stanje napolnjenosti baterije (SOC) v %",
-                    "battery_power_entity_id": "Senzor, ki meri moč baterije",
-                    "battery_max_charge_power": "Maksimalna moč polnjenja baterije v vatih",
-                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije v vatih",
-                    "battery_soc_hysteresis": "Histereza SOC baterije (%) za preprečevanje nihanja"
+                    "solar_production_entity_id": "Senzor proizvodnje solarne energije",
+                    "battery_soc_entity_id": "Senzor stanja napolnjenosti baterije (SOC)",
+                    "battery_power_entity_id": "Senzor moči baterije",
+                    "battery_max_charge_power": "Maksimalna moč polnjenja baterije",
+                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije",
+                    "battery_soc_hysteresis": "Histereza SOC baterije"
+                },
+                "data_description": {
+                    "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
+                    "battery_power_entity_id": "Pozitivne vrednosti = baterija se prazni, negativne vrednosti = baterija se polni.",
+                    "battery_max_charge_power": "Maksimalna moč, ki jo razsmernik uporabi za polnjenje baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
+                    "battery_max_discharge_power": "Maksimalna moč, ki jo razsmernik lahko prazni iz baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
+                    "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%."
                 }
             },
             "plug": {
@@ -278,41 +402,134 @@
                 "description": "Posodobite nastavitve pametne vtičnice",
                 "data": {
                     "plug_switch_entity_id": "Entiteta stikala, ki upravlja vtičnico",
-                    "plug_power_rating": "Največja nazivna moč (W)",
+                    "plug_power_rating": "Nazivna moč",
                     "connected_to_phase": "Priključena na fazo",
-                    "charger_priority": "Prioriteta (1 = najvišja prioriteta)",
-                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno — omogoča samodejno zaznavo dejanske porabe)",
-                    "update_frequency": "Frekvenca posodabljanja v sekundah"
+                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
+                    "update_frequency": "Frekvenca posodabljanja"
+                },
+                "data_description": {
+                    "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
+                    "connected_to_phase": "Na katero električno fazo je vtičnica priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
+                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
+                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo vtičnica vklopljena ali izklopljena."
                 }
             },
             "charger": {
                 "title": "Posodobi prioriteto polnilnika",
                 "description": "Posodobite prioriteto polnilnika",
                 "data": {
-                    "charger_priority": "Prioriteta polnilnika (1 = najvišja prioriteta)"
+                    "charger_priority": "Prioriteta (1 = najvišja)"
+                },
+                "data_description": {
+                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno."
                 }
             },
             "charger_current": {
                 "title": "Posodobi tok in faze",
                 "description": "Posodobite omejitve toka in preslikavo faz",
                 "data": {
-                    "evse_minimum_charge_current": "Minimalni tok polnjenja (A)",
-                    "evse_maximum_charge_current": "Maksimalni tok polnjenja (A)",
-                    "charger_l1_phase": "L1 polnilnika priključen na fazo",
-                    "charger_l2_phase": "L2 polnilnika priključen na fazo",
-                    "charger_l3_phase": "L3 polnilnika priključen na fazo"
+                    "evse_minimum_charge_current": "Minimalni tok polnjenja",
+                    "evse_maximum_charge_current": "Maksimalni tok polnjenja",
+                    "charger_l1_phase": "L1 polnilnika → faza lokacije",
+                    "charger_l2_phase": "L2 polnilnika → faza lokacije",
+                    "charger_l3_phase": "L3 polnilnika → faza lokacije"
+                },
+                "data_description": {
+                    "evse_minimum_charge_current": "Najnižji tok, ki ga vaš polnilnik podpira. Preverite priročnik — večina polnilnikov podpira 6A.",
+                    "evse_maximum_charge_current": "Najvišji tok, ki ga vaš polnilnik podpira. Preverite priročnik polnilnika.",
+                    "charger_l1_phase": "Preslika priključek L1 polnilnika na fazo lokacije. Večina inštalacij uporablja privzeto preslikavo A/B/C. Spremenite le, če je električar polnilnik priključil drugače.",
+                    "charger_l2_phase": "Preslika priključek L2 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače.",
+                    "charger_l3_phase": "Preslika priključek L3 polnilnika na fazo lokacije. Spremenite le, če je električar polnilnik priključil drugače."
                 }
             },
             "charger_timing": {
                 "title": "Posodobi enote in čase",
                 "description": "Posodobite enoto hitrosti polnjenja in časovne nastavitve",
                 "data": {
-                    "charge_rate_unit": "Enota hitrosti polnjenja (A=Amperi, W=Vati)",
-                    "profile_validity_mode": "Način veljavnosti profila polnjenja",
-                    "update_frequency": "Frekvenca posodabljanja v sekundah",
-                    "ocpp_profile_timeout": "Časovna omejitev OCPP profila v sekundah",
-                    "charge_pause_duration": "Trajanje premora polnjenja v sekundah",
+                    "charge_rate_unit": "Enota hitrosti polnjenja",
+                    "profile_validity_mode": "Način veljavnosti profila",
+                    "update_frequency": "Frekvenca posodabljanja",
+                    "ocpp_profile_timeout": "Časovna omejitev profila",
+                    "charge_pause_duration": "Trajanje premora polnjenja",
                     "stack_level": "OCPP nivo sklada"
+                },
+                "data_description": {
+                    "charge_rate_unit": "Večina OCPP polnilnikov uporablja ampere. Nekateri (npr. nekateri modeli Wallbox) zahtevajo vate.",
+                    "profile_validity_mode": "Absolutni uporablja časovne žige, relativni uporablja trajanja. Najprej poskusite absolutni — preklopite na relativnega, če polnilnik ne reagira pravilno.",
+                    "update_frequency": "Kako pogosto se pošiljajo posodobljeni profili polnjenja temu polnilniku.",
+                    "ocpp_profile_timeout": "Koliko časa profil polnjenja ostane veljaven. Polnilnik se vrne na privzeto obnašanje, če v tem času ne prejme novega profila.",
+                    "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilnik drži na 0A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
+                    "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju."
+                }
+            }
+        }
+    },
+    "services": {
+        "reset_ocpp_evse": {
+            "name": "Ponastavi OCPP EVSE",
+            "description": "Počisti profile polnjenja in ponastavi polnilnico na minimalni tok.",
+            "fields": {
+                "entry_id": {
+                    "name": "ID konfiguracije polnilnice",
+                    "description": "ID konfiguracijske enote polnilnice za ponastavitev."
+                }
+            }
+        },
+        "set_charging_mode": {
+            "name": "Nastavi način polnjenja",
+            "description": "Spremeni način polnjenja za vozlišče (lokacijo).",
+            "fields": {
+                "entry_id": {
+                    "name": "ID konfiguracije vozlišča",
+                    "description": "ID konfiguracijske enote vozlišča."
+                },
+                "mode": {
+                    "name": "Način polnjenja",
+                    "description": "Način polnjenja za nastavitev (Standard, Eco, Solar, Excess)."
+                }
+            }
+        },
+        "set_distribution_mode": {
+            "name": "Nastavi način distribucije",
+            "description": "Spremeni način distribucije moči za vozlišče (lokacijo).",
+            "fields": {
+                "entry_id": {
+                    "name": "ID konfiguracije vozlišča",
+                    "description": "ID konfiguracijske enote vozlišča."
+                },
+                "mode": {
+                    "name": "Način distribucije",
+                    "description": "Način distribucije za nastavitev (Shared, Priority, Sequential - Optimized, Sequential - Strict)."
+                }
+            }
+        },
+        "set_max_current": {
+            "name": "Nastavi maksimalni tok",
+            "description": "Spremeni maksimalni tok polnjenja za polnilnico.",
+            "fields": {
+                "entry_id": {
+                    "name": "ID konfiguracije polnilnice",
+                    "description": "ID konfiguracijske enote polnilnice."
+                },
+                "current": {
+                    "name": "Maksimalni tok",
+                    "description": "Maksimalni tok v amperih."
+                }
+            }
+        },
+        "set_min_current": {
+            "name": "Nastavi minimalni tok",
+            "description": "Spremeni minimalni tok polnjenja za polnilnico.",
+            "fields": {
+                "entry_id": {
+                    "name": "ID konfiguracije polnilnice",
+                    "description": "ID konfiguracijske enote polnilnice."
+                },
+                "current": {
+                    "name": "Minimalni tok",
+                    "description": "Minimalni tok v amperih."
                 }
             }
         }

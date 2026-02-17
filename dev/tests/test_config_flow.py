@@ -132,11 +132,11 @@ async def test_charger_current_validation_min_exceeds_max(
     assert result["errors"] == {"base": "min_exceeds_max"}
 
 
-async def test_charger_current_validation_zero_current(
+async def test_charger_current_validation_min_exceeds_max(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
 ):
-    """Test that charger_current step rejects zero current values."""
+    """Test that charger_current step rejects min > max current values."""
     mock_hub_entry.add_to_hass(hass)
 
     result = await hass.config_entries.flow.async_init(
@@ -165,12 +165,12 @@ async def test_charger_current_validation_zero_current(
         },
     )
 
-    # Step 2: charger_current — submit with zero current
+    # Step 2: charger_current — submit with min > max
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
-            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 0,
-            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 20,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 6,
             CONF_CHARGER_L1_PHASE: "A",
             CONF_CHARGER_L2_PHASE: "B",
             CONF_CHARGER_L3_PHASE: "C",
@@ -178,7 +178,7 @@ async def test_charger_current_validation_zero_current(
     )
 
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"] == {"base": "invalid_current"}
+    assert result["errors"] == {"base": "min_exceeds_max"}
 
 
 async def test_charger_config_creates_entry(

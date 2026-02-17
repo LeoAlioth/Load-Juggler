@@ -11,41 +11,50 @@ If you have a smart meter or PV with consumption monitoring, and an EVSE integra
 - [Battery System Support](#battery-system-support)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Services & Automations](#services--automations)
 - [Supported Equipment](#supported-equipment)
+- [Troubleshooting](#troubleshooting)
 - [Testing and Feedback](#testing-and-feedback)
 
 ## Features
 
 - **Dynamic charging control** based on available power and solar generation
-- **Multiple charging modes** to suit different needs and scenarios
+- **Multiple charging modes**: Standard, Eco, Solar, Excess (see [Charge Modes Guide](CHARGE_MODES_GUIDE.md))
+- **Multiple distribution modes**: Shared, Priority, Optimized, Strict (see [Distribution Modes Guide](DISTRIBUTION_MODES_GUIDE.md))
+- **Multi-charger support** with priority-based power distribution
 - **Battery system integration** for optimal energy management
-- **Automatic inverter detection** for popular brands (SolarEdge, Solarman/Deye)
-- **Power-to-current conversion** for systems that only provide power readings
+- **Smart plug support** for on/off controlled devices (heaters, pumps, etc.)
+- **Phase-aware calculations** for 1-phase, 2-phase, and 3-phase installations
+- **Per-charger phase mapping** (L1/L2/L3 to site phases A/B/C)
+- **Symmetric and asymmetric inverter** support
+- **Automatic charge rate unit detection** via OCPP (Amps or Watts)
+- **Relative and absolute OCPP profile modes** for different charger compatibility
+- **Current rate limiting** (ramp up/down) for stable charging
 - **Failsafe operation** - EVSE reverts to default profile if communication fails
 
 ## Charging Modes
 
 The integration offers four distinct charging modes:
 
-- **Standard**: Charges as fast as possible according to the set import power limit. Ideal for maximum charging speed when grid power usage is not a concern.
+- **Standard**: Charges as fast as possible from all available power sources (grid + solar + battery). Ideal for maximum charging speed.
+- **Eco**: Charges at minimum current, increases with solar production. Prevents grid export while maintaining minimum charge rate.
+- **Solar**: Only charges when sufficient solar power is available. Zero grid import — stops if import would be required.
+- **Excess**: Starts charging only when solar export exceeds a configurable threshold. Designed for large solar systems to utilize excess power.
 
-- **Eco**: Charges at the minimum current and increases charging speed when sufficient solar power is available. Balances charging speed with solar utilization.
-
-- **Solar**: Only charges when enough solar power is available, minimizing grid consumption. Perfect for maximizing self-consumption of solar energy.
-
-- **Excess**: Advanced mode that starts charging only when solar export exceeds a configurable threshold. This mode is designed for systems with high solar generation that want to utilize excess power for EV charging while maintaining battery charging priority. The charging continues for 15 minutes even if export drops below the threshold, providing stable charging sessions.
+For detailed explanations with examples, battery behavior, and configuration parameters, see the [Charge Modes Guide](CHARGE_MODES_GUIDE.md).
 
 ## Battery System Support
 
 The integration includes comprehensive battery system support:
 
-- **Battery SOC monitoring** - tracks current battery state of charge
-- **SOC target management** - respects minimum battery charge levels
-- **Intelligent discharge control** - allows battery power to supplement EV charging when SOC is above target
-- **Charge/discharge power limits** - configurable maximum battery charge and discharge rates
-- **Grid charging control** - optional switch to allow/disallow charging from grid power
+- **Battery SOC monitoring** — tracks current battery state of charge
+- **SOC target management** — respects minimum battery charge levels
+- **Intelligent discharge control** — allows battery power to supplement EV charging when SOC is above target
+- **Charge/discharge power limits** — configurable maximum battery charge and discharge rates
+- **Grid charging control** — optional switch to allow/disallow charging from grid power
+- **SOC hysteresis** — prevents oscillation when battery SOC hovers near thresholds
 
-Battery integration works seamlessly with all charging modes, ensuring optimal energy management between solar generation, battery storage, and EV charging.
+Battery integration works seamlessly with all charging modes. Battery entities (SOC Target, SOC Min, Allow Grid Charging) are only shown when a battery sensor is configured.
 
 ## Installation
 
@@ -55,51 +64,167 @@ Battery integration works seamlessly with all charging modes, ensuring optimal e
 
 **Method 2:**
 
-1. **Download the Custom Component**
-   - Download the files from the repository.
-
-2. **Copy to Your Custom Components Directory**
-   - Copy the downloaded folder `dynamic_ocpp_evse` into the `custom_components/dynamic_ocpp_evse` directory in your Home Assistant configuration directory.
-
-3. **Restart Home Assistant**
-   - Restart your Home Assistant instance to load the new component.
+1. Download the files from the repository
+2. Copy the `dynamic_ocpp_evse` folder into `custom_components/dynamic_ocpp_evse` in your Home Assistant config directory
+3. Restart Home Assistant
 
 ## Configuration
 
-### Import power limit helper
+### Prerequisites
 
-Create a template sensor, that holds the maximum import power. You will need it in the configuration steps. I Recommend the name to contain "Power Limit" so it gets auto selected during configuration.
+Create a template sensor for the maximum import power limit. You will need it during configuration:
 
-- The template can be whatever you want, for s simple static example of 6 kW: {{ 6000 }}
+- The template can be whatever you want, for a simple static example of 6 kW: `{{ 6000 }}`
 - Unit of measurement: W
 - Device class: Power
 - State class: Measurement
 
-( Using an input_number is not yet possible but planned for future release)
+I recommend including "Power Limit" in the name so it gets auto-selected during configuration.
 
-### Adding integration
+### Quick Start
 
-After installation, go to Settings -> Add Integration and search for `Dynamic OCPP EVSE`
+1. Go to **Settings > Devices & Services > Add Integration** and search for `Dynamic OCPP EVSE`
+2. **Create a Hub** (represents your electrical site):
+   - Select your phase current/power sensors (Phase A required, B and C optional for multi-phase)
+   - Configure main breaker rating, voltage, and max import power
+   - Optionally configure battery sensors and inverter settings
+3. **Add a Charger** (the integration will auto-discover OCPP chargers):
+   - Confirm the detected EVSE or manually select entities
+   - Set min/max current, phase count, and phase mapping
+   - Choose charge rate unit (auto-detected from charger when possible)
+   - Choose profile validity mode (Absolute or Relative)
+4. **Press the Reset OCPP EVSE button** on your charger device to clear any existing profiles
+5. Set your charging mode and you're ready to go
 
-The integration will automatically detect and suggest appropriate sensors based on your system:
+### Configuration Reference
 
-### Configuration options
+#### Hub (Site) Settings
 
-1. **Phase Current/Power Sensors**: The integration will automatically detect phase sensors from supported inverters
-2. **EVSE Sensors**: Select your EVSE current import and offered sensors from the OCPP integration
-3. **Power Limits**: Configure your maximum import power and main breaker rating
-4. **Battery Configuration** (optional): Set up battery SOC, power sensors, and charge/discharge limits
-5. **Charging Parameters**: Set minimum and maximum charging currents
+| Field | Description | Default |
+|---|---|---|
+| Phase A/B/C current entity | Grid current sensors (A or W, auto-converted) | — |
+| Main breaker rating | Maximum current per phase (A) | 25A |
+| Phase voltage | Voltage per phase (V) | 230V |
+| Max import power entity | Template sensor for grid import limit (W) | — |
+| Excess export threshold | Solar export threshold for Excess mode (W) | 13000W |
+| Invert phases | Flip CT polarity if installed backwards | Off |
+| Battery SOC entity | Battery state of charge sensor | — |
+| Battery power entity | Battery charge/discharge power sensor (W) | — |
+| Battery max charge/discharge power | Battery power limits (W) | 5000W |
+| Battery SOC hysteresis | SOC change before triggering mode switches (%) | 5% |
+| Solar production entity | Dedicated solar power sensor (optional) | — |
+| Inverter max power | Total inverter capacity (W) | — |
+| Inverter max power per phase | Per-phase inverter limit (W) | — |
+| Inverter supports asymmetric | Can inverter balance power across phases | Off |
+| Inverter output phase A/B/C entity | Per-phase inverter output sensors (optional) | — |
 
-Most fields should auto-populate during setup. If they do not, please report that, with the ids of entities that should be selected, so I can improve searching.
+#### Charger Settings
 
-**Important**: Generally, the EVSE has some charge profiles set, and those might not be compatible with the ones this integration creates. After first install, call the reset_ocpp_evse action via the **Reset OCPP EVSE** button.
+| Field | Description | Default |
+|---|---|---|
+| EVSE current import entity | OCPP current import sensor | — |
+| EVSE current offered entity | OCPP current offered sensor | — |
+| OCPP device ID | Device ID for OCPP service calls | — |
+| Min/Max charge current | Charger operating range (A) | 6A / 16A |
+| Phases | Number of phases (1 or 3) | 3 |
+| Priority | Distribution priority (1=highest) | 1 |
+| L1/L2/L3 phase mapping | Which site phase each charger leg uses | A/B/C |
+| Charge rate unit | Amps or Watts (auto-detected) | Auto |
+| Profile validity mode | Absolute (timestamp) or Relative (duration) | Absolute |
+| OCPP profile timeout | Profile validity duration (seconds) | 120 |
+| Charge pause duration | Minimum pause before restart (seconds) | 180 |
+| Stack level | OCPP charging profile stack level | 2 |
 
-## Supported equipment
+## Services & Automations
 
-### power meters / inverters
+### Available Services
 
-While technically you can use any home assistant entity, the integration also automatically detects sensors for some setups:
+The integration exposes these services for use in automations and scripts:
+
+| Service | Description | Parameters |
+|---|---|---|
+| `dynamic_ocpp_evse.set_charging_mode` | Change charging mode | `entry_id`, `mode` (Standard/Eco/Solar/Excess) |
+| `dynamic_ocpp_evse.set_distribution_mode` | Change distribution mode | `entry_id`, `mode` (Shared/Priority/Sequential - Optimized/Sequential - Strict) |
+| `dynamic_ocpp_evse.set_max_current` | Set charger max current | `entry_id`, `current` (A) |
+| `dynamic_ocpp_evse.set_min_current` | Set charger min current | `entry_id`, `current` (A) |
+| `dynamic_ocpp_evse.reset_ocpp_evse` | Reset charger profiles | `entry_id` |
+
+The `entry_id` is the config entry ID of the hub or charger. You can find it in the URL when viewing the integration entry in Settings, or by inspecting the device info.
+
+### Using the Select Entity (Alternative)
+
+You can also change modes directly via the select entity in automations:
+
+```yaml
+action:
+  - service: select.select_option
+    target:
+      entity_id: select.dynamic_ocpp_evse_charging_mode
+    data:
+      option: "Standard"
+```
+
+### Common Automation Examples
+
+#### Time-of-day charging (free power hours)
+
+```yaml
+automation:
+  - alias: "Charge at max during free hours"
+    trigger:
+      - platform: time
+        at: "11:00:00"
+    action:
+      - service: select.select_option
+        target:
+          entity_id: select.dynamic_ocpp_evse_charging_mode
+        data:
+          option: "Standard"
+
+  - alias: "Switch to Solar after free hours"
+    trigger:
+      - platform: time
+        at: "14:00:00"
+    action:
+      - service: select.select_option
+        target:
+          entity_id: select.dynamic_ocpp_evse_charging_mode
+        data:
+          option: "Solar"
+```
+
+#### Tariff-based charging (cheap night rate)
+
+```yaml
+automation:
+  - alias: "Standard mode during cheap tariff"
+    trigger:
+      - platform: time
+        at: "23:00:00"
+    action:
+      - service: select.select_option
+        target:
+          entity_id: select.dynamic_ocpp_evse_charging_mode
+        data:
+          option: "Standard"
+
+  - alias: "Eco mode during expensive tariff"
+    trigger:
+      - platform: time
+        at: "07:00:00"
+    action:
+      - service: select.select_option
+        target:
+          entity_id: select.dynamic_ocpp_evse_charging_mode
+        data:
+          option: "Eco"
+```
+
+## Supported Equipment
+
+### Power Meters / Inverters
+
+While technically you can use any Home Assistant entity, the integration also automatically detects sensors for some setups:
 
 - SolarEdge
 - Deye - External CTs
@@ -108,11 +233,62 @@ While technically you can use any home assistant entity, the integration also au
 
 The integration supports both current (A) and power (W) sensors, automatically converting power to current using the configured phase voltage.
 
+### EVSE Chargers
+
+Any charger supported by the [OCPP integration](https://github.com/lbbrhzn/ocpp) should work. Tested with:
+
+- EVBox Elvi
+- ZJBeny
+- Huawei SCharger-7KS-S0
+
+### Smart Plugs
+
+Smart plugs can be added as load devices for on/off control based on available power. Configure them as "Smart Plug" device type during charger setup.
+
+## Troubleshooting
+
+### Charger rejecting profiles
+
+**Symptom:** Logs show `SetChargingProfile` response `Rejected`
+
+**Solutions:**
+1. Press the **Reset OCPP EVSE** button to clear existing profiles
+2. Check the charge rate unit — some chargers (e.g., Huawei) only accept Watts, not Amps. The integration auto-detects this, but you can manually set it in charger settings.
+3. Try switching profile validity mode from Absolute to Relative (or vice versa)
+
+### Current oscillating / unstable
+
+**Symptom:** Charger current toggles rapidly between values
+
+**Cause:** Charger's internal clock drifts, causing the OCPP profile to expire mid-session
+
+**Solution:** Switch profile validity mode to **Relative** (duration-based) in charger settings
+
+### Solar mode not charging
+
+**With battery:** Battery SOC must be at or above the target SOC before Solar mode will charge the EV.
+
+**Without battery:** Export power must exceed the charger's minimum current. Check your grid current sensors.
+
+### Eco mode charging too fast/slow at night
+
+**Expected:** Eco mode charges at the minimum rate when no solar is available. If it's charging faster, check that grid current sensors are reading correctly and the invert_phases setting is correct.
+
+### No entities showing up
+
+After adding the integration, entities are created automatically. If battery-related entities don't appear, it's because no battery sensor is configured — this is intentional to keep the UI clean.
+
+### "Allow Grid Charging" — what does it do?
+
+This switch only affects systems with home batteries, in Standard and Eco modes:
+- **ON**: Charging uses all available power including grid import
+- **OFF**: Charging stops when it would require grid import (only uses solar + battery discharge above target SOC)
+
+For more troubleshooting tips, see the [Charge Modes Guide](CHARGE_MODES_GUIDE.md#troubleshooting).
+
 ## Testing and Feedback
 
-🧪 **Looking for Testers!** 🧪
-
-This integration is actively being developed and improved. I'm looking for users to test it with different setups and provide feedback.
+This integration is actively being developed and improved. Looking for users to test it with different setups and provide feedback.
 
 **Especially interested in testing with:**
 
@@ -127,5 +303,3 @@ This integration is actively being developed and improved. I'm looking for users
 - Report any issues or unexpected behavior via [GitHub Issues](https://github.com/LeoAlioth/Dynamic_OCPP_EVSE/issues)
 - Share your configuration and experiences
 - Suggest improvements or new features
-
-Your testing and feedback help make this integration better for everyone! 🚗⚡

@@ -5,6 +5,18 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 
 
+def prettify_name(name: str) -> str:
+    """Convert raw device names (e.g. 'evbox_elvi') to human-friendly format.
+
+    Replaces underscores with spaces. Applies title-case only when the name
+    is all lowercase (preserves existing mixed case like 'EvBox Elvi').
+    """
+    name = name.replace("_", " ")
+    if name == name.lower():
+        name = name.title()
+    return name
+
+
 def normalize_optional_entity(value: str | None) -> str | None:
     """Normalize optional entity selector values.
 

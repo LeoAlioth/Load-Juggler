@@ -3,7 +3,7 @@ import time
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .dynamic_ocpp_evse import run_hub_calculation
 from .const import *
@@ -23,18 +23,25 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
 
-        # Check if a battery is configured (any battery entity present)
+        # Check which optional hardware is configured
         has_battery = bool(get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID, None))
+        has_phase_b = bool(get_entry_value(config_entry, CONF_PHASE_B_CURRENT_ENTITY_ID, None))
+        has_phase_c = bool(get_entry_value(config_entry, CONF_PHASE_C_CURRENT_ENTITY_ID, None))
 
         entities = [DynamicOcppEvseHubSensor(hass, config_entry, name, entity_id)]
         # Create individual hub data sensors from definitions
         for defn in HUB_SENSOR_DEFINITIONS:
             if defn.get("requires_battery") and not has_battery:
                 continue
+            if defn.get("requires_phase") == "B" and not has_phase_b:
+                continue
+            if defn.get("requires_phase") == "C" and not has_phase_c:
+                continue
             entities.append(DynamicOcppEvseHubDataSensor(hass, config_entry, name, entity_id, defn))
 
         async_add_entities(entities)
-        _LOGGER.info(f"Setting up hub sensors for {name} (battery={'yes' if has_battery else 'no'})")
+        phases = "A" + ("B" if has_phase_b else "") + ("C" if has_phase_c else "")
+        _LOGGER.info(f"Setting up hub sensors for {name} (battery={'yes' if has_battery else 'no'}, phases={phases})")
         return
     
     # Only set up charger sensors for charger entries
@@ -83,7 +90,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     )
     sensor.coordinator = coordinator
     allocated_sensor = DynamicOcppEvseAllocatedCurrentSensor(hass, config_entry, hub_entry, name, entity_id)
-    async_add_entities([sensor, allocated_sensor])
+    status_sensor = DynamicOcppEvseChargerStatusSensor(hass, config_entry, hub_entry, name, entity_id)
+    async_add_entities([sensor, allocated_sensor, status_sensor])
 
     # Start the first update
     await coordinator.async_config_entry_first_refresh()
@@ -146,6 +154,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
         self._target_evse_eco = None
         self._target_evse_solar = None
         self._target_evse_excess = None
+        self._charging_status = "Unknown"
         self.coordinator = coordinator
 
     @property
@@ -329,6 +338,195 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
             except Exception as e:
                 _LOGGER.error("Auto-reset service call failed for %s: %s", self._attr_name, e)
 
+    async def _send_plug_command(self, limit: float, hub_data: dict, now_mono: float) -> None:
+        """Send on/off command to a smart plug / relay device."""
+        plug_switch_entity = self.config_entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
+        if not plug_switch_entity:
+            _LOGGER.error(f"No switch entity configured for plug {self._attr_name}")
+            return
+
+        if limit > 0:
+            _LOGGER.debug(f"Smart plug {self._attr_name}: turning ON (limit={limit}A)")
+            await self.hass.services.async_call(
+                "switch", "turn_on",
+                {"entity_id": plug_switch_entity},
+                blocking=False,
+            )
+        else:
+            _LOGGER.debug(f"Smart plug {self._attr_name}: turning OFF (limit=0)")
+            await self.hass.services.async_call(
+                "switch", "turn_off",
+                {"entity_id": plug_switch_entity},
+                blocking=False,
+            )
+
+        # Auto-update Device Power slider from power monitoring average
+        plug_auto_power = hub_data.get("plug_auto_power", {})
+        auto_power = plug_auto_power.get(self.config_entry.entry_id)
+        if auto_power is not None:
+            charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
+            device_power_entity = f"number.{charger_entity_id}_device_power"
+            try:
+                await self.hass.services.async_call(
+                    "number", "set_value",
+                    {"entity_id": device_power_entity, "value": auto_power},
+                    blocking=False,
+                )
+            except Exception as e:
+                _LOGGER.debug(f"Could not update device power slider: {e}")
+
+        self._last_update = datetime.now(timezone.utc)
+        self._last_command_time = now_mono
+
+    async def _send_ocpp_command(self, limit: float, hub_entry, dynamic_control_on: bool, now_mono: float) -> None:
+        """Send OCPP charging profile to an EVSE charger."""
+        # Rate-limit current changes (only when actively charging both cycles)
+        if self._last_commanded_limit is not None and self._last_commanded_limit > 0 and limit > 0:
+            update_freq = get_entry_value(self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
+            max_up = RAMP_UP_RATE * update_freq
+            max_down = RAMP_DOWN_RATE * update_freq
+            delta = limit - self._last_commanded_limit
+            if delta > max_up:
+                limit = round(self._last_commanded_limit + max_up, 1)
+                _LOGGER.debug("Rate-limited ramp UP for %s: %.1fA (max +%.1fA/cycle)", self._attr_name, limit, max_up)
+            elif delta < -max_down:
+                limit = round(self._last_commanded_limit - max_down, 1)
+                _LOGGER.debug("Rate-limited ramp DOWN for %s: %.1fA (max -%.1fA/cycle)", self._attr_name, limit, max_down)
+
+        # Check if charger is following our profiles (auto-reset detection)
+        await self._check_profile_compliance(limit, dynamic_control_on)
+
+        profile_timeout = get_entry_value(self.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)
+        stack_level = get_entry_value(self.config_entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
+        profile_validity_mode = get_entry_value(self.config_entry, CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE)
+
+        # Get charge rate unit from config (A or W)
+        charge_rate_unit = get_entry_value(self.config_entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
+
+        # Legacy fallback: if still set to "auto" (pre-OCPP detection), try
+        # querying the charger via OCPP and cache the result for future cycles.
+        if charge_rate_unit not in (CHARGE_RATE_UNIT_AMPS, CHARGE_RATE_UNIT_WATTS):
+            cached = getattr(self, "_cached_charge_rate_unit", None)
+            if cached:
+                charge_rate_unit = cached
+            else:
+                ocpp_device_id = self.config_entry.data.get(CONF_OCPP_DEVICE_ID)
+                detected = await self._detect_charge_rate_unit_ocpp(ocpp_device_id)
+                if detected:
+                    charge_rate_unit = detected
+                    self._cached_charge_rate_unit = detected
+                    _LOGGER.info("OCPP-detected charge rate unit: %s for %s", detected, self._attr_name)
+                else:
+                    charge_rate_unit = CHARGE_RATE_UNIT_AMPS
+                    _LOGGER.warning("Could not detect charge rate unit for %s, defaulting to Amperes", self._attr_name)
+
+        # Convert limit based on charge rate unit
+        if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
+            voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+            phases_for_profile = self._phases if self._phases else 1
+            limit_for_charger = round(limit * voltage * phases_for_profile, 0)
+            rate_unit = "W"
+            self._last_set_power = limit_for_charger
+            self._last_set_current = None
+        else:
+            limit_for_charger = round(limit , 1)
+            rate_unit = "A"
+            self._last_set_current = limit_for_charger
+            self._last_set_power = None
+
+        # Build charging profile based on validity mode
+        if profile_validity_mode == PROFILE_VALIDITY_MODE_ABSOLUTE:
+            now = datetime.now(timezone.utc)
+            valid_from = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+            valid_to = (now + timedelta(seconds=profile_timeout)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            charging_profile = {
+                "chargingProfileId": 11,
+                "stackLevel": stack_level,
+                "chargingProfileKind": "Absolute",
+                "chargingProfilePurpose": "TxDefaultProfile",
+                "validFrom": valid_from,
+                "validTo": valid_to,
+                "chargingSchedule": {
+                    "chargingRateUnit": rate_unit,
+                    "startSchedule": valid_from,
+                    "chargingSchedulePeriod": [
+                        {
+                            "startPeriod": 0,
+                            "limit": limit_for_charger,
+                        }
+                    ]
+                }
+            }
+            _LOGGER.debug(f"Using absolute profile validity mode: {valid_from} to {valid_to}")
+        else:
+            charging_profile = {
+                "chargingProfileId": 11,
+                "stackLevel": stack_level,
+                "chargingProfileKind": "Relative",
+                "chargingProfilePurpose": "TxDefaultProfile",
+                "chargingSchedule": {
+                    "chargingRateUnit": rate_unit,
+                    "duration": profile_timeout,
+                    "chargingSchedulePeriod": [
+                        {
+                            "startPeriod": 0,
+                            "limit": limit_for_charger,
+                        }
+                    ]
+                }
+            }
+            _LOGGER.debug(f"Using relative profile validity mode: duration={profile_timeout}s")
+
+        # Get the OCPP device ID for targeting the correct charger
+        ocpp_device_id = self.config_entry.data.get(CONF_OCPP_DEVICE_ID)
+        if not ocpp_device_id:
+            _LOGGER.error(f"No OCPP device ID configured for {self._attr_name} - cannot send charging profile")
+            return
+
+        _LOGGER.debug(f"Sending set_charge_rate to device {ocpp_device_id} for {self._attr_name} with limit: {limit_for_charger}{rate_unit} (calculated from {limit}A)")
+
+        # Check if charge_control switch is off and we have available current - turn it on
+        # But only if a car is actually plugged in (connector status is not "Available")
+        charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
+        charge_control_switch = f"switch.{charger_entity_id}_charge_control"
+        charge_control_state = self.hass.states.get(charge_control_switch)
+
+        connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
+        connector_status_state = self.hass.states.get(connector_status_entity)
+        connector_status = connector_status_state.state if connector_status_state else "unknown"
+
+        car_plugged_in = connector_status not in ["Available", "unknown", "unavailable"]
+
+        _LOGGER.debug(f"Charge control check: entity={connector_status_entity}, status={connector_status}, car_plugged_in={car_plugged_in}, limit={limit}A, switch_state={charge_control_state.state if charge_control_state else 'not found'}")
+
+        if charge_control_state and charge_control_state.state == "off" and limit > 0 and car_plugged_in:
+            _LOGGER.info(f"Charge control switch {charge_control_switch} is off but limit is {limit}A and car is plugged in (connector: {connector_status}) - turning on")
+            try:
+                await self.hass.services.async_call(
+                    "switch", "turn_on",
+                    {"entity_id": charge_control_switch}
+                )
+            except Exception as e:
+                _LOGGER.warning(f"Failed to turn on charge_control switch {charge_control_switch}: {e}")
+        elif charge_control_state and charge_control_state.state == "off" and limit > 0 and not car_plugged_in:
+            _LOGGER.debug(f"Charge control switch {charge_control_switch} is off with limit {limit}A, but no car plugged in (connector: {connector_status}) - not turning on")
+
+        # Call the OCPP set_charge_rate service with device_id
+        await self.hass.services.async_call(
+            "ocpp",
+            "set_charge_rate",
+            {
+                "devid": ocpp_device_id,
+                "custom_profile": charging_profile
+            },
+            blocking=False,
+        )
+
+        self._last_commanded_limit = limit  # Store for next cycle's ramp + compliance
+        self._last_update = datetime.now(timezone.utc)
+        self._last_command_time = now_mono
+
     async def async_update(self):
         """Fetch new state data for the sensor asynchronously."""
         try:
@@ -403,7 +601,7 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 # Solar surplus
                 "solar_surplus_power": hub_data.get("solar_surplus_power"),
                 "solar_surplus_current": hub_data.get("solar_surplus_current"),
-                "last_update": datetime.utcnow(),
+                "last_update": datetime.now(timezone.utc),
             }
 
             # Use pre-computed charger targets from the calculation engine
@@ -474,199 +672,50 @@ class DynamicOcppEvseChargerSensor(SensorEntity):
                 else:
                     limit = round(self._allocated_current, 1)
 
-            # Branch on device type: smart plug vs OCPP EVSE
-            device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+            # Determine charging status reason
+            connector_entity = f"sensor.{charger_entity_id}_status_connector"
+            connector_state = self.hass.states.get(connector_entity)
+            connector_status = connector_state.state if connector_state else "unknown"
 
-            if device_type == DEVICE_TYPE_PLUG:
-                # Smart plug / relay — binary on/off control via switch entity
-                plug_switch_entity = self.config_entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
-                if not plug_switch_entity:
-                    _LOGGER.error(f"No switch entity configured for plug {self._attr_name}")
-                    return
-
-                if limit > 0:
-                    _LOGGER.debug(f"Smart plug {self._attr_name}: turning ON (limit={limit}A)")
-                    await self.hass.services.async_call(
-                        "switch", "turn_on",
-                        {"entity_id": plug_switch_entity},
-                        blocking=False,
-                    )
-                else:
-                    _LOGGER.debug(f"Smart plug {self._attr_name}: turning OFF (limit=0)")
-                    await self.hass.services.async_call(
-                        "switch", "turn_off",
-                        {"entity_id": plug_switch_entity},
-                        blocking=False,
-                    )
-
-                # Auto-update Device Power slider from power monitoring average
-                plug_auto_power = hub_data.get("plug_auto_power", {})
-                auto_power = plug_auto_power.get(self.config_entry.entry_id)
-                if auto_power is not None:
-                    charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
-                    device_power_entity = f"number.{charger_entity_id}_device_power"
-                    try:
-                        await self.hass.services.async_call(
-                            "number", "set_value",
-                            {"entity_id": device_power_entity, "value": auto_power},
-                            blocking=False,
-                        )
-                    except Exception as e:
-                        _LOGGER.debug(f"Could not update device power slider: {e}")
-
-                self._last_update = datetime.utcnow()
-                self._last_command_time = now_mono
-
+            if connector_status in ("Available", "unknown", "unavailable"):
+                self._charging_status = "Not Connected"
+            elif not dynamic_control_on:
+                self._charging_status = "Dynamic Control Off"
+            elif self._pause_started_at is not None and limit == 0:
+                pause_dur = get_entry_value(self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
+                elapsed = (datetime.now() - self._pause_started_at).total_seconds()
+                remaining = max(0, int(pause_dur - elapsed))
+                self._charging_status = f"Paused: {remaining}s"
+            elif limit > 0:
+                self._charging_status = "Charging"
             else:
-                # OCPP EVSE — send charging profile
-
-                # Rate-limit current changes (only when actively charging both cycles)
-                if self._last_commanded_limit is not None and self._last_commanded_limit > 0 and limit > 0:
-                    update_freq = get_entry_value(self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
-                    max_up = RAMP_UP_RATE * update_freq
-                    max_down = RAMP_DOWN_RATE * update_freq
-                    delta = limit - self._last_commanded_limit
-                    if delta > max_up:
-                        limit = round(self._last_commanded_limit + max_up, 1)
-                        _LOGGER.debug("Rate-limited ramp UP for %s: %.1fA (max +%.1fA/cycle)", self._attr_name, limit, max_up)
-                    elif delta < -max_down:
-                        limit = round(self._last_commanded_limit - max_down, 1)
-                        _LOGGER.debug("Rate-limited ramp DOWN for %s: %.1fA (max -%.1fA/cycle)", self._attr_name, limit, max_down)
-
-                # Check if charger is following our profiles (auto-reset detection)
-                await self._check_profile_compliance(limit, dynamic_control_on)
-
-                profile_timeout = get_entry_value(self.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT)
-                stack_level = get_entry_value(self.config_entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
-                profile_validity_mode = get_entry_value(self.config_entry, CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE)
-
-                # Get charge rate unit from config (A or W)
-                charge_rate_unit = get_entry_value(self.config_entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
-
-                # Legacy fallback: if still set to "auto" (pre-OCPP detection), try
-                # querying the charger via OCPP and cache the result for future cycles.
-                if charge_rate_unit not in (CHARGE_RATE_UNIT_AMPS, CHARGE_RATE_UNIT_WATTS):
-                    # Check instance cache first
-                    cached = getattr(self, "_cached_charge_rate_unit", None)
-                    if cached:
-                        charge_rate_unit = cached
-                    else:
-                        ocpp_device_id = self.config_entry.data.get(CONF_OCPP_DEVICE_ID)
-                        detected = await self._detect_charge_rate_unit_ocpp(ocpp_device_id)
-                        if detected:
-                            charge_rate_unit = detected
-                            self._cached_charge_rate_unit = detected
-                            _LOGGER.info("OCPP-detected charge rate unit: %s for %s", detected, self._attr_name)
-                        else:
-                            charge_rate_unit = CHARGE_RATE_UNIT_AMPS
-                            _LOGGER.warning("Could not detect charge rate unit for %s, defaulting to Amperes", self._attr_name)
-
-                # Convert limit based on charge rate unit
-                if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
-                    voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
-                    phases_for_profile = self._phases if self._phases else 1
-                    limit_for_charger = round(limit * voltage * phases_for_profile, 0)
-                    rate_unit = "W"
-                    self._last_set_power = limit_for_charger
-                    self._last_set_current = None
+                mode = self._charging_mode
+                bat_soc = hub_data.get("battery_soc")
+                bat_target = hub_data.get("battery_soc_target")
+                bat_below_target = (bat_soc is not None and bat_target is not None
+                                    and bat_soc < bat_target)
+                if mode in ("Solar", "Eco") and bat_below_target:
+                    self._charging_status = "Battery Priority"
+                elif mode == "Solar":
+                    self._charging_status = "Insufficient Solar"
+                elif mode == "Eco":
+                    self._charging_status = "Insufficient Solar"
+                elif mode == "Excess":
+                    self._charging_status = "No Excess"
                 else:
-                    limit_for_charger = round(limit , 1)
-                    rate_unit = "A"
-                    self._last_set_current = limit_for_charger
-                    self._last_set_power = None
+                    self._charging_status = "Insufficient Power"
 
-                # Build charging profile based on validity mode
-                if profile_validity_mode == PROFILE_VALIDITY_MODE_ABSOLUTE:
-                    now = datetime.utcnow()
-                    valid_from = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-                    valid_to = (now + timedelta(seconds=profile_timeout)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            # Publish charging status for the status sensor to read
+            if "charger_status" not in self.hass.data.get(DOMAIN, {}):
+                self.hass.data.setdefault(DOMAIN, {})["charger_status"] = {}
+            self.hass.data[DOMAIN]["charger_status"][self.config_entry.entry_id] = self._charging_status
 
-                    charging_profile = {
-                        "chargingProfileId": 11,
-                        "stackLevel": stack_level,
-                        "chargingProfileKind": "Absolute",
-                        "chargingProfilePurpose": "TxDefaultProfile",
-                        "validFrom": valid_from,
-                        "validTo": valid_to,
-                        "chargingSchedule": {
-                            "chargingRateUnit": rate_unit,
-                            "startSchedule": valid_from,
-                            "chargingSchedulePeriod": [
-                                {
-                                    "startPeriod": 0,
-                                    "limit": limit_for_charger,
-                                }
-                            ]
-                        }
-                    }
-                    _LOGGER.debug(f"Using absolute profile validity mode: {valid_from} to {valid_to}")
-                else:
-                    charging_profile = {
-                        "chargingProfileId": 11,
-                        "stackLevel": stack_level,
-                        "chargingProfileKind": "Relative",
-                        "chargingProfilePurpose": "TxDefaultProfile",
-                        "chargingSchedule": {
-                            "chargingRateUnit": rate_unit,
-                            "duration": profile_timeout,
-                            "chargingSchedulePeriod": [
-                                {
-                                    "startPeriod": 0,
-                                    "limit": limit_for_charger,
-                                }
-                            ]
-                        }
-                    }
-                    _LOGGER.debug(f"Using relative profile validity mode: duration={profile_timeout}s")
-
-                # Get the OCPP device ID for targeting the correct charger
-                ocpp_device_id = self.config_entry.data.get(CONF_OCPP_DEVICE_ID)
-                if not ocpp_device_id:
-                    _LOGGER.error(f"No OCPP device ID configured for {self._attr_name} - cannot send charging profile")
-                    return
-
-                _LOGGER.debug(f"Sending set_charge_rate to device {ocpp_device_id} for {self._attr_name} with limit: {limit_for_charger}{rate_unit} (calculated from {limit}A)")
-
-                # Check if charge_control switch is off and we have available current - turn it on
-                # But only if a car is actually plugged in (connector status is not "Available")
-                charger_entity_id = self.config_entry.data.get(CONF_ENTITY_ID)
-                charge_control_switch = f"switch.{charger_entity_id}_charge_control"
-                charge_control_state = self.hass.states.get(charge_control_switch)
-
-                connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
-                connector_status_state = self.hass.states.get(connector_status_entity)
-                connector_status = connector_status_state.state if connector_status_state else "unknown"
-
-                car_plugged_in = connector_status not in ["Available", "unknown", "unavailable"]
-
-                _LOGGER.debug(f"Charge control check: entity={connector_status_entity}, status={connector_status}, car_plugged_in={car_plugged_in}, limit={limit}A, switch_state={charge_control_state.state if charge_control_state else 'not found'}")
-
-                if charge_control_state and charge_control_state.state == "off" and limit > 0 and car_plugged_in:
-                    _LOGGER.info(f"Charge control switch {charge_control_switch} is off but limit is {limit}A and car is plugged in (connector: {connector_status}) - turning on")
-                    try:
-                        await self.hass.services.async_call(
-                            "switch", "turn_on",
-                            {"entity_id": charge_control_switch}
-                        )
-                    except Exception as e:
-                        _LOGGER.warning(f"Failed to turn on charge_control switch {charge_control_switch}: {e}")
-                elif charge_control_state and charge_control_state.state == "off" and limit > 0 and not car_plugged_in:
-                    _LOGGER.debug(f"Charge control switch {charge_control_switch} is off with limit {limit}A, but no car plugged in (connector: {connector_status}) - not turning on")
-
-                # Call the OCPP set_charge_rate service with device_id
-                await self.hass.services.async_call(
-                    "ocpp",
-                    "set_charge_rate",
-                    {
-                        "devid": ocpp_device_id,
-                        "custom_profile": charging_profile
-                    },
-                    blocking=False,
-                )
-
-                self._last_commanded_limit = limit  # Store for next cycle's ramp + compliance
-                self._last_update = datetime.utcnow()
-                self._last_command_time = now_mono
+            # Send device command
+            device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+            if device_type == DEVICE_TYPE_PLUG:
+                await self._send_plug_command(limit, hub_data, now_mono)
+            else:
+                await self._send_ocpp_command(limit, hub_entry, dynamic_control_on, now_mono)
         except Exception as e:
             _LOGGER.error(f"Error updating Dynamic OCPP EVSE Charger Sensor {self._attr_name}: {e}", exc_info=True)
 
@@ -722,6 +771,48 @@ class DynamicOcppEvseAllocatedCurrentSensor(SensorEntity):
             allocations = self.hass.data.get(DOMAIN, {}).get("charger_allocations", {})
             value = allocations.get(self.config_entry.entry_id, 0)
             self._state = round(float(value), 1)
+        except Exception as e:
+            _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+
+
+class DynamicOcppEvseChargerStatusSensor(SensorEntity):
+    """Sensor showing the current charging status reason for a charger."""
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id):
+        """Initialize the charging status sensor."""
+        self.hass = hass
+        self.config_entry = config_entry
+        self.hub_entry = hub_entry
+        self._attr_name = f"{name} Charging Status"
+        self._attr_unique_id = f"{entity_id}_charging_status"
+        self._state = "Unknown"
+
+    @property
+    def device_info(self):
+        """Return device information about this charger."""
+        device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        model = "Smart Plug" if device_type == DEVICE_TYPE_PLUG else "EV Charger"
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME),
+            "manufacturer": "Dynamic OCPP EVSE",
+            "model": model,
+            "via_device": (DOMAIN, self.hub_entry.entry_id),
+        }
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def icon(self):
+        return "mdi:information-outline"
+
+    async def async_update(self):
+        """Read charging status from hass.data (populated by the charger sensor)."""
+        try:
+            status = self.hass.data.get(DOMAIN, {}).get("charger_status", {})
+            self._state = status.get(self.config_entry.entry_id, "Unknown")
         except Exception as e:
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
 
@@ -787,7 +878,7 @@ class DynamicOcppEvseHubSensor(SensorEntity):
 
             if hub_data:
                 self._total_site_available_power = hub_data.get("total_site_available_power")
-                self._last_update = hub_data.get("last_update", datetime.utcnow())
+                self._last_update = hub_data.get("last_update", datetime.now(timezone.utc))
         except Exception as e:
             _LOGGER.error(f"Error updating hub sensor {self._attr_name}: {e}", exc_info=True)
 
@@ -862,6 +953,7 @@ HUB_SENSOR_DEFINITIONS = [
         "device_class": "current",
         "icon": "mdi:current-ac",
         "decimals": 1,
+        "requires_phase": "B",
     },
     {
         "name_suffix": "Site Available Current Phase C",
@@ -871,6 +963,7 @@ HUB_SENSOR_DEFINITIONS = [
         "device_class": "current",
         "icon": "mdi:current-ac",
         "decimals": 1,
+        "requires_phase": "C",
     },
     {
         "name_suffix": "Site Battery Available Power",

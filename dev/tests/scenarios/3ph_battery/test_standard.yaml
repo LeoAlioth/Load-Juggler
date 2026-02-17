@@ -1,0 +1,113 @@
+# Test scenarios: Standard mode, three-phase sites, with battery
+
+scenarios:
+
+  - name: "3ph-3c-standard-prio-with-bat-normal"
+    description: "3 chargers, all standard mode"
+    human_verified: True
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 4140  # 18A total
+      phase_a_consumption: 3.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 3.0  # 9A total, 9 export
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 6000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+      - entity_id: "charger_3"
+        min_current: 6
+        max_current: 10
+        phases: 3
+        priority: 3
+    expected: # Manually verified expected result
+      charger_1:
+        allocated: 16 # total available is 18A from solar, and 75A from grid and 18 A from battery = 111A total, 102 A afer load (34A per phase)
+      charger_2:
+        allocated: 12 # 34A per phase is enough for 6A minimum for all 3 chargers, so after charger_1 gets its 16A, 18A remains
+      charger_3:
+        allocated: 6 # with charger 3 havin a 6A minimum, the charger 2 can only get 12A to keep the 3d one charging at all.
+
+  - name: "3ph-1c-standard-heavy-importing"
+    description: "Home consuming more than solar produces (importing)"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 2990  # 13A total
+      phase_a_consumption: 8.0
+      phase_b_consumption: 7.0
+      phase_c_consumption: 6.0  # 21A total (importing 8A)
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 32
+        phases: 3
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 28.3  # Standard: grid(25+25+25=75A) + solar(13) + battery(18) - consumption(21) = 75+13+18-21=85A total pool, 85/3=28.3A per phase, limited by max_current 32A
+
+  - name: "3ph-1c-standard-zero-solar-night"
+    description: "Night time charging with no solar"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0  # No solar
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 32
+        phases: 3
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 32  # Standard: grid(30+30+30=90A) + battery(18A) = 108A. Per-phase: 30+(26-2)=54A. 108/3=36→capped at 32

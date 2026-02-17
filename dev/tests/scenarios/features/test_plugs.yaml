@@ -32,7 +32,7 @@ scenarios:
         power_rating: 1500
         phases: 1
         priority: 1
-        connected_to_phase: "A"
+        l1_phase: "A"
     expected:
       plug_1:
         allocated: 6.5  # 1500W / 230V = 6.5A; solar available = 3000/230 - 2 = 11.0A > 6.5A → on
@@ -62,7 +62,7 @@ scenarios:
         power_rating: 2000
         phases: 1
         priority: 1
-        connected_to_phase: "A"
+        l1_phase: "A"
     expected:
       plug_1:
         allocated: 0.0  # 2000W / 230V = 8.7A; solar available = 2000/230 - 5 = 3.7A < 8.7A → off
@@ -99,7 +99,7 @@ scenarios:
         power_rating: 1500
         phases: 1
         priority: 2
-        connected_to_phase: "A"
+        l1_phase: "A"
     expected:
       # Solar per phase = 6000/3/230 = 8.7A. Available per phase = 8.7 - 2 = 6.7A
       # EVSE (3-phase, priority 1): gets min(6.7, 6.7, 6.7) = 6.7A
@@ -142,7 +142,7 @@ scenarios:
         power_rating: 1500
         phases: 1
         priority: 2
-        connected_to_phase: "A"
+        l1_phase: "A"
     expected:
       # Solar per phase = 12000/3/230 = 17.4A. Available per phase = 17.4 - 2 = 15.4A
       # EVSE (3-phase) and plug (1-phase A) share phase A.
@@ -211,7 +211,7 @@ scenarios:
         power_rating: 2000
         phases: 1
         priority: 1
-        connected_to_phase: "A"
+        l1_phase: "A"
         connector_status: "Available"
         active: false
     expected:

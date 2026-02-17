@@ -1,0 +1,90 @@
+# Test scenarios: Standard mode, single-phase sites, with battery
+
+scenarios:
+
+  - name: "1ph-1c-standard-bat-above-target"
+    description: "Standard mode with battery above target — max from all sources"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 2300  # 10A
+      phase_a_consumption: 3.0
+      battery_soc: 90
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4600  # 20A
+      battery_max_discharge_power: 4600  # 20A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 32.0  # Standard: grid(35A) + solar(10A) + battery(20A) - consumption(3A) = 62A, capped at max 32A
+
+  - name: "1ph-1c-standard-bat-night"
+    description: "Standard mode at night with battery — grid + battery"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 2300  # 10A 
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 0
+      phase_a_consumption: 3.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4600  # 20A
+      battery_max_discharge_power: 4600  # 20A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 27.0  # Standard: grid(10A) + battery(20A) - consumption(3A) = 27A
+
+  - name: "1ph-1c-standard-bat-heavy-consumption"
+    description: "Standard mode with high household consumption"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 5750
+      distribution_mode: priority
+      charging_mode: Standard
+      solar_production: 2300  # 10A
+      phase_a_consumption: 15.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4600  # 20A
+      battery_max_discharge_power: 4600  # 20A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 32.0  # Standard: grid(25A) + battery covers household via self-consumption → full capacity, capped at max 32A

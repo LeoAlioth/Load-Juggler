@@ -41,18 +41,18 @@ jobs:
           else
             BRANCH="${GITHUB_REF##*/}"
           fi
-          
+
           echo "Detected branch: $BRANCH"
           echo "GITHUB_REF: $GITHUB_REF"
           echo "GITHUB_REF_NAME: $GITHUB_REF_NAME"
-          
-          TIMESTAMP=$(date -u +"%Y-%m-%d_%H-%M")
+
+          VERSION=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
+          TIMESTAMP=$(date -u +"%Y%m%d.%H%M")
 
           if [ "$BRANCH" = "dev" ]; then
-            TAG_NAME="dev-${TIMESTAMP}"
+            TAG_NAME="${VERSION}-dev.${TIMESTAMP}"
           elif [ "$BRANCH" = "pre-release" ]; then
-            VERSION=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
-            TAG_NAME="${VERSION}-pre-${TIMESTAMP}"
+            TAG_NAME="${VERSION}-rc.${TIMESTAMP}"
           else
             echo "Unsupported branch: $BRANCH"
             exit 1
@@ -60,7 +60,7 @@ jobs:
 
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-          echo "VERSION=${VERSION:-}" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Create ZIP archive
         run: |
@@ -73,28 +73,29 @@ jobs:
         if: env.BRANCH == 'dev'
         run: |
           echo "Cleaning up previous dev releases..."
-          
+          # Match both old format (dev-*) and new format (*-dev.*)
+          DEV_PATTERN='(^dev-|.*-dev\\.)'
+
           # Delete previous dev releases from Gitea
           echo "Fetching Gitea releases..."
           GITEA_RELEASES=$(curl -s \
             -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases")
-          
-          echo "$GITEA_RELEASES" | jq -r '.[] | select(.tag_name | startswith("dev-")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
+
+          echo "$GITEA_RELEASES" | jq -r '.[] | select(.tag_name | test("'"$DEV_PATTERN"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
             if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
               echo "Deleting Gitea release: $RELEASE_TAG (ID: $RELEASE_ID)"
               curl -s -X DELETE \
                 -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
                 "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID"
-              
-              # Delete the tag from Gitea
+
               echo "Deleting Gitea tag: $RELEASE_TAG"
               curl -s -X DELETE \
                 -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
                 "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/tags/$RELEASE_TAG"
             fi
           done
-          
+
           # Delete previous dev releases from GitHub
           echo "Fetching GitHub releases..."
           GH_RELEASES=$(curl -s \
@@ -102,8 +103,8 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
-          
-          echo "$GH_RELEASES" | jq -r '.[] | select(.tag_name | startswith("dev-")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
+
+          echo "$GH_RELEASES" | jq -r '.[] | select(.tag_name | test("'"$DEV_PATTERN"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
             if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
               echo "Deleting GitHub release: $RELEASE_TAG (ID: $RELEASE_ID)"
               curl -s -X DELETE \
@@ -111,8 +112,7 @@ jobs:
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
                 "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID"
-              
-              # Delete the tag from GitHub
+
               echo "Deleting GitHub tag: $RELEASE_TAG"
               curl -s -X DELETE \
                 -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
@@ -121,7 +121,7 @@ jobs:
                 "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/git/refs/tags/$RELEASE_TAG"
             fi
           done
-          
+
           echo "Cleanup complete!"
 
       - name: Delete previous pre-release releases (same version, pre-release branch only)
@@ -133,9 +133,9 @@ jobs:
             exit 1
           fi
 
-          # Match only pre-release tags for this version (e.g., "2.0.0-pre-*"), never the bare version tag
-          PREFIX="${VERSION}-pre-"
-          echo "Cleaning up pre-release releases matching: ${PREFIX}*"
+          # Match both old format (VERSION-pre-*) and new format (VERSION-rc.*)
+          RC_PATTERN="${VERSION}"'-(pre-|rc\\.)'
+          echo "Cleaning up pre-release releases matching: ${RC_PATTERN}"
 
           # Delete previous pre-releases with same version from Gitea
           echo "Fetching Gitea releases..."
@@ -143,7 +143,7 @@ jobs:
             -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases")
 
-          echo "$GITEA_RELEASES" | jq -r '.[] | select(.tag_name | startswith("'"$PREFIX"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
+          echo "$GITEA_RELEASES" | jq -r '.[] | select(.tag_name | test("'"$RC_PATTERN"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
             if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
               echo "Deleting Gitea release: $RELEASE_TAG (ID: $RELEASE_ID)"
               curl -s -X DELETE \
@@ -165,7 +165,7 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
 
-          echo "$GH_RELEASES" | jq -r '.[] | select(.tag_name | startswith("'"$PREFIX"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
+          echo "$GH_RELEASES" | jq -r '.[] | select(.tag_name | test("'"$RC_PATTERN"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
             if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
               echo "Deleting GitHub release: $RELEASE_TAG (ID: $RELEASE_ID)"
               curl -s -X DELETE \

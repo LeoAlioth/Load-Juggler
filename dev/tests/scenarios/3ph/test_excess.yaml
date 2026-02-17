@@ -1,0 +1,67 @@
+# Test scenarios: Excess mode, three-phase sites, no battery
+
+scenarios:
+
+  - name: "3ph-1c-excess-no-bat-above-threshold"
+    description: "Excess mode with export above threshold — 3-phase charger, symmetric inverter"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      charging_mode: Excess
+      solar_production: 10350  # 45A total = 15A/phase
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
+      excess_export_threshold: 3450  # 15A
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 5750  # 25A
+      inverter_max_power: 17250  # 75A
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 9.0  # Export = 14A/ph * 3 * 230 = 9660W. Excess = (9660-3450)/230 = 27A / 3 = 9A per phase
+
+  - name: "3ph-1c-excess-no-bat-below-threshold"
+    description: "Excess mode with export below threshold — no charging"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      charging_mode: Excess
+      solar_production: 4140  # 18A total = 6A/phase
+      phase_a_consumption: 3.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 3.0
+      excess_export_threshold: 4600  # 20A
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 5750  # 25A
+      inverter_max_power: 17250  # 75A
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 0.0  # Export = 3A/ph * 3 * 230 = 2070W < 4600W threshold → no charging

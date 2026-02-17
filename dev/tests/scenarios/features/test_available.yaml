@@ -199,7 +199,7 @@ scenarios:
         min_current: 6
         max_current: 16
         phases: 1
-        connected_to_phase: "B"
+        l1_phase: "B"
         priority: 2
         active: false
     expected:

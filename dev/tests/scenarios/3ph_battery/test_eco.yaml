@@ -1,0 +1,235 @@
+# Test scenarios: Eco mode, three-phase sites, with battery
+
+scenarios:
+
+  - name: "3ph-1c-eco-prio-with-bat-high-soc"
+    description: "Eco mode with battery above target"
+    human_verified: True
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Eco
+      solar_production: 3450  # 15A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total
+      battery_soc: 85  # Above 80% target
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140 # 18A at 230V
+      battery_max_discharge_power: 4140
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 6000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected: # Manually verified expected result
+      charger_1:
+        allocated: 10 # available is 15A+18A from battery - 3A load = 30A. Even distribution so 10A per phase is available.
+
+  - name: "3ph-1c-eco-prio-with-bat-low-soc"
+    description: "Eco mode with battery below minimum — charges at minimum from grid"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Eco
+      solar_production: 3450  # 15 total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total
+      battery_soc: 15  # Below 20% min
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 6000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected: # Manually verified expected result
+      charger_1:
+        allocated: 6  # Battery below min → Eco still guarantees minimum from grid
+
+  - name: "3ph-1c-eco-prio-with-bat-mid-soc"
+    description: "Eco mode with battery between min and target"
+    human_verified: True
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Eco
+      solar_production: 4140  # 18A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, 15A export = 5A per phase
+      battery_soc: 50  # Between 20-80%
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 6000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected: # Manually verified expected result
+      charger_1:
+        allocated: 6  # Uses min_current (export=5A < min=6A)
+
+  - name: "3ph-2c-eco-prio-with-bat-no-solar"
+    description: "No solar export available"
+    human_verified: True
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Eco
+      solar_production: 690  # 3A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, 0A export
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 6000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "charger_2"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+    expected: # Manually verified expected result
+      charger_1:
+        allocated: 6
+      charger_2:
+        allocated: 6
+
+  - name: "3ph-1c-eco-no-grid-low-battery"
+    description: "No grid charging with battery below minimum"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+
+      distribution_mode: priority
+      charging_mode: Eco
+      allow_grid_charging: false
+      solar_production: 2990  # 13A total
+      phase_a_consumption: 3.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 3.0
+      battery_soc: 15  # Below minimum
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 0  # allow_grid_charging=false + battery below min (no discharge) → no power source
+
+  - name: "3ph-1c-eco-battery-at-exact-min"
+    description: "Battery SOC exactly at minimum threshold"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Eco
+      solar_production: 4600  # 20A total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
+      battery_soc: 20  # Exactly at minimum
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 6  # Eco with SOC at min, below allocated: charge at minimum only
+
+  - name: "3ph-1c-eco-zero-solar-night"
+    description: "Eco mode at night should use minimum only"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+
+      distribution_mode: priority
+      charging_mode: Eco
+      solar_production: 0  # No solar
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140  # 18A
+      battery_max_discharge_power: 4140  # 18A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 5980  # 26A
+      inverter_max_power: 14950  # 65A
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 32
+        phases: 3
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 6  # Eco with battery above allocated: solar available 0-6+18=12A. 12/3=4A per phase → below min but Eco guarantees min

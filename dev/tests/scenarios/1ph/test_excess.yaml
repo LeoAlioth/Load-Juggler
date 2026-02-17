@@ -1,0 +1,93 @@
+# Test scenarios: Excess mode, single-phase sites, no battery
+
+scenarios:
+
+  - name: "1ph-1c-excess-no-bat-above-threshold"
+    description: "Excess mode with export well above threshold"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Excess
+      solar_production: 4600  # 20A
+      phase_a_consumption: 2.0
+      excess_export_threshold: 2300  # 10A
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 8.0  # Export = (20-2)*230 = 4140W. Excess = (4140-2300)/230 = 8A
+
+  - name: "1ph-1c-excess-no-bat-below-threshold"
+    description: "Excess mode with export below threshold — no charging"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Excess
+      solar_production: 2300  # 10A
+      phase_a_consumption: 3.0
+      excess_export_threshold: 3450  # 15A
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 0.0  # Export = (10-3)*230 = 1610W < 3450W threshold → no charging
+
+  - name: "1ph-1c-excess-no-bat-below-min-after-threshold"
+    description: "Excess mode — excess over threshold is below min current"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      charging_mode: Excess
+      solar_production: 5060  # 22A
+      phase_a_consumption: 2.0
+      excess_export_threshold: 3910  # 17A
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 6.0  # Export = 4600W, excess = (4600-3910)/230 = 3A  →  should charge at 6A min otherwise excess is wasted when inveter starts throttling 

@@ -62,6 +62,7 @@ _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator
 # Convenience aliases for the rest of this file
 from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext, PhaseValues
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
+from custom_components.dynamic_ocpp_evse.calculations.utils import compute_household_per_phase
 
 # ---------------------------------------------------------------------------
 # Simulation constants
@@ -283,28 +284,9 @@ def apply_feedback_adjustment(site):
             site.household_consumption_total = max(0, site.solar_production_total + bp - export_power)
 
     # Per-phase household from inverter output entities
-    if site.inverter_output_per_phase is not None:
-        if site.wiring_topology == 'parallel':
-            # Parallel: household = grid_consumption + inverter_output - grid_export (after feedback)
-            def _hh_par(inv_out, cons, exp):
-                if cons is None:
-                    return None
-                return max(0, (cons or 0) + (inv_out or 0) - (exp or 0))
-            hh_a = _hh_par(site.inverter_output_per_phase.a, site.consumption.a, site.export_current.a)
-            hh_b = _hh_par(site.inverter_output_per_phase.b, site.consumption.b, site.export_current.b)
-            hh_c = _hh_par(site.inverter_output_per_phase.c, site.consumption.c, site.export_current.c)
-        else:
-            # Series: household = inverter_output - charger_draws (per phase)
-            ch_a = ch_b = ch_c = 0.0
-            for c in site.chargers:
-                a_d, b_d, c_d = c.get_site_phase_draw()
-                ch_a += a_d
-                ch_b += b_d
-                ch_c += c_d
-            hh_a = max(0, (site.inverter_output_per_phase.a or 0) - ch_a) if site.consumption.a is not None else None
-            hh_b = max(0, (site.inverter_output_per_phase.b or 0) - ch_b) if site.consumption.b is not None else None
-            hh_c = max(0, (site.inverter_output_per_phase.c or 0) - ch_c) if site.consumption.c is not None else None
-        site.household_consumption = PhaseValues(hh_a, hh_b, hh_c)
+    household = compute_household_per_phase(site, site.wiring_topology)
+    if household is not None:
+        site.household_consumption = household
 
 
 def check_stability(history, tolerance=0.5):
@@ -384,6 +366,7 @@ def build_site_from_scenario(scenario):
         inverter_max_power_per_phase=site_data.get('inverter_max_power_per_phase'),
         inverter_supports_asymmetric=site_data.get('inverter_supports_asymmetric', False),
         wiring_topology=site_data.get('wiring_topology', 'parallel'),
+        allow_grid_charging=site_data.get('allow_grid_charging', True),
     )
 
     # Per-phase inverter output: explicit values or auto-derived from simulation
@@ -415,22 +398,9 @@ def build_site_from_scenario(scenario):
 
     # Build chargers
     for idx, charger_data in enumerate(scenario['chargers']):
+        device_type = charger_data.get("device_type", "evse")
         phases = charger_data.get("phases", 1)
 
-        # Set active_phases_mask based on charger configuration
-        active_phases_mask = charger_data.get("active_phases_mask")
-        if not active_phases_mask:
-            connected_to_phase = charger_data.get('connected_to_phase')
-            if connected_to_phase:
-                active_phases_mask = connected_to_phase
-            elif phases == 3:
-                active_phases_mask = "ABC"
-            elif phases == 2:
-                active_phases_mask = "AB"
-
-        connected_phase = charger_data.get('connected_to_phase') if phases == 1 else None
-
-        device_type = charger_data.get("device_type", "evse")
         if device_type == "plug":
             power_rating = charger_data.get("power_rating", 2000)
             equiv_current = round(power_rating / (voltage * phases), 1)
@@ -445,11 +415,10 @@ def build_site_from_scenario(scenario):
             entity_id=charger_data.get("entity_id", f"charger_{idx}"),
             min_current=min_current,
             max_current=max_current,
-            phases=charger_data.get("phases", 1),
+            phases=phases,
             priority=charger_data.get("priority", idx),
             device_type=device_type,
             car_phases=charger_data.get("car_phases"),
-            active_phases_mask=active_phases_mask,
             l1_phase=charger_data.get("l1_phase", "A"),
             l2_phase=charger_data.get("l2_phase", "B"),
             l3_phase=charger_data.get("l3_phase", "C"),
@@ -459,8 +428,6 @@ def build_site_from_scenario(scenario):
             l2_current=charger_data.get("l2_current", 0),
             l3_current=charger_data.get("l3_current", 0),
         )
-        if charger.phases == 1 and connected_phase:
-            charger.charger_id = f"{charger.charger_id}_phase_{connected_phase}"
         site.chargers.append(charger)
 
     return site
@@ -742,10 +709,14 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, trace=Fa
         name = scenario['name']
         description = scenario['description']
         is_verified = scenario.get('human_verified', False)
+        source_file = scenario.get('_source_file', '')
 
         if verbose:
             print(f"\n{'='*70}")
-            print(f"Running: {name}")
+            if source_file:
+                print(f"Running: [{source_file}] {name}")
+            else:
+                print(f"Running: {name}")
             print(f"Description: {description}")
             print(f"{'='*70}")
 
@@ -776,8 +747,9 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, trace=Fa
         })
 
         prefix = "UNVERIFIED " if not is_verified else ""
+        source_tag = f"[{source_file}] " if source_file else ""
         if verbose or not passed:
-            print(f"{prefix}{status} {name}")
+            print(f"{prefix}{status} {source_tag}{name}")
             for error in errors:
                 print(f"  {error}")
             print()
@@ -816,14 +788,16 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, trace=Fa
     return failed_count == 0
 
 
-def run_single_scenario(scenario_name, yaml_file='dev/tests/test_scenarios.yaml', trace=False):
+def run_single_scenario(scenario_name, yaml_file='dev/tests/test_scenarios.yaml', trace=False, source_file=''):
     """Run a single scenario by name with verbose simulation output."""
     scenarios = load_scenarios(yaml_file)
 
     for scenario in scenarios:
         if scenario['name'] == scenario_name:
+            sf = scenario.get('_source_file', source_file)
+            source_tag = f"[{sf}] " if sf else ""
             print(f"\n{'='*70}")
-            print(f"Running: {scenario['name']}")
+            print(f"Running: {source_tag}{scenario['name']}")
             print(f"Description: {scenario['description']}")
             print(f"{'='*70}\n")
 
@@ -889,11 +863,14 @@ if __name__ == "__main__":
         """Merge all yaml scenarios from a directory into a single list."""
         combined = []
         p = Path(dir_path)
-        files = sorted(p.glob("*.yaml")) + sorted(p.glob("*.yml"))
+        files = sorted(p.rglob("*.yaml")) + sorted(p.rglob("*.yml"))
         for f in files:
+            rel = f.relative_to(p)
             with open(f, "r", encoding="utf-8") as fh:
                 data = yaml.safe_load(fh) or {}
-            combined.extend(data.get("scenarios", []))
+            for sc in data.get("scenarios", []):
+                sc.setdefault("_source_file", str(rel))
+                combined.append(sc)
         return combined
 
     # Parse flags from command line
@@ -938,18 +915,19 @@ if __name__ == "__main__":
             scenarios_dir = Path(__file__).parent / "scenarios"
             search_paths = []
             if scenarios_dir.exists():
-                search_paths = list(sorted(scenarios_dir.glob("*.yaml"))) + list(sorted(scenarios_dir.glob("*.yml")))
+                search_paths = list(sorted(scenarios_dir.rglob("*.yaml"))) + list(sorted(scenarios_dir.rglob("*.yml")))
             else:
                 search_paths = [Path(__file__).parent / "test_scenarios.yaml"]
 
             found = False
             for f in search_paths:
+                rel = f.relative_to(scenarios_dir) if scenarios_dir.exists() else f.name
                 with open(f, "r", encoding="utf-8") as fh:
                     data = yaml.safe_load(fh) or {}
                 for sc in data.get("scenarios", []):
                     if sc.get("name") == arg:
                         found = True
-                        success = run_single_scenario(arg, yaml_file=str(f), trace=trace)
+                        success = run_single_scenario(arg, yaml_file=str(f), trace=trace, source_file=str(rel))
                         break
                 if found:
                     break

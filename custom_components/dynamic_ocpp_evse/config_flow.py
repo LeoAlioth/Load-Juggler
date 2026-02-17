@@ -1,6 +1,5 @@
 import re
 import logging
-import asyncio
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -9,9 +8,16 @@ from homeassistant.helpers.entity_registry import async_get as async_get_entity_
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from typing import Any
 from .const import *
-from .helpers import normalize_optional_entity, validate_charger_settings
+from .detection_patterns import (
+    PHASE_PATTERNS, INVERTER_OUTPUT_PATTERNS,
+    BATTERY_SOC_PATTERNS, BATTERY_POWER_PATTERNS, SOLAR_PRODUCTION_PATTERNS,
+    BATTERY_MAX_CHARGE_POWER_PATTERNS, BATTERY_MAX_DISCHARGE_POWER_PATTERNS,
+)
+from .helpers import normalize_optional_entity, prettify_name, validate_charger_settings
 
 _LOGGER = logging.getLogger(__name__)
+_POWER_FACTOR = 0.9  # 90% of detected limit for safe headroom
+
 
 class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Dynamic OCPP EVSE."""
@@ -33,73 +39,56 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._entity_cache = list(entity_registry.entities.keys())
         return self._entity_cache
 
-    def _get_current_and_power_entities(self) -> list[str]:
-        current_power_entities: list[str] = []
-        for state in self.hass.states.async_all():
-            entity_id = state.entity_id
-            if entity_id.startswith("sensor."):
-                device_class = state.attributes.get("device_class")
-                if device_class in ["current", "power"]:
-                    current_power_entities.append(entity_id)
-        return sorted({entity for entity in current_power_entities if entity})
-
-    def _battery_and_power_entities(self) -> tuple[list[str], list[str]]:
-        battery_entities = []
-        power_entities = []
-        for state in self.hass.states.async_all():
-            entity_id = state.entity_id
-            if entity_id.startswith("sensor."):
-                device_class = state.attributes.get("device_class")
-                if device_class == "battery":
-                    battery_entities.append(entity_id)
-                elif device_class == "power":
-                    power_entities.append(entity_id)
-        return sorted(battery_entities), sorted(power_entities)
-
-    def _optional_entity_options(self, entities: list[str]) -> list[dict[str, str]]:
-        options = [{"value": "", "label": "None"}]
-        options.extend({"value": entity, "label": entity} for entity in entities)
-        return options
+    @staticmethod
+    def _optional_entity_field(key: str, default_val):
+        """Create vol.Optional with default only when a valid entity ID exists."""
+        val = normalize_optional_entity(default_val)
+        if val:
+            return vol.Optional(key, default=val)
+        return vol.Optional(key)
 
     def _build_hub_grid_schema(self, defaults: dict | None = None) -> list[tuple]:
         """Build grid/electrical fields as a reusable list."""
         defaults = defaults or {}
-        current_power_entities = self._get_current_and_power_entities()
-        optional_current_options = self._optional_entity_options(current_power_entities)
-        
+        entity_sel_current_power = selector({"entity": {"domain": "sensor", "device_class": ["current", "power"]}})
+
         return [
             (vol.Required(
                 CONF_PHASE_A_CURRENT_ENTITY_ID,
                 default=defaults.get(CONF_PHASE_A_CURRENT_ENTITY_ID),
-            ), selector({"entity": {"domain": "sensor", "device_class": ["current", "power"]}})),
-            (vol.Optional(
+            ), entity_sel_current_power),
+            (self._optional_entity_field(
                 CONF_PHASE_B_CURRENT_ENTITY_ID,
-                default=normalize_optional_entity(defaults.get(CONF_PHASE_B_CURRENT_ENTITY_ID)) or "",
-            ), selector({"select": {"options": optional_current_options, "mode": "dropdown"}})),
-            (vol.Optional(
+                defaults.get(CONF_PHASE_B_CURRENT_ENTITY_ID),
+            ), entity_sel_current_power),
+            (self._optional_entity_field(
                 CONF_PHASE_C_CURRENT_ENTITY_ID,
-                default=normalize_optional_entity(defaults.get(CONF_PHASE_C_CURRENT_ENTITY_ID)) or "",
-            ), selector({"select": {"options": optional_current_options, "mode": "dropdown"}})),
+                defaults.get(CONF_PHASE_C_CURRENT_ENTITY_ID),
+            ), entity_sel_current_power),
             (vol.Required(
                 CONF_MAIN_BREAKER_RATING,
                 default=defaults.get(CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING),
-            ), int),
+            ), selector({"number": {"min": 1, "max": 200, "step": 1, "mode": "box", "unit_of_measurement": "A"}})),
             (vol.Required(
                 CONF_INVERT_PHASES,
                 default=defaults.get(CONF_INVERT_PHASES, False),
             ), bool),
             (vol.Required(
+                CONF_ENABLE_MAX_IMPORT_POWER,
+                default=defaults.get(CONF_ENABLE_MAX_IMPORT_POWER, True),
+            ), bool),
+            (self._optional_entity_field(
                 CONF_MAX_IMPORT_POWER_ENTITY_ID,
-                default=defaults.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
+                defaults.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
             ), selector({"entity": {"domain": ["sensor", "input_number"], "device_class": "power"}})),
             (vol.Required(
                 CONF_PHASE_VOLTAGE,
                 default=defaults.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE),
-            ), int),
+            ), selector({"number": {"min": 100, "max": 400, "step": 1, "mode": "box", "unit_of_measurement": "V"}})),
             (vol.Required(
                 CONF_EXCESS_EXPORT_THRESHOLD,
                 default=defaults.get(CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD),
-            ), int),
+            ), selector({"number": {"min": 0, "max": 50000, "step": 100, "mode": "box", "unit_of_measurement": "W"}})),
             (vol.Optional(
                 CONF_SITE_UPDATE_FREQUENCY,
                 default=defaults.get(CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY),
@@ -109,30 +98,28 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _build_hub_battery_schema(self, defaults: dict | None = None) -> list[tuple]:
         """Build battery fields as a reusable list (includes solar entity selector)."""
         defaults = defaults or {}
-        battery_entities, power_entities = self._battery_and_power_entities()
-        optional_power_options = self._optional_entity_options(power_entities)
 
         return [
-            (vol.Optional(
+            (self._optional_entity_field(
                 CONF_SOLAR_PRODUCTION_ENTITY_ID,
-                default=normalize_optional_entity(defaults.get(CONF_SOLAR_PRODUCTION_ENTITY_ID)) or "",
-            ), selector({"select": {"options": optional_power_options, "mode": "dropdown"}})),
-            (vol.Optional(
+                defaults.get(CONF_SOLAR_PRODUCTION_ENTITY_ID),
+            ), selector({"entity": {"domain": "sensor", "device_class": "power"}})),
+            (self._optional_entity_field(
                 CONF_BATTERY_SOC_ENTITY_ID,
-                default=normalize_optional_entity(defaults.get(CONF_BATTERY_SOC_ENTITY_ID)) or "",
-            ), selector({"select": {"options": [{"value": "", "label": "None"}] + [{"value": e, "label": e} for e in battery_entities], "mode": "dropdown"}})),
-            (vol.Optional(
+                defaults.get(CONF_BATTERY_SOC_ENTITY_ID),
+            ), selector({"entity": {"domain": "sensor", "device_class": "battery"}})),
+            (self._optional_entity_field(
                 CONF_BATTERY_POWER_ENTITY_ID,
-                default=normalize_optional_entity(defaults.get(CONF_BATTERY_POWER_ENTITY_ID)) or "",
-            ), selector({"select": {"options": [{"value": "", "label": "None"}] + [{"value": e, "label": e} for e in power_entities], "mode": "dropdown"}})),
+                defaults.get(CONF_BATTERY_POWER_ENTITY_ID),
+            ), selector({"entity": {"domain": "sensor", "device_class": "power"}})),
             (vol.Optional(
                 CONF_BATTERY_MAX_CHARGE_POWER,
                 default=defaults.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER),
-            ), int),
+            ), selector({"number": {"min": 0, "max": 50000, "step": 100, "mode": "box", "unit_of_measurement": "W"}})),
             (vol.Optional(
                 CONF_BATTERY_MAX_DISCHARGE_POWER,
                 default=defaults.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER),
-            ), int),
+            ), selector({"number": {"min": 0, "max": 50000, "step": 100, "mode": "box", "unit_of_measurement": "W"}})),
             (vol.Optional(
                 CONF_BATTERY_SOC_HYSTERESIS,
                 default=defaults.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS),
@@ -142,8 +129,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _build_hub_inverter_schema(self, defaults: dict | None = None) -> list[tuple]:
         """Build inverter configuration fields as a reusable list."""
         defaults = defaults or {}
-        current_power_entities = self._get_current_and_power_entities()
-        optional_cp_options = self._optional_entity_options(current_power_entities)
+        entity_sel_current_power = selector({"entity": {"domain": "sensor", "device_class": ["current", "power"]}})
         topology_options = [
             {"value": WIRING_TOPOLOGY_PARALLEL, "label": "Parallel (AC-coupled / no battery)"},
             {"value": WIRING_TOPOLOGY_SERIES, "label": "Series (Hybrid / battery)"},
@@ -161,18 +147,18 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_INVERTER_SUPPORTS_ASYMMETRIC,
                 default=defaults.get(CONF_INVERTER_SUPPORTS_ASYMMETRIC, False),
             ), bool),
-            (vol.Optional(
+            (self._optional_entity_field(
                 CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-                default=normalize_optional_entity(defaults.get(CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID)) or "",
-            ), selector({"select": {"options": optional_cp_options, "mode": "dropdown"}})),
-            (vol.Optional(
+                defaults.get(CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
+            ), entity_sel_current_power),
+            (self._optional_entity_field(
                 CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-                default=normalize_optional_entity(defaults.get(CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID)) or "",
-            ), selector({"select": {"options": optional_cp_options, "mode": "dropdown"}})),
-            (vol.Optional(
+                defaults.get(CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
+            ), entity_sel_current_power),
+            (self._optional_entity_field(
                 CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-                default=normalize_optional_entity(defaults.get(CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID)) or "",
-            ), selector({"select": {"options": optional_cp_options, "mode": "dropdown"}})),
+                defaults.get(CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
+            ), entity_sel_current_power),
             (vol.Required(
                 CONF_WIRING_TOPOLOGY,
                 default=defaults.get(CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY),
@@ -238,11 +224,11 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_EVSE_MINIMUM_CHARGE_CURRENT,
                 default=defaults.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT),
-            ): int,
+            ): selector({"number": {"min": 6, "max": 80, "step": 1, "mode": "box", "unit_of_measurement": "A"}}),
             vol.Required(
                 CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
                 default=defaults.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT),
-            ): int,
+            ): selector({"number": {"min": 6, "max": 80, "step": 1, "mode": "box", "unit_of_measurement": "A"}}),
             vol.Required(
                 CONF_CHARGER_L1_PHASE,
                 default=defaults.get(CONF_CHARGER_L1_PHASE, "A"),
@@ -296,27 +282,24 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_UPDATE_FREQUENCY,
                 default=defaults.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY),
-            ): int,
+            ): selector({"number": {"min": 5, "max": 300, "step": 1, "mode": "box", "unit_of_measurement": "s"}}),
             vol.Required(
                 CONF_OCPP_PROFILE_TIMEOUT,
                 default=defaults.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT),
-            ): int,
+            ): selector({"number": {"min": 30, "max": 600, "step": 1, "mode": "box", "unit_of_measurement": "s"}}),
             vol.Required(
                 CONF_CHARGE_PAUSE_DURATION,
                 default=defaults.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION),
-            ): int,
+            ): selector({"number": {"min": 0, "max": 600, "step": 1, "mode": "box", "unit_of_measurement": "s"}}),
             vol.Required(
                 CONF_STACK_LEVEL,
                 default=defaults.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL),
-            ): int,
+            ): selector({"number": {"min": 0, "max": 10, "step": 1, "mode": "box"}}),
         })
 
     def _plug_schema(self, defaults: dict | None = None) -> vol.Schema:
         """Build schema for smart plug / relay configuration."""
         defaults = defaults or {}
-        power_monitor_options = self._optional_entity_options(
-            self._battery_and_power_entities()[1]  # power sensor entities
-        )
         phase_options = [
             {"value": "A", "label": "Phase A"},
             {"value": "B", "label": "Phase B"},
@@ -334,7 +317,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(
                 CONF_PLUG_POWER_RATING,
                 default=defaults.get(CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING),
-            ): int,
+            ): selector({"number": {"min": 100, "max": 25000, "step": 100, "mode": "box", "unit_of_measurement": "W"}}),
             vol.Required(
                 CONF_CONNECTED_TO_PHASE,
                 default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
@@ -343,32 +326,96 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_CHARGER_PRIORITY,
                 default=defaults.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
             ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
-            vol.Optional(
+            self._optional_entity_field(
                 CONF_PLUG_POWER_MONITOR_ENTITY_ID,
-                default=normalize_optional_entity(defaults.get(CONF_PLUG_POWER_MONITOR_ENTITY_ID)) or "",
-            ): selector({"select": {"options": power_monitor_options, "mode": "dropdown"}}),
+                defaults.get(CONF_PLUG_POWER_MONITOR_ENTITY_ID),
+            ): selector({"entity": {"domain": "sensor", "device_class": "power"}}),
             vol.Required(
                 CONF_UPDATE_FREQUENCY,
                 default=defaults.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY),
-            ): int,
+            ): selector({"number": {"min": 5, "max": 300, "step": 1, "mode": "box", "unit_of_measurement": "s"}}),
         })
 
-    def _normalize_optional_inputs(self, data: dict[str, Any]) -> dict[str, Any]:
+    # Optional entity keys grouped by config step (for entity selector clearing)
+    _GRID_ENTITY_KEYS = [CONF_PHASE_B_CURRENT_ENTITY_ID, CONF_PHASE_C_CURRENT_ENTITY_ID, CONF_MAX_IMPORT_POWER_ENTITY_ID]
+    _BATTERY_ENTITY_KEYS = [CONF_SOLAR_PRODUCTION_ENTITY_ID, CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID]
+    _INVERTER_ENTITY_KEYS = [CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID, CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID, CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID]
+    _PLUG_ENTITY_KEYS = [CONF_PLUG_POWER_MONITOR_ENTITY_ID]
+
+    def _normalize_optional_inputs(self, data: dict[str, Any], step_entity_keys: list[str] | None = None) -> dict[str, Any]:
+        """Normalize optional entity inputs.
+
+        Args:
+            data: The user_input from the form step.
+            step_entity_keys: Optional entity keys expected in this step.
+                Keys missing from data are set to None (user cleared the field).
+        """
         normalized = dict(data)
-        for key in [
-            CONF_PHASE_B_CURRENT_ENTITY_ID,
-            CONF_PHASE_C_CURRENT_ENTITY_ID,
-            CONF_BATTERY_SOC_ENTITY_ID,
-            CONF_BATTERY_POWER_ENTITY_ID,
-            CONF_SOLAR_PRODUCTION_ENTITY_ID,
-            CONF_PLUG_POWER_MONITOR_ENTITY_ID,
-            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-        ]:
+        for key in (self._GRID_ENTITY_KEYS + self._BATTERY_ENTITY_KEYS
+                     + self._INVERTER_ENTITY_KEYS + self._PLUG_ENTITY_KEYS):
             if key in normalized:
                 normalized[key] = normalize_optional_entity(normalized.get(key))
+        # Entity selectors omit unselected fields — explicitly clear them
+        if step_entity_keys:
+            for key in step_entity_keys:
+                if key not in normalized:
+                    normalized[key] = None
         return normalized
+
+    def _normalize_inverter_powers(self):
+        """Normalize inverter power values: 0 means 'not configured' → store as None."""
+        for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
+            if key in self._data and self._data[key] == 0:
+                self._data[key] = None
+
+    def _auto_detect_phase_entities(self, pattern_sets: list[dict]) -> dict[str, str | None]:
+        """Auto-detect a matching set of phase A/B/C entities from pattern sets.
+
+        Returns dict with keys 'phase_a', 'phase_b', 'phase_c' (values may be None).
+        """
+        entity_ids = self._get_entity_registry_ids()
+        for pattern_set in pattern_sets:
+            a = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_a"], eid)), None)
+            b = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_b"], eid)), None)
+            c = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_c"], eid)), None)
+            if a and b and c:
+                return {"phase_a": a, "phase_b": b, "phase_c": c}
+        return {"phase_a": None, "phase_b": None, "phase_c": None}
+
+    def _auto_detect_entity(self, pattern_sets: list[dict]) -> str | None:
+        """Auto-detect a single entity from pattern sets. Returns first match."""
+        entity_ids = self._get_entity_registry_ids()
+        for pattern_set in pattern_sets:
+            match = next((eid for eid in entity_ids if re.match(pattern_set["pattern"], eid)), None)
+            if match:
+                return match
+        return None
+
+    def _auto_detect_entity_value(
+        self, pattern_sets: list[dict], factor: float = 1.0
+    ) -> int | None:
+        """Auto-detect an entity and read its numeric state value.
+
+        Returns int(state * factor), or None if not found / not numeric.
+        """
+        entity_id = self._auto_detect_entity(pattern_sets)
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if not state:
+            return None
+        try:
+            return int(float(state.state) * factor)
+        except (ValueError, TypeError):
+            return None
+
+    def _create_entry_and_seed_options(
+        self, title: str, static_data: dict, options_data: dict
+    ) -> config_entries.FlowResult:
+        """Create a config entry with options set directly."""
+        return self.async_create_entry(
+            title=title, data=static_data, options=options_data
+        )
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -456,90 +503,34 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> config_entries.FlowResult:
         """Hub step 2: Grid/electrical configuration."""
         errors: dict[str, str] = {}
-        
+
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(user_input)
+            user_input = self._normalize_optional_inputs(user_input, self._GRID_ENTITY_KEYS)
             self._data.update(user_input)
             return await self.async_step_hub_inverter()
 
         try:
-            # Define pattern sets for different inverter types
-            PHASE_PATTERNS = [
-                {
-                    "name": "SolarEdge",
-                    "patterns": {
-                        "phase_a": r'sensor\..*m.*ac_current_a.*',
-                        "phase_b": r'sensor\..*m.*ac_current_b.*', 
-                        "phase_c": r'sensor\..*m.*ac_current_c.*'
-                    },
-                    "unit": "A",
-                },
-                {
-                    "name": "Solarman/Deye - external CTs",
-                    "patterns": {
-                        "phase_a": r'sensor\..*_external_ct1_current.*',
-                        "phase_b": r'sensor\..*_external_ct2_current.*',
-                        "phase_c": r'sensor\..*_external_ct3_current.*'
-                    },
-                    "unit": "A", 
-                },
-                {
-                    "name": "Solarman/Deye - internal CTs",
-                    "patterns": {
-                        "phase_a": r'sensor\..*_internal_ct1_current.*',
-                        "phase_b": r'sensor\..*_internal_ct2_current.*',
-                        "phase_c": r'sensor\..*_internal_ct3_current.*'
-                    },
-                    "unit": "A", 
-                },
-                {
-                    "name": "Solarman - grid power (individual phases)",
-                    "patterns": {
-                        "phase_a": r'sensor\..*grid_(?:1|l1|power_1|power_l1).*',
-                        "phase_b": r'sensor\..*grid_(?:2|l2|power_2|power_l2).*', 
-                        "phase_c": r'sensor\..*grid_(?:3|l3|power_3|power_l3).*'
-                    },
-                    "unit": "W", 
-                }
-            ]
-            
-            # Fetch available entities
-            entity_ids = self._get_entity_registry_ids()
-            
             # Try to find a complete set of phases using pattern sets
-            default_phase_a = None
-            default_phase_b = None
-            default_phase_c = None
-            
-            for pattern_set in PHASE_PATTERNS:
-                phase_a_match = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_a"], entity_id)), None)
-                phase_b_match = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_b"], entity_id)), None)
-                phase_c_match = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_c"], entity_id)), None)
-                
-                if phase_a_match and phase_b_match and phase_c_match:
-                    default_phase_a = phase_a_match
-                    default_phase_b = phase_b_match
-                    default_phase_c = phase_c_match
-                    break
-            
-            # Fallback to individual pattern matching
+            ct_detected = self._auto_detect_phase_entities(PHASE_PATTERNS)
+            default_phase_a = ct_detected["phase_a"]
+            default_phase_b = ct_detected["phase_b"]
+            default_phase_c = ct_detected["phase_c"]
+
+            # Fallback: pick individual phases from different pattern sets
             if not (default_phase_a and default_phase_b and default_phase_c):
+                entity_ids = self._get_entity_registry_ids()
                 for pattern_set in PHASE_PATTERNS:
                     if not default_phase_a:
-                        default_phase_a = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_a"], entity_id)), None)
+                        default_phase_a = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_a"], eid)), None)
                     if not default_phase_b:
-                        default_phase_b = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_b"], entity_id)), None)
+                        default_phase_b = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_b"], eid)), None)
                     if not default_phase_c:
-                        default_phase_c = next((entity_id for entity_id in entity_ids if re.match(pattern_set["patterns"]["phase_c"], entity_id)), None)
-            
-            # Find max import power sensor
-            default_max_import_power = next((entity_id for entity_id in entity_ids if re.match(r'sensor\..*power_limit.*', entity_id)), None)
+                        default_phase_c = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_c"], eid)), None)
 
             data_schema = self._hub_grid_schema({
                 CONF_PHASE_A_CURRENT_ENTITY_ID: default_phase_a,
                 CONF_PHASE_B_CURRENT_ENTITY_ID: default_phase_b,
                 CONF_PHASE_C_CURRENT_ENTITY_ID: default_phase_c,
-                CONF_MAX_IMPORT_POWER_ENTITY_ID: default_max_import_power,
                 CONF_MAIN_BREAKER_RATING: DEFAULT_MAIN_BREAKER_RATING,
                 CONF_INVERT_PHASES: False,
                 CONF_PHASE_VOLTAGE: DEFAULT_PHASE_VOLTAGE,
@@ -565,7 +556,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(user_input)
+            user_input = self._normalize_optional_inputs(user_input, self._BATTERY_ENTITY_KEYS)
             self._data.update(user_input)
 
             # Generate entity IDs for hub-created entities
@@ -583,42 +574,23 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
             options_data = {k: v for k, v in self._data.items() if k not in static_data}
 
-            result = self.async_create_entry(
-                title=static_data[CONF_NAME],
-                data=static_data
+            return self._create_entry_and_seed_options(
+                static_data[CONF_NAME], static_data, options_data
             )
 
-            async def _seed_options():
-                await asyncio.sleep(0.1)
-                for entry in self.hass.config_entries.async_entries(DOMAIN):
-                    if entry.data.get(CONF_ENTITY_ID) == static_data.get(CONF_ENTITY_ID) and entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_HUB:
-                        try:
-                            self.hass.config_entries.async_update_entry(
-                                entry,
-                                options={**entry.options, **options_data}
-                            )
-                        except Exception:
-                            _LOGGER.exception("Failed to seed options for hub entry")
-                        break
-
-            asyncio.create_task(_seed_options())
-            return result
-
-        # Auto-detect solar production sensor
-        entity_ids = self._get_entity_registry_ids()
-        default_solar_production = next(
-            (entity_id for entity_id in entity_ids
-             if re.match(r'sensor\..*solar.*(?:production|power|generation).*', entity_id, re.IGNORECASE)
-             and entity_id.startswith("sensor.")),
-            None
-        )
-
+        # Auto-detect solar / battery entities and power limits
         data_schema = self._hub_battery_schema({
-            CONF_SOLAR_PRODUCTION_ENTITY_ID: default_solar_production,
-            CONF_BATTERY_SOC_ENTITY_ID: None,
-            CONF_BATTERY_POWER_ENTITY_ID: None,
-            CONF_BATTERY_MAX_CHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: DEFAULT_BATTERY_MAX_POWER,
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: self._auto_detect_entity(SOLAR_PRODUCTION_PATTERNS),
+            CONF_BATTERY_SOC_ENTITY_ID: self._auto_detect_entity(BATTERY_SOC_PATTERNS),
+            CONF_BATTERY_POWER_ENTITY_ID: self._auto_detect_entity(BATTERY_POWER_PATTERNS),
+            CONF_BATTERY_MAX_CHARGE_POWER: (
+                self._auto_detect_entity_value(BATTERY_MAX_CHARGE_POWER_PATTERNS, _POWER_FACTOR)
+                or DEFAULT_BATTERY_MAX_POWER
+            ),
+            CONF_BATTERY_MAX_DISCHARGE_POWER: (
+                self._auto_detect_entity_value(BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR)
+                or DEFAULT_BATTERY_MAX_POWER
+            ),
             CONF_BATTERY_SOC_HYSTERESIS: DEFAULT_BATTERY_SOC_HYSTERESIS,
         })
 
@@ -636,62 +608,20 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(user_input)
+            user_input = self._normalize_optional_inputs(user_input, self._INVERTER_ENTITY_KEYS)
             self._data.update(user_input)
-
-            # Normalize inverter power values: 0 means "not configured" → store as None
-            for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
-                if key in self._data and self._data[key] == 0:
-                    self._data[key] = None
-
+            self._normalize_inverter_powers()
             return await self.async_step_hub_battery()
 
         # Auto-detect per-phase inverter output entities
-        INVERTER_OUTPUT_PATTERNS = [
-            {
-                "name": "Solarman/Deye - output current",
-                "patterns": {
-                    "phase_a": r'sensor\..*(?:output|inverter)_(?:current_)?(?:l1|1|phase_?a).*',
-                    "phase_b": r'sensor\..*(?:output|inverter)_(?:current_)?(?:l2|2|phase_?b).*',
-                    "phase_c": r'sensor\..*(?:output|inverter)_(?:current_)?(?:l3|3|phase_?c).*',
-                },
-            },
-            {
-                "name": "SolarEdge - AC current",
-                "patterns": {
-                    "phase_a": r'sensor\..*i.*ac_current_a.*',
-                    "phase_b": r'sensor\..*i.*ac_current_b.*',
-                    "phase_c": r'sensor\..*i.*ac_current_c.*',
-                },
-            },
-            {
-                "name": "Fronius/Huawei - phase power",
-                "patterns": {
-                    "phase_a": r'sensor\..*inverter.*(?:power|current).*(?:phase_?a|l1|_1).*',
-                    "phase_b": r'sensor\..*inverter.*(?:power|current).*(?:phase_?b|l2|_2).*',
-                    "phase_c": r'sensor\..*inverter.*(?:power|current).*(?:phase_?c|l3|_3).*',
-                },
-            },
-        ]
+        inv_detected = self._auto_detect_phase_entities(INVERTER_OUTPUT_PATTERNS)
+        default_inv_a = inv_detected["phase_a"]
+        default_inv_b = inv_detected["phase_b"]
+        default_inv_c = inv_detected["phase_c"]
 
-        entity_ids = self._get_entity_registry_ids()
-        default_inv_a = None
-        default_inv_b = None
-        default_inv_c = None
-
-        for pattern_set in INVERTER_OUTPUT_PATTERNS:
-            a_match = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_a"], eid)), None)
-            b_match = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_b"], eid)), None)
-            c_match = next((eid for eid in entity_ids if re.match(pattern_set["patterns"]["phase_c"], eid)), None)
-            if a_match and b_match and c_match:
-                default_inv_a = a_match
-                default_inv_b = b_match
-                default_inv_c = c_match
-                break
-
-        # Auto-detect wiring topology from battery presence in previous steps
+        # Auto-detect wiring topology: series if battery entities are detected
         default_topology = DEFAULT_WIRING_TOPOLOGY
-        if self._data.get(CONF_BATTERY_SOC_ENTITY_ID):
+        if self._auto_detect_entity(BATTERY_SOC_PATTERNS):
             default_topology = WIRING_TOPOLOGY_SERIES
 
         data_schema = self._hub_inverter_schema({
@@ -704,11 +634,16 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_WIRING_TOPOLOGY: default_topology,
         })
 
+        # Auto-detect battery discharge power for description hint
+        battery_hint = self._auto_detect_entity_value(BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR)
+        hint_text = f"{battery_hint}W detected" if battery_hint else "not detected"
+
         return self.async_show_form(
             step_id="hub_inverter",
             data_schema=data_schema,
             errors=errors,
-            last_step=False
+            last_step=False,
+            description_placeholders={"battery_power_hint": hint_text},
         )
 
     # ==================== CHARGER CONFIGURATION STEPS ====================
@@ -804,7 +739,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(user_input)
+            user_input = self._normalize_optional_inputs(user_input, self._PLUG_ENTITY_KEYS)
             self._data.update(user_input)
 
             plug_name = self._data.get(CONF_NAME, "Smart Plug")
@@ -820,27 +755,9 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
             options_data = {k: v for k, v in self._data.items() if k not in static_data}
 
-            result = self.async_create_entry(
-                title=f"{plug_name} Smart Plug",
-                data=static_data,
+            return self._create_entry_and_seed_options(
+                f"{plug_name} Smart Plug", static_data, options_data
             )
-
-            async def _seed_plug_options():
-                await asyncio.sleep(0.1)
-                for entry in self.hass.config_entries.async_entries(DOMAIN):
-                    if (entry.data.get(CONF_ENTITY_ID) == plug_entity_id
-                            and entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG):
-                        try:
-                            self.hass.config_entries.async_update_entry(
-                                entry,
-                                options={**entry.options, **options_data},
-                            )
-                        except Exception:
-                            _LOGGER.exception("Failed to seed options for plug entry")
-                        break
-
-            asyncio.create_task(_seed_plug_options())
-            return result
 
         existing_chargers = self._get_charger_entries()
         next_priority = len(existing_chargers) + 1
@@ -936,13 +853,13 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 current_offered_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_OFFERED}"
                 if current_offered_id in entity_registry.entities:
                     # Get device info if available
-                    device_name = base_name.replace("_", " ").title()
+                    device_name = prettify_name(base_name)
                     device_id = None
-                    
+
                     if entity.device_id:
                         device = device_registry.async_get(entity.device_id)
                         if device:
-                            device_name = device.name or device_name
+                            device_name = prettify_name(device.name) if device.name else device_name
                             device_id = device.id
                     
                     chargers.append({
@@ -1130,26 +1047,9 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
             options_data = {k: v for k, v in self._data.items() if k not in static_data}
 
-            result = self.async_create_entry(
-                title=f"{charger_name} Charger",
-                data=static_data
+            return self._create_entry_and_seed_options(
+                f"{charger_name} Charger", static_data, options_data
             )
-
-            async def _seed_charger_options():
-                await asyncio.sleep(0.1)
-                for entry in self.hass.config_entries.async_entries(DOMAIN):
-                    if entry.data.get(CONF_ENTITY_ID) == charger_entity_id and entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER:
-                        try:
-                            self.hass.config_entries.async_update_entry(
-                                entry,
-                                options={**entry.options, **options_data}
-                            )
-                        except Exception:
-                            _LOGGER.exception("Failed to seed options for charger entry")
-                        break
-
-            asyncio.create_task(_seed_charger_options())
-            return result
 
         data_schema = self._charger_timing_schema(
             {
@@ -1199,7 +1099,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         defaults = {**entry.data, **entry.options}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(user_input)
+            user_input = self._normalize_optional_inputs(user_input, self._GRID_ENTITY_KEYS)
             self._data.update(user_input)
             return await self.async_step_reconfigure_hub_inverter()
 
@@ -1226,7 +1126,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         defaults = {**entry.data, **entry.options}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(user_input)
+            user_input = self._normalize_optional_inputs(user_input, self._BATTERY_ENTITY_KEYS)
             self._data.update(user_input)
             self.hass.config_entries.async_update_entry(
                 entry,
@@ -1252,12 +1152,9 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         defaults = {**entry.data, **entry.options}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(user_input)
+            user_input = self._normalize_optional_inputs(user_input, self._INVERTER_ENTITY_KEYS)
             self._data.update(user_input)
-            # Normalize: 0 means "not configured" → store as None
-            for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
-                if key in self._data and self._data[key] == 0:
-                    self._data[key] = None
+            self._normalize_inverter_powers()
             return await self.async_step_reconfigure_hub_battery()
 
         # Show existing values, defaulting 0 for None (user sees 0 = "not set")
@@ -1268,11 +1165,16 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         data_schema = self._hub_inverter_schema(inverter_defaults)
 
+        # Auto-detect battery discharge power for description hint
+        battery_hint = self._auto_detect_entity_value(BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR)
+        hint_text = f"{battery_hint}W detected" if battery_hint else "not detected"
+
         return self.async_show_form(
             step_id="reconfigure_hub_inverter",
             data_schema=data_schema,
             errors=errors,
-            last_step=False
+            last_step=False,
+            description_placeholders={"battery_power_hint": hint_text},
         )
 
     async def async_step_reconfigure_charger(
@@ -1369,7 +1271,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         defaults = {**entry.data, **entry.options}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(user_input)
+            user_input = self._normalize_optional_inputs(user_input, self._PLUG_ENTITY_KEYS)
             self._data.update(user_input)
             self.hass.config_entries.async_update_entry(
                 entry,
@@ -1398,6 +1300,15 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self):
         self._data = {}
+        self._flow = None  # Cached config flow for schema/helper access
+
+    @property
+    def _schema_helper(self) -> DynamicOcppEvseConfigFlow:
+        """Cached DynamicOcppEvseConfigFlow instance for schema building."""
+        if self._flow is None:
+            self._flow = DynamicOcppEvseConfigFlow()
+            self._flow.hass = self.hass
+        return self._flow
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
         entry_type = self.config_entry.data.get(ENTRY_TYPE)
@@ -1413,34 +1324,42 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
     async def async_step_hub_grid(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
         errors: dict[str, str] = {}
         defaults = {**self.config_entry.data, **self.config_entry.options}
-        flow = DynamicOcppEvseConfigFlow()
-        flow.hass = self.hass
+        f = self._schema_helper
 
         if user_input is not None:
-            user_input = flow._normalize_optional_inputs(user_input)
+            user_input = f._normalize_optional_inputs(user_input, f._GRID_ENTITY_KEYS)
             self._data.update(user_input)
             return await self.async_step_hub_inverter()
 
-        data_schema = flow._hub_grid_schema(defaults)
+        # Auto-detect empty grid CT entity fields
+        phase_keys = {
+            "phase_a": CONF_PHASE_A_CURRENT_ENTITY_ID,
+            "phase_b": CONF_PHASE_B_CURRENT_ENTITY_ID,
+            "phase_c": CONF_PHASE_C_CURRENT_ENTITY_ID,
+        }
+        if any(not defaults.get(k) for k in phase_keys.values()):
+            ct_detected = f._auto_detect_phase_entities(PHASE_PATTERNS)
+            for phase, conf_key in phase_keys.items():
+                if not defaults.get(conf_key):
+                    defaults[conf_key] = ct_detected[phase]
+
         return self.async_show_form(
             step_id="hub_grid",
-            data_schema=data_schema,
+            data_schema=f._hub_grid_schema(defaults),
             errors=errors,
         )
 
     async def async_step_hub_inverter(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
         errors: dict[str, str] = {}
         defaults = {**self.config_entry.data, **self.config_entry.options}
-        flow = DynamicOcppEvseConfigFlow()
-        flow.hass = self.hass
+        f = self._schema_helper
 
         if user_input is not None:
-            user_input = flow._normalize_optional_inputs(user_input)
+            user_input = f._normalize_optional_inputs(user_input, f._INVERTER_ENTITY_KEYS)
             self._data.update(user_input)
-            # Normalize: 0 means "not configured" → store as None
-            for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
-                if key in self._data and self._data[key] == 0:
-                    self._data[key] = None
+            f._data = self._data
+            f._normalize_inverter_powers()
+            self._data = f._data
             return await self.async_step_hub()
 
         # Show existing values, defaulting 0 for None
@@ -1449,31 +1368,72 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             if inverter_defaults.get(key) is None:
                 inverter_defaults[key] = 0
 
-        data_schema = flow._hub_inverter_schema(inverter_defaults)
+        # Auto-detect empty inverter output entity fields
+        inv_keys = {
+            "phase_a": CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+            "phase_b": CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+            "phase_c": CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+        }
+        if any(not inverter_defaults.get(k) for k in inv_keys.values()):
+            inv_detected = f._auto_detect_phase_entities(INVERTER_OUTPUT_PATTERNS)
+            for phase, conf_key in inv_keys.items():
+                if not inverter_defaults.get(conf_key):
+                    inverter_defaults[conf_key] = inv_detected[phase]
+
+        # Suggest series topology if battery entities exist and topology is at default
+        if inverter_defaults.get(CONF_WIRING_TOPOLOGY) == DEFAULT_WIRING_TOPOLOGY:
+            has_battery = defaults.get(CONF_BATTERY_SOC_ENTITY_ID) or f._auto_detect_entity(BATTERY_SOC_PATTERNS)
+            if has_battery:
+                inverter_defaults[CONF_WIRING_TOPOLOGY] = WIRING_TOPOLOGY_SERIES
+
+        # Auto-detect battery discharge power for description hint
+        battery_hint = f._auto_detect_entity_value(BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR)
+        hint_text = f"{battery_hint}W detected" if battery_hint else "not detected"
+
         return self.async_show_form(
             step_id="hub_inverter",
-            data_schema=data_schema,
+            data_schema=f._hub_inverter_schema(inverter_defaults),
             errors=errors,
+            description_placeholders={"battery_power_hint": hint_text},
         )
 
     async def async_step_hub(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
         errors: dict[str, str] = {}
         defaults = {**self.config_entry.data, **self.config_entry.options}
-        flow = DynamicOcppEvseConfigFlow()
-        flow.hass = self.hass
+        f = self._schema_helper
 
         if user_input is not None:
-            user_input = flow._normalize_optional_inputs(user_input)
+            user_input = f._normalize_optional_inputs(user_input, f._BATTERY_ENTITY_KEYS)
             self._data.update(user_input)
             return self.async_create_entry(
                 title="",
                 data={**self.config_entry.options, **self._data},
             )
 
-        data_schema = flow._hub_battery_schema(defaults)
+        # Auto-detect empty battery/solar entity fields
+        auto_detect_map = {
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: SOLAR_PRODUCTION_PATTERNS,
+            CONF_BATTERY_SOC_ENTITY_ID: BATTERY_SOC_PATTERNS,
+            CONF_BATTERY_POWER_ENTITY_ID: BATTERY_POWER_PATTERNS,
+        }
+        for conf_key, patterns in auto_detect_map.items():
+            if not defaults.get(conf_key):
+                defaults[conf_key] = f._auto_detect_entity(patterns)
+
+        # Auto-detect battery power limits when at default
+        power_detect_map = {
+            CONF_BATTERY_MAX_CHARGE_POWER: BATTERY_MAX_CHARGE_POWER_PATTERNS,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: BATTERY_MAX_DISCHARGE_POWER_PATTERNS,
+        }
+        for conf_key, patterns in power_detect_map.items():
+            if defaults.get(conf_key) == DEFAULT_BATTERY_MAX_POWER:
+                detected = f._auto_detect_entity_value(patterns, _POWER_FACTOR)
+                if detected:
+                    defaults[conf_key] = detected
+
         return self.async_show_form(
             step_id="hub",
-            data_schema=data_schema,
+            data_schema=f._hub_battery_schema(defaults),
             errors=errors,
         )
 
@@ -1502,8 +1462,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         """Options charger step 2: Current limits and phase mapping."""
         errors: dict[str, str] = {}
         defaults = {**self.config_entry.data, **self.config_entry.options}
-        flow = DynamicOcppEvseConfigFlow()
-        flow.hass = self.hass
+        f = self._schema_helper
 
         if user_input is not None:
             self._data.update(user_input)
@@ -1511,15 +1470,14 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             if errors:
                 return self.async_show_form(
                     step_id="charger_current",
-                    data_schema=flow._charger_current_schema(self._data),
+                    data_schema=f._charger_current_schema(self._data),
                     errors=errors,
                 )
             return await self.async_step_charger_timing()
 
-        data_schema = flow._charger_current_schema(defaults)
         return self.async_show_form(
             step_id="charger_current",
-            data_schema=data_schema,
+            data_schema=f._charger_current_schema(defaults),
             errors=errors,
         )
 
@@ -1527,11 +1485,10 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         """Options charger step 3: Units and timing (final — saves)."""
         errors: dict[str, str] = {}
         defaults = {**self.config_entry.data, **self.config_entry.options}
-        flow = DynamicOcppEvseConfigFlow()
-        flow.hass = self.hass
+        f = self._schema_helper
 
         ocpp_device_id = self.config_entry.data.get(CONF_OCPP_DEVICE_ID)
-        detected_unit = await flow._detect_charge_rate_unit(ocpp_device_id)
+        detected_unit = await f._detect_charge_rate_unit(ocpp_device_id)
 
         if user_input is not None:
             self._data.update(user_input)
@@ -1540,31 +1497,28 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
                 data={**self.config_entry.options, **self._data},
             )
 
-        data_schema = flow._charger_timing_schema(defaults, detected_unit=detected_unit)
         return self.async_show_form(
             step_id="charger_timing",
-            data_schema=data_schema,
+            data_schema=f._charger_timing_schema(defaults, detected_unit=detected_unit),
             errors=errors,
         )
 
     async def async_step_plug(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
         errors: dict[str, str] = {}
         defaults = {**self.config_entry.data, **self.config_entry.options}
-        flow = DynamicOcppEvseConfigFlow()
-        flow.hass = self.hass
+        f = self._schema_helper
 
         if user_input is not None:
-            user_input = flow._normalize_optional_inputs(user_input)
+            user_input = f._normalize_optional_inputs(user_input, f._PLUG_ENTITY_KEYS)
             self._data.update(user_input)
             return self.async_create_entry(
                 title="",
                 data={**self.config_entry.options, **self._data},
             )
 
-        data_schema = flow._plug_schema(defaults)
         return self.async_show_form(
             step_id="plug",
-            data_schema=data_schema,
+            data_schema=f._plug_schema(defaults),
             errors=errors,
         )
 

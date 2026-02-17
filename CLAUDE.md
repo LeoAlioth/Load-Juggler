@@ -20,7 +20,7 @@ Dynamic OCPP EVSE is a Home Assistant custom component that provides intelligent
 
 **Improvement Ideas** `dev/IMPROVEMENTS.md` List of ideas for future imporovements and changes. Developer will prompt Claude to discuss and refine them.
 
-**TODOs** Keep track of TODOs as an ordered numbered list with checkmarks in `dev/TODO.md`. Before and after making code changes, make sure that the TODO is up to date. Mark steps completed as soon as they are done. Split TODOs into 3 parts. "Completed": ones which get cleaned up once no longer relevant, "In progress": the clearly defined ones we need to finish before reaching out back to the developer, "Backlog": upcoming things to do. More general ones, which should often be made more detailed when transitioning to "In progress". 
+**TODOs** Keep track of TODOs as an ordered numbered list with checkmarks in `dev/TODO.md`. Before and after making code changes, make sure that the TODO is up to date. Mark steps completed as soon as they are done. Split TODOs into 3 parts. "Completed": ones which get cleaned up once no longer relevant, "In progress": the clearly defined ones we need to finish before reaching out back to the developer, "Backlog": upcoming things to do. More general ones, which should often be made more detailed when transitioning to "In progress".
 
 ## Architecture
 
@@ -41,7 +41,6 @@ custom_components/dynamic_ocpp_evse/
 │   └── utils.py                   # Utility functions (is_number)
 └── translations/                  # Localization files
 ```
-
 
 ### Core Design Principle: Generality Over Special Cases
 
@@ -146,7 +145,7 @@ The `calculations/` directory is pure Python and can be imported/tested independ
 
 ### Phase-Specific Allocation
 
-When chargers have explicit phase assignments (e.g., `connected_to_phase: "B"`):
+When chargers have explicit phase assignments (e.g., `l1_phase: "B"`):
 
 - All distribution uses PhaseConstraints — per-phase limits are enforced automatically
 - Each phase is allocated independently via `_distribute_power()`
@@ -171,7 +170,7 @@ Four distribution modes for multi-charger setups: **Shared** (equal split), **Pr
 
 ### Adding New Features
 
-1. **Charging Mode**: Add to `calculations/modes/`, inherit from `base.py`
+1. **Charging Mode**: Add to `_determine_target_power()` in `target_calculator.py`
 2. **Distribution Mode**: Add to `target_calculator.py` as `_distribute_<mode>()`
 3. **Test Scenarios**: Create YAML scenarios in `dev/tests/scenarios/`
 4. **Documentation**: Update CHARGE_MODES_GUIDE.md, README.md
@@ -212,17 +211,17 @@ python dev/tests/run_tests.py "scenario-name" --trace
 
 Test results are written to `dev/tests/test_results.log`.
 
+**IMPORTANT**: When creating new or modifying existing test scenarios, always set `human_verified: false`. Only the developer marks scenarios as verified after manual review.
+
 Scenario YAML format:
 
 ```yaml
 scenarios:
   - name: "test-name"
     description: "What this tests"
-    verified: true
-    iterations: 1
+    human_verified: false
     site:
       voltage: 230
-      num_phases: 3
       charging_mode: Solar
     chargers:
       - entity_id: "charger_1"
@@ -230,19 +229,21 @@ scenarios:
         max_current: 16
         phases: 3
         priority: 1
-        connected_to_phase: "A"
+        l1_phase: "A"
     expected:
       charger_1:
-        target: 10.0
+        allocated: 10.0
 ```
 
-Scenario files in `dev/tests/scenarios/`:
+Scenario files in `dev/tests/scenarios/` (organized by site type × charging mode):
 
-- `test_scenarios_1ph.yaml` — Single-phase scenarios
-- `test_scenarios_1ph_battery.yaml` — Single-phase with battery
-- `test_scenarios_3ph.yaml` — Three-phase scenarios
-- `test_scenarios_3ph_battery.yaml` — Three-phase with battery
-- `test_scenarios_solar_entity.yaml` — Direct solar production entity (inverter limit enforcement)
+```
+1ph/            — Single-phase, no battery (test_solar, test_eco, test_standard, test_excess)
+1ph_battery/    — Single-phase with battery (test_solar, test_eco, test_standard, test_excess)
+3ph/            — Three-phase, no battery (test_solar, test_eco, test_standard, test_excess)
+3ph_battery/    — Three-phase with battery (test_solar, test_eco, test_standard, test_excess)
+features/       — Cross-cutting tests (test_available, test_plugs, test_phase_mapping)
+```
 
 ### HA Integration Tests (WSL/Linux)
 
