@@ -90,6 +90,7 @@
 
 87. - [x] **Fix case-insensitive OCPP phase attribute reading** — `_read_phase_attr` now does case-insensitive lookup (fixes uppercase `L1`/`L2`/`L3` attrs from Huawei OCPP). Without this, single-phase car on 3-phase charger showed 3x actual power and corrupted feedback loop.
 88. - [x] **Rename "Total EVSE Power" → "Total Managed Power"** sensor display name
+89. - [x] **Two-stage auto-detect phase mapping** — notify at 10 samples, auto-remap at 30 samples with swap logic (L1↔L2 swap to avoid duplicate phase assignments). Fix: snapshots always updated regardless of charger state (prevents invisible transitions).
 
 
 79. - [x] **Per-load operating modes — foundation**

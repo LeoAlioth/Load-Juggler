@@ -685,6 +685,30 @@ def run_hub_calculation(sensor):
     hub_entry_id = hub_entry.entry_id if hasattr(hub_entry, 'entry_id') else hub_entry.data.get('hub_entry_id')
     plug_auto_power = _add_chargers_to_site(hass, site, hub_entry_id, sensor)
 
+    # Apply auto-detected phase remaps from previous cycles
+    auto_detect_state = hub_runtime.setdefault("_auto_detect", {})
+    phase_remaps = auto_detect_state.get("phase_remap", {})
+    for charger in site.chargers:
+        remap = phase_remaps.get(charger.charger_id)
+        if remap:
+            old = (charger.l1_phase, charger.l2_phase, charger.l3_phase)
+            charger.l1_phase = remap["l1_phase"]
+            charger.l2_phase = remap["l2_phase"]
+            charger.l3_phase = remap["l3_phase"]
+            # Recalculate active_phases_mask from new mapping
+            if charger.phases == 3:
+                charger.active_phases_mask = "".join(sorted({charger.l1_phase, charger.l2_phase, charger.l3_phase}))
+            elif charger.phases == 2:
+                charger.active_phases_mask = "".join(sorted({charger.l1_phase, charger.l2_phase}))
+            elif charger.phases == 1:
+                charger.active_phases_mask = charger.l1_phase
+            _LOGGER.debug(
+                "Auto-remap applied for %s: L1:%s→%s L2:%s→%s L3:%s→%s mask=%s",
+                charger.entity_id, old[0], charger.l1_phase,
+                old[1], charger.l2_phase, old[2], charger.l3_phase,
+                charger.active_phases_mask,
+            )
+
     # --- Feedback loop ---
     _apply_feedback_loop(site, solar_is_derived, voltage)
 
@@ -727,12 +751,16 @@ def run_hub_calculation(sensor):
     if inv_notif:
         auto_notifications.append(inv_notif)
     if get_entry_value(hub_entry, CONF_AUTO_DETECT_PHASE_MAPPING, True):
-        auto_notifications.extend(
-            check_phase_mapping(
-                auto_detect_state, smoothed_phases, site.chargers,
-                hub_entry.entry_id,
-            )
+        pm_results = check_phase_mapping(
+            auto_detect_state, smoothed_phases, site.chargers,
+            hub_entry.entry_id,
         )
+        for notif in pm_results:
+            # Store auto-remap for next cycle
+            remap = notif.pop("auto_remap", None)
+            if remap:
+                auto_detect_state.setdefault("phase_remap", {})[remap["charger_id"]] = remap
+            auto_notifications.append(notif)
 
     # --- Build result ---
     return _build_hub_result(

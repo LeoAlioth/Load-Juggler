@@ -16,7 +16,8 @@ _INV_THRESHOLD = 10         # Inversion signals needed in a full window to fire
 
 # --- Phase mapping detection parameters ---
 _PM_MIN_DELTA_A = 0.5       # Minimum draw / grid-phase delta (A) to correlate
-_PM_MIN_SAMPLES = 10        # Correlated samples before evaluating
+_PM_MIN_SAMPLES = 10        # Correlated samples before notification
+_PM_AUTO_REMAP_SAMPLES = 30 # Correlated samples before auto-remap
 _PM_CONFIDENCE = 0.70       # Required ratio (best / total)
 
 
@@ -175,10 +176,11 @@ def _check_draw_phase_correlation(pm_state: dict,
         "prev_grid_a": 0.0, "prev_grid_b": 0.0, "prev_grid_c": 0.0,
         "corr": {"A": 0, "B": 0, "C": 0},
         "sample_count": 0,
-        "notified": False,
+        "notify_sent": False,
+        "remapped": False,
     })
 
-    if cs["notified"]:
+    if cs["remapped"]:
         return None
 
     delta_draw = total_draw - cs["prev_draw"]
@@ -204,7 +206,7 @@ def _check_draw_phase_correlation(pm_state: dict,
     if cs["sample_count"] < _PM_MIN_SAMPLES:
         return None
 
-    # Find best matching phase
+    # Evaluate confidence
     best_phase = max(cs["corr"], key=lambda p: cs["corr"][p])
     best_count = cs["corr"][best_phase]
     total_count = sum(cs["corr"].values())
@@ -216,6 +218,7 @@ def _check_draw_phase_correlation(pm_state: dict,
         )
         cs["corr"] = {"A": 0, "B": 0, "C": 0}
         cs["sample_count"] = 0
+        cs["notify_sent"] = False
         return None
 
     # Determine configured phase
@@ -228,30 +231,81 @@ def _check_draw_phase_correlation(pm_state: dict,
             "AutoDetect phase for %s: confirmed on phase %s",
             charger.entity_id, configured_phase,
         )
-        cs["notified"] = True
+        cs["remapped"] = True
         return None
 
-    cs["notified"] = True
+    # --- Stage 1: Notification at _PM_MIN_SAMPLES ---
+    if not cs["notify_sent"]:
+        cs["notify_sent"] = True
+        _LOGGER.warning(
+            "AutoDetect: Phase mismatch for %s. Configured: %s, Detected: %s "
+            "(auto-remap at %d samples)",
+            charger.entity_id, configured_phase, best_phase,
+            _PM_AUTO_REMAP_SAMPLES,
+        )
+        return {
+            "title": (
+                f"Dynamic OCPP EVSE \u2014 Phase Mismatch: "
+                f"{charger.entity_id}"
+            ),
+            "message": (
+                f"Charger '{charger.entity_id}' draws power on site **Phase "
+                f"{best_phase}**, but Charger L1 is mapped to **Phase "
+                f"{configured_phase}**.\n\n"
+                f"To fix this manually, change 'Charger L1 \u2192 Site Phase' "
+                f"from **{configured_phase}** to **{best_phase}** in:\n"
+                "Settings \u2192 Devices & Services \u2192 Dynamic OCPP EVSE "
+                f"\u2192 '{charger.entity_id}' \u2192 Configure.\n\n"
+                "If no action is taken, the mapping will be auto-corrected "
+                f"after {_PM_AUTO_REMAP_SAMPLES} observation cycles."
+            ),
+            "notification_id": (
+                f"dynamic_ocpp_evse_phase_map_{hub_entry_id}_{cid}"
+            ),
+        }
+
+    # --- Stage 2: Auto-remap at _PM_AUTO_REMAP_SAMPLES ---
+    if cs["sample_count"] < _PM_AUTO_REMAP_SAMPLES:
+        return None
+
+    # Build remap: swap L1's phase with whichever line currently occupies best_phase
+    remap = {"l1_phase": charger.l1_phase, "l2_phase": charger.l2_phase, "l3_phase": charger.l3_phase}
+    # Find which line currently maps to best_phase and swap with L1
+    for line_key in ("l1_phase", "l2_phase", "l3_phase"):
+        if remap[line_key] == best_phase:
+            remap[line_key] = configured_phase  # Give it L1's old phase
+            break
+    remap["l1_phase"] = best_phase  # L1 now maps to detected phase
+
+    cs["remapped"] = True
     _LOGGER.warning(
-        "AutoDetect: Phase mismatch for %s. Configured: %s, Detected: %s",
-        charger.entity_id, configured_phase, best_phase,
+        "AutoDetect: Auto-remapping %s. L1:%s→%s L2:%s→%s L3:%s→%s",
+        charger.entity_id,
+        charger.l1_phase, remap["l1_phase"],
+        charger.l2_phase, remap["l2_phase"],
+        charger.l3_phase, remap["l3_phase"],
     )
     return {
         "title": (
-            f"Dynamic OCPP EVSE \u2014 Possible Phase Mismatch: "
+            f"Dynamic OCPP EVSE \u2014 Phase Mapping Auto-Corrected: "
             f"{charger.entity_id}"
         ),
         "message": (
-            f"The phase assignment for '{charger.entity_id}' may be incorrect.\n\n"
-            f"Based on observed current patterns:\n"
-            f"  Configured phase: {configured_phase}\n"
-            f"  Detected phase:   {best_phase}\n\n"
-            "To correct this, update the phase assignment in:\n"
-            "Settings \u2192 Devices & Services \u2192 Dynamic OCPP EVSE \u2192 "
-            f"'{charger.entity_id}' \u2192 Configure.\n\n"
-            "You can disable phase mapping detection in the hub settings."
+            f"Phase mapping for '{charger.entity_id}' was automatically "
+            f"corrected based on {cs['sample_count']} observations.\n\n"
+            f"L1: {charger.l1_phase} \u2192 {remap['l1_phase']}\n"
+            f"L2: {charger.l2_phase} \u2192 {remap['l2_phase']}\n"
+            f"L3: {charger.l3_phase} \u2192 {remap['l3_phase']}\n\n"
+            "To make this permanent, update the charger configuration.\n"
+            "This auto-correction resets on restart."
         ),
         "notification_id": (
-            f"dynamic_ocpp_evse_phase_map_{hub_entry_id}_{charger.charger_id}"
+            f"dynamic_ocpp_evse_phase_map_{hub_entry_id}_{cid}"
         ),
+        "auto_remap": {
+            "charger_id": cid,
+            "l1_phase": remap["l1_phase"],
+            "l2_phase": remap["l2_phase"],
+            "l3_phase": remap["l3_phase"],
+        },
     }

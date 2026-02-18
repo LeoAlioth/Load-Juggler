@@ -274,7 +274,7 @@ class TestPhaseMappingDetection:
         state = {"phase_map": {"c1": {
             "prev_draw": 0, "prev_grid_a": 0, "prev_grid_b": 0, "prev_grid_c": 0,
             "corr": {"A": 0, "B": 0, "C": 0},
-            "sample_count": 0, "notified": True,
+            "sample_count": 0, "notify_sent": True, "remapped": True,
         }}}
         charger = _make_charger(l1_current=10, l2_current=10, l3_current=10)
         result = check_phase_mapping(state, [15.0, 13.0, 14.0], [charger], "hub1")
@@ -363,7 +363,7 @@ class TestSinglePhaseDetection:
         state = {"phase_map": {"c1": {
             "prev_draw": 0, "prev_grid_a": 0, "prev_grid_b": 0, "prev_grid_c": 0,
             "corr": {"A": 0, "B": 0, "C": 0},
-            "sample_count": 0, "notified": True,
+            "sample_count": 0, "notify_sent": True, "remapped": True,
         }}}
         charger = _make_charger(phases=1, l1_current=10)
         result = check_phase_mapping(state, [15.0, 3.0, 4.0], [charger], "hub1")
