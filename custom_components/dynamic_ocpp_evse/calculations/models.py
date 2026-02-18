@@ -11,7 +11,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
-class ChargerContext:
+class LoadContext:
     """Individual EVSE/charger state and configuration."""
     # Identity
     charger_id: str  # Config entry ID
@@ -147,7 +147,7 @@ class SiteContext:
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
 
     # Chargers at this site
-    chargers: list[ChargerContext] = field(default_factory=list)
+    chargers: list[LoadContext] = field(default_factory=list)
 
     @property
     def num_phases(self) -> int:

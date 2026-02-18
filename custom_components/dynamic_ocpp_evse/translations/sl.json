@@ -9,6 +9,16 @@
                     "sequential___optimized": "Zaporedno - Optimizirano",
                     "sequential___strict": "Zaporedno - Strogo"
                 }
+            },
+            "operating_mode": {
+                "name": "Način Delovanja",
+                "state": {
+                    "standard": "Standardni",
+                    "continuous": "Neprekinjeni",
+                    "solar_priority": "Prednost Sončne",
+                    "solar_only": "Samo Sončna",
+                    "excess": "Presežek"
+                }
             }
         }
     },
@@ -482,17 +492,17 @@
                 }
             }
         },
-        "set_charging_mode": {
-            "name": "Nastavi način polnjenja",
-            "description": "Spremeni način polnjenja za vozlišče (lokacijo).",
+        "set_operating_mode": {
+            "name": "Nastavi način delovanja",
+            "description": "Spremeni način delovanja za polnilnik ali pametno obremenitev.",
             "fields": {
                 "entry_id": {
-                    "name": "ID konfiguracije vozlišča",
-                    "description": "ID konfiguracijske enote vozlišča."
+                    "name": "ID konfiguracije polnilnika",
+                    "description": "ID konfiguracijske enote polnilnika ali pametne obremenitve."
                 },
                 "mode": {
-                    "name": "Način polnjenja",
-                    "description": "Način polnjenja za nastavitev (Standard, Eco, Solar, Excess)."
+                    "name": "Način delovanja",
+                    "description": "Način delovanja za nastavitev (Standard, Neprekinjeni, Prednost Sončne, Samo Sončna, Presežek)."
                 }
             }
         },

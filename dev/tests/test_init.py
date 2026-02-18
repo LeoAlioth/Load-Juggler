@@ -23,7 +23,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_HYSTERESIS,
-    CONF_CHARGING_MODE_ENTITY_ID,
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_UPDATE_FREQUENCY,
@@ -176,9 +175,6 @@ async def test_migration_v1_to_v2(
 
     # Should be marked as hub
     assert legacy_entry.data[ENTRY_TYPE] == ENTRY_TYPE_HUB
-
-    # Generated entity IDs should be present
-    assert legacy_entry.data[CONF_CHARGING_MODE_ENTITY_ID] == "select.legacy_evse_charging_mode"
 
     # Mutable settings should be seeded into options
     assert legacy_entry.options[CONF_EVSE_MINIMUM_CHARGE_CURRENT] == 8

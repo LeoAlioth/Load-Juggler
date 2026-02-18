@@ -60,7 +60,7 @@ _load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
 _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
 
 # Convenience aliases for the rest of this file
-from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext, PhaseValues
+from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 from custom_components.dynamic_ocpp_evse.calculations.utils import compute_household_per_phase
 
@@ -428,7 +428,7 @@ def build_site_from_scenario(scenario):
         # Migrate old mode names
         operating_mode = _MIGRATE_MODE_NAMES.get(operating_mode, operating_mode)
 
-        charger = ChargerContext(
+        charger = LoadContext(
             charger_id=f"charger_{idx}",
             entity_id=charger_data.get("entity_id", f"charger_{idx}"),
             min_current=min_current,
@@ -525,7 +525,7 @@ def print_scenario_params(scenario):
         l2p = ch.get('l2_phase', 'B')
         l3p = ch.get('l3_phase', 'C')
 
-        # Derive mask the same way ChargerContext.__post_init__ does
+        # Derive mask the same way LoadContext.__post_init__ does
         if ch.get('active_phases_mask'):
             mask = ch['active_phases_mask']
         elif ch.get('connected_to_phase'):

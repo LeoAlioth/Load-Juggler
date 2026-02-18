@@ -35,8 +35,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         # Generate entity IDs for hub-created entities if not present
         entity_id = new_data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
-        if CONF_CHARGING_MODE_ENTITY_ID not in new_data:
-            new_data[CONF_CHARGING_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
         if CONF_BATTERY_SOC_TARGET_ENTITY_ID not in new_data:
             new_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
         if CONF_ALLOW_GRID_CHARGING_ENTITY_ID not in new_data:
@@ -223,15 +221,15 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 return eid
         return None
 
-    # --- set_charging_mode service ---
-    async def handle_set_charging_mode(call: ServiceCall):
-        """Set the charging mode for a hub."""
+    # --- set_operating_mode service ---
+    async def handle_set_operating_mode(call: ServiceCall):
+        """Set the operating mode for a charger."""
         entry_id = call.data["entry_id"]
         mode = call.data["mode"]
 
-        entity_id = _find_entity_state("_charging_mode", entry_id)
+        entity_id = _find_entity_state("_operating_mode", entry_id)
         if not entity_id:
-            _LOGGER.error("Could not find charging mode entity for hub %s", entry_id)
+            _LOGGER.error("Could not find operating mode entity for charger %s", entry_id)
             return
 
         await hass.services.async_call(
@@ -241,12 +239,13 @@ async def async_setup(hass: HomeAssistant, config: dict):
         )
 
     hass.services.async_register(
-        DOMAIN, "set_charging_mode", handle_set_charging_mode,
+        DOMAIN, "set_operating_mode", handle_set_operating_mode,
         schema=vol.Schema({
             vol.Required("entry_id"): cv.string,
             vol.Required("mode"): vol.In([
-                CHARGING_MODE_STANDARD, CHARGING_MODE_ECO,
-                CHARGING_MODE_SOLAR, CHARGING_MODE_EXCESS,
+                OPERATING_MODE_STANDARD, OPERATING_MODE_CONTINUOUS,
+                OPERATING_MODE_SOLAR_PRIORITY, OPERATING_MODE_SOLAR_ONLY,
+                OPERATING_MODE_EXCESS,
             ]),
         }),
     )
@@ -374,7 +373,6 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data[DOMAIN]["hubs"][entry.entry_id] = {
         "entry": entry,
         "chargers": [],  # List of charger entry_ids linked to this hub
-        "charging_mode": CHARGING_MODE_STANDARD,
         "distribution_mode": DEFAULT_DISTRIBUTION_MODE,
         "allow_grid_charging": True,
         "power_buffer": 0,
@@ -407,6 +405,8 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
         return False
     
     # Store charger data (runtime state written by entities, read by calculation)
+    device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    default_mode = DEFAULT_OPERATING_MODE_PLUG if device_type == DEVICE_TYPE_PLUG else DEFAULT_OPERATING_MODE_EVSE
     hass.data[DOMAIN]["chargers"][entry.entry_id] = {
         "entry": entry,
         "hub_entry_id": hub_entry_id,
@@ -414,6 +414,7 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
         "max_current": None,
         "device_power": None,
         "dynamic_control": True,
+        "operating_mode": default_mode,
     }
     
     # Link charger to hub
@@ -504,7 +505,6 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
         f"number.{entity_id}_home_battery_soc_target": f"{entity_id}_home_battery_soc_target",
         f"number.{entity_id}_home_battery_soc_min": f"{entity_id}_home_battery_soc_min",
         f"number.{entity_id}_power_buffer": f"{entity_id}_power_buffer",
-        f"select.{entity_id}_charging_mode": f"{entity_id}_charging_mode",
         f"switch.{entity_id}_allow_grid_charging": f"{entity_id}_allow_grid_charging"
     }
     
@@ -536,7 +536,6 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
     # Update the config entry to ensure it has the required entity IDs
     updated_data = dict(entry.data)
     updated_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
-    updated_data[CONF_CHARGING_MODE_ENTITY_ID] = f"select.{entity_id}_charging_mode"
     updated_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
     updated_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
     updated_data["integration_version"] = INTEGRATION_VERSION

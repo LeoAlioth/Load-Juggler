@@ -9,26 +9,27 @@ reset_ocpp_evse:
       selector:
         text:
 
-set_charging_mode:
-  name: Set Charging Mode
-  description: Change the charging mode for a hub (site).
+set_operating_mode:
+  name: Set Operating Mode
+  description: Change the operating mode for a charger or smart load.
   fields:
     entry_id:
-      name: Hub Config Entry ID
-      description: The config entry ID of the hub.
+      name: Charger Config Entry ID
+      description: The config entry ID of the charger or smart load.
       required: true
       selector:
         text:
     mode:
-      name: Charging Mode
-      description: The charging mode to set.
+      name: Operating Mode
+      description: The operating mode to set.
       required: true
       selector:
         select:
           options:
             - "Standard"
-            - "Eco"
-            - "Solar"
+            - "Continuous"
+            - "Solar Priority"
+            - "Solar Only"
             - "Excess"
 
 set_distribution_mode:

@@ -12,7 +12,7 @@ Clear architecture:
 
 import logging
 
-from .models import SiteContext, ChargerContext, PhaseConstraints
+from .models import SiteContext, LoadContext, PhaseConstraints
 from ..const import (
     OPERATING_MODE_STANDARD,
     OPERATING_MODE_CONTINUOUS,
@@ -425,7 +425,7 @@ def _below_soc_target(site: SiteContext) -> bool:
 
 
 def _source_limit(
-    charger: ChargerContext,
+    charger: LoadContext,
     site: SiteContext,
     solar: PhaseConstraints,
     excess: PhaseConstraints,
@@ -487,7 +487,7 @@ def _deduct_from_sources(
     return solar, excess
 
 
-def _sort_chargers(chargers: list[ChargerContext]) -> list[ChargerContext]:
+def _sort_chargers(chargers: list[LoadContext]) -> list[LoadContext]:
     """Sort chargers by (mode_urgency, priority) for distribution order."""
     return sorted(
         chargers,
@@ -549,7 +549,7 @@ def _distribute_power(
 
 
 def _allocate_minimums(
-    chargers: list[ChargerContext],
+    chargers: list[LoadContext],
     site: SiteContext,
     physical: PhaseConstraints,
     solar: PhaseConstraints,

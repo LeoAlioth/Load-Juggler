@@ -75,7 +75,6 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         return {
             CONF_TOTAL_ALLOCATED_CURRENT: sensor._state,
             CONF_PHASES: sensor._phases,
-            CONF_CHARGING_MODE: sensor._charging_mode,
             "calc_used": sensor._calc_used,
             "allocated_current": sensor._allocated_current,
         }
@@ -141,13 +140,13 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         self._state = None
         self._phases = None
         self._detected_phases = None  # Remembered phase count from actual charging
-        self._charging_mode = None
+        self._operating_mode = None  # Per-charger operating mode
         self._calc_used = None
         self._allocated_current = None
         self._last_update = datetime.min
         self._pause_started_at = None  # datetime when charge pause started
         self._grace_started_at = None  # datetime when Solar/Excess grace period started
-        self._prev_charging_mode = None   # for detecting mode changes to cancel pause
+        self._prev_operating_mode = None   # for detecting mode changes to cancel pause
         self._prev_distribution_mode = None
         self._last_set_current = 0
         self._last_set_power = None
@@ -548,21 +547,24 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
 
             # Store charger-level calculation results
             self._phases = hub_data.get(CONF_PHASES)
-            self._charging_mode = hub_data.get(CONF_CHARGING_MODE)
             current_distribution_mode = hub_data.get("distribution_mode")
+
+            # Read per-charger operating mode from hub_data
+            charger_modes = hub_data.get("charger_modes", {})
+            self._operating_mode = charger_modes.get(self.config_entry.entry_id)
 
             # Detect mode changes — used to cancel pause AND bypass rate limiting
             mode_changed = (
-                (self._prev_charging_mode is not None and self._charging_mode != self._prev_charging_mode) or
+                (self._prev_operating_mode is not None and self._operating_mode != self._prev_operating_mode) or
                 (self._prev_distribution_mode is not None and current_distribution_mode != self._prev_distribution_mode)
             )
 
-            # Cancel charge pause and grace timer when user changes charging or distribution mode
+            # Cancel charge pause and grace timer when user changes operating or distribution mode
             if mode_changed:
                 if self._pause_started_at is not None:
                     _LOGGER.info(
-                        "Mode changed for %s (charging: %s→%s, distribution: %s→%s) — cancelling charge pause",
-                        self._attr_name, self._prev_charging_mode, self._charging_mode,
+                        "Mode changed for %s (operating: %s→%s, distribution: %s→%s) — cancelling charge pause",
+                        self._attr_name, self._prev_operating_mode, self._operating_mode,
                         self._prev_distribution_mode, current_distribution_mode,
                     )
                     self._pause_started_at = None
@@ -570,21 +572,10 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                     _LOGGER.info("Mode changed for %s — cancelling grace timer", self._attr_name)
                     self._grace_started_at = None
 
-            self._prev_charging_mode = self._charging_mode
+            self._prev_operating_mode = self._operating_mode
             self._prev_distribution_mode = current_distribution_mode
 
             self._calc_used = hub_data.get("calc_used")
-            charger_max_available = hub_data.get("charger_max_available", 0)
-            self._target_evse = hub_data.get("target_evse")
-            self._target_evse_standard = hub_data.get("target_evse_standard")
-            self._target_evse_eco = hub_data.get("target_evse_eco")
-            self._target_evse_solar = hub_data.get("target_evse_solar")
-            self._target_evse_excess = hub_data.get("target_evse_excess")
-
-            if "excess_charge_start_time" in hub_data:
-                self._excess_charge_start_time = hub_data["excess_charge_start_time"]
-            else:
-                self._excess_charge_start_time = None
 
             # Store hub data in hass.data for hub sensor to read
             hub_entry_id = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
@@ -672,16 +663,18 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             grace_period_minutes = get_entry_value(hub_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
             grace_period_seconds = grace_period_minutes * 60
 
-            if self._charging_mode in (CHARGING_MODE_SOLAR, CHARGING_MODE_EXCESS) and grace_period_seconds > 0:
+            if self._operating_mode in (OPERATING_MODE_SOLAR_ONLY, OPERATING_MODE_EXCESS) and grace_period_seconds > 0:
                 if self._allocated_current < min_charge_current:
-                    # Engine says stop — check if site limits allow grace
-                    standard_target = self._target_evse_standard or 0
-                    if standard_target >= min_charge_current:
+                    # Engine says stop — check if site physical limits allow grace
+                    # Use charger_available as proxy for physical headroom
+                    charger_avail = hub_data.get("charger_available", {})
+                    physical_available = charger_avail.get(self.config_entry.entry_id, 0)
+                    if physical_available >= min_charge_current:
                         # Site can support min_current — apply grace
                         if self._grace_started_at is None:
                             self._grace_started_at = datetime.now()
                             _LOGGER.debug("Grace timer started for %s (mode=%s, grace=%dm)",
-                                          self._attr_name, self._charging_mode, grace_period_minutes)
+                                          self._attr_name, self._operating_mode, grace_period_minutes)
                         elapsed = (datetime.now() - self._grace_started_at).total_seconds()
                         if elapsed < grace_period_seconds:
                             # Override: charge at min_current during grace
@@ -703,7 +696,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                         _LOGGER.debug("Grace timer reset for %s — conditions recovered", self._attr_name)
                         self._grace_started_at = None
             else:
-                # Not in Solar/Excess mode or grace disabled — reset
+                # Not in Solar Only/Excess mode or grace disabled — reset
                 if self._grace_started_at is not None:
                     self._grace_started_at = None
 
@@ -780,18 +773,18 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             elif limit > 0:
                 self._charging_status = "Charging"
             else:
-                mode = self._charging_mode
+                mode = self._operating_mode
                 bat_soc = hub_data.get("battery_soc")
                 bat_target = hub_data.get("battery_soc_target")
                 bat_below_target = (bat_soc is not None and bat_target is not None
                                     and bat_soc < bat_target)
-                if mode in ("Solar", "Eco") and bat_below_target:
+                if mode in (OPERATING_MODE_SOLAR_ONLY, OPERATING_MODE_SOLAR_PRIORITY) and bat_below_target:
                     self._charging_status = "Battery Priority"
-                elif mode == "Solar":
+                elif mode == OPERATING_MODE_SOLAR_ONLY:
                     self._charging_status = "Insufficient Solar"
-                elif mode == "Eco":
+                elif mode == OPERATING_MODE_SOLAR_PRIORITY:
                     self._charging_status = "Insufficient Solar"
-                elif mode == "Excess":
+                elif mode == OPERATING_MODE_EXCESS:
                     self._charging_status = "No Excess"
                 else:
                     self._charging_status = "Insufficient Power"

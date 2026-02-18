@@ -11,7 +11,7 @@ This document is used for keeping notes of ideas for future implementations in n
 - One physical EVSE = one HA configuration entry
 
 ### Implementation Approach
-Add `plug_id` field to `ChargerContext`. Multiple plugs can:
+Add `plug_id` field to `LoadContext`. Multiple plugs can:
 - Share the same OCPP connection (if the charger supports multiple concurrent sessions)
 - Have separate current/power sensors for each plug
 - Be configured with individual priorities and modes
@@ -73,7 +73,7 @@ We take charging modes as a priority, and only use the priority numbers to solve
 So a charger on Standard mode, always gets priority over a charger in eco mode.
 
 #### Implementation Steps (for future)
-1. Add `charging_mode` field to `ChargerContext`
+1. Add `charging_mode` field to `LoadContext`
 2. Modify `_determine_target_power()` to accept per-charger modes
 3. Update distribution functions to handle mixed-mode constraints
 4. Create new constraint types for each mode's power pool
@@ -99,7 +99,7 @@ The current architecture is already quite general:
 
 | Current EVSE Concept | General Load Equivalent |
 |---------------------|------------------------|
-| `ChargerContext` | `LoadContext` |
+| `LoadContext` | `LoadContext` |
 | `min_current` / `max_current` | `min_power` / `max_power` |
 | Charging mode | Control strategy |
 | Priority distribution | Load prioritization |

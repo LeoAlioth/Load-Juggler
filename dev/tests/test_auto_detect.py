@@ -43,7 +43,7 @@ _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator
 _load_module_as(f"{_PKG_COMP}.auto_detect", _comp_dir / "auto_detect.py")
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (
-    ChargerContext, SiteContext, PhaseValues,
+    LoadContext, SiteContext, PhaseValues,
 )
 from custom_components.dynamic_ocpp_evse.auto_detect import (
     check_inversion, check_phase_mapping,
@@ -56,7 +56,7 @@ from custom_components.dynamic_ocpp_evse.auto_detect import (
 # ---------------------------------------------------------------------------
 
 def _make_charger(**kwargs):
-    """Create a ChargerContext with sensible defaults."""
+    """Create a LoadContext with sensible defaults."""
     defaults = dict(
         charger_id="c1", entity_id="charger_1",
         min_current=6, max_current=16, phases=3,
@@ -65,7 +65,7 @@ def _make_charger(**kwargs):
         l1_current=0, l2_current=0, l3_current=0,
     )
     defaults.update(kwargs)
-    return ChargerContext(**defaults)
+    return LoadContext(**defaults)
 
 
 # ===========================================================================

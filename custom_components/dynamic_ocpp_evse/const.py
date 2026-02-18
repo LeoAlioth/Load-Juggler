@@ -81,7 +81,7 @@ CONF_CHARGER_L3_PHASE = "charger_l3_phase"
 
 # sensor attributes
 CONF_PHASES = "phases"
-CONF_CHARGING_MODE = "charging_mode"  # Legacy key used in hub_data result dict — will be replaced
+CONF_CHARGING_MODE = "charging_mode"  # Legacy key — kept for hub_data result dict backward compat
 CONF_TOTAL_ALLOCATED_CURRENT = "total_allocated_current"
 CONF_PHASE_A_CURRENT = "phase_a_current"
 CONF_PHASE_B_CURRENT = "phase_b_current"
