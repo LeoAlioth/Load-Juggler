@@ -235,9 +235,9 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
 
     Battery discharge is added when SOC >= battery_soc_min.
 
-    In derived mode (solar from grid CT): solar_current already reflects battery
-    effects in the grid readings. Adds REMAINING discharge capacity to avoid
-    double-counting.
+    In derived mode (solar from grid CT): solar_production_total includes battery
+    charge redirect (added by feedback loop). Only REMAINING discharge capacity
+    is added here to avoid double-counting.
 
     With dedicated solar entity: solar_current is the raw inverter output.
     battery_power may not be available or embedded, so use full max_discharge.
@@ -254,12 +254,13 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
         site.battery_soc >= (site.battery_soc_min or 0) and
         site.battery_max_discharge_power):
         if site.solar_is_derived and site.battery_power is not None:
-            # Derived mode: solar_current includes actual battery effect.
-            # Add only the REMAINING discharge capacity.
+            # Derived mode: solar_production_total already includes battery charge
+            # redirect (charge power added back in feedback loop). Only add the
+            # remaining discharge capacity to avoid double-counting.
             # battery_power: positive=discharging, negative=charging
-            actual_effect = site.battery_power / site.voltage  # positive if already discharging
+            actual_discharge = max(0, site.battery_power) / site.voltage
             max_discharge = site.battery_max_discharge_power / site.voltage
-            battery_current = max(0, max_discharge - actual_effect)
+            battery_current = max(0, max_discharge - actual_discharge)
         elif not site.solar_is_derived:
             # Dedicated solar entity: solar_current is raw inverter output,
             # battery effect not embedded. Use full max discharge.

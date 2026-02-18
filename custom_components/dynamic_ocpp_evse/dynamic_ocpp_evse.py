@@ -388,10 +388,13 @@ def _apply_feedback_loop(site, solar_is_derived, voltage):
     site.consumption = PhaseValues(*adj_consumption)
     site.export_current = PhaseValues(*adj_export)
 
-    # Update derived solar to match adjusted export
+    # Update derived solar to match adjusted export + battery charge absorption
     solar_note = ""
     if solar_is_derived:
         site.solar_production_total = site.export_current.total * site.voltage
+        # Battery charging absorbs solar power invisible to grid CT — add it back
+        if site.battery_power is not None and site.battery_power < 0:
+            site.solar_production_total += abs(site.battery_power)
         solar_note = f" | Solar(derived)={site.solar_production_total:.0f}W"
 
     _LOGGER.debug(
@@ -556,6 +559,11 @@ def run_hub_calculation(sensor):
     battery_soc_hysteresis = get_entry_value(hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
     battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
+
+    # In derived mode, battery charging absorbs solar power invisible to grid CT.
+    # Add it back to recover true solar production estimate.
+    if solar_is_derived and battery_power is not None and battery_power < 0:
+        solar_production_total += abs(battery_power)
 
     # --- Max grid import power (entity override → shared hub data → None) ---
     enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)

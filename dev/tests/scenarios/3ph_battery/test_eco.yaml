@@ -98,6 +98,69 @@ scenarios:
       charger_1:
         allocated: 6  # Uses min_current (export=5A < min=6A)
 
+  - name: "3ph-1c-eco-prio-with-bat-below-target"
+    description: "Eco mode with battery bellow target"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 3450
+      distribution_mode: priority
+      solar_production: 3450  # 15 total
+      phase_a_consumption: 2.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 2.0  # 5A total
+      battery_soc: 60  # Below 20% min
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 11000
+      battery_max_discharge_power: 11000
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 6000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 8
+        max_current: 16
+        phases: 3
+        priority: 1
+        operating_mode: "Solar Priority"
+    expected:
+      charger_1:
+        allocated: 8  # Battery below target → Eco still guarantees out of 15A solar, 5 Are used by the load, so 10A left. minimum of 3*8=24A, So 10 of those comes from solar and remaining 14A from the battery
+
+  - name: "3ph-1c-eco-prio-with-bat-below-min"
+    description: "Eco mode with battery bellow min"
+    human_verified: true
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 3450
+      distribution_mode: priority
+      solar_production: 3450  # 15 total
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total
+      battery_soc: 15  # Below 20% min
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 11000
+      battery_max_discharge_power: 11000
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 6000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 8
+        max_current: 16
+        phases: 3
+        priority: 1
+        operating_mode: "Solar Priority"
+    expected:
+      charger_1:
+        allocated: 8  # Battery below min → Eco still guarantees out of 15A solar, 3 Are used by the load, so 12A left. minimum of 3*8=24A, So 12 of those comes from solar and remaining 12A from the grid
+
+
   - name: "3ph-2c-eco-prio-with-bat-no-solar"
     description: "No solar export available"
     human_verified: false

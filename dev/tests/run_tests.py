@@ -282,8 +282,11 @@ def apply_feedback_adjustment(site):
         site.export_current = PhaseValues(adj_a_exp, adj_b_exp, adj_c_exp)
 
     # Derived mode: recalculate solar_production_total from adjusted export.
+    # Battery charging absorbs solar power invisible to grid CT — add it back.
     if site.solar_is_derived:
         site.solar_production_total = site.export_current.total * site.voltage
+        if site.battery_power is not None and site.battery_power < 0:
+            site.solar_production_total += abs(site.battery_power)
     else:
         # Dedicated solar entity mode: compute household_consumption_total
         # via energy balance: household = solar + battery_power - export
