@@ -16,7 +16,7 @@ _INV_THRESHOLD = 10         # Inversion signals needed in a full window to fire
 
 # --- Phase mapping detection parameters ---
 _PM_MIN_DELTA_A = 0.5       # Minimum draw / grid-phase delta (A) to correlate
-_PM_MIN_SAMPLES = 20        # Correlated samples before evaluating
+_PM_MIN_SAMPLES = 10        # Correlated samples before evaluating
 _PM_CONFIDENCE = 0.70       # Required ratio (best / total)
 
 
@@ -134,15 +134,17 @@ def check_phase_mapping(state: dict, smoothed_phases: list, chargers: list,
     pm_state = state.setdefault("phase_map", {})
     notifications = []
 
+    grid_a = smoothed_phases[0] if smoothed_phases[0] is not None else 0.0
+    grid_b = smoothed_phases[1] if smoothed_phases[1] is not None else 0.0
+    grid_c = smoothed_phases[2] if smoothed_phases[2] is not None else 0.0
+
     for charger in chargers:
-        # Must be actively drawing power
-        if charger.connector_status not in ("Charging", "SuspendedEVSE", "SuspendedEV"):
-            continue
-        if charger.l1_current == 0 and charger.l2_current == 0 and charger.l3_current == 0:
-            continue
+        total_draw = charger.l1_current + charger.l2_current + charger.l3_current
+        is_active = charger.connector_status in ("Charging", "SuspendedEVSE", "SuspendedEV")
 
         notif = _check_draw_phase_correlation(
-            pm_state, smoothed_phases, charger, hub_entry_id,
+            pm_state, grid_a, grid_b, grid_c, total_draw,
+            charger, hub_entry_id, is_active,
         )
         if notif:
             notifications.append(notif)
@@ -152,14 +154,20 @@ def check_phase_mapping(state: dict, smoothed_phases: list, chargers: list,
 
 # --- Total draw → single phase correlation ---
 
-def _check_draw_phase_correlation(pm_state: dict, smoothed_phases: list,
-                                  charger, hub_entry_id: str) -> dict | None:
+def _check_draw_phase_correlation(pm_state: dict,
+                                  grid_a: float, grid_b: float, grid_c: float,
+                                  total_draw: float,
+                                  charger, hub_entry_id: str,
+                                  is_active: bool) -> dict | None:
     """Detect which phase a charger's draw actually appears on.
 
     Uses total charger draw (l1+l2+l3) correlated against per-phase grid
     deltas. For 3-phase chargers with symmetric draws (all phases equal),
     the draw correlates equally with all grid phases → inconclusive → no
     notification (correct behavior — symmetric draws don't need mapping).
+
+    Always updates prev snapshots (even when charger is inactive) so that
+    start/stop transitions produce accurate deltas.
     """
     cid = charger.charger_id
     cs = pm_state.setdefault(cid, {
@@ -173,11 +181,6 @@ def _check_draw_phase_correlation(pm_state: dict, smoothed_phases: list,
     if cs["notified"]:
         return None
 
-    total_draw = charger.l1_current + charger.l2_current + charger.l3_current
-    grid_a = smoothed_phases[0] if smoothed_phases[0] is not None else 0.0
-    grid_b = smoothed_phases[1] if smoothed_phases[1] is not None else 0.0
-    grid_c = smoothed_phases[2] if smoothed_phases[2] is not None else 0.0
-
     delta_draw = total_draw - cs["prev_draw"]
     delta_g = {
         "A": grid_a - cs["prev_grid_a"],
@@ -185,12 +188,14 @@ def _check_draw_phase_correlation(pm_state: dict, smoothed_phases: list,
         "C": grid_c - cs["prev_grid_c"],
     }
 
-    if abs(delta_draw) >= _PM_MIN_DELTA_A:
+    # Only accumulate correlation when charger is in an active charging state
+    if is_active and abs(delta_draw) >= _PM_MIN_DELTA_A:
         for phase, d_phase in delta_g.items():
             if abs(d_phase) >= _PM_MIN_DELTA_A and (delta_draw > 0) == (d_phase > 0):
                 cs["corr"][phase] += 1
         cs["sample_count"] += 1
 
+    # Always update snapshots so transitions are visible next cycle
     cs["prev_draw"] = total_draw
     cs["prev_grid_a"] = grid_a
     cs["prev_grid_b"] = grid_b
