@@ -91,6 +91,10 @@
 87. - [x] **Fix case-insensitive OCPP phase attribute reading** — `_read_phase_attr` now does case-insensitive lookup (fixes uppercase `L1`/`L2`/`L3` attrs from Huawei OCPP). Without this, single-phase car on 3-phase charger showed 3x actual power and corrupted feedback loop.
 88. - [x] **Rename "Total EVSE Power" → "Total Managed Power"** sensor display name
 89. - [x] **Two-stage auto-detect phase mapping** — notify at 10 samples, auto-remap at 30 samples with swap logic (L1↔L2 swap to avoid duplicate phase assignments). Fix: snapshots always updated regardless of charger state (prevents invisible transitions).
+90. - [x] **2-phase car inactive line detection** — when a 2-phase car charges (2 of 3 lines active), the non-correlating grid phase reveals where the inactive line is connected. Combined with 1-phase detection, gives full L1/L2/L3→A/B/C verification. After remap, correlation state resets for re-detection.
+91. - [x] **Confidence-weighted auto-detect scoring** — replace flat sample counts with weighted scores (weight = min(|delta_draw|, 15) / 5). Strong oscillation signals (20A swings) score 3.0/sample → remap in ~5 samples vs 30 flat. Soft decay (×0.5) instead of hard reset on inconclusive data. New tests: auto-remap verification, noisy data decay.
+92. - [x] **10% clamping tolerance for W-based chargers** — `_build_evse_charger()` now uses `max_current * 1.1` threshold when `charge_rate_unit == "W"` to avoid false clamping from voltage/rounding variance.
+93. - [x] **Fix W-based OCPP power multiplication** — `_send_ocpp_command()` now uses car's actual active phase count (from l1/l2/l3 current draws) instead of charger hardware phases. Fixes 3x over-allocation for 1-phase cars on 3-phase EVSEs (e.g., 8A → 1840W instead of 5520W). Active phases passed via `charger_active_phases` in hub result dict.
 
 
 79. - [x] **Per-load operating modes — foundation**

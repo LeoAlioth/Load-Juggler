@@ -122,6 +122,66 @@ The current architecture is already quite general:
 
 ---
 
+## Auto-detect scoring: confidence-weighted points instead of flat sample counts
+
+**Status:** Implemented (TODO #91)
+**Complexity:** Medium
+
+### Problem
+The current auto-detect phase mapping uses flat sample counts (notify at 10, remap at 30). When a phase mapping is wrong, the engine allocates current to the wrong phase, causing start/stop oscillation. If the car experiences too many interruptions before we accumulate enough samples, it may refuse to charge entirely.
+
+### Research: How EVs Handle Repeated Charging Interruptions
+
+**No hard standard exists.** IEC 61851 defines CP pilot signal states (A/B/C/D/E/F) and PWM duty cycle communication, but does NOT specify a maximum number of start/stop cycles or mandatory cooldown between current changes. Behavior is entirely OEM-specific.
+
+**Known behaviors (from forums, evcc community, real-world reports):**
+- **Most EVs auto-retry** after an interruption — they re-enter state B (connected) and wait for state C (charging) again. There's no universal "3 strikes" rule.
+- **Some cars fault after repeated rapid cycling.** Forum reports mention Kia EV6, Ford Mach-E, and some Renault ZOE models entering fault states after frequent start/stop. No consistent threshold found — ranges from ~5 to ~20+ cycles depending on the car, timing, and EVSE behavior.
+- **Tesla** generally tolerant — retries indefinitely but may show "Charge interrupted" notifications. Some models add increasing delays between retries.
+- **Hyundai/Kia ICCU** is known to be fragile — 2-10% of owners experienced ICCU-related failures in certain model years. Rapid cycling may exacerbate this.
+
+**evcc's approach (industry reference):**
+- **`guardduration`**: default **5 minutes** — minimum time between start→stop or stop→start transitions
+- **`enable.delay`**: default **1 minute** — surplus must persist for 1 min before starting charge
+- **`disable.delay`**: recommended **30 minutes** — deficit must persist 30 min before stopping
+- **`Min+Solar` mode**: never stops charging, only adjusts current — specifically designed for "vehicles that do not like regular starting and stopping"
+- evcc docs explicitly warn: *"Some vehicles refuse to charge if it is interrupted too often and must be made to charge again, for example by unlocking or plugging/unplugging the charging cable."*
+
+**Key insight:** The danger isn't gradual current changes (PWM adjustments) — it's full **start/stop transitions** (CP state C→B→C). Adjusting current from 10A→6A is fine. Going to 0A (pause) and back is what stresses cars.
+
+### Current System Context
+
+Our system has two separate concerns:
+1. **Grace period timer** (sensor.py) — already prevents rapid pause/resume in Solar Only and Excess modes. Configurable hold-at-min before pausing.
+2. **Auto-detect phase mapping** — the oscillation happens because wrong phase mapping → engine allocates 0A on the wrong phase → pause → resume → repeat. This is the root cause, not a symptom we should mask with longer timers.
+
+### Proposed: Confidence-Weighted Scoring
+
+Replace flat `sample_count >= threshold` with a point-based system:
+
+| Condition | Points |
+|---|---|
+| Correlating sample with confidence > 90% (best_phase matches >90% of votes) | +3 |
+| Correlating sample with confidence > 80% | +2 |
+| Correlating sample with confidence > 70% | +1 |
+| Contradicting sample (different phase leads) | -1 |
+
+**Thresholds:**
+- **Notify** at score >= 10 (e.g., 4 strong samples or 10 weak ones)
+- **Auto-remap** at score >= 25
+
+**Benefits:**
+- Strong signals (large delta_draw + clear single-phase correlation) trigger faster
+- Noisy signals accumulate more slowly
+- A single contradicting sample doesn't reset everything (unlike current "reset on inconclusive")
+
+### Discussion Points
+- Should we also weight by `|delta_draw|`? A 10A change is much more informative than a 1A change.
+- The current "reset on inconclusive" approach is aggressive — might be better to decay points slowly instead of hard reset.
+- The real fix for oscillation is the remap itself. Once applied, the oscillation stops. So speed of detection matters more than avoiding false positives (which can be corrected by re-detection after reset).
+
+---
+
 ## GitHub issue triage (reviewed 2026-02-17)
 
 ### Can be closed (fixed in v2.0.0)

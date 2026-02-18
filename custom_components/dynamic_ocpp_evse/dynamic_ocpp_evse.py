@@ -208,9 +208,12 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
                     charger.l3_current = l3 or 0
 
                     # Clamp per-phase draws at max_current (some chargers report total in per-phase)
+                    # Allow 10% tolerance when using W-based profiles (voltage/rounding variance)
+                    cru = get_entry_value(entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
+                    clamp_threshold = max_current * 1.1 if cru == CHARGE_RATE_UNIT_WATTS else max_current
                     for attr in ('l1_current', 'l2_current', 'l3_current'):
                         val = getattr(charger, attr)
-                        if val > max_current:
+                        if val > clamp_threshold:
                             _LOGGER.warning(
                                 "EVSE %s: %s=%.1fA exceeds max_current=%.1fA — "
                                 "clamping (charger may be reporting total instead of per-phase)",
@@ -472,6 +475,13 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
     # Build per-charger operating modes dict
     charger_modes = {c.charger_id: c.operating_mode for c in site.chargers}
 
+    # Per-charger active phase count (for W-based OCPP profiles)
+    # Uses actual draw to detect 1-phase car on 3-phase EVSE; falls back to configured phases.
+    charger_active_phases = {}
+    for c in site.chargers:
+        active = sum(1 for cur in (c.l1_current, c.l2_current, c.l3_current) if cur > 1.0)
+        charger_active_phases[c.charger_id] = active if active > 0 else c.phases
+
     return {
         CONF_TOTAL_ALLOCATED_CURRENT: round(sum(charger_targets.values()), 1),
         CONF_PHASES: site.num_phases,
@@ -498,6 +508,7 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
         "charger_available": charger_available,
         "charger_names": charger_names,
         "charger_modes": charger_modes,
+        "charger_active_phases": charger_active_phases,
         "distribution_mode": site.distribution_mode,
 
         # Auto-detected plug power ratings
@@ -760,6 +771,10 @@ def run_hub_calculation(sensor):
             remap = notif.pop("auto_remap", None)
             if remap:
                 auto_detect_state.setdefault("phase_remap", {})[remap["charger_id"]] = remap
+                # Reset correlation state so re-detection runs with new mapping
+                # (allows 2-phase detection to verify/correct after 1-phase remap)
+                pm_state = auto_detect_state.get("phase_map", {})
+                pm_state.pop(remap["charger_id"], None)
             auto_notifications.append(notif)
 
     # --- Build result ---
