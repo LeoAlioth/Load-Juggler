@@ -4,14 +4,13 @@ scenarios:
 
   - name: "3ph-3c-standard-prio-with-bat-normal"
     description: "3 chargers, all standard mode"
-    human_verified: True
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 4140  # 18A total
       phase_a_consumption: 3.0
       phase_b_consumption: 3.0
@@ -26,16 +25,19 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
       - entity_id: "charger_2"
+        operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 3
         priority: 2
       - entity_id: "charger_3"
+        operating_mode: Standard
         min_current: 6
         max_current: 10
         phases: 3
@@ -50,14 +52,13 @@ scenarios:
 
   - name: "3ph-1c-standard-heavy-importing"
     description: "Home consuming more than solar produces (importing)"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 2990  # 13A total
       phase_a_consumption: 8.0
       phase_b_consumption: 7.0
@@ -72,6 +73,7 @@ scenarios:
       inverter_max_power: 14950  # 65A
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Standard
         min_current: 6
         max_current: 32
         phases: 3
@@ -82,14 +84,13 @@ scenarios:
 
   - name: "3ph-1c-standard-zero-solar-night"
     description: "Night time charging with no solar"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 32
       max_import_power: 22080
 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0  # No solar
       phase_a_consumption: 2.0
       phase_b_consumption: 2.0
@@ -104,6 +105,7 @@ scenarios:
       inverter_max_power: 14950  # 65A
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Standard
         min_current: 6
         max_current: 32
         phases: 3

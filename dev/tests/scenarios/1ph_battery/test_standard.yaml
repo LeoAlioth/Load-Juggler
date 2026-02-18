@@ -4,13 +4,12 @@ scenarios:
 
   - name: "1ph-1c-standard-bat-above-target"
     description: "Standard mode with battery above target — max from all sources"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 2300  # 10A
       phase_a_consumption: 3.0
       battery_soc: 90
@@ -23,6 +22,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Standard
         min_current: 6
         max_current: 32
         phases: 1
@@ -33,13 +33,12 @@ scenarios:
 
   - name: "1ph-1c-standard-bat-night"
     description: "Standard mode at night with battery — grid + battery"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 2300  # 10A 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 3.0
       battery_soc: 85
@@ -52,6 +51,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Standard
         min_current: 6
         max_current: 32
         phases: 1
@@ -62,13 +62,12 @@ scenarios:
 
   - name: "1ph-1c-standard-bat-heavy-consumption"
     description: "Standard mode with high household consumption"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 5750
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 2300  # 10A
       phase_a_consumption: 15.0
       battery_soc: 85
@@ -81,6 +80,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Standard
         min_current: 6
         max_current: 32
         phases: 1

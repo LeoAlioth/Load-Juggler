@@ -84,7 +84,44 @@
 
 ## In Progress
 
+79. - [x] **Per-load operating modes — foundation**
+    - Rename charging mode constants: Standard→Continuous, Eco→Solar Priority, Solar→Solar Only, Excess stays
+    - Add `OPERATING_MODE_*` constants, `OPERATING_MODES_EVSE` (4), `OPERATING_MODES_PLUG` (3), `MODE_URGENCY` dict
+    - Add `operating_mode` field to `ChargerContext`, remove `charging_mode` from `SiteContext`
+    - Remove old `CHARGING_MODE_*` constants and `CONF_CHARGING_MODE_ENTITY_ID`
+
+80. - [x] **Per-load operating modes — calculation engine**
+    - `_calculate_site_limit()`: always return `grid_limit + inverter_limit` (remove mode branch)
+    - Remove `_determine_target_power()` entirely
+    - Source-aware dual-pool distribution: physical (grid+inverter), solar, excess tracked simultaneously
+    - Helper functions: `_below_soc_target()`, `_source_limit()`, `_deduct_from_sources()`
+    - Source-aware `_allocate_minimums()`: ALL modes participate, each checks its source pools
+    - All 4 distribution functions: source-limited fills, urgency+priority sorting, batch increment (Shared), source-aware reduction (Optimized)
+    - All 99 test scenarios passing (25 verified, 74 unverified)
+
+81. - [ ] **Per-load operating modes — test scenarios**
+    - Update `run_tests.py` to read per-charger `operating_mode` from YAML ✓
+    - Migrate all existing scenario files: move `charging_mode` from `site:` to per-charger `operating_mode:` ✓
+    - Add mixed-mode scenarios (Continuous+Solar Only, Solar Priority+Excess, plug in Solar Only)
+    - Run calculation tests — all scenarios must pass
+
+82. - [ ] **Per-load operating modes — HA integration**
+    - `__init__.py`: add `operating_mode` to charger runtime, remove `charging_mode` from hub runtime, update services
+    - `dynamic_ocpp_evse.py`: read per-charger mode from charger runtime, remove hub-level mode, update `_build_hub_result()`
+    - `select.py`: remove hub-level `ChargingModeSelect`, add per-charger `OperatingModeSelect` (ChargerEntityMixin)
+    - `sensor.py`: per-charger mode detection, grace timer checks per-charger mode, status messages use per-charger mode
+    - `config_flow.py`: remove `CONF_CHARGING_MODE_ENTITY_ID` from hub data, bump `MINOR_VERSION`
+
+83. - [ ] **Per-load operating modes — translations & tests**
+    - Translations: add operating mode select labels (en.json, sl.json), remove hub charging mode
+    - Update integration test fixtures and assertions for per-charger mode
+    - Run all integration tests
+
 ## Backlog
+
+84. - [ ] **Hot Water Tank device type** — thermostat control (Normal/Boost), modes: Solar Only, Excess
+85. - [ ] **SG Ready device type** — 2-relay site-state mapping (Block/Normal/Recommend ON/Force ON), no user modes
+86. - [ ] **Rename ChargerContext → LoadContext** across codebase
 
 ## Other
 

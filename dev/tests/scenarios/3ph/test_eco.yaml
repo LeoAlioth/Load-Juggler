@@ -4,14 +4,13 @@ scenarios:
 
   - name: "3ph-1c-eco-prio-no-bat-normal"
     description: "Eco mode without battery, should use export"
-    human_verified: True
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Eco
       solar_production: 6210  # 27A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -26,6 +25,7 @@ scenarios:
       inverter_max_power: 17000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
         min_current: 6
         max_current: 16
         phases: 3
