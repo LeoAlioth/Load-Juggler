@@ -1032,7 +1032,7 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_battery": True,
     },
     {
-        "name_suffix": "Total EVSE Power",
+        "name_suffix": "Total Managed Power",
         "unique_id_suffix": "total_evse_power",
         "hub_data_key": "total_evse_power",
         "unit": "W",
