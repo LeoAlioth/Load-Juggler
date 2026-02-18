@@ -66,11 +66,48 @@ jobs:
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
+      - name: Generate release notes
+        run: |
+          if [ "$BRANCH" = "pre-release" ]; then
+            # Extract matching version section from RELEASE_NOTES.md
+            # Match "## VERSION" up to the next "---" or "## " line
+            awk -v ver="$VERSION" '
+              BEGIN { found=0 }
+              /^## / {
+                if (found) exit
+                # Match "## 2.0.2" or "## 2.0.2 (Pre-release)" etc.
+                if (index($0, "## " ver) == 1) { found=1; next }
+              }
+              /^---$/ { if (found) exit }
+              found { print }
+            ' RELEASE_NOTES.md > /tmp/release_body.md
+
+            if [ ! -s /tmp/release_body.md ]; then
+              echo "No matching section found for version $VERSION in RELEASE_NOTES.md" > /tmp/release_body.md
+            fi
+          else
+            # dev / dev-* branches: list commit messages since last release tag
+            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -n "$LAST_TAG" ]; then
+              echo "Changes since $LAST_TAG:" > /tmp/release_body.md
+              echo "" >> /tmp/release_body.md
+              git log "$LAST_TAG..HEAD" --pretty=format:"- %s" >> /tmp/release_body.md
+            else
+              echo "All commits:" > /tmp/release_body.md
+              echo "" >> /tmp/release_body.md
+              git log --pretty=format:"- %s" -20 >> /tmp/release_body.md
+            fi
+          fi
+
+          echo "--- Release body ---"
+          cat /tmp/release_body.md
+          echo "---"
+
       - name: Create ZIP archive
         run: |
           # Create zip with full path for HACS (content_in_root: false)
           # HACS expects: /manifest.json
-          cd custom_components/dynamic_ocpp_evse         
+          cd custom_components/dynamic_ocpp_evse
           zip -r dynamic-ocpp-evse.zip .
 
       - name: Delete previous dev releases (dev branch only)
@@ -255,10 +292,11 @@ jobs:
           git push origin "$TAG_NAME"
           
           # Create the release using Gitea API
+          BODY=$(jq -Rs '.' < /tmp/release_body.md)
           RELEASE_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"prerelease\": true, \"draft\": false}" \
+            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"body\": $BODY, \"prerelease\": true, \"draft\": false}" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases")
           
           echo "Gitea Release response: $RELEASE_RESPONSE"
@@ -282,11 +320,12 @@ jobs:
           sleep 5
           
           # Create the release using GitHub API
+          BODY=$(jq -Rs '.' < /tmp/release_body.md)
           RELEASE_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"prerelease\": true, \"draft\": false}" \
+            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"body\": $BODY, \"prerelease\": true, \"draft\": false}" \
             "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
           
           echo "GitHub Release response: $RELEASE_RESPONSE"
