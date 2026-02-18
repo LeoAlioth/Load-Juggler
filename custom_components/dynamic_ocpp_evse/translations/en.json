@@ -9,6 +9,16 @@
                     "sequential___optimized": "Sequential - Optimized",
                     "sequential___strict": "Sequential - Strict"
                 }
+            },
+            "operating_mode": {
+                "name": "Operating Mode",
+                "state": {
+                    "standard": "Standard",
+                    "continuous": "Continuous",
+                    "solar_priority": "Solar Priority",
+                    "solar_only": "Solar Only",
+                    "excess": "Excess"
+                }
             }
         }
     },
@@ -482,17 +492,17 @@
                 }
             }
         },
-        "set_charging_mode": {
-            "name": "Set Charging Mode",
-            "description": "Change the charging mode for a hub (site).",
+        "set_operating_mode": {
+            "name": "Set Operating Mode",
+            "description": "Change the operating mode for a charger or smart load.",
             "fields": {
                 "entry_id": {
-                    "name": "Hub Config Entry ID",
-                    "description": "The config entry ID of the hub."
+                    "name": "Charger Config Entry ID",
+                    "description": "The config entry ID of the charger or smart load."
                 },
                 "mode": {
-                    "name": "Charging Mode",
-                    "description": "The charging mode to set (Standard, Eco, Solar, Excess)."
+                    "name": "Operating Mode",
+                    "description": "The operating mode to set (Standard, Continuous, Solar Priority, Solar Only, Excess)."
                 }
             }
         },

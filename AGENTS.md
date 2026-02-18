@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -21,6 +21,7 @@ Dynamic OCPP EVSE is a Home Assistant custom component that provides intelligent
 **Improvement Ideas** `dev/IMPROVEMENTS.md` List of ideas for future imporovements and changes. Developer will prompt Claude to discuss and refine them.
 
 **TODOs** Keep track of TODOs as an ordered numbered list with checkmarks in `dev/TODO.md`. Before and after making code changes, make sure that the TODO is up to date. Mark steps completed as soon as they are done. Split TODOs into 4 parts:
+
 - **Completed**: Short one-liners (title only, no implementation details). Periodically consolidate related items and remove entries that are no longer useful context.
 - **In Progress**: Clearly defined tasks to finish before reaching out to the developer. Include enough detail to implement without ambiguity.
 - **Backlog**: Upcoming work. More general — make more detailed when transitioning to In Progress.
@@ -41,7 +42,7 @@ custom_components/dynamic_ocpp_evse/
 ├── dynamic_ocpp_evse.py          # Main entry point — reads HA states, builds SiteContext, calls engine
 ├── [button|number|select|sensor|switch].py  # HA entities
 ├── calculations/                  # Core calculation logic (PURE PYTHON - no HA dependencies)
-│   ├── models.py                  # Data models (SiteContext, ChargerContext)
+│   ├── models.py                  # Data models (SiteContext, LoadContext)
 │   ├── context.py                 # Context builder (HA → models)
 │   ├── target_calculator.py       # Main calculation engine
 │   └── utils.py                   # Utility functions (is_number)
@@ -117,7 +118,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric
 - Charging: charging_mode, distribution_mode, chargers[]
 
-**ChargerContext** (`calculations/models.py`) — Represents a single EVSE:
+**LoadContext** (`calculations/models.py`) — Represents a single EVSE:
 
 - Config: entity_id, min_current, max_current, phases, car_phases, priority
 - Status: connector_status (Available, Charging, etc.)
@@ -129,7 +130,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 The `calculations/` directory is pure Python and can be imported/tested independently. The HA integration layer:
 
-1. **dynamic_ocpp_evse.py**: Reads HA entity states, builds SiteContext/ChargerContext, calls calculation engine
+1. **dynamic_ocpp_evse.py**: Reads HA entity states, builds SiteContext/LoadContext, calls calculation engine
 2. **sensor.py**: Uses engine output (charger_targets) to set OCPP charging profiles via service calls
 3. **Entities** (button.py, number.py, select.py, etc.): Expose controls and sensors to HA UI
 
@@ -169,7 +170,7 @@ Four distribution modes for multi-charger setups: **Shared** (equal split), **Pr
 
 1. **Understand the Flow**: Always trace through the 5-step calculation process
 2. **Pure Python**: `calculations/` directory has no HA dependencies for testability
-3. **Data Models**: Use SiteContext and ChargerContext — don't pass raw values
+3. **Data Models**: Use SiteContext and LoadContext — don't pass raw values
 4. **Logging**: Use `_LOGGER.debug()` extensively for troubleshooting
 5. **Test First**: Run relevant tests before and after changes
 6. **Helper Functions**: Prefer helper functions over inline logic for maintainability
@@ -201,17 +202,17 @@ YAML-driven tests that validate the calculation engine directly. Run on any plat
 
 ```bash
 # Run all scenarios
-python dev/tests/run_tests.py dev/tests/scenarios
+python3 dev/tests/run_tests.py dev/tests/scenarios
 
 # Run only verified or unverified
-python dev/tests/run_tests.py --verified dev/tests/scenarios
-python dev/tests/run_tests.py --unverified dev/tests/scenarios
+python3 dev/tests/run_tests.py --verified dev/tests/scenarios
+python3 dev/tests/run_tests.py --unverified dev/tests/scenarios
 
 # Run a single scenario by name
-python dev/tests/run_tests.py "scenario-name"
+python3 dev/tests/run_tests.py "scenario-name"
 
 # Run a single test with a detailed output
-python dev/tests/run_tests.py "scenario-name" --trace
+python3 dev/tests/run_tests.py "scenario-name" --trace
 
 ```
 
@@ -257,10 +258,10 @@ Integration tests use `pytest-homeassistant-custom-component` and run under WSL 
 
 ```bash
 # All integration tests
-wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python -m pytest dev/tests/test_init.py dev/tests/test_config_flow.py dev/tests/test_config_flow_e2e.py dev/tests/test_sensor_update.py -v"
+wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python3 -m pytest dev/tests/test_init.py dev/tests/test_config_flow.py dev/tests/test_config_flow_e2e.py dev/tests/test_sensor_update.py -v"
 
 # Individual test file
-wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python -m pytest dev/tests/test_sensor_update.py -v"
+wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python3 -m pytest dev/tests/test_sensor_update.py -v"
 ```
 
 **Integration test files:**
@@ -283,8 +284,8 @@ mypy custom_components/dynamic_ocpp_evse
 ### Debugging
 
 1. **Enable verbose logging** in HA: `custom_components.dynamic_ocpp_evse: debug`
-2. **Run specific test**: `python dev/tests/run_tests.py "test-name"`
-3. **Debug a single scenario**: `python dev/debug_scenario.py "scenario-name" --verbose`
+2. **Run specific test**: `python3 dev/tests/run_tests.py "test-name"`
+3. **Debug a single scenario**: `python3 dev/debug_scenario.py "scenario-name" --verbose`
 4. **Check calculation steps**: Each step logs its output (site_limit, solar_available, target_power, etc.)
 5. **Per-phase values**: Log phase_a/b/c_export, consumption, available
 

@@ -4,13 +4,12 @@ scenarios:
 
   - name: "1ph-1c-eco-bat-above-target"
     description: "Eco with battery above target — uses solar surplus + battery discharge"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Eco
       solar_production: 2300  # 10A at 230V
       phase_a_consumption: 3.0
       battery_soc: 90
@@ -23,6 +22,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
         min_current: 6
         max_current: 32
         phases: 1
@@ -33,13 +33,12 @@ scenarios:
 
   - name: "1ph-1c-eco-bat-below-min"
     description: "Eco with battery below minimum SOC — charges at minimum from grid"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Eco
       solar_production: 3450  # 15A
       phase_a_consumption: 2.0
       battery_soc: 15  # Below 20% min
@@ -52,6 +51,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
         min_current: 6
         max_current: 16
         phases: 1
@@ -62,13 +62,12 @@ scenarios:
 
   - name: "1ph-1c-eco-bat-between-min-target"
     description: "Eco with battery between min and target — minimum current only"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Eco
       solar_production: 4140  # 18A
       phase_a_consumption: 2.0
       battery_soc: 50  # Between 20% min and 80% target
@@ -81,6 +80,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
         min_current: 8
         max_current: 16
         phases: 1
@@ -91,13 +91,12 @@ scenarios:
 
   - name: "1ph-1c-eco-bat-at-target-good-solar"
     description: "Eco with battery at target and good solar — surplus allocation"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Eco
       solar_production: 4140  # 18A
       phase_a_consumption: 3.0
       battery_soc: 80  # At target
@@ -110,6 +109,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
         min_current: 6
         max_current: 16
         phases: 1

@@ -37,7 +37,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_HYSTERESIS,
-    CONF_CHARGING_MODE_ENTITY_ID,
     CONF_BATTERY_SOC_TARGET_ENTITY_ID,
     CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
     CONF_POWER_BUFFER_ENTITY_ID,
@@ -52,7 +51,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_STACK_LEVEL,
     CONF_TOTAL_ALLOCATED_CURRENT,
     CONF_PHASES,
-    CONF_CHARGING_MODE,
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_PHASE_VOLTAGE,
@@ -85,7 +83,6 @@ def hub_entry() -> MockConfigEntry:
             CONF_NAME: "Test Hub",
             CONF_ENTITY_ID: "test_hub",
             ENTRY_TYPE: ENTRY_TYPE_HUB,
-            CONF_CHARGING_MODE_ENTITY_ID: "select.test_hub_charging_mode",
             CONF_BATTERY_SOC_TARGET_ENTITY_ID: "number.test_hub_home_battery_soc_target",
             CONF_ALLOW_GRID_CHARGING_ENTITY_ID: "switch.test_hub_allow_grid_charging",
             CONF_POWER_BUFFER_ENTITY_ID: "number.test_hub_power_buffer",
@@ -148,7 +145,6 @@ def setup_domain_data(hass, hub_entry, charger_entry):
             hub_entry.entry_id: {
                 "entry": hub_entry,
                 "chargers": [charger_entry.entry_id],
-                "charging_mode": "Standard",
                 "distribution_mode": "Priority",
                 "allow_grid_charging": True,
                 "power_buffer": 0,
@@ -229,7 +225,6 @@ def _set_ha_states(hass, hub_entry):
     hass.states.async_set("switch.test_charger_charge_control", "on")
     # Hub-level runtime state (written to hass.data, not entity states)
     hub_data = hass.data[DOMAIN]["hubs"][hub_entry.entry_id]
-    hub_data["charging_mode"] = "Standard"
     hub_data["distribution_mode"] = "Priority"
     hub_data["allow_grid_charging"] = True
     hub_data["power_buffer"] = 200
@@ -457,8 +452,8 @@ async def test_charge_pause_starts_when_below_minimum(
     no solar power available — triggering the pause logic.
     """
     _set_ha_states(hass, hub_entry)
-    # Override to Solar mode — with grid importing there is no solar surplus
-    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Solar"
+    # Override to Solar Only mode — with grid importing there is no solar surplus
+    hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -467,7 +462,7 @@ async def test_charge_pause_starts_when_below_minimum(
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         await sensor.async_update()
 
-    # In Solar mode with no export, charger gets 0A which is < min (6A)
+    # In Solar Only mode with no export, charger gets 0A which is < min (6A)
     assert sensor._pause_started_at is not None, (
         "Pause should start when allocated current (0) < min_current (6)"
     )
@@ -485,8 +480,8 @@ async def test_charge_pause_holds_at_zero(
     Uses Solar mode with no export surplus so the charger gets 0A allocation.
     """
     _set_ha_states(hass, hub_entry)
-    # Override to Solar mode — charger gets 0A allocation
-    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Solar"
+    # Override to Solar Only mode — charger gets 0A allocation
+    hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -775,7 +770,6 @@ async def test_result_dict_all_keys_populated(
     expected_keys = {
         CONF_TOTAL_ALLOCATED_CURRENT,
         CONF_PHASES,
-        CONF_CHARGING_MODE,
         "calc_used",
         "battery_soc",
         "battery_soc_min",
@@ -854,7 +848,6 @@ async def test_result_dict_values_are_reasonable(
     assert result["total_evse_power"] == 2300
 
     # --- Charger targets ---
-    assert result[CONF_CHARGING_MODE] == "Standard"
     assert result["distribution_mode"] == "Priority"
     assert charger_entry.entry_id in result["charger_targets"]
     assert result[CONF_TOTAL_ALLOCATED_CURRENT] > 0
@@ -966,7 +959,7 @@ async def test_rate_limit_ramp_up_capped(
     # Simulate previous cycle had output at 6A
     sensor._ema_current = 6.0
     sensor._rate_limited_current = 6.0
-    sensor._prev_charging_mode = "Standard"
+    sensor._prev_operating_mode = "Standard"
     sensor._prev_distribution_mode = "Priority"
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
@@ -1008,11 +1001,11 @@ async def test_rate_limit_ramp_down_capped(
     # Simulate previous cycle had output at 16A
     sensor._ema_current = 16.0
     sensor._rate_limited_current = 16.0
-    sensor._prev_charging_mode = "Eco"
+    sensor._prev_operating_mode = "Solar Priority"
     sensor._prev_distribution_mode = "Priority"
 
-    # Eco mode with battery SOC below target — engine gives min_current (6A)
-    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Eco"
+    # Solar Priority mode with battery SOC below target — engine gives min_current (6A)
+    hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Priority"
     hass.states.async_set("sensor.battery_soc", "50")
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["battery_soc_target"] = 90
 
@@ -1313,34 +1306,34 @@ async def test_charge_pause_cancelled_on_charging_mode_change(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that active charge pause is cancelled when user changes charging mode.
+    """Test that active charge pause is cancelled when user changes operating mode.
 
-    Start in Solar mode (no surplus → pause starts), then switch to Standard mode.
+    Start in Solar Only mode (no surplus → pause starts), then switch to Standard mode.
     The pause should be cancelled immediately on the mode change.
     """
     _set_ha_states(hass, hub_entry)
-    # Start in Solar mode — no export surplus → charger gets 0A → pause starts
-    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Solar"
+    # Start in Solar Only mode — no export surplus → charger gets 0A → pause starts
+    hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        # First update: Solar mode, no surplus → pause starts
+        # First update: Solar Only mode, no surplus → pause starts
         await sensor.async_update()
-        assert sensor._pause_started_at is not None, "Pause should have started in Solar mode"
-        assert sensor._prev_charging_mode == "Solar"
+        assert sensor._pause_started_at is not None, "Pause should have started in Solar Only mode"
+        assert sensor._prev_operating_mode == "Solar Only"
 
         # Switch to Standard mode
-        hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Standard"
+        hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Standard"
 
         # Second update: mode changed → pause should be cancelled
         await sensor.async_update()
         assert sensor._pause_started_at is None, (
-            "Pause should be cancelled when charging mode changes from Solar to Standard"
+            "Pause should be cancelled when operating mode changes from Solar Only to Standard"
         )
-        assert sensor._prev_charging_mode == "Standard"
+        assert sensor._prev_operating_mode == "Standard"
 
 
 async def test_charge_pause_cancelled_on_distribution_mode_change(
@@ -1351,27 +1344,27 @@ async def test_charge_pause_cancelled_on_distribution_mode_change(
 ):
     """Test that active charge pause is cancelled when user changes distribution mode.
 
-    Start in Solar mode (triggers pause), then change BOTH distribution mode AND
-    charging mode to Standard. The mode change cancels the pause, and Standard
+    Start in Solar Only mode (triggers pause), then change BOTH distribution mode AND
+    operating mode to Standard. The mode change cancels the pause, and Standard
     mode provides enough current to prevent a new pause from starting.
     """
     _set_ha_states(hass, hub_entry)
-    # Start in Solar mode — charger gets 0A → pause starts
-    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Solar"
+    # Start in Solar Only mode — charger gets 0A → pause starts
+    hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        # First update: Solar mode → pause starts
+        # First update: Solar Only mode → pause starts
         await sensor.async_update()
         assert sensor._pause_started_at is not None, "Pause should have started"
         assert sensor._prev_distribution_mode == "Priority"
 
-        # Switch distribution mode AND charging mode so charger gets current
+        # Switch distribution mode AND operating mode so charger gets current
         hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["distribution_mode"] = "Shared"
-        hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Standard"
+        hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Standard"
 
         # Second update: distribution mode changed → pause cancelled,
         # Standard mode gives current → no new pause
@@ -1390,7 +1383,7 @@ async def test_charge_pause_remaining_seconds_attribute(
 ):
     """Test that pause_remaining_seconds attribute is populated during active pause."""
     _set_ha_states(hass, hub_entry)
-    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Solar"
+    hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
@@ -1490,8 +1483,8 @@ async def test_eco_mode_night_with_feedback_loop(
     # No battery (night, typical for non-battery setups)
     hass.states.async_set("sensor.battery_soc", "unknown")
     hass.states.async_set("sensor.battery_power", "unknown")
-    # Eco mode
-    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["charging_mode"] = "Eco"
+    # Solar Priority mode (was "Eco")
+    hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Priority"
 
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger", None

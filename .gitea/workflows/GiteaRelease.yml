@@ -49,11 +49,35 @@ jobs:
           
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
 
+      - name: Generate release notes
+        run: |
+          # Extract version from tag (strip leading 'v' if present)
+          VERSION=$(echo "$TAG_NAME" | sed 's/^v//')
+
+          # Extract matching version section from RELEASE_NOTES.md
+          awk -v ver="$VERSION" '
+            BEGIN { found=0 }
+            /^## / {
+              if (found) exit
+              if (index($0, "## " ver) == 1) { found=1; next }
+            }
+            /^---$/ { if (found) exit }
+            found { print }
+          ' RELEASE_NOTES.md > /tmp/release_body.md
+
+          if [ ! -s /tmp/release_body.md ]; then
+            echo "No matching section found for version $VERSION in RELEASE_NOTES.md" > /tmp/release_body.md
+          fi
+
+          echo "--- Release body ---"
+          cat /tmp/release_body.md
+          echo "---"
+
       - name: Create ZIP archive
         run: |
           # Create zip with full path for HACS (content_in_root: false)
           # HACS expects: /manifest.json
-          cd custom_components/dynamic_ocpp_evse         
+          cd custom_components/dynamic_ocpp_evse
           zip -r dynamic-ocpp-evse.zip .
 
       - name: Create Gitea Release
@@ -61,6 +85,7 @@ jobs:
         with:
           tag_name: ${{ env.TAG_NAME }}
           name: Dynamic OCPP EVSE ${{ env.TAG_NAME }}
+          body_path: /tmp/release_body.md
           draft: false
           prerelease: false
           files: custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip
@@ -72,11 +97,12 @@ jobs:
           echo "Creating GitHub release for tag: $TAG_NAME"
           
           # Create the release using GitHub API
+          BODY=$(jq -Rs '.' < /tmp/release_body.md)
           RELEASE_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"prerelease\": false, \"draft\": false}" \
+            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"body\": $BODY, \"prerelease\": false, \"draft\": false}" \
             "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
           
           echo "GitHub Release response: $RELEASE_RESPONSE"

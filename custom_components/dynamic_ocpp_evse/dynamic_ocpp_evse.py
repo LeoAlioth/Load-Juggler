@@ -9,7 +9,7 @@ import logging
 
 from .calculations import (
     SiteContext,
-    ChargerContext,
+    LoadContext,
     PhaseValues,
     calculate_all_charger_targets,
 )
@@ -151,7 +151,7 @@ def _read_inverter_config(hass, hub_entry, voltage):
 
 
 def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
-    """Build a ChargerContext for an OCPP EVSE charger."""
+    """Build a LoadContext for an OCPP EVSE charger."""
     charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
     config_min = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
     config_max = get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
@@ -170,7 +170,10 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     l2_phase = get_entry_value(entry, CONF_CHARGER_L2_PHASE, "B")
     l3_phase = get_entry_value(entry, CONF_CHARGER_L3_PHASE, "C")
 
-    charger = ChargerContext(
+    # Read per-charger operating mode from runtime data
+    operating_mode = charger_rt.get("operating_mode", OPERATING_MODE_STANDARD)
+
+    charger = LoadContext(
         charger_id=entry.entry_id,
         entity_id=charger_entity_id,
         min_current=min_current,
@@ -178,6 +181,7 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
         phases=phases,
         priority=priority,
         connector_status=connector_status,
+        operating_mode=operating_mode,
         l1_phase=l1_phase,
         l2_phase=l2_phase,
         l3_phase=l3_phase,
@@ -234,7 +238,7 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
 
 
 def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority, plug_auto_power):
-    """Build a ChargerContext for a smart load (plug) device."""
+    """Build a LoadContext for a smart load (plug) device."""
     charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
     slider_power = charger_rt.get("device_power", None)
     config_power = get_entry_value(entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
@@ -276,7 +280,10 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority, plug_
 
     equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
 
-    charger = ChargerContext(
+    # Read per-charger operating mode from runtime data
+    operating_mode = charger_rt.get("operating_mode", OPERATING_MODE_CONTINUOUS)
+
+    charger = LoadContext(
         charger_id=entry.entry_id,
         entity_id=charger_entity_id,
         min_current=equivalent_current,
@@ -286,6 +293,7 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority, plug_
         active_phases_mask=connected_to_phase,
         connector_status=connector_status,
         device_type=DEVICE_TYPE_PLUG,
+        operating_mode=operating_mode,
     )
     _LOGGER.debug(
         "  Plug %s: %.0fW on %s prio=%d [%s]%s",
@@ -297,7 +305,7 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority, plug_
 
 
 def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
-    """Build ChargerContext objects for all chargers and add them to the site.
+    """Build LoadContext objects for all chargers and add them to the site.
 
     Returns plug_auto_power dict for auto-adjusted plug power ratings.
     """
@@ -388,10 +396,13 @@ def _apply_feedback_loop(site, solar_is_derived, voltage):
     site.consumption = PhaseValues(*adj_consumption)
     site.export_current = PhaseValues(*adj_export)
 
-    # Update derived solar to match adjusted export
+    # Update derived solar to match adjusted export + battery charge absorption
     solar_note = ""
     if solar_is_derived:
         site.solar_production_total = site.export_current.total * site.voltage
+        # Battery charging absorbs solar power invisible to grid CT — add it back
+        if site.battery_power is not None and site.battery_power < 0:
+            site.solar_production_total += abs(site.battery_power)
         solar_note = f" | Solar(derived)={site.solar_production_total:.0f}W"
 
     _LOGGER.debug(
@@ -454,10 +465,12 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
             # Derived solar mode: export IS the solar available (best approximation)
             solar_available = max(0, site.solar_production_total)
 
+    # Build per-charger operating modes dict
+    charger_modes = {c.charger_id: c.operating_mode for c in site.chargers}
+
     return {
         CONF_TOTAL_ALLOCATED_CURRENT: round(sum(charger_targets.values()), 1),
         CONF_PHASES: site.num_phases,
-        CONF_CHARGING_MODE: site.charging_mode,
         "calc_used": "calculate_all_charger_targets",
 
         # Site-level data for hub sensor
@@ -480,6 +493,7 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
         "charger_targets": charger_targets,
         "charger_available": charger_available,
         "charger_names": charger_names,
+        "charger_modes": charger_modes,
         "distribution_mode": site.distribution_mode,
 
         # Auto-detected plug power ratings
@@ -557,6 +571,11 @@ def run_hub_calculation(sensor):
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
     battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
 
+    # In derived mode, battery charging absorbs solar power invisible to grid CT.
+    # Add it back to recover true solar production estimate.
+    if solar_is_derived and battery_power is not None and battery_power < 0:
+        solar_production_total += abs(battery_power)
+
     # --- Max grid import power (entity override → shared hub data → None) ---
     enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
     max_import_power_entity = get_entry_value(hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
@@ -581,7 +600,6 @@ def run_hub_calculation(sensor):
         inverter_output_per_phase = PhaseValues(*inv_smoothed)
 
     # --- Runtime state from shared hub data (hub_runtime already fetched above) ---
-    charging_mode = hub_runtime.get("charging_mode", CHARGING_MODE_STANDARD)
     distribution_mode = hub_runtime.get("distribution_mode", DEFAULT_DISTRIBUTION_MODE)
     allow_grid_charging = hub_runtime.get("allow_grid_charging", True)
     power_buffer = hub_runtime.get("power_buffer", 0)
@@ -617,8 +635,8 @@ def run_hub_calculation(sensor):
             f"{'asym' if inverter_supports_asymmetric else 'sym'} {wiring_topology}"
         )
     _LOGGER.debug(
-        "  %s/%s grid_chg=%s buf=%sW max_import=%s%s",
-        charging_mode, distribution_mode,
+        "  dist=%s grid_chg=%s buf=%sW max_import=%s%s",
+        distribution_mode,
         "on" if allow_grid_charging else "off",
         _fv(power_buffer),
         f"{max_grid_import_power:.0f}W" if max_grid_import_power is not None else "unlimited",
@@ -657,7 +675,6 @@ def run_hub_calculation(sensor):
         allow_grid_charging=allow_grid_charging,
         power_buffer=power_buffer,
         distribution_mode=distribution_mode,
-        charging_mode=charging_mode,
     )
 
     # --- Add chargers ---
@@ -724,7 +741,7 @@ def run_hub_calculation(sensor):
 
 __all__ = [
     "SiteContext",
-    "ChargerContext",
+    "LoadContext",
     "PhaseValues",
     "calculate_all_charger_targets",
     "run_hub_calculation",

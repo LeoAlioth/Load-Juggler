@@ -10,7 +10,6 @@ scenarios:
       main_breaker_rating: 25
       max_import_power: 17250
       distribution_mode: priority
-      charging_mode: Excess
       solar_production: 10350  # 45A total = 15A/phase
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -26,6 +25,7 @@ scenarios:
       inverter_max_power: 17250  # 75A
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Excess
         min_current: 6
         max_current: 16
         phases: 3
@@ -42,7 +42,6 @@ scenarios:
       main_breaker_rating: 25
       max_import_power: 17250
       distribution_mode: priority
-      charging_mode: Excess
       solar_production: 4140  # 18A total = 6A/phase
       phase_a_consumption: 3.0
       phase_b_consumption: 3.0
@@ -58,6 +57,7 @@ scenarios:
       inverter_max_power: 17250  # 75A
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Excess
         min_current: 6
         max_current: 16
         phases: 3

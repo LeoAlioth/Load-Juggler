@@ -10,7 +10,6 @@ scenarios:
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Excess
       solar_production: 4600  # 20A
       phase_a_consumption: 2.0
       excess_export_threshold: 2300  # 10A
@@ -24,6 +23,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Excess
         min_current: 6
         max_current: 16
         phases: 1
@@ -40,7 +40,6 @@ scenarios:
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Excess
       solar_production: 2760  # 12A
       phase_a_consumption: 5.0
       excess_export_threshold: 4600  # 20A
@@ -54,6 +53,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Excess
         min_current: 6
         max_current: 16
         phases: 1

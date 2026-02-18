@@ -1,35 +1,53 @@
 # Release Notes
 
-## 2.0.1 (Pre-release)
+## 2.0.2 (Pre-release)
 
 **BREAKING**: Existing 1.x users must **remove and re-add** the integration.
 
 ### New Features
+- **Per-load operating modes**: each charger/load has its own operating mode instead of a site-wide setting. EVSE modes: Standard, Solar Priority, Solar Only, Excess. Smart Load modes: Continuous, Solar Only, Excess.
+- **Mixed-mode operation**: run different chargers in different modes simultaneously (e.g., one charger in Standard while another waits for Solar Only).
+- **Source-aware dual-pool distribution**: physical (grid + inverter), solar, and excess power pools tracked independently — each charger draws from the pools its mode allows.
 - **Multi-charger support** with 4 distribution modes (Shared, Priority, Optimized, Strict).
 - **Smart Load support**: non-OCPP controllable loads (e.g., granny charger behind a Shelly smart plug) with binary on/off control, configurable power rating, and phase assignment.
-- **4 charging modes**: Standard (grid + solar + battery), Eco (solar-first with grid fallback), Solar (solar-only), Excess (threshold-based export charging).
 - **Asymmetric inverter support**: flexible power pool across phases.
 - **Battery integration**: SOC thresholds, charge/discharge power limits, battery-aware solar derivation.
 - **2-phase OBC charger support** (e.g., VW eGolf, eUp, ID.3 base).
 - **Charger phase mapping (L1/L2/L3 → A/B/C)** with per-phase constraint enforcement.
 - **Power-based charging**: send watts instead of amps via OCPP charge rate unit auto-detection.
 - **Dedicated solar power entity**: direct inverter-side solar sensor instead of CT-derived.
-- **Entity auto-detection**: battery, solar, inverter, and wiring topology entities for 12 inverter brands.
+- **Per-phase inverter output entities**: optional sensors for each inverter phase with parallel/series wiring topology.
+- **Entity auto-detection**: battery, solar, inverter, power monitoring, and wiring topology entities for 12 inverter brands.
 - **Max import power limiter**: cap grid import independently of breaker rating.
-- **HA service actions**: `set_charging_mode`, `set_distribution_mode`, `set_max_current`.
+- **HA service actions**: `set_operating_mode`, `set_distribution_mode`, `set_max_current`, `set_min_current`.
 - **Available current display** for idle chargers.
-- **EVSE charging status sensor**.
+- **EVSE charging status sensor** with mode-aware status messages (Battery Priority, Insufficient Solar, No Excess, etc.).
+- **Solar/Excess grace period**: configurable hold-at-minimum timer before pausing when conditions drop, preventing rapid on/off cycling.
+- **Auto-detect grid CT inversion**: correlates charger draw vs grid current direction, fires persistent notification after repeated inverted readings.
+- **Auto-detect phase mapping**: correlates charger draw vs per-phase grid deltas, notifies on wiring mismatch (opt-in).
+- **Auto-detect OCPP meter sample interval**: uses charger's `MeterValueSampleInterval` as default update frequency.
+- **Auto-detect smart plug power monitor**: discovers power sensors for Shelly, Sonoff, Tasmota, Kasa, Tuya plugs.
 
 ### Bug Fixes
-- Fixed charging instability from feedback loop oscillation (current rate limiting + dual-frequency updates).
-- Fixed grid CT feedback loop overcorrection when charger reports inflated per-phase draws.
+- Fixed charging instability from feedback loop oscillation (EMA smoothing + Schmitt trigger dead band + dual-frequency updates).
+- Fixed grid CT feedback loop overcorrection when charger reports inflated per-phase draws (per-phase draw clamping).
+- Fixed battery power sensor false-positive detection matching phone batteries.
+- Fixed entity state lookup using shared `hass.data` store instead of entity ID guessing.
+- Fixed battery SOC target/min sliders not feeding into calculation engine.
+- Fixed EVSE min/max current sliders missing value clamping.
+- Fixed connector status "Finishing"/"Faulted" treated as active — now correctly stops allocation and skips OCPP profiles.
+- Fixed entity selector clearing (`suggested_value` instead of `default` so X button truly clears).
+- Fixed options flow Submit → Next button on non-final steps.
+- Fixed config entry not reloading on options change (stale battery sliders persisting).
 
 ### UX Improvements
 - Redesigned configuration flow with contextual help text, entity pickers, and number selectors.
 - Phase mapping fields hidden on single-phase sites to prevent misconfiguration.
 - Charger names auto-prettified from OCPP entity IDs.
 - Phase B/C sensors hidden on single-phase sites.
-- Structured debug logging for easier remote troubleshooting.
+- Hub sensor renames: shorter, consistent naming (Current X Power / Available X Power), added Current Solar Power sensor.
+- Structured debug logging with human-readable charger names, raw+smoothed value display.
+- Charge pause duration in minutes (was seconds) for consistency.
 
 ---
 

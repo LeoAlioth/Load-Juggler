@@ -4,14 +4,13 @@ scenarios:
 
   - name: "3ph-2c-solar-prio-no-bat-mixed-phases"
     description: "Mix of 1-phase and 3-phase chargers"
-    human_verified: True
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 7590  # 33A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -26,11 +25,13 @@ scenarios:
       inverter_max_power: 17000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
       - entity_id: "charger_2"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 1  # Single phase charger
@@ -43,14 +44,13 @@ scenarios:
 
   - name: "3ph-1c-solar-prio-no-bat-normal"
     description: "Solar mode without battery configured"
-    human_verified: True
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 5520  # 24A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -65,6 +65,7 @@ scenarios:
       inverter_max_power: 17000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
@@ -75,14 +76,13 @@ scenarios:
 
   - name: "3ph-2c-solar-sym-two-single-phase"
     description: "Two 1-phase chargers on different phases, symmetric system"
-    human_verified: True
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 32
       max_import_power: 22080
 
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 12000  # 52A total, 17.4A per phase
       phase_a_consumption: 2.0
       phase_b_consumption: 1.0
@@ -97,12 +97,14 @@ scenarios:
       inverter_max_power: 20000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 1
         l1_phase: "A"
         priority: 1
       - entity_id: "charger_2"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 1
@@ -116,14 +118,13 @@ scenarios:
 
   - name: "3ph-1c-solar-very-unbalanced"
     description: "One phase maxed out, others idle"
-    human_verified: True
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 6900  # 30A total
       phase_a_consumption: 8.0  # Heavy load
       phase_b_consumption: 0.5
@@ -138,6 +139,7 @@ scenarios:
       inverter_max_power: 15000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
@@ -150,14 +152,13 @@ scenarios:
 
   - name: "3ph-1c-solar-2ph-obc-normal"
     description: "Single 2-phase OBC charger (VW eGolf, eUp, ID.3 base)"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 32
       max_import_power: 22080
 
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 6900  # 30A total
       phase_a_consumption: 1.0
       phase_b_consumption: 2.0
@@ -172,6 +173,7 @@ scenarios:
       inverter_max_power: 20700  # 90A total
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 2
@@ -184,14 +186,13 @@ scenarios:
 
   - name: "3ph-2c-solar-2ph-and-3ph-mixed"
     description: "Mix of 2-phase and 3-phase chargers"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 32
       max_import_power: 22080
 
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 13800  # 60A total 20.0A per phase
       phase_a_consumption: 2.0
       phase_b_consumption: 1.0
@@ -206,11 +207,13 @@ scenarios:
       inverter_max_power: 20000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
       - entity_id: "charger_2"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 2
@@ -225,14 +228,13 @@ scenarios:
 
   - name: "3ph-2c-solar-2ph-and-3ph-mixed-alt"
     description: "Mix of 2-phase and 3-phase chargers"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 32
       max_import_power: 22080
 
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 13800  # 60A total 20.0A per phase
       phase_a_consumption: 2.0
       phase_b_consumption: 1.0
@@ -247,11 +249,13 @@ scenarios:
       inverter_max_power: 20000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
       - entity_id: "charger_2"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 2
@@ -266,14 +270,13 @@ scenarios:
 
   - name: "3ph-2c-solar-two-2ph-different-phases"
     description: "Two 2-phase chargers on different phase combinations"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 32
       max_import_power: 22080
 
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 9200  # 40A total
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -288,6 +291,7 @@ scenarios:
       inverter_max_power: 20000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 2
@@ -295,6 +299,7 @@ scenarios:
         l2_phase: "B"
         priority: 1
       - entity_id: "charger_2"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 2

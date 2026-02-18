@@ -9,20 +9,20 @@ YAML-driven tests that validate the calculation engine directly. Run on any plat
 ### Run all scenarios
 
 ```bash
-python dev/tests/run_tests.py dev/tests/scenarios
+python3 dev/tests/run_tests.py dev/tests/scenarios
 ```
 
 ### Run only verified or unverified scenarios
 
 ```bash
-python dev/tests/run_tests.py --verified dev/tests/scenarios
-python dev/tests/run_tests.py --unverified dev/tests/scenarios
+python3 dev/tests/run_tests.py --verified dev/tests/scenarios
+python3 dev/tests/run_tests.py --unverified dev/tests/scenarios
 ```
 
 ### Run a single scenario by name
 
 ```bash
-python dev/tests/run_tests.py "scenario-name"
+python3 dev/tests/run_tests.py "scenario-name"
 ```
 
 **Test results** are written to `dev/tests/test_results.log`.
@@ -44,13 +44,13 @@ Pytest-based tests using `pytest-homeassistant-custom-component`. These require 
 ### Run all integration tests
 
 ```bash
-wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python -m pytest dev/tests/test_init.py dev/tests/test_config_flow.py dev/tests/test_config_flow_e2e.py dev/tests/test_sensor_update.py -v"
+wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python3 -m pytest dev/tests/test_init.py dev/tests/test_config_flow.py dev/tests/test_config_flow_e2e.py dev/tests/test_sensor_update.py -v"
 ```
 
 ### Run a single integration test file
 
 ```bash
-wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python -m pytest dev/tests/test_sensor_update.py -v"
+wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python3 -m pytest dev/tests/test_sensor_update.py -v"
 ```
 
 ### Integration test files
@@ -68,8 +68,8 @@ wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Docu
 Use `dev/debug_scenario.py` to debug a **single calculation scenario** interactively with logging:
 
 ```bash
-python dev/debug_scenario.py "scenario-name"
-python dev/debug_scenario.py "scenario-name" --verbose
+python3 dev/debug_scenario.py "scenario-name"
+python3 dev/debug_scenario.py "scenario-name" --verbose
 ```
 
 ## Notes

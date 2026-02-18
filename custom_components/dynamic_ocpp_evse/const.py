@@ -45,14 +45,10 @@ CONF_ALLOW_GRID_CHARGING_ENTITY_ID = "allow_grid_charging_entity_id"
 CONF_POWER_BUFFER_ENTITY_ID = "power_buffer_entity_id"
 CONF_POWER_BUFFER = "power_buffer"
 
-# Hub entity IDs (created by hub)
-CONF_CHARGING_MODE_ENTITY_ID = "charging_mode_entity_id"
-
 # Charger-specific configuration keys
 CONF_HUB_ENTRY_ID = "hub_entry_id"
 CONF_CHARGER_ID = "charger_id"
 CONF_CHARGER_PRIORITY = "charger_priority"
-CONF_CHARGER_CHARGING_MODE_ENTITY_ID = "charger_charging_mode_entity_id"  # Charger-level charging mode
 CONF_OCPP_DEVICE_ID = "ocpp_device_id"
 CONF_EVSE_CURRENT_IMPORT_ENTITY_ID = "evse_current_import_entity_id"
 CONF_EVSE_CURRENT_OFFERED_ENTITY_ID = "evse_current_offered_entity_id"
@@ -85,7 +81,7 @@ CONF_CHARGER_L3_PHASE = "charger_l3_phase"
 
 # sensor attributes
 CONF_PHASES = "phases"
-CONF_CHARGING_MODE = "charging_mode"
+CONF_CHARGING_MODE = "charging_mode"  # Legacy key — kept for hub_data result dict backward compat
 CONF_TOTAL_ALLOCATED_CURRENT = "total_allocated_current"
 CONF_PHASE_A_CURRENT = "phase_a_current"
 CONF_PHASE_B_CURRENT = "phase_b_current"
@@ -148,11 +144,38 @@ DEFAULT_PROFILE_VALIDITY_MODE = PROFILE_VALIDITY_MODE_ABSOLUTE
 # Distribution mode configuration (hub-level)
 CONF_DISTRIBUTION_MODE = "distribution_mode"
 
-# Charging mode configuration (hub-level)
-CHARGING_MODE_STANDARD = "Standard"
-CHARGING_MODE_ECO = "Eco"
-CHARGING_MODE_SOLAR = "Solar"
-CHARGING_MODE_EXCESS = "Excess"
+# Operating mode configuration (per-load)
+CONF_OPERATING_MODE = "operating_mode"
+OPERATING_MODE_STANDARD = "Standard"        # EVSE: charge from any source at max
+OPERATING_MODE_CONTINUOUS = "Continuous"     # Plug: always on
+OPERATING_MODE_SOLAR_PRIORITY = "Solar Priority"
+OPERATING_MODE_SOLAR_ONLY = "Solar Only"
+OPERATING_MODE_EXCESS = "Excess"
+DEFAULT_OPERATING_MODE_EVSE = OPERATING_MODE_STANDARD
+DEFAULT_OPERATING_MODE_PLUG = OPERATING_MODE_CONTINUOUS
+
+# Available modes per device type
+OPERATING_MODES_EVSE = [
+    OPERATING_MODE_STANDARD,
+    OPERATING_MODE_SOLAR_PRIORITY,
+    OPERATING_MODE_SOLAR_ONLY,
+    OPERATING_MODE_EXCESS,
+]
+OPERATING_MODES_PLUG = [
+    OPERATING_MODE_CONTINUOUS,
+    OPERATING_MODE_SOLAR_ONLY,
+    OPERATING_MODE_EXCESS,
+]
+
+# Mode urgency for distribution sorting (lower = higher urgency)
+# Standard and Continuous share urgency 0 — same engine behavior, different labels
+MODE_URGENCY = {
+    OPERATING_MODE_STANDARD: 0,
+    OPERATING_MODE_CONTINUOUS: 0,
+    OPERATING_MODE_SOLAR_PRIORITY: 1,
+    OPERATING_MODE_SOLAR_ONLY: 2,
+    OPERATING_MODE_EXCESS: 3,
+}
 DISTRIBUTION_MODE_SHARED = "Shared"
 DISTRIBUTION_MODE_PRIORITY = "Priority"
 DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED = "Sequential - Optimized"
