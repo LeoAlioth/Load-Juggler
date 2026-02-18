@@ -88,6 +88,10 @@
 
 ## Recently Completed
 
+87. - [x] **Fix case-insensitive OCPP phase attribute reading** — `_read_phase_attr` now does case-insensitive lookup (fixes uppercase `L1`/`L2`/`L3` attrs from Huawei OCPP). Without this, single-phase car on 3-phase charger showed 3x actual power and corrupted feedback loop.
+88. - [x] **Rename "Total EVSE Power" → "Total Managed Power"** sensor display name
+
+
 79. - [x] **Per-load operating modes — foundation**
     - Rename charging mode constants: Standard→Continuous, Eco→Solar Priority, Solar→Solar Only, Excess stays
     - Add `OPERATING_MODE_*` constants, `OPERATING_MODES_EVSE` (4), `OPERATING_MODES_PLUG` (3), `MODE_URGENCY` dict

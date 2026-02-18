@@ -41,9 +41,13 @@ def _smooth(ema_dict: dict, key: str, raw, alpha: float = EMA_ALPHA):
 
 
 def _read_phase_attr(attrs: dict, keys: tuple) -> float | None:
-    """Try to read a numeric phase current from entity attributes using multiple naming conventions."""
+    """Try to read a numeric phase current from entity attributes using multiple naming conventions.
+
+    Case-insensitive: handles L1/l1/L1_current/l1_current etc.
+    """
+    lower_attrs = {k.lower(): v for k, v in attrs.items()}
     for key in keys:
-        val = attrs.get(key)
+        val = lower_attrs.get(key.lower())
         if val is not None and is_number(val):
             return float(val)
     return None
