@@ -42,7 +42,7 @@ custom_components/dynamic_ocpp_evse/
 ├── dynamic_ocpp_evse.py          # Main entry point — reads HA states, builds SiteContext, calls engine
 ├── [button|number|select|sensor|switch].py  # HA entities
 ├── calculations/                  # Core calculation logic (PURE PYTHON - no HA dependencies)
-│   ├── models.py                  # Data models (SiteContext, ChargerContext)
+│   ├── models.py                  # Data models (SiteContext, LoadContext)
 │   ├── context.py                 # Context builder (HA → models)
 │   ├── target_calculator.py       # Main calculation engine
 │   └── utils.py                   # Utility functions (is_number)
@@ -118,7 +118,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric
 - Charging: charging_mode, distribution_mode, chargers[]
 
-**ChargerContext** (`calculations/models.py`) — Represents a single EVSE:
+**LoadContext** (`calculations/models.py`) — Represents a single EVSE:
 
 - Config: entity_id, min_current, max_current, phases, car_phases, priority
 - Status: connector_status (Available, Charging, etc.)
@@ -130,7 +130,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 The `calculations/` directory is pure Python and can be imported/tested independently. The HA integration layer:
 
-1. **dynamic_ocpp_evse.py**: Reads HA entity states, builds SiteContext/ChargerContext, calls calculation engine
+1. **dynamic_ocpp_evse.py**: Reads HA entity states, builds SiteContext/LoadContext, calls calculation engine
 2. **sensor.py**: Uses engine output (charger_targets) to set OCPP charging profiles via service calls
 3. **Entities** (button.py, number.py, select.py, etc.): Expose controls and sensors to HA UI
 
@@ -170,7 +170,7 @@ Four distribution modes for multi-charger setups: **Shared** (equal split), **Pr
 
 1. **Understand the Flow**: Always trace through the 5-step calculation process
 2. **Pure Python**: `calculations/` directory has no HA dependencies for testability
-3. **Data Models**: Use SiteContext and ChargerContext — don't pass raw values
+3. **Data Models**: Use SiteContext and LoadContext — don't pass raw values
 4. **Logging**: Use `_LOGGER.debug()` extensively for troubleshooting
 5. **Test First**: Run relevant tests before and after changes
 6. **Helper Functions**: Prefer helper functions over inline logic for maintainability

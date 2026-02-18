@@ -4,13 +4,12 @@ scenarios:
 
   - name: "1ph-1c-standard-no-bat-basic"
     description: "Standard mode basic — charger max limited by max_current"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
       battery_soc: null
@@ -23,6 +22,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 1
@@ -33,13 +33,12 @@ scenarios:
 
   - name: "1ph-1c-standard-no-bat-breaker-limited"
     description: "Standard mode — breaker limits charger below max_current"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 16
       max_import_power: 3680
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
       battery_soc: null
@@ -52,6 +51,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 1
@@ -62,13 +62,12 @@ scenarios:
 
   - name: "1ph-2c-standard-no-bat-prio"
     description: "Standard mode, two chargers, priority distribution"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 25
       max_import_power: 5750
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 460 # 2A
       phase_a_consumption: 3.0
       battery_soc: null
@@ -81,11 +80,13 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
       - entity_id: "charger_2"
+        operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 1

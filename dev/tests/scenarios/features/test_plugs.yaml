@@ -1,6 +1,6 @@
 # Test scenarios: Smart plug / relay device type
 # Plugs are binary on/off devices with fixed power draw.
-# They are modeled as ChargerContext with min_current == max_current == power_rating / (voltage * phases).
+# They are modeled as LoadContext with min_current == max_current == power_rating / (voltage * phases).
 # The engine's min-current threshold naturally produces binary behavior:
 #   - If available >= equiv_current → allocate equiv_current (turn on)
 #   - If available < equiv_current → allocate 0 (turn off)

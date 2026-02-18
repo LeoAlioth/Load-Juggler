@@ -4,13 +4,12 @@ scenarios:
 
   - name: "1ph-1c-eco-no-bat-good-solar"
     description: "Eco mode with solar surplus above min current"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Eco
       solar_production: 3450  # 15A at 230V
       phase_a_consumption: 3.0
       battery_soc: null
@@ -23,6 +22,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
         min_current: 6
         max_current: 16
         phases: 1
@@ -33,13 +33,12 @@ scenarios:
 
   - name: "1ph-1c-eco-no-bat-low-solar"
     description: "Eco mode with solar surplus below min current, falls back to minimum"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Eco
       solar_production: 1610  # 7A at 230V
       phase_a_consumption: 4.0
       battery_soc: null
@@ -52,6 +51,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
         min_current: 6
         max_current: 16
         phases: 1
@@ -62,13 +62,12 @@ scenarios:
 
   - name: "1ph-1c-eco-no-bat-zero-solar"
     description: "Eco mode at night, no solar — charges at minimum"
-    human_verified: true
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Eco
       solar_production: 0
       phase_a_consumption: 2.0
       battery_soc: null
@@ -81,6 +80,7 @@ scenarios:
       inverter_max_power: 12000
     chargers:
       - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
         min_current: 6
         max_current: 16
         phases: 1

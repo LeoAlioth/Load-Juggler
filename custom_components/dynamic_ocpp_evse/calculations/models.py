@@ -11,7 +11,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
-class ChargerContext:
+class LoadContext:
     """Individual EVSE/charger state and configuration."""
     # Identity
     charger_id: str  # Config entry ID
@@ -23,6 +23,7 @@ class ChargerContext:
     phases: int  # 1 or 3 (EVSE hardware capability)
     priority: int = 1  # For distribution (lower = higher priority)
     device_type: str = "evse"  # "evse" (OCPP) or "plug" (smart load)
+    operating_mode: str = "Standard"  # Per-load operating mode (EVSE: Standard, Plug: Continuous)
     
     # Active car connection (detected from OCPP or configured)
     car_phases: int = None  # 1, 2, or 3 (actual car OBC phases detected)
@@ -143,11 +144,10 @@ class SiteContext:
     allow_grid_charging: bool = True
     power_buffer: float = 0
     excess_export_threshold: float = 13000
-    charging_mode: str = "Standard"  # "Standard", "Eco", "Solar", "Excess"
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
 
     # Chargers at this site
-    chargers: list[ChargerContext] = field(default_factory=list)
+    chargers: list[LoadContext] = field(default_factory=list)
 
     @property
     def num_phases(self) -> int:

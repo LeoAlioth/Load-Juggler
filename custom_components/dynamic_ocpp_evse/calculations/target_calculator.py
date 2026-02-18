@@ -6,18 +6,20 @@ Clear architecture:
 1. Calculate absolute site limits (per-phase, prevents breaker trips)
 2. Calculate solar available
 3. Calculate excess available
-4. Determine target power based on charging mode
-5. Distribute power among chargers
+4. Compute per-charger ceilings based on operating mode
+5. Distribute power among chargers (dual-pool: physical + solar tracking)
 """
 
 import logging
 
-from .models import SiteContext, ChargerContext, PhaseConstraints
+from .models import SiteContext, LoadContext, PhaseConstraints
 from ..const import (
-    CHARGING_MODE_STANDARD,
-    CHARGING_MODE_ECO,
-    CHARGING_MODE_SOLAR,
-    CHARGING_MODE_EXCESS,
+    OPERATING_MODE_STANDARD,
+    OPERATING_MODE_CONTINUOUS,
+    OPERATING_MODE_SOLAR_PRIORITY,
+    OPERATING_MODE_SOLAR_ONLY,
+    OPERATING_MODE_EXCESS,
+    MODE_URGENCY,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,12 +31,11 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
 
     Steps:
     0. Filter active chargers (with cars connected)
-    1. Calculate absolute site limits (per-phase physical constraints)
-    2. Calculate solar available power
+    1. Calculate absolute site limits (physical pool: grid + inverter)
+    2. Calculate solar available power (solar pool)
     3. Calculate excess available power
-    4. Determine target power based on charging mode
-    5. Distribute power among active chargers
-    6. Calculate available current for all chargers
+    4. Distribute power among active chargers (dual-pool, per-charger ceilings)
+    5. Calculate available current for all chargers
 
     Args:
         site: SiteContext containing all site and charger data
@@ -50,36 +51,34 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
 
     _LOGGER.debug(
         f"Calculating targets for {len(active_chargers)}/{len(all_chargers)} active chargers - "
-        f"Mode: {site.charging_mode}, Distribution: {site.distribution_mode}"
+        f"Distribution: {site.distribution_mode}"
     )
 
-    # Steps 1-4: Calculate constraints (always, even with no active chargers)
-    site_limit_constraints = _calculate_site_limit(site)
-    _LOGGER.debug(f"Step 1 - Site limit constraints: {site_limit_constraints}")
+    # Steps 1-3: Calculate pools (always, even with no active chargers)
+    physical_pool = _calculate_site_limit(site)
+    _LOGGER.debug(f"Step 1 - Physical pool (grid+inverter): {physical_pool}")
 
-    solar_constraints = _calculate_solar_surplus(site)
-    _LOGGER.debug(f"Step 2 - Solar available constraints: {solar_constraints}")
+    solar_pool = _calculate_solar_surplus(site)
+    _LOGGER.debug(f"Step 2 - Solar pool: {solar_pool}")
 
-    excess_constraints = _calculate_excess_available(site)
-    _LOGGER.debug(f"Step 3 - Excess available constraints: {excess_constraints}")
+    excess_pool = _calculate_excess_available(site)
+    _LOGGER.debug(f"Step 3 - Excess pool: {excess_pool}")
 
-    target_constraints = _determine_target_power(
-        site, site_limit_constraints, solar_constraints, excess_constraints
-    )
-    _LOGGER.debug(f"Step 4 - Target power ({site.charging_mode}) constraints: {target_constraints}")
-
-    # Step 5: Distribute power among active chargers only
+    # Step 4: Distribute power among active chargers only
     if active_chargers:
         site.chargers = active_chargers
-        _distribute_power(site, target_constraints)
+        _distribute_power(site, physical_pool, solar_pool, excess_pool)
         site.chargers = all_chargers
 
     # Set inactive chargers to 0 allocated
     for charger in inactive_chargers:
         charger.allocated_current = 0
 
-    # Step 6: Calculate available current for all chargers
-    _set_available_current_for_chargers(all_chargers, active_chargers, inactive_chargers, target_constraints)
+    # Step 5: Calculate available current for all chargers (mode-aware)
+    _set_available_current_for_chargers(
+        all_chargers, active_chargers, inactive_chargers,
+        physical_pool, solar_pool, excess_pool, site,
+    )
 
     for charger in all_chargers:
         _draw = charger.l1_current + charger.l2_current + charger.l3_current
@@ -94,33 +93,44 @@ def _set_available_current_for_chargers(
     all_chargers: list,
     active_chargers: list,
     inactive_chargers: list,
-    target_constraints: PhaseConstraints,
+    physical_pool: PhaseConstraints,
+    solar_pool: PhaseConstraints,
+    excess_pool: PhaseConstraints,
+    site: SiteContext,
 ) -> None:
     """
-    Calculate available current for all chargers.
+    Calculate available current for all chargers (mode-aware).
 
     - Active chargers: available = allocated (they're getting what's available)
     - Inactive chargers: available = what they could get from remaining capacity
-      after active chargers are deducted. Each idle charger independently sees
-      the same remaining pool (hypothetical, no deduction between idle chargers).
+      after active chargers are deducted, capped by their mode's source limit.
+      Each idle charger independently sees the same remaining pools.
     """
     # Active chargers: available = allocated (already rounded)
     for charger in active_chargers:
         charger.available_current = round(charger.allocated_current, 1)
 
-    # Calculate remaining constraints after active allocations
-    remaining = target_constraints.copy()
+    # Calculate remaining pools after active allocations
+    remaining = physical_pool.copy()
+    solar_rem = solar_pool.copy()
+    excess_rem = excess_pool.copy()
     for charger in active_chargers:
         if charger.allocated_current > 0 and charger.active_phases_mask:
             remaining = remaining.deduct(charger.allocated_current, charger.active_phases_mask)
+            solar_rem, excess_rem = _deduct_from_sources(
+                charger.allocated_current, charger.active_phases_mask,
+                solar_rem, excess_rem,
+            )
 
-    # Inactive chargers: each independently sees remaining pool
+    # Inactive chargers: mode-aware available (each independently sees remaining pools)
     for charger in inactive_chargers:
         mask = charger.active_phases_mask
         if not mask:
             charger.available_current = 0
             continue
-        available = remaining.get_available(mask)
+        phys_avail = remaining.get_available(mask)
+        src_max = _source_limit(charger, site, solar_rem, excess_rem, base=0)
+        available = min(phys_avail, src_max)
         if available >= charger.min_current:
             charger.available_current = round(min(charger.max_current, available), 1)
         else:
@@ -225,9 +235,9 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
 
     Battery discharge is added when SOC >= battery_soc_min.
 
-    In derived mode (solar from grid CT): solar_current already reflects battery
-    effects in the grid readings. Adds REMAINING discharge capacity to avoid
-    double-counting.
+    In derived mode (solar from grid CT): solar_production_total includes battery
+    charge redirect (added by feedback loop). Only REMAINING discharge capacity
+    is added here to avoid double-counting.
 
     With dedicated solar entity: solar_current is the raw inverter output.
     battery_power may not be available or embedded, so use full max_discharge.
@@ -244,12 +254,13 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
         site.battery_soc >= (site.battery_soc_min or 0) and
         site.battery_max_discharge_power):
         if site.solar_is_derived and site.battery_power is not None:
-            # Derived mode: solar_current includes actual battery effect.
-            # Add only the REMAINING discharge capacity.
+            # Derived mode: solar_production_total already includes battery charge
+            # redirect (charge power added back in feedback loop). Only add the
+            # remaining discharge capacity to avoid double-counting.
             # battery_power: positive=discharging, negative=charging
-            actual_effect = site.battery_power / site.voltage  # positive if already discharging
+            actual_discharge = max(0, site.battery_power) / site.voltage
             max_discharge = site.battery_max_discharge_power / site.voltage
-            battery_current = max(0, max_discharge - actual_effect)
+            battery_current = max(0, max_discharge - actual_discharge)
         elif not site.solar_is_derived:
             # Dedicated solar entity: solar_current is raw inverter output,
             # battery effect not embedded. Use full max discharge.
@@ -279,21 +290,17 @@ def _calculate_site_limit(site: SiteContext) -> PhaseConstraints:
 
     Returns PhaseConstraints for ALL phase combinations (Multi-Phase Constraint Principle).
 
-    For Standard mode: Includes grid + inverter (solar + battery when SOC >= min)
-    For other modes: Only includes grid (solar/battery handled separately)
+    Always includes grid + inverter (solar + battery when SOC >= min).
+    Mode-specific limits are handled by per-charger ceilings, not by reducing
+    the physical pool.
     """
     grid_constraints = _calculate_grid_limit(site)
+    inverter_constraints = _calculate_inverter_limit(site)
+    constraints = grid_constraints + inverter_constraints
 
-    if site.charging_mode == CHARGING_MODE_STANDARD:
-        inverter_constraints = _calculate_inverter_limit(site)
-        constraints = grid_constraints + inverter_constraints
-
-        _LOGGER.debug(f"Site limit (Standard): grid={grid_constraints.ABC:.1f}A + "
-                     f"inverter={inverter_constraints.ABC:.1f}A = "
-                     f"total={constraints.ABC:.1f}A")
-    else:
-        constraints = grid_constraints
-        _LOGGER.debug(f"Site limit (grid only): {constraints.ABC:.1f}A")
+    _LOGGER.debug(f"Site limit: grid={grid_constraints.ABC:.1f}A + "
+                 f"inverter={inverter_constraints.ABC:.1f}A = "
+                 f"total={constraints.ABC:.1f}A")
 
     return constraints
 
@@ -411,85 +418,117 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
     return PhaseConstraints.zeros()
 
 
-def _calculate_active_minimums(site: SiteContext) -> PhaseConstraints:
-    """Calculate PhaseConstraints for the sum of minimum charge rates of active chargers."""
-    active = [c for c in site.chargers
-              if c.connector_status not in (
-                  "Available", "Unknown", "Unavailable",
-                  "Finishing", "Faulted",
-              )]
-    sum_minimums_total = sum(c.min_current * c.phases for c in active)
-    sum_minimums_per_phase = sum_minimums_total / site.num_phases
-    return PhaseConstraints.from_per_phase(
-        sum_minimums_per_phase if site.consumption.a is not None else 0,
-        sum_minimums_per_phase if site.consumption.b is not None else 0,
-        sum_minimums_per_phase if site.consumption.c is not None else 0,
+def _below_soc_target(site: SiteContext) -> bool:
+    """Check if battery SOC is below target."""
+    return (site.battery_soc is not None and site.battery_soc_target is not None
+            and site.battery_soc < site.battery_soc_target)
+
+
+def _source_limit(
+    charger: LoadContext,
+    site: SiteContext,
+    solar: PhaseConstraints,
+    excess: PhaseConstraints,
+    base: float = 0,
+) -> float:
+    """Compute source-limited maximum allocation for a charger.
+
+    Returns the maximum per-phase current this charger may receive based on its
+    operating mode and available energy sources. Physical pool limits are applied
+    separately by the caller.
+
+    Args:
+        base: Current already reserved in pass 1 (accounts for prior deductions
+              from source pools so the ceiling includes the pass-1 allocation).
+    """
+    mask = charger.active_phases_mask
+    mode = charger.operating_mode
+
+    if mode in (OPERATING_MODE_STANDARD, OPERATING_MODE_CONTINUOUS):
+        return charger.max_current
+
+    if mode == OPERATING_MODE_SOLAR_PRIORITY:
+        if _below_soc_target(site):
+            return charger.min_current  # Grid-backed minimum only
+        return max(charger.min_current, base + solar.get_available(mask))
+
+    if mode == OPERATING_MODE_SOLAR_ONLY:
+        if _below_soc_target(site):
+            return 0  # Battery needs to charge
+        return base + solar.get_available(mask)
+
+    if mode == OPERATING_MODE_EXCESS:
+        e_avail = excess.get_available(mask)
+        if e_avail <= 0:
+            return 0
+        # Trigger: once excess exists, guarantee at least min_current
+        return max(charger.min_current, base + e_avail)
+
+    return charger.max_current
+
+
+def _deduct_from_sources(
+    current: float,
+    mask: str,
+    solar: PhaseConstraints,
+    excess: PhaseConstraints,
+) -> tuple[PhaseConstraints, PhaseConstraints]:
+    """Deduct allocated current from source pools.
+
+    ALL draws reduce both solar and excess pools because any power consumption
+    reduces grid export, which reduces surplus available for other chargers.
+    """
+    s_avail = solar.get_available(mask)
+    if s_avail > 0:
+        solar = solar.deduct(min(current, s_avail), mask)
+    e_avail = excess.get_available(mask)
+    if e_avail > 0:
+        excess = excess.deduct(min(current, e_avail), mask)
+    return solar, excess
+
+
+def _sort_chargers(chargers: list[LoadContext]) -> list[LoadContext]:
+    """Sort chargers by (mode_urgency, priority) for distribution order."""
+    return sorted(
+        chargers,
+        key=lambda c: (MODE_URGENCY.get(c.operating_mode, 0), c.priority),
     )
 
 
-def _determine_target_power(
+def _distribute_power(
     site: SiteContext,
-    site_limit_constraints: PhaseConstraints,
-    solar_constraints: PhaseConstraints,
-    excess_constraints: PhaseConstraints,
-) -> PhaseConstraints:
+    physical_pool: PhaseConstraints,
+    solar_pool: PhaseConstraints,
+    excess_pool: PhaseConstraints,
+) -> None:
     """
-    Step 4: Determine target power based on charging mode.
+    Step 4: Distribute power among chargers using source-aware pools.
 
-    Returns PhaseConstraints for ALL phase combinations.
+    Three pools tracked simultaneously:
+    - Physical pool: hard wire limits (grid + inverter). ALL allocations deduct.
+    - Solar pool: surplus from renewables. ALL allocations deduct (any draw
+      reduces export, shrinking the surplus available for other chargers).
+    - Excess pool: surplus above threshold. ALL allocations deduct.
+
+    Mode determines SOURCE LIMIT (max a charger may draw):
+    - Standard/Continuous: physical pool only (any source)
+    - Solar Priority: solar pool + grid minimum guarantee
+    - Solar Only: solar pool only
+    - Excess: excess pool + minimum guarantee when excess > 0
     """
-    mode = site.charging_mode
-
-    if mode == CHARGING_MODE_STANDARD:
-        return site_limit_constraints
-
-    elif mode == CHARGING_MODE_ECO:
-        minimums = _calculate_active_minimums(site)
-
-        # Battery between min and target - charge at minimum only
-        if site.battery_soc is not None and site.battery_soc_target is not None and site.battery_soc < site.battery_soc_target:
-            return minimums.element_min(site_limit_constraints)
-        else:
-            # Battery >= target or no battery - use max of solar and minimums, capped at site limit
-            target = solar_constraints.element_max(minimums)
-            return target.element_min(site_limit_constraints)
-
-    elif mode == CHARGING_MODE_SOLAR:
-        if site.battery_soc is not None and site.battery_soc_target is not None and site.battery_soc < site.battery_soc_target:
-            return PhaseConstraints.zeros()
-        return solar_constraints
-
-    elif mode == CHARGING_MODE_EXCESS:
-        # If there's any excess over threshold, guarantee at least min_current
-        # to avoid wasting export when inverter would otherwise throttle
-        if excess_constraints.ABC > 0:
-            minimums = _calculate_active_minimums(site)
-            target = excess_constraints.element_max(minimums)
-            return target.element_min(site_limit_constraints)
-        return excess_constraints
-
-    else:
-        _LOGGER.warning(f"Unknown charging mode '{mode}', using site limit")
-        return site_limit_constraints
-
-
-def _distribute_power(site: SiteContext, target_constraints: PhaseConstraints) -> None:
-    """
-    Step 5: Distribute target power among chargers.
-
-    Uses PhaseConstraints (Multi-Phase Constraint Principle).
-    Dispatches to mode-specific distribution function.
-    """
-    if len(site.chargers) == 0:
+    if not site.chargers:
         return
 
-    _LOGGER.debug(f"Distribution constraints: {target_constraints}")
+    _LOGGER.debug(f"Distribution — physical: {physical_pool}")
+    _LOGGER.debug(f"Distribution — solar: {solar_pool}")
+    _LOGGER.debug(f"Distribution — excess: {excess_pool}")
 
     for charger in site.chargers:
         _eff_ph = len(charger.active_phases_mask) if charger.active_phases_mask else 0
         _draw = charger.l1_current + charger.l2_current + charger.l3_current
         _LOGGER.debug(
-            f"  {charger.entity_id}: mask={charger.active_phases_mask}({_eff_ph}ph) "
+            f"  {charger.entity_id}: mode={charger.operating_mode} "
+            f"mask={charger.active_phases_mask}({_eff_ph}ph) "
             f"hw={charger.phases}ph {charger.min_current:.0f}-{charger.max_current:.0f}A "
             f"prio={charger.priority} [{charger.connector_status}] draw={_draw:.1f}A"
         )
@@ -497,93 +536,190 @@ def _distribute_power(site: SiteContext, target_constraints: PhaseConstraints) -
     mode = site.distribution_mode.lower() if site.distribution_mode else "priority"
 
     if "priority" in mode:
-        _distribute_per_phase_priority(site, target_constraints)
+        _distribute_per_phase_priority(site, physical_pool, solar_pool, excess_pool)
     elif "shared" in mode:
-        _distribute_per_phase_shared(site, target_constraints)
+        _distribute_per_phase_shared(site, physical_pool, solar_pool, excess_pool)
     elif "strict" in mode:
-        _distribute_per_phase_strict(site, target_constraints)
+        _distribute_per_phase_strict(site, physical_pool, solar_pool, excess_pool)
     elif "optimized" in mode:
-        _distribute_per_phase_optimized(site, target_constraints)
+        _distribute_per_phase_optimized(site, physical_pool, solar_pool, excess_pool)
     else:
         _LOGGER.warning(f"Unknown distribution mode '{mode}', using priority")
-        _distribute_per_phase_priority(site, target_constraints)
+        _distribute_per_phase_priority(site, physical_pool, solar_pool, excess_pool)
 
 
 def _allocate_minimums(
-    chargers: list[ChargerContext], remaining: PhaseConstraints
-) -> tuple[dict[str, float], PhaseConstraints]:
-    """Allocate minimum current to chargers that fit. Returns (allocated dict, remaining constraints)."""
+    chargers: list[LoadContext],
+    site: SiteContext,
+    physical: PhaseConstraints,
+    solar: PhaseConstraints,
+    excess: PhaseConstraints,
+) -> tuple[dict[str, float], PhaseConstraints, PhaseConstraints, PhaseConstraints]:
+    """Pass 1: Reserve minimum current for all eligible chargers.
+
+    Source-aware: each mode checks its allowed energy sources.
+    All allocations deduct from physical pool (wire limits apply to all).
+    All allocations deduct from solar and excess pools (any draw reduces export).
+
+    Returns (allocated dict, remaining physical, remaining solar, remaining excess).
+    """
     allocated = {}
     for charger in chargers:
         mask = charger.active_phases_mask
         if not mask:
-            _LOGGER.error(f"Charger {charger.entity_id} has no phase mask!")
             allocated[charger.entity_id] = 0
             continue
 
-        if remaining.get_available(mask) >= charger.min_current:
-            allocated[charger.entity_id] = charger.min_current
-            remaining = remaining.deduct(charger.min_current, mask)
-        else:
+        # Source limit: is this mode allowed to charge at all?
+        src_max = _source_limit(charger, site, solar, excess, base=0)
+        if src_max < charger.min_current:
             allocated[charger.entity_id] = 0
-
-    return allocated, remaining
-
-
-def _distribute_per_phase_priority(site: SiteContext, constraints: PhaseConstraints) -> None:
-    """
-    PRIORITY mode: Pass 1 allocate minimum by priority, Pass 2 give remainder by priority.
-    """
-    chargers_by_priority = sorted(site.chargers, key=lambda c: c.priority)
-    allocated, remaining = _allocate_minimums(chargers_by_priority, constraints.copy())
-
-    # Pass 2: Allocate remainder by priority
-    for charger in chargers_by_priority:
-        if allocated.get(charger.entity_id, 0) == 0:
-            charger.allocated_current = 0
             continue
 
+        # Physical pool must have room on the wire
+        if physical.get_available(mask) < charger.min_current:
+            allocated[charger.entity_id] = 0
+            continue
+
+        # Reserve minimum
+        allocated[charger.entity_id] = charger.min_current
+        physical = physical.deduct(charger.min_current, mask)
+        solar, excess = _deduct_from_sources(charger.min_current, mask, solar, excess)
+
+    return allocated, physical, solar, excess
+
+
+def _distribute_per_phase_priority(
+    site: SiteContext,
+    physical_pool: PhaseConstraints,
+    solar_pool: PhaseConstraints,
+    excess_pool: PhaseConstraints,
+) -> None:
+    """
+    PRIORITY mode: Pass 1 reserve minimums for all eligible chargers,
+    Pass 2 fill remainder by urgency+priority order.
+
+    Source-aware: each charger's fill-up is limited by its mode's source pool.
+    All draws deduct from physical, solar, and excess pools.
+    """
+    sorted_chargers = _sort_chargers(site.chargers)
+
+    # Pass 1: Reserve minimums (source-aware)
+    remaining = physical_pool.copy()
+    solar_rem = solar_pool.copy()
+    excess_rem = excess_pool.copy()
+    allocated, remaining, solar_rem, excess_rem = _allocate_minimums(
+        sorted_chargers, site, remaining, solar_rem, excess_rem
+    )
+
+    for cid, alloc in allocated.items():
+        _LOGGER.debug(f"  Pass 1: {cid} = {alloc:.1f}A")
+
+    # Pass 2: Fill by priority order, source-limited
+    for charger in sorted_chargers:
+        base = allocated.get(charger.entity_id, 0)
         mask = charger.active_phases_mask
-        if not mask:
-            charger.allocated_current = round(allocated[charger.entity_id], 1)
+        if not mask or base == 0:
+            charger.allocated_current = round(base, 1)
             continue
 
-        charger_available = remaining.get_available(mask)
-        wanted_additional = charger.max_current - allocated[charger.entity_id]
-        additional = min(wanted_additional, charger_available)
-        charger.allocated_current = round(allocated[charger.entity_id] + additional, 1)
-        remaining = remaining.deduct(additional, mask)
+        phys_avail = remaining.get_available(mask)
+        src_max = _source_limit(charger, site, solar_rem, excess_rem, base=base)
+        effective_max = min(src_max, charger.max_current)
+        additional = max(0, min(effective_max - base, phys_avail))
+        total = base + additional
+
+        charger.allocated_current = round(total, 1)
+        if additional > 0:
+            remaining = remaining.deduct(additional, mask)
+            solar_rem, excess_rem = _deduct_from_sources(
+                additional, mask, solar_rem, excess_rem
+            )
 
 
-def _distribute_per_phase_shared(site: SiteContext, constraints: PhaseConstraints) -> None:
+def _distribute_per_phase_shared(
+    site: SiteContext,
+    physical_pool: PhaseConstraints,
+    solar_pool: PhaseConstraints,
+    excess_pool: PhaseConstraints,
+) -> None:
     """
-    SHARED mode: Pass 1 allocate minimum to all, Pass 2 split remainder equally.
-    """
-    allocated, remaining = _allocate_minimums(site.chargers, constraints.copy())
+    SHARED mode: Pass 1 reserve minimums for all eligible chargers,
+    Pass 2 split remainder equally among charging chargers.
 
-    charging_chargers = [c for c in site.chargers if allocated.get(c.entity_id, 0) > 0]
+    Source-aware: each charger's fill-up is limited by its mode's source pool.
+    Equal split respects source ceilings — source-limited chargers cap early
+    and the remainder goes to others in subsequent rounds.
+    """
+    sorted_chargers = _sort_chargers(site.chargers)
+
+    # Pass 1: Reserve minimums (source-aware)
+    remaining = physical_pool.copy()
+    solar_rem = solar_pool.copy()
+    excess_rem = excess_pool.copy()
+    allocated, remaining, solar_rem, excess_rem = _allocate_minimums(
+        sorted_chargers, site, remaining, solar_rem, excess_rem
+    )
+
+    charging_chargers = [c for c in sorted_chargers if allocated.get(c.entity_id, 0) > 0]
     if not charging_chargers:
         for charger in site.chargers:
             charger.allocated_current = 0
         return
 
-    # Pass 2: Split remainder equally among charging chargers
+    # Pass 2: Split remainder equally, respecting source limits.
+    # Batch compute increments to avoid order-dependent solar depletion.
     while True:
-        chargers_wanting_more = [c for c in charging_chargers if allocated[c.entity_id] < c.max_current]
+        chargers_wanting_more = []
+        for c in charging_chargers:
+            src_max = _source_limit(c, site, solar_rem, excess_rem, base=allocated[c.entity_id])
+            effective_max = min(c.max_current, src_max)
+            if allocated[c.entity_id] < effective_max:
+                chargers_wanting_more.append(c)
+
         if not chargers_wanting_more:
             break
 
-        min_available = min(remaining.get_available(c.active_phases_mask) for c in chargers_wanting_more)
+        min_available = min(
+            remaining.get_available(c.active_phases_mask) for c in chargers_wanting_more
+        )
         if min_available <= 0:
             break
 
         per_charger_increment = min_available / len(chargers_wanting_more)
 
+        # Batch: compute all increments against current pool state
+        batch = []
         for charger in chargers_wanting_more:
             mask = charger.active_phases_mask
-            additional = min(per_charger_increment, charger.max_current - allocated[charger.entity_id])
-            allocated[charger.entity_id] += additional
-            remaining = remaining.deduct(additional, mask)
+            src_max = _source_limit(charger, site, solar_rem, excess_rem, base=allocated[charger.entity_id])
+            effective_max = min(charger.max_current, src_max)
+            additional = min(per_charger_increment, effective_max - allocated[charger.entity_id])
+            additional = max(0, additional)
+            batch.append((charger, mask, additional))
+
+        # Check total solar consumption doesn't exceed available.
+        # For source-limited chargers sharing the same phases, scale down if needed.
+        total_increment = sum(incr for _, _, incr in batch if incr > 0)
+        if total_increment > 0:
+            min_solar = min(solar_rem.get_available(c.active_phases_mask) for c in chargers_wanting_more)
+            if total_increment > min_solar > 0:
+                scale = min_solar / total_increment
+                batch = [(c, m, incr * scale) for c, m, incr in batch]
+
+        # Apply all increments
+        any_progress = False
+        for charger, mask, additional in batch:
+            if additional > 0.001:
+                allocated[charger.entity_id] += additional
+                remaining = remaining.deduct(additional, mask)
+                solar_rem, excess_rem = _deduct_from_sources(
+                    additional, mask, solar_rem, excess_rem
+                )
+                any_progress = True
+
+        if not any_progress:
+            break
 
     for charger in charging_chargers:
         charger.allocated_current = round(allocated[charger.entity_id], 1)
@@ -593,56 +729,102 @@ def _distribute_per_phase_shared(site: SiteContext, constraints: PhaseConstraint
             charger.allocated_current = 0
 
 
-def _distribute_per_phase_strict(site: SiteContext, constraints: PhaseConstraints) -> None:
+def _distribute_per_phase_strict(
+    site: SiteContext,
+    physical_pool: PhaseConstraints,
+    solar_pool: PhaseConstraints,
+    excess_pool: PhaseConstraints,
+) -> None:
     """
-    STRICT mode: Give first charger up to max, then next, etc. (by priority).
+    STRICT mode: Give first charger up to max (or source limit), then next, etc.
+    Sorted by (urgency, priority). No minimum reservation — sequential greedy.
     """
-    remaining = constraints.copy()
-    chargers_by_priority = sorted(site.chargers, key=lambda c: c.priority)
+    remaining = physical_pool.copy()
+    solar_rem = solar_pool.copy()
+    excess_rem = excess_pool.copy()
+    sorted_chargers = _sort_chargers(site.chargers)
 
-    for charger in chargers_by_priority:
+    for charger in sorted_chargers:
         mask = charger.active_phases_mask
         if not mask:
-            _LOGGER.error(f"Charger {charger.entity_id} has no phase mask!")
             charger.allocated_current = 0
             continue
 
-        charger_available = remaining.get_available(mask)
-        charger.allocated_current = round(min(charger.max_current, charger_available), 1)
-        remaining = remaining.deduct(charger.allocated_current, mask)
+        src_max = _source_limit(charger, site, solar_rem, excess_rem, base=0)
+        phys_avail = remaining.get_available(mask)
+        allocation = round(min(charger.max_current, src_max, phys_avail), 1)
 
-
-def _distribute_per_phase_optimized(site: SiteContext, constraints: PhaseConstraints) -> None:
-    """
-    OPTIMIZED mode: Reduce higher priority chargers to allow lower priority to charge at minimum.
-    """
-    remaining = constraints.copy()
-    chargers_by_priority = sorted(site.chargers, key=lambda c: c.priority)
-
-    for i, charger in enumerate(chargers_by_priority):
-        mask = charger.active_phases_mask
-        if not mask:
-            _LOGGER.error(f"Charger {charger.entity_id} has no phase mask!")
+        if allocation < charger.min_current:
             charger.allocated_current = 0
             continue
 
-        charger_available = remaining.get_available(mask)
-        wanted = min(charger.max_current, charger_available)
+        charger.allocated_current = allocation
+        remaining = remaining.deduct(allocation, mask)
+        solar_rem, excess_rem = _deduct_from_sources(
+            allocation, mask, solar_rem, excess_rem
+        )
+
+
+def _distribute_per_phase_optimized(
+    site: SiteContext,
+    physical_pool: PhaseConstraints,
+    solar_pool: PhaseConstraints,
+    excess_pool: PhaseConstraints,
+) -> None:
+    """
+    OPTIMIZED mode: Reduce higher priority chargers to allow lower priority
+    to charge at minimum. Sorted by (urgency, priority). Source-aware.
+    """
+    remaining = physical_pool.copy()
+    solar_rem = solar_pool.copy()
+    excess_rem = excess_pool.copy()
+    sorted_chargers = _sort_chargers(site.chargers)
+
+    for i, charger in enumerate(sorted_chargers):
+        mask = charger.active_phases_mask
+        if not mask:
+            charger.allocated_current = 0
+            continue
+
+        src_max = _source_limit(charger, site, solar_rem, excess_rem, base=0)
+        if src_max < charger.min_current:
+            charger.allocated_current = 0
+            continue
+
+        phys_avail = remaining.get_available(mask)
+        wanted = min(charger.max_current, src_max, phys_avail)
 
         # Check if we should reduce to help next charger
-        if i < len(chargers_by_priority) - 1:
-            next_charger = chargers_by_priority[i + 1]
+        if i < len(sorted_chargers) - 1:
+            next_charger = sorted_chargers[i + 1]
             next_mask = next_charger.active_phases_mask
             if next_mask:
-                temp_remaining = remaining.deduct(wanted, mask)
-                next_available = temp_remaining.get_available(next_mask)
+                # Pre-check: does next charger have source potential before our draw?
+                pre_src = _source_limit(next_charger, site, solar_rem, excess_rem, base=0)
+                if pre_src >= next_charger.min_current:
+                    # Simulate full deduction (physical + sources)
+                    temp_remaining = remaining.deduct(wanted, mask)
+                    temp_solar, temp_excess = _deduct_from_sources(
+                        wanted, mask, solar_rem, excess_rem
+                    )
+                    next_phys = temp_remaining.get_available(next_mask)
+                    next_src = _source_limit(
+                        next_charger, site, temp_solar, temp_excess, base=0
+                    )
+                    next_effective = min(next_phys, next_src)
+                    if next_effective < next_charger.min_current:
+                        reduction_needed = next_charger.min_current - next_effective
+                        can_reduce = max(0, wanted - charger.min_current)
+                        wanted -= min(reduction_needed, can_reduce)
 
-                if next_available < next_charger.min_current:
-                    reduction_needed = next_charger.min_current - next_available
-                    can_reduce = max(0, wanted - charger.min_current)
-                    wanted -= min(reduction_needed, can_reduce)
+        if wanted < charger.min_current:
+            charger.allocated_current = 0
+            continue
 
         charger.allocated_current = round(wanted, 1)
         remaining = remaining.deduct(charger.allocated_current, mask)
+        solar_rem, excess_rem = _deduct_from_sources(
+            charger.allocated_current, mask, solar_rem, excess_rem
+        )
 
 

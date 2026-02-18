@@ -60,9 +60,18 @@ _load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
 _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
 
 # Convenience aliases for the rest of this file
-from custom_components.dynamic_ocpp_evse.calculations.models import ChargerContext, SiteContext, PhaseValues
+from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 from custom_components.dynamic_ocpp_evse.calculations.utils import compute_household_per_phase
+
+# ---------------------------------------------------------------------------
+# Mode name migration (old YAML → new operating modes)
+# ---------------------------------------------------------------------------
+_MIGRATE_MODE_NAMES = {
+    "Eco": "Solar Priority",
+    "Solar": "Solar Only",
+    # Standard and Excess are unchanged
+}
 
 # ---------------------------------------------------------------------------
 # Simulation constants
@@ -273,8 +282,11 @@ def apply_feedback_adjustment(site):
         site.export_current = PhaseValues(adj_a_exp, adj_b_exp, adj_c_exp)
 
     # Derived mode: recalculate solar_production_total from adjusted export.
+    # Battery charging absorbs solar power invisible to grid CT — add it back.
     if site.solar_is_derived:
         site.solar_production_total = site.export_current.total * site.voltage
+        if site.battery_power is not None and site.battery_power < 0:
+            site.solar_production_total += abs(site.battery_power)
     else:
         # Dedicated solar entity mode: compute household_consumption_total
         # via energy balance: household = solar + battery_power - export
@@ -390,13 +402,10 @@ def build_site_from_scenario(scenario):
             0.0 if phase_c_cons is not None else None,
         )
 
-    # Set site-level charging mode (first charger's mode, or from site if specified)
-    if 'charging_mode' in site_data:
-        site.charging_mode = site_data['charging_mode']
-    else:
-        print(f"  Scenario '{scenario['name']}' should specify 'charging_mode' at site level.")
-
     # Build chargers
+    # Per-charger operating_mode; fallback to site-level charging_mode for migration
+    site_mode = site_data.get('charging_mode')
+
     for idx, charger_data in enumerate(scenario['chargers']):
         device_type = charger_data.get("device_type", "evse")
         phases = charger_data.get("phases", 1)
@@ -410,7 +419,16 @@ def build_site_from_scenario(scenario):
             min_current = charger_data.get("min_current", 6)
             max_current = charger_data.get("max_current", 16)
 
-        charger = ChargerContext(
+        # Resolve operating mode: per-charger > site-level fallback > device default
+        operating_mode = charger_data.get("operating_mode")
+        if operating_mode is None and site_mode is not None:
+            operating_mode = site_mode
+        if operating_mode is None:
+            operating_mode = "Continuous" if device_type == "plug" else "Standard"
+        # Migrate old mode names
+        operating_mode = _MIGRATE_MODE_NAMES.get(operating_mode, operating_mode)
+
+        charger = LoadContext(
             charger_id=f"charger_{idx}",
             entity_id=charger_data.get("entity_id", f"charger_{idx}"),
             min_current=min_current,
@@ -418,6 +436,7 @@ def build_site_from_scenario(scenario):
             phases=phases,
             priority=charger_data.get("priority", idx),
             device_type=device_type,
+            operating_mode=operating_mode,
             car_phases=charger_data.get("car_phases"),
             l1_phase=charger_data.get("l1_phase", "A"),
             l2_phase=charger_data.get("l2_phase", "B"),
@@ -445,7 +464,6 @@ def print_scenario_params(scenario):
     # Site basics
     voltage = site_data.get('voltage', 230)
     breaker = site_data.get('main_breaker_rating', 63)
-    mode = site_data.get('charging_mode', '?')
     dist = site_data.get('distribution_mode', 'priority')
     solar = site_data.get('solar_production', 0)
     max_import = site_data.get('max_import_power')
@@ -461,7 +479,7 @@ def print_scenario_params(scenario):
 
     has_battery = site_data.get('battery_soc') is not None
 
-    print(f"  Site: {voltage}V {breaker}A breaker {num_phases}ph | Solar {solar}W | Mode: {mode}/{dist}")
+    print(f"  Site: {voltage}V {breaker}A breaker {num_phases}ph | Solar {solar}W | Dist: {dist}")
     if max_import:
         print(f"        Max import: {max_import}W")
     print(f"  Consumption: {cons_str}")
@@ -490,22 +508,24 @@ def print_scenario_params(scenario):
 
     # Excess threshold
     excess_thresh = site_data.get('excess_export_threshold')
-    if excess_thresh and mode.lower() == 'excess':
+    if excess_thresh:
         print(f"  Excess threshold: {excess_thresh}W")
 
     # Chargers
+    site_mode = site_data.get('charging_mode')
     for ch in chargers:
         eid = ch.get('entity_id', '?')
         dev_type = ch.get('device_type', 'evse')
         phases = ch.get('phases', 1)
         priority = ch.get('priority', 0)
         status = ch.get('connector_status', 'Charging' if ch.get('active') is not False else 'Available')
+        op_mode = ch.get('operating_mode', site_mode or ("Continuous" if dev_type == "plug" else "Standard"))
         # Phase mapping
         l1p = ch.get('l1_phase', 'A')
         l2p = ch.get('l2_phase', 'B')
         l3p = ch.get('l3_phase', 'C')
 
-        # Derive mask the same way ChargerContext.__post_init__ does
+        # Derive mask the same way LoadContext.__post_init__ does
         if ch.get('active_phases_mask'):
             mask = ch['active_phases_mask']
         elif ch.get('connected_to_phase'):
@@ -522,11 +542,11 @@ def print_scenario_params(scenario):
 
         if dev_type == 'plug':
             power = ch.get('power_rating', 2000)
-            print(f"  Charger {eid}: plug {power}W {phases}ph mask={mask} prio={priority}{phase_map_str} [{status}]")
+            print(f"  Charger {eid}: plug {power}W {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
         else:
             min_c = ch.get('min_current', 6)
             max_c = ch.get('max_current', 16)
-            print(f"  Charger {eid}: {min_c}-{max_c}A {phases}ph mask={mask} prio={priority}{phase_map_str} [{status}]")
+            print(f"  Charger {eid}: {min_c}-{max_c}A {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
 
     # Expected
     expected = scenario.get('expected', {})
