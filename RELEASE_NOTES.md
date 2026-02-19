@@ -1,6 +1,6 @@
 # Release Notes
 
-## 2.0.2 (Pre-release)
+## 2.0.3 (Pre-release)
 
 **BREAKING**: Existing 1.x users must **remove and re-add** the integration.
 
