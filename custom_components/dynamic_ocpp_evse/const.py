@@ -53,6 +53,7 @@ CONF_CHARGER_PRIORITY = "charger_priority"
 CONF_OCPP_DEVICE_ID = "ocpp_device_id"
 CONF_EVSE_CURRENT_IMPORT_ENTITY_ID = "evse_current_import_entity_id"
 CONF_EVSE_CURRENT_OFFERED_ENTITY_ID = "evse_current_offered_entity_id"
+CONF_EVSE_POWER_OFFERED_ENTITY_ID = "evse_power_offered_entity_id"
 CONF_EVSE_MINIMUM_CHARGE_CURRENT = "evse_minimum_charge_current"  # defaults to 6
 CONF_EVSE_MAXIMUM_CHARGE_CURRENT = "evse_maximum_charge_current"  # defaults to 16
 CONF_MIN_CURRENT_ENTITY_ID = "min_current_entity_id"
@@ -102,6 +103,7 @@ CONF_MAX_CURRENT = "max_current"
 # OCPP integration entity suffixes for auto-discovery
 OCPP_ENTITY_SUFFIX_CURRENT_IMPORT = "_current_import"
 OCPP_ENTITY_SUFFIX_CURRENT_OFFERED = "_current_offered"
+OCPP_ENTITY_SUFFIX_POWER_OFFERED = "_power_offered"
 OCPP_ENTITY_SUFFIX_STATUS = "_status"
 OCPP_ENTITY_SUFFIX_STOP_REASON = "_stop_reason"
 

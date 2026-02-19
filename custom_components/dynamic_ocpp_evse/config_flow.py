@@ -982,24 +982,34 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 
                 # Check if corresponding current_offered entity exists
                 current_offered_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_OFFERED}"
-                if current_offered_id in entity_registry.entities:
-                    # Get device info if available
-                    device_name = prettify_name(base_name)
-                    device_id = None
+                current_offered_entity = current_offered_id if current_offered_id in entity_registry.entities else None
+                
+                # Fallback: check for power_offered entity if current_offered not available
+                power_offered_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_POWER_OFFERED}"
+                power_offered_entity = power_offered_id if power_offered_id in entity_registry.entities else None
+                
+                # Skip chargers without current_offered OR power_offered
+                if not current_offered_entity and not power_offered_entity:
+                    continue
+                
+                # Get device info if available
+                device_name = prettify_name(base_name)
+                device_id = None
 
-                    if entity.device_id:
-                        device = device_registry.async_get(entity.device_id)
-                        if device:
-                            device_name = prettify_name(device.name) if device.name else device_name
-                            device_id = device.id
-                    
-                    chargers.append({
-                        "id": base_name,
-                        "name": device_name,
-                        "device_id": device_id,
-                        "current_import_entity": entity_id,
-                        "current_offered_entity": current_offered_id,
-                    })
+                if entity.device_id:
+                    device = device_registry.async_get(entity.device_id)
+                    if device:
+                        device_name = prettify_name(device.name) if device.name else device_name
+                        device_id = device.id
+                
+                chargers.append({
+                    "id": base_name,
+                    "name": device_name,
+                    "device_id": device_id,
+                    "current_import_entity": entity_id,
+                    "current_offered_entity": current_offered_entity,
+                    "power_offered_entity": power_offered_entity,
+                })
         
         return chargers
 
@@ -1219,6 +1229,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._data[CONF_OCPP_DEVICE_ID] = self._selected_charger.get("device_id")
             self._data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID] = self._selected_charger["current_import_entity"]
             self._data[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID] = self._selected_charger["current_offered_entity"]
+            self._data[CONF_EVSE_POWER_OFFERED_ENTITY_ID] = self._selected_charger.get("power_offered_entity")
 
             # Use user-provided name/entity_id from charger_info step
             charger_name = self._data.get(CONF_NAME, self._selected_charger["name"])
@@ -1236,6 +1247,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_OCPP_DEVICE_ID: self._data.get(CONF_OCPP_DEVICE_ID),
                 CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: self._data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID),
                 CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: self._data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID),
+                CONF_EVSE_POWER_OFFERED_ENTITY_ID: self._data.get(CONF_EVSE_POWER_OFFERED_ENTITY_ID),
             }
             options_data = {k: v for k, v in self._data.items() if k not in static_data}
 

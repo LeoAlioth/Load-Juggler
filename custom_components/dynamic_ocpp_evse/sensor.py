@@ -295,18 +295,42 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             self._mismatch_count = 0
             return
 
-        # Read current_offered from OCPP entity
+        # Read current_offered from OCPP entity (with fallback to power_offered)
         current_offered_entity_id = self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID)
-        if not current_offered_entity_id:
-            return
-
-        current_offered_state = self.hass.states.get(current_offered_entity_id)
-        if not current_offered_state or current_offered_state.state in ("unknown", "unavailable", None, ""):
-            return
-
-        try:
-            current_offered = float(current_offered_state.state)
-        except (ValueError, TypeError):
+        power_offered_entity_id = self.config_entry.data.get(CONF_EVSE_POWER_OFFERED_ENTITY_ID)
+        
+        current_offered = None
+        
+        # Try current_offered first
+        if current_offered_entity_id:
+            current_offered_state = self.hass.states.get(current_offered_entity_id)
+            if current_offered_state and current_offered_state.state not in ("unknown", "unavailable", None, ""):
+                try:
+                    current_offered = float(current_offered_state.state)
+                except (ValueError, TypeError):
+                    current_offered = None
+        
+        # Fallback: try power_offered and convert W → A
+        if current_offered is None and power_offered_entity_id:
+            power_offered_state = self.hass.states.get(power_offered_entity_id)
+            if power_offered_state and power_offered_state.state not in ("unknown", "unavailable", None, ""):
+                try:
+                    power_w = float(power_offered_state.state)
+                    # Convert power (W) to current (A): I = P / (V * phases)
+                    # Use configured phases for conversion
+                    phases = self._phases or 1
+                    voltage = self.hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE) if self.hub_entry else DEFAULT_PHASE_VOLTAGE
+                    if voltage > 0 and phases > 0:
+                        current_offered = power_w / (voltage * phases)
+                        _LOGGER.debug(
+                            "Using power_offered fallback for %s: %.0fW → %.1fA "
+                            "(voltage=%dV, phases=%d)",
+                            self._attr_name, power_w, current_offered, voltage, phases,
+                        )
+                except (ValueError, TypeError):
+                    pass
+        
+        if current_offered is None:
             return
 
         # Tolerance = max ramp-down per cycle (dynamically adapts to update_frequency)
