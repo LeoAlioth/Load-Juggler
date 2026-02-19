@@ -1172,14 +1172,32 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_CHARGER_PRIORITY: next_priority,
         })
 
+        # Build list of detected entities for display
+        detected_entities = []
+        if self._selected_charger.get("current_import_entity"):
+            detected_entities.append(f"Current Import: {self._selected_charger['current_import_entity']}")
+        if self._selected_charger.get("current_import_l1_entity"):
+            detected_entities.append(f"Current Import L1: {self._selected_charger['current_import_l1_entity']}")
+        if self._selected_charger.get("current_import_l2_entity"):
+            detected_entities.append(f"Current Import L2: {self._selected_charger['current_import_l2_entity']}")
+        if self._selected_charger.get("current_import_l3_entity"):
+            detected_entities.append(f"Current Import L3: {self._selected_charger['current_import_l3_entity']}")
+        if self._selected_charger.get("current_offered_entity"):
+            detected_entities.append(f"Current Offered: {self._selected_charger['current_offered_entity']}")
+        if self._selected_charger.get("power_offered_entity"):
+            detected_entities.append(f"Power Offered: {self._selected_charger['power_offered_entity']}")
+        if self._selected_charger.get("power_import_entity"):
+            detected_entities.append(f"Power Import: {self._selected_charger['power_import_entity']}")
+        
+        entities_text = "\n- ".join(detected_entities) if detected_entities else "None"
+        
         return self.async_show_form(
             step_id="charger_info",
             data_schema=data_schema,
             errors=errors,
             description_placeholders={
                 "charger_name": self._selected_charger["name"],
-                "current_import": self._selected_charger["current_import_entity"],
-                "current_offered": self._selected_charger["current_offered_entity"],
+                "detected_entities": entities_text,
             },
             last_step=False
         )
