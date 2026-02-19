@@ -209,9 +209,11 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self._hub_schema(defaults, include_grid=False, include_battery=False, include_inverter=True)
 
     def _charger_info_schema(self, defaults: dict | None = None) -> vol.Schema:
-        """Build schema for charger info step (name, entity ID, priority)."""
+        """Build schema for charger info step (name, entity ID, priority, OCPP device ID)."""
         defaults = defaults or {}
-        return vol.Schema({
+        
+        # Build dynamic fields based on what was detected
+        fields = {
             vol.Required(
                 CONF_NAME,
                 default=defaults.get(CONF_NAME, ""),
@@ -224,7 +226,16 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_CHARGER_PRIORITY,
                 default=defaults.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
             ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
-        })
+        }
+        
+        # Add OCPP Device ID as optional editable field (shown when detected)
+        if defaults.get("ocpp_device_id"):
+            fields[vol.Optional(
+                "ocpp_device_id",
+                default=defaults.get("ocpp_device_id", ""),
+            )] = str
+        
+        return vol.Schema(fields)
 
     def _get_hub_phase_count(self, hub_entry_id: str | None = None) -> int:
         """Get the number of phases configured on the hub."""
@@ -1170,10 +1181,13 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_NAME: self._selected_charger["name"],
             CONF_ENTITY_ID: self._selected_charger["id"],
             CONF_CHARGER_PRIORITY: next_priority,
+            "ocpp_device_id": self._selected_charger.get("device_id"),
         })
 
         # Build list of detected entities for display
         detected_entities = []
+        if self._selected_charger.get("device_id"):
+            detected_entities.append(f"OCPP Device ID: {self._selected_charger['device_id']}")
         if self._selected_charger.get("current_import_entity"):
             detected_entities.append(f"Current Import: {self._selected_charger['current_import_entity']}")
         if self._selected_charger.get("current_import_l1_entity"):
@@ -1250,8 +1264,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Charger step 3c: Units and timing configuration (final — creates entry)."""
         errors: dict[str, str] = {}
 
+        # Use user-provided OCPP device ID if edited, otherwise use detected
+        ocpp_device_id = user_input.get("ocpp_device_id") if user_input else self._selected_charger.get("device_id")
+        if not ocpp_device_id:
+            ocpp_device_id = self._selected_charger.get("device_id")
+        
         # Detect charger capabilities via OCPP
-        ocpp_device_id = self._selected_charger.get("device_id")
         detected_unit = await self._detect_charge_rate_unit(ocpp_device_id)
         detected_interval = await self._detect_meter_value_interval(ocpp_device_id)
 
@@ -1260,7 +1278,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             self._data[ENTRY_TYPE] = ENTRY_TYPE_CHARGER
             self._data[CONF_CHARGER_ID] = self._selected_charger["id"]
-            self._data[CONF_OCPP_DEVICE_ID] = self._selected_charger.get("device_id")
+            # Use user-edited OCPP device ID if provided, otherwise detected
+            self._data[CONF_OCPP_DEVICE_ID] = user_input.get("ocpp_device_id") or self._selected_charger.get("device_id")
             self._data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID] = self._selected_charger["current_import_entity"]
             self._data[CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID] = self._selected_charger.get("current_import_l1_entity")
             self._data[CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID] = self._selected_charger.get("current_import_l2_entity")
