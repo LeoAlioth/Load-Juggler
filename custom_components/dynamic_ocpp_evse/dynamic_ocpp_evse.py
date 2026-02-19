@@ -231,9 +231,9 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
                 pass
 
     _LOGGER.debug(
-        "  EVSE %s: %s-%sA %dph(hw) L1->%s/L2->%s/L3->%s mask=%s(%dph) "
+        "  EVSE %s [%s]: %s-%sA %dph(hw) L1->%s/L2->%s/L3->%s mask=%s(%dph) "
         "prio=%d [%s] draw=L1:%s/L2:%s/L3:%s",
-        charger_entity_id,
+        charger_entity_id, operating_mode,
         _fv(min_current), _fv(max_current), phases,
         l1_phase, l2_phase, l3_phase,
         charger.active_phases_mask,
@@ -303,8 +303,8 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority, plug_
         operating_mode=operating_mode,
     )
     _LOGGER.debug(
-        "  Plug %s: %.0fW on %s prio=%d [%s]%s",
-        charger_entity_id, power_rating, connected_to_phase,
+        "  Plug %s [%s]: %.0fW on %s prio=%d [%s]%s",
+        charger_entity_id, operating_mode, power_rating, connected_to_phase,
         priority, connector_status,
         " (auto-adj)" if entry.entry_id in plug_auto_power else "",
     )

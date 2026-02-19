@@ -1,36 +1,55 @@
-# Dynamic OCPP EVSE - Charge Modes Guide
+# Load Juggler - Operating Modes Guide
 
 For distribution modes (Shared, Priority, Optimized, Strict), see [DISTRIBUTION_MODES_GUIDE.md](DISTRIBUTION_MODES_GUIDE.md).
 
 ## Table of Contents
-1. [Charge Modes Overview](#charge-modes-overview)
-2. [Standard Mode](#standard-mode)
-3. [Eco Mode](#eco-mode)
-4. [Solar Mode](#solar-mode)
-5. [Excess Mode](#excess-mode)
-6. [Configuration Parameters](#configuration-parameters)
+1. [Operating Modes Overview](#operating-modes-overview)
+2. [Standard Mode](#standard-mode) (EVSE)
+3. [Continuous Mode](#continuous-mode) (Smart Plug)
+4. [Solar Priority Mode](#solar-priority-mode)
+5. [Solar Only Mode](#solar-only-mode)
+6. [Excess Mode](#excess-mode)
+7. [Configuration Parameters](#configuration-parameters)
 
 ---
 
-## Charge Modes Overview
+## Operating Modes Overview
 
-The Dynamic OCPP EVSE integration provides four intelligent charging modes that adapt to your electrical system, solar production, and battery configuration. Each mode behaves differently depending on whether your site has a battery system installed.
+Load Juggler provides per-load operating modes — each managed load chooses its own mode independently. This allows mixing modes across your loads (e.g., daily driver on Standard while a pool heater runs on Solar Only).
 
-### Quick Comparison Table
+### Mode Urgency
+
+When multiple loads compete for limited power, mode urgency determines allocation order:
+
+**Standard/Continuous (highest) > Solar Priority > Solar Only > Excess (lowest)**
+
+Within the same mode, the load's priority number decides who gets power first.
+
+### Quick Comparison Table (EVSE)
 
 | Mode | Without Battery | With Battery | Grid Import | Battery Discharge |
 |------|----------------|--------------|-------------|-------------------|
-| **Standard** | Full speed from grid + solar | Full speed, battery provides no power below min SOC | ✅ Yes | ✅ Yes (above min SOC) |
-| **Eco** | Min rate + solar (prevents export) | Graduated charging based on battery SOC | ⚠️ Minimal | ⚠️ Above target SOC only |
-| **Solar** | Solar/export only (stops if import needed) | Solar only, requires battery at target SOC | ❌ No | ⚠️ Above target SOC only |
-| **Excess** | Charge when export > threshold | Battery-aware threshold charging | ❌ No | ❌ No (until 97-98% SOC) |
+| **Standard** | Full speed from grid + solar | Full speed, battery provides no power below min SOC | Yes | Yes (above min SOC) |
+| **Solar Priority** | Min rate + solar (prevents export) | Graduated charging based on battery SOC | Minimal | Above target SOC only |
+| **Solar Only** | Solar/export only (stops if import needed) | Solar only, requires battery at target SOC | No | Above target SOC only |
+| **Excess** | Charge when export > threshold | Battery-aware threshold charging | No | No (until 97-98% SOC) |
+
+### Smart Plug Modes
+
+| Mode | Behavior |
+|------|----------|
+| **Continuous** | Always on |
+| **Solar Only** | On only when solar surplus is available |
+| **Excess** | On only when export exceeds threshold |
 
 ---
 
 ## Standard Mode
 
+**Available for:** EVSE
+
 ### Purpose
-Maximum speed charging - charge as fast as possible within available power limits.
+Maximum speed charging — charge as fast as possible within available power limits.
 
 ### Without Battery
 
@@ -55,7 +74,7 @@ Result: Charge at 15A (if charger supports it)
 
 **Behavior:**
 - Uses all available power sources (grid + battery + solar)
-- Allows battery discharge for EV charging when SOC ≥ min threshold
+- Allows battery discharge for EV charging when SOC >= min threshold
 - When battery SOC < min threshold: battery provides no power (acts like no-battery system)
 
 **Battery SOC Thresholds:**
@@ -89,10 +108,25 @@ Result: Charge at 13A (grid + solar only, battery protected)
 
 ---
 
-## Eco Mode
+## Continuous Mode
+
+**Available for:** Smart Plug
 
 ### Purpose
-Economical charging that prioritizes using available solar production and minimizes grid export while maintaining a minimum charging rate.
+Always-on operation. The load stays powered whenever it is connected.
+
+**When to use:**
+- Devices that should always run when plugged in
+- Non-solar-dependent loads that still benefit from priority-based power allocation
+
+---
+
+## Solar Priority Mode
+
+**Available for:** EVSE
+
+### Purpose
+Economical charging that prioritizes solar production and minimizes grid export while maintaining a minimum charging rate. Formerly known as "Eco" mode.
 
 ### Without Battery
 
@@ -199,23 +233,25 @@ Battery discharges to provide full speed charging
 
 ---
 
-## Solar Mode
+## Solar Only Mode
+
+**Available for:** EVSE, Smart Plug
 
 ### Purpose
-Pure solar charging - similar to Eco mode but stricter about using only solar power (no grid import, no battery discharge below target SOC).
+Pure solar charging — stricter than Solar Priority about using only solar power (no grid import, no battery discharge below target SOC).
 
 ### Without Battery
 
 **Behavior:**
 - Only charges when solar is available (exporting to grid)
 - Uses export power for EV charging
-- Zero grid import - stops charging if grid import would be required
+- Zero grid import — stops charging if grid import would be required
 - Stops charging when solar production drops below minimum current
 
 **When to use:**
-- Want 100% solar-powered EV charging
+- Want 100% solar-powered charging
 - Excess solar would otherwise export to grid
-- Not time-sensitive charging
+- Not time-sensitive
 - Maximizing solar self-consumption
 
 **Example:**
@@ -259,12 +295,14 @@ Result: Charge at 10A (solar rate)
 ```
 Battery SOC: 70% (below target 80%)
 Solar Export: 15A available
-Result: No EV charging (prioritize battery charging)
+Result: No charging (prioritize battery charging)
 ```
 
 ---
 
 ## Excess Mode
+
+**Available for:** EVSE, Smart Plug
 
 ### Purpose
 Threshold-based charging that starts when excess export exceeds a configured threshold, preventing excessive solar export while managing battery capacity.
@@ -275,7 +313,6 @@ Threshold-based charging that starts when excess export exceeds a configured thr
 - Threshold-based charging that uses excess export above threshold
 - Starts charging when `export_power > threshold`
 - Charging rate: `max(min_current, (export_power - threshold) / voltage)`
-- Continues for 15 minutes if export remains near threshold
 
 **Logic:**
 ```
@@ -314,7 +351,7 @@ Else:
     threshold = base_threshold
 
 If battery_soc >= 98%:
-    Behave like Solar mode (match solar production)
+    Behave like Solar Only mode (match solar production)
 ```
 
 **Why adjust threshold?**
@@ -352,7 +389,7 @@ Result: Start charging at available current
 ```
 Battery SOC: 98%
 Current Export: 8000W
-Result: Charge at solar rate (like Solar mode)
+Result: Charge at solar rate (like Solar Only mode)
 ```
 
 ---
@@ -368,23 +405,24 @@ Result: Charge at solar rate (like Solar mode)
 | **Max Import Power** | Maximum grid import power (W) | - | All modes |
 | **Excess Export Threshold** | Threshold for Excess mode (W) | 13000W | Excess mode |
 | **Battery SOC Min** | Minimum battery SOC for charging (%) | 20% | All modes (with battery) |
-| **Battery SOC Target** | Target battery SOC (%) | 80% | Eco, Solar modes |
-| **Battery SOC Hysteresis** | SOC hysteresis to prevent oscillation (%) | 3% | Eco, Solar modes |
+| **Battery SOC Target** | Target battery SOC (%) | 80% | Solar Priority, Solar Only |
+| **Battery SOC Hysteresis** | SOC hysteresis to prevent oscillation (%) | 3% | Solar Priority, Solar Only |
 | **Battery Max Charge Power** | Maximum battery charging power (W) | 5000W | Excess mode |
-| **Battery Max Discharge Power** | Maximum battery discharge power (W) | 5000W | Standard, Eco modes |
+| **Battery Max Discharge Power** | Maximum battery discharge power (W) | 5000W | Standard, Solar Priority |
 | **Power Buffer** | Safety buffer in Standard mode (W) | 0W | Standard mode |
-| **Allow Grid Charging** | Enable/disable grid import | ON | Standard, Eco modes |
-| **Distribution Mode** | How to allocate between chargers | Priority | Multi-charger |
+| **Allow Grid Charging** | Enable/disable grid import | ON | Standard, Solar Priority |
+| **Distribution Mode** | How to allocate between loads | Priority | Multi-load |
 
-### Charger-Level Configuration
+### Load-Level Configuration
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
+| **Operating Mode** | Per-load operating mode | Standard (EVSE) / Continuous (Plug) |
 | **Min Current** | Minimum charge rate (A) | 6A |
 | **Max Current** | Maximum charge rate (A) | 16A |
-| **Charger Priority** | Priority for distribution (1-10, lower=higher) | 1 |
+| **Load Priority** | Priority for distribution (1-10, lower=higher) | 1 |
 | **Update Frequency** | How often to recalculate (seconds) | 15s |
-| **Charge Pause Duration** | Min time before restarting (seconds) | 180s |
+| **Charge Pause Duration** | Min time before restarting (minutes) | 3 |
 
 ---
 
@@ -394,7 +432,7 @@ Result: Charge at solar rate (like Solar mode)
 **Setup:** Solar system without battery, want to use excess solar for EV
 
 **Recommended Settings:**
-- **Charge Mode**: Eco
+- **Operating Mode**: Solar Priority
 - **Why**: Uses available solar/export with minimum rate guarantee
 - **Behavior**: Charges faster when sunny, minimum rate when cloudy
 
@@ -402,16 +440,16 @@ Result: Charge at solar rate (like Solar mode)
 **Setup:** Battery system, prioritize home battery over EV
 
 **Recommended Settings:**
-- **Charge Mode**: Solar or Eco
+- **Operating Mode**: Solar Only or Solar Priority
 - **Battery SOC Min**: 30%
 - **Battery SOC Target**: 80%
-- **Why**: Solar won't charge EV until battery is satisfied; Eco provides minimum charging
+- **Why**: Solar Only won't charge EV until battery is satisfied; Solar Priority provides minimum charging
 
 ### Scenario 3: Large Solar System, Prevent Excessive Export
 **Setup:** Large solar array, significant daily export
 
 **Recommended Settings:**
-- **Charge Mode**: Excess
+- **Operating Mode**: Excess
 - **Excess Threshold**: 10000W
 - **Why**: Only charges when significant excess available, stable charging sessions
 
@@ -424,11 +462,20 @@ Result: Charge at solar rate (like Solar mode)
 - **Guest Charger Priority**: 2
 - **Why**: Main vehicle gets priority, guest gets remainder
 
-### Scenario 5: Maximum Speed, Don't Care About Solar
+### Scenario 5: Mixed Loads — Daily Driver + Pool Heater
+**Setup:** EV charger for daily commute, smart plug for pool heater
+
+**Recommended Settings:**
+- **EV Operating Mode**: Standard (morning), Solar Priority (daytime)
+- **Pool Heater Operating Mode**: Solar Only
+- **Distribution Mode**: Priority (EV priority 1, heater priority 2)
+- **Why**: Car charges fast when needed, pool heater only uses surplus solar
+
+### Scenario 6: Maximum Speed, Don't Care About Solar
 **Setup:** Need fastest possible charging
 
 **Recommended Settings:**
-- **Charge Mode**: Standard
+- **Operating Mode**: Standard
 - **Why**: Uses all available power sources without limitations
 
 ---
@@ -442,11 +489,11 @@ Hysteresis prevents rapid switching on/off when battery SOC hovers around thresh
 **Example with target_soc = 80%, hysteresis = 3%:**
 ```
 Rising:
-  75% → 78% → 80% → (triggers "above target")
-  
+  75% -> 78% -> 80% -> (triggers "above target")
+
 Falling (once above):
-  80% → 78% → 77% → (still "above target")
-  77% → 75% → (drops below 77% = target - hysteresis)
+  80% -> 78% -> 77% -> (still "above target")
+  77% -> 75% -> (drops below 77% = target - hysteresis)
   Now "below target"
 ```
 
@@ -459,24 +506,24 @@ Falling (once above):
 
 ## Troubleshooting
 
-### Eco Mode Charging Above Minimum
+### Solar Priority Charging Above Minimum
 
-**Symptom:** Eco mode is charging faster than minimum rate
+**Symptom:** Solar Priority is charging faster than minimum rate
 **Cause:** Solar/export power available
-**Solution:** This is correct behavior! Eco mode uses available solar to prevent grid export
+**Solution:** This is correct behavior! Solar Priority uses available solar to prevent grid export
 
-### Eco Mode Not Using Solar
+### Solar Priority Not Using Solar
 
-**Symptom:** Solar exporting but eco mode charges at minimum
+**Symptom:** Solar exporting but Solar Priority charges at minimum
 **Check:**
 - Is battery below target SOC? (Battery gets priority)
 - Is "Allow Grid Charging" disabled? (May limit calculation)
 - Check logs for actual current calculation
 
-### Solar Mode Not Charging
+### Solar Only Not Charging
 
 **With Battery:**
-- **Check:** Battery SOC - must be at or above target
+- **Check:** Battery SOC — must be at or above target
 - **Check:** Is solar actually producing? (battery charging or exporting?)
 
 **Without Battery:**
@@ -488,27 +535,15 @@ Falling (once above):
 **Check:**
 - Export power vs. configured threshold
 - With battery: Is threshold adjusted for battery charging?
-- Is 15-minute keep-alive timer active?
 
 ---
 
 ## Best Practices
 
 1. **Start with Standard mode** to verify basic operation
-2. **Set realistic battery SOC limits** - don't set min too high
+2. **Set realistic battery SOC limits** — don't set min too high
 3. **Use Power Buffer** in Standard mode if experiencing frequent stops
 4. **Monitor for a full day** before adjusting thresholds
-5. **Eco mode** is usually the best general-purpose mode for solar systems
-6. **Distribution mode** depends on your specific multi-charger needs
-7. **Update frequency** of 15s is good balance between responsiveness and stability
-
----
-
-## Version History
-
-- **v2.0** - Added no-battery support for all modes
-- **v2.0** - Eco mode now prevents grid export by using solar
-- **v2.0** - Conditional battery entity creation
-- **v2.0** - Improved solar utilization across all modes
-
-
+5. **Solar Priority** is usually the best general-purpose mode for solar systems
+6. **Distribution mode** depends on your specific multi-load needs
+7. **Update frequency** of 15s is a good balance between responsiveness and stability

@@ -1,4 +1,4 @@
-# TODO
+# Load Juggler — TODO
 
 ## Completed
 
@@ -93,6 +93,9 @@
 89. - [x] Confidence-weighted auto-detect scoring — weighted scores (weight = min(|delta|, 15) / 5), soft decay, fast oscillation detection
 90. - [x] 10% clamping tolerance for W-based chargers — avoids false clamping from voltage/rounding variance
 91. - [x] Fix W-based OCPP power multiplication — use car's active phase count instead of charger hardware phases for W conversion
+92. - [x] Per-device operating mode in debug logs
+93. - [x] Charger targets log: show both allocated and available current
+94. - [x] Expose `available_current` as sensor attribute in HA
 
 ## In Progress
 

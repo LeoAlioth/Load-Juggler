@@ -49,9 +49,12 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
                        ]]
     inactive_chargers = [c for c in all_chargers if c not in active_chargers]
 
+    _mode_summary = ", ".join(
+        f"{c.entity_id}={c.operating_mode}" for c in active_chargers
+    ) if active_chargers else "none"
     _LOGGER.debug(
         f"Calculating targets for {len(active_chargers)}/{len(all_chargers)} active chargers - "
-        f"Distribution: {site.distribution_mode}"
+        f"Distribution: {site.distribution_mode} | Modes: {_mode_summary}"
     )
 
     # Steps 1-3: Calculate pools (always, even with no active chargers)
@@ -83,7 +86,8 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     for charger in all_chargers:
         _draw = charger.l1_current + charger.l2_current + charger.l3_current
         _LOGGER.debug(
-            f"Final -- {charger.entity_id}: allocated={charger.allocated_current:.1f}A "
+            f"Final -- {charger.entity_id} [{charger.operating_mode}]: "
+            f"allocated={charger.allocated_current:.1f}A "
             f"available={charger.available_current:.1f}A | "
             f"draw={_draw:.1f}A (L1:{charger.l1_current:.1f} L2:{charger.l2_current:.1f} L3:{charger.l3_current:.1f})"
         )

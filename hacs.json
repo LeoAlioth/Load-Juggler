@@ -1,11 +1,11 @@
 {
-    "name": "Dynamic OCPP EVSE",
+    "name": "Load Juggler",
     "content_in_root": false,
     "domains": ["dynamic_ocpp_evse"],
     "country": "US",
     "homeassistant": "2023.8.0",
     "render_readme": true,
-    "icon": "mdi:ev-station",
+    "icon": "mdi:lightning-bolt",
     "zip_release": true,
     "filename": "dynamic-ocpp-evse.zip"
 }

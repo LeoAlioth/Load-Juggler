@@ -1,6 +1,6 @@
 {
   "domain": "dynamic_ocpp_evse",
-  "name": "Dynamic OCPP EVSE",
+  "name": "Load Juggler",
   "documentation": "https://github.com/LeoAlioth/dynamic_ocpp_evse",
   "dependencies": [],
   "after_dependencies": ["ocpp"],
@@ -10,5 +10,5 @@
   "integration_type": "device",
   "iot_class": "local_polling",
   "config_flow": true,
-  "icon": "mdi:ev-station"
+  "icon": "mdi:lightning-bolt"
 }

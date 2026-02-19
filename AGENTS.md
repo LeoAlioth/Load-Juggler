@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Dynamic OCPP EVSE is a Home Assistant custom component that provides intelligent EV charging control via OCPP 1.6J protocol. It dynamically adjusts charging current based on solar production, battery state, grid capacity, and user-defined charging modes.
+Load Juggler is a Home Assistant custom component for intelligent load management. It dynamically distributes available power across managed loads — EV chargers (via OCPP 1.6J), smart plugs, and more — based on solar production, battery state, grid capacity, and per-load operating modes.
 
 **Key Capabilities:**
 
-- Multiple charging modes (Standard, Eco, Solar, Excess)
-- Multi-charger support with priority-based distribution
+- Per-load operating modes (Standard, Solar Priority, Solar Only, Excess for EVSE; Continuous, Solar Only, Excess for plugs)
+- Multi-load support with priority-based distribution and mode urgency sorting
 - Battery integration with SOC thresholds
 - Phase-aware handling (1-phase, 2-phase, 3-phase installations)
 - Symmetric and asymmetric inverter support
@@ -87,18 +87,18 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 1. Calculate absolute site limits (per-phase physical constraints)
    → _calculate_site_limit()
      ├─ _calculate_grid_limit()      (grid capacity based on breaker rating)
-     └─ _calculate_inverter_limit()  (solar + battery for Standard mode)
+     └─ _calculate_inverter_limit()  (solar + battery)
    ↓
 2. Calculate solar surplus power (includes battery charge/discharge)
    → _calculate_solar_surplus()
    ↓
-3. Calculate excess available power (Excess mode only)
+3. Calculate excess available power
    → _calculate_excess_available()
    ↓
-4. Determine target power based on charging mode
-   → _determine_target_power()
+4. Compute per-load ceilings based on each load's operating mode
+   → _compute_charger_ceiling() per load (mode-aware, uses solar/excess pools)
    ↓
-5. Distribute power among chargers
+5. Distribute power among loads (sorted by mode urgency + priority)
    → _distribute_power()
 ```
 
@@ -116,11 +116,11 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Derived: total_export_current, total_export_power (computed properties)
 - Battery: battery_soc, battery_soc_min, battery_soc_target, battery_max_charge/discharge_power
 - Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric
-- Charging: charging_mode, distribution_mode, chargers[]
+- Charging: distribution_mode, chargers[]
 
-**LoadContext** (`calculations/models.py`) — Represents a single EVSE:
+**LoadContext** (`calculations/models.py`) — Represents a single managed load (EVSE or smart plug):
 
-- Config: entity_id, min_current, max_current, phases, car_phases, priority
+- Config: charger_id, min_current, max_current, phases, car_phases, priority, device_type, operating_mode
 - Status: connector_status (Available, Charging, etc.)
 - Phase tracking: active_phases_mask ("A", "B", "C", "AB", "BC", "AC", "ABC")
 - Current: l1_current, l2_current, l3_current (actual OCPP draw)
@@ -158,11 +158,11 @@ When chargers have explicit phase assignments (e.g., `l1_phase: "B"`):
 - Each phase is allocated independently via `_distribute_power()`
 - 3-phase chargers limited by minimum available phase
 
-## Charging & Distribution Modes
+## Operating & Distribution Modes
 
-Four charging modes: **Standard** (max speed from all sources), **Eco** (solar-first with min rate fallback), **Solar** (pure solar only), **Excess** (threshold-based export charging). See [CHARGE_MODES_GUIDE.md](CHARGE_MODES_GUIDE.md) for full details.
+Per-load operating modes (set independently per load): **Standard** (EVSE: max speed from all sources), **Continuous** (Plug: always on), **Solar Priority** (solar-first with min rate fallback), **Solar Only** (pure solar only), **Excess** (threshold-based export charging). Mode urgency: Standard/Continuous > Solar Priority > Solar Only > Excess. See [CHARGE_MODES_GUIDE.md](CHARGE_MODES_GUIDE.md) for full details.
 
-Four distribution modes for multi-charger setups: **Shared** (equal split), **Priority** (higher priority first), **Optimized** (sequential with leftover sharing), **Strict** (sequential, no sharing). See [DISTRIBUTION_MODES_GUIDE.md](DISTRIBUTION_MODES_GUIDE.md) for full details.
+Four distribution modes for multi-load setups: **Shared** (equal split), **Priority** (higher priority first), **Optimized** (sequential with leftover sharing), **Strict** (sequential, no sharing). See [DISTRIBUTION_MODES_GUIDE.md](DISTRIBUTION_MODES_GUIDE.md) for full details.
 
 ## Development
 
@@ -177,7 +177,7 @@ Four distribution modes for multi-charger setups: **Shared** (equal split), **Pr
 
 ### Adding New Features
 
-1. **Charging Mode**: Add to `_determine_target_power()` in `target_calculator.py`
+1. **Operating Mode**: Add ceiling logic in `_compute_charger_ceiling()` in `target_calculator.py`
 2. **Distribution Mode**: Add to `target_calculator.py` as `_distribute_<mode>()`
 3. **Test Scenarios**: Create YAML scenarios in `dev/tests/scenarios/`
 4. **Documentation**: Update CHARGE_MODES_GUIDE.md, README.md
@@ -229,7 +229,6 @@ scenarios:
     human_verified: false
     site:
       voltage: 230
-      charging_mode: Solar
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -237,6 +236,7 @@ scenarios:
         phases: 3
         priority: 1
         l1_phase: "A"
+        operating_mode: "Solar Only"
     expected:
       charger_1:
         allocated: 10.0

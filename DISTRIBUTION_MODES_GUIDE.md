@@ -1,6 +1,6 @@
-# Dynamic OCPP EVSE - Distribution Modes Guide
+# Load Juggler - Distribution Modes Guide
 
-When multiple chargers are connected to a single hub, the distribution mode determines how available current is allocated between them. All modes use a two-step approach: first ensure minimums, then distribute the remainder.
+When multiple loads are connected to a single hub, the distribution mode determines how available current is allocated between them. All modes use a two-step approach: first ensure minimums, then distribute the remainder.
 
 ## Quick Comparison
 
@@ -157,17 +157,18 @@ Processing:
 
 ## Configuration
 
-### Charger-Level Parameters
+### Load-Level Parameters
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| **Charger Priority** | Priority for distribution (1-10, lower = higher) | 1 |
-| **Min Current** | Minimum charge rate (A) — charger gets this or 0 | 6A |
+| **Load Priority** | Priority for distribution (1-10, lower = higher) | 1 |
+| **Min Current** | Minimum charge rate (A) — load gets this or 0 | 6A |
 | **Max Current** | Maximum charge rate (A) | 16A |
 
 ### Key Rules
 
-- Chargers need >= min_current or they get 0A (can't charge below minimum)
-- Distribution mode is set at the **hub level** (applies to all chargers on that hub)
+- Loads need >= min_current or they get 0A (can't operate below minimum)
+- Distribution mode is set at the **hub level** (applies to all loads on that hub)
 - Priority value 1 is highest, 10 is lowest
-- Only chargers with connector_status = "Charging" (car plugged in and ready) participate in distribution
+- Mode urgency takes precedence over priority number: Standard/Continuous loads are always allocated before Solar Priority, which comes before Solar Only, etc.
+- Only active loads participate in distribution (EVSE must have car plugged in and ready, smart plugs must be connected)

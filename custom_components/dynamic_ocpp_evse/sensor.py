@@ -144,6 +144,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         self._operating_mode = None  # Per-charger operating mode
         self._calc_used = None
         self._allocated_current = None
+        self._available_current = None  # What the charger could get if active
         self._last_update = datetime.min
         self._pause_started_at = None  # datetime when charge pause started
         self._grace_started_at = None  # datetime when Solar/Excess grace period started
@@ -190,6 +191,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             CONF_PHASES: self._phases,
             "detected_phases": self._detected_phases,
             "allocated_current": self._allocated_current,
+            "available_current": self._available_current,
             "last_update": self._last_update,
             "pause_active": self._pause_started_at is not None,
             "pause_remaining_seconds": pause_remaining,
@@ -617,12 +619,20 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
 
             if charger_targets:
                 charger_names = hub_data.get("charger_names", {})
+                charger_modes = hub_data.get("charger_modes", {})
+                charger_avail = hub_data.get("charger_available", {})
                 _LOGGER.debug("Charger targets: %s", ", ".join(
-                    [f"{charger_names.get(k, k[-8:])}: {v:.1f}A" for k, v in charger_targets.items()]
+                    [f"{charger_names.get(k, k[-8:])}({charger_modes.get(k, '?')}): "
+                     f"alloc={v:.1f}A avail={charger_avail.get(k, 0):.1f}A"
+                     for k, v in charger_targets.items()]
                 ))
 
             # Get this charger's raw allocated current from engine output
             raw_allocated = round(charger_targets.get(self.config_entry.entry_id, 0), 1)
+
+            # Get available current (what this charger could get if active)
+            charger_avail_data = hub_data.get("charger_available", {})
+            self._available_current = round(charger_avail_data.get(self.config_entry.entry_id, 0), 1)
 
             # --- Smoothing pipeline: EMA → dead band → rate limit ---
             # On mode change or first run: reset and pass through immediately.

@@ -1,4 +1,4 @@
-# Improvements
+# Load Juggler — Improvements
 
 This document is used for keeping notes of ideas for future implementations in no particular order. As long as the developer does not explicitly say to start implementing them, you can just use this as a reference for what might come, if that has any effect on current decisions. This will also keep any discussions about ideas. This way you can plan them easier with the developer.
 
@@ -136,3 +136,6 @@ Replaced flat counts with weighted scoring:
 - **#18** — Charge Offered instability (clock drift) → relative time profile mode implemented (CONF_PROFILE_VALIDITY_MODE)
 - **#19** — Solar mode not working → likely fixed by v2.0.0 solar refactoring; user testing v2.0.0-pre release
 - **#5** — HomeWizard P1 + WallBox setup → user testing v2.0.0
+
+## implement an additional load current limit
+If some devices are on the same circut, they also have a common limit lower than their sum. So i need to consider to somehow "group" devices together and limit how much current they can pull together.
