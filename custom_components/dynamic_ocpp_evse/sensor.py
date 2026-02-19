@@ -191,7 +191,6 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             CONF_PHASES: self._phases,
             "detected_phases": self._detected_phases,
             "allocated_current": self._allocated_current,
-            "available_current": self._available_current,
             "last_update": self._last_update,
             "pause_active": self._pause_started_at is not None,
             "pause_remaining_seconds": pause_remaining,
@@ -671,7 +670,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                     self._rate_limited_current = round(target, 1)
 
             self._allocated_current = self._rate_limited_current
-            self._state = self._rate_limited_current
+            self._state = self._available_current
 
             # --- Grace timer for Solar/Excess modes (anti-flicker) ---
             # When Solar/Excess conditions drop below minimum but site limits still
@@ -696,7 +695,6 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                         if elapsed < grace_period_seconds:
                             # Override: charge at min_current during grace
                             self._allocated_current = float(min_charge_current)
-                            self._state = self._allocated_current
                         else:
                             # Grace expired — let engine's 0 through (pause will kick in)
                             _LOGGER.info("Grace timer expired for %s after %dm — allowing pause",
