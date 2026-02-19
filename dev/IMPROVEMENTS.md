@@ -1,8 +1,8 @@
 # Improvements
 
-This document is used for keeping notes of ideas for future implementations in no particular order. As long as the developer does not expicitly say to start implementing them, you can just use this as a reference for what might come, if that has any effect on current decisions. This will also keep any discussions about ideas. This way you can plan them easier with the developer.
+This document is used for keeping notes of ideas for future implementations in no particular order. As long as the developer does not explicitly say to start implementing them, you can just use this as a reference for what might come, if that has any effect on current decisions. This will also keep any discussions about ideas. This way you can plan them easier with the developer.
 
-## Supports for chargers with multiple plugs
+## Support for chargers with multiple plugs
 **Status:** Not yet implemented
 **Complexity:** Medium
 
@@ -47,43 +47,8 @@ Behavior:
 
 ---
 
-## Moving charge mode selection from the site to the individual EVSE
-**Status:** Not yet implemented (const `CONF_CHARGER_CHARGING_MODE_ENTITY_ID` declared but unused)
-**Complexity:** High
-
-### Current State
-- Charging mode is set per-site (hub)
-- All chargers under a hub use the same mode
-- `CONF_CHARGER_CHARGING_MODE_ENTITY_ID` exists in const.py as a placeholder
-
-### Design Questions & Solutions
-
-#### Problem 1: Mixed Mode Priority Conflicts
-**Scenario:** Charger 1 (priority 1) = Eco, Charger 2 (priority 2) = Standard
-**Question:** If very little power is available, should Charger 1 get minimum rate while Charger 2 gets more?
-
-**Analysis:**
-- Priority mode currently orders by charger priority number (lower = higher priority)
-- With mixed modes, we have two competing orderings:
-  - `priority`: which charger goes first
-  - `mode urgency`: Standard > Eco > Solar > Excess
-
-**Proposed Solution 1: Mode-Aware Priority**
-We take charging modes as a priority, and only use the priority numbers to solve within the same charge mode.
-So a charger on Standard mode, always gets priority over a charger in eco mode.
-
-#### Implementation Steps (for future)
-1. Add `charging_mode` field to `LoadContext`
-2. Modify `_determine_target_power()` to accept per-charger modes
-3. Update distribution functions to handle mixed-mode constraints
-4. Create new constraint types for each mode's power pool
-5. Wire up config flow to use `CONF_CHARGER_CHARGING_MODE_ENTITY_ID`
-6. Create per-charger charging mode select entity
-
----
-
 ## Making this a general load management project
-**Status:** Phase 1 complete (smart plug support), Phases 2-3 not started
+**Status:** Phase 1 complete (smart plug + per-load operating modes), Phases 2-3 not started
 **Complexity:** High (but incremental path possible)
 
 ### Vision
@@ -101,12 +66,17 @@ The current architecture is already quite general:
 |---------------------|------------------------|
 | `LoadContext` | `LoadContext` |
 | `min_current` / `max_current` | `min_power` / `max_power` |
-| Charging mode | Control strategy |
+| Operating mode | Control strategy |
 | Priority distribution | Load prioritization |
 
 ### Progress
 
-**Phase 1: Smart Plug Support** — Done (TODO #6, #74).
+**Phase 1: Smart Plug + Per-Load Operating Modes** — Done (TODO #6, #74, #79-85).
+- Smart plug device type with power monitoring
+- Per-load operating mode selection (Continuous, Solar Priority, Solar Only, Excess)
+- Dual-pool distribution engine (physical pool + mode-aware ceilings)
+- Mode urgency sorting (Continuous > Solar Priority > Solar Only > Excess)
+- Mixed-mode scenarios across chargers and plugs
 
 **Phase 2: General Load Type** (higher effort, not started)
 - Create separate `Load` entity type alongside `Charger`
@@ -120,6 +90,33 @@ The current architecture is already quite general:
 
 ---
 
+## Auto-detect scoring: confidence-weighted points instead of flat sample counts
+
+**Status:** Implemented (TODO #91)
+**Complexity:** Medium
+
+### Problem
+Flat sample counts (notify at 10, remap at 30) were too slow when phase mapping was wrong — the engine would oscillate (allocate wrong phase → pause → resume → repeat) for 30+ cycles before correcting. Some cars refuse to charge after too many interruptions.
+
+### Implementation
+Replaced flat counts with weighted scoring:
+- `weight = min(abs(delta_draw), 15) / 5` — strong signals (large current swings) score higher
+- Notify at score >= 6.0, auto-remap at score >= 15.0
+- Soft decay (×0.5) on inconclusive data instead of hard reset — preserves partial progress
+- Strong oscillation signals (20A swings) trigger remap in ~5 samples vs 30 flat samples
+
+### EV Charging Interruption Research (reference)
+
+**No hard standard exists.** IEC 61851 defines CP pilot signal states but does NOT specify max start/stop cycles. Behavior is OEM-specific:
+- **Most EVs auto-retry** — no universal "3 strikes" rule
+- **Some cars fault after rapid cycling** — Kia EV6, Ford Mach-E, Renault ZOE reported, ~5 to ~20+ cycles
+- **Tesla** generally tolerant, retries indefinitely
+- **Hyundai/Kia ICCU** known to be fragile
+
+**evcc's approach:** `guardduration` 5 min between start/stop, `disable.delay` 30 min before pausing. Their `Min+Solar` mode never stops charging — designed for sensitive cars.
+
+**Key insight:** The danger is full start/stop transitions (CP state C→B→C), not gradual current changes. The auto-detect remap eliminates the root cause of oscillation.
+
 ---
 
 ## GitHub issue triage (reviewed 2026-02-17)
@@ -128,11 +125,11 @@ The current architecture is already quite general:
 - **#3** — `UnboundLocalError: target_evse` + deprecated methods → v1.1.1 code, fully rewritten in v2.0.0
 - **#7** — Single phase installation validation error → fixed since v1.2.1 (phases 2/3 optional)
 - **#12** — Multi-charger support → implemented in v2.0.0
-- **#14** — Huawei charger rejecting Amps profiles → charge rate unit auto-detection added (TODO #14)
-- **#13** — Conditional entity visibility → implemented (TODO #53, Phase B/C hiding + battery entities)
-- **#11** — User guide / documentation → README.md rewritten (TODO #55)
+- **#14** — Huawei charger rejecting Amps profiles → charge rate unit auto-detection added (TODO #7)
+- **#13** — Conditional entity visibility → implemented (TODO #29, Phase B/C hiding + battery entities)
+- **#11** — User guide / documentation → README.md rewritten (TODO #31)
 - **#9** — "Allow grid charging" documentation → covered in README.md
-- **#8** — Time-of-day charging → HA service actions implemented (TODO #54)
+- **#8** — Time-of-day charging → HA service actions implemented (TODO #30)
 - **#4** — Helper setting clarification → old v1.x question, resolved
 
 ### Need follow-up testing on v2.0.0

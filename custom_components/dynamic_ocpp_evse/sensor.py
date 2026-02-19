@@ -139,6 +139,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         self._charge_control_entity = f"switch.{charger_entity_id}_charge_control"
         self._state = None
         self._phases = None
+        self._car_active_phases = None  # Actual car phase count for W conversion
         self._detected_phases = None  # Remembered phase count from actual charging
         self._operating_mode = None  # Per-charger operating mode
         self._calc_used = None
@@ -419,7 +420,9 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         # Convert limit based on charge rate unit
         if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
             voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
-            phases_for_profile = self._phases if self._phases else 1
+            # Use car's actual active phases (not charger hardware phases)
+            # to avoid 3x over-allocation for 1-phase cars on 3-phase EVSEs
+            phases_for_profile = self._car_active_phases or self._phases or 1
             limit_for_charger = round(limit * voltage * phases_for_profile, 0)
             rate_unit = "W"
             self._last_set_power = limit_for_charger
@@ -547,6 +550,10 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
 
             # Store charger-level calculation results
             self._phases = hub_data.get(CONF_PHASES)
+            charger_active_phases = hub_data.get("charger_active_phases", {})
+            self._car_active_phases = charger_active_phases.get(
+                self.config_entry.entry_id, self._phases or 1,
+            )
             current_distribution_mode = hub_data.get("distribution_mode")
 
             # Read per-charger operating mode from hub_data

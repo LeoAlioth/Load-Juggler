@@ -48,6 +48,7 @@ from custom_components.dynamic_ocpp_evse.calculations.models import (
 from custom_components.dynamic_ocpp_evse.auto_detect import (
     check_inversion, check_phase_mapping,
     _INV_WINDOW_SIZE, _INV_THRESHOLD,
+    _PM_NOTIFY_SCORE, _PM_REMAP_SCORE,
 )
 
 
@@ -210,14 +211,14 @@ class TestPhaseMappingDetection:
         assert result == []
 
     def test_symmetric_3phase_no_notification(self):
-        """3-phase charger with 3-phase OBC (symmetric draw) → inconclusive, no notification.
+        """3-phase charger with 3-phase OBC (symmetric draw) → inconclusive.
 
-        When all phases draw equally, the total-draw correlation matches all
-        grid phases equally → ratio ≈ 0.33 < 0.70 → inconclusive.
+        When all phases draw equally, active_lines == 3 → skipped entirely.
+        No score accumulation, no notification.
         """
         state = {}
-        for i in range(35):
-            draw = max(0, (i - 2) * 0.8)
+        for i in range(25):
+            draw = max(0, (i - 2) * 2.0)
             charger = _make_charger(
                 l1_current=draw, l2_current=draw, l3_current=draw,
                 l1_phase="A", l2_phase="B", l3_phase="C",
@@ -237,8 +238,8 @@ class TestPhaseMappingDetection:
         """
         state = {}
         notified = False
-        for i in range(50):
-            draw = max(0, (i - 2) * 0.8)
+        for i in range(30):
+            draw = max(0, (i - 2) * 2.0)
             charger = _make_charger(
                 phases=3, l1_current=draw, l2_current=0, l3_current=0,
                 l1_phase="A",  # configured: L1→A (WRONG)
@@ -257,8 +258,8 @@ class TestPhaseMappingDetection:
     def test_1phase_obc_on_3phase_evse_correct_no_notification(self):
         """3-phase EVSE with 1-phase OBC car on correct phase → no notification."""
         state = {}
-        for i in range(35):
-            draw = max(0, (i - 2) * 0.8)
+        for i in range(25):
+            draw = max(0, (i - 2) * 2.0)
             charger = _make_charger(
                 phases=3, l1_current=draw, l2_current=0, l3_current=0,
                 l1_phase="A",  # configured: L1→A (correct)
@@ -270,15 +271,63 @@ class TestPhaseMappingDetection:
                 f"False mismatch at cycle {i}"
 
     def test_notification_fires_only_once(self):
-        """After conclusion (notified=True), no repeat."""
+        """After remapped=True, no repeat."""
         state = {"phase_map": {"c1": {
             "prev_draw": 0, "prev_grid_a": 0, "prev_grid_b": 0, "prev_grid_c": 0,
-            "corr": {"A": 0, "B": 0, "C": 0},
-            "sample_count": 0, "notified": True,
+            "score": {"A": 0.0, "B": 0.0, "C": 0.0},
+            "score_2ph": {"A": 0.0, "B": 0.0, "C": 0.0},
+            "inactive_line": None,
+            "notify_sent_1ph": False, "notify_sent_2ph": False,
+            "confirmed_1ph": False, "confirmed_2ph": False,
+            "remapped": True,
         }}}
         charger = _make_charger(l1_current=10, l2_current=10, l3_current=10)
         result = check_phase_mapping(state, [15.0, 13.0, 14.0], [charger], "hub1")
         assert result == []
+
+    def test_auto_remap_after_sufficient_score(self):
+        """Phase mismatch triggers notification first, then auto-remap."""
+        state = {}
+        notification_cycle = None
+        remap_cycle = None
+        for i in range(60):
+            draw = max(0, (i - 2) * 2.0)
+            charger = _make_charger(
+                phases=3, l1_current=draw, l2_current=0, l3_current=0,
+                l1_phase="A",  # configured: A (WRONG)
+            )
+            # Physical: draw on phase B
+            smoothed = [5.0, 3.0 + draw, 4.0]
+            result = check_phase_mapping(state, smoothed, [charger], "hub1")
+            if result:
+                if notification_cycle is None:
+                    notification_cycle = i
+                    assert "Mismatch" in result[0]["title"]
+                if "auto_remap" in result[0]:
+                    remap_cycle = i
+                    assert result[0]["auto_remap"]["l1_phase"] == "B"
+                    break
+
+        assert notification_cycle is not None, "Expected notification"
+        assert remap_cycle is not None, "Expected auto-remap"
+        assert remap_cycle > notification_cycle
+
+    def test_noisy_data_no_false_notification(self):
+        """Noisy per-phase data (no clear leader) → no notification, scores decay."""
+        state = {}
+        for i in range(100):
+            draw = max(0, (i - 2) * 2.0)
+            charger = _make_charger(
+                phases=3, l1_current=draw, l2_current=0, l3_current=0,
+                l1_phase="A",
+            )
+            # Rotate which grid phase shows the draw → no clear winner
+            phase_idx = i % 3
+            smoothed = [5.0, 3.0, 4.0]
+            smoothed[phase_idx] += draw
+            result = check_phase_mapping(state, smoothed, [charger], "hub1")
+            assert all("Mismatch" not in n.get("title", "") for n in result), \
+                f"False mismatch at cycle {i}"
 
 
 class TestSinglePhaseDetection:
@@ -287,8 +336,8 @@ class TestSinglePhaseDetection:
     def test_single_phase_correct_phase_no_notification(self):
         """1-phase charger on phase A, actually on A → no notification."""
         state = {}
-        for i in range(35):
-            draw = max(0, (i - 2) * 0.8)
+        for i in range(25):
+            draw = max(0, (i - 2) * 2.0)
             charger = _make_charger(
                 phases=1, l1_current=draw, l2_current=0, l3_current=0,
                 l1_phase="A",
@@ -303,8 +352,8 @@ class TestSinglePhaseDetection:
         """1-phase charger configured on A, but actually on B → mismatch."""
         state = {}
         notified = False
-        for i in range(50):
-            draw = max(0, (i - 2) * 0.8)
+        for i in range(30):
+            draw = max(0, (i - 2) * 2.0)
             charger = _make_charger(
                 phases=1, l1_current=draw, l2_current=0, l3_current=0,
                 l1_phase="A",  # configured: A (WRONG)
@@ -323,8 +372,8 @@ class TestSinglePhaseDetection:
     def test_plug_correct_phase_no_notification(self):
         """Smart plug on phase C, actually on C → no notification."""
         state = {}
-        for i in range(35):
-            draw = max(0, (i - 2) * 0.8)
+        for i in range(25):
+            draw = max(0, (i - 2) * 2.0)
             charger = _make_charger(
                 phases=1, device_type="plug",
                 l1_current=draw, l2_current=0, l3_current=0,
@@ -340,8 +389,8 @@ class TestSinglePhaseDetection:
         """Smart plug configured on A, but actually on C → mismatch."""
         state = {}
         notified = False
-        for i in range(50):
-            draw = max(0, (i - 2) * 0.8)
+        for i in range(30):
+            draw = max(0, (i - 2) * 2.0)
             charger = _make_charger(
                 phases=1, device_type="plug",
                 l1_current=draw, l2_current=0, l3_current=0,
@@ -359,15 +408,161 @@ class TestSinglePhaseDetection:
         assert notified, "Expected plug phase mismatch notification"
 
     def test_single_phase_notification_fires_only_once(self):
-        """After conclusion, no repeat for single-phase."""
+        """After remapped=True, no repeat for single-phase."""
         state = {"phase_map": {"c1": {
             "prev_draw": 0, "prev_grid_a": 0, "prev_grid_b": 0, "prev_grid_c": 0,
-            "corr": {"A": 0, "B": 0, "C": 0},
-            "sample_count": 0, "notified": True,
+            "score": {"A": 0.0, "B": 0.0, "C": 0.0},
+            "score_2ph": {"A": 0.0, "B": 0.0, "C": 0.0},
+            "inactive_line": None,
+            "notify_sent_1ph": False, "notify_sent_2ph": False,
+            "confirmed_1ph": False, "confirmed_2ph": False,
+            "remapped": True,
         }}}
         charger = _make_charger(phases=1, l1_current=10)
         result = check_phase_mapping(state, [15.0, 3.0, 4.0], [charger], "hub1")
         assert result == []
+
+
+# ===========================================================================
+# Feature 2b: Two-Phase Car Detection (inactive line mapping)
+# ===========================================================================
+
+class TestTwoPhaseDetection:
+    """Tests for 2-phase car → inactive line phase detection."""
+
+    def test_2phase_inactive_line_wrong_phase_detected(self):
+        """2-phase car on 3-phase EVSE: inactive L3 detected on A, mapped to C → mismatch."""
+        state = {}
+        notified = False
+        for i in range(30):
+            draw = max(0, (i - 2) * 2.0)
+            charger = _make_charger(
+                phases=3,
+                l1_current=draw, l2_current=draw, l3_current=0,
+                l1_phase="A", l2_phase="B", l3_phase="C",  # configured
+            )
+            # Physical: L1 on B, L2 on C, L3 on A (inactive)
+            # Phase A stays flat, B and C increase with draw
+            smoothed = [5.0, 3.0 + draw, 4.0 + draw]
+            result = check_phase_mapping(state, smoothed, [charger], "hub1")
+            if result:
+                notified = True
+                assert "Mismatch" in result[0]["title"]
+                assert "L3" in result[0]["message"]
+                assert "A" in result[0]["message"]  # detected phase
+                break
+
+        assert notified, "Expected 2-phase inactive line mismatch notification"
+
+    def test_2phase_correct_mapping_no_notification(self):
+        """2-phase car, correct mapping (L3 on C) → confirmed, no notification."""
+        state = {}
+        for i in range(25):
+            draw = max(0, (i - 2) * 2.0)
+            charger = _make_charger(
+                phases=3,
+                l1_current=draw, l2_current=draw, l3_current=0,
+                l1_phase="A", l2_phase="B", l3_phase="C",
+            )
+            # Physical: L1 on A, L2 on B, L3 on C (correct)
+            # Phase C doesn't change, A and B increase
+            smoothed = [5.0 + draw, 3.0 + draw, 4.0]
+            result = check_phase_mapping(state, smoothed, [charger], "hub1")
+            assert all("Mismatch" not in n.get("title", "") for n in result), \
+                f"False mismatch at cycle {i}"
+
+        # L3 confirmed on C
+        cs = state["phase_map"]["c1"]
+        assert cs.get("confirmed_2ph") is True
+
+    def test_combined_1ph_then_2ph_full_verification(self):
+        """1-phase car confirms L1, then 2-phase car confirms L3 → full verification."""
+        state = {}
+
+        # Phase 1: single-phase car — L1 draws on phase A (correct)
+        for i in range(20):
+            draw = max(0, (i - 2) * 2.0)
+            charger = _make_charger(
+                phases=3,
+                l1_current=draw, l2_current=0, l3_current=0,
+                l1_phase="A", l2_phase="B", l3_phase="C",
+            )
+            smoothed = [5.0 + draw, 3.0, 4.0]
+            result = check_phase_mapping(state, smoothed, [charger], "hub1")
+            assert result == [], f"Unexpected notification at 1ph cycle {i}"
+
+        cs = state["phase_map"]["c1"]
+        assert cs["confirmed_1ph"] is True
+        assert cs["confirmed_2ph"] is False
+
+        # Phase 2: two-phase car — L3 inactive, non-correlating on C (correct)
+        for i in range(20):
+            draw = max(0, (i - 2) * 2.0)
+            charger = _make_charger(
+                phases=3,
+                l1_current=draw, l2_current=draw, l3_current=0,
+                l1_phase="A", l2_phase="B", l3_phase="C",
+            )
+            smoothed = [5.0 + draw, 3.0 + draw, 4.0]
+            result = check_phase_mapping(state, smoothed, [charger], "hub1")
+            assert result == [], f"Unexpected notification at 2ph cycle {i}"
+
+        assert cs["confirmed_1ph"] is True
+        assert cs["confirmed_2ph"] is True
+
+    def test_inactive_line_change_resets_2ph_tracking(self):
+        """When a different 2-phase car plugs in (different inactive line),
+        the 2-phase score data resets."""
+        state = {}
+
+        # Car 1: L3 inactive, builds up a few samples
+        for i in range(8):
+            draw = max(0, (i - 2) * 0.8)
+            charger = _make_charger(
+                phases=3,
+                l1_current=draw, l2_current=draw, l3_current=0,
+                l1_phase="A", l2_phase="B", l3_phase="C",
+            )
+            smoothed = [5.0 + draw, 3.0 + draw, 4.0]
+            check_phase_mapping(state, smoothed, [charger], "hub1")
+
+        cs = state["phase_map"]["c1"]
+        assert cs["inactive_line"] == "l3"
+        assert sum(cs["score_2ph"].values()) > 0
+        # Car 1 (correct mapping, L3→C) accumulated on phase C
+        assert cs["score_2ph"]["C"] > 0
+
+        # Car 2: L2 inactive — different inactive line triggers reset
+        for i in range(3):
+            draw = 5.0 + i * 2.0
+            charger = _make_charger(
+                phases=3,
+                l1_current=draw, l2_current=0, l3_current=draw,
+                l1_phase="A", l2_phase="B", l3_phase="C",
+            )
+            smoothed = [5.0 + draw, 3.0, 4.0 + draw]
+            check_phase_mapping(state, smoothed, [charger], "hub1")
+
+        assert cs["inactive_line"] == "l2"
+        # Reset wiped car 1's phase C accumulation
+        assert cs["score_2ph"]["C"] == 0.0
+
+    def test_2phase_on_single_phase_evse_skipped(self):
+        """2-phase detection only runs on 3-phase EVSEs (phases >= 3)."""
+        state = {}
+        for i in range(20):
+            draw = max(0, (i - 2) * 2.0)
+            charger = _make_charger(
+                phases=1,  # single-phase EVSE
+                l1_current=draw, l2_current=draw, l3_current=0,
+                l1_phase="A",
+            )
+            smoothed = [5.0 + draw, 3.0 + draw, 4.0]
+            check_phase_mapping(state, smoothed, [charger], "hub1")
+
+        cs = state["phase_map"]["c1"]
+        # No 2-phase data accumulated (charger.phases < 3)
+        assert sum(cs.get("score_2ph", {"A": 0, "B": 0, "C": 0}).values()) == 0
 
 
 # ---------------------------------------------------------------------------
