@@ -1,0 +1,394 @@
+# Test scenarios: Circuit groups — shared breaker limits for co-located loads
+# Circuit groups enforce a per-phase current limit on a subset of loads.
+# Post-distribution capping: the engine distributes normally, then caps groups.
+
+scenarios:
+
+  # --- Basic capping ---
+
+  - name: "group-3ph-two-chargers-capped"
+    description: "Two 3ph chargers on 20A group, 25A site — second charger capped by group"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      inverter_max_power: 17000
+      inverter_max_power_per_phase: 5700
+      circuit_groups:
+        - name: "garage"
+          current_limit: 20
+          members: ["charger_1", "charger_2"]
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+      - entity_id: "charger_2"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+    expected:
+      charger_1:
+        allocated: 16.0  # Priority 1 gets full 16A first
+      charger_2:
+        allocated: 0.0   # 20A - 16A = 4A remaining < 6A min → 0
+
+  - name: "group-3ph-two-chargers-both-fit"
+    description: "Two 3ph chargers on 24A group — both fit at reduced current"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+      distribution_mode: shared
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      inverter_max_power: 22000
+      inverter_max_power_per_phase: 7400
+      circuit_groups:
+        - name: "garage"
+          current_limit: 24
+          members: ["charger_1", "charger_2"]
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+      - entity_id: "charger_2"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+    expected:
+      charger_1:
+        allocated: 15.0  # Shared: each gets (32-2)/2 = 15A, then group cap 24A → 15+9=24 → charger_1 keeps 15
+      charger_2:
+        allocated: 9.0   # 24 - 15 = 9A remaining ≥ 6A min → 9A
+
+  - name: "group-3ph-one-inactive"
+    description: "Two 3ph chargers on 20A group — one inactive, other gets full allocation"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      inverter_max_power: 17000
+      inverter_max_power_per_phase: 5700
+      circuit_groups:
+        - name: "garage"
+          current_limit: 20
+          members: ["charger_1", "charger_2"]
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+      - entity_id: "charger_2"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+        active: false
+    expected:
+      charger_1:
+        allocated: 16.0  # Only active charger, 16A < 20A group limit → uncapped
+      charger_2:
+        allocated: 0.0   # Inactive
+
+  # --- Phase-aware capping ---
+
+  - name: "group-1ph-same-phase-capped"
+    description: "Two 1ph chargers on same phase in 16A group — second charger capped"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.0
+      inverter_max_power: 8050
+      inverter_max_power_per_phase: 8050
+      circuit_groups:
+        - name: "kitchen"
+          current_limit: 16
+          members: ["charger_1", "charger_2"]
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "charger_2"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+    expected:
+      charger_1:
+        allocated: 16.0  # Priority 1 gets full 16A
+      charger_2:
+        allocated: 0.0   # 16 - 16 = 0A remaining < 6A min → 0
+
+  - name: "group-1ph-different-phases-no-conflict"
+    description: "Two 1ph chargers on different phases in 16A group — no capping needed"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 24150
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      inverter_max_power: 24000
+      inverter_max_power_per_phase: 8000
+      circuit_groups:
+        - name: "garage"
+          current_limit: 16
+          members: ["charger_1", "charger_2"]
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "charger_2"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        l1_phase: "B"
+    expected:
+      charger_1:
+        allocated: 16.0  # Phase A: 16A ≤ 16A group limit → OK
+      charger_2:
+        allocated: 16.0  # Phase B: 16A ≤ 16A group limit → OK (different phase)
+
+  # --- Priority and mode ordering ---
+
+  - name: "group-mixed-priority"
+    description: "Two chargers in group — higher priority keeps allocation, lower capped"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      inverter_max_power: 22000
+      inverter_max_power_per_phase: 7400
+      circuit_groups:
+        - name: "garage"
+          current_limit: 20
+          members: ["charger_1", "charger_2"]
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+      - entity_id: "charger_2"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+    expected:
+      charger_1:
+        allocated: 16.0  # Priority 1 gets full allocation
+      charger_2:
+        allocated: 0.0   # 20 - 16 = 4A < 6A min → 0
+
+  - name: "group-mixed-modes-urgency"
+    description: "Standard charger keeps allocation over Solar Only in group"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+      distribution_mode: priority
+      solar_production: 6000
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: 90
+      battery_soc_target: 80
+      battery_soc_min: 20
+      inverter_max_power: 22000
+      inverter_max_power_per_phase: 7400
+      circuit_groups:
+        - name: "garage"
+          current_limit: 14
+          members: ["charger_1", "charger_2"]
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+      - entity_id: "charger_2"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+    expected:
+      charger_1:
+        allocated: 14.0  # Standard (urgency 0) > Solar Only (urgency 2), gets group limit first
+      charger_2:
+        allocated: 0.0   # 14 - 14 = 0A < 6A min → 0
+
+  # --- No group / unconstrained ---
+
+  - name: "group-limit-above-sum-no-effect"
+    description: "Group limit higher than sum of max_currents — no capping"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 27600
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      inverter_max_power: 27000
+      inverter_max_power_per_phase: 9000
+      circuit_groups:
+        - name: "garage"
+          current_limit: 40
+          members: ["charger_1", "charger_2"]
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+      - entity_id: "charger_2"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+    expected:
+      charger_1:
+        allocated: 16.0  # 16 + 16 = 32 < 40 group limit → no capping
+      charger_2:
+        allocated: 16.0
+
+  - name: "group-not-member-unaffected"
+    description: "Charger not in group is unaffected by group limit"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      inverter_max_power: 22000
+      inverter_max_power_per_phase: 7400
+      circuit_groups:
+        - name: "garage"
+          current_limit: 20
+          members: ["charger_1"]
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+      - entity_id: "charger_2"
+        operating_mode: Standard
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+    expected:
+      charger_1:
+        allocated: 16.0  # In group but under limit
+      charger_2:
+        allocated: 14.0  # Not in group, gets remaining site capacity (32-2-16=14)

@@ -102,6 +102,15 @@ class PhaseValues:
 
 
 @dataclass
+class CircuitGroup:
+    """A group of loads sharing a common circuit breaker."""
+    group_id: str
+    name: str
+    current_limit: float  # Per-phase current limit (A)
+    member_ids: list[str] = field(default_factory=list)  # charger_ids of member loads
+
+
+@dataclass
 class SiteContext:
     """Site-wide electrical system state and configuration."""
     # Grid/Power configuration
@@ -148,6 +157,9 @@ class SiteContext:
 
     # Chargers at this site
     chargers: list[LoadContext] = field(default_factory=list)
+
+    # Circuit groups (shared breaker limits)
+    circuit_groups: list[CircuitGroup] = field(default_factory=list)
 
     @property
     def num_phases(self) -> int:

@@ -4,6 +4,7 @@ DOMAIN = "dynamic_ocpp_evse"
 ENTRY_TYPE = "entry_type"
 ENTRY_TYPE_HUB = "hub"
 ENTRY_TYPE_CHARGER = "charger"
+ENTRY_TYPE_GROUP = "group"
 
 # configuration keys - common
 CONF_NAME = "name"
@@ -73,6 +74,12 @@ CONF_PLUG_POWER_RATING = "plug_power_rating"  # Fixed power draw in watts
 CONF_PLUG_POWER_MONITOR_ENTITY_ID = "plug_power_monitor_entity_id"  # Optional power monitoring sensor
 CONF_CONNECTED_TO_PHASE = "connected_to_phase"  # Which phase(s) the device is wired to
 DEFAULT_PLUG_POWER_RATING = 2000
+
+# Circuit group — shared breaker limit for co-located loads
+DEVICE_TYPE_GROUP = "group"
+CONF_CIRCUIT_GROUP_CURRENT_LIMIT = "circuit_group_current_limit"
+CONF_CIRCUIT_GROUP_MEMBERS = "circuit_group_members"
+DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT = 20
 
 # OCPP charger L1/L2/L3 → site phase mapping
 CONF_CHARGER_L1_PHASE = "charger_l1_phase"

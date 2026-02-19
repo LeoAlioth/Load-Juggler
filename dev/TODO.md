@@ -97,6 +97,9 @@
 93. - [x] Charger targets log: show both allocated and available current
 94. - [x] Expose `available_current` as sensor attribute in HA
 
+95. - [x] Available Current sensor shows available (not allocated) current in HA
+96. - [x] Circuit Groups — shared breaker limits (post-distribution capping, PhaseConstraints reuse, 9 test scenarios)
+
 ## In Progress
 
 (none)

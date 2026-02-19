@@ -473,6 +473,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         DEVICE_TYPE_EVSE if setup_type == "evse" else DEVICE_TYPE_PLUG
                     )
                     return await self.async_step_select_hub()
+            elif setup_type == "group":
+                if not hubs:
+                    errors["base"] = "no_hub_configured"
+                else:
+                    self._data[CONF_DEVICE_TYPE] = DEVICE_TYPE_GROUP
+                    return await self.async_step_select_hub()
 
         # Build options based on existing hubs
         options = [
@@ -481,6 +487,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if hubs:
             options.append({"value": "evse", "label": "Add OCPP Charger (EVSE)"})
             options.append({"value": "plug", "label": "Add Smart Outlet / Relay"})
+            options.append({"value": "group", "label": "Add Circuit Group (Shared Breaker)"})
 
         data_schema = vol.Schema({
             vol.Required("setup_type", default="hub" if not hubs else "evse"): selector({
@@ -711,8 +718,11 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _route_after_hub_selection(self) -> config_entries.FlowResult:
         """Route to the correct step after hub is selected."""
-        if self._data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG:
+        device_type = self._data.get(CONF_DEVICE_TYPE)
+        if device_type == DEVICE_TYPE_PLUG:
             return await self.async_step_plug_config()
+        if device_type == DEVICE_TYPE_GROUP:
+            return await self.async_step_group_config()
         return await self.async_step_discover_chargers()
 
     async def async_step_select_hub(
@@ -800,6 +810,109 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
             last_step=True,
         )
+
+    # ==================== CIRCUIT GROUP CONFIGURATION STEPS ====================
+
+    async def async_step_group_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Circuit group step 1: Name and current limit."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            self._data.update(user_input)
+            return await self.async_step_group_members()
+
+        data_schema = vol.Schema({
+            vol.Required(CONF_NAME, default="Circuit Group"): str,
+            vol.Required(CONF_ENTITY_ID, default="circuit_group"): str,
+            vol.Required(
+                CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
+                default=DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
+            ): selector({
+                "number": {
+                    "min": 1,
+                    "max": 100,
+                    "step": 1,
+                    "unit_of_measurement": "A",
+                    "mode": "box",
+                }
+            }),
+        })
+
+        return self.async_show_form(
+            step_id="group_config",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=False,
+        )
+
+    async def async_step_group_members(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Circuit group step 2: Select member loads."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            selected = user_input.get(CONF_CIRCUIT_GROUP_MEMBERS, [])
+            if not selected:
+                errors["base"] = "no_members_selected"
+            else:
+                self._data[CONF_CIRCUIT_GROUP_MEMBERS] = selected
+
+                group_name = self._data.get(CONF_NAME, "Circuit Group")
+                group_entity_id = self._data.get(CONF_ENTITY_ID, "circuit_group")
+
+                static_data = {
+                    CONF_ENTITY_ID: group_entity_id,
+                    CONF_NAME: group_name,
+                    ENTRY_TYPE: ENTRY_TYPE_GROUP,
+                    CONF_DEVICE_TYPE: DEVICE_TYPE_GROUP,
+                    CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
+                }
+                options_data = {
+                    CONF_CIRCUIT_GROUP_CURRENT_LIMIT: self._data.get(
+                        CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT
+                    ),
+                    CONF_CIRCUIT_GROUP_MEMBERS: selected,
+                }
+
+                return self._create_entry_and_seed_options(
+                    f"{group_name}", static_data, options_data
+                )
+
+        # Build list of loads on this hub for multi-select
+        hub_entry_id = self._data.get(CONF_HUB_ENTRY_ID)
+        load_options = []
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            if (entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+                    and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry_id):
+                load_options.append({
+                    "value": entry.entry_id,
+                    "label": entry.title,
+                })
+
+        if not load_options:
+            errors["base"] = "no_loads_available"
+
+        data_schema = vol.Schema({
+            vol.Required(CONF_CIRCUIT_GROUP_MEMBERS): selector({
+                "select": {
+                    "options": load_options,
+                    "multiple": True,
+                    "mode": "list",
+                }
+            }),
+        })
+
+        return self.async_show_form(
+            step_id="group_members",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=True,
+        )
+
+    # ==================== EVSE CHARGER CONFIGURATION STEPS ====================
 
     async def async_step_discover_chargers(
         self, user_input: dict[str, Any] | None = None
@@ -1406,6 +1519,8 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             if self.config_entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG:
                 return await self.async_step_plug()
             return await self.async_step_charger()
+        if entry_type == ENTRY_TYPE_GROUP:
+            return await self.async_step_group()
         return self.async_abort(reason="entry_not_found")
 
     async def async_step_hub_grid(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
@@ -1621,6 +1736,72 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="plug",
             data_schema=f._plug_schema(defaults),
+            errors=errors,
+            last_step=True,
+        )
+
+    async def async_step_group(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
+        """Options flow for circuit group: current limit + member selection."""
+        errors: dict[str, str] = {}
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+
+        if user_input is not None:
+            selected = user_input.get(CONF_CIRCUIT_GROUP_MEMBERS, [])
+            if not selected:
+                errors["base"] = "no_members_selected"
+            else:
+                return self.async_create_entry(
+                    title="",
+                    data={
+                        **self.config_entry.options,
+                        CONF_CIRCUIT_GROUP_CURRENT_LIMIT: user_input.get(
+                            CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT
+                        ),
+                        CONF_CIRCUIT_GROUP_MEMBERS: selected,
+                    },
+                )
+
+        # Build list of loads on this hub for multi-select
+        hub_entry_id = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
+        load_options = []
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            if (entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+                    and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry_id):
+                load_options.append({
+                    "value": entry.entry_id,
+                    "label": entry.title,
+                })
+
+        current_members = defaults.get(CONF_CIRCUIT_GROUP_MEMBERS, [])
+
+        data_schema = vol.Schema({
+            vol.Required(
+                CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
+                default=defaults.get(CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT),
+            ): selector({
+                "number": {
+                    "min": 1,
+                    "max": 100,
+                    "step": 1,
+                    "unit_of_measurement": "A",
+                    "mode": "box",
+                }
+            }),
+            vol.Required(
+                CONF_CIRCUIT_GROUP_MEMBERS,
+                default=current_members,
+            ): selector({
+                "select": {
+                    "options": load_options,
+                    "multiple": True,
+                    "mode": "list",
+                }
+            }),
+        })
+
+        return self.async_show_form(
+            step_id="group",
+            data_schema=data_schema,
             errors=errors,
             last_step=True,
         )

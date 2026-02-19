@@ -182,3 +182,8 @@ After `_distribute_power()`, add `_enforce_circuit_groups()`:
 
 ### Future upgrade path
 Post-distribution capping is simple but can "waste" headroom — the engine might over-allocate to a group then slash, while non-grouped loads could have used that capacity. If this matters in practice, upgrade to group-aware distribution where `_distribute_power()` deducts from both site pool and group budget simultaneously.
+
+
+## some chargers seem to not show Current offered as a single entity with sindividual phases being attribures
+but instead they expose sensor.charger_current_import_l1, sensor.charger_current_import_l2, sensor.charger_current_import_l3
+we should add support for that. For OCPP chargers. Instead of selecting individual entities during setup. Could we select device as a whole instead?

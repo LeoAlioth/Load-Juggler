@@ -60,7 +60,7 @@ _load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
 _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
 
 # Convenience aliases for the rest of this file
-from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues
+from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues, CircuitGroup
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 from custom_components.dynamic_ocpp_evse.calculations.utils import compute_household_per_phase
 
@@ -448,6 +448,19 @@ def build_site_from_scenario(scenario):
             l3_current=charger_data.get("l3_current", 0),
         )
         site.chargers.append(charger)
+
+    # Build circuit groups
+    charger_id_by_entity = {c.entity_id: c.charger_id for c in site.chargers}
+    for idx, group_data in enumerate(site_data.get('circuit_groups', [])):
+        member_entities = group_data.get('members', [])
+        member_ids = [charger_id_by_entity[e] for e in member_entities if e in charger_id_by_entity]
+        group = CircuitGroup(
+            group_id=f"group_{idx}",
+            name=group_data.get('name', f"group_{idx}"),
+            current_limit=group_data['current_limit'],
+            member_ids=member_ids,
+        )
+        site.circuit_groups.append(group)
 
     return site
 

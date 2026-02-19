@@ -5,7 +5,7 @@ device_info, _write_to_*_data, and state-restore boilerplate across
 number.py, select.py, switch.py, sensor.py, and button.py.
 """
 
-from .const import DOMAIN, CONF_NAME, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG
+from .const import DOMAIN, CONF_NAME, CONF_HUB_ENTRY_ID, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG
 
 
 class HubEntityMixin:
@@ -101,3 +101,22 @@ class ChargerEntityMixin:
                 pass
         self.async_write_ha_state()
         self._write_to_charger_data(self._attr_native_value)
+
+
+class GroupEntityMixin:
+    """Mixin for circuit group entities.
+
+    Provides:
+      - device_info property (Circuit Group, linked to hub via via_device)
+    """
+
+    @property
+    def device_info(self):
+        hub_entry_id = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME),
+            "manufacturer": "Load Juggler",
+            "model": "Circuit Group",
+            "via_device": (DOMAIN, hub_entry_id) if hub_entry_id else None,
+        }

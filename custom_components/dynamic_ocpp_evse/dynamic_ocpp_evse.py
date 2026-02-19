@@ -11,6 +11,7 @@ from .calculations import (
     SiteContext,
     LoadContext,
     PhaseValues,
+    CircuitGroup,
     calculate_all_charger_targets,
 )
 from .const import *
@@ -422,10 +423,39 @@ def _apply_feedback_loop(site, solar_is_derived, voltage):
     )
 
 
+def _build_circuit_groups(hass, hub_entry_id):
+    """Build CircuitGroup objects from config entries for this hub.
+
+    Returns list of CircuitGroup model objects for the calculation engine.
+    """
+    from . import get_groups_for_hub
+
+    group_entries = get_groups_for_hub(hass, hub_entry_id)
+    groups = []
+    for entry in group_entries:
+        if entry is None:
+            continue
+        options = {**entry.data, **entry.options}
+        current_limit = options.get(CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT)
+        member_ids = options.get(CONF_CIRCUIT_GROUP_MEMBERS, [])
+        group = CircuitGroup(
+            group_id=entry.entry_id,
+            name=options.get(CONF_NAME, "Circuit Group"),
+            current_limit=float(current_limit),
+            member_ids=member_ids,
+        )
+        groups.append(group)
+        _LOGGER.debug(
+            "  Circuit group '%s': limit=%.0fA, members=%s",
+            group.name, group.current_limit, member_ids,
+        )
+    return groups
+
+
 def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
                       battery_soc, battery_soc_min, battery_max_discharge_power,
                       battery_power, charger_targets, charger_available, charger_names,
-                      plug_auto_power, auto_detect_notifications=None):
+                      plug_auto_power, auto_detect_notifications=None, group_data=None):
     """Build the result dict returned by run_hub_calculation."""
     # Grid headroom per phase
     available_per_phase = []
@@ -516,6 +546,9 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
 
         # Auto-detection notifications (inversion, phase mapping)
         "auto_detect_notifications": auto_detect_notifications or [],
+
+        # Circuit group data (for group sensors)
+        "group_data": group_data or {},
     }
 
 
@@ -696,6 +729,9 @@ def run_hub_calculation(sensor):
     hub_entry_id = hub_entry.entry_id if hasattr(hub_entry, 'entry_id') else hub_entry.data.get('hub_entry_id')
     plug_auto_power = _add_chargers_to_site(hass, site, hub_entry_id, sensor)
 
+    # --- Build circuit groups ---
+    site.circuit_groups = _build_circuit_groups(hass, hub_entry_id)
+
     # Apply auto-detected phase remaps from previous cycles
     auto_detect_state = hub_runtime.setdefault("_auto_detect", {})
     phase_remaps = auto_detect_state.get("phase_remap", {})
@@ -752,6 +788,30 @@ def run_hub_calculation(sensor):
     charger_available = {c.charger_id: c.available_current for c in site.chargers}
     charger_names = {c.charger_id: c.entity_id for c in site.chargers}
 
+    # --- Build per-group allocation data for group sensors ---
+    group_data = {}
+    charger_by_id = {c.charger_id: c for c in site.chargers}
+    for group in site.circuit_groups:
+        per_phase_draw = {"A": 0.0, "B": 0.0, "C": 0.0}
+        for mid in group.member_ids:
+            c = charger_by_id.get(mid)
+            if c and c.allocated_current > 0 and c.active_phases_mask:
+                for phase in c.active_phases_mask:
+                    per_phase_draw[phase] += c.allocated_current
+        # Headroom = limit minus max draw on any active phase
+        active_draws = [per_phase_draw[p] for p in ("A", "B", "C")
+                        if site.consumption and getattr(site.consumption, p.lower()) is not None]
+        max_draw = max(active_draws) if active_draws else 0
+        headroom = max(0, group.current_limit - max_draw)
+        group_data[group.group_id] = {
+            "name": group.name,
+            "current_limit": group.current_limit,
+            "member_ids": group.member_ids,
+            "per_phase_draw": per_phase_draw,
+            "max_phase_draw": round(max_draw, 1),
+            "headroom": round(headroom, 1),
+        }
+
     # --- Auto-detection (inversion + phase mapping) ---
     auto_detect_state = hub_runtime.setdefault("_auto_detect", {})
     auto_notifications = []
@@ -782,7 +842,7 @@ def run_hub_calculation(sensor):
         site, raw_phases, voltage, main_breaker_rating,
         battery_soc, battery_soc_min, battery_max_discharge_power,
         battery_power, charger_targets, charger_available, charger_names,
-        plug_auto_power, auto_notifications,
+        plug_auto_power, auto_notifications, group_data,
     )
 
 
