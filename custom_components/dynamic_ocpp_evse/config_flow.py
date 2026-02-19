@@ -1445,7 +1445,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure_charger(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Reconfigure charger step 1: Info (priority only — name/id not editable)."""
+        """Reconfigure charger step 1: Info (priority and OCPP device ID)."""
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         defaults = {**entry.data, **entry.options}
@@ -1454,13 +1454,23 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._data.update(user_input)
             return await self.async_step_reconfigure_charger_current()
 
-        # Only show priority (name/id are static and not editable during reconfigure)
-        data_schema = vol.Schema({
+        # Build schema with priority and OCPP Device ID
+        fields = {
             vol.Required(
                 CONF_CHARGER_PRIORITY,
                 default=defaults.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
             ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
-        })
+        }
+        
+        # Add OCPP Device ID as editable field if it exists
+        ocpp_device_id = defaults.get(CONF_OCPP_DEVICE_ID)
+        if ocpp_device_id:
+            fields[vol.Optional(
+                CONF_OCPP_DEVICE_ID,
+                default=ocpp_device_id,
+            )] = str
+        
+        data_schema = vol.Schema(fields)
 
         return self.async_show_form(
             step_id="reconfigure_charger",
@@ -1716,7 +1726,7 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_charger(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
-        """Options charger step 1: Priority."""
+        """Options charger step 1: Priority and OCPP device ID."""
         errors: dict[str, str] = {}
         defaults = {**self.config_entry.data, **self.config_entry.options}
 
@@ -1724,12 +1734,23 @@ class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
             self._data.update(user_input)
             return await self.async_step_charger_current()
 
-        data_schema = vol.Schema({
+        # Build schema with priority and OCPP Device ID
+        fields = {
             vol.Required(
                 CONF_CHARGER_PRIORITY,
                 default=defaults.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
             ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
-        })
+        }
+        
+        # Add OCPP Device ID as editable field if it exists
+        ocpp_device_id = defaults.get(CONF_OCPP_DEVICE_ID)
+        if ocpp_device_id:
+            fields[vol.Optional(
+                CONF_OCPP_DEVICE_ID,
+                default=ocpp_device_id,
+            )] = str
+        
+        data_schema = vol.Schema(fields)
         return self.async_show_form(
             step_id="charger",
             data_schema=data_schema,
