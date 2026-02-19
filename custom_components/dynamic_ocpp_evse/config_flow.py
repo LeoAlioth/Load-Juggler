@@ -1017,18 +1017,20 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 # Get device info if available
                 device_name = prettify_name(base_name)
-                device_id = None
+                # Use the entity base_name as OCPP device ID (e.g., "evbox_elvy"), not the internal HA UUID
+                ocpp_device_id = base_name
 
                 if entity.device_id:
                     device = device_registry.async_get(entity.device_id)
                     if device:
-                        device_name = prettify_name(device.name) if device.name else device_name
-                        device_id = device.id
+                        # Use device name if available, otherwise fall back to base_name
+                        if device.name:
+                            device_name = prettify_name(device.name)
                 
                 chargers.append({
                     "id": base_name,
                     "name": device_name,
-                    "device_id": device_id,
+                    "device_id": ocpp_device_id,
                     "current_import_entity": entity_id,
                     "current_import_l1_entity": current_import_l1_entity,
                     "current_import_l2_entity": current_import_l2_entity,
