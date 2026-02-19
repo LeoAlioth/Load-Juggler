@@ -193,9 +193,35 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
         l3_phase=l3_phase,
     )
 
-    # Get OCPP current draw for this charger
+    # Get OCPP current draw for this charger with fallback chain:
+    # 1. Current Import per-phase entities (sensor.{id}_current_import_l1/l2/l3)
+    # 2. Current Import entity (per-phase attributes or total)
+    # 3. Power Active Import (convert W → A)
     evse_import = entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
-    if evse_import:
+    evse_import_l1 = entry.data.get(CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID)
+    evse_import_l2 = entry.data.get(CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID)
+    evse_import_l3 = entry.data.get(CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID)
+    evse_power_import = entry.data.get(CONF_EVSE_POWER_IMPORT_ENTITY_ID)
+    current_draw = None
+    
+    # Try per-phase current import entities first (separate sensors for each phase)
+    if evse_import_l1 or evse_import_l2 or evse_import_l3:
+        l1_val = _read_entity(hass, evse_import_l1, None) if evse_import_l1 else None
+        l2_val = _read_entity(hass, evse_import_l2, None) if evse_import_l2 else None
+        l3_val = _read_entity(hass, evse_import_l3, None) if evse_import_l3 else None
+        
+        if l1_val is not None or l2_val is not None or l3_val is not None:
+            charger.l1_current = l1_val if l1_val is not None else 0
+            charger.l2_current = l2_val if l2_val is not None else 0
+            charger.l3_current = l3_val if l3_val is not None else 0
+            current_draw = "current_import_l1l2l3"
+            _LOGGER.debug(
+                "EVSE %s: Using per-phase current import entities: L1=%.1f L2=%.1f L3=%.1f",
+                charger_entity_id, charger.l1_current, charger.l2_current, charger.l3_current,
+            )
+    
+    # Try Current Import entity with per-phase attributes or total
+    if current_draw is None and evse_import:
         evse_state = hass.states.get(evse_import)
         if evse_state and evse_state.state not in ['unknown', 'unavailable', None]:
             try:
@@ -222,6 +248,7 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
                                 charger_entity_id, attr, val, max_current,
                             )
                             setattr(charger, attr, max_current)
+                    current_draw = "current_import_attr"
                 else:
                     current_import = float(evse_state.state)
                     charger.l1_current = current_import
@@ -229,8 +256,37 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
                         charger.l2_current = current_import
                     if phases >= 3:
                         charger.l3_current = current_import
+                    current_draw = "current_import_total"
             except (ValueError, TypeError):
                 pass
+    
+    # Fallback to Power Active Import if no current import data available
+    if current_draw is None and evse_power_import:
+        power_state = hass.states.get(evse_power_import)
+        if power_state and power_state.state not in ['unknown', 'unavailable', None]:
+            try:
+                power_w = float(power_state.state)
+                if power_w > 0 and voltage > 0:
+                    # Convert W → A (total power across all phases)
+                    power_per_phase = power_w / phases
+                    current_per_phase = power_per_phase / voltage
+                    charger.l1_current = current_per_phase
+                    if phases >= 2:
+                        charger.l2_current = current_per_phase
+                    if phases >= 3:
+                        charger.l3_current = current_per_phase
+                    current_draw = "power_import"
+                    _LOGGER.debug(
+                        "EVSE %s: Using Power Active Import fallback: %.1fW → %.1fA per phase",
+                        charger_entity_id, power_w, current_per_phase,
+                    )
+            except (ValueError, TypeError):
+                pass
+    
+    if current_draw:
+        _LOGGER.debug(
+            "EVSE %s: Current draw source: %s", charger_entity_id, current_draw
+        )
 
     _LOGGER.debug(
         "  EVSE %s [%s]: %s-%sA %dph(hw) L1->%s/L2->%s/L3->%s mask=%s(%dph) "

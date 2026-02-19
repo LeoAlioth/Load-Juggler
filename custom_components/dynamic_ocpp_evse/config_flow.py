@@ -992,6 +992,18 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not current_offered_entity and not power_offered_entity:
                     continue
                 
+                # Check for per-phase current import entities (fallback 1)
+                current_import_l1_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L1}"
+                current_import_l1_entity = current_import_l1_id if current_import_l1_id in entity_registry.entities else None
+                current_import_l2_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L2}"
+                current_import_l2_entity = current_import_l2_id if current_import_l2_id in entity_registry.entities else None
+                current_import_l3_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L3}"
+                current_import_l3_entity = current_import_l3_id if current_import_l3_id in entity_registry.entities else None
+
+                # Check for power_import entity (fallback 2)
+                power_import_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_POWER_IMPORT}"
+                power_import_entity = power_import_id if power_import_id in entity_registry.entities else None
+
                 # Get device info if available
                 device_name = prettify_name(base_name)
                 device_id = None
@@ -1007,8 +1019,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "name": device_name,
                     "device_id": device_id,
                     "current_import_entity": entity_id,
+                    "current_import_l1_entity": current_import_l1_entity,
+                    "current_import_l2_entity": current_import_l2_entity,
+                    "current_import_l3_entity": current_import_l3_entity,
                     "current_offered_entity": current_offered_entity,
                     "power_offered_entity": power_offered_entity,
+                    "power_import_entity": power_import_entity,
                 })
         
         return chargers
@@ -1228,8 +1244,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._data[CONF_CHARGER_ID] = self._selected_charger["id"]
             self._data[CONF_OCPP_DEVICE_ID] = self._selected_charger.get("device_id")
             self._data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID] = self._selected_charger["current_import_entity"]
+            self._data[CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID] = self._selected_charger.get("current_import_l1_entity")
+            self._data[CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID] = self._selected_charger.get("current_import_l2_entity")
+            self._data[CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID] = self._selected_charger.get("current_import_l3_entity")
             self._data[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID] = self._selected_charger["current_offered_entity"]
             self._data[CONF_EVSE_POWER_OFFERED_ENTITY_ID] = self._selected_charger.get("power_offered_entity")
+            self._data[CONF_EVSE_POWER_IMPORT_ENTITY_ID] = self._selected_charger.get("power_import_entity")
 
             # Use user-provided name/entity_id from charger_info step
             charger_name = self._data.get(CONF_NAME, self._selected_charger["name"])
@@ -1246,8 +1266,12 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_CHARGER_ID: self._data.get(CONF_CHARGER_ID),
                 CONF_OCPP_DEVICE_ID: self._data.get(CONF_OCPP_DEVICE_ID),
                 CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: self._data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID),
+                CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID: self._data.get(CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID),
+                CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID: self._data.get(CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID),
+                CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID: self._data.get(CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID),
                 CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: self._data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID),
                 CONF_EVSE_POWER_OFFERED_ENTITY_ID: self._data.get(CONF_EVSE_POWER_OFFERED_ENTITY_ID),
+                CONF_EVSE_POWER_IMPORT_ENTITY_ID: self._data.get(CONF_EVSE_POWER_IMPORT_ENTITY_ID),
             }
             options_data = {k: v for k, v in self._data.items() if k not in static_data}
 
