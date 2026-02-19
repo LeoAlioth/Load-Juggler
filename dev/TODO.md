@@ -76,65 +76,32 @@
 72. - [x] Auto-detect OCPP `MeterValueSampleInterval` and use as default charger update frequency in config flow
 73. - [x] Fix "Finishing"/"Faulted" connector status: treat as inactive (no power allocation), skip OCPP profiles and charge control toggle
 74. - [x] Auto-detect power monitoring sensor for smart plugs (Shelly, Sonoff, Tasmota, Kasa, Tuya) in config flow
-
 75. - [x] Auto-detect grid CT inversion — correlates charger draw vs grid current, fires persistent notification after 10/15 inverted signals
 76. - [x] Auto-detect phase mapping — correlates total charger draw vs per-phase grid deltas, fires persistent notification on mismatch (opt-in via config flow)
 77. - [x] Solar/Excess grace period (anti-flicker) — configurable hold-at-min timer before pausing when mode conditions drop, respects site limits for immediate stop
 78. - [x] Charge pause duration unit change — seconds → minutes for consistency, with migration from v2.1 to v2.2
+79. - [x] Per-load operating modes — foundation (rename constants, add `operating_mode` to `LoadContext`, remove hub-level `charging_mode`)
+80. - [x] Per-load operating modes — calculation engine (dual-pool distribution, source-aware allocation, urgency+priority sorting)
+81. - [x] Per-load operating modes — test scenarios (migrate YAML files, add 8 mixed-mode scenarios, 110 passing)
+82. - [x] Per-load operating modes — HA integration (`__init__.py`, `dynamic_ocpp_evse.py`, `select.py`, `sensor.py`, `config_flow.py`)
+83. - [x] Per-load operating modes — translations & services (`services.yaml`, `en.json`, `sl.json`)
+84. - [x] Rename ChargerContext → LoadContext across codebase
+85. - [x] Fix case-insensitive OCPP phase attribute reading (`_read_phase_attr` lowercase normalization)
+86. - [x] Rename "Total EVSE Power" → "Total Managed Power" sensor display name
+87. - [x] Two-stage auto-detect phase mapping — notify + auto-remap with swap logic, always-updated snapshots
+88. - [x] 2-phase car inactive line detection — non-correlating grid phase reveals inactive charger line, full L1/L2/L3→A/B/C verification
+89. - [x] Confidence-weighted auto-detect scoring — weighted scores (weight = min(|delta|, 15) / 5), soft decay, fast oscillation detection
+90. - [x] 10% clamping tolerance for W-based chargers — avoids false clamping from voltage/rounding variance
+91. - [x] Fix W-based OCPP power multiplication — use car's active phase count instead of charger hardware phases for W conversion
 
 ## In Progress
 
 (none)
 
-## Recently Completed
-
-87. - [x] **Fix case-insensitive OCPP phase attribute reading** — `_read_phase_attr` now does case-insensitive lookup (fixes uppercase `L1`/`L2`/`L3` attrs from Huawei OCPP). Without this, single-phase car on 3-phase charger showed 3x actual power and corrupted feedback loop.
-88. - [x] **Rename "Total EVSE Power" → "Total Managed Power"** sensor display name
-89. - [x] **Two-stage auto-detect phase mapping** — notify at 10 samples, auto-remap at 30 samples with swap logic (L1↔L2 swap to avoid duplicate phase assignments). Fix: snapshots always updated regardless of charger state (prevents invisible transitions).
-90. - [x] **2-phase car inactive line detection** — when a 2-phase car charges (2 of 3 lines active), the non-correlating grid phase reveals where the inactive line is connected. Combined with 1-phase detection, gives full L1/L2/L3→A/B/C verification. After remap, correlation state resets for re-detection.
-91. - [x] **Confidence-weighted auto-detect scoring** — replace flat sample counts with weighted scores (weight = min(|delta_draw|, 15) / 5). Strong oscillation signals (20A swings) score 3.0/sample → remap in ~5 samples vs 30 flat. Soft decay (×0.5) instead of hard reset on inconclusive data. New tests: auto-remap verification, noisy data decay.
-92. - [x] **10% clamping tolerance for W-based chargers** — `_build_evse_charger()` now uses `max_current * 1.1` threshold when `charge_rate_unit == "W"` to avoid false clamping from voltage/rounding variance.
-93. - [x] **Fix W-based OCPP power multiplication** — `_send_ocpp_command()` now uses car's actual active phase count (from l1/l2/l3 current draws) instead of charger hardware phases. Fixes 3x over-allocation for 1-phase cars on 3-phase EVSEs (e.g., 8A → 1840W instead of 5520W). Active phases passed via `charger_active_phases` in hub result dict.
-
-
-79. - [x] **Per-load operating modes — foundation**
-    - Rename charging mode constants: Standard→Continuous, Eco→Solar Priority, Solar→Solar Only, Excess stays
-    - Add `OPERATING_MODE_*` constants, `OPERATING_MODES_EVSE` (4), `OPERATING_MODES_PLUG` (3), `MODE_URGENCY` dict
-    - Add `operating_mode` field to `LoadContext`, remove `charging_mode` from `SiteContext`
-    - Remove old `CHARGING_MODE_*` constants and `CONF_CHARGING_MODE_ENTITY_ID`
-
-80. - [x] **Per-load operating modes — calculation engine**
-    - `_calculate_site_limit()`: always return `grid_limit + inverter_limit` (remove mode branch)
-    - Remove `_determine_target_power()` entirely
-    - Source-aware dual-pool distribution: physical (grid+inverter), solar, excess tracked simultaneously
-    - Helper functions: `_below_soc_target()`, `_source_limit()`, `_deduct_from_sources()`
-    - Source-aware `_allocate_minimums()`: ALL modes participate, each checks its source pools
-    - All 4 distribution functions: source-limited fills, urgency+priority sorting, batch increment (Shared), source-aware reduction (Optimized)
-
-81. - [x] **Per-load operating modes — test scenarios**
-    - Update `run_tests.py` to read per-charger `operating_mode` from YAML
-    - Migrate all existing scenario files: move `charging_mode` from `site:` to per-charger `operating_mode:`
-    - Add 8 mixed-mode scenarios (Continuous+Solar Only, Solar Priority+Excess, three-mode mix, plug scenarios)
-    - All 109 scenarios passing (27 verified, 82 unverified)
-
-82. - [x] **Per-load operating modes — HA integration**
-    - `__init__.py`: add `operating_mode` to charger runtime, remove `charging_mode` from hub runtime, replace `set_charging_mode` with `set_operating_mode` service
-    - `dynamic_ocpp_evse.py`: read per-charger mode from charger runtime, remove hub-level mode, add `charger_modes` to `_build_hub_result()`
-    - `select.py`: remove hub-level `ChargingModeSelect`, add per-charger `OperatingModeSelect` (ChargerEntityMixin, device-type-aware options)
-    - `sensor.py`: per-charger mode detection via `charger_modes` dict, grace timer checks per-charger mode, status messages use new constants
-    - `config_flow.py`: remove `CONF_CHARGING_MODE_ENTITY_ID` from hub data
-
-83. - [x] **Per-load operating modes — translations & services**
-    - `services.yaml`: replace `set_charging_mode` with `set_operating_mode` (5 mode options)
-    - `en.json`: add operating mode select entity with state labels, replace service translations
-    - `sl.json`: add operating mode select entity (Način Delovanja), replace service translations
-    - Integration tests updated and all 56 passing
-
 ## Backlog
 
-84. - [ ] **Hot Water Tank device type** — thermostat control (Normal/Boost), modes: Solar Only, Excess
-85. - [ ] **SG Ready device type** — 2-relay site-state mapping (Block/Normal/Recommend ON/Force ON), no user modes
-86. - [x] **Rename ChargerContext → LoadContext** across codebase
+1. - [ ] **Hot Water Tank device type** — thermostat control (Normal/Boost), modes: Solar Only, Excess
+2. - [ ] **SG Ready device type** — 2-relay site-state mapping (Block/Normal/Recommend ON/Force ON), no user modes
 
 ## Other
 
