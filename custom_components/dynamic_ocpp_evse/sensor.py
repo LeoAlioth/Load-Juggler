@@ -620,6 +620,8 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                 "total_site_available_power": hub_data.get("total_site_available_power"),
                 "total_evse_power": hub_data.get("total_evse_power"),
                 "last_update": datetime.now(timezone.utc),
+                # Grid sensor health
+                "grid_stale": hub_data.get("grid_stale", False),
                 # Circuit group data
                 "group_data": hub_data.get("group_data", {}),
             }
@@ -912,6 +914,7 @@ class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
         self._attr_name = f"{name} Site Available Power"
         self._attr_unique_id = f"{entity_id}_site_info"
         self._total_site_available_power = None
+        self._grid_stale = False
         self._last_update = datetime.min
 
     @property
@@ -925,10 +928,13 @@ class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
     @property
     def extra_state_attributes(self):
         """Return the state attributes."""
-        return {
+        attrs = {
             "state_class": "measurement",
             "last_update": self._last_update,
         }
+        if self._grid_stale:
+            attrs["grid_stale"] = True
+        return attrs
 
     @property
     def icon(self):
@@ -953,6 +959,7 @@ class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
 
             if hub_data:
                 self._total_site_available_power = hub_data.get("total_site_available_power")
+                self._grid_stale = hub_data.get("grid_stale", False)
                 self._last_update = hub_data.get("last_update", datetime.now(timezone.utc))
         except Exception as e:
             _LOGGER.error(f"Error updating hub sensor {self._attr_name}: {e}", exc_info=True)

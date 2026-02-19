@@ -828,12 +828,14 @@ async def test_result_dict_values_are_reasonable(
     assert result["available_current_a"] == 20.0
     assert result["available_current_b"] == 20.5
     assert result["available_current_c"] == 21.2
-    # Total site available: (20 + 20.5 + 21.2) * 230 ≈ 14191W
-    assert result["total_site_available_power"] > 14000
+    # Total site available: breaker headroom ≈ 14191W,
+    # capped by max_import (17050W) - net_consumption (3059W) ≈ 13991W
+    assert 13500 < result["total_site_available_power"] < 14500
     # Net consumption: (5.0 + 4.5 + 3.8) * 230 ≈ 3059W
     assert 3000 < result["grid_power"] < 3200
-    # Grid headroom (same as available since no export):
-    # (25-5)*230 + (25-4.5)*230 + (25-3.8)*230 = 4600 + 4715 + 4876 = 14191
+    # Grid headroom: breaker ≈ 14191W,
+    # capped by max_import (17050W) - post-feedback consumption
+    # post-feedback: (0+4.5+3.8)*230 = 1909W → 17050-1909 = 15141W (no cap)
     assert result["available_grid_power"] > 14000
     # --- Battery ---
     assert result["battery_soc"] == 80.0
@@ -846,6 +848,9 @@ async def test_result_dict_values_are_reasonable(
     # --- EVSE ---
     # Charger drawing 10A on L1 → 10 * 230 = 2300W
     assert result["total_evse_power"] == 2300
+
+    # --- Grid sensor health ---
+    assert result["grid_stale"] is False
 
     # --- Charger targets ---
     assert result["distribution_mode"] == "Priority"

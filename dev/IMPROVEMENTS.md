@@ -184,6 +184,41 @@ After `_distribute_power()`, add `_enforce_circuit_groups()`:
 Post-distribution capping is simple but can "waste" headroom — the engine might over-allocate to a group then slash, while non-grouped loads could have used that capacity. If this matters in practice, upgrade to group-aware distribution where `_distribute_power()` deducts from both site pool and group budget simultaneously.
 
 
-## some chargers seem to not show Current offered as a single entity with sindividual phases being attribures
-but instead they expose sensor.charger_current_import_l1, sensor.charger_current_import_l2, sensor.charger_current_import_l3
-we should add support for that. For OCPP chargers. Instead of selecting individual entities during setup. Could we select device as a whole instead?
+## Device-based OCPP charger discovery
+
+**Problem:** Some OCPP chargers (e.g. Alfen) expose per-phase current as separate entities (`sensor.<charger>_current_import_l1`, `_l2`, `_l3`) instead of a single entity with L1/L2/L3 attributes. Our discovery only finds `sensor.<charger>_current_import` and reads phase data from its attributes.
+
+**Solution:** Rewrite charger discovery to be device-based. User selects an OCPP **device** from the device registry, and we auto-discover all relevant entities from it (current_import, current_offered, status, per-phase current if separate). This also simplifies UX — one device pick instead of hoping entity naming matches.
+
+**Scope:**
+- Rework `_discover_ocpp_chargers()` in config_flow.py to scan by device, not entity suffix
+- In `_build_evse_charger()`, support reading per-phase current from separate entities (store entity IDs during discovery)
+- Fallback: keep attribute-based reading for chargers that use single-entity + attributes pattern
+- Store discovered entity IDs in config entry data (current_import, current_import_l1/l2/l3, current_offered, status)
+
+## Failure modes — DONE
+
+
+### Issue 1: Grid CT sensor unavailability — IMPLEMENTED
+
+When a configured grid CT sensor becomes `unavailable`/`unknown`, `_read_entity()` returns default 0, making the engine think there's zero site load — dangerous over-allocation.
+
+**Solution** (in `dynamic_ocpp_evse.py`):
+- After reading raw_phases, check each configured CT entity via `hass.states.get()`
+- If unavailable: inject the last known EMA smoothed value (prevents EMA decay toward 0)
+- If no prior EMA value exists: assume `main_breaker_rating` (worst-case safe)
+- Track staleness via `hub_runtime["grid_stale_since"]` (monotonic clock)
+- After `GRID_STALE_TIMEOUT` (60s): override all chargers to `min_current` (charging) or 0 (not charging)
+- Recovery: when sensors return, resume normal operation with log message
+- Hub sensor exposes `grid_stale` attribute (only shown when `True`)
+
+### Issue 2: Site available power ignores max_grid_import_power — IMPLEMENTED
+
+`total_site_available_power` and `available_grid_power` (hub sensors) only accounted for breaker headroom, ignoring the configured max grid import power entity/slider.
+
+**Solution** (in `_build_hub_result()`):
+- After computing `net_consumption`, cap `total_site_available` by `max_grid_import_power - net_consumption`
+- Cap `grid_headroom` by `max_grid_import_power - post_feedback_consumption`
+- These sensors now reflect the actual grid limit used by the calculation engine
+
+## Fallback to Power Offered if Current offered (total or per phase) is not available

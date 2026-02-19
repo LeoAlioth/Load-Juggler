@@ -130,6 +130,7 @@ RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
 # EMA smoothing — exponential moving average on engine output before rate limiting
 EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothing)
 DEAD_BAND = 0.3          # Ignore changes smaller than this (Schmitt trigger, amps)
+GRID_STALE_TIMEOUT = 60  # Seconds of grid CT unavailability before falling to min_current
 
 # Auto-reset detection — triggers reset_ocpp_evse when charger ignores profiles
 AUTO_RESET_MISMATCH_THRESHOLD = 5    # consecutive mismatched cycles before reset

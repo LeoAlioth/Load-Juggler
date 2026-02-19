@@ -6,6 +6,7 @@ All core calculation logic has been refactored into the calculations/ directory.
 """
 
 import logging
+import time
 
 from .calculations import (
     SiteContext,
@@ -455,7 +456,8 @@ def _build_circuit_groups(hass, hub_entry_id):
 def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
                       battery_soc, battery_soc_min, battery_max_discharge_power,
                       battery_power, charger_targets, charger_available, charger_names,
-                      plug_auto_power, auto_detect_notifications=None, group_data=None):
+                      plug_auto_power, auto_detect_notifications=None, group_data=None,
+                      grid_stale=False):
     """Build the result dict returned by run_hub_calculation."""
     # Grid headroom per phase
     available_per_phase = []
@@ -490,6 +492,15 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
 
     # Net site consumption
     net_consumption = sum(r for r in raw_phases if r is not None) * voltage
+
+    # Cap available power by max grid import power limit (if configured)
+    if site.max_grid_import_power is not None:
+        import_headroom = max(0, site.max_grid_import_power - max(0, net_consumption))
+        total_site_available = min(total_site_available, import_headroom)
+        post_feedback_import = sum(
+            c * voltage for c in (site.consumption.a, site.consumption.b, site.consumption.c) if c is not None
+        )
+        grid_headroom = min(grid_headroom, max(0, site.max_grid_import_power - max(0, post_feedback_import)))
 
     # Solar power available to chargers = solar production - household loads
     # (household_consumption_total is set after feedback loop, so it excludes charger draws)
@@ -549,6 +560,9 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
 
         # Circuit group data (for group sensors)
         "group_data": group_data or {},
+
+        # Grid sensor health
+        "grid_stale": grid_stale,
     }
 
 
@@ -589,6 +603,36 @@ def run_hub_calculation(sensor):
     # --- Input EMA smoothing (grid CT, solar, battery power) ---
     hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
     ema_inputs = hub_runtime.setdefault("_ema_inputs", {})
+
+    # --- Detect stale grid CT readings (configured but unavailable) ---
+    phase_confs = (CONF_PHASE_A_CURRENT_ENTITY_ID, CONF_PHASE_B_CURRENT_ENTITY_ID, CONF_PHASE_C_CURRENT_ENTITY_ID)
+    any_grid_stale = False
+    for i, conf in enumerate(phase_confs):
+        entity_id = get_entry_value(hub_entry, conf, None)
+        if not entity_id:
+            continue  # Phase not configured
+        state = hass.states.get(entity_id)
+        if state is None or state.state in ('unknown', 'unavailable', None, ''):
+            # Sensor is unavailable — hold last EMA value instead of using 0
+            held = ema_inputs.get(f"grid_{i}")
+            if held is not None:
+                raw_phases[i] = held
+            else:
+                # No previous reading — assume breaker load for safety
+                raw_phases[i] = main_breaker_rating
+            any_grid_stale = True
+
+    if any_grid_stale:
+        if "grid_stale_since" not in hub_runtime:
+            hub_runtime["grid_stale_since"] = time.monotonic()
+            _LOGGER.warning("Grid CT sensor(s) unavailable — holding last known values")
+        grid_stale_duration = time.monotonic() - hub_runtime["grid_stale_since"]
+    else:
+        if "grid_stale_since" in hub_runtime:
+            _LOGGER.info("Grid CT sensors recovered after %.0fs",
+                         time.monotonic() - hub_runtime["grid_stale_since"])
+        hub_runtime.pop("grid_stale_since", None)
+        grid_stale_duration = 0
 
     smoothed_phases = [_smooth(ema_inputs, f"grid_{i}", r) for i, r in enumerate(raw_phases)]
     consumption = [max(0, r) if r is not None else None for r in smoothed_phases]
@@ -784,6 +828,17 @@ def run_hub_calculation(sensor):
     # --- Calculate targets ---
     calculate_all_charger_targets(site)
 
+    # --- Grid stale fallback: force min_current after timeout ---
+    grid_stale = grid_stale_duration > GRID_STALE_TIMEOUT
+    if grid_stale:
+        _LOGGER.warning(
+            "Grid CT unavailable for %.0fs (>%ds) — all chargers falling to minimum current",
+            grid_stale_duration, GRID_STALE_TIMEOUT,
+        )
+        for charger in site.chargers:
+            charger.allocated_current = charger.min_current if charger.connector_status == "Charging" else 0
+            charger.available_current = charger.min_current
+
     charger_targets = {c.charger_id: c.allocated_current for c in site.chargers}
     charger_available = {c.charger_id: c.available_current for c in site.chargers}
     charger_names = {c.charger_id: c.entity_id for c in site.chargers}
@@ -843,6 +898,7 @@ def run_hub_calculation(sensor):
         battery_soc, battery_soc_min, battery_max_discharge_power,
         battery_power, charger_targets, charger_available, charger_names,
         plug_auto_power, auto_notifications, group_data,
+        grid_stale=grid_stale,
     )
 
 
