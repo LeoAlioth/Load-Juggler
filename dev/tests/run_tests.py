@@ -437,7 +437,6 @@ def build_site_from_scenario(scenario):
             priority=charger_data.get("priority", idx),
             device_type=device_type,
             operating_mode=operating_mode,
-            car_phases=charger_data.get("car_phases"),
             l1_phase=charger_data.get("l1_phase", "A"),
             l2_phase=charger_data.get("l2_phase", "B"),
             l3_phase=charger_data.get("l3_phase", "C"),

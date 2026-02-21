@@ -29,7 +29,10 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         has_phase_b = bool(get_entry_value(config_entry, CONF_PHASE_B_CURRENT_ENTITY_ID, None))
         has_phase_c = bool(get_entry_value(config_entry, CONF_PHASE_C_CURRENT_ENTITY_ID, None))
 
-        entities = [DynamicOcppEvseHubSensor(hass, config_entry, name, entity_id)]
+        entities = [
+            DynamicOcppEvseHubSensor(hass, config_entry, name, entity_id),
+            DynamicOcppEvseHubStatusSensor(hass, config_entry, name, entity_id),
+        ]
         # Create individual hub data sensors from definitions
         for defn in HUB_SENSOR_DEFINITIONS:
             if defn.get("requires_battery") and not has_battery:
@@ -655,6 +658,9 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                 "grid_stale": hub_data.get("grid_stale", False),
                 # Circuit group data
                 "group_data": hub_data.get("group_data", {}),
+                # Hub status
+                "hub_status": hub_data.get("hub_status", "OK"),
+                "hub_warnings": hub_data.get("hub_warnings", []),
             }
 
             # Use pre-computed charger targets from the calculation engine
@@ -994,6 +1000,50 @@ class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
                 self._last_update = hub_data.get("last_update", datetime.now(timezone.utc))
         except Exception as e:
             _LOGGER.error(f"Error updating hub sensor {self._attr_name}: {e}", exc_info=True)
+
+
+class DynamicOcppEvseHubStatusSensor(HubEntityMixin, SensorEntity):
+    """Hub-level sensor showing site configuration status and warnings."""
+
+    def __init__(self, hass, config_entry, name, entity_id):
+        """Initialize the hub status sensor."""
+        self.hass = hass
+        self.config_entry = config_entry
+        self._attr_name = f"{name} Status"
+        self._attr_unique_id = f"{entity_id}_hub_status"
+        self._state = "Initializing"
+        self._warnings = []
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def extra_state_attributes(self):
+        attrs = {}
+        if self._warnings:
+            attrs["warnings"] = self._warnings
+        return attrs
+
+    @property
+    def icon(self):
+        if self._state == "OK":
+            return "mdi:check-circle-outline"
+        if self._state == "Initializing":
+            return "mdi:timer-sand"
+        return "mdi:alert-circle-outline"
+
+    async def async_update(self):
+        """Read hub status from hass.data."""
+        try:
+            hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(
+                self.config_entry.entry_id, {}
+            )
+            if hub_data:
+                self._state = hub_data.get("hub_status", "OK")
+                self._warnings = hub_data.get("hub_warnings", [])
+        except Exception as e:
+            _LOGGER.error(f"Error updating hub status sensor: {e}", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

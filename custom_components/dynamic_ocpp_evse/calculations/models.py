@@ -26,7 +26,6 @@ class LoadContext:
     operating_mode: str = "Standard"  # Per-load operating mode (EVSE: Standard, Plug: Continuous)
     
     # Active car connection (detected from OCPP or configured)
-    car_phases: int = None  # 1, 2, or 3 (actual car OBC phases detected)
     active_phases_mask: str = None  # "A", "AB", "ABC", "B", "BC", "C", "AC"
     connector_status: str = "Charging"  # OCPP status: Default to active for backward compatibility
     

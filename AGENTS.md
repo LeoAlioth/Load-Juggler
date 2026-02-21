@@ -120,7 +120,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 **LoadContext** (`calculations/models.py`) — Represents a single managed load (EVSE or smart plug):
 
-- Config: charger_id, min_current, max_current, phases, car_phases, priority, device_type, operating_mode
+- Config: charger_id, min_current, max_current, phases, priority, device_type, operating_mode
 - Status: connector_status (Available, Charging, etc.)
 - Phase tracking: active_phases_mask ("A", "B", "C", "AB", "BC", "AC", "ABC")
 - Current: l1_current, l2_current, l3_current (actual OCPP draw)

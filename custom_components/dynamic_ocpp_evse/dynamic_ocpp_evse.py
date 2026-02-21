@@ -582,7 +582,7 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
                       battery_soc, battery_soc_min, battery_max_discharge_power,
                       battery_power, charger_targets, charger_available, charger_names,
                       plug_auto_power, auto_detect_notifications=None, group_data=None,
-                      grid_stale=False):
+                      grid_stale=False, hub_status="OK", hub_warnings=None):
     """Build the result dict returned by run_hub_calculation."""
     # Grid headroom per phase
     available_per_phase = []
@@ -688,6 +688,10 @@ def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
 
         # Grid sensor health
         "grid_stale": grid_stale,
+
+        # Hub status
+        "hub_status": hub_status,
+        "hub_warnings": hub_warnings or [],
     }
 
 
@@ -1010,7 +1014,7 @@ def run_hub_calculation(sensor):
         }
 
     # --- Auto-detection (inversion + phase mapping) ---
-    auto_detect_state = hub_runtime.setdefault("_auto_detect", {})
+    # auto_detect_state already initialized above (line 926)
     auto_notifications = []
     inv_notif = check_inversion(
         auto_detect_state, smoothed_phases, site.chargers,
@@ -1034,13 +1038,25 @@ def run_hub_calculation(sensor):
                 pm_state.pop(remap["charger_id"], None)
             auto_notifications.append(notif)
 
+    # --- Hub status (config validation + runtime state) ---
+    hub_status = "OK"
+    hub_warnings = []
+    if not has_grid_cts and inverter_output_per_phase is None and not solar_production_entity:
+        hub_status = "No power measurement"
+        hub_warnings.append("No grid CTs, inverter output, or solar entity configured")
+    elif not has_grid_cts:
+        hub_warnings.append("Off-grid mode (no grid CTs)")
+    if grid_stale:
+        hub_status = "Grid sensors unavailable"
+        hub_warnings.append(f"Grid CT readings stale for {grid_stale_duration:.0f}s")
+
     # --- Build result ---
     return _build_hub_result(
         site, raw_phases, voltage, main_breaker_rating,
         battery_soc, battery_soc_min, battery_max_discharge_power,
         battery_power, charger_targets, charger_available, charger_names,
         plug_auto_power, auto_notifications, group_data,
-        grid_stale=grid_stale,
+        grid_stale=grid_stale, hub_status=hub_status, hub_warnings=hub_warnings,
     )
 
 
