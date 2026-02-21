@@ -343,6 +343,23 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
             "EVSE %s: Current draw source: %s", charger_entity_id, current_draw
         )
 
+    # SuspendedEV grace period: car may briefly pause during normal charging (BMS
+    # balancing). Only treat as inactive after SUSPENDED_EV_IDLE_TIMEOUT seconds
+    # of continuous SuspendedEV + near-zero draw.
+    total_draw = charger.l1_current + charger.l2_current + charger.l3_current
+    if connector_status == "SuspendedEV" and total_draw < 1.0:
+        if "_suspended_ev_since" not in charger_rt:
+            charger_rt["_suspended_ev_since"] = time.monotonic()
+        idle_duration = time.monotonic() - charger_rt["_suspended_ev_since"]
+        if idle_duration >= SUSPENDED_EV_IDLE_TIMEOUT:
+            _LOGGER.debug(
+                "EVSE %s: SuspendedEV idle for %.0fs (>%ds) — treating as inactive",
+                charger_entity_id, idle_duration, SUSPENDED_EV_IDLE_TIMEOUT,
+            )
+            charger.connector_status = "Finishing"
+    else:
+        charger_rt.pop("_suspended_ev_since", None)
+
     _LOGGER.debug(
         "  EVSE %s [%s]: %s-%sA %dph(hw) L1->%s/L2->%s/L3->%s mask=%s(%dph) "
         "prio=%d [%s] draw=L1:%s/L2:%s/L3:%s",
@@ -351,7 +368,7 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
         l1_phase, l2_phase, l3_phase,
         charger.active_phases_mask,
         len(charger.active_phases_mask) if charger.active_phases_mask else 0,
-        priority, connector_status,
+        priority, charger.connector_status,
         _fv(charger.l1_current), _fv(charger.l2_current), _fv(charger.l3_current),
     )
     return charger

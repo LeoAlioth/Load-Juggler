@@ -25,8 +25,8 @@ class HubEntityMixin:
     def device_info(self):
         return {
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE"),
-            "manufacturer": "Dynamic OCPP EVSE",
+            "name": self.config_entry.data.get(CONF_NAME, "Site Load Management"),
+            "manufacturer": "Load Juggler",
             "model": "Electrical System Hub",
         }
 
@@ -80,7 +80,7 @@ class ChargerEntityMixin:
         return {
             "identifiers": {(DOMAIN, self.config_entry.entry_id)},
             "name": self.config_entry.data.get(CONF_NAME),
-            "manufacturer": "Dynamic OCPP EVSE",
+            "manufacturer": "Load Juggler",
             "model": model,
             "via_device": (DOMAIN, hub.entry_id) if hub else None,
         }

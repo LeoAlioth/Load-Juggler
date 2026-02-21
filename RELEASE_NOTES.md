@@ -1,6 +1,6 @@
 # Release Notes
 
-## 2.0.3 (Pre-release)
+## 2.0.4 (Pre-release)
 
 **BREAKING**: Existing 1.x users must **remove and re-add** the integration.
 
@@ -22,11 +22,20 @@
 - **HA service actions**: `set_operating_mode`, `set_distribution_mode`, `set_max_current`, `set_min_current`.
 - **Available current display** for idle chargers.
 - **EVSE charging status sensor** with mode-aware status messages (Battery Priority, Insufficient Solar, No Excess, etc.).
+- **Hub status sensor** — shows site configuration health (OK, Initializing, No power measurement, Grid sensors unavailable) with detailed warnings as attributes.
 - **Solar/Excess grace period**: configurable hold-at-minimum timer before pausing when conditions drop, preventing rapid on/off cycling.
 - **Auto-detect grid CT inversion**: correlates charger draw vs grid current direction, fires persistent notification after repeated inverted readings.
 - **Auto-detect phase mapping**: correlates charger draw vs per-phase grid deltas, notifies on wiring mismatch (opt-in).
 - **Auto-detect OCPP meter sample interval**: uses charger's `MeterValueSampleInterval` as default update frequency.
 - **Auto-detect smart plug power monitor**: discovers power sensors for Shelly, Sonoff, Tasmota, Kasa, Tuya plugs.
+- **Circuit groups**: shared breaker limits for co-located loads. Group loads under a sub-breaker with a per-phase current limit. Post-distribution enforcement ensures combined allocation never exceeds the circuit limit.
+- **Off-grid support**: grid CT entities are now optional. When no grid CTs are configured, the system infers active phases from inverter output entities and treats grid current as 0A. Solar production is derived from inverter output using a unified formula that works for both grid and off-grid sites.
+
+### Resilience Improvements
+- **Grid CT stale detection**: when configured grid CT sensors become unavailable, the system holds the last known EMA value. After 60s of continuous unavailability, all chargers fall to minimum current. Recovery is automatic with a log message.
+- **Sensor unavailability handling**: `_UNAVAILABLE` sentinel pattern — solar, battery, and inverter sensors automatically hold their last EMA value during brief unavailability instead of decaying to 0.
+- **OCPP/switch error handling**: `set_charge_rate` and plug switch commands wrapped in try-except to prevent update cycle crashes if the OCPP integration restarts.
+- **Input validation**: NaN/Inf guard in EMA smoothing, voltage ≤0 fallback to 230V, plug empty-phase crash fix, stale circuit group member filtering.
 
 ### Bug Fixes
 - Fixed charging instability from feedback loop oscillation (EMA smoothing + Schmitt trigger dead band + dual-frequency updates).
@@ -39,6 +48,7 @@
 - Fixed entity selector clearing (`suggested_value` instead of `default` so X button truly clears).
 - Fixed options flow Submit → Next button on non-final steps.
 - Fixed config entry not reloading on options change (stale battery sliders persisting).
+- Fixed `total_site_available_power` and `available_grid_power` not capped by `max_grid_import_power`.
 
 ### UX Improvements
 - Redesigned configuration flow with contextual help text, entity pickers, and number selectors.
@@ -48,6 +58,7 @@
 - Hub sensor renames: shorter, consistent naming (Current X Power / Available X Power), added Current Solar Power sensor.
 - Structured debug logging with human-readable charger names, raw+smoothed value display.
 - Charge pause duration in minutes (was seconds) for consistency.
+- Default hub name changed to "Site Load Management".
 
 ---
 

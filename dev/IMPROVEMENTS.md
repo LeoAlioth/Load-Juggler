@@ -138,7 +138,7 @@ Replaced flat counts with weighted scoring:
 - **#5** — HomeWizard P1 + WallBox setup → user testing v2.0.0
 
 ## Circuit Groups — shared breaker limit for co-located loads
-**Status:** Designed, not yet implemented
+**Status:** Implemented (TODO #96)
 **Complexity:** Medium
 
 ### Problem

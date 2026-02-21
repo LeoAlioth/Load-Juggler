@@ -38,8 +38,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         _LOGGER.info("No battery configured - skipping 'Allow Grid Charging' switch")
         return
 
-    entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
-    name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
+    entity_id = config_entry.data.get(CONF_ENTITY_ID, "site_load_management")
+    name = config_entry.data.get(CONF_NAME, "Site Load Management")
 
     entities = [AllowGridChargingSwitch(hass, config_entry, entity_id, name)]
     _LOGGER.info(f"Setting up hub switch entities: {[entity.unique_id for entity in entities]}")

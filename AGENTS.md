@@ -10,9 +10,11 @@ Load Juggler is a Home Assistant custom component for intelligent load managemen
 
 - Per-load operating modes (Standard, Solar Priority, Solar Only, Excess for EVSE; Continuous, Solar Only, Excess for plugs)
 - Multi-load support with priority-based distribution and mode urgency sorting
+- Circuit groups — shared breaker limits for co-located loads (post-distribution capping)
 - Battery integration with SOC thresholds
 - Phase-aware handling (1-phase, 2-phase, 3-phase installations)
 - Symmetric and asymmetric inverter support
+- Off-grid support (no grid CTs required — infers phases from inverter output)
 
 **Version 2.0** — disregard backwards compatibility. No migration processes needed.
 
@@ -40,12 +42,16 @@ custom_components/dynamic_ocpp_evse/
 ├── const.py                       # Constants and defaults
 ├── config_flow.py                 # HA configuration flow
 ├── dynamic_ocpp_evse.py          # Main entry point — reads HA states, builds SiteContext, calls engine
+│                                  #   Key helpers: _derive_solar_production(), _smooth(), _coerce(),
+│                                  #   _read_entity() (returns _UNAVAILABLE sentinel), _apply_feedback_loop()
+├── entity_mixins.py              # HubEntityMixin, ChargerEntityMixin (device_info, data write helpers)
+├── auto_detect.py                # Grid CT inversion + phase mapping auto-detection
 ├── [button|number|select|sensor|switch].py  # HA entities
 ├── calculations/                  # Core calculation logic (PURE PYTHON - no HA dependencies)
-│   ├── models.py                  # Data models (SiteContext, LoadContext)
+│   ├── models.py                  # Data models (SiteContext, LoadContext, CircuitGroup, PhaseConstraints)
 │   ├── context.py                 # Context builder (HA → models)
 │   ├── target_calculator.py       # Main calculation engine
-│   └── utils.py                   # Utility functions (is_number)
+│   └── utils.py                   # Utility functions (is_number, compute_household_per_phase)
 └── translations/                  # Localization files
 ```
 
@@ -100,6 +106,9 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
    ↓
 5. Distribute power among loads (sorted by mode urgency + priority)
    → _distribute_power()
+   ↓
+6. Enforce circuit group limits (post-distribution capping)
+   → _enforce_circuit_groups()
 ```
 
 ### Data Models
@@ -112,11 +121,11 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 - Electrical: voltage, num_phases, main_breaker_rating
 - Per-phase: consumption (PhaseValues), export_current (PhaseValues), grid_current (PhaseValues)
-- Solar: solar_production_total (derived from grid CT export, or from dedicated entity), solar_is_derived, household_consumption_total
+- Solar: solar_production_total (derived via `_derive_solar_production()`, or from dedicated entity), solar_is_derived, household_consumption_total
 - Derived: total_export_current, total_export_power (computed properties)
 - Battery: battery_soc, battery_soc_min, battery_soc_target, battery_max_charge/discharge_power
-- Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric
-- Charging: distribution_mode, chargers[]
+- Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, wiring_topology, inverter_output_per_phase
+- Charging: distribution_mode, chargers[], circuit_groups[]
 
 **LoadContext** (`calculations/models.py`) — Represents a single managed load (EVSE or smart plug):
 
@@ -126,12 +135,22 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Current: l1_current, l2_current, l3_current (actual OCPP draw)
 - Calculated: target_current (output of calculation)
 
+**CircuitGroup** (`calculations/models.py`) — Shared breaker limit for co-located loads:
+
+- Config: group_id, name, current_limit (per-phase A), member_ids[]
+- Enforced post-distribution: member allocations per phase capped to current_limit
+
 ### HA Integration Layer
 
 The `calculations/` directory is pure Python and can be imported/tested independently. The HA integration layer:
 
-1. **dynamic_ocpp_evse.py**: Reads HA entity states, builds SiteContext/LoadContext, calls calculation engine
-2. **sensor.py**: Uses engine output (charger_targets) to set OCPP charging profiles via service calls
+1. **dynamic_ocpp_evse.py**: Reads HA entity states, builds SiteContext/LoadContext, calls calculation engine. Key patterns:
+   - `_UNAVAILABLE` sentinel: returned by `_read_entity()` when a configured sensor is unavailable/unknown
+   - `_smooth()`: EMA smoothing with `_UNAVAILABLE` holdover (holds last value instead of decaying to 0), NaN/Inf rejection
+   - `_coerce()`: converts `_UNAVAILABLE` back to safe defaults for non-smoothed values
+   - `_derive_solar_production()`: unified formula for grid and off-grid — uses inverter output when available, falls back to grid export + battery
+   - Off-grid: when no grid CTs are configured, phases with inverter output entities are zeroed (not None), making the site behave like a grid site with 0A grid current
+2. **sensor.py**: Uses engine output (charger_targets) to set OCPP charging profiles via service calls. Hub sensors: Site Available Power, Hub Status, per-metric data sensors. Charger sensors: allocated current, available current, charging status.
 3. **Entities** (button.py, number.py, select.py, etc.): Expose controls and sensors to HA UI
 
 ### Asymmetric vs Symmetric Inverters
@@ -249,7 +268,7 @@ Scenario files in `dev/tests/scenarios/` (organized by site type × charging mod
 1ph_battery/    — Single-phase with battery (test_solar, test_eco, test_standard, test_excess)
 3ph/            — Three-phase, no battery (test_solar, test_eco, test_standard, test_excess)
 3ph_battery/    — Three-phase with battery (test_solar, test_eco, test_standard, test_excess)
-features/       — Cross-cutting tests (test_available, test_plugs, test_phase_mapping)
+features/       — Cross-cutting tests (test_available, test_plugs, test_phase_mapping, test_circuit_groups)
 ```
 
 ### HA Integration Tests (WSL/Linux)

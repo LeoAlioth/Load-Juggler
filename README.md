@@ -1,6 +1,6 @@
 # Load Juggler
 
-Intelligent load management for Home Assistant. Dynamically distributes available power across your managed loads — EV chargers (via OCPP), smart plugs, and more — based on solar production, battery state, grid capacity, and per-load operating modes.
+Intelligent load management for Home Assistant. Dynamically distributes available power across your managed loads — EV chargers (via OCPP), smart plugs, and more — based on solar production, battery state, grid capacity, and per-load operating modes. Works with both grid-tied and off-grid installations.
 
 ## Table of Contents
 
@@ -25,11 +25,13 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 - **Phase-aware calculations** for 1-phase, 2-phase, and 3-phase installations
 - **Per-load phase mapping** (L1/L2/L3 to site phases A/B/C)
 - **Symmetric and asymmetric inverter** support
+- **Circuit groups** — shared breaker limits for co-located loads
+- **Off-grid support** — grid CTs optional, infers phases from inverter output
 - **Auto-detection** of sensors, phase mapping, and charger settings
 - **OCPP 1.6J** control for EV chargers (Amps or Watts, auto-detected)
 - **Relative and absolute OCPP profile modes** for different charger compatibility
 - **Current rate limiting** (ramp up/down) for stable operation
-- **Failsafe operation** — loads revert to safe defaults if communication fails
+- **Failsafe operation** — loads revert to safe defaults if sensors become unavailable (EMA holdover, grid stale detection)
 
 ## Supported Load Types
 
@@ -80,6 +82,19 @@ When multiple loads are managed by a single hub, the distribution mode determine
 
 See the [Distribution Modes Guide](DISTRIBUTION_MODES_GUIDE.md) for detailed explanations.
 
+### Circuit Groups
+
+When multiple loads share a sub-breaker (e.g., two chargers on a 20A circuit), create a circuit group with a per-phase current limit. The system enforces the group limit after distribution, reducing lower-priority members first. See the [Distribution Modes Guide](DISTRIBUTION_MODES_GUIDE.md#circuit-groups) for details.
+
+## Off-Grid Support
+
+Load Juggler works on off-grid installations. When no grid CT entities are configured:
+- Active phases are inferred from inverter output entities
+- Grid current is treated as 0A (same calculation engine, no separate code paths)
+- Solar production is derived from inverter output (series: `solar = inverter - battery`, parallel: `solar = inverter`)
+
+Configure inverter output entities in the hub settings. The hub status sensor shows "Off-grid mode" when no grid CTs are present.
+
 ## Battery System Support
 
 - **Battery SOC monitoring** — tracks current battery state of charge
@@ -120,7 +135,7 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
 
 1. Go to **Settings > Devices & Services > Add Integration** and search for `Dynamic OCPP EVSE`
 2. **Create a Hub** (represents your electrical site):
-   - Select your phase current/power sensors (Phase A required, B and C optional for multi-phase)
+   - Select your phase current/power sensors (all optional — for off-grid sites, configure inverter output entities instead)
    - Configure main breaker rating, voltage, and max import power
    - Optionally configure battery sensors and inverter settings
 3. **Add a Load** (the integration auto-discovers OCPP chargers):
@@ -341,6 +356,16 @@ Any smart plug in Home Assistant with an on/off switch entity. Power monitoring 
 ### Solar Priority mode charging too fast/slow at night
 
 **Expected:** Solar Priority mode charges at the minimum rate when no solar is available. If it's charging faster, check that grid current sensors are reading correctly and the invert_phases setting is correct.
+
+### Hub status sensor shows warnings
+
+The hub creates a **Status** sensor that shows the site health:
+- **OK** — everything is configured and working
+- **Initializing** — first calculation cycle hasn't completed yet
+- **No power measurement** — no grid CTs, inverter output, or solar entity configured
+- **Grid sensors unavailable** — configured grid CT sensors are returning unavailable/unknown. Chargers hold last known values for 60s, then fall to minimum current as a safety measure.
+
+Check the sensor's `warnings` attribute for details.
 
 ### No entities showing up
 

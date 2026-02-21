@@ -42,13 +42,13 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
         site: SiteContext containing all site and charger data
     """
     # Step 0: Filter active vs inactive chargers
+    # SuspendedEVSE = charger is throttling (our profile active), still active.
+    # SuspendedEV idle timeout is handled in the HA layer (dynamic_ocpp_evse.py),
+    # which overrides connector_status to "Finishing" after the grace period.
+    _INACTIVE_STATUSES = {"Available", "Unknown", "Unavailable", "Finishing", "Faulted"}
     all_chargers = site.chargers
-    active_chargers = [c for c in all_chargers
-                       if c.connector_status not in [
-                           "Available", "Unknown", "Unavailable",
-                           "Finishing", "Faulted",
-                       ]]
-    inactive_chargers = [c for c in all_chargers if c not in active_chargers]
+    active_chargers = [c for c in all_chargers if c.connector_status not in _INACTIVE_STATUSES]
+    inactive_chargers = [c for c in all_chargers if c.connector_status in _INACTIVE_STATUSES]
 
     _mode_summary = ", ".join(
         f"{c.entity_id}={c.operating_mode}" for c in active_chargers

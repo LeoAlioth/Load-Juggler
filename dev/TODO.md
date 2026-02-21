@@ -112,6 +112,7 @@
 100. - [x] Off-grid support — Phase A CT optional in config flow, `_get_hub_phase_count` falls back to inverter output entities, unified solar derivation via `_derive_solar_production()` (inverter-based for series/parallel, export-based fallback), off-grid phases zeroed from inverter output config (no separate code paths)
 101. - [x] Hub status sensor — `DynamicOcppEvseHubStatusSensor` shows config validation + runtime warnings (no power measurement, off-grid mode, grid sensors unavailable)
 102. - [x] Cleanup — removed dead `car_phases` field from `LoadContext`, removed auto-detect state double-init
+103. - [x] SuspendedEV handling — `SuspendedEV` with near-zero draw (< 1.0A) treated as inactive after 60s grace period (car done charging, frees capacity); `SuspendedEVSE` remains active (charger throttling). Grace period tracked in HA layer, engine stays stateless.
 
 ## Backlog
 

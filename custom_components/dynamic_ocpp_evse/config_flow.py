@@ -548,8 +548,8 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_hub_grid()
 
         data_schema = vol.Schema({
-            vol.Required(CONF_NAME, default="Dynamic OCPP EVSE"): str,
-            vol.Required(CONF_ENTITY_ID, default="dynamic_ocpp_evse"): str,
+            vol.Required(CONF_NAME, default="Site Load Management"): str,
+            vol.Required(CONF_ENTITY_ID, default="site_load_management"): str,
         })
         
         return self.async_show_form(

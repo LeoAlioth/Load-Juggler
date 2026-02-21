@@ -1,6 +1,8 @@
-# Load Juggler - Distribution Modes Guide
+# Load Juggler — Distribution Modes Guide
 
 When multiple loads are connected to a single hub, the distribution mode determines how available current is allocated between them. All modes use a two-step approach: first ensure minimums, then distribute the remainder.
+
+After distribution, [circuit group limits](#circuit-groups) are enforced as an additional constraint.
 
 ## Quick Comparison
 
@@ -172,3 +174,48 @@ Processing:
 - Priority value 1 is highest, 10 is lowest
 - Mode urgency takes precedence over priority number: Standard/Continuous loads are always allocated before Solar Priority, which comes before Solar Only, etc.
 - Only active loads participate in distribution (EVSE must have car plugged in and ready, smart plugs must be connected)
+- Circuit group limits are enforced **after** distribution — they can reduce allocations but never increase them
+
+---
+
+## Circuit Groups
+
+Circuit groups add an intermediate breaker constraint between the site breaker and individual loads. Use them when multiple loads share a sub-breaker (e.g., two 16A EVSEs on a 20A circuit breaker).
+
+### How It Works
+
+1. Distribution mode allocates power as usual (Shared, Priority, etc.)
+2. After distribution, circuit group limits are enforced per phase
+3. If the combined allocation of group members exceeds the group limit on any phase, members are reduced in reverse priority order until the limit is satisfied
+4. If reducing a load drops it below its min_current, it is set to 0A
+
+### Configuration
+
+Create a circuit group via **Settings > Devices & Services > Add Integration > Load Juggler > Circuit Group**:
+
+| Field | Description |
+|-------|-------------|
+| **Name** | Display name for the group |
+| **Current Limit** | Maximum current per phase (A) for all members combined |
+| **Hub** | Which hub this group belongs to |
+| **Members** | Select which loads belong to this group |
+
+### Example
+
+```text
+Site breaker: 25A per phase
+Circuit group "Garage": 20A limit
+  - EVSE 1: 6-16A, priority 1
+  - EVSE 2: 6-16A, priority 2
+
+Distribution allocates: EVSE 1=12A, EVSE 2=12A (24A total)
+Circuit group enforces: 24A > 20A limit
+  → EVSE 2 reduced to 8A (lower priority)
+  → Final: EVSE 1=12A, EVSE 2=8A (20A total)
+```
+
+### HA Entities
+
+Each circuit group creates a sensor showing:
+- **State**: Current allocation (sum of member draws on heaviest phase)
+- **Attributes**: per-phase draw breakdown, headroom, member list

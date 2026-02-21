@@ -1,6 +1,7 @@
-# Load Juggler - Operating Modes Guide
+# Load Juggler — Operating Modes Guide
 
 For distribution modes (Shared, Priority, Optimized, Strict), see [DISTRIBUTION_MODES_GUIDE.md](DISTRIBUTION_MODES_GUIDE.md).
+For circuit groups (shared breaker limits), see [DISTRIBUTION_MODES_GUIDE.md](DISTRIBUTION_MODES_GUIDE.md#circuit-groups).
 
 ## Table of Contents
 1. [Operating Modes Overview](#operating-modes-overview)
@@ -412,6 +413,15 @@ Result: Charge at solar rate (like Solar Only mode)
 | **Power Buffer** | Safety buffer in Standard mode (W) | 0W | Standard mode |
 | **Allow Grid Charging** | Enable/disable grid import | ON | Standard, Solar Priority |
 | **Distribution Mode** | How to allocate between loads | Priority | Multi-load |
+| **Circuit Group Limit** | Max current per phase for a group of loads (A) | — | Multi-load |
+
+### Off-Grid Sites
+
+All operating modes work on off-grid sites (no grid CT entities configured). The system treats grid current as 0A and derives solar production from inverter output:
+- **Series topology**: solar = inverter output - battery power
+- **Parallel topology**: solar = inverter output
+
+Standard and Solar Priority modes work identically — the grid portion of available power is simply 0. Solar Only and Excess modes rely on solar production, which is derived from inverter output sensors instead of grid export.
 
 ### Load-Level Configuration
 
@@ -535,6 +545,16 @@ Falling (once above):
 **Check:**
 - Export power vs. configured threshold
 - With battery: Is threshold adjusted for battery charging?
+
+### Hub Status Shows "Grid sensors unavailable"
+
+**Cause:** Configured grid CT sensors are returning `unavailable` or `unknown` state.
+**Behavior:** The system holds the last known reading for up to 60 seconds. After 60s, all chargers fall to minimum current as a safety measure. Recovery is automatic when sensors come back.
+
+### Hub Status Shows "No power measurement"
+
+**Cause:** No grid CTs, no inverter output entities, and no solar entity are configured. The system has no way to measure power flow.
+**Solution:** Configure at least one power measurement source — grid CT entities, inverter output entities, or a solar production entity.
 
 ---
 

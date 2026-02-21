@@ -21,8 +21,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     
     # Set up hub sensor for hub entries
     if entry_type == ENTRY_TYPE_HUB:
-        name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
-        entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+        name = config_entry.data.get(CONF_NAME, "Site Load Management")
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "site_load_management")
 
         # Check which optional hardware is configured
         has_battery = bool(get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID, None))
@@ -823,7 +823,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             connector_status = connector_state.state if connector_state else "unknown"
 
             if connector_status in ("Available", "unknown", "unavailable"):
-                self._charging_status = "Not Connected"
+                self._charging_status = "Unplugged"
             elif not dynamic_control_on:
                 self._charging_status = "Dynamic Control Off"
             elif self._grace_started_at is not None and self._allocated_current >= min_charge_current:
