@@ -59,9 +59,9 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         entity_sel_current_power = selector({"entity": {"domain": "sensor", "device_class": ["current", "power"]}})
 
         return [
-            (vol.Required(
+            (self._optional_entity_field(
                 CONF_PHASE_A_CURRENT_ENTITY_ID,
-                default=defaults.get(CONF_PHASE_A_CURRENT_ENTITY_ID),
+                defaults.get(CONF_PHASE_A_CURRENT_ENTITY_ID),
             ), entity_sel_current_power),
             (self._optional_entity_field(
                 CONF_PHASE_B_CURRENT_ENTITY_ID,
@@ -245,11 +245,15 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         hub_entry = self.hass.config_entries.async_get_entry(entry_id)
         if not hub_entry:
             return 3
-        count = 0
-        for key in (CONF_PHASE_A_CURRENT_ENTITY_ID, CONF_PHASE_B_CURRENT_ENTITY_ID, CONF_PHASE_C_CURRENT_ENTITY_ID):
-            val = hub_entry.options.get(key) or hub_entry.data.get(key)
-            if val:
-                count += 1
+        opts = {**hub_entry.data, **hub_entry.options}
+        # Count from grid CT entities first
+        count = sum(1 for key in (CONF_PHASE_A_CURRENT_ENTITY_ID, CONF_PHASE_B_CURRENT_ENTITY_ID, CONF_PHASE_C_CURRENT_ENTITY_ID)
+                    if opts.get(key))
+        if count > 0:
+            return count
+        # Off-grid fallback: infer from inverter output entities
+        count = sum(1 for key in (CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID, CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID, CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID)
+                    if opts.get(key))
         return max(count, 1)
 
     def _charger_current_schema(self, defaults: dict | None = None, hub_phases: int = 3) -> vol.Schema:

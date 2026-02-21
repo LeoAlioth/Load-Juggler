@@ -109,6 +109,7 @@
 ## Completed (cont.)
 
 99. - [x] Resilience improvements — OCPP try-except + plug switch error handling, `_UNAVAILABLE` sentinel + EMA holdover for solar/battery/inverter sensors, NaN/inf guard in `_smooth()`, stale circuit group member filtering, voltage ≤0 guard, plug empty-phase crash fix
+100. - [x] Off-grid support — Phase A CT optional in config flow, `_get_hub_phase_count` falls back to inverter output entities, unified solar derivation via `_derive_solar_production()` (inverter-based for series/parallel, export-based fallback), off-grid phases zeroed from inverter output config (no separate code paths)
 
 ## Backlog
 

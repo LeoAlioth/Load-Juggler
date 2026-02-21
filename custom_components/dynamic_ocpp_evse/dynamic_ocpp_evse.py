@@ -128,6 +128,35 @@ def _fv2(raw, smoothed):
     return f"{_fv(smoothed)}({_fv(raw)})"
 
 
+def _derive_solar_production(inverter_output_per_phase, wiring_topology,
+                              export_power, battery_power, voltage):
+    """Derive solar production from available sensor data.
+
+    Unified formula for grid and off-grid sites:
+    - With inverter output: series → solar = inverter_output - battery_power
+                            parallel → solar = inverter_output
+    - Without inverter output: fallback → solar = export + battery_charging
+    For off-grid, export is naturally 0 (no grid CTs), so the inverter-based
+    formula is used.
+    """
+    if inverter_output_per_phase is not None:
+        inv_watts = inverter_output_per_phase.total * voltage
+        if wiring_topology == WIRING_TOPOLOGY_SERIES:
+            # Battery is behind inverter: inverter_output = solar + battery_power
+            # (battery_power > 0 = discharging, < 0 = charging)
+            bp = battery_power if battery_power is not None else 0
+            return max(0, inv_watts - bp)
+        else:
+            # Parallel: inverter output IS solar
+            return max(0, inv_watts)
+    else:
+        # Fallback: derive from grid export + battery charge absorption
+        solar = export_power or 0
+        if battery_power is not None and battery_power < 0:
+            solar += abs(battery_power)
+        return max(0, solar)
+
+
 # ---------------------------------------------------------------------------
 # Subfunctions for run_hub_calculation
 # ---------------------------------------------------------------------------
@@ -487,13 +516,14 @@ def _apply_feedback_loop(site, solar_is_derived, voltage):
     site.consumption = PhaseValues(*adj_consumption)
     site.export_current = PhaseValues(*adj_export)
 
-    # Update derived solar to match adjusted export + battery charge absorption
+    # Update derived solar after feedback (unified formula for grid and off-grid)
     solar_note = ""
     if solar_is_derived:
-        site.solar_production_total = site.export_current.total * site.voltage
-        # Battery charging absorbs solar power invisible to grid CT — add it back
-        if site.battery_power is not None and site.battery_power < 0:
-            site.solar_production_total += abs(site.battery_power)
+        export_after = site.export_current.total * site.voltage
+        site.solar_production_total = _derive_solar_production(
+            site.inverter_output_per_phase, site.wiring_topology,
+            export_after, site.battery_power, site.voltage,
+        )
         solar_note = f" | Solar(derived)={site.solar_production_total:.0f}W"
 
     _LOGGER.debug(
@@ -696,6 +726,17 @@ def run_hub_calculation(sensor):
 
     # --- Read per-phase grid current (raw) ---
     raw_phases, _, _ = _read_grid_phases(hass, hub_entry)
+    has_grid_cts = any(r is not None for r in raw_phases)
+
+    # Off-grid (no grid CTs): zero out phases that have inverter output entities.
+    # This makes the site behave like a grid site with 0A grid current.
+    if not has_grid_cts:
+        inv_confs = (CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+                     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+                     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID)
+        for i, conf in enumerate(inv_confs):
+            if get_entry_value(hub_entry, conf, None):
+                raw_phases[i] = 0
 
     # --- Input EMA smoothing (grid CT, solar, battery power) ---
     hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
@@ -740,15 +781,15 @@ def run_hub_calculation(sensor):
     total_export_current = export_pv.total
     total_export_power = total_export_current * voltage if voltage > 0 else 0
 
-    # --- Solar production ---
+    # --- Solar production (direct entity, or derived after inverter output below) ---
     solar_production_entity = get_entry_value(hub_entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
     solar_is_derived = not solar_production_entity
     if solar_production_entity:
         raw_solar = _read_entity(hass, solar_production_entity, 0)
         solar_production_total = _smooth(ema_inputs, "solar", raw_solar)
     else:
-        raw_solar = None  # derived — no raw reading
-        solar_production_total = total_export_power
+        raw_solar = None  # derived — calculated after inverter output is read
+        solar_production_total = 0  # placeholder
 
     # --- Battery data ---
     battery_soc_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
@@ -759,11 +800,6 @@ def run_hub_calculation(sensor):
     battery_soc_hysteresis = get_entry_value(hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
     battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
-
-    # In derived mode, battery charging absorbs solar power invisible to grid CT.
-    # Add it back to recover true solar production estimate.
-    if solar_is_derived and battery_power is not None and battery_power < 0:
-        solar_production_total += abs(battery_power)
 
     # --- Max grid import power (entity override → shared hub data → None) ---
     enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
@@ -787,6 +823,15 @@ def run_hub_calculation(sensor):
             for i, p in enumerate(("a", "b", "c"))
         ]
         inverter_output_per_phase = PhaseValues(*inv_smoothed)
+
+    # --- Derive solar production (unified for grid and off-grid) ---
+    # Uses inverter output when available; falls back to grid export + battery.
+    # For off-grid sites (no grid CTs), export is 0 so inverter formula applies.
+    if solar_is_derived:
+        solar_production_total = _derive_solar_production(
+            inverter_output_per_phase, wiring_topology,
+            total_export_power, battery_power, voltage,
+        )
 
     # --- Runtime state from shared hub data (hub_runtime already fetched above) ---
     distribution_mode = hub_runtime.get("distribution_mode", DEFAULT_DISTRIBUTION_MODE)
