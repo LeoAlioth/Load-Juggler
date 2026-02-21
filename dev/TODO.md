@@ -99,6 +99,8 @@
 
 95. - [x] Available Current sensor shows available (not allocated) current in HA
 96. - [x] Circuit Groups — shared breaker limits (post-distribution capping, PhaseConstraints reuse, 9 test scenarios)
+97. - [x] Grid CT stale detection — hold last EMA value, fallback to min_current after 60s timeout, `grid_stale` attribute on hub sensor
+98. - [x] Site available power cap — `total_site_available_power` and `available_grid_power` now capped by `max_grid_import_power`
 
 ## In Progress
 
