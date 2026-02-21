@@ -221,4 +221,26 @@ When a configured grid CT sensor becomes `unavailable`/`unknown`, `_read_entity(
 - Cap `grid_headroom` by `max_grid_import_power - post_feedback_consumption`
 - These sensors now reflect the actual grid limit used by the calculation engine
 
+### Issue 3: Broader sensor resilience — IMPLEMENTED
+
+Extended failure handling beyond grid CT to all sensor types:
+
+- `_read_entity()` now returns `_UNAVAILABLE` sentinel when a configured sensor is `unknown`/`unavailable`
+- `_smooth()` holds last known EMA value when receiving `_UNAVAILABLE` (prevents decay to 0)
+- `_smooth()` rejects `NaN`/`Inf` values (returns last EMA instead)
+- Non-smoothed call sites use `_coerce()` helper to safely convert `_UNAVAILABLE` to appropriate defaults
+- **Effect**: solar production, battery power, and inverter output sensors automatically hold their last value during brief unavailability
+
+### Issue 4: OCPP/switch service call resilience — IMPLEMENTED
+
+- `set_charge_rate` wrapped in try-except; `_last_commanded_limit` only updated on success
+- Plug switch `turn_on`/`turn_off` wrapped in try-except with warning log
+- Prevents entire update cycle crash if OCPP integration restarts
+
+### Issue 5: Miscellaneous hardening — IMPLEMENTED
+
+- Plug charger `connected_to_phase` fallback to "A" if empty (prevents division by zero)
+- Voltage validation: `<= 0` falls back to `DEFAULT_PHASE_VOLTAGE` (230V)
+- Circuit group stale member filtering: deleted charger entry_ids silently dropped with warning log
+
 ## Fallback to Power Offered if Current offered (total or per phase) is not available

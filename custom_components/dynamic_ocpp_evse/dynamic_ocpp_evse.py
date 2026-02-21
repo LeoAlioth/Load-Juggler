@@ -6,6 +6,7 @@ All core calculation logic has been refactored into the calculations/ directory.
 """
 
 import logging
+import math
 import time
 
 from .calculations import (
@@ -25,19 +26,33 @@ _LOGGER = logging.getLogger(__name__)
 # Phase labels used for loop-based per-phase processing
 _PHASE_LABELS = ("A", "B", "C")
 
+# Sentinel: sensor is configured but currently unavailable/unknown
+_UNAVAILABLE = object()
+
 
 def _smooth(ema_dict: dict, key: str, raw, alpha: float = EMA_ALPHA):
     """Apply EMA smoothing to a sensor reading. Returns smoothed value.
 
-    State is stored in ema_dict[key] between calls. None values pass through.
+    State is stored in ema_dict[key] between calls.
+    - None values pass through (sensor not configured).
+    - _UNAVAILABLE holds the last known EMA value (sensor temporarily down).
     """
     if raw is None:
         return None
+    if raw is _UNAVAILABLE:
+        # Sensor unavailable — hold last known EMA value
+        return ema_dict.get(key)
+    try:
+        val = float(raw)
+    except (ValueError, TypeError):
+        return ema_dict.get(key)
+    if not math.isfinite(val):
+        return ema_dict.get(key)
     prev = ema_dict.get(key)
     if prev is None:
-        ema_dict[key] = float(raw)
-        return float(raw)
-    smoothed = alpha * float(raw) + (1 - alpha) * prev
+        ema_dict[key] = val
+        return val
+    smoothed = alpha * val + (1 - alpha) * prev
     ema_dict[key] = smoothed
     return round(smoothed, 2)
 
@@ -56,16 +71,22 @@ def _read_phase_attr(attrs: dict, keys: tuple) -> float | None:
 
 
 def _read_entity(hass, entity_id: str, default=0):
-    """Read a numeric value from an HA entity, falling back to a default."""
+    """Read a numeric value from an HA entity.
+
+    Returns:
+        float: The entity's numeric value.
+        _UNAVAILABLE: The entity is configured but currently unavailable/unknown.
+        default: The entity_id is not provided (not configured).
+    """
     if not entity_id:
         return default
     state = hass.states.get(entity_id)
-    if state and state.state not in ('unknown', 'unavailable', None, ''):
-        try:
-            return float(state.state)
-        except (ValueError, TypeError):
-            pass
-    return default
+    if not state or state.state in ('unknown', 'unavailable', None, ''):
+        return _UNAVAILABLE
+    try:
+        return float(state.state)
+    except (ValueError, TypeError):
+        return _UNAVAILABLE
 
 
 def _read_inverter_output(hass, entity_id, voltage):
@@ -84,6 +105,11 @@ def _read_inverter_output(hass, entity_id, voltage):
     if unit == "W" and voltage > 0:
         value = value / voltage  # Convert W → A
     return value
+
+
+def _coerce(v, default=0):
+    """Convert _UNAVAILABLE sentinel to a safe default for non-smoothed use."""
+    return default if v is _UNAVAILABLE else v
 
 
 def _fv(v):
@@ -120,7 +146,7 @@ def _read_grid_phases(hass, hub_entry):
 
     raw_phases = []
     for entity in phase_entities:
-        raw = _read_entity(hass, entity, 0) if entity else None
+        raw = _coerce(_read_entity(hass, entity, 0)) if entity else None
         if raw is not None and invert_phases:
             raw = -raw
         raw_phases.append(raw)
@@ -206,9 +232,9 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     
     # Try per-phase current import entities first (separate sensors for each phase)
     if evse_import_l1 or evse_import_l2 or evse_import_l3:
-        l1_val = _read_entity(hass, evse_import_l1, None) if evse_import_l1 else None
-        l2_val = _read_entity(hass, evse_import_l2, None) if evse_import_l2 else None
-        l3_val = _read_entity(hass, evse_import_l3, None) if evse_import_l3 else None
+        l1_val = _coerce(_read_entity(hass, evse_import_l1, None), None) if evse_import_l1 else None
+        l2_val = _coerce(_read_entity(hass, evse_import_l2, None), None) if evse_import_l2 else None
+        l3_val = _coerce(_read_entity(hass, evse_import_l3, None), None) if evse_import_l3 else None
         
         if l1_val is not None or l2_val is not None or l3_val is not None:
             charger.l1_current = l1_val if l1_val is not None else 0
@@ -309,7 +335,7 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority, plug_
     config_power = get_entry_value(entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
     power_rating = slider_power if slider_power is not None and slider_power > 0 else config_power
 
-    connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A")
+    connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
     phases = len(connected_to_phase)
 
     # Determine connector status from plug switch state
@@ -319,7 +345,7 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority, plug_
     # Check power monitor if available (more reliable than switch state)
     power_monitor_entity = get_entry_value(entry, CONF_PLUG_POWER_MONITOR_ENTITY_ID, None)
     if power_monitor_entity:
-        power_draw = _read_entity(hass, power_monitor_entity, 0)
+        power_draw = _coerce(_read_entity(hass, power_monitor_entity, 0))
         connector_status = "Charging" if power_draw > 10 else "Available"
 
         # Auto-adjust power rating from monitored draw (rolling average)
@@ -488,13 +514,26 @@ def _build_circuit_groups(hass, hub_entry_id):
     from . import get_groups_for_hub
 
     group_entries = get_groups_for_hub(hass, hub_entry_id)
+    # Build set of valid charger entry_ids for member validation
+    valid_charger_ids = {
+        e.entry_id for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+    }
     groups = []
     for entry in group_entries:
         if entry is None:
             continue
         options = {**entry.data, **entry.options}
         current_limit = options.get(CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT)
-        member_ids = options.get(CONF_CIRCUIT_GROUP_MEMBERS, [])
+        raw_member_ids = options.get(CONF_CIRCUIT_GROUP_MEMBERS, [])
+        # Filter out stale member references (deleted chargers)
+        member_ids = [mid for mid in raw_member_ids if mid in valid_charger_ids]
+        stale = set(raw_member_ids) - set(member_ids)
+        if stale:
+            _LOGGER.warning(
+                "Circuit group '%s': removed %d stale member(s) — entries no longer exist",
+                options.get(CONF_NAME, "Circuit Group"), len(stale),
+            )
         group = CircuitGroup(
             group_id=entry.entry_id,
             name=options.get(CONF_NAME, "Circuit Group"),
@@ -649,7 +688,9 @@ def run_hub_calculation(sensor):
     hub_entry = sensor.hub_entry
 
     # --- Read hub config values ---
-    voltage = get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+    voltage = get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE) or DEFAULT_PHASE_VOLTAGE
+    if voltage <= 0:
+        voltage = DEFAULT_PHASE_VOLTAGE
     main_breaker_rating = get_entry_value(hub_entry, CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING)
     excess_threshold = get_entry_value(hub_entry, CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD)
 
@@ -712,7 +753,7 @@ def run_hub_calculation(sensor):
     # --- Battery data ---
     battery_soc_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
     battery_power_entity = get_entry_value(hub_entry, CONF_BATTERY_POWER_ENTITY_ID, None)
-    battery_soc = _read_entity(hass, battery_soc_entity, None) if battery_soc_entity else None
+    battery_soc = _coerce(_read_entity(hass, battery_soc_entity, None), None) if battery_soc_entity else None
     raw_battery_power = _read_entity(hass, battery_power_entity, None) if battery_power_entity else None
     battery_power = _smooth(ema_inputs, "battery_power", raw_battery_power) if battery_power_entity else None
     battery_soc_hysteresis = get_entry_value(hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)
@@ -728,7 +769,7 @@ def run_hub_calculation(sensor):
     enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
     max_import_power_entity = get_entry_value(hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
     if max_import_power_entity:
-        max_grid_import_power = _read_entity(hass, max_import_power_entity, None)
+        max_grid_import_power = _coerce(_read_entity(hass, max_import_power_entity, None), None)
     elif enable_max_import:
         hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
         max_grid_import_power = hub_rt.get("max_import_power", None)

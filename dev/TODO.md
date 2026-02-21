@@ -106,6 +106,10 @@
 
 (none)
 
+## Completed (cont.)
+
+99. - [x] Resilience improvements — OCPP try-except + plug switch error handling, `_UNAVAILABLE` sentinel + EMA holdover for solar/battery/inverter sensors, NaN/inf guard in `_smooth()`, stale circuit group member filtering, voltage ≤0 guard, plug empty-phase crash fix
+
 ## Backlog
 
 1. - [ ] **Device-based OCPP discovery** — select OCPP device instead of entity, auto-find all entities (supports per-phase separate entities)

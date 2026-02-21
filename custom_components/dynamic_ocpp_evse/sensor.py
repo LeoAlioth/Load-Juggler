@@ -381,20 +381,23 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             _LOGGER.error(f"No switch entity configured for plug {self._attr_name}")
             return
 
-        if limit > 0:
-            _LOGGER.debug(f"Smart load {self._attr_name}: turning ON (limit={limit}A)")
-            await self.hass.services.async_call(
-                "switch", "turn_on",
-                {"entity_id": plug_switch_entity},
-                blocking=False,
-            )
-        else:
-            _LOGGER.debug(f"Smart load {self._attr_name}: turning OFF (limit=0)")
-            await self.hass.services.async_call(
-                "switch", "turn_off",
-                {"entity_id": plug_switch_entity},
-                blocking=False,
-            )
+        try:
+            if limit > 0:
+                _LOGGER.debug(f"Smart load {self._attr_name}: turning ON (limit={limit}A)")
+                await self.hass.services.async_call(
+                    "switch", "turn_on",
+                    {"entity_id": plug_switch_entity},
+                    blocking=False,
+                )
+            else:
+                _LOGGER.debug(f"Smart load {self._attr_name}: turning OFF (limit=0)")
+                await self.hass.services.async_call(
+                    "switch", "turn_off",
+                    {"entity_id": plug_switch_entity},
+                    blocking=False,
+                )
+        except Exception as e:
+            _LOGGER.warning("Smart load switch command failed for %s: %s", self._attr_name, e)
 
         # Auto-update device power from power monitoring average
         plug_auto_power = hub_data.get("plug_auto_power", {})
@@ -543,15 +546,19 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             _LOGGER.debug(f"Charge control switch {self._charge_control_entity} is off with limit {limit}A, but no car plugged in (connector: {connector_status}) - not turning on")
 
         # Call the OCPP set_charge_rate service with device_id
-        await self.hass.services.async_call(
-            "ocpp",
-            "set_charge_rate",
-            {
-                "devid": ocpp_device_id,
-                "custom_profile": charging_profile
-            },
-            blocking=False,
-        )
+        try:
+            await self.hass.services.async_call(
+                "ocpp",
+                "set_charge_rate",
+                {
+                    "devid": ocpp_device_id,
+                    "custom_profile": charging_profile
+                },
+                blocking=False,
+            )
+        except Exception as e:
+            _LOGGER.warning("OCPP set_charge_rate failed for %s: %s", self._attr_name, e)
+            return
 
         self._last_commanded_limit = limit  # Store for next cycle's ramp + compliance
         self._last_update = datetime.now(timezone.utc)
