@@ -861,6 +861,28 @@ def run_hub_calculation(sensor):
     battery_soc_target = hub_runtime.get("battery_soc_target", DEFAULT_BATTERY_SOC_TARGET)
     battery_soc_min = hub_runtime.get("battery_soc_min", DEFAULT_BATTERY_SOC_MIN)
 
+    # Apply SOC hysteresis — adjust thresholds so engine stays stateless
+    now_above_target = False
+    now_above_min = False
+    if battery_soc is not None and battery_soc_hysteresis and battery_soc_hysteresis > 0:
+        was_above_target = hub_runtime.get("_soc_above_target", False)
+        if was_above_target:
+            now_above_target = battery_soc >= battery_soc_target - battery_soc_hysteresis
+        else:
+            now_above_target = battery_soc >= battery_soc_target
+        hub_runtime["_soc_above_target"] = now_above_target
+        if now_above_target:
+            battery_soc_target = battery_soc_target - battery_soc_hysteresis
+
+        was_above_min = hub_runtime.get("_soc_above_min", False)
+        if was_above_min:
+            now_above_min = battery_soc >= battery_soc_min - battery_soc_hysteresis
+        else:
+            now_above_min = battery_soc >= battery_soc_min
+        hub_runtime["_soc_above_min"] = now_above_min
+        if now_above_min:
+            battery_soc_min = battery_soc_min - battery_soc_hysteresis
+
     # Apply power buffer to reduce effective max grid import power
     if max_grid_import_power is not None and power_buffer > 0:
         max_grid_import_power = max(0, max_grid_import_power - power_buffer)
@@ -880,9 +902,11 @@ def run_hub_calculation(sensor):
     _extra = []
     if battery_soc_entity:
         _bat_dir = "chg" if (battery_power or 0) < 0 else ("dischg" if (battery_power or 0) > 0 else "idle")
+        _hyst_min = "*" if now_above_min else ""
+        _hyst_tgt = "*" if now_above_target else ""
         _extra.append(
             f"Bat: {_fv(battery_soc)}%/{_fv2(raw_battery_power, battery_power)}W({_bat_dir}) "
-            f"min={_fv(battery_soc_min)}% tgt={_fv(battery_soc_target)}%"
+            f"min={_fv(battery_soc_min)}%{_hyst_min} tgt={_fv(battery_soc_target)}%{_hyst_tgt}"
         )
     if inverter_max_power or inverter_max_power_per_phase:
         _extra.append(

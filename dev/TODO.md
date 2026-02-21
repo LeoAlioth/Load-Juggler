@@ -113,6 +113,8 @@
 101. - [x] Hub status sensor — `DynamicOcppEvseHubStatusSensor` shows config validation + runtime warnings (no power measurement, off-grid mode, grid sensors unavailable)
 102. - [x] Cleanup — removed dead `car_phases` field from `LoadContext`, removed auto-detect state double-init
 103. - [x] SuspendedEV handling — `SuspendedEV` with near-zero draw (< 1.0A) treated as inactive after 60s grace period (car done charging, frees capacity); `SuspendedEVSE` remains active (charger throttling). Grace period tracked in HA layer, engine stays stateless.
+104. - [x] Battery SOC hysteresis — HA layer applies hysteresis to `battery_soc_target` and `battery_soc_min` before passing to engine (tracks `_soc_above_target`/`_soc_above_min` booleans in `hub_runtime`). Engine stays stateless. 14 boundary test scenarios added.
+105. - [x] Charger finishing test scenarios — 8 scenarios testing capacity redistribution when chargers finish (paired baselines, priority/shared modes, mixed modes, 3-charger setups).
 
 ## Backlog
 
