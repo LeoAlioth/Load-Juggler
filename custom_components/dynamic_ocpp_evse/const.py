@@ -4,6 +4,7 @@ DOMAIN = "dynamic_ocpp_evse"
 ENTRY_TYPE = "entry_type"
 ENTRY_TYPE_HUB = "hub"
 ENTRY_TYPE_CHARGER = "charger"
+ENTRY_TYPE_GROUP = "group"
 
 # configuration keys - common
 CONF_NAME = "name"
@@ -51,7 +52,12 @@ CONF_CHARGER_ID = "charger_id"
 CONF_CHARGER_PRIORITY = "charger_priority"
 CONF_OCPP_DEVICE_ID = "ocpp_device_id"
 CONF_EVSE_CURRENT_IMPORT_ENTITY_ID = "evse_current_import_entity_id"
+CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID = "evse_current_import_l1_entity_id"
+CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID = "evse_current_import_l2_entity_id"
+CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID = "evse_current_import_l3_entity_id"
 CONF_EVSE_CURRENT_OFFERED_ENTITY_ID = "evse_current_offered_entity_id"
+CONF_EVSE_POWER_OFFERED_ENTITY_ID = "evse_power_offered_entity_id"
+CONF_EVSE_POWER_IMPORT_ENTITY_ID = "evse_power_import_entity_id"
 CONF_EVSE_MINIMUM_CHARGE_CURRENT = "evse_minimum_charge_current"  # defaults to 6
 CONF_EVSE_MAXIMUM_CHARGE_CURRENT = "evse_maximum_charge_current"  # defaults to 16
 CONF_MIN_CURRENT_ENTITY_ID = "min_current_entity_id"
@@ -74,6 +80,12 @@ CONF_PLUG_POWER_MONITOR_ENTITY_ID = "plug_power_monitor_entity_id"  # Optional p
 CONF_CONNECTED_TO_PHASE = "connected_to_phase"  # Which phase(s) the device is wired to
 DEFAULT_PLUG_POWER_RATING = 2000
 
+# Circuit group — shared breaker limit for co-located loads
+DEVICE_TYPE_GROUP = "group"
+CONF_CIRCUIT_GROUP_CURRENT_LIMIT = "circuit_group_current_limit"
+CONF_CIRCUIT_GROUP_MEMBERS = "circuit_group_members"
+DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT = 20
+
 # OCPP charger L1/L2/L3 → site phase mapping
 CONF_CHARGER_L1_PHASE = "charger_l1_phase"
 CONF_CHARGER_L2_PHASE = "charger_l2_phase"
@@ -94,7 +106,12 @@ CONF_MAX_CURRENT = "max_current"
 
 # OCPP integration entity suffixes for auto-discovery
 OCPP_ENTITY_SUFFIX_CURRENT_IMPORT = "_current_import"
+OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L1 = "_current_import_l1"
+OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L2 = "_current_import_l2"
+OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L3 = "_current_import_l3"
 OCPP_ENTITY_SUFFIX_CURRENT_OFFERED = "_current_offered"
+OCPP_ENTITY_SUFFIX_POWER_OFFERED = "_power_offered"
+OCPP_ENTITY_SUFFIX_POWER_IMPORT = "_power_active_import"
 OCPP_ENTITY_SUFFIX_STATUS = "_status"
 OCPP_ENTITY_SUFFIX_STOP_REASON = "_stop_reason"
 
@@ -123,6 +140,8 @@ RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
 # EMA smoothing — exponential moving average on engine output before rate limiting
 EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothing)
 DEAD_BAND = 0.3          # Ignore changes smaller than this (Schmitt trigger, amps)
+GRID_STALE_TIMEOUT = 60  # Seconds of grid CT unavailability before falling to min_current
+SUSPENDED_EV_IDLE_TIMEOUT = 60  # Seconds of SuspendedEV + near-zero draw before treating as inactive
 
 # Auto-reset detection — triggers reset_ocpp_evse when charger ignores profiles
 AUTO_RESET_MISMATCH_THRESHOLD = 5    # consecutive mismatched cycles before reset

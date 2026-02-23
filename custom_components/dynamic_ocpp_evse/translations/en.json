@@ -329,11 +329,32 @@
                     "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
                     "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level."
                 }
+            },
+            "group_config": {
+                "title": "Circuit Group",
+                "description": "Create a circuit group to enforce a shared breaker limit across multiple loads",
+                "data": {
+                    "name": "Group name",
+                    "entity_id": "Entity ID prefix",
+                    "circuit_group_current_limit": "Circuit breaker rating (per phase)"
+                },
+                "data_description": {
+                    "circuit_group_current_limit": "The amperage rating of the circuit breaker shared by the loads in this group. Allocations will be capped so the combined draw never exceeds this limit on any phase."
+                }
+            },
+            "group_members": {
+                "title": "Select Members",
+                "description": "Select the loads that share this circuit breaker",
+                "data": {
+                    "circuit_group_members": "Member loads"
+                }
             }
         },
         "error": {
             "no_hub_configured": "No hub configured. Please set up a Home Electrical Hub first.",
             "no_ocpp_chargers_found": "No OCPP chargers found. Make sure you have the OCPP integration installed and configured with at least one charger.",
+            "no_members_selected": "Please select at least one load for this circuit group.",
+            "no_loads_available": "No loads available on this hub. Add chargers or smart loads first.",
             "invalid_current": "Charge current values must be greater than zero.",
             "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
             "unknown": "An unknown error occurred"
@@ -477,6 +498,17 @@
                     "ocpp_profile_timeout": "How long a charging profile remains valid. The charger reverts to default behavior if no new profile is sent within this time.",
                     "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
                     "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level."
+                }
+            },
+            "group": {
+                "title": "Update Circuit Group",
+                "description": "Update circuit group settings",
+                "data": {
+                    "circuit_group_current_limit": "Circuit breaker rating (per phase)",
+                    "circuit_group_members": "Member loads"
+                },
+                "data_description": {
+                    "circuit_group_current_limit": "The amperage rating of the circuit breaker shared by the loads in this group."
                 }
             }
         }

@@ -140,7 +140,7 @@
             },
             "charger_info": {
                 "title": "Charger Info",
-                "description": "Set up the charger identity for {charger_name}\n\nDetected OCPP entities:\n- Current Import: {current_import}\n- Current Offered: {current_offered}",
+                "description": "Set up the charger identity for {charger_name}\n\nDetected OCPP entities:\n- {detected_entities}",
                 "data": {
                     "name": "Charger name",
                     "entity_id": "Entity ID prefix",

@@ -43,8 +43,8 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     """Set up the number entities."""
     entry_type = config_entry.data.get(ENTRY_TYPE)
-    name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
-    entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+    name = config_entry.data.get(CONF_NAME, "Site Load Management")
+    entity_id = config_entry.data.get(CONF_ENTITY_ID, "site_load_management")
 
     entities = []
 

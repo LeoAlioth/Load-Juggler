@@ -1,0 +1,436 @@
+# Test scenarios: SOC Hysteresis boundary conditions
+# The engine is stateless — it receives pre-adjusted thresholds from the HA layer.
+# These tests verify engine behavior at hysteresis-adjusted boundaries.
+#
+# Hysteresis model (target=80%, hysteresis=3%):
+#   Rising:  SOC must reach 80% to trigger "above target"
+#   Falling: SOC must drop below 77% (target - hysteresis) to trigger "below target"
+#
+# When HA layer sets _soc_above_target=True:  effective_target = 77% (target - hysteresis)
+# When HA layer sets _soc_above_target=False: effective_target = 80% (target)
+# Same pattern for min_soc.
+#
+# Paired scenarios test the SAME SOC with different effective thresholds,
+# simulating "was previously above" vs "was previously below" prior state.
+
+scenarios:
+
+  # ========== SOLAR ONLY: Target SOC boundary (1-phase) ==========
+
+  - name: "hyst-solar-only-below-target"
+    description: "SOC 75% clearly below target 80%, not previously above — no charging"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600  # 20A
+      phase_a_consumption: 3.0
+      battery_soc: 75
+      battery_soc_min: 20
+      battery_soc_target: 80  # Effective target: 80% (not previously above)
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 0  # Below target: Solar Only blocked
+
+  - name: "hyst-solar-only-at-target-rising"
+    description: "SOC exactly 80% = target, crossing threshold — charges from solar"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600  # 20A
+      phase_a_consumption: 3.0
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80  # At target: engine sees soc >= target, not below
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 17.0  # At target: solar pool available (20A - 3A consumption = 17A)
+
+  - name: "hyst-solar-only-deadband-above"
+    description: "SOC 78% in dead band [77-80], previously above — engine sees effective target=77%, full power"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600
+      phase_a_consumption: 3.0
+      battery_soc: 78
+      battery_soc_min: 20
+      battery_soc_target: 77  # Effective target: 77% (was previously above, hysteresis applied)
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 32.0  # SOC 78% > effective target 77% → solar + battery discharge, capped at max
+
+  - name: "hyst-solar-only-deadband-below"
+    description: "SOC 78% in dead band [77-80], NOT previously above — engine sees target=80%, blocked"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600
+      phase_a_consumption: 3.0
+      battery_soc: 78
+      battery_soc_min: 20
+      battery_soc_target: 80  # Effective target: 80% (not previously above)
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 0  # SOC 78% < target 80% — no charging
+
+  - name: "hyst-solar-only-at-lower-edge"
+    description: "SOC at exactly target-hysteresis (77%), previously above — edge of dead band, still charges"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600
+      phase_a_consumption: 3.0
+      battery_soc: 77
+      battery_soc_min: 20
+      battery_soc_target: 77  # Effective target: 77% (was previously above)
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 17.0  # SOC 77% >= effective target 77% — still charges
+
+  - name: "hyst-solar-only-below-lower-edge"
+    description: "SOC 76% below target-hysteresis (77%), fell out of dead band — reverts to target=80%"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600
+      phase_a_consumption: 3.0
+      battery_soc: 76
+      battery_soc_min: 20
+      battery_soc_target: 80  # Effective target: 80% (fell below 77%, reverts to normal)
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 0  # SOC 76% < target 80% — no charging
+
+  # ========== SOLAR PRIORITY: Target SOC boundary (1-phase) ==========
+
+  - name: "hyst-solar-prio-deadband-above"
+    description: "Solar Priority, SOC 78% in dead band, previously above — full power (solar + discharge)"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600
+      phase_a_consumption: 3.0
+      battery_soc: 78
+      battery_soc_min: 20
+      battery_soc_target: 77  # Effective target: 77% (previously above)
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 32.0  # Above effective target: solar + battery discharge, capped at max
+
+  - name: "hyst-solar-prio-deadband-below"
+    description: "Solar Priority, SOC 78% in dead band, NOT previously above — min only"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600
+      phase_a_consumption: 3.0
+      battery_soc: 78
+      battery_soc_min: 20
+      battery_soc_target: 80  # Effective target: 80% (not previously above)
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 6  # Below target: Solar Priority → min only
+
+  # ========== MIN SOC HYSTERESIS: Battery discharge gating (1-phase) ==========
+
+  - name: "hyst-min-soc-deadband-above"
+    description: "Standard mode, SOC 18% in min dead band [17-20], previously above min — battery discharge available"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 2300  # 10A
+      phase_a_consumption: 3.0
+      battery_soc: 18
+      battery_soc_min: 17  # Effective min: 17% (previously above, hysteresis applied)
+      battery_soc_target: 80
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600  # 20A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 32  # SOC 18% >= effective min 17%: grid + solar + battery discharge
+
+  - name: "hyst-min-soc-deadband-below"
+    description: "Standard mode, SOC 18% in min dead band [17-20], NOT previously above min — no battery discharge"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 2300  # 10A
+      phase_a_consumption: 3.0
+      battery_soc: 18
+      battery_soc_min: 20  # Effective min: 20% (not previously above)
+      battery_soc_target: 80
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 32  # Standard: grid(35-3=32) + solar(10) but no battery discharge; capped at 32A max
+
+  # ========== 3-PHASE: Target SOC boundary ==========
+
+  - name: "hyst-3ph-solar-only-deadband-above"
+    description: "3-phase, Solar Only, SOC 78% in dead band, previously above — full power (solar + discharge)"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      solar_production: 7590  # 33A total (11A per phase)
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
+      battery_soc: 78
+      battery_soc_min: 20
+      battery_soc_target: 77  # Effective target: 77% (previously above)
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 6000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 16.0  # SOC 78% > effective target 77%: solar + discharge, capped at 16A max
+
+  - name: "hyst-3ph-solar-only-deadband-below"
+    description: "3-phase, Solar Only, SOC 78% in dead band, NOT previously above — blocked"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      solar_production: 7590
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
+      battery_soc: 78
+      battery_soc_min: 20
+      battery_soc_target: 80  # Effective target: 80% (not previously above)
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 6000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 0  # SOC 78% < target 80% — blocked
+
+  # ========== SOLAR SURPLUS DISCHARGE: Target SOC boundary ==========
+
+  - name: "hyst-discharge-potential-deadband-above"
+    description: "Solar Only, SOC 79%, effective target 77% — battery discharge potential unlocked for solar surplus"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 2300  # 10A
+      phase_a_consumption: 3.0
+      battery_soc: 79
+      battery_soc_min: 20
+      battery_soc_target: 77  # Effective target: 77% (previously above) — discharge potential triggers (soc > target)
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600  # 20A
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 27.0  # SOC 79% > effective target 77%: solar(10-3=7A) + battery discharge(20A) = 27A
+
+  - name: "hyst-discharge-potential-deadband-below"
+    description: "Solar Only, SOC 79%, normal target 80% — below target, no charging"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 2300
+      phase_a_consumption: 3.0
+      battery_soc: 79
+      battery_soc_min: 20
+      battery_soc_target: 80  # Effective target: 80% (not previously above) — no discharge potential
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      charger_1:
+        allocated: 0  # SOC 79% < target 80% — below target, blocked

@@ -336,6 +336,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data.setdefault(DOMAIN, {
         "hubs": {},
         "chargers": {},
+        "groups": {},  # Circuit group entries
         "charger_allocations": {},  # Stores current allocation for each charger
     })
     
@@ -353,6 +354,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         await _setup_hub_entry(hass, entry)
     elif entry_type == ENTRY_TYPE_CHARGER:
         await _setup_charger_entry(hass, entry)
+    elif entry_type == ENTRY_TYPE_GROUP:
+        await _setup_group_entry(hass, entry)
 
     # Reload entry when options change (e.g. battery entities added/removed)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
@@ -373,6 +376,7 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data[DOMAIN]["hubs"][entry.entry_id] = {
         "entry": entry,
         "chargers": [],  # List of charger entry_ids linked to this hub
+        "groups": [],    # List of circuit group entry_ids linked to this hub
         "distribution_mode": DEFAULT_DISTRIBUTION_MODE,
         "allow_grid_charging": True,
         "power_buffer": 0,
@@ -426,6 +430,32 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Forward setup to charger platforms
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "number", "button", "select", "switch"])
     
+    return True
+
+
+async def _setup_group_entry(hass: HomeAssistant, entry: ConfigEntry):
+    """Set up a circuit group config entry."""
+    _LOGGER.info("Setting up circuit group entry: %s", entry.title)
+
+    hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
+
+    # Verify hub exists
+    if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
+        _LOGGER.error("Hub entry %s not found for group %s", hub_entry_id, entry.title)
+        return False
+
+    # Store group data
+    hass.data[DOMAIN]["groups"][entry.entry_id] = {
+        "entry": entry,
+        "hub_entry_id": hub_entry_id,
+    }
+
+    # Link group to hub
+    hass.data[DOMAIN]["hubs"][hub_entry_id]["groups"].append(entry.entry_id)
+
+    # Forward setup to sensor platform only (group sensors)
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+
     return True
 
 
@@ -574,7 +604,22 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
             del hass.data[DOMAIN]["chargers"][entry.entry_id]
         if entry.entry_id in hass.data[DOMAIN]["charger_allocations"]:
             del hass.data[DOMAIN]["charger_allocations"][entry.entry_id]
-    
+
+    elif entry_type == ENTRY_TYPE_GROUP:
+        # Unload group platforms
+        await hass.config_entries.async_forward_entry_unload(entry, "sensor")
+
+        # Remove group from hub's list
+        hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
+        if hub_entry_id in hass.data[DOMAIN]["hubs"]:
+            groups_list = hass.data[DOMAIN]["hubs"][hub_entry_id].get("groups", [])
+            if entry.entry_id in groups_list:
+                groups_list.remove(entry.entry_id)
+
+        # Remove group from data
+        if entry.entry_id in hass.data[DOMAIN]["groups"]:
+            del hass.data[DOMAIN]["groups"][entry.entry_id]
+
     return True
 
 
@@ -597,11 +642,26 @@ def get_chargers_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigE
     hub_data = hass.data[DOMAIN]["hubs"].get(hub_entry_id)
     if not hub_data:
         return []
-    
+
     chargers = []
     for charger_entry_id in hub_data.get("chargers", []):
         charger_data = hass.data[DOMAIN]["chargers"].get(charger_entry_id)
         if charger_data:
             chargers.append(charger_data.get("entry"))
-    
+
     return chargers
+
+
+def get_groups_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigEntry]:
+    """Get all circuit group config entries for a hub."""
+    hub_data = hass.data[DOMAIN]["hubs"].get(hub_entry_id)
+    if not hub_data:
+        return []
+
+    groups = []
+    for group_entry_id in hub_data.get("groups", []):
+        group_data = hass.data[DOMAIN]["groups"].get(group_entry_id)
+        if group_data:
+            groups.append(group_data.get("entry"))
+
+    return groups

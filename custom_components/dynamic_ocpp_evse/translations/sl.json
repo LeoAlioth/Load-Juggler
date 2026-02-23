@@ -329,11 +329,32 @@
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilnik drži na 0A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju."
                 }
+            },
+            "group_config": {
+                "title": "Skupina Tokokroga",
+                "description": "Ustvarite skupino tokokroga za skupno omejitev varovalke med več bremeni",
+                "data": {
+                    "name": "Ime skupine",
+                    "entity_id": "Predpona ID entitete",
+                    "circuit_group_current_limit": "Nazivni tok varovalke (na fazo)"
+                },
+                "data_description": {
+                    "circuit_group_current_limit": "Nazivni tok varovalke, ki si jo delijo bremena v tej skupini. Dodelitve bodo omejene, da skupna poraba nikoli ne preseže te omejitve na nobeni fazi."
+                }
+            },
+            "group_members": {
+                "title": "Izberi Člane",
+                "description": "Izberite bremena, ki si delijo to varovalko",
+                "data": {
+                    "circuit_group_members": "Članská bremena"
+                }
             }
         },
         "error": {
             "no_hub_configured": "Hub ni konfiguriran. Najprej nastavite domači električni hub.",
             "no_ocpp_chargers_found": "OCPP polnilniki niso najdeni. Prepričajte se, da imate nameščeno in konfigurirano integracijo OCPP z vsaj enim polnilnikom.",
+            "no_members_selected": "Izberite vsaj eno breme za to skupino tokokroga.",
+            "no_loads_available": "Na tem hubu ni na voljo nobenih bremen. Najprej dodajte polnilnike ali pametna bremena.",
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
             "unknown": "Prišlo je do neznane napake"
@@ -477,6 +498,17 @@
                     "ocpp_profile_timeout": "Koliko časa profil polnjenja ostane veljaven. Polnilnik se vrne na privzeto obnašanje, če v tem času ne prejme novega profila.",
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilnik drži na 0A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju."
+                }
+            },
+            "group": {
+                "title": "Posodobi Skupino Tokokroga",
+                "description": "Posodobite nastavitve skupine tokokroga",
+                "data": {
+                    "circuit_group_current_limit": "Nazivni tok varovalke (na fazo)",
+                    "circuit_group_members": "Članská bremena"
+                },
+                "data_description": {
+                    "circuit_group_current_limit": "Nazivni tok varovalke, ki si jo delijo bremena v tej skupini."
                 }
             }
         }

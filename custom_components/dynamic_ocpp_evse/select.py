@@ -26,8 +26,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
     # Hub entries get distribution_mode selector only
     if entry_type == ENTRY_TYPE_HUB:
-        name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
-        entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+        name = config_entry.data.get(CONF_NAME, "Site Load Management")
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "site_load_management")
 
         entities = [
             DynamicOcppEvseDistributionModeSelect(hass, config_entry, name, entity_id)

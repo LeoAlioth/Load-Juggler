@@ -1,4 +1,4 @@
-# TODO
+# Load Juggler — TODO
 
 ## Completed
 
@@ -93,15 +93,34 @@
 89. - [x] Confidence-weighted auto-detect scoring — weighted scores (weight = min(|delta|, 15) / 5), soft decay, fast oscillation detection
 90. - [x] 10% clamping tolerance for W-based chargers — avoids false clamping from voltage/rounding variance
 91. - [x] Fix W-based OCPP power multiplication — use car's active phase count instead of charger hardware phases for W conversion
+92. - [x] Per-device operating mode in debug logs
+93. - [x] Charger targets log: show both allocated and available current
+94. - [x] Expose `available_current` as sensor attribute in HA
+
+95. - [x] Available Current sensor shows available (not allocated) current in HA
+96. - [x] Circuit Groups — shared breaker limits (post-distribution capping, PhaseConstraints reuse, 9 test scenarios)
+97. - [x] Grid CT stale detection — hold last EMA value, fallback to min_current after 60s timeout, `grid_stale` attribute on hub sensor
+98. - [x] Site available power cap — `total_site_available_power` and `available_grid_power` now capped by `max_grid_import_power`
 
 ## In Progress
 
 (none)
 
+## Completed (cont.)
+
+99. - [x] Resilience improvements — OCPP try-except + plug switch error handling, `_UNAVAILABLE` sentinel + EMA holdover for solar/battery/inverter sensors, NaN/inf guard in `_smooth()`, stale circuit group member filtering, voltage ≤0 guard, plug empty-phase crash fix
+100. - [x] Off-grid support — Phase A CT optional in config flow, `_get_hub_phase_count` falls back to inverter output entities, unified solar derivation via `_derive_solar_production()` (inverter-based for series/parallel, export-based fallback), off-grid phases zeroed from inverter output config (no separate code paths)
+101. - [x] Hub status sensor — `DynamicOcppEvseHubStatusSensor` shows config validation + runtime warnings (no power measurement, off-grid mode, grid sensors unavailable)
+102. - [x] Cleanup — removed dead `car_phases` field from `LoadContext`, removed auto-detect state double-init
+103. - [x] SuspendedEV handling — `SuspendedEV` with near-zero draw (< 1.0A) treated as inactive after 60s grace period (car done charging, frees capacity); `SuspendedEVSE` remains active (charger throttling). Grace period tracked in HA layer, engine stays stateless.
+104. - [x] Battery SOC hysteresis — HA layer applies hysteresis to `battery_soc_target` and `battery_soc_min` before passing to engine (tracks `_soc_above_target`/`_soc_above_min` booleans in `hub_runtime`). Engine stays stateless. 14 boundary test scenarios added.
+105. - [x] Charger finishing test scenarios — 8 scenarios testing capacity redistribution when chargers finish (paired baselines, priority/shared modes, mixed modes, 3-charger setups).
+
 ## Backlog
 
-1. - [ ] **Hot Water Tank device type** — thermostat control (Normal/Boost), modes: Solar Only, Excess
-2. - [ ] **SG Ready device type** — 2-relay site-state mapping (Block/Normal/Recommend ON/Force ON), no user modes
+1. - [ ] **Device-based OCPP discovery** — select OCPP device instead of entity, auto-find all entities (supports per-phase separate entities)
+2. - [ ] **Hot Water Tank device type** — thermostat control (Normal/Boost), modes: Solar Only, Excess
+3. - [ ] **SG Ready device type** — 2-relay site-state mapping (Block/Normal/Recommend ON/Force ON), no user modes
 
 ## Other
 
