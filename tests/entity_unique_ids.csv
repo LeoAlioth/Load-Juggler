@@ -1,6 +1,0 @@
-Entity_Type,Entity_Name,Unique_ID_Pattern,Example_ID
-Number,Min Current Slider,{entry_id}_min_current,test_entry_1_min_current
-Number,Max Current Slider,{entry_id}_max_current,test_entry_1_max_current
-Number,Battery SOC Target,{entry_id}_battery_soc_target,test_entry_1_battery_soc_target
-Select,Charging Mode,{entry_id}_charging_mode,test_entry_1_charging_mode
-Switch,Allow Grid Charging,{entry_id}_allow_grid_charging,test_entry_1_allow_grid_charging

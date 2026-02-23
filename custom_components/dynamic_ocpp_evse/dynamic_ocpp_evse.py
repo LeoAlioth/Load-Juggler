@@ -1,567 +1,1110 @@
-import datetime
+"""
+Dynamic OCPP EVSE - Main calculation module.
+
+This file provides a unified interface for EVSE calculations.
+All core calculation logic has been refactored into the calculations/ directory.
+"""
+
 import logging
-from .const import *  # Make sure DOMAIN is defined in const.py
-from dataclasses import dataclass
-import inspect
+import math
+import time
+
+from .calculations import (
+    SiteContext,
+    LoadContext,
+    PhaseValues,
+    CircuitGroup,
+    calculate_all_charger_targets,
+)
+from .const import *
+from .calculations.utils import is_number, compute_household_per_phase
+from .helpers import get_entry_value
+from .auto_detect import check_inversion, check_phase_mapping
 
 _LOGGER = logging.getLogger(__name__)
 
-@dataclass
-class ChargeContext:
-    state: dict
-    phases: int
-    voltage: float
-    total_import_current: float
-    grid_phase_a_current: float
-    grid_phase_b_current: float
-    grid_phase_c_current: float
-    phase_a_export_current: float
-    phase_b_export_current: float
-    phase_c_export_current: float
-    evse_current_per_phase: float
-    max_evse_available: float
-    min_current: float
-    max_current: float
-    total_export_power: float
-    # Battery-related fields
-    battery_soc: float = None
-    battery_power: float = None
-    battery_soc_target: float = None
-    battery_max_charge_power: float = None
-    battery_max_discharge_power: float = None
-    allow_grid_charging: bool = True
-    allow_grid_charging_entity_id: str = None
+# Phase labels used for loop-based per-phase processing
+_PHASE_LABELS = ("A", "B", "C")
+
+# Sentinel: sensor is configured but currently unavailable/unknown
+_UNAVAILABLE = object()
 
 
-def is_number(value):
-    try:
-        float(value)
-        return True
-    except ValueError:
-        return False
+def _smooth(ema_dict: dict, key: str, raw, alpha: float = EMA_ALPHA):
+    """Apply EMA smoothing to a sensor reading. Returns smoothed value.
 
-def get_sensor_data(self, sensor):
-    _LOGGER.debug(f"Getting state for sensor: {sensor}")
-    state = self.hass.states.get(sensor)
-    if state is None:
-        _LOGGER.warning(f"Failed to get state for sensor: {sensor}: {inspect.stack()}")
+    State is stored in ema_dict[key] between calls.
+    - None values pass through (sensor not configured).
+    - _UNAVAILABLE holds the last known EMA value (sensor temporarily down).
+    """
+    if raw is None:
         return None
-    _LOGGER.debug(f"Got state for sensor: {sensor}  -  {state} ({type(state.state)})")
-    value = state.state
-    if type(value) == str:
-        if is_number(value):
-            value = float(value)
-            _LOGGER.debug(f"Sensor: {sensor}  -  {state} is ({type(value)})")
+    if raw is _UNAVAILABLE:
+        # Sensor unavailable — hold last known EMA value
+        return ema_dict.get(key)
+    try:
+        val = float(raw)
+    except (ValueError, TypeError):
+        return ema_dict.get(key)
+    if not math.isfinite(val):
+        return ema_dict.get(key)
+    prev = ema_dict.get(key)
+    if prev is None:
+        ema_dict[key] = val
+        return val
+    smoothed = alpha * val + (1 - alpha) * prev
+    ema_dict[key] = smoothed
+    return round(smoothed, 2)
+
+
+def _read_phase_attr(attrs: dict, keys: tuple) -> float | None:
+    """Try to read a numeric phase current from entity attributes using multiple naming conventions.
+
+    Case-insensitive: handles L1/l1/L1_current/l1_current etc.
+    """
+    lower_attrs = {k.lower(): v for k, v in attrs.items()}
+    for key in keys:
+        val = lower_attrs.get(key.lower())
+        if val is not None and is_number(val):
+            return float(val)
+    return None
+
+
+def _read_entity(hass, entity_id: str, default=0):
+    """Read a numeric value from an HA entity.
+
+    Returns:
+        float: The entity's numeric value.
+        _UNAVAILABLE: The entity is configured but currently unavailable/unknown.
+        default: The entity_id is not provided (not configured).
+    """
+    if not entity_id:
+        return default
+    state = hass.states.get(entity_id)
+    if not state or state.state in ('unknown', 'unavailable', None, ''):
+        return _UNAVAILABLE
+    try:
+        return float(state.state)
+    except (ValueError, TypeError):
+        return _UNAVAILABLE
+
+
+def _read_inverter_output(hass, entity_id, voltage):
+    """Read inverter output, auto-detecting A vs W and converting to A."""
+    if not entity_id:
+        return None
+    st = hass.states.get(entity_id)
+    if not st or st.state in ('unknown', 'unavailable', None, ''):
+        return None
+    try:
+        value = abs(float(st.state))
+    except (ValueError, TypeError):
+        return None
+    # Auto-detect unit from entity attributes
+    unit = st.attributes.get("unit_of_measurement", "").upper()
+    if unit == "W" and voltage > 0:
+        value = value / voltage  # Convert W → A
     return value
 
-def get_sensor_attribute(self, sensor, attribute):
-    state = self.hass.states.get(sensor)
-    _LOGGER.debug(f"Getting attribute '{attribute}' for sensor: {sensor}  -  {state}")
-    if state is None:
-        _LOGGER.warning(f"Failed to get state for sensor: {sensor} when getting attribute '{attribute}'")
-        return None
-    value = state.attributes.get(attribute)
-    if value is None:
-        _LOGGER.warning(f"Failed to get attribute '{attribute}' for sensor: {sensor}")
-        return None
-    if type(value) == str:
-        if is_number(value):
-            value = float(value)
-    return value
 
-def apply_ramping(self, state, target_evse, min_current):
-        # Store last available current and time
-        if not hasattr(self, '_last_ramp_value'):
-            self._last_ramp_value = None
-        if not hasattr(self, '_last_ramp_time'):
-            self._last_ramp_time = None
-
-        ramp_limit_up = 0.05   # Amps per second (ramp up)
-        ramp_limit_down = 0.2 # Amps per second (ramp down, faster)
-        now = datetime.datetime.now()
-        
-        ramp_enabled = True
-        if ramp_enabled:
-            # Use last ramped value as base for ramping, fallback to EVSE current if None
-            if self._last_ramp_value is None or not is_number(self._last_ramp_value):
-                ramped_value = state[CONF_EVSE_CURRENT_OFFERED] or state[CONF_AVAILABLE_CURRENT]
-                self._last_ramp_value = ramped_value
-            else:
-                ramped_value = self._last_ramp_value if is_number(self._last_ramp_value) else 0
-                if ramped_value < min_current and target_evse > min_current:
-                    ramped_value = min_current
-                    self._last_ramp_value = ramped_value
-
-            if self._last_ramp_value is not None and self._last_ramp_time is not None:
-                dt = (now - self._last_ramp_time).total_seconds()
-                delta = state[CONF_AVAILABLE_CURRENT] - self._last_ramp_value
-                if delta > 0:
-                    max_delta = ramp_limit_up * max(dt, 0.1)
-                else:
-                    max_delta = ramp_limit_down * max(dt, 0.1)
-                if abs(delta) > max_delta:
-                    ramped_value = self._last_ramp_value + max_delta * (1 if delta > 0 else -1)
-                    _LOGGER.debug(f"Ramping limited: {self._last_ramp_value} -> {ramped_value} (requested {state[CONF_AVAILABLE_CURRENT]})")
-                else:
-                    ramped_value = state[CONF_AVAILABLE_CURRENT]
-            self._last_ramp_value = ramped_value
-            self._last_ramp_time = now
-            state[CONF_AVAILABLE_CURRENT] = ramped_value
-
-def calculate_max_evse_available(context: ChargeContext):
-    state = context.state
-    max_import_power = state[CONF_MAX_IMPORT_POWER]
-    max_import_current = max_import_power / context.voltage
-    
-    # Total import current includes EVSE import current across all 3 phases
-    # max import current is total for all phases, so we can directly compare
-    remaining_available_import_current = max_import_current - context.total_import_current
-
-    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_a_current
-    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_b_current
-    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_c_current
-    
-    _LOGGER.debug(f"Calculating max EVSE available current with context: {context}")
-    _LOGGER.debug(f"Max import current: {max_import_current}A, Total import current: {context.total_import_current}A, Remaining available import current: {remaining_available_import_current}A")
-    _LOGGER.debug(f"Remaining available current - Phase A: {remaining_available_current_phase_a}A, Phase B: {remaining_available_current_phase_b}A, Phase C: {remaining_available_current_phase_c}A")
-
-    # Battery discharge logic
-    battery_power = context.battery_power if context.battery_power is not None else 0
-    battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
-    battery_soc = context.battery_soc if context.battery_soc is not None else 0
-    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 0
-
-    # Only allow battery discharge if SOC > SOC target
-    if battery_soc > battery_soc_target:
-        available_battery_power = max(0, battery_max_discharge_power - battery_power)
-    else:
-        # Only allow battery to stop charging (i.e., don't discharge below target)
-        available_battery_power = max(0, -battery_power)  # Only offset if battery is charging
-    available_battery_current = (available_battery_power / context.voltage) if context.voltage else 0
-    
-    if context.phases == 1:
-        max_evse_available = context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_import_current + context.phase_a_export_current + available_battery_current
-        )
-        _LOGGER.debug(f"Max EVSE available (1 phase): {max_evse_available}A")
-        return max_evse_available
-    elif context.phases == 2:
-        max_evse_available =  context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_current_phase_b,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + available_battery_current) / 2
-        )
-        _LOGGER.debug(f"Max EVSE available (2 phases): {max_evse_available}A")
-        return max_evse_available
-    elif context.phases == 3:
-        max_evse_available =  context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_current_phase_b,
-            remaining_available_current_phase_c,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + context.phase_c_export_current + available_battery_current) / 3
-        )
-        _LOGGER.debug(f"Max EVSE available (3 phases): {max_evse_available}A")
-        return max_evse_available
-    else:
-        return state.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
-
-def determine_phases(self, state):
-    phases = 0
-    calc_used = ""
-    
-    if state[CONF_EVSE_CURRENT_OFFERED] is not None:
-        evse_attributes = self.hass.states.get(self.config_entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)).attributes
-        for attr, value in evse_attributes.items():
-            if attr.startswith('L') and is_number(value) and float(value) > 1:
-                phases += 1
-        if phases > 0:
-            calc_used = f"1-{phases}"
-
-    # Fallback to the existing method if individual phase currents are not provided
-    if phases == 0 and state[CONF_PHASES] is not None and is_number(state[CONF_PHASES]):
-        phases = state[CONF_PHASES]
-        calc_used = f"2-{phases}"
-
-    # Finally just assume the safest case of 3 phases
-    if phases == 0:
-        phases = 3
-        calc_used = f"3-{phases}"
-    return phases, calc_used
+def _coerce(v, default=0):
+    """Convert _UNAVAILABLE sentinel to a safe default for non-smoothed use."""
+    return default if v is _UNAVAILABLE else v
 
 
-# functions for calculating current for different charge modes
+def _fv(v):
+    """Format value for debug: None->'n/a', number->'12.3'."""
+    if v is None:
+        return "n/a"
+    if isinstance(v, (int, float)):
+        return f"{v:.1f}"
+    return str(v)
 
-def calculate_standard_mode(context: ChargeContext):
-    state = context.state
-    max_import_power = state[CONF_MAX_IMPORT_POWER]
-    max_import_current = max_import_power / context.voltage
-    target_import_current = max_import_current
-    # If grid charging is not allowed, set available import current to 0
-    if not context.allow_grid_charging:
-        remaining_available_import_current = 0
-    else:
-        remaining_available_import_current = target_import_current - context.total_import_current
 
-    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_a_current
-    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_b_current
-    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_c_current
+def _fv2(raw, smoothed):
+    """Format smoothed(raw) pair. Always shows both values."""
+    if raw is None:
+        return _fv(smoothed)
+    return f"{_fv(smoothed)}({_fv(raw)})"
 
-    # Battery discharge logic for standard mode
-    battery_power = context.battery_power if context.battery_power is not None else 0
-    battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
-    battery_soc = context.battery_soc if context.battery_soc is not None else 100
-    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 0
 
-    if battery_soc > battery_soc_target:
-        # Allow battery to discharge at max power
-        available_battery_power = max(0, battery_max_discharge_power)
-    else:
-        # Only allow battery to stop charging (no discharge below target)
-        available_battery_power = max(0, -battery_power)  # Only offset if battery is charging
-    available_battery_current = available_battery_power / context.voltage if context.voltage else 0
+def _derive_solar_production(inverter_output_per_phase, wiring_topology,
+                              export_power, battery_power, voltage):
+    """Derive solar production from available sensor data.
 
-    if context.phases == 1:
-        target_evse = context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_import_current + context.phase_a_export_current + available_battery_current
-        )
-    elif context.phases == 2:
-        target_evse = context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_current_phase_b,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + available_battery_current) / 2
-        )
-    elif context.phases == 3:
-        target_evse = context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_current_phase_b,
-            remaining_available_current_phase_c,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + context.phase_c_export_current + available_battery_current) / 3
-        )
-    else:
-        target_evse = state.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
-
-    # Apply power buffer logic
-    # Buffer reduces target to prevent frequent charging stops
-    # If buffered target is below minimum, allow up to full target (but never exceed max_evse_available)
-    power_buffer = state.get(CONF_POWER_BUFFER, 0)
-    if power_buffer is None or not is_number(power_buffer):
-        power_buffer = 0
-    buffer_current = power_buffer / context.voltage if context.voltage else 0
-    
-    target_evse_buffered = target_evse - buffer_current
-    
-    # If buffered target is below minimum charge current, allow charging up to full target
-    # This prevents the buffer from causing unnecessary charging stops
-    if target_evse_buffered < context.min_current:
-        # Use full target (no buffer) if it allows charging at minimum rate
-        # This will be clamped by max_evse_available in calculate_available_current
-        _LOGGER.debug(f"Standard mode: buffered target {target_evse_buffered}A < min {context.min_current}A, using full target {target_evse}A")
-        return target_evse
-    else:
-        _LOGGER.debug(f"Standard mode: using buffered target {target_evse_buffered}A (buffer: {power_buffer}W = {buffer_current}A)")
-        return target_evse_buffered
-
-def calculate_solar_mode(context: ChargeContext, target_import_current=0):
-    state = context.state
-    # If grid charging is not allowed, set available import current to 0
-    if not context.allow_grid_charging:
-        remaining_available_import_current = 0
-    else:
-        remaining_available_import_current = target_import_current - context.total_import_current
-    remaining_available_current_phase_a = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_a_current
-    remaining_available_current_phase_b = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_b_current
-    remaining_available_current_phase_c = state[CONF_MAIN_BREAKER_RATING] - context.grid_phase_c_current
-
-    # Battery discharge logic for solar mode
-    battery_power = context.battery_power if context.battery_power is not None else 0
-    battery_max_discharge_power = context.battery_max_discharge_power if context.battery_max_discharge_power is not None else 0
-    battery_soc = context.battery_soc if context.battery_soc is not None else 0
-    battery_soc_target = context.battery_soc_target if context.battery_soc_target is not None else 0
-
-    if battery_soc > battery_soc_target:
-        # Allow battery to discharge at max power
-        available_battery_power = max(0, battery_max_discharge_power)
-    else:
-        # Only allow battery to stop charging (no discharge below target)
-        available_battery_power = max(0, -battery_power)  # Only offset if battery is charging
-    available_battery_current = available_battery_power / context.voltage if context.voltage else 0
-
-    if context.phases == 1:
-        target_evse = context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_import_current + context.phase_a_export_current + available_battery_current
-        )
-    elif context.phases == 2:
-        target_evse = context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_current_phase_b,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + available_battery_current) / 2
-        )
-    elif context.phases == 3:
-        target_evse = context.evse_current_per_phase + min(
-            remaining_available_current_phase_a,
-            remaining_available_current_phase_b,
-            remaining_available_current_phase_c,
-            (remaining_available_import_current + context.phase_a_export_current + context.phase_b_export_current + context.phase_c_export_current + available_battery_current) / 3
-        )
-    else:
-        target_evse = state.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT)
-    return max(target_evse, 0) # Ensure non-negative current
-
-def calculate_eco_mode(context: ChargeContext):
-    target_evse = calculate_solar_mode(context)
-    target_evse = max(context.min_current, target_evse)
-    return target_evse
-
-def calculate_excess_mode(self, context: ChargeContext):
-    state = context.state
-    voltage = context.voltage
-    total_export_power = context.total_export_power
-    base_threshold = state.get(CONF_EXCESS_EXPORT_THRESHOLD, 13600)
-    if context.battery_soc is not None and context.battery_soc < 100:
-        battery_max_charge_power = state.get(CONF_BATTERY_MAX_CHARGE_POWER, 5000)
-    else:
-        battery_max_charge_power = 0
-    # Add battery max charge power to the threshold
-    threshold = base_threshold + (battery_max_charge_power if battery_max_charge_power else 0)
-    now = datetime.datetime.now()
-    if total_export_power > threshold:
-        _LOGGER.info(f"Excess mode: total_export_power {total_export_power}W > threshold {threshold}W, starting charge")
-        self._excess_charge_start_time = now
-    keep_charging = False
-    if getattr(self, '_excess_charge_start_time', None) is not None and \
-       (now - self._excess_charge_start_time).total_seconds() < 15 * 60:
-        if total_export_power + context.min_current * voltage > threshold:
-            self._excess_charge_start_time = now
-        keep_charging = True
-    if keep_charging:
-        export_available_current = (total_export_power - threshold) / voltage + context.evse_current_per_phase
-        target_evse = max(context.min_current, export_available_current)
-    else:
-        target_evse = 0
-    target_evse = min(target_evse, context.max_current, context.max_evse_available)
-    return target_evse
-
-def get_state_config(self):
-    state = {}
-    try:
-        state[CONF_PHASES] = get_sensor_attribute(self, "sensor." + self.config_entry.data.get(CONF_ENTITY_ID), CONF_PHASES)
-    except:
-        state[CONF_PHASES] = None
-    state[CONF_MAIN_BREAKER_RATING] = self.config_entry.data.get(CONF_MAIN_BREAKER_RATING)
-    state[CONF_INVERT_PHASES] = self.config_entry.data.get(CONF_INVERT_PHASES)
-    state[CONF_CHARING_MODE] = get_sensor_data(self, self.config_entry.data.get(CONF_CHARGIN_MODE_ENTITY_ID))
-    
-    # Get phase voltage for power-to-current conversion
-    voltage = self.config_entry.data.get(CONF_PHASE_VOLTAGE, 230)
-    
-    # Helper function to convert power to current if needed
-    def get_phase_current(entity_id):
-        if not entity_id:
-            return None
-        value = get_sensor_data(self, entity_id)
-        if value is None:
-            return None
-        
-        # Check if this is a power sensor by looking at the entity's unit_of_measurement
-        entity_state = self.hass.states.get(entity_id)
-        if entity_state and entity_state.attributes.get('unit_of_measurement') == 'W':
-            # Convert power to current: I = P / V
-            return value / voltage if voltage > 0 else 0
+    Unified formula for grid and off-grid sites:
+    - With inverter output: series → solar = inverter_output - battery_power
+                            parallel → solar = inverter_output
+    - Without inverter output: fallback → solar = export + battery_charging
+    For off-grid, export is naturally 0 (no grid CTs), so the inverter-based
+    formula is used.
+    """
+    if inverter_output_per_phase is not None:
+        inv_watts = inverter_output_per_phase.total * voltage
+        if wiring_topology == WIRING_TOPOLOGY_SERIES:
+            # Battery is behind inverter: inverter_output = solar + battery_power
+            # (battery_power > 0 = discharging, < 0 = charging)
+            bp = battery_power if battery_power is not None else 0
+            return max(0, inv_watts - bp)
         else:
-            # Assume it's already current
-            return value
-    
-    state[CONF_PHASE_A_CURRENT] = get_phase_current(self.config_entry.data.get(CONF_PHASE_A_CURRENT_ENTITY_ID))
-    
-    # Phase B and C are optional for single-phase setups
-    phase_b_entity = self.config_entry.data.get(CONF_PHASE_B_CURRENT_ENTITY_ID)
-    if phase_b_entity and phase_b_entity != 'None':
-        state[CONF_PHASE_B_CURRENT] = get_phase_current(phase_b_entity)
+            # Parallel: inverter output IS solar
+            return max(0, inv_watts)
     else:
-        state[CONF_PHASE_B_CURRENT] = 0  # Default to 0 for single-phase setups
-    
-    phase_c_entity = self.config_entry.data.get(CONF_PHASE_C_CURRENT_ENTITY_ID)
-    if phase_c_entity and phase_c_entity != 'None':
-        state[CONF_PHASE_C_CURRENT] = get_phase_current(phase_c_entity)
-    else:
-        state[CONF_PHASE_C_CURRENT] = 0  # Default to 0 for single-phase setups
-    
-    state[CONF_EVSE_CURRENT_IMPORT] = get_sensor_data(self, self.config_entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID))
-    state[CONF_EVSE_CURRENT_OFFERED] = get_sensor_data(self, self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID))
-    state[CONF_MAX_IMPORT_POWER] = get_sensor_data(self, self.config_entry.data.get(CONF_MAX_IMPORT_POWER_ENTITY_ID))
-    state[CONF_PHASE_VOLTAGE] = voltage
-    state[CONF_EVSE_MINIMUM_CHARGE_CURRENT] = self.config_entry.data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, 6)
-    state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT] = self.config_entry.data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, 16)
-    state[CONF_MIN_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_MIN_CURRENT_ENTITY_ID))
-    state[CONF_MAX_CURRENT] = get_sensor_data(self, self.config_entry.data.get(CONF_MAX_CURRENT_ENTITY_ID))
-    state[CONF_EXCESS_EXPORT_THRESHOLD] = self.config_entry.data.get(CONF_EXCESS_EXPORT_THRESHOLD, 13600)
-    
-    # Read battery values if entities are set
-    battery_soc_entity_id = self.config_entry.data.get(CONF_BATTERY_SOC_ENTITY_ID)
-    if battery_soc_entity_id != 'None':
-        state["battery_soc"] = get_sensor_data(self, battery_soc_entity_id)
-    else:
-        state["battery_soc"] = None
+        # Fallback: derive from grid export + battery charge absorption
+        solar = export_power or 0
+        if battery_power is not None and battery_power < 0:
+            solar += abs(battery_power)
+        return max(0, solar)
 
-    battery_power_entity_id = self.config_entry.data.get(CONF_BATTERY_POWER_ENTITY_ID)
-    if battery_power_entity_id != 'None':
-        state["battery_power"] = get_sensor_data(self, battery_power_entity_id)
-    else:
-        state["battery_power"] = None
 
-    battery_soc_target_entity_id = self.config_entry.data.get(CONF_BATTERY_SOC_TARGET_ENTITY_ID)
-    if battery_soc_target_entity_id != 'None':
-        state["battery_soc_target"] = get_sensor_data(self, battery_soc_target_entity_id)
-    else:
-        state["battery_soc_target"] = None
+# ---------------------------------------------------------------------------
+# Subfunctions for run_hub_calculation
+# ---------------------------------------------------------------------------
 
-    state[CONF_BATTERY_MAX_CHARGE_POWER] = self.config_entry.data.get(CONF_BATTERY_MAX_CHARGE_POWER, 5000)
-    state[CONF_BATTERY_MAX_DISCHARGE_POWER] = self.config_entry.data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, 5000)
+def _read_grid_phases(hass, hub_entry):
+    """Read per-phase grid current, apply inversion, split into consumption/export.
 
-    # Read power buffer value
-    power_buffer_entity_id = self.config_entry.data.get(CONF_POWER_BUFFER_ENTITY_ID)
-    if power_buffer_entity_id and power_buffer_entity_id != 'None':
-        state[CONF_POWER_BUFFER] = get_sensor_data(self, power_buffer_entity_id)
-    else:
-        state[CONF_POWER_BUFFER] = 0
+    Returns (raw_phases, consumption_pv, export_pv) where raw_phases is a 3-list
+    of raw current values (None for unconfigured phases).
+    """
+    phase_entities = [
+        get_entry_value(hub_entry, conf, None)
+        for conf in (CONF_PHASE_A_CURRENT_ENTITY_ID, CONF_PHASE_B_CURRENT_ENTITY_ID, CONF_PHASE_C_CURRENT_ENTITY_ID)
+    ]
+    invert_phases = get_entry_value(hub_entry, CONF_INVERT_PHASES, False)
 
-    # Retrieve the allow grid charging switch state using the constant
-    switch_state = get_sensor_data(self, self.config_entry.data.get(CONF_ALLOW_GRID_CHARGING_ENTITY_ID))
-    state["allow_grid_charging"] = switch_state == "on" if switch_state else True  # Default to True
-    return state
+    raw_phases = []
+    for entity in phase_entities:
+        raw = _coerce(_read_entity(hass, entity, 0)) if entity else None
+        if raw is not None and invert_phases:
+            raw = -raw
+        raw_phases.append(raw)
 
-def get_charge_context_values(self, state):
-    min_current = state[CONF_MIN_CURRENT] if state[CONF_MIN_CURRENT] is not None else state[CONF_EVSE_MINIMUM_CHARGE_CURRENT]
-    max_current = state[CONF_MAX_CURRENT] if state[CONF_MAX_CURRENT] is not None else state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]
-    phases, calc_used = determine_phases(self, state)
-    voltage = state[CONF_PHASE_VOLTAGE] if state[CONF_PHASE_VOLTAGE] is not None and is_number(state[CONF_PHASE_VOLTAGE]) else 230
-    
-    # Ensure phase current values are numeric (default to 0 if None)
-    phase_a_current = state[CONF_PHASE_A_CURRENT] if state[CONF_PHASE_A_CURRENT] is not None and is_number(state[CONF_PHASE_A_CURRENT]) else 0
-    phase_b_current = state[CONF_PHASE_B_CURRENT] if state[CONF_PHASE_B_CURRENT] is not None and is_number(state[CONF_PHASE_B_CURRENT]) else 0
-    phase_c_current = state[CONF_PHASE_C_CURRENT] if state[CONF_PHASE_C_CURRENT] is not None and is_number(state[CONF_PHASE_C_CURRENT]) else 0
-    
-    # Calculate total export current (sum of negative phase currents)
-    total_export_current = (
-        max(-phase_a_current, 0) +
-        max(-phase_b_current, 0) +
-        max(-phase_c_current, 0)
-    )
-    total_export_power = total_export_current * voltage
-    if state[CONF_INVERT_PHASES]:
-        phase_a_current, phase_b_current, phase_c_current = -phase_a_current, -phase_b_current, -phase_c_current
-    grid_phase_a_current = phase_a_current
-    grid_phase_b_current = phase_b_current
-    grid_phase_c_current = phase_c_current
-    phase_a_import_current = max(grid_phase_a_current, 0)
-    phase_b_import_current = max(grid_phase_b_current, 0)
-    phase_c_import_current = max(grid_phase_c_current, 0)
-    phase_a_export_current = max(-grid_phase_a_current, 0)
-    phase_b_export_current = max(-grid_phase_b_current, 0)
-    phase_c_export_current = max(-grid_phase_c_current, 0)
-    total_import_current = phase_a_import_current + phase_b_import_current + phase_c_import_current
-    evse_current = state[CONF_EVSE_CURRENT_IMPORT]
-    if evse_current is None or not is_number(evse_current):
-        evse_current = 0
-    # phases is always 1-3 at this point, so no need for additional checks
-    evse_current_per_phase = evse_current
-    # Battery values
-    battery_soc = state["battery_soc"]
-    battery_power = state["battery_power"]
-    battery_soc_target = state.get("battery_soc_target")
-    battery_max_charge_power = state.get(CONF_BATTERY_MAX_CHARGE_POWER)
-    battery_max_discharge_power = state.get(CONF_BATTERY_MAX_DISCHARGE_POWER)
-    allow_grid_charging = state.get("allow_grid_charging", True)
-    allow_grid_charging_entity_id = state.get(CONF_ALLOW_GRID_CHARGING_ENTITY_ID)
-    return ChargeContext(
-        state=state,
-        phases=phases,
-        voltage=voltage,
-        total_import_current=total_import_current,
-        grid_phase_a_current=grid_phase_a_current,
-        grid_phase_b_current=grid_phase_b_current,
-        grid_phase_c_current=grid_phase_c_current,
-        phase_a_export_current=phase_a_export_current,
-        phase_b_export_current=phase_b_export_current,
-        phase_c_export_current=phase_c_export_current,
-        evse_current_per_phase=evse_current_per_phase,
-        max_evse_available=0,  # will be set after calculation
+    consumption = [max(0, r) if r is not None else None for r in raw_phases]
+    export = [max(0, -r) if r is not None else None for r in raw_phases]
+
+    return raw_phases, PhaseValues(*consumption), PhaseValues(*export)
+
+
+def _read_inverter_config(hass, hub_entry, voltage):
+    """Read inverter configuration and per-phase output entities.
+
+    Returns (inverter_max_power, inverter_max_power_per_phase,
+             inverter_supports_asymmetric, wiring_topology, inverter_output_per_phase).
+    """
+    inverter_max_power = get_entry_value(hub_entry, CONF_INVERTER_MAX_POWER, None)
+    inverter_max_power_per_phase = get_entry_value(hub_entry, CONF_INVERTER_MAX_POWER_PER_PHASE, None)
+    inverter_supports_asymmetric = get_entry_value(hub_entry, CONF_INVERTER_SUPPORTS_ASYMMETRIC, False)
+    wiring_topology = get_entry_value(hub_entry, CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY)
+
+    # Read per-phase inverter output entities (optional)
+    inv_entities = [
+        get_entry_value(hub_entry, conf, None)
+        for conf in (CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID, CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID, CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID)
+    ]
+    inverter_output_per_phase = None
+    if inv_entities[0]:
+        inv_values = [_read_inverter_output(hass, e, voltage) for e in inv_entities]
+        if inv_values[0] is not None:
+            inverter_output_per_phase = PhaseValues(*inv_values)
+
+    return inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, wiring_topology, inverter_output_per_phase
+
+
+def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
+    """Build a LoadContext for an OCPP EVSE charger."""
+    charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
+    config_min = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+    config_max = get_entry_value(entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+    min_current = charger_rt.get("min_current") or config_min
+    max_current = charger_rt.get("max_current") or config_max
+
+    phases = int(get_entry_value(entry, CONF_PHASES, 3) or 3)
+
+    # Read connector status from OCPP entity
+    connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
+    connector_status_state = hass.states.get(connector_status_entity)
+    connector_status = connector_status_state.state if connector_status_state else "Unknown"
+
+    # Read L1/L2/L3 → site phase mapping
+    l1_phase = get_entry_value(entry, CONF_CHARGER_L1_PHASE, "A")
+    l2_phase = get_entry_value(entry, CONF_CHARGER_L2_PHASE, "B")
+    l3_phase = get_entry_value(entry, CONF_CHARGER_L3_PHASE, "C")
+
+    # Read per-charger operating mode from runtime data
+    operating_mode = charger_rt.get("operating_mode", OPERATING_MODE_STANDARD)
+
+    charger = LoadContext(
+        charger_id=entry.entry_id,
+        entity_id=charger_entity_id,
         min_current=min_current,
         max_current=max_current,
-        total_export_power=total_export_power,
-        battery_soc=battery_soc,
-        battery_power=battery_power,
-        battery_soc_target=battery_soc_target,
-        battery_max_charge_power=battery_max_charge_power,
-        battery_max_discharge_power=battery_max_discharge_power,
-        allow_grid_charging=allow_grid_charging,
-        allow_grid_charging_entity_id=allow_grid_charging_entity_id,
+        phases=phases,
+        priority=priority,
+        connector_status=connector_status,
+        operating_mode=operating_mode,
+        l1_phase=l1_phase,
+        l2_phase=l2_phase,
+        l3_phase=l3_phase,
     )
 
-# Calculate the available current based on the configuration and sensor data - this is the main function called by the integration
-# It gathers all necessary data, determines the number of phases, and calculates the available current based on the selected charging mode.
-# It also applies ramping logic to smooth out changes in available current
-# and ensures that the current is within the defined limits.
-def calculate_available_current(self):
-    _LOGGER.debug(" Logging in 10")
-    _LOGGER.debug(" Logging in 9")
-    _LOGGER.debug(" Logging in 8")
-    _LOGGER.debug(" Logging in 7")
-    _LOGGER.debug(" Logging in 6")
-    _LOGGER.debug(" Logging in 5")
-    _LOGGER.debug(" Logging in 4")
-    _LOGGER.debug(" Logging in 3")
-    _LOGGER.debug(" Logging in 2")
-    _LOGGER.debug(" Logging in 1")
-
-    state = get_state_config(self)
-    charge_context = get_charge_context_values(self, state)
-
-    # Calculate max_evse_available using context
-    max_evse_available = calculate_max_evse_available(charge_context)
-    charge_context.max_evse_available = max_evse_available
-
-    target_evse_standard = calculate_standard_mode(charge_context)
-    target_evse_eco = calculate_eco_mode(charge_context)
-    target_evse_solar = calculate_solar_mode(charge_context)
-    target_evse_excess = calculate_excess_mode(self, charge_context)
-
-    if state[CONF_CHARING_MODE] == 'Standard':
-        target_evse = target_evse_standard
-    elif state[CONF_CHARING_MODE] == 'Eco':
-        target_evse = target_evse_eco
-    elif state[CONF_CHARING_MODE] == 'Solar':
-        target_evse = target_evse_solar
-    elif state[CONF_CHARING_MODE] == 'Excess':
-        target_evse = target_evse_excess
-
-    # Clamp target_evse to CONF_MAX_CURRENT
-    target_evse = min(target_evse, charge_context.max_current, max_evse_available)
-
-    # Clamp to available
-    state[CONF_AVAILABLE_CURRENT] = min(max_evse_available, target_evse)
-
-    # --- Ramping logic ---
-    apply_ramping(self, state, target_evse, charge_context.min_current)
+    # Get OCPP current draw for this charger with fallback chain:
+    # 1. Current Import per-phase entities (sensor.{id}_current_import_l1/l2/l3)
+    # 2. Current Import entity (per-phase attributes or total)
+    # 3. Power Active Import (convert W → A)
+    evse_import = entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
+    evse_import_l1 = entry.data.get(CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID)
+    evse_import_l2 = entry.data.get(CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID)
+    evse_import_l3 = entry.data.get(CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID)
+    evse_power_import = entry.data.get(CONF_EVSE_POWER_IMPORT_ENTITY_ID)
+    current_draw = None
     
-    if state[CONF_AVAILABLE_CURRENT] < state[CONF_EVSE_MINIMUM_CHARGE_CURRENT]:
-        state[CONF_AVAILABLE_CURRENT] = 0
-    if state[CONF_AVAILABLE_CURRENT] > state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]:
-        state[CONF_AVAILABLE_CURRENT] = state[CONF_EVSE_MAXIMUM_CHARGE_CURRENT]
+    # Try per-phase current import entities first (separate sensors for each phase)
+    if evse_import_l1 or evse_import_l2 or evse_import_l3:
+        l1_val = _coerce(_read_entity(hass, evse_import_l1, None), None) if evse_import_l1 else None
+        l2_val = _coerce(_read_entity(hass, evse_import_l2, None), None) if evse_import_l2 else None
+        l3_val = _coerce(_read_entity(hass, evse_import_l3, None), None) if evse_import_l3 else None
+        
+        if l1_val is not None or l2_val is not None or l3_val is not None:
+            charger.l1_current = l1_val if l1_val is not None else 0
+            charger.l2_current = l2_val if l2_val is not None else 0
+            charger.l3_current = l3_val if l3_val is not None else 0
+            current_draw = "current_import_l1l2l3"
+            _LOGGER.debug(
+                "EVSE %s: Using per-phase current import entities: L1=%.1f L2=%.1f L3=%.1f",
+                charger_entity_id, charger.l1_current, charger.l2_current, charger.l3_current,
+            )
+    
+    # Try Current Import entity with per-phase attributes or total
+    if current_draw is None and evse_import:
+        evse_state = hass.states.get(evse_import)
+        if evse_state and evse_state.state not in ['unknown', 'unavailable', None]:
+            try:
+                attrs = evse_state.attributes
+                l1 = _read_phase_attr(attrs, ('l1_current', 'l1', 'phase_1', 'current_phase_1'))
+                l2 = _read_phase_attr(attrs, ('l2_current', 'l2', 'phase_2', 'current_phase_2'))
+                l3 = _read_phase_attr(attrs, ('l3_current', 'l3', 'phase_3', 'current_phase_3'))
+
+                if l1 is not None or l2 is not None or l3 is not None:
+                    charger.l1_current = l1 or 0
+                    charger.l2_current = l2 or 0
+                    charger.l3_current = l3 or 0
+
+                    # Clamp per-phase draws at max_current (some chargers report total in per-phase)
+                    # Allow 10% tolerance when using W-based profiles (voltage/rounding variance)
+                    cru = get_entry_value(entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
+                    clamp_threshold = max_current * 1.1 if cru == CHARGE_RATE_UNIT_WATTS else max_current
+                    for attr in ('l1_current', 'l2_current', 'l3_current'):
+                        val = getattr(charger, attr)
+                        if val > clamp_threshold:
+                            _LOGGER.warning(
+                                "EVSE %s: %s=%.1fA exceeds max_current=%.1fA — "
+                                "clamping (charger may be reporting total instead of per-phase)",
+                                charger_entity_id, attr, val, max_current,
+                            )
+                            setattr(charger, attr, max_current)
+                    current_draw = "current_import_attr"
+                else:
+                    current_import = float(evse_state.state)
+                    charger.l1_current = current_import
+                    if phases >= 2:
+                        charger.l2_current = current_import
+                    if phases >= 3:
+                        charger.l3_current = current_import
+                    current_draw = "current_import_total"
+            except (ValueError, TypeError):
+                pass
+    
+    # Fallback to Power Active Import if no current import data available
+    if current_draw is None and evse_power_import:
+        power_state = hass.states.get(evse_power_import)
+        if power_state and power_state.state not in ['unknown', 'unavailable', None]:
+            try:
+                power_w = float(power_state.state)
+                if power_w > 0 and voltage > 0:
+                    # Convert W → A (total power across all phases)
+                    power_per_phase = power_w / phases
+                    current_per_phase = power_per_phase / voltage
+                    charger.l1_current = current_per_phase
+                    if phases >= 2:
+                        charger.l2_current = current_per_phase
+                    if phases >= 3:
+                        charger.l3_current = current_per_phase
+                    current_draw = "power_import"
+                    _LOGGER.debug(
+                        "EVSE %s: Using Power Active Import fallback: %.1fW → %.1fA per phase",
+                        charger_entity_id, power_w, current_per_phase,
+                    )
+            except (ValueError, TypeError):
+                pass
+    
+    if current_draw:
+        _LOGGER.debug(
+            "EVSE %s: Current draw source: %s", charger_entity_id, current_draw
+        )
+
+    # SuspendedEV grace period: car may briefly pause during normal charging (BMS
+    # balancing). Only treat as inactive after SUSPENDED_EV_IDLE_TIMEOUT seconds
+    # of continuous SuspendedEV + near-zero draw.
+    total_draw = charger.l1_current + charger.l2_current + charger.l3_current
+    if connector_status == "SuspendedEV" and total_draw < 1.0:
+        if "_suspended_ev_since" not in charger_rt:
+            charger_rt["_suspended_ev_since"] = time.monotonic()
+        idle_duration = time.monotonic() - charger_rt["_suspended_ev_since"]
+        if idle_duration >= SUSPENDED_EV_IDLE_TIMEOUT:
+            _LOGGER.debug(
+                "EVSE %s: SuspendedEV idle for %.0fs (>%ds) — treating as inactive",
+                charger_entity_id, idle_duration, SUSPENDED_EV_IDLE_TIMEOUT,
+            )
+            charger.connector_status = "Finishing"
+    else:
+        charger_rt.pop("_suspended_ev_since", None)
+
+    _LOGGER.debug(
+        "  EVSE %s [%s]: %s-%sA %dph(hw) L1->%s/L2->%s/L3->%s mask=%s(%dph) "
+        "prio=%d [%s] draw=L1:%s/L2:%s/L3:%s",
+        charger_entity_id, operating_mode,
+        _fv(min_current), _fv(max_current), phases,
+        l1_phase, l2_phase, l3_phase,
+        charger.active_phases_mask,
+        len(charger.active_phases_mask) if charger.active_phases_mask else 0,
+        priority, charger.connector_status,
+        _fv(charger.l1_current), _fv(charger.l2_current), _fv(charger.l3_current),
+    )
+    return charger
+
+
+def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority, plug_auto_power):
+    """Build a LoadContext for a smart load (plug) device."""
+    charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
+    slider_power = charger_rt.get("device_power", None)
+    config_power = get_entry_value(entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
+    power_rating = slider_power if slider_power is not None and slider_power > 0 else config_power
+
+    connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
+    phases = len(connected_to_phase)
+
+    # Determine connector status from plug switch state
+    plug_switch_entity = entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
+    plug_switch_state = hass.states.get(plug_switch_entity) if plug_switch_entity else None
+
+    # Check power monitor if available (more reliable than switch state)
+    power_monitor_entity = get_entry_value(entry, CONF_PLUG_POWER_MONITOR_ENTITY_ID, None)
+    if power_monitor_entity:
+        power_draw = _coerce(_read_entity(hass, power_monitor_entity, 0))
+        connector_status = "Charging" if power_draw > 10 else "Available"
+
+        # Auto-adjust power rating from monitored draw (rolling average)
+        if power_draw > 10:
+            if DOMAIN not in hass.data:
+                hass.data[DOMAIN] = {}
+            avg_key = f"plug_power_avg_{entry.entry_id}"
+            readings = hass.data[DOMAIN].get(avg_key, [])
+            readings.append(power_draw)
+            if len(readings) > 5:
+                readings = readings[-5:]
+            hass.data[DOMAIN][avg_key] = readings
+            power_rating = sum(readings) / len(readings)
+            plug_auto_power[entry.entry_id] = round(power_rating, 0)
+            _LOGGER.debug(
+                "Plug %s: auto-adjusted power rating to %.0fW (avg of %d readings)",
+                charger_entity_id, power_rating, len(readings),
+            )
+    elif plug_switch_state:
+        connector_status = "Charging" if plug_switch_state.state == "on" else "Available"
+    else:
+        connector_status = "Charging"
+
+    equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
+
+    # Read per-charger operating mode from runtime data
+    operating_mode = charger_rt.get("operating_mode", OPERATING_MODE_CONTINUOUS)
+
+    charger = LoadContext(
+        charger_id=entry.entry_id,
+        entity_id=charger_entity_id,
+        min_current=equivalent_current,
+        max_current=equivalent_current,
+        phases=phases,
+        priority=priority,
+        active_phases_mask=connected_to_phase,
+        connector_status=connector_status,
+        device_type=DEVICE_TYPE_PLUG,
+        operating_mode=operating_mode,
+    )
+    _LOGGER.debug(
+        "  Plug %s [%s]: %.0fW on %s prio=%d [%s]%s",
+        charger_entity_id, operating_mode, power_rating, connected_to_phase,
+        priority, connector_status,
+        " (auto-adj)" if entry.entry_id in plug_auto_power else "",
+    )
+    return charger
+
+
+def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
+    """Build LoadContext objects for all chargers and add them to the site.
+
+    Returns plug_auto_power dict for auto-adjusted plug power ratings.
+    """
+    from . import get_chargers_for_hub
+
+    if hasattr(sensor, '_charger_entries'):
+        chargers = sensor._charger_entries
+    else:
+        chargers = get_chargers_for_hub(hass, hub_entry_id)
+
+    plug_auto_power = {}
+    for entry in chargers:
+        device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        charger_entity_id = entry.data.get(CONF_ENTITY_ID, f"charger_{entry.entry_id}")
+        priority = get_entry_value(entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
+
+        if device_type == DEVICE_TYPE_PLUG:
+            charger = _build_plug_charger(hass, entry, site.voltage, charger_entity_id, priority, plug_auto_power)
+        else:
+            charger = _build_evse_charger(hass, entry, site.voltage, charger_entity_id, priority)
+
+        # Clamp active_phases_mask to only include phases that exist on the site
+        site_phases = {p for p, v in zip(_PHASE_LABELS, (site.consumption.a, site.consumption.b, site.consumption.c)) if v is not None}
+        mask_phases = set(charger.active_phases_mask) if charger.active_phases_mask else set()
+        if mask_phases and not mask_phases.issubset(site_phases):
+            clamped = "".join(sorted(mask_phases & site_phases)) or charger.l1_phase
+            _LOGGER.warning(
+                "%s %s: phase mask %s includes phases not on site (%s) — clamping to %s",
+                "Plug" if charger.device_type == DEVICE_TYPE_PLUG else "EVSE",
+                charger_entity_id, charger.active_phases_mask,
+                "".join(sorted(site_phases)), clamped,
+            )
+            charger.active_phases_mask = clamped
+
+        site.chargers.append(charger)
+
+    return plug_auto_power
+
+
+def _apply_feedback_loop(site, solar_is_derived, voltage):
+    """Subtract charger draws from grid readings to prevent double-counting.
+
+    Grid CTs measure total site current INCLUDING charger draws. Without this
+    adjustment, the engine double-counts charger power as both 'consumption'
+    and 'charger demand'. Modifies site.consumption and site.export_current
+    in-place.
+    """
+    # Sum charger draws per site phase
+    total_draws = [0.0, 0.0, 0.0]
+    for c in site.chargers:
+        a_draw, b_draw, c_draw = c.get_site_phase_draw()
+        total_draws[0] += a_draw
+        total_draws[1] += b_draw
+        total_draws[2] += c_draw
+
+    if not any(d > 0 for d in total_draws):
+        return
+
+    # Reconstruct raw grid current, remove charger draw, re-split
+    orig_consumption = (site.consumption.a, site.consumption.b, site.consumption.c)
+    orig_export = (site.export_current.a, site.export_current.b, site.export_current.c)
+    adj_consumption = []
+    adj_export = []
+
+    for i, label in enumerate(_PHASE_LABELS):
+        cons = orig_consumption[i]
+        exp = orig_export[i]
+        draw = total_draws[i]
+        if cons is None:
+            adj_consumption.append(None)
+            adj_export.append(None)
+            continue
+        raw_grid = cons - (exp or 0)
+        true_grid = raw_grid - draw
+        adj_cons = max(0.0, true_grid)
+        adj_exp = max(0.0, -true_grid)
+
+        # Warn when household consumption gets clamped to 0 by feedback
+        if draw > 0 and adj_cons == 0 and cons > 0:
+            _LOGGER.warning(
+                "Phase %s: household -> 0 after feedback "
+                "(raw_grid=%.1fA - charger=%.1fA = %.1fA)",
+                label, raw_grid, draw, raw_grid - draw,
+            )
+        adj_consumption.append(adj_cons)
+        adj_export.append(adj_exp)
+
+    site.consumption = PhaseValues(*adj_consumption)
+    site.export_current = PhaseValues(*adj_export)
+
+    # Update derived solar after feedback (unified formula for grid and off-grid)
+    solar_note = ""
+    if solar_is_derived:
+        export_after = site.export_current.total * site.voltage
+        site.solar_production_total = _derive_solar_production(
+            site.inverter_output_per_phase, site.wiring_topology,
+            export_after, site.battery_power, site.voltage,
+        )
+        solar_note = f" | Solar(derived)={site.solar_production_total:.0f}W"
+
+    _LOGGER.debug(
+        "--- Feedback --- Subtracted A=%.1f B=%.1f C=%.1fA -> "
+        "cons=(%s/%s/%s) exp=(%s/%s/%s)%s",
+        total_draws[0], total_draws[1], total_draws[2],
+        *[_fv(v) for v in adj_consumption],
+        *[_fv(v) for v in adj_export],
+        solar_note,
+    )
+
+
+def _build_circuit_groups(hass, hub_entry_id):
+    """Build CircuitGroup objects from config entries for this hub.
+
+    Returns list of CircuitGroup model objects for the calculation engine.
+    """
+    from . import get_groups_for_hub
+
+    group_entries = get_groups_for_hub(hass, hub_entry_id)
+    # Build set of valid charger entry_ids for member validation
+    valid_charger_ids = {
+        e.entry_id for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+    }
+    groups = []
+    for entry in group_entries:
+        if entry is None:
+            continue
+        options = {**entry.data, **entry.options}
+        current_limit = options.get(CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT)
+        raw_member_ids = options.get(CONF_CIRCUIT_GROUP_MEMBERS, [])
+        # Filter out stale member references (deleted chargers)
+        member_ids = [mid for mid in raw_member_ids if mid in valid_charger_ids]
+        stale = set(raw_member_ids) - set(member_ids)
+        if stale:
+            _LOGGER.warning(
+                "Circuit group '%s': removed %d stale member(s) — entries no longer exist",
+                options.get(CONF_NAME, "Circuit Group"), len(stale),
+            )
+        group = CircuitGroup(
+            group_id=entry.entry_id,
+            name=options.get(CONF_NAME, "Circuit Group"),
+            current_limit=float(current_limit),
+            member_ids=member_ids,
+        )
+        groups.append(group)
+        _LOGGER.debug(
+            "  Circuit group '%s': limit=%.0fA, members=%s",
+            group.name, group.current_limit, member_ids,
+        )
+    return groups
+
+
+def _build_hub_result(site, raw_phases, voltage, main_breaker_rating,
+                      battery_soc, battery_soc_min, battery_max_discharge_power,
+                      battery_power, charger_targets, charger_available, charger_names,
+                      plug_auto_power, auto_detect_notifications=None, group_data=None,
+                      grid_stale=False, hub_status="OK", hub_warnings=None):
+    """Build the result dict returned by run_hub_calculation."""
+    # Grid headroom per phase
+    available_per_phase = []
+    for raw in raw_phases:
+        if raw is not None:
+            available_per_phase.append(round(main_breaker_rating - raw, 1))
+        else:
+            available_per_phase.append(0)
+
+    total_site_available = sum(
+        max(0, main_breaker_rating - r) * voltage
+        for r in raw_phases if r is not None
+    )
+
+    # Grid available power (based on consumption after feedback loop)
+    grid_headroom = sum(
+        max(0, main_breaker_rating - c) * voltage
+        for c in (site.consumption.a, site.consumption.b, site.consumption.c) if c is not None
+    )
+
+    # Battery discharge power available for EV charging
+    if (battery_soc is not None and battery_soc_min is not None
+            and battery_soc >= battery_soc_min and battery_max_discharge_power):
+        available_battery_power = round(float(battery_max_discharge_power), 0)
+    else:
+        available_battery_power = 0
+
+    # Total EVSE power = sum of actual charger draws
+    total_evse_power = round(
+        sum((c.l1_current + c.l2_current + c.l3_current) * voltage for c in site.chargers), 0
+    )
+
+    # Net site consumption
+    net_consumption = sum(r for r in raw_phases if r is not None) * voltage
+
+    # Cap available power by max grid import power limit (if configured)
+    if site.max_grid_import_power is not None:
+        import_headroom = max(0, site.max_grid_import_power - max(0, net_consumption))
+        total_site_available = min(total_site_available, import_headroom)
+        post_feedback_import = sum(
+            c * voltage for c in (site.consumption.a, site.consumption.b, site.consumption.c) if c is not None
+        )
+        grid_headroom = min(grid_headroom, max(0, site.max_grid_import_power - max(0, post_feedback_import)))
+
+    # Solar power available to chargers = solar production - household loads
+    # (household_consumption_total is set after feedback loop, so it excludes charger draws)
+    solar_available = 0
+    if site.solar_production_total and site.solar_production_total > 0:
+        household = getattr(site, 'household_consumption_total', None)
+        if household is not None:
+            solar_available = max(0, site.solar_production_total - household)
+        else:
+            # Derived solar mode: export IS the solar available (best approximation)
+            solar_available = max(0, site.solar_production_total)
+
+    # Build per-charger operating modes dict
+    charger_modes = {c.charger_id: c.operating_mode for c in site.chargers}
+
+    # Per-charger active phase count (for W-based OCPP profiles)
+    # Uses actual draw to detect 1-phase car on 3-phase EVSE; falls back to configured phases.
+    charger_active_phases = {}
+    for c in site.chargers:
+        active = sum(1 for cur in (c.l1_current, c.l2_current, c.l3_current) if cur > 1.0)
+        charger_active_phases[c.charger_id] = active if active > 0 else c.phases
 
     return {
-        CONF_AVAILABLE_CURRENT: round(state[CONF_AVAILABLE_CURRENT], 1),
-        CONF_PHASES: charge_context.phases,
-        CONF_CHARING_MODE: state[CONF_CHARING_MODE],
-        'calc_used': getattr(charge_context, 'calc_used', None),
-        'max_evse_available': max_evse_available,
-        'target_evse': target_evse,
-        'target_evse_standard': target_evse_standard,
-        'target_evse_eco': target_evse_eco,
-        'target_evse_solar': target_evse_solar,
-        'target_evse_excess': target_evse_excess,
-        'excess_charge_start_time': getattr(self, '_excess_charge_start_time', None),
+        CONF_TOTAL_ALLOCATED_CURRENT: round(sum(charger_targets.values()), 1),
+        CONF_PHASES: site.num_phases,
+        "calc_used": "calculate_all_charger_targets",
+
+        # Site-level data for hub sensor
+        "battery_soc": site.battery_soc,
+        "battery_soc_min": site.battery_soc_min,
+        "battery_soc_target": site.battery_soc_target,
+        "battery_power": battery_power,
+        "available_current_a": available_per_phase[0],
+        "available_current_b": available_per_phase[1],
+        "available_current_c": available_per_phase[2],
+        "total_site_available_power": round(total_site_available, 0),
+        "grid_power": round(net_consumption, 0),
+        "available_grid_power": round(grid_headroom, 0),
+        "available_battery_power": available_battery_power,
+        "total_evse_power": total_evse_power,
+        "solar_power": round(site.solar_production_total or 0, 0),
+        "available_solar_power": round(solar_available, 0),
+
+        # Per-charger targets
+        "charger_targets": charger_targets,
+        "charger_available": charger_available,
+        "charger_names": charger_names,
+        "charger_modes": charger_modes,
+        "charger_active_phases": charger_active_phases,
+        "distribution_mode": site.distribution_mode,
+
+        # Auto-detected plug power ratings
+        "plug_auto_power": plug_auto_power,
+
+        # Auto-detection notifications (inversion, phase mapping)
+        "auto_detect_notifications": auto_detect_notifications or [],
+
+        # Circuit group data (for group sensors)
+        "group_data": group_data or {},
+
+        # Grid sensor health
+        "grid_stale": grid_stale,
+
+        # Hub status
+        "hub_status": hub_status,
+        "hub_warnings": hub_warnings or [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def run_hub_calculation(sensor):
+    """
+    Run the hub calculation: read HA states, build SiteContext, calculate targets.
+
+    This is the main entry point for Home Assistant sensor updates.
+    Reads HA entity states from hub config, builds a SiteContext, runs the
+    calculation engine, and returns results for all chargers.
+
+    Args:
+        sensor: The HA sensor object containing config, hub_entry, and hass
+
+    Returns:
+        dict with calculated values including:
+            - CONF_TOTAL_ALLOCATED_CURRENT: Total allocated current (A)
+            - CONF_PHASES: Number of phases
+            - CONF_CHARGING_MODE: Current charging mode
+            - charger_targets: per-charger target currents
+            - Other site/charger data
+    """
+    hass = sensor.hass
+    hub_entry = sensor.hub_entry
+
+    # --- Read hub config values ---
+    voltage = get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE) or DEFAULT_PHASE_VOLTAGE
+    if voltage <= 0:
+        voltage = DEFAULT_PHASE_VOLTAGE
+    main_breaker_rating = get_entry_value(hub_entry, CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING)
+    excess_threshold = get_entry_value(hub_entry, CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD)
+
+    # --- Read per-phase grid current (raw) ---
+    raw_phases, _, _ = _read_grid_phases(hass, hub_entry)
+    has_grid_cts = any(r is not None for r in raw_phases)
+
+    # Off-grid (no grid CTs): zero out phases that have inverter output entities.
+    # This makes the site behave like a grid site with 0A grid current.
+    if not has_grid_cts:
+        inv_confs = (CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+                     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+                     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID)
+        for i, conf in enumerate(inv_confs):
+            if get_entry_value(hub_entry, conf, None):
+                raw_phases[i] = 0
+
+    # --- Input EMA smoothing (grid CT, solar, battery power) ---
+    hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
+    ema_inputs = hub_runtime.setdefault("_ema_inputs", {})
+
+    # --- Detect stale grid CT readings (configured but unavailable) ---
+    phase_confs = (CONF_PHASE_A_CURRENT_ENTITY_ID, CONF_PHASE_B_CURRENT_ENTITY_ID, CONF_PHASE_C_CURRENT_ENTITY_ID)
+    any_grid_stale = False
+    for i, conf in enumerate(phase_confs):
+        entity_id = get_entry_value(hub_entry, conf, None)
+        if not entity_id:
+            continue  # Phase not configured
+        state = hass.states.get(entity_id)
+        if state is None or state.state in ('unknown', 'unavailable', None, ''):
+            # Sensor is unavailable — hold last EMA value instead of using 0
+            held = ema_inputs.get(f"grid_{i}")
+            if held is not None:
+                raw_phases[i] = held
+            else:
+                # No previous reading — assume breaker load for safety
+                raw_phases[i] = main_breaker_rating
+            any_grid_stale = True
+
+    if any_grid_stale:
+        if "grid_stale_since" not in hub_runtime:
+            hub_runtime["grid_stale_since"] = time.monotonic()
+            _LOGGER.warning("Grid CT sensor(s) unavailable — holding last known values")
+        grid_stale_duration = time.monotonic() - hub_runtime["grid_stale_since"]
+    else:
+        if "grid_stale_since" in hub_runtime:
+            _LOGGER.info("Grid CT sensors recovered after %.0fs",
+                         time.monotonic() - hub_runtime["grid_stale_since"])
+        hub_runtime.pop("grid_stale_since", None)
+        grid_stale_duration = 0
+
+    smoothed_phases = [_smooth(ema_inputs, f"grid_{i}", r) for i, r in enumerate(raw_phases)]
+    consumption = [max(0, r) if r is not None else None for r in smoothed_phases]
+    export = [max(0, -r) if r is not None else None for r in smoothed_phases]
+    consumption_pv = PhaseValues(*consumption)
+    export_pv = PhaseValues(*export)
+
+    total_export_current = export_pv.total
+    total_export_power = total_export_current * voltage if voltage > 0 else 0
+
+    # --- Solar production (direct entity, or derived after inverter output below) ---
+    solar_production_entity = get_entry_value(hub_entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
+    solar_is_derived = not solar_production_entity
+    if solar_production_entity:
+        raw_solar = _read_entity(hass, solar_production_entity, 0)
+        solar_production_total = _smooth(ema_inputs, "solar", raw_solar)
+    else:
+        raw_solar = None  # derived — calculated after inverter output is read
+        solar_production_total = 0  # placeholder
+
+    # --- Battery data ---
+    battery_soc_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
+    battery_power_entity = get_entry_value(hub_entry, CONF_BATTERY_POWER_ENTITY_ID, None)
+    battery_soc = _coerce(_read_entity(hass, battery_soc_entity, None), None) if battery_soc_entity else None
+    raw_battery_power = _read_entity(hass, battery_power_entity, None) if battery_power_entity else None
+    battery_power = _smooth(ema_inputs, "battery_power", raw_battery_power) if battery_power_entity else None
+    battery_soc_hysteresis = get_entry_value(hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)
+    battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
+    battery_max_discharge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
+
+    # --- Max grid import power (entity override → shared hub data → None) ---
+    enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
+    max_import_power_entity = get_entry_value(hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
+    if max_import_power_entity:
+        max_grid_import_power = _coerce(_read_entity(hass, max_import_power_entity, None), None)
+    elif enable_max_import:
+        hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
+        max_grid_import_power = hub_rt.get("max_import_power", None)
+    else:
+        max_grid_import_power = None
+
+    # --- Inverter configuration ---
+    inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, \
+        wiring_topology, inverter_output_per_phase = _read_inverter_config(hass, hub_entry, voltage)
+
+    # Smooth inverter output per-phase (if configured)
+    if inverter_output_per_phase is not None:
+        inv_smoothed = [
+            _smooth(ema_inputs, f"inv_{i}", getattr(inverter_output_per_phase, p))
+            for i, p in enumerate(("a", "b", "c"))
+        ]
+        inverter_output_per_phase = PhaseValues(*inv_smoothed)
+
+    # --- Derive solar production (unified for grid and off-grid) ---
+    # Uses inverter output when available; falls back to grid export + battery.
+    # For off-grid sites (no grid CTs), export is 0 so inverter formula applies.
+    if solar_is_derived:
+        solar_production_total = _derive_solar_production(
+            inverter_output_per_phase, wiring_topology,
+            total_export_power, battery_power, voltage,
+        )
+
+    # --- Runtime state from shared hub data (hub_runtime already fetched above) ---
+    distribution_mode = hub_runtime.get("distribution_mode", DEFAULT_DISTRIBUTION_MODE)
+    allow_grid_charging = hub_runtime.get("allow_grid_charging", True)
+    power_buffer = hub_runtime.get("power_buffer", 0)
+    battery_soc_target = hub_runtime.get("battery_soc_target", DEFAULT_BATTERY_SOC_TARGET)
+    battery_soc_min = hub_runtime.get("battery_soc_min", DEFAULT_BATTERY_SOC_MIN)
+
+    # Apply SOC hysteresis — adjust thresholds so engine stays stateless
+    now_above_target = False
+    now_above_min = False
+    if battery_soc is not None and battery_soc_hysteresis and battery_soc_hysteresis > 0:
+        was_above_target = hub_runtime.get("_soc_above_target", False)
+        if was_above_target:
+            now_above_target = battery_soc >= battery_soc_target - battery_soc_hysteresis
+        else:
+            now_above_target = battery_soc >= battery_soc_target
+        hub_runtime["_soc_above_target"] = now_above_target
+        if now_above_target:
+            battery_soc_target = battery_soc_target - battery_soc_hysteresis
+
+        was_above_min = hub_runtime.get("_soc_above_min", False)
+        if was_above_min:
+            now_above_min = battery_soc >= battery_soc_min - battery_soc_hysteresis
+        else:
+            now_above_min = battery_soc >= battery_soc_min
+        hub_runtime["_soc_above_min"] = now_above_min
+        if now_above_min:
+            battery_soc_min = battery_soc_min - battery_soc_hysteresis
+
+    # Apply power buffer to reduce effective max grid import power
+    if max_grid_import_power is not None and power_buffer > 0:
+        max_grid_import_power = max(0, max_grid_import_power - power_buffer)
+
+    # --- Debug logging ---
+    invert_phases = get_entry_value(hub_entry, CONF_INVERT_PHASES, False)
+    _LOGGER.debug(
+        "--- Hub Update --- CT: A=%sA B=%sA C=%sA (%dph, invert=%s) | "
+        "Solar: %sW (%s) | Export: %sA/%sW",
+        _fv2(raw_phases[0], smoothed_phases[0]),
+        _fv2(raw_phases[1], smoothed_phases[1]),
+        _fv2(raw_phases[2], smoothed_phases[2]),
+        consumption_pv.active_count, "on" if invert_phases else "off",
+        _fv2(raw_solar, solar_production_total), solar_production_entity or "derived",
+        _fv(total_export_current), _fv(total_export_power),
+    )
+    _extra = []
+    if battery_soc_entity:
+        _bat_dir = "chg" if (battery_power or 0) < 0 else ("dischg" if (battery_power or 0) > 0 else "idle")
+        _hyst_min = "*" if now_above_min else ""
+        _hyst_tgt = "*" if now_above_target else ""
+        _extra.append(
+            f"Bat: {_fv(battery_soc)}%/{_fv2(raw_battery_power, battery_power)}W({_bat_dir}) "
+            f"min={_fv(battery_soc_min)}%{_hyst_min} tgt={_fv(battery_soc_target)}%{_hyst_tgt}"
+        )
+    if inverter_max_power or inverter_max_power_per_phase:
+        _extra.append(
+            f"Inv: {_fv(inverter_max_power)}W/{_fv(inverter_max_power_per_phase)}W/ph "
+            f"{'asym' if inverter_supports_asymmetric else 'sym'} {wiring_topology}"
+        )
+    _LOGGER.debug(
+        "  dist=%s grid_chg=%s buf=%sW max_import=%s%s",
+        distribution_mode,
+        "on" if allow_grid_charging else "off",
+        _fv(power_buffer),
+        f"{max_grid_import_power:.0f}W" if max_grid_import_power is not None else "unlimited",
+        (" | " + " | ".join(_extra)) if _extra else "",
+    )
+    if inverter_output_per_phase:
+        _LOGGER.debug(
+            "  Inverter output: A=%sA B=%sA C=%sA",
+            _fv(inverter_output_per_phase.a), _fv(inverter_output_per_phase.b),
+            _fv(inverter_output_per_phase.c),
+        )
+
+    # --- Build SiteContext ---
+    site = SiteContext(
+        voltage=voltage,
+        main_breaker_rating=main_breaker_rating,
+        grid_current=PhaseValues(*raw_phases),
+        consumption=consumption_pv,
+        export_current=export_pv,
+        solar_production_total=solar_production_total,
+        solar_is_derived=solar_is_derived,
+        battery_soc=float(battery_soc) if battery_soc is not None else None,
+        battery_power=float(battery_power) if battery_power is not None else None,
+        battery_soc_min=float(battery_soc_min) if battery_soc_min is not None else None,
+        battery_soc_target=float(battery_soc_target) if battery_soc_target is not None else None,
+        battery_soc_hysteresis=float(battery_soc_hysteresis) if battery_soc_hysteresis is not None else 5,
+        battery_max_charge_power=float(battery_max_charge_power) if battery_max_charge_power is not None else None,
+        battery_max_discharge_power=float(battery_max_discharge_power) if battery_max_discharge_power is not None else None,
+        max_grid_import_power=float(max_grid_import_power) if max_grid_import_power is not None else None,
+        inverter_max_power=float(inverter_max_power) if inverter_max_power is not None else None,
+        inverter_max_power_per_phase=float(inverter_max_power_per_phase) if inverter_max_power_per_phase is not None else None,
+        inverter_supports_asymmetric=inverter_supports_asymmetric,
+        wiring_topology=wiring_topology,
+        inverter_output_per_phase=inverter_output_per_phase,
+        excess_export_threshold=excess_threshold,
+        allow_grid_charging=allow_grid_charging,
+        power_buffer=power_buffer,
+        distribution_mode=distribution_mode,
+    )
+
+    # --- Add chargers ---
+    hub_entry_id = hub_entry.entry_id if hasattr(hub_entry, 'entry_id') else hub_entry.data.get('hub_entry_id')
+    plug_auto_power = _add_chargers_to_site(hass, site, hub_entry_id, sensor)
+
+    # --- Build circuit groups ---
+    site.circuit_groups = _build_circuit_groups(hass, hub_entry_id)
+
+    # Apply auto-detected phase remaps from previous cycles
+    auto_detect_state = hub_runtime.setdefault("_auto_detect", {})
+    phase_remaps = auto_detect_state.get("phase_remap", {})
+    for charger in site.chargers:
+        remap = phase_remaps.get(charger.charger_id)
+        if remap:
+            old = (charger.l1_phase, charger.l2_phase, charger.l3_phase)
+            charger.l1_phase = remap["l1_phase"]
+            charger.l2_phase = remap["l2_phase"]
+            charger.l3_phase = remap["l3_phase"]
+            # Recalculate active_phases_mask from new mapping
+            if charger.phases == 3:
+                charger.active_phases_mask = "".join(sorted({charger.l1_phase, charger.l2_phase, charger.l3_phase}))
+            elif charger.phases == 2:
+                charger.active_phases_mask = "".join(sorted({charger.l1_phase, charger.l2_phase}))
+            elif charger.phases == 1:
+                charger.active_phases_mask = charger.l1_phase
+            _LOGGER.debug(
+                "Auto-remap applied for %s: L1:%s→%s L2:%s→%s L3:%s→%s mask=%s",
+                charger.entity_id, old[0], charger.l1_phase,
+                old[1], charger.l2_phase, old[2], charger.l3_phase,
+                charger.active_phases_mask,
+            )
+
+    # --- Feedback loop ---
+    _apply_feedback_loop(site, solar_is_derived, voltage)
+
+    # Compute household_consumption_total when solar entity provides ground truth
+    if not solar_is_derived and solar_production_total > 0:
+        export_power_after_feedback = site.export_current.total * site.voltage
+        bp = float(battery_power) if battery_power is not None else 0
+        site.household_consumption_total = max(0, solar_production_total + bp - export_power_after_feedback)
+        _LOGGER.debug(
+            "Computed household_consumption_total=%.1fW (solar=%.1fW + bat=%.1fW - export=%.1fW)",
+            site.household_consumption_total, solar_production_total, bp, export_power_after_feedback,
+        )
+
+    # Compute per-phase household from inverter output entities (after feedback)
+    household = compute_household_per_phase(site, site.wiring_topology)
+    if household is not None:
+        site.household_consumption = household
+        _LOGGER.debug(
+            "Per-phase household from inverter output (%s): A=%.1fA B=%.1fA C=%.1fA",
+            site.wiring_topology,
+            household.a if household.a is not None else 0,
+            household.b if household.b is not None else 0,
+            household.c if household.c is not None else 0,
+        )
+
+    # --- Calculate targets ---
+    calculate_all_charger_targets(site)
+
+    # --- Grid stale fallback: force min_current after timeout ---
+    grid_stale = grid_stale_duration > GRID_STALE_TIMEOUT
+    if grid_stale:
+        _LOGGER.warning(
+            "Grid CT unavailable for %.0fs (>%ds) — all chargers falling to minimum current",
+            grid_stale_duration, GRID_STALE_TIMEOUT,
+        )
+        for charger in site.chargers:
+            charger.allocated_current = charger.min_current if charger.connector_status == "Charging" else 0
+            charger.available_current = charger.min_current
+
+    charger_targets = {c.charger_id: c.allocated_current for c in site.chargers}
+    charger_available = {c.charger_id: c.available_current for c in site.chargers}
+    charger_names = {c.charger_id: c.entity_id for c in site.chargers}
+
+    # --- Build per-group allocation data for group sensors ---
+    group_data = {}
+    charger_by_id = {c.charger_id: c for c in site.chargers}
+    for group in site.circuit_groups:
+        per_phase_draw = {"A": 0.0, "B": 0.0, "C": 0.0}
+        for mid in group.member_ids:
+            c = charger_by_id.get(mid)
+            if c and c.allocated_current > 0 and c.active_phases_mask:
+                for phase in c.active_phases_mask:
+                    per_phase_draw[phase] += c.allocated_current
+        # Headroom = limit minus max draw on any active phase
+        active_draws = [per_phase_draw[p] for p in ("A", "B", "C")
+                        if site.consumption and getattr(site.consumption, p.lower()) is not None]
+        max_draw = max(active_draws) if active_draws else 0
+        headroom = max(0, group.current_limit - max_draw)
+        group_data[group.group_id] = {
+            "name": group.name,
+            "current_limit": group.current_limit,
+            "member_ids": group.member_ids,
+            "per_phase_draw": per_phase_draw,
+            "max_phase_draw": round(max_draw, 1),
+            "headroom": round(headroom, 1),
+        }
+
+    # --- Auto-detection (inversion + phase mapping) ---
+    # auto_detect_state already initialized above (line 926)
+    auto_notifications = []
+    inv_notif = check_inversion(
+        auto_detect_state, smoothed_phases, site.chargers,
+        hub_entry.entry_id, get_entry_value(hub_entry, CONF_NAME, "Hub"),
+    )
+    if inv_notif:
+        auto_notifications.append(inv_notif)
+    if get_entry_value(hub_entry, CONF_AUTO_DETECT_PHASE_MAPPING, True):
+        pm_results = check_phase_mapping(
+            auto_detect_state, smoothed_phases, site.chargers,
+            hub_entry.entry_id,
+        )
+        for notif in pm_results:
+            # Store auto-remap for next cycle
+            remap = notif.pop("auto_remap", None)
+            if remap:
+                auto_detect_state.setdefault("phase_remap", {})[remap["charger_id"]] = remap
+                # Reset correlation state so re-detection runs with new mapping
+                # (allows 2-phase detection to verify/correct after 1-phase remap)
+                pm_state = auto_detect_state.get("phase_map", {})
+                pm_state.pop(remap["charger_id"], None)
+            auto_notifications.append(notif)
+
+    # --- Hub status (config validation + runtime state) ---
+    hub_status = "OK"
+    hub_warnings = []
+    if not has_grid_cts and inverter_output_per_phase is None and not solar_production_entity:
+        hub_status = "No power measurement"
+        hub_warnings.append("No grid CTs, inverter output, or solar entity configured")
+    elif not has_grid_cts:
+        hub_warnings.append("Off-grid mode (no grid CTs)")
+    if grid_stale:
+        hub_status = "Grid sensors unavailable"
+        hub_warnings.append(f"Grid CT readings stale for {grid_stale_duration:.0f}s")
+
+    # --- Build result ---
+    return _build_hub_result(
+        site, raw_phases, voltage, main_breaker_rating,
+        battery_soc, battery_soc_min, battery_max_discharge_power,
+        battery_power, charger_targets, charger_available, charger_names,
+        plug_auto_power, auto_notifications, group_data,
+        grid_stale=grid_stale, hub_status=hub_status, hub_warnings=hub_warnings,
+    )
+
+
+__all__ = [
+    "SiteContext",
+    "LoadContext",
+    "PhaseValues",
+    "calculate_all_charger_targets",
+    "run_hub_calculation",
+]

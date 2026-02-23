@@ -1,0 +1,338 @@
+# Test scenarios: Mixed operating modes
+# Chargers at the same site with DIFFERENT operating modes.
+# Exercises source-aware dual-pool distribution, urgency ordering,
+# and mode-specific source limits.
+
+scenarios:
+
+  # ===== CONTINUOUS + SOLAR ONLY =====
+
+  - name: "mixed-continuous-solar-only-priority"
+    description: "Continuous gets any source first, Solar Only gets remaining solar"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+      distribution_mode: priority
+      solar_production: 6900  # 30A total
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4000
+      battery_max_discharge_power: 4000
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 8000
+      inverter_max_power: 20000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Continuous"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "charger_2"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+    expected:
+      charger_1:
+        allocated: 16  # Continuous: any source, gets max
+      charger_2:
+        allocated: 6   # Solar Only: just enough solar remaining for minimum
+
+  - name: "mixed-continuous-solar-only-shared"
+    description: "Shared mode: equal split, Solar Only capped by source"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+      distribution_mode: Shared
+      solar_production: 6900
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4000
+      battery_max_discharge_power: 4000
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 8000
+      inverter_max_power: 20000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Continuous"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "charger_2"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+    expected:
+      charger_1:
+        allocated: 7.5  # Shared: Continuous gets equal split (not source-limited)
+      charger_2:
+        allocated: 6.3  # Shared: Solar Only capped by solar pool
+
+  # ===== SOLAR PRIORITY + SOLAR ONLY =====
+
+  - name: "mixed-solar-prio-solar-only-plenty"
+    description: "Plenty of solar: Solar Priority fills to max, Solar Only gets remainder"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+      distribution_mode: priority
+      solar_production: 13800  # 60A total — lots of solar
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4000
+      battery_max_discharge_power: 4000
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 8000
+      inverter_max_power: 20000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "charger_2"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+    expected:
+      charger_1:
+        allocated: 16   # Solar Priority: filled to max from solar pool
+      charger_2:
+        allocated: 7.8  # Solar Only: gets remaining solar after ch1
+
+  - name: "mixed-solar-prio-solar-only-low-soc"
+    description: "SOC below target: Solar Priority gets min from grid, Solar Only gets 0"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+      distribution_mode: priority
+      solar_production: 6900
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: 50
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4000
+      battery_max_discharge_power: 4000
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 8000
+      inverter_max_power: 20000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "charger_2"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+    expected:
+      charger_1:
+        allocated: 6  # Solar Priority: SOC < target → min only (grid guarantee)
+      charger_2:
+        allocated: 0  # Solar Only: SOC < target → no charging
+
+  # ===== SOLAR PRIORITY + EXCESS =====
+
+  - name: "mixed-solar-prio-excess-above-threshold"
+    description: "1ph: Solar Priority uses solar, Excess triggered by remaining export"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 10000  # 43.5A
+      phase_a_consumption: 2.0
+      excess_export_threshold: 3000
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "charger_2"
+        operating_mode: "Excess"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+    expected:
+      charger_1:
+        allocated: 16  # Solar Priority: fills to max from solar
+      charger_2:
+        allocated: 12.4  # Excess: 25.5A export remaining - 13.04A threshold = 12.4A
+
+  - name: "mixed-solar-prio-excess-below-threshold"
+    description: "1ph: Moderate solar, export below excess threshold"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 3000  # 13A
+      phase_a_consumption: 3.0
+      excess_export_threshold: 3000
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "charger_2"
+        operating_mode: "Excess"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+    expected:
+      charger_1:
+        allocated: 10  # placeholder — Solar Priority: solar available
+      charger_2:
+        allocated: 0   # Excess: export below 3000W threshold → off
+
+  # ===== THREE MODES MIXED =====
+
+  - name: "mixed-three-modes-priority"
+    description: "Continuous + Solar Priority + Solar Only on same 3ph site"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 32
+      max_import_power: 22080
+      distribution_mode: priority
+      solar_production: 9200  # 40A total
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4000
+      battery_max_discharge_power: 4000
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 8000
+      inverter_max_power: 20000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Continuous"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "charger_2"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+      - entity_id: "charger_3"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 3
+    expected:
+      charger_1:
+        allocated: 16  # placeholder
+      charger_2:
+        allocated: 6   # placeholder
+      charger_3:
+        allocated: 0   # placeholder
+
+  # ===== PLUG IN SOLAR ONLY =====
+
+  - name: "mixed-plug-solar-only-with-evse"
+    description: "EVSE Continuous + Plug Solar Only, enough solar for both"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 5000
+      phase_a_consumption: 2.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "evse_1"
+        operating_mode: "Continuous"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "plug_1"
+        device_type: "plug"
+        operating_mode: "Solar Only"
+        power_rating: 1500
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+    expected:
+      evse_1:
+        allocated: 16   # Continuous: any source
+      plug_1:
+        allocated: 6.5  # Plug on (1500/230=6.5A), solar surplus > 6.5A after evse draws
