@@ -1,0 +1,69 @@
+# Test scenarios: Excess mode, three-phase sites, with battery
+
+scenarios:
+
+  - name: "3ph-1c-excess-prio-with-bat-above-threshold"
+    description: "Excess mode with export above threshold"
+    human_verified: True
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Excess
+      solar_production: 11840  # Total 18kW
+      phase_a_consumption: 0
+      phase_b_consumption: 0
+      phase_c_consumption: 0  # 0A total,
+      excess_export_threshold: 10000  # 10kW
+      battery_soc: 97
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 6000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected: # Manually verified expected result
+      charger_1:
+        allocated: 8  # (11840- 10000W) / 230V  = 8A
+
+  - name: "3ph-1c-excess-prio-with-bat-below-threshold"
+    description: "Excess mode with export below threshold"
+    human_verified: True
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+
+      distribution_mode: priority
+      charging_mode: Excess
+      solar_production: 10350  # Total ~10.35kW
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0  # 3A total, ~8kW export
+      excess_export_threshold: 10000  # 10kW
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4140
+      battery_max_discharge_power: 4140
+      inverter_supports_asymmetric: True
+      inverter_max_power_per_phase: 6000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected: # Manually verified expected result
+      charger_1:
+        allocated: 0  # Below threshold

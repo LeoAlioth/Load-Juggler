@@ -18,141 +18,103 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # - name: Set up Python
-      #   uses: actions/setup-python@v5
-      #   with:
-      #     python-version: "3.11"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-      # - name: Install dependencies
-      #   run: |
-      #     python -m pip install --upgrade pip
-      #     pip install -r requirements.txt
-      #     pip install -r requirements_dev.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements_dev.txt
 
-      # - name: Run test suite
-      #   run: |
-      #     python dev/tests/run_tests.py dev/tests/scenarios
+      - name: Run test suite
+        run: |
+          python dev/tests/run_tests.py dev/tests/scenarios
 
       - name: Set up variables
         id: vars
         run: |
-          echo "GITHUB_REF: $GITHUB_REF"
-          echo "GITHUB_REF_NAME: $GITHUB_REF_NAME"
-
-          if echo "$GITHUB_REF" | grep -q "^refs/tags/"; then
-            # Triggered by tag push — use the tag name directly
+          # Use GITHUB_REF_NAME (short ref) if available, otherwise parse GITHUB_REF
+          if [ -n "$GITHUB_REF_NAME" ]; then
             TAG_NAME="$GITHUB_REF_NAME"
           else
-            # Manual dispatch on a branch — read version from manifest.json
-            TAG_NAME=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
-            echo "Manual trigger: read version '$TAG_NAME' from manifest.json"
+            TAG_NAME="${GITHUB_REF##*/}"
           fi
-
-          # Validate TAG_NAME looks like a version (starts with v or digit)
-          if ! echo "$TAG_NAME" | grep -qE '^(v?[0-9])'; then
-            echo "ERROR: TAG_NAME '$TAG_NAME' does not look like a version tag — aborting"
-            exit 1
-          fi
-
-          echo "Using tag: $TAG_NAME"
+          
+          echo "Detected tag: $TAG_NAME"
+          echo "GITHUB_REF: $GITHUB_REF"
+          echo "GITHUB_REF_NAME: $GITHUB_REF_NAME"
+          
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+
+      - name: Generate release notes
+        run: |
+          # Extract version from tag (strip leading 'v' if present)
+          VERSION=$(echo "$TAG_NAME" | sed 's/^v//')
+
+          # Extract matching version section from RELEASE_NOTES.md
+          awk -v ver="$VERSION" '
+            BEGIN { found=0 }
+            /^## / {
+              if (found) exit
+              if (index($0, "## " ver) == 1) { found=1; next }
+            }
+            /^---$/ { if (found) exit }
+            found { print }
+          ' RELEASE_NOTES.md > /tmp/release_body.md
+
+          if [ ! -s /tmp/release_body.md ]; then
+            echo "No matching section found for version $VERSION in RELEASE_NOTES.md" > /tmp/release_body.md
+          fi
+
+          echo "--- Release body ---"
+          cat /tmp/release_body.md
+          echo "---"
 
       - name: Create ZIP archive
         run: |
           # Create zip with full path for HACS (content_in_root: false)
           # HACS expects: /manifest.json
-          cd custom_components/dynamic_ocpp_evse         
+          cd custom_components/dynamic_ocpp_evse
           zip -r dynamic-ocpp-evse.zip .
 
       - name: Create Gitea Release
-        run: |
-          echo "Creating Gitea release for tag: $TAG_NAME"
-          GITEA_API="${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
-
-          # Check if release already exists for this tag
-          EXISTING=$(curl -s \
-            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
-            "${GITEA_API}/releases/tags/${TAG_NAME}")
-          EXISTING_ID=$(echo "$EXISTING" | jq -r '.id // empty')
-
-          if [ -n "$EXISTING_ID" ]; then
-            echo "Deleting existing Gitea release $EXISTING_ID for tag $TAG_NAME"
-            curl -s -X DELETE \
-              -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
-              "${GITEA_API}/releases/$EXISTING_ID"
-          fi
-
-          # Ensure the tag exists (manual dispatch won't have created one)
-          git config user.name "Gitea Actions"
-          git config user.email "actions@gitea.local"
-          git tag -f "$TAG_NAME"
-          git push origin "$TAG_NAME" --force
-
-          # Create the release
-          RELEASE_RESPONSE=$(curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"prerelease\": false, \"draft\": false}" \
-            "${GITEA_API}/releases")
-
-          echo "Gitea Release response: $RELEASE_RESPONSE"
-          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
-          echo "Gitea Release ID: $RELEASE_ID"
-
-          if [ "$RELEASE_ID" = "null" ] || [ -z "$RELEASE_ID" ]; then
-            echo "Failed to create Gitea release"
-            exit 1
-          fi
-
-          # Upload the asset
-          curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
-            -H "Content-Type: application/zip" \
-            --data-binary @custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip \
-            "${GITEA_API}/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
-
-          echo "Gitea release created successfully!"
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: Dynamic OCPP EVSE ${{ env.TAG_NAME }}
+          body_path: /tmp/release_body.md
+          draft: false
+          prerelease: false
+          files: custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITEA_TOKEN }}
 
       - name: Create GitHub Release
         run: |
           echo "Creating GitHub release for tag: $TAG_NAME"
-          GH_API="https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE"
-
-          # Check if release already exists for this tag
-          EXISTING=$(curl -s \
-            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "${GH_API}/releases/tags/${TAG_NAME}")
-          EXISTING_ID=$(echo "$EXISTING" | jq -r '.id // empty')
-
-          if [ -n "$EXISTING_ID" ]; then
-            echo "Deleting existing GitHub release $EXISTING_ID for tag $TAG_NAME"
-            curl -s -X DELETE \
-              -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "${GH_API}/releases/$EXISTING_ID"
-          fi
-
-          # Create the release
+          
+          # Create the release using GitHub API
+          BODY=$(jq -Rs '.' < /tmp/release_body.md)
           RELEASE_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"prerelease\": false, \"draft\": false}" \
-            "${GH_API}/releases")
-
+            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"body\": $BODY, \"prerelease\": false, \"draft\": false}" \
+            "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
+          
           echo "GitHub Release response: $RELEASE_RESPONSE"
           RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
           echo "GitHub Release ID: $RELEASE_ID"
-
+          
           if [ "$RELEASE_ID" = "null" ] || [ -z "$RELEASE_ID" ]; then
             echo "Failed to create GitHub release"
             exit 1
           fi
-
-          # Upload the asset
+          
+          # Upload the asset to GitHub
           curl -s -X POST \
             -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
@@ -160,5 +122,5 @@ jobs:
             -H "Content-Type: application/zip" \
             --data-binary @custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip \
             "https://uploads.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
-
+          
           echo "GitHub release created successfully!"
