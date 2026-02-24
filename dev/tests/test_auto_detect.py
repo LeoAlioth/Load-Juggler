@@ -40,6 +40,7 @@ _load_module_as(f"{_PKG_COMP}.const", _comp_dir / "const.py")
 _load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
 _load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
 _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
+_load_module_as(_PKG_CALC, _calc_dir / "__init__.py")
 _load_module_as(f"{_PKG_COMP}.auto_detect", _comp_dir / "auto_detect.py")
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (
