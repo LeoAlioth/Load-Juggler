@@ -11,7 +11,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     libjpeg-dev \
     zlib1g-dev \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+# Set up timezone data for tests
+# Home Assistant test framework uses US/Pacific which is a legacy symlink
+ENV TZ=America/Los_Angeles
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+# Create US/Pacific symlink for Home Assistant test compatibility
+RUN mkdir -p /usr/share/zoneinfo/US && \
+    ln -sf /usr/share/zoneinfo/America/Los_Angeles /usr/share/zoneinfo/US/Pacific
 
 # Set working directory
 WORKDIR /app
@@ -19,8 +28,8 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements_dev.txt .
 
-# Install test dependencies
-RUN pip install --no-cache-dir -r requirements_dev.txt
+# Install test dependencies with timeout
+RUN pip install --no-cache-dir --timeout 600 -r requirements_dev.txt
 
 # Copy the component and tests
 COPY . .

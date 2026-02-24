@@ -6,4 +6,4 @@ types-requests
 PyYAML>=6.0
 pytest
 pytest-asyncio
-pytest-homeassistant-custom-component
+pytest-homeassistant-custom-component>=0.14.0

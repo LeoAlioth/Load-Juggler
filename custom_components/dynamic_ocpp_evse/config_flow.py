@@ -121,7 +121,7 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             (self._optional_entity_field(
                 CONF_BATTERY_SOC_ENTITY_ID,
                 defaults.get(CONF_BATTERY_SOC_ENTITY_ID),
-            ), selector({"entity": {"domain": "sensor", "device_class": "battery"}})),
+            ), selector({"entity": {"domain": ["sensor", "input_number"], "unit_of_measurement": "%"}})),
             (self._optional_entity_field(
                 CONF_BATTERY_POWER_ENTITY_ID,
                 defaults.get(CONF_BATTERY_POWER_ENTITY_ID),

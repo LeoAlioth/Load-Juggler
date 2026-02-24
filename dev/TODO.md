@@ -116,11 +116,14 @@
 104. - [x] Battery SOC hysteresis — HA layer applies hysteresis to `battery_soc_target` and `battery_soc_min` before passing to engine (tracks `_soc_above_target`/`_soc_above_min` booleans in `hub_runtime`). Engine stays stateless. 14 boundary test scenarios added.
 105. - [x] Charger finishing test scenarios — 8 scenarios testing capacity redistribution when chargers finish (paired baselines, priority/shared modes, mixed modes, 3-charger setups).
 
-## Backlog
+## Completed (cont.)
 
-1. - [ ] **Device-based OCPP discovery** — select OCPP device instead of entity, auto-find all entities (supports per-phase separate entities)
-2. - [ ] **Hot Water Tank device type** — thermostat control (Normal/Boost), modes: Solar Only, Excess
-3. - [ ] **SG Ready device type** — 2-relay site-state mapping (Block/Normal/Recommend ON/Force ON), no user modes
+106. - [x] Fix test infrastructure — added `minor_version=2` to all MockConfigEntry calls (matching config flow VERSION=2, MINOR_VERSION=2), updated pytest-homeassistant-custom-component requirement to >=0.14.0, removed `unit_of_measurement` from entity_registry.async_get_or_create calls (test framework schema validation)
+
+## Backlog
+3. - [ ] **Device-based OCPP discovery** — select OCPP device instead of entity, auto-find all entities (supports per-phase separate entities)
+4. - [ ] **Hot Water Tank device type** — thermostat control (Normal/Boost), modes: Solar Only, Excess
+5. - [ ] **SG Ready device type** — 2-relay site-state mapping (Block/Normal/Recommend ON/Force ON), no user modes
 
 ## Other
 

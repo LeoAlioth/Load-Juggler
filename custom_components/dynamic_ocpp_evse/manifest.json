@@ -2,6 +2,7 @@
   "domain": "dynamic_ocpp_evse",
   "name": "Load Juggler",
   "documentation": "https://github.com/LeoAlioth/dynamic_ocpp_evse",
+  "issue_tracker": "https://github.com/LeoAlioth/dynamic_ocpp_evse/issues",
   "dependencies": [],
   "after_dependencies": ["ocpp"],
   "codeowners": ["@LeoAlioth"],
