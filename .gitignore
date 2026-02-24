@@ -8,3 +8,4 @@ dev/tests/scenarios_combined_temp.yaml
 *.whl
 dev/debug.log
 .github/instructions/Context.instructions.md
+/.venv

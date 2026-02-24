@@ -1,0 +1,29 @@
+# Docker image for running Home Assistant integration tests
+# Build: docker build -t dynamic-ocpp-evse-test -f dev/Dockerfile.test .
+# Run: docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test
+
+FROM python:3.11-slim
+
+# Install system dependencies required for Home Assistant
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libffi-dev \
+    libssl-dev \
+    libjpeg-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements_dev.txt .
+
+# Install test dependencies
+RUN pip install --no-cache-dir -r requirements_dev.txt
+
+# Copy the component and tests
+COPY . .
+
+# Default command runs all tests
+CMD ["python", "-m", "pytest", "dev/tests/", "-v"]
