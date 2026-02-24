@@ -30,7 +30,12 @@ for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC):
 def _load_module_as(fqn, path):
     spec = importlib.util.spec_from_file_location(fqn, str(path))
     module = importlib.util.module_from_spec(spec)
-    module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
+    # For package __init__.py files, __package__ is the package itself;
+    # for regular modules it's the parent package.
+    if Path(path).name == "__init__.py":
+        module.__package__ = fqn
+    else:
+        module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
     sys.modules[fqn] = module
     spec.loader.exec_module(module)
     return module
