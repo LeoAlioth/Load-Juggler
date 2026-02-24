@@ -60,7 +60,14 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _get_entity_registry_ids(self) -> list[str]:
         if self._entity_cache is None:
             entity_registry = async_get_entity_registry(self.hass)
-            self._entity_cache = list(entity_registry.entities.keys())
+            # Only include entities that are present in the state machine.
+            # Disabled/stale registry entries have no state and should not be
+            # offered as auto-detection candidates (they would end up as a
+            # suggested_value that is not in include_entities, breaking submission).
+            self._entity_cache = [
+                eid for eid in entity_registry.entities.keys()
+                if self.hass.states.get(eid) is not None
+            ]
         return self._entity_cache
 
     def _entity_ids_for(
