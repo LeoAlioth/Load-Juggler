@@ -1,13 +1,22 @@
 # Release Notes
 
+## 2.0.5
+
+### Improvements
+
+- **Automatic unit conversion**: Power and current sensors now auto-convert units at runtime:
+- **Unit-based entity filtering**: Entity selectors now filter by `unit_of_measurement` instead of `device_class`, allowing selection of sensors from integrations that don't set device_class properly.
+
+---
+
 ## 2.0.4
 
 **BREAKING**: Existing 1.x users must **remove and re-add** the integration.
 
 ### New Features
+
 - **Per-load operating modes**: each charger/load has its own operating mode instead of a site-wide setting. EVSE modes: Standard, Solar Priority, Solar Only, Excess. Smart Load modes: Continuous, Solar Only, Excess.
 - **Mixed-mode operation**: run different chargers in different modes simultaneously (e.g., one charger in Standard while another waits for Solar Only).
-- **Source-aware dual-pool distribution**: physical (grid + inverter), solar, and excess power pools tracked independently — each charger draws from the pools its mode allows.
 - **Multi-charger support** with 4 distribution modes (Shared, Priority, Optimized, Strict).
 - **Smart Load support**: non-OCPP controllable loads (e.g., granny charger behind a Shelly smart plug) with binary on/off control, configurable power rating, and phase assignment.
 - **Asymmetric inverter support**: flexible power pool across phases.
@@ -15,9 +24,8 @@
 - **2-phase OBC charger support** (e.g., VW eGolf, eUp, ID.3 base).
 - **Charger phase mapping (L1/L2/L3 → A/B/C)** with per-phase constraint enforcement.
 - **Power-based charging**: send watts instead of amps via OCPP charge rate unit auto-detection.
-- **Dedicated solar power entity**: direct inverter-side solar sensor instead of CT-derived.
 - **Per-phase inverter output entities**: optional sensors for each inverter phase with parallel/series wiring topology.
-- **Entity auto-detection**: battery, solar, inverter, power monitoring, and wiring topology entities for 12 inverter brands.
+- **Entity auto-detection**: battery, solar, inverter, power monitoring, and wiring topology usually get auto detected.
 - **Max import power limiter**: cap grid import independently of breaker rating.
 - **HA service actions**: `set_operating_mode`, `set_distribution_mode`, `set_max_current`, `set_min_current`.
 - **Available current display** for idle chargers.
@@ -32,12 +40,14 @@
 - **Off-grid support**: grid CT entities are now optional. When no grid CTs are configured, the system infers active phases from inverter output entities and treats grid current as 0A. Solar production is derived from inverter output using a unified formula that works for both grid and off-grid sites.
 
 ### Resilience Improvements
+
 - **Grid CT stale detection**: when configured grid CT sensors become unavailable, the system holds the last known EMA value. After 60s of continuous unavailability, all chargers fall to minimum current. Recovery is automatic with a log message.
 - **Sensor unavailability handling**: `_UNAVAILABLE` sentinel pattern — solar, battery, and inverter sensors automatically hold their last EMA value during brief unavailability instead of decaying to 0.
 - **OCPP/switch error handling**: `set_charge_rate` and plug switch commands wrapped in try-except to prevent update cycle crashes if the OCPP integration restarts.
 - **Input validation**: NaN/Inf guard in EMA smoothing, voltage ≤0 fallback to 230V, plug empty-phase crash fix, stale circuit group member filtering.
 
 ### Bug Fixes
+
 - Fixed charging instability from feedback loop oscillation (EMA smoothing + Schmitt trigger dead band + dual-frequency updates).
 - Fixed grid CT feedback loop overcorrection when charger reports inflated per-phase draws (per-phase draw clamping).
 - Fixed battery power sensor false-positive detection matching phone batteries.
@@ -65,6 +75,7 @@
 ## 1.2.1
 
 ### Improvements
+
 - Added configurable power buffer for grid protection.
 - Default charging mode selection.
 - Single-phase operation support.
@@ -94,6 +105,7 @@
 ## 1.0.7
 
 ### Improvements
+
 - Faster detection/refreshing of number of charging phases.
 - Fixed initial setup and added reset notice on first configuration.
 - Updated English descriptions.
@@ -106,6 +118,7 @@
 First public HACS release.
 
 ### Features
+
 - OCPP 1.6J charger management via Home Assistant.
 - Dynamic current adjustment based on solar production and grid capacity.
 - Solar and Eco charging modes.
