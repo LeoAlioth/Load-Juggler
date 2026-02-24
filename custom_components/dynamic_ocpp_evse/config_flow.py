@@ -63,6 +63,38 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._entity_cache = list(entity_registry.entities.keys())
         return self._entity_cache
 
+    def _entity_ids_for(
+        self,
+        device_classes: set,
+        valid_units: frozenset | None = None,
+        domains: list[str] | None = None,
+    ) -> list[str]:
+        """Build entity ID list for the include_entities selector parameter.
+
+        Selection logic (same for every domain):
+          device_class matches
+          OR (device_class is None AND unit_of_measurement matches valid_units)
+        """
+        if domains is None:
+            domains = ["sensor"]
+        registry = async_get_entity_registry(self.hass)
+        result = []
+        for entry in registry.entities.values():
+            if entry.domain not in domains:
+                continue
+            effective_class = entry.device_class or entry.original_device_class
+            if effective_class not in device_classes:
+                continue
+            if effective_class is None and valid_units:
+                state = self.hass.states.get(entry.entity_id)
+                if not state:
+                    continue
+                unit = state.attributes.get("unit_of_measurement")
+                if not unit or unit not in valid_units:
+                    continue
+            result.append(entry.entity_id)
+        return result
+
     @staticmethod
     def _optional_entity_field(key: str, default_val):
         """Create vol.Optional with suggested_value so the user can truly clear it.
@@ -79,7 +111,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _build_hub_grid_schema(self, defaults: dict | None = None) -> list[tuple]:
         """Build grid/electrical fields as a reusable list."""
         defaults = defaults or {}
-        entity_sel_current_power = selector({"entity": {"domain": "sensor", "device_class": ["current", "power"]}})
+        entity_sel_current_power = selector({"entity": {
+            "include_entities": self._entity_ids_for(
+                {None, "current", "power"}, valid_units=_CURRENT_UNITS | _POWER_UNITS),
+        }})
 
         return [
             (self._optional_entity_field(
@@ -109,7 +144,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             (self._optional_entity_field(
                 CONF_MAX_IMPORT_POWER_ENTITY_ID,
                 defaults.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
-            ), selector({"entity": {"domain": ["sensor", "input_number"], "device_class": "power"}})),
+            ), selector({"entity": {
+                "include_entities": self._entity_ids_for(
+                    {None, "power"}, valid_units=_POWER_UNITS, domains=["sensor", "input_number"]),
+            }})),
             (vol.Required(
                 CONF_PHASE_VOLTAGE,
                 default=defaults.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE),
@@ -140,15 +178,24 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             (self._optional_entity_field(
                 CONF_SOLAR_PRODUCTION_ENTITY_ID,
                 defaults.get(CONF_SOLAR_PRODUCTION_ENTITY_ID),
-            ), selector({"entity": {"domain": "sensor", "device_class": "power"}})),
+            ), selector({"entity": {
+                "include_entities": self._entity_ids_for(
+                    {None, "power"}, valid_units=_POWER_UNITS),
+            }})),
             (self._optional_entity_field(
                 CONF_BATTERY_SOC_ENTITY_ID,
                 defaults.get(CONF_BATTERY_SOC_ENTITY_ID),
-            ), selector({"entity": {"domain": "sensor", "device_class": "battery"}})),
+            ), selector({"entity": {
+                "include_entities": self._entity_ids_for(
+                    {None, "battery"}, valid_units=_SOC_UNITS),
+            }})),
             (self._optional_entity_field(
                 CONF_BATTERY_POWER_ENTITY_ID,
                 defaults.get(CONF_BATTERY_POWER_ENTITY_ID),
-            ), selector({"entity": {"domain": "sensor", "device_class": "power"}})),
+            ), selector({"entity": {
+                "include_entities": self._entity_ids_for(
+                    {None, "power"}, valid_units=_POWER_UNITS),
+            }})),
             (vol.Optional(
                 CONF_BATTERY_MAX_CHARGE_POWER,
                 default=defaults.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER),
@@ -166,7 +213,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _build_hub_inverter_schema(self, defaults: dict | None = None) -> list[tuple]:
         """Build inverter configuration fields as a reusable list."""
         defaults = defaults or {}
-        entity_sel_current_power = selector({"entity": {"domain": "sensor", "device_class": ["current", "power"]}})
+        entity_sel_current_power = selector({"entity": {
+            "include_entities": self._entity_ids_for(
+                {None, "current", "power"}, valid_units=_CURRENT_UNITS | _POWER_UNITS),
+        }})
         topology_options = [
             {"value": WIRING_TOPOLOGY_PARALLEL, "label": "Parallel (AC-coupled / no battery)"},
             {"value": WIRING_TOPOLOGY_SERIES, "label": "Series (Hybrid / battery)"},
