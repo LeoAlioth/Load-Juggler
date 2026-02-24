@@ -32,7 +32,11 @@ jobs:
 
       - name: Run test suite
         run: |
+          echo "=== Running calculation scenario tests ==="
           python dev/tests/run_tests.py dev/tests/scenarios
+          echo ""
+          echo "=== Running HA integration tests ==="
+          pytest dev/tests/ -v --ignore=dev/tests/scenarios
 
       - name: Determine tag name
         run: |

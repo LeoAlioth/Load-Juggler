@@ -119,6 +119,7 @@
 ## Completed (cont.)
 
 106. - [x] Fix test infrastructure — added `minor_version=2` to all MockConfigEntry calls (matching config flow VERSION=2, MINOR_VERSION=2), updated CI workflows to Python 3.12, set pytest-homeassistant-custom-component>=0.13.110, removed `unit_of_measurement` from entity_registry.async_get_or_create calls (test framework schema validation)
+107. - [x] Add HA integration tests to CI — both release workflows now run calculation scenario tests + pytest integration tests (config flow, sensor update, migration) before creating releases
 
 ## Backlog
 3. - [ ] **Device-based OCPP discovery** — select OCPP device instead of entity, auto-find all entities (supports per-phase separate entities)
