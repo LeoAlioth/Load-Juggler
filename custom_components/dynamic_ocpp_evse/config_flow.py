@@ -79,20 +79,23 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             domains = ["sensor"]
         registry = async_get_entity_registry(self.hass)
         result = []
-        for entry in registry.entities.values():
-            if entry.domain not in domains:
+        for state in self.hass.states.async_all():
+            entity_id = state.entity_id
+            if entity_id.split(".", 1)[0] not in domains:
                 continue
-            effective_class = entry.device_class or entry.original_device_class
+            # Prefer registry device_class override; fall back to state attribute.
+            entry = registry.async_get(entity_id)
+            if entry is not None:
+                effective_class = entry.device_class or entry.original_device_class
+            else:
+                effective_class = state.attributes.get("device_class")
             if effective_class not in device_classes:
                 continue
             if effective_class is None and valid_units:
-                state = self.hass.states.get(entry.entity_id)
-                if not state:
-                    continue
                 unit = state.attributes.get("unit_of_measurement")
                 if not unit or unit not in valid_units:
                     continue
-            result.append(entry.entity_id)
+            result.append(entity_id)
         return result
 
     @staticmethod
