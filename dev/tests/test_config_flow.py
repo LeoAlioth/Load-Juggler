@@ -296,7 +296,8 @@ async def test_hub_grid_with_entities_without_device_class(
     device_class set, using unit_of_measurement for filtering instead.
     """
     # Create mock entities in the registry without device_class
-    entity_registry = hass.helpers.entity_registry.async_get(hass)
+    from homeassistant.helpers.entity_registry import async_get as _async_get_er
+    entity_registry = _async_get_er(hass)
 
     # Grid current sensors with unit A but no device_class
     entity_registry.async_get_or_create(
@@ -367,7 +368,8 @@ async def test_hub_battery_with_soc_sensor_without_device_class(
     correctly using unit_of_measurement='%' for filtering.
     """
     # Create mock entities in the registry without device_class
-    entity_registry = hass.helpers.entity_registry.async_get(hass)
+    from homeassistant.helpers.entity_registry import async_get as _async_get_er
+    entity_registry = _async_get_er(hass)
 
     # Grid current sensors
     entity_registry.async_get_or_create(
@@ -414,13 +416,11 @@ async def test_hub_battery_with_soc_sensor_without_device_class(
         user_input={CONF_NAME: "Test Hub", CONF_ENTITY_ID: "test_hub"},
     )
 
-    # hub_grid step
+    # hub_grid step - only phase A, leave B/C as optional (not submitted)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             "phase_a_current_entity_id": "sensor.grid_a",
-            "phase_b_current_entity_id": None,
-            "phase_c_current_entity_id": None,
             "main_breaker_rating": 25,
             "invert_phases": False,
             "enable_max_import_power": True,
@@ -431,16 +431,13 @@ async def test_hub_battery_with_soc_sensor_without_device_class(
         },
     )
 
-    # hub_inverter step - just proceed
+    # hub_inverter step - just proceed, optional entity fields omitted
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             "inverter_max_power": 0,
             "inverter_max_power_per_phase": 0,
             "inverter_supports_asymmetric": False,
-            "inverter_output_phase_a_entity_id": None,
-            "inverter_output_phase_b_entity_id": None,
-            "inverter_output_phase_c_entity_id": None,
             "wiring_topology": "parallel",
         },
     )
@@ -476,7 +473,8 @@ async def test_power_sensors_with_watts_unit_without_device_class(
     Tests solar production and battery power sensors that use unit_of_measurement
     for filtering rather than device_class.
     """
-    entity_registry = hass.helpers.entity_registry.async_get(hass)
+    from homeassistant.helpers.entity_registry import async_get as _async_get_er
+    entity_registry = _async_get_er(hass)
 
     # Grid sensors with A unit
     entity_registry.async_get_or_create(
@@ -516,8 +514,6 @@ async def test_power_sensors_with_watts_unit_without_device_class(
         result["flow_id"],
         user_input={
             "phase_a_current_entity_id": "sensor.grid_a",
-            "phase_b_current_entity_id": None,
-            "phase_c_current_entity_id": None,
             "main_breaker_rating": 25,
             "invert_phases": False,
             "enable_max_import_power": True,
@@ -533,19 +529,15 @@ async def test_power_sensors_with_watts_unit_without_device_class(
             "inverter_max_power": 0,
             "inverter_max_power_per_phase": 0,
             "inverter_supports_asymmetric": False,
-            "inverter_output_phase_a_entity_id": None,
-            "inverter_output_phase_b_entity_id": None,
-            "inverter_output_phase_c_entity_id": None,
             "wiring_topology": "parallel",
         },
     )
 
-    # hub_battery step - use sensors without device_class
+    # hub_battery step - use sensors without device_class, battery_soc_entity_id omitted (optional)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             "solar_production_entity_id": "sensor.solar_production",
-            "battery_soc_entity_id": None,
             "battery_power_entity_id": "sensor.battery_power",
             "battery_max_charge_power": 5000,
             "battery_max_discharge_power": 5000,

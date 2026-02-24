@@ -188,6 +188,7 @@ async def test_migration_v2_minor_update(
     v2_entry = MockConfigEntry(
         domain=DOMAIN,
         version=2,
+        minor_version=0,
         title="V2 Hub",
         data={
             CONF_ENTITY_ID: "test_hub",
