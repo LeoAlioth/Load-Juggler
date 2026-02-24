@@ -31,6 +31,8 @@ jobs:
           pip install -r requirements_dev.txt
 
       - name: Run test suite
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           echo "=== Running calculation scenario tests ==="
           python dev/tests/run_tests.py dev/tests/scenarios
