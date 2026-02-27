@@ -428,6 +428,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_STACK_LEVEL,
                 default=defaults.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL),
             ): selector({"number": {"min": 0, "max": 10, "step": 1, "mode": "box"}}),
+            vol.Required(
+                CONF_SOLAR_GRACE_PERIOD,
+                default=defaults.get(CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD),
+            ): selector({"number": {"min": 0, "max": 30, "step": 1, "mode": "box", "unit_of_measurement": "min"}}),
         })
 
     def _plug_schema(self, defaults: dict | None = None) -> vol.Schema:
@@ -467,6 +471,10 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_UPDATE_FREQUENCY,
                 default=defaults.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY),
             ): selector({"number": {"min": 5, "max": 300, "step": 1, "mode": "box", "unit_of_measurement": "s"}}),
+            vol.Required(
+                CONF_SOLAR_GRACE_PERIOD,
+                default=defaults.get(CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD),
+            ): selector({"number": {"min": 0, "max": 30, "step": 1, "mode": "box", "unit_of_measurement": "min"}}),
         })
 
     # Optional entity keys grouped by config step (for entity selector clearing)

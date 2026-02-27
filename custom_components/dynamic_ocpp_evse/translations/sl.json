@@ -127,7 +127,8 @@
                     "connected_to_phase": "Priključena na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
-                    "update_frequency": "Frekvenca posodabljanja"
+                    "update_frequency": "Frekvenca posodabljanja",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
                 },
                 "data_description": {
                     "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power).",
@@ -135,7 +136,8 @@
                     "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
-                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena."
+                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop."
                 }
             },
             "discover_chargers": {
@@ -185,7 +187,8 @@
                     "update_frequency": "Frekvenca posodabljanja",
                     "ocpp_profile_timeout": "Časovna omejitev profila",
                     "charge_pause_duration": "Trajanje premora polnjenja",
-                    "stack_level": "OCPP nivo sklada"
+                    "stack_level": "OCPP nivo sklada",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
                 },
                 "data_description": {
                     "charge_rate_unit": "Večina OCPP polnilnikov uporablja ampere. Nekateri (npr. nekateri modeli Wallbox) zahtevajo vate.",
@@ -193,7 +196,8 @@
                     "update_frequency": "Kako pogosto se pošiljajo posodobljeni profili polnjenja temu polnilniku.",
                     "ocpp_profile_timeout": "Koliko časa profil polnjenja ostane veljaven. Polnilnik se vrne na privzeto obnašanje, če v tem času ne prejme novega profila.",
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilnik drži na 0A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
-                    "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju."
+                    "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju.",
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
                 }
             },
             "reconfigure_hub_grid": {
@@ -272,14 +276,16 @@
                     "connected_to_phase": "Priključena na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
-                    "update_frequency": "Frekvenca posodabljanja"
+                    "update_frequency": "Frekvenca posodabljanja",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
                 },
                 "data_description": {
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
                     "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
-                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena."
+                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop."
                 }
             },
             "reconfigure_charger": {
@@ -319,7 +325,8 @@
                     "update_frequency": "Frekvenca posodabljanja",
                     "ocpp_profile_timeout": "Časovna omejitev profila",
                     "charge_pause_duration": "Trajanje premora polnjenja",
-                    "stack_level": "OCPP nivo sklada"
+                    "stack_level": "OCPP nivo sklada",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
                 },
                 "data_description": {
                     "charge_rate_unit": "Večina OCPP polnilnikov uporablja ampere. Nekateri (npr. nekateri modeli Wallbox) zahtevajo vate.",
@@ -327,7 +334,8 @@
                     "update_frequency": "Kako pogosto se pošiljajo posodobljeni profili polnjenja temu polnilniku.",
                     "ocpp_profile_timeout": "Koliko časa profil polnjenja ostane veljaven. Polnilnik se vrne na privzeto obnašanje, če v tem času ne prejme novega profila.",
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilnik drži na 0A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
-                    "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju."
+                    "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju.",
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
                 }
             },
             "group_config": {
@@ -442,14 +450,16 @@
                     "connected_to_phase": "Priključena na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
-                    "update_frequency": "Frekvenca posodabljanja"
+                    "update_frequency": "Frekvenca posodabljanja",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
                 },
                 "data_description": {
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
                     "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
-                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena."
+                    "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop."
                 }
             },
             "charger": {
@@ -489,7 +499,8 @@
                     "update_frequency": "Frekvenca posodabljanja",
                     "ocpp_profile_timeout": "Časovna omejitev profila",
                     "charge_pause_duration": "Trajanje premora polnjenja",
-                    "stack_level": "OCPP nivo sklada"
+                    "stack_level": "OCPP nivo sklada",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
                 },
                 "data_description": {
                     "charge_rate_unit": "Večina OCPP polnilnikov uporablja ampere. Nekateri (npr. nekateri modeli Wallbox) zahtevajo vate.",
@@ -497,7 +508,8 @@
                     "update_frequency": "Kako pogosto se pošiljajo posodobljeni profili polnjenja temu polnilniku.",
                     "ocpp_profile_timeout": "Koliko časa profil polnjenja ostane veljaven. Polnilnik se vrne na privzeto obnašanje, če v tem času ne prejme novega profila.",
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilnik drži na 0A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
-                    "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju."
+                    "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju.",
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
                 }
             },
             "group": {

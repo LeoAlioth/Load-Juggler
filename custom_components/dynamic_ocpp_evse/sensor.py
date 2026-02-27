@@ -171,6 +171,8 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         self._last_command_time: float = -float('inf')  # monotonic time of last OCPP/plug command
         self._mismatch_count = 0           # consecutive non-compliant cycles
         self._last_auto_reset_at = None    # datetime of last auto-reset
+        self._profile_reset_count = 0      # profile resets since last compliance
+        self._last_hard_reset_at = None    # datetime of last hard OCPP reset
         self._target_evse = None
         self._target_evse_standard = None
         self._target_evse_eco = None
@@ -195,7 +197,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
 
         grace_remaining = None
         if self._grace_started_at is not None:
-            grace_period_min = get_entry_value(self.hub_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
+            grace_period_min = get_entry_value(self.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
             elapsed = (datetime.now() - self._grace_started_at).total_seconds()
             grace_remaining = max(0, round(grace_period_min * 60 - elapsed))
 
@@ -215,6 +217,8 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             "hub_entry_id": self.config_entry.data.get(CONF_HUB_ENTRY_ID),
             "auto_reset_mismatch_count": self._mismatch_count,
             "last_auto_reset": self._last_auto_reset_at,
+            "profile_reset_count": self._profile_reset_count,
+            "last_hard_reset": self._last_hard_reset_at,
         }
         return attrs
 
@@ -284,7 +288,14 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         if self._last_commanded_limit is None or self._last_commanded_limit <= 0:
             return
 
-        # Guard: cooldown after last reset
+        # Guard: cooldown after hard reset (longer cooldown takes precedence)
+        if self._last_hard_reset_at is not None:
+            elapsed = (datetime.now() - self._last_hard_reset_at).total_seconds()
+            if elapsed < HARD_RESET_COOLDOWN_SECONDS:
+                self._mismatch_count = 0
+                return
+
+        # Guard: cooldown after profile reset
         if self._last_auto_reset_at is not None:
             elapsed = (datetime.now() - self._last_auto_reset_at).total_seconds()
             if elapsed < AUTO_RESET_COOLDOWN_SECONDS:
@@ -352,30 +363,81 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         else:
             if self._mismatch_count > 0:
                 _LOGGER.debug(
-                    "Profile compliance restored for %s (was at %d cycles)",
-                    self._attr_name, self._mismatch_count,
+                    "Profile compliance restored for %s (was at %d cycles, %d resets)",
+                    self._attr_name, self._mismatch_count, self._profile_reset_count,
                 )
             self._mismatch_count = 0
+            self._profile_reset_count = 0
             return
 
-        # Check if threshold reached
+        # Check if threshold reached — escalate if profile resets keep failing
         if self._mismatch_count >= AUTO_RESET_MISMATCH_THRESHOLD:
-            _LOGGER.info(
-                "Auto-reset triggered for %s: charger offered %.1fA but we commanded "
-                "%.1fA for %d consecutive cycles",
-                self._attr_name, current_offered, self._last_commanded_limit,
-                self._mismatch_count,
-            )
             self._mismatch_count = 0
-            self._last_auto_reset_at = datetime.now()
+            self._profile_reset_count += 1
 
+            if self._profile_reset_count >= ESCALATION_PROFILE_RESET_LIMIT:
+                # Escalate to hard reset
+                _LOGGER.warning(
+                    "Escalating to hard reset for %s: profile reset failed %d times",
+                    self._attr_name, self._profile_reset_count,
+                )
+                await self._perform_hard_reset()
+                self._profile_reset_count = 0
+                self._last_hard_reset_at = datetime.now()
+                self._last_auto_reset_at = None
+            else:
+                # Profile reset (existing behavior)
+                _LOGGER.info(
+                    "Auto-reset %d/%d for %s: charger offered %.1fA but we commanded %.1fA",
+                    self._profile_reset_count, ESCALATION_PROFILE_RESET_LIMIT,
+                    self._attr_name, current_offered, self._last_commanded_limit,
+                )
+                self._last_auto_reset_at = datetime.now()
+
+                try:
+                    await self.hass.services.async_call(
+                        DOMAIN, "reset_ocpp_evse",
+                        {"entry_id": self.config_entry.entry_id},
+                    )
+                except Exception as e:
+                    _LOGGER.error("Auto-reset service call failed for %s: %s", self._attr_name, e)
+
+    async def _perform_hard_reset(self) -> None:
+        """Perform an OCPP hard reset by pressing the charger's reset button entity.
+
+        Falls back to a profile reset if the reset button entity is not found.
+        """
+        charger_id = self.config_entry.data.get(CONF_ENTITY_ID)
+        if not charger_id:
+            _LOGGER.error("Cannot hard reset %s: no entity_id configured", self._attr_name)
+            return
+
+        reset_entity_id = f"button.{charger_id}_reset"
+        state = self.hass.states.get(reset_entity_id)
+
+        if state is None:
+            _LOGGER.warning(
+                "Hard reset entity %s not found for %s — falling back to profile reset",
+                reset_entity_id, self._attr_name,
+            )
             try:
                 await self.hass.services.async_call(
                     DOMAIN, "reset_ocpp_evse",
                     {"entry_id": self.config_entry.entry_id},
                 )
             except Exception as e:
-                _LOGGER.error("Auto-reset service call failed for %s: %s", self._attr_name, e)
+                _LOGGER.error("Fallback profile reset failed for %s: %s", self._attr_name, e)
+            return
+
+        _LOGGER.info("Hard OCPP reset for %s via %s", self._attr_name, reset_entity_id)
+        try:
+            await self.hass.services.async_call(
+                "button", "press",
+                {"entity_id": reset_entity_id},
+                blocking=True,
+            )
+        except Exception as e:
+            _LOGGER.error("Hard reset failed for %s: %s", self._attr_name, e)
 
     async def _send_plug_command(self, limit: float, hub_data: dict, now_mono: float) -> None:
         """Send on/off command to a smart load device."""
@@ -727,7 +789,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             # When Solar/Excess conditions drop below minimum but site limits still
             # allow charging, hold at min_current for a grace period before pausing.
             min_charge_current = get_entry_value(self.config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
-            grace_period_minutes = get_entry_value(hub_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
+            grace_period_minutes = get_entry_value(self.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
             grace_period_seconds = grace_period_minutes * 60
 
             if self._operating_mode in (OPERATING_MODE_SOLAR_ONLY, OPERATING_MODE_EXCESS) and grace_period_seconds > 0:
@@ -827,7 +889,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             elif not dynamic_control_on:
                 self._charging_status = "Dynamic Control Off"
             elif self._grace_started_at is not None and self._allocated_current >= min_charge_current:
-                grace_min = get_entry_value(hub_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
+                grace_min = get_entry_value(self.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
                 elapsed = (datetime.now() - self._grace_started_at).total_seconds()
                 remaining = max(0, int(grace_min * 60 - elapsed))
                 self._charging_status = f"Grace: {remaining}s"
