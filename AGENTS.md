@@ -263,7 +263,7 @@ scenarios:
 
 Scenario files in `dev/tests/scenarios/` (organized by site type × charging mode):
 
-```
+```text
 1ph/            — Single-phase, no battery (test_solar, test_eco, test_standard, test_excess)
 1ph_battery/    — Single-phase with battery (test_solar, test_eco, test_standard, test_excess)
 3ph/            — Three-phase, no battery (test_solar, test_eco, test_standard, test_excess)
