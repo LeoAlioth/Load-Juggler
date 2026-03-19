@@ -30,7 +30,12 @@ for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC):
 def _load_module_as(fqn, path):
     spec = importlib.util.spec_from_file_location(fqn, str(path))
     module = importlib.util.module_from_spec(spec)
-    module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
+    # For package __init__.py files, __package__ is the package itself;
+    # for regular modules it's the parent package.
+    if Path(path).name == "__init__.py":
+        module.__package__ = fqn
+    else:
+        module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
     sys.modules[fqn] = module
     spec.loader.exec_module(module)
     return module
@@ -40,6 +45,7 @@ _load_module_as(f"{_PKG_COMP}.const", _comp_dir / "const.py")
 _load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
 _load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
 _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
+_load_module_as(_PKG_CALC, _calc_dir / "__init__.py")
 _load_module_as(f"{_PKG_COMP}.auto_detect", _comp_dir / "auto_detect.py")
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (

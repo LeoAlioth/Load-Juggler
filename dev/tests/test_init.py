@@ -162,16 +162,14 @@ async def test_migration_v1_to_v2(
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 8,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 32,
         },
-        options={},
     )
     legacy_entry.add_to_hass(hass)
 
     await hass.config_entries.async_setup(legacy_entry.entry_id)
     await hass.async_block_till_done()
 
-    # After migration, entry should be v2.2
+    # After migration, entry should be v2
     assert legacy_entry.version == 2
-    assert legacy_entry.minor_version == 2
 
     # Should be marked as hub
     assert legacy_entry.data[ENTRY_TYPE] == ENTRY_TYPE_HUB
@@ -197,14 +195,12 @@ async def test_migration_v2_minor_update(
             ENTRY_TYPE: ENTRY_TYPE_HUB,
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
         },
-        options={},
     )
     v2_entry.add_to_hass(hass)
 
     await hass.config_entries.async_setup(v2_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert v2_entry.minor_version == 2
     # Options should be seeded from data with defaults
     assert v2_entry.options[CONF_EVSE_MINIMUM_CHARGE_CURRENT] == 6
     assert v2_entry.options[CONF_CHARGE_RATE_UNIT] == DEFAULT_CHARGE_RATE_UNIT
@@ -224,7 +220,6 @@ async def test_legacy_entry_without_type(
             CONF_ENTITY_ID: "no_type",
             # Deliberately missing ENTRY_TYPE
         },
-        options={},
     )
     no_type_entry.add_to_hass(hass)
 

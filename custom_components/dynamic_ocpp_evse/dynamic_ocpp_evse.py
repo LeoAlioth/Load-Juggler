@@ -70,11 +70,19 @@ def _read_phase_attr(attrs: dict, keys: tuple) -> float | None:
     return None
 
 
-def _read_entity(hass, entity_id: str, default=0):
-    """Read a numeric value from an HA entity.
+def _read_entity(hass, entity_id: str, default=0, unit: str = None):
+    """Read a numeric value from an HA entity with optional unit conversion.
+
+    Args:
+        hass: Home Assistant instance
+        entity_id: The entity ID to read
+        default: Default value if entity not configured
+        unit: Target unit for conversion. Supported: "A", "W"
+              - "A": Converts W→A (divides by voltage), kW→W→A
+              - "W": Converts kW→W (multiplies by 1000)
 
     Returns:
-        float: The entity's numeric value.
+        float: The entity's numeric value (converted if unit specified).
         _UNAVAILABLE: The entity is configured but currently unavailable/unknown.
         default: The entity_id is not provided (not configured).
     """
@@ -84,13 +92,31 @@ def _read_entity(hass, entity_id: str, default=0):
     if not state or state.state in ('unknown', 'unavailable', None, ''):
         return _UNAVAILABLE
     try:
-        return float(state.state)
+        value = float(state.state)
     except (ValueError, TypeError):
         return _UNAVAILABLE
 
+    # Apply unit conversion if requested
+    if unit and value != 0:
+        entity_unit = state.attributes.get("unit_of_measurement", "")
+        if entity_unit:
+            entity_unit = entity_unit.upper()
+
+            # Convert kW → W
+            if unit == "W" and entity_unit == "KW":
+                value = value * 1000
+            elif unit == "A" and entity_unit == "KW":
+                # kW → W → A (need voltage context, handled by caller)
+                value = value * 1000  # Just do kW → W, caller handles W → A
+            elif unit == "A" and entity_unit == "W":
+                # W → A conversion requires voltage - caller must handle this
+                pass  # Return W value, caller handles conversion
+
+    return value
+
 
 def _read_inverter_output(hass, entity_id, voltage):
-    """Read inverter output, auto-detecting A vs W and converting to A."""
+    """Read inverter output, auto-detecting A vs W vs kW and converting to A."""
     if not entity_id:
         return None
     st = hass.states.get(entity_id)
@@ -102,8 +128,11 @@ def _read_inverter_output(hass, entity_id, voltage):
         return None
     # Auto-detect unit from entity attributes
     unit = st.attributes.get("unit_of_measurement", "").upper()
-    if unit == "W" and voltage > 0:
+    if unit == "KW" and voltage > 0:
+        value = (value * 1000) / voltage  # Convert kW → W → A
+    elif unit == "W" and voltage > 0:
         value = value / voltage  # Convert W → A
+    # If unit is A or unknown, assume already in Amperes
     return value
 
 
@@ -391,7 +420,7 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority, plug_
     # Check power monitor if available (more reliable than switch state)
     power_monitor_entity = get_entry_value(entry, CONF_PLUG_POWER_MONITOR_ENTITY_ID, None)
     if power_monitor_entity:
-        power_draw = _coerce(_read_entity(hass, power_monitor_entity, 0))
+        power_draw = _coerce(_read_entity(hass, power_monitor_entity, 0, unit="W"))  # Convert kW→W if needed
         connector_status = "Charging" if power_draw > 10 else "Available"
 
         # Auto-adjust power rating from monitored draw (rolling average)
@@ -806,7 +835,7 @@ def run_hub_calculation(sensor):
     solar_production_entity = get_entry_value(hub_entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
     solar_is_derived = not solar_production_entity
     if solar_production_entity:
-        raw_solar = _read_entity(hass, solar_production_entity, 0)
+        raw_solar = _read_entity(hass, solar_production_entity, 0, unit="W")  # Convert kW→W if needed
         solar_production_total = _smooth(ema_inputs, "solar", raw_solar)
     else:
         raw_solar = None  # derived — calculated after inverter output is read
@@ -816,7 +845,7 @@ def run_hub_calculation(sensor):
     battery_soc_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
     battery_power_entity = get_entry_value(hub_entry, CONF_BATTERY_POWER_ENTITY_ID, None)
     battery_soc = _coerce(_read_entity(hass, battery_soc_entity, None), None) if battery_soc_entity else None
-    raw_battery_power = _read_entity(hass, battery_power_entity, None) if battery_power_entity else None
+    raw_battery_power = _read_entity(hass, battery_power_entity, None, unit="W") if battery_power_entity else None  # Convert kW→W if needed
     battery_power = _smooth(ema_inputs, "battery_power", raw_battery_power) if battery_power_entity else None
     battery_soc_hysteresis = get_entry_value(hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS)
     battery_max_charge_power = get_entry_value(hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
@@ -826,7 +855,7 @@ def run_hub_calculation(sensor):
     enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
     max_import_power_entity = get_entry_value(hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
     if max_import_power_entity:
-        max_grid_import_power = _coerce(_read_entity(hass, max_import_power_entity, None), None)
+        max_grid_import_power = _coerce(_read_entity(hass, max_import_power_entity, None, unit="W"), None)  # Convert kW→W if needed
     elif enable_max_import:
         hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
         max_grid_import_power = hub_rt.get("max_import_power", None)

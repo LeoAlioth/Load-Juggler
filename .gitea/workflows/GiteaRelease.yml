@@ -21,7 +21,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -30,8 +30,14 @@ jobs:
           pip install -r requirements_dev.txt
 
       - name: Run test suite
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
+          echo "=== Running calculation scenario tests ==="
           python dev/tests/run_tests.py dev/tests/scenarios
+          echo ""
+          echo "=== Running HA integration tests ==="
+          pytest dev/tests/ -v --ignore=dev/tests/scenarios
 
       - name: Set up variables
         id: vars

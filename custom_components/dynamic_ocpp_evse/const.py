@@ -146,6 +146,8 @@ SUSPENDED_EV_IDLE_TIMEOUT = 60  # Seconds of SuspendedEV + near-zero draw before
 # Auto-reset detection — triggers reset_ocpp_evse when charger ignores profiles
 AUTO_RESET_MISMATCH_THRESHOLD = 5    # consecutive mismatched cycles before reset
 AUTO_RESET_COOLDOWN_SECONDS = 120    # seconds to wait after reset before checking again
+ESCALATION_PROFILE_RESET_LIMIT = 3   # profile resets before escalating to hard reset
+HARD_RESET_COOLDOWN_SECONDS = 300    # seconds to wait after hard reset (5 minutes)
 
 # Charge rate unit configuration (per charger)
 CONF_CHARGE_RATE_UNIT = "charge_rate_unit"

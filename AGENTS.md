@@ -217,10 +217,10 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 
 ### Calculation Scenario Tests (Pure Python)
 
-YAML-driven tests that validate the calculation engine directly. Run on any platform.
+YAML-driven tests that validate the calculation engine directly. **Run natively on any platform** — no Home Assistant dependencies.
 
 ```bash
-# Run all scenarios
+# Run all scenarios (from project root)
 python3 dev/tests/run_tests.py dev/tests/scenarios
 
 # Run only verified or unverified
@@ -271,16 +271,25 @@ Scenario files in `dev/tests/scenarios/` (organized by site type × charging mod
 features/       — Cross-cutting tests (test_available, test_plugs, test_phase_mapping, test_circuit_groups)
 ```
 
-### HA Integration Tests (WSL/Linux)
+### HA Integration Tests (Docker)
 
-Integration tests use `pytest-homeassistant-custom-component` and run under WSL (HA core requires `fcntl`, Unix-only):
+Integration tests use `pytest-homeassistant-custom-component` and run in Docker for platform independence and system isolation. This ensures tests don't affect the developer's system and work consistently across macOS, Windows, and Linux.
 
 ```bash
-# All integration tests
-wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python3 -m pytest dev/tests/test_init.py dev/tests/test_config_flow.py dev/tests/test_config_flow_e2e.py dev/tests/test_sensor_update.py -v"
+# Build the test image (first time only, or after requirements_dev.txt changes)
+docker build -t dynamic-ocpp-evse-test -f dev/Dockerfile.test .
 
-# Individual test file
-wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python3 -m pytest dev/tests/test_sensor_update.py -v"
+# Run all integration tests
+docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test
+
+# Run a specific test file
+docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests/test_init.py -v
+
+# Run with specific test pattern
+docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests/ -v -k "test_async_setup"
+
+# Run only scenario tests (pure Python, no HA dependencies)
+docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python dev/tests/run_tests.py
 ```
 
 **Integration test files:**
