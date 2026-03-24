@@ -156,21 +156,6 @@ def _fv2(raw, smoothed):
         return _fv(smoothed)
     return f"{_fv(smoothed)}({_fv(raw)})"
 
-            if self._last_ramp_value is not None and self._last_ramp_time is not None:
-                dt = (now - self._last_ramp_time).total_seconds()
-                delta = state[CONF_AVAILABLE_CURRENT] - self._last_ramp_value
-                if delta > 0:
-                    max_delta = ramp_limit_up * max(dt, 0.1)
-                else:
-                    max_delta = ramp_limit_down * max(dt, 0.1)
-                if abs(delta) > max_delta:
-                    ramped_value = self._last_ramp_value + max_delta * (1 if delta > 0 else -1)
-                    _LOGGER.debug(f"Ramping limited: {self._last_ramp_value} -> {ramped_value} (requested {state[CONF_AVAILABLE_CURRENT]})")
-                else:
-                    ramped_value = state[CONF_AVAILABLE_CURRENT]
-            self._last_ramp_value = ramped_value
-            self._last_ramp_time = now
-            state[CONF_AVAILABLE_CURRENT] = ramped_value
 
 def _derive_solar_production(inverter_output_per_phase, wiring_topology,
                               export_power, battery_power, voltage):
@@ -596,21 +581,6 @@ def _apply_feedback_loop(site, solar_is_derived, voltage):
         solar_note,
     )
 
-# Calculate the available current based on the configuration and sensor data - this is the main function called by the integration
-# It gathers all necessary data, determines the number of phases, and calculates the available current based on the selected charging mode.
-# It also applies ramping logic to smooth out changes in available current
-# and ensures that the current is within the defined limits.
-def calculate_available_current(self):
-    _LOGGER.debug(" Logging in 10")
-    _LOGGER.debug(" Logging in 9")
-    _LOGGER.debug(" Logging in 8")
-    _LOGGER.debug(" Logging in 7")
-    _LOGGER.debug(" Logging in 6")
-    _LOGGER.debug(" Logging in 5")
-    _LOGGER.debug(" Logging in 4")
-    _LOGGER.debug(" Logging in 3")
-    _LOGGER.debug(" Logging in 2")
-    _LOGGER.debug(" Logging in 1")
 
 def _build_circuit_groups(hass, hub_entry_id):
     """Build CircuitGroup objects from config entries for this hub.
