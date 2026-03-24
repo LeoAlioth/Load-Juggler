@@ -19,6 +19,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     """Set up the Dynamic OCPP EVSE Select from a config entry."""
     entry_type = config_entry.data.get(ENTRY_TYPE)
@@ -47,8 +48,6 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         async_add_entities(entities)
         return
 
-class DynamicOcppEvseSelect(SelectEntity, RestoreEntity):
-    """Representation of a Dynamic OCPP EVSE Select."""
 
 class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
     """Per-charger operating mode selector (EVSE or Smart Load)."""

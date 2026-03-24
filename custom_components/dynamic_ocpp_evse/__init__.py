@@ -17,7 +17,8 @@ _LOGGER = logging.getLogger(__name__)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # Integration version for entity migration
-INTEGRATION_VERSION = "1.1.0"
+INTEGRATION_VERSION = "2.0.0"
+
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old entry to new version."""
@@ -123,7 +124,6 @@ async def async_setup(hass: HomeAssistant, config: dict):
     
     async def handle_reset_service(call):
         """Handle the reset service call."""
-        
         entry_id = call.data.get("entry_id")
         entry = hass.config_entries.async_get_entry(entry_id)
         if entry is None:
@@ -330,6 +330,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
     return True
 
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Dynamic OCPP EVSE from a config entry."""
     hass.data.setdefault(DOMAIN, {
@@ -526,7 +527,7 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
     entity_id = entry.data.get(CONF_ENTITY_ID)
     
     if not entity_id:
-        _LOGGER.warning("No entity_id found in config entry, skipping entity migration")
+        _LOGGER.warning("No entity_id found in hub config entry, skipping entity migration")
         return
     
     # Define expected hub entities with their unique_ids

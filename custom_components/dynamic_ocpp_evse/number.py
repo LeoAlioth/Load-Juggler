@@ -1,4 +1,4 @@
-# filepath: \\192.168.1.98\config\custom_components\dynamic_ocpp_evse\number.py
+# filepath: custom_components/dynamic_ocpp_evse/number.py
 import logging
 from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry
@@ -38,6 +38,7 @@ from .const import (
 from .helpers import get_entry_value
 
 _LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     """Set up the number entities."""
@@ -263,12 +264,13 @@ class PowerBufferSlider(HubEntityMixin, NumberEntity, RestoreEntity):
         self.hass = hass
         self.config_entry = config_entry
         self._attr_name = f"{name} Power Buffer"
-        self._attr_unique_id = f"{config_entry.entry_id}_power_buffer"
+        self._attr_unique_id = f"{entity_id}_power_buffer"
         self._attr_native_min_value = 0
         self._attr_native_max_value = 5000
         self._attr_native_step = 100
         self._attr_native_value = 0
         self._attr_native_unit_of_measurement = "W"
+        self._attr_icon = "mdi:buffer"
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

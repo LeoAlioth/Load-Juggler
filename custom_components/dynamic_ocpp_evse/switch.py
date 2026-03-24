@@ -1,5 +1,7 @@
 import logging
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -40,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     name = config_entry.data.get(CONF_NAME, "Site Load Management")
 
     entities = [AllowGridChargingSwitch(hass, config_entry, entity_id, name)]
-    _LOGGER.info(f"Setting up switch entities: {[entity.unique_id for entity in entities]}")
+    _LOGGER.info(f"Setting up hub switch entities: {[entity.unique_id for entity in entities]}")
     async_add_entities(entities)
 
 

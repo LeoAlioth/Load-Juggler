@@ -14,6 +14,7 @@ from . import get_hub_for_charger
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=10)
 
+
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities):
     """Set up the Dynamic OCPP EVSE Sensor from a config entry."""
     entry_type = config_entry.data.get(ENTRY_TYPE)
@@ -64,6 +65,13 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
     name = config_entry.data[CONF_NAME]
     entity_id = config_entry.data[CONF_ENTITY_ID]
+    charger_entry_id = config_entry.entry_id
+
+    # Get the hub entry for this charger
+    hub_entry = get_hub_for_charger(hass, charger_entry_id)
+    if not hub_entry:
+        _LOGGER.error("No hub found for charger: %s", name)
+        return
 
     # Site update frequency (fast loop) — controls how often site sensors refresh.
     # Read from hub config since it's a site-level setting.
@@ -89,7 +97,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
-        name="Dynamic OCPP EVSE Coordinator",
+        name=f"Dynamic OCPP EVSE Coordinator - {name}",
         update_method=async_update_data,
         update_interval=timedelta(seconds=site_update_frequency),
     )
@@ -115,7 +123,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
             coordinator = DataUpdateCoordinator(
                 hass,
                 _LOGGER,
-                name="Dynamic OCPP EVSE Coordinator",
+                name=f"Dynamic OCPP EVSE Coordinator - {name}",
                 update_method=async_update_data,
                 update_interval=timedelta(seconds=new_site_freq),
             )
@@ -124,14 +132,14 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
             sensor.coordinator = coordinator
 
     # Register the listener for config entry updates
-    _LOGGER.debug("Registering async_on_update listener")
+    _LOGGER.debug("Registering async_on_update listener for %s", name)
     config_entry.async_on_unload(config_entry.add_update_listener(async_update_listener))
 
 
 class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
     """Representation of a Dynamic OCPP EVSE Charger Sensor."""
 
-    def __init__(self, hass, config_entry, name, entity_id, coordinator):
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id, coordinator):
         """Initialize the sensor."""
         self.hass = hass
         self.config_entry = config_entry
@@ -217,7 +225,17 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
     @property
     def icon(self):
         """Return the icon to use in the frontend."""
-        return "mdi:transmission-tower"
+        return "mdi:ev-station"
+
+    @property
+    def unit_of_measurement(self):
+        """Return the unit of measurement."""
+        return "A"
+
+    @property
+    def device_class(self):
+        """Return the device class."""
+        return "current"
 
     async def _detect_charge_rate_unit_ocpp(self, ocpp_device_id: str) -> str | None:
         """Query OCPP charger for ChargingScheduleAllowedChargingRateUnit."""
