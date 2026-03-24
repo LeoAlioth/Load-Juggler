@@ -8,11 +8,12 @@ Clear architecture:
 3. Calculate excess available
 4. Compute per-charger ceilings based on operating mode
 5. Distribute power among chargers (dual-pool: physical + solar tracking)
+6. Enforce circuit group limits (post-distribution capping)
 """
 
 import logging
 
-from .models import SiteContext, LoadContext, PhaseConstraints
+from .models import SiteContext, LoadContext, PhaseConstraints, CircuitGroup
 from ..const import (
     OPERATING_MODE_STANDARD,
     OPERATING_MODE_CONTINUOUS,
@@ -41,17 +42,20 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
         site: SiteContext containing all site and charger data
     """
     # Step 0: Filter active vs inactive chargers
+    # SuspendedEVSE = charger is throttling (our profile active), still active.
+    # SuspendedEV idle timeout is handled in the HA layer (dynamic_ocpp_evse.py),
+    # which overrides connector_status to "Finishing" after the grace period.
+    _INACTIVE_STATUSES = {"Available", "Unknown", "Unavailable", "Finishing", "Faulted"}
     all_chargers = site.chargers
-    active_chargers = [c for c in all_chargers
-                       if c.connector_status not in [
-                           "Available", "Unknown", "Unavailable",
-                           "Finishing", "Faulted",
-                       ]]
-    inactive_chargers = [c for c in all_chargers if c not in active_chargers]
+    active_chargers = [c for c in all_chargers if c.connector_status not in _INACTIVE_STATUSES]
+    inactive_chargers = [c for c in all_chargers if c.connector_status in _INACTIVE_STATUSES]
 
+    _mode_summary = ", ".join(
+        f"{c.entity_id}={c.operating_mode}" for c in active_chargers
+    ) if active_chargers else "none"
     _LOGGER.debug(
         f"Calculating targets for {len(active_chargers)}/{len(all_chargers)} active chargers - "
-        f"Distribution: {site.distribution_mode}"
+        f"Distribution: {site.distribution_mode} | Modes: {_mode_summary}"
     )
 
     # Steps 1-3: Calculate pools (always, even with no active chargers)
@@ -74,6 +78,10 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     for charger in inactive_chargers:
         charger.allocated_current = 0
 
+    # Step 6: Enforce circuit group limits (post-distribution capping)
+    if site.circuit_groups:
+        _enforce_circuit_groups(site)
+
     # Step 5: Calculate available current for all chargers (mode-aware)
     _set_available_current_for_chargers(
         all_chargers, active_chargers, inactive_chargers,
@@ -83,7 +91,8 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     for charger in all_chargers:
         _draw = charger.l1_current + charger.l2_current + charger.l3_current
         _LOGGER.debug(
-            f"Final -- {charger.entity_id}: allocated={charger.allocated_current:.1f}A "
+            f"Final -- {charger.entity_id} [{charger.operating_mode}]: "
+            f"allocated={charger.allocated_current:.1f}A "
             f"available={charger.available_current:.1f}A | "
             f"draw={_draw:.1f}A (L1:{charger.l1_current:.1f} L2:{charger.l2_current:.1f} L3:{charger.l3_current:.1f})"
         )
@@ -135,6 +144,58 @@ def _set_available_current_for_chargers(
             charger.available_current = round(min(charger.max_current, available), 1)
         else:
             charger.available_current = 0
+
+
+def _enforce_circuit_groups(site: SiteContext) -> None:
+    """Enforce circuit group breaker limits (post-distribution capping).
+
+    For each group, builds a PhaseConstraints pool from the group's current limit
+    and walks members in priority order (highest urgency+priority first).
+    Higher-priority loads keep their allocation; lower-priority loads get capped.
+    """
+    charger_by_id = {c.charger_id: c for c in site.chargers}
+
+    for group in site.circuit_groups:
+        members = [charger_by_id[mid] for mid in group.member_ids if mid in charger_by_id]
+        if not members:
+            continue
+
+        # Build group budget — per-phase limit based on site phases
+        limit = group.current_limit
+        a = limit if site.consumption.a is not None else 0
+        b = limit if site.consumption.b is not None else 0
+        c = limit if site.consumption.c is not None else 0
+        group_pool = PhaseConstraints.from_per_phase(a, b, c)
+
+        # Walk members in priority order (highest urgency+priority first → keeps allocation)
+        sorted_members = _sort_chargers(members)
+
+        capped_any = False
+        for charger in sorted_members:
+            mask = charger.active_phases_mask
+            if not mask or charger.allocated_current == 0:
+                continue
+
+            avail = group_pool.get_available(mask)
+            original = charger.allocated_current
+            capped = min(original, avail)
+
+            if capped < charger.min_current:
+                capped = 0
+
+            if capped != original:
+                capped_any = True
+                _LOGGER.debug(
+                    "Circuit group '%s': %s capped %.1fA → %.1fA (group limit %.0fA)",
+                    group.name, charger.entity_id, original, capped, group.current_limit,
+                )
+
+            charger.allocated_current = round(capped, 1)
+            if capped > 0:
+                group_pool = group_pool.deduct(capped, mask)
+
+        if not capped_any:
+            _LOGGER.debug("Circuit group '%s': all members within %.0fA limit", group.name, group.current_limit)
 
 
 def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:

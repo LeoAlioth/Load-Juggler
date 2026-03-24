@@ -8,7 +8,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .dynamic_ocpp_evse import run_hub_calculation
 from .const import *
 from .helpers import get_entry_value
-from .entity_mixins import HubEntityMixin, ChargerEntityMixin
+from .entity_mixins import HubEntityMixin, ChargerEntityMixin, GroupEntityMixin
 from . import get_hub_for_charger
 
 _LOGGER = logging.getLogger(__name__)
@@ -20,15 +20,18 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     
     # Set up hub sensor for hub entries
     if entry_type == ENTRY_TYPE_HUB:
-        name = config_entry.data.get(CONF_NAME, "Dynamic OCPP EVSE")
-        entity_id = config_entry.data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
+        name = config_entry.data.get(CONF_NAME, "Site Load Management")
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "site_load_management")
 
         # Check which optional hardware is configured
         has_battery = bool(get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID, None))
         has_phase_b = bool(get_entry_value(config_entry, CONF_PHASE_B_CURRENT_ENTITY_ID, None))
         has_phase_c = bool(get_entry_value(config_entry, CONF_PHASE_C_CURRENT_ENTITY_ID, None))
 
-        entities = [DynamicOcppEvseHubSensor(hass, config_entry, name, entity_id)]
+        entities = [
+            DynamicOcppEvseHubSensor(hass, config_entry, name, entity_id),
+            DynamicOcppEvseHubStatusSensor(hass, config_entry, name, entity_id),
+        ]
         # Create individual hub data sensors from definitions
         for defn in HUB_SENSOR_DEFINITIONS:
             if defn.get("requires_battery") and not has_battery:
@@ -44,6 +47,16 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         _LOGGER.info(f"Setting up hub sensors for {name} (battery={'yes' if has_battery else 'no'}, phases={phases})")
         return
     
+    # Set up circuit group sensor
+    if entry_type == ENTRY_TYPE_GROUP:
+        name = config_entry.data.get(CONF_NAME, "Circuit Group")
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "circuit_group")
+        hub_entry_id = config_entry.data.get(CONF_HUB_ENTRY_ID)
+        sensor = DynamicOcppEvseCircuitGroupSensor(hass, config_entry, name, entity_id, hub_entry_id)
+        async_add_entities([sensor])
+        _LOGGER.info("Setting up circuit group sensor for %s", name)
+        return
+
     # Only set up charger sensors for charger entries
     if entry_type != ENTRY_TYPE_CHARGER:
         _LOGGER.debug("Skipping sensor setup for unknown entry type: %s", config_entry.title)
@@ -136,6 +149,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         self._operating_mode = None  # Per-charger operating mode
         self._calc_used = None
         self._allocated_current = None
+        self._available_current = None  # What the charger could get if active
         self._last_update = datetime.min
         self._pause_started_at = None  # datetime when charge pause started
         self._grace_started_at = None  # datetime when Solar/Excess grace period started
@@ -149,6 +163,8 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         self._last_command_time: float = -float('inf')  # monotonic time of last OCPP/plug command
         self._mismatch_count = 0           # consecutive non-compliant cycles
         self._last_auto_reset_at = None    # datetime of last auto-reset
+        self._profile_reset_count = 0      # profile resets since last compliance
+        self._last_hard_reset_at = None    # datetime of last hard OCPP reset
         self._target_evse = None
         self._target_evse_standard = None
         self._target_evse_eco = None
@@ -173,7 +189,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
 
         grace_remaining = None
         if self._grace_started_at is not None:
-            grace_period_min = get_entry_value(self.hub_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
+            grace_period_min = get_entry_value(self.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
             elapsed = (datetime.now() - self._grace_started_at).total_seconds()
             grace_remaining = max(0, round(grace_period_min * 60 - elapsed))
 
@@ -193,6 +209,8 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             "hub_entry_id": self.config_entry.data.get(CONF_HUB_ENTRY_ID),
             "auto_reset_mismatch_count": self._mismatch_count,
             "last_auto_reset": self._last_auto_reset_at,
+            "profile_reset_count": self._profile_reset_count,
+            "last_hard_reset": self._last_hard_reset_at,
         }
         return attrs
 
@@ -252,7 +270,14 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         if self._last_commanded_limit is None or self._last_commanded_limit <= 0:
             return
 
-        # Guard: cooldown after last reset
+        # Guard: cooldown after hard reset (longer cooldown takes precedence)
+        if self._last_hard_reset_at is not None:
+            elapsed = (datetime.now() - self._last_hard_reset_at).total_seconds()
+            if elapsed < HARD_RESET_COOLDOWN_SECONDS:
+                self._mismatch_count = 0
+                return
+
+        # Guard: cooldown after profile reset
         if self._last_auto_reset_at is not None:
             elapsed = (datetime.now() - self._last_auto_reset_at).total_seconds()
             if elapsed < AUTO_RESET_COOLDOWN_SECONDS:
@@ -266,18 +291,42 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             self._mismatch_count = 0
             return
 
-        # Read current_offered from OCPP entity
+        # Read current_offered from OCPP entity (with fallback to power_offered)
         current_offered_entity_id = self.config_entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID)
-        if not current_offered_entity_id:
-            return
-
-        current_offered_state = self.hass.states.get(current_offered_entity_id)
-        if not current_offered_state or current_offered_state.state in ("unknown", "unavailable", None, ""):
-            return
-
-        try:
-            current_offered = float(current_offered_state.state)
-        except (ValueError, TypeError):
+        power_offered_entity_id = self.config_entry.data.get(CONF_EVSE_POWER_OFFERED_ENTITY_ID)
+        
+        current_offered = None
+        
+        # Try current_offered first
+        if current_offered_entity_id:
+            current_offered_state = self.hass.states.get(current_offered_entity_id)
+            if current_offered_state and current_offered_state.state not in ("unknown", "unavailable", None, ""):
+                try:
+                    current_offered = float(current_offered_state.state)
+                except (ValueError, TypeError):
+                    current_offered = None
+        
+        # Fallback: try power_offered and convert W → A
+        if current_offered is None and power_offered_entity_id:
+            power_offered_state = self.hass.states.get(power_offered_entity_id)
+            if power_offered_state and power_offered_state.state not in ("unknown", "unavailable", None, ""):
+                try:
+                    power_w = float(power_offered_state.state)
+                    # Convert power (W) to current (A): I = P / (V * phases)
+                    # Use configured phases for conversion
+                    phases = self._phases or 1
+                    voltage = self.hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE) if self.hub_entry else DEFAULT_PHASE_VOLTAGE
+                    if voltage > 0 and phases > 0:
+                        current_offered = power_w / (voltage * phases)
+                        _LOGGER.debug(
+                            "Using power_offered fallback for %s: %.0fW → %.1fA "
+                            "(voltage=%dV, phases=%d)",
+                            self._attr_name, power_w, current_offered, voltage, phases,
+                        )
+                except (ValueError, TypeError):
+                    pass
+        
+        if current_offered is None:
             return
 
         # Tolerance = max ramp-down per cycle (dynamically adapts to update_frequency)
@@ -296,30 +345,81 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         else:
             if self._mismatch_count > 0:
                 _LOGGER.debug(
-                    "Profile compliance restored for %s (was at %d cycles)",
-                    self._attr_name, self._mismatch_count,
+                    "Profile compliance restored for %s (was at %d cycles, %d resets)",
+                    self._attr_name, self._mismatch_count, self._profile_reset_count,
                 )
             self._mismatch_count = 0
+            self._profile_reset_count = 0
             return
 
-        # Check if threshold reached
+        # Check if threshold reached — escalate if profile resets keep failing
         if self._mismatch_count >= AUTO_RESET_MISMATCH_THRESHOLD:
-            _LOGGER.info(
-                "Auto-reset triggered for %s: charger offered %.1fA but we commanded "
-                "%.1fA for %d consecutive cycles",
-                self._attr_name, current_offered, self._last_commanded_limit,
-                self._mismatch_count,
-            )
             self._mismatch_count = 0
-            self._last_auto_reset_at = datetime.now()
+            self._profile_reset_count += 1
 
+            if self._profile_reset_count >= ESCALATION_PROFILE_RESET_LIMIT:
+                # Escalate to hard reset
+                _LOGGER.warning(
+                    "Escalating to hard reset for %s: profile reset failed %d times",
+                    self._attr_name, self._profile_reset_count,
+                )
+                await self._perform_hard_reset()
+                self._profile_reset_count = 0
+                self._last_hard_reset_at = datetime.now()
+                self._last_auto_reset_at = None
+            else:
+                # Profile reset (existing behavior)
+                _LOGGER.info(
+                    "Auto-reset %d/%d for %s: charger offered %.1fA but we commanded %.1fA",
+                    self._profile_reset_count, ESCALATION_PROFILE_RESET_LIMIT,
+                    self._attr_name, current_offered, self._last_commanded_limit,
+                )
+                self._last_auto_reset_at = datetime.now()
+
+                try:
+                    await self.hass.services.async_call(
+                        DOMAIN, "reset_ocpp_evse",
+                        {"entry_id": self.config_entry.entry_id},
+                    )
+                except Exception as e:
+                    _LOGGER.error("Auto-reset service call failed for %s: %s", self._attr_name, e)
+
+    async def _perform_hard_reset(self) -> None:
+        """Perform an OCPP hard reset by pressing the charger's reset button entity.
+
+        Falls back to a profile reset if the reset button entity is not found.
+        """
+        charger_id = self.config_entry.data.get(CONF_ENTITY_ID)
+        if not charger_id:
+            _LOGGER.error("Cannot hard reset %s: no entity_id configured", self._attr_name)
+            return
+
+        reset_entity_id = f"button.{charger_id}_reset"
+        state = self.hass.states.get(reset_entity_id)
+
+        if state is None:
+            _LOGGER.warning(
+                "Hard reset entity %s not found for %s — falling back to profile reset",
+                reset_entity_id, self._attr_name,
+            )
             try:
                 await self.hass.services.async_call(
                     DOMAIN, "reset_ocpp_evse",
                     {"entry_id": self.config_entry.entry_id},
                 )
             except Exception as e:
-                _LOGGER.error("Auto-reset service call failed for %s: %s", self._attr_name, e)
+                _LOGGER.error("Fallback profile reset failed for %s: %s", self._attr_name, e)
+            return
+
+        _LOGGER.info("Hard OCPP reset for %s via %s", self._attr_name, reset_entity_id)
+        try:
+            await self.hass.services.async_call(
+                "button", "press",
+                {"entity_id": reset_entity_id},
+                blocking=True,
+            )
+        except Exception as e:
+            _LOGGER.error("Hard reset failed for %s: %s", self._attr_name, e)
 
     async def _send_plug_command(self, limit: float, hub_data: dict, now_mono: float) -> None:
         """Send on/off command to a smart load device."""
@@ -328,20 +428,23 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             _LOGGER.error(f"No switch entity configured for plug {self._attr_name}")
             return
 
-        if limit > 0:
-            _LOGGER.debug(f"Smart load {self._attr_name}: turning ON (limit={limit}A)")
-            await self.hass.services.async_call(
-                "switch", "turn_on",
-                {"entity_id": plug_switch_entity},
-                blocking=False,
-            )
-        else:
-            _LOGGER.debug(f"Smart load {self._attr_name}: turning OFF (limit=0)")
-            await self.hass.services.async_call(
-                "switch", "turn_off",
-                {"entity_id": plug_switch_entity},
-                blocking=False,
-            )
+        try:
+            if limit > 0:
+                _LOGGER.debug(f"Smart load {self._attr_name}: turning ON (limit={limit}A)")
+                await self.hass.services.async_call(
+                    "switch", "turn_on",
+                    {"entity_id": plug_switch_entity},
+                    blocking=False,
+                )
+            else:
+                _LOGGER.debug(f"Smart load {self._attr_name}: turning OFF (limit=0)")
+                await self.hass.services.async_call(
+                    "switch", "turn_off",
+                    {"entity_id": plug_switch_entity},
+                    blocking=False,
+                )
+        except Exception as e:
+            _LOGGER.warning("Smart load switch command failed for %s: %s", self._attr_name, e)
 
         # Auto-update device power from power monitoring average
         plug_auto_power = hub_data.get("plug_auto_power", {})
@@ -490,15 +593,19 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             _LOGGER.debug(f"Charge control switch {self._charge_control_entity} is off with limit {limit}A, but no car plugged in (connector: {connector_status}) - not turning on")
 
         # Call the OCPP set_charge_rate service with device_id
-        await self.hass.services.async_call(
-            "ocpp",
-            "set_charge_rate",
-            {
-                "devid": ocpp_device_id,
-                "custom_profile": charging_profile
-            },
-            blocking=False,
-        )
+        try:
+            await self.hass.services.async_call(
+                "ocpp",
+                "set_charge_rate",
+                {
+                    "devid": ocpp_device_id,
+                    "custom_profile": charging_profile
+                },
+                blocking=False,
+            )
+        except Exception as e:
+            _LOGGER.warning("OCPP set_charge_rate failed for %s: %s", self._attr_name, e)
+            return
 
         self._last_commanded_limit = limit  # Store for next cycle's ramp + compliance
         self._last_update = datetime.now(timezone.utc)
@@ -591,6 +698,13 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                 "total_site_available_power": hub_data.get("total_site_available_power"),
                 "total_evse_power": hub_data.get("total_evse_power"),
                 "last_update": datetime.now(timezone.utc),
+                # Grid sensor health
+                "grid_stale": hub_data.get("grid_stale", False),
+                # Circuit group data
+                "group_data": hub_data.get("group_data", {}),
+                # Hub status
+                "hub_status": hub_data.get("hub_status", "OK"),
+                "hub_warnings": hub_data.get("hub_warnings", []),
             }
 
             # Use pre-computed charger targets from the calculation engine
@@ -599,12 +713,20 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
 
             if charger_targets:
                 charger_names = hub_data.get("charger_names", {})
+                charger_modes = hub_data.get("charger_modes", {})
+                charger_avail = hub_data.get("charger_available", {})
                 _LOGGER.debug("Charger targets: %s", ", ".join(
-                    [f"{charger_names.get(k, k[-8:])}: {v:.1f}A" for k, v in charger_targets.items()]
+                    [f"{charger_names.get(k, k[-8:])}({charger_modes.get(k, '?')}): "
+                     f"alloc={v:.1f}A avail={charger_avail.get(k, 0):.1f}A"
+                     for k, v in charger_targets.items()]
                 ))
 
             # Get this charger's raw allocated current from engine output
             raw_allocated = round(charger_targets.get(self.config_entry.entry_id, 0), 1)
+
+            # Get available current (what this charger could get if active)
+            charger_avail_data = hub_data.get("charger_available", {})
+            self._available_current = round(charger_avail_data.get(self.config_entry.entry_id, 0), 1)
 
             # --- Smoothing pipeline: EMA → dead band → rate limit ---
             # On mode change or first run: reset and pass through immediately.
@@ -643,13 +765,13 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                     self._rate_limited_current = round(target, 1)
 
             self._allocated_current = self._rate_limited_current
-            self._state = self._rate_limited_current
+            self._state = self._available_current
 
             # --- Grace timer for Solar/Excess modes (anti-flicker) ---
             # When Solar/Excess conditions drop below minimum but site limits still
             # allow charging, hold at min_current for a grace period before pausing.
             min_charge_current = get_entry_value(self.config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
-            grace_period_minutes = get_entry_value(hub_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
+            grace_period_minutes = get_entry_value(self.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
             grace_period_seconds = grace_period_minutes * 60
 
             if self._operating_mode in (OPERATING_MODE_SOLAR_ONLY, OPERATING_MODE_EXCESS) and grace_period_seconds > 0:
@@ -668,7 +790,6 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                         if elapsed < grace_period_seconds:
                             # Override: charge at min_current during grace
                             self._allocated_current = float(min_charge_current)
-                            self._state = self._allocated_current
                         else:
                             # Grace expired — let engine's 0 through (pause will kick in)
                             _LOGGER.info("Grace timer expired for %s after %dm — allowing pause",
@@ -746,11 +867,11 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             connector_status = connector_state.state if connector_state else "unknown"
 
             if connector_status in ("Available", "unknown", "unavailable"):
-                self._charging_status = "Not Connected"
+                self._charging_status = "Unplugged"
             elif not dynamic_control_on:
                 self._charging_status = "Dynamic Control Off"
             elif self._grace_started_at is not None and self._allocated_current >= min_charge_current:
-                grace_min = get_entry_value(hub_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
+                grace_min = get_entry_value(self.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD)
                 elapsed = (datetime.now() - self._grace_started_at).total_seconds()
                 remaining = max(0, int(grace_min * 60 - elapsed))
                 self._charging_status = f"Grace: {remaining}s"
@@ -874,6 +995,7 @@ class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
         self._attr_name = f"{name} Site Available Power"
         self._attr_unique_id = f"{entity_id}_site_info"
         self._total_site_available_power = None
+        self._grid_stale = False
         self._last_update = datetime.min
 
     @property
@@ -887,10 +1009,13 @@ class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
     @property
     def extra_state_attributes(self):
         """Return the state attributes."""
-        return {
+        attrs = {
             "state_class": "measurement",
             "last_update": self._last_update,
         }
+        if self._grid_stale:
+            attrs["grid_stale"] = True
+        return attrs
 
     @property
     def icon(self):
@@ -915,9 +1040,54 @@ class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
 
             if hub_data:
                 self._total_site_available_power = hub_data.get("total_site_available_power")
+                self._grid_stale = hub_data.get("grid_stale", False)
                 self._last_update = hub_data.get("last_update", datetime.now(timezone.utc))
         except Exception as e:
             _LOGGER.error(f"Error updating hub sensor {self._attr_name}: {e}", exc_info=True)
+
+
+class DynamicOcppEvseHubStatusSensor(HubEntityMixin, SensorEntity):
+    """Hub-level sensor showing site configuration status and warnings."""
+
+    def __init__(self, hass, config_entry, name, entity_id):
+        """Initialize the hub status sensor."""
+        self.hass = hass
+        self.config_entry = config_entry
+        self._attr_name = f"{name} Status"
+        self._attr_unique_id = f"{entity_id}_hub_status"
+        self._state = "Initializing"
+        self._warnings = []
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def extra_state_attributes(self):
+        attrs = {}
+        if self._warnings:
+            attrs["warnings"] = self._warnings
+        return attrs
+
+    @property
+    def icon(self):
+        if self._state == "OK":
+            return "mdi:check-circle-outline"
+        if self._state == "Initializing":
+            return "mdi:timer-sand"
+        return "mdi:alert-circle-outline"
+
+    async def async_update(self):
+        """Read hub status from hass.data."""
+        try:
+            hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(
+                self.config_entry.entry_id, {}
+            )
+            if hub_data:
+                self._state = hub_data.get("hub_status", "OK")
+                self._warnings = hub_data.get("hub_warnings", [])
+        except Exception as e:
+            _LOGGER.error(f"Error updating hub status sensor: {e}", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1056,5 +1226,57 @@ class DynamicOcppEvseHubDataSensor(HubEntityMixin, SensorEntity):
             key = self._defn["hub_data_key"]
             if hub_data and key in hub_data and hub_data[key] is not None:
                 self._state = round(float(hub_data[key]), self._defn["decimals"])
+        except Exception as e:
+            _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+
+
+class DynamicOcppEvseCircuitGroupSensor(GroupEntityMixin, SensorEntity):
+    """Sensor showing circuit group allocation and headroom."""
+
+    def __init__(self, hass, config_entry, name, entity_id, hub_entry_id):
+        self.hass = hass
+        self.config_entry = config_entry
+        self._hub_entry_id = hub_entry_id
+        self._attr_name = f"{name} Circuit Allocation"
+        self._attr_unique_id = f"{entity_id}_circuit_allocation"
+        self._attr_native_unit_of_measurement = "A"
+        self._attr_device_class = "current"
+        self._attr_icon = "mdi:current-ac"
+        self._state = None
+        self._headroom = None
+        self._per_phase_draw = None
+        self._current_limit = None
+        self._member_ids = None
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def extra_state_attributes(self):
+        attrs = {}
+        if self._current_limit is not None:
+            attrs["current_limit"] = self._current_limit
+        if self._headroom is not None:
+            attrs["headroom"] = self._headroom
+        if self._per_phase_draw is not None:
+            attrs["phase_a_draw"] = round(self._per_phase_draw.get("A", 0), 1)
+            attrs["phase_b_draw"] = round(self._per_phase_draw.get("B", 0), 1)
+            attrs["phase_c_draw"] = round(self._per_phase_draw.get("C", 0), 1)
+        if self._member_ids is not None:
+            attrs["member_count"] = len(self._member_ids)
+        return attrs
+
+    async def async_update(self):
+        try:
+            hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(self._hub_entry_id, {})
+            all_group_data = hub_data.get("group_data", {})
+            my_data = all_group_data.get(self.config_entry.entry_id)
+            if my_data:
+                self._state = my_data.get("max_phase_draw", 0)
+                self._headroom = my_data.get("headroom", 0)
+                self._per_phase_draw = my_data.get("per_phase_draw")
+                self._current_limit = my_data.get("current_limit")
+                self._member_ids = my_data.get("member_ids")
         except Exception as e:
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)

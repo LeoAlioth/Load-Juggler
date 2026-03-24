@@ -7,7 +7,7 @@ They use broad naming conventions common across many inverter brands.
 # Negative lookahead fragment — excludes phones, tablets, laptops, watches.
 # Sony Xperia model numbers start with xq_ (e.g. xq_cq54, xq_es44, xq_ge54).
 _NOT_MOBILE = (
-    r'(?!.*(?:phone|pixel|iphone|ipad|galaxy|oneplus|xiaomi|xperia|xq_'
+    r'(?!.*(?:phone|pixel|iphone|ipad|galaxy|oneplus|xiaomi|xperia|xq_|sm_'
     r'|huawei_p|huawei_mate|samsung_|macbook|laptop|tablet|watch|ring))'
 )
 

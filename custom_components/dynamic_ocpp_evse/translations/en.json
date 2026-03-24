@@ -127,7 +127,8 @@
                     "connected_to_phase": "Connected to phase",
                     "charger_priority": "Priority (1 = highest)",
                     "plug_power_monitor_entity_id": "Power monitoring sensor (optional)",
-                    "update_frequency": "Update frequency"
+                    "update_frequency": "Update frequency",
+                    "solar_grace_period": "Solar/Excess grace period"
                 },
                 "data_description": {
                     "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power).",
@@ -135,7 +136,8 @@
                     "connected_to_phase": "Which electrical phase(s) this plug is wired to. Determines which phase capacity is used in calculations.",
                     "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
-                    "update_frequency": "How often to re-evaluate whether this plug should be turned on or off."
+                    "update_frequency": "How often to re-evaluate whether this plug should be turned on or off.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately."
                 }
             },
             "discover_chargers": {
@@ -185,7 +187,8 @@
                     "update_frequency": "Update frequency",
                     "ocpp_profile_timeout": "Profile timeout",
                     "charge_pause_duration": "Charge pause duration",
-                    "stack_level": "OCPP stack level"
+                    "stack_level": "OCPP stack level",
+                    "solar_grace_period": "Solar/Excess grace period"
                 },
                 "data_description": {
                     "charge_rate_unit": "Most OCPP chargers use Amperes. Some chargers (e.g., certain Wallbox models) require Watts instead.",
@@ -193,7 +196,8 @@
                     "update_frequency": "How often to send updated charging profiles to this charger.",
                     "ocpp_profile_timeout": "How long a charging profile remains valid. The charger reverts to default behavior if no new profile is sent within this time.",
                     "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
-                    "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level."
+                    "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
                 }
             },
             "reconfigure_hub_grid": {
@@ -272,14 +276,16 @@
                     "connected_to_phase": "Connected to phase",
                     "charger_priority": "Priority (1 = highest)",
                     "plug_power_monitor_entity_id": "Power monitoring sensor (optional)",
-                    "update_frequency": "Update frequency"
+                    "update_frequency": "Update frequency",
+                    "solar_grace_period": "Solar/Excess grace period"
                 },
                 "data_description": {
                     "plug_power_rating": "The power this device draws when turned on. Used for allocation calculations. Ignored when a power monitor sensor is configured.",
                     "connected_to_phase": "Which electrical phase(s) this plug is wired to. Determines which phase capacity is used in calculations.",
                     "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
-                    "update_frequency": "How often to re-evaluate whether this plug should be turned on or off."
+                    "update_frequency": "How often to re-evaluate whether this plug should be turned on or off.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately."
                 }
             },
             "reconfigure_charger": {
@@ -319,7 +325,8 @@
                     "update_frequency": "Update frequency",
                     "ocpp_profile_timeout": "Profile timeout",
                     "charge_pause_duration": "Charge pause duration",
-                    "stack_level": "OCPP stack level"
+                    "stack_level": "OCPP stack level",
+                    "solar_grace_period": "Solar/Excess grace period"
                 },
                 "data_description": {
                     "charge_rate_unit": "Most OCPP chargers use Amperes. Some chargers (e.g., certain Wallbox models) require Watts instead.",
@@ -327,13 +334,35 @@
                     "update_frequency": "How often to send updated charging profiles to this charger.",
                     "ocpp_profile_timeout": "How long a charging profile remains valid. The charger reverts to default behavior if no new profile is sent within this time.",
                     "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
-                    "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level."
+                    "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
+                }
+            },
+            "group_config": {
+                "title": "Circuit Group",
+                "description": "Create a circuit group to enforce a shared breaker limit across multiple loads",
+                "data": {
+                    "name": "Group name",
+                    "entity_id": "Entity ID prefix",
+                    "circuit_group_current_limit": "Circuit breaker rating (per phase)"
+                },
+                "data_description": {
+                    "circuit_group_current_limit": "The amperage rating of the circuit breaker shared by the loads in this group. Allocations will be capped so the combined draw never exceeds this limit on any phase."
+                }
+            },
+            "group_members": {
+                "title": "Select Members",
+                "description": "Select the loads that share this circuit breaker",
+                "data": {
+                    "circuit_group_members": "Member loads"
                 }
             }
         },
         "error": {
             "no_hub_configured": "No hub configured. Please set up a Home Electrical Hub first.",
             "no_ocpp_chargers_found": "No OCPP chargers found. Make sure you have the OCPP integration installed and configured with at least one charger.",
+            "no_members_selected": "Please select at least one load for this circuit group.",
+            "no_loads_available": "No loads available on this hub. Add chargers or smart loads first.",
             "invalid_current": "Charge current values must be greater than zero.",
             "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
             "unknown": "An unknown error occurred"
@@ -421,14 +450,16 @@
                     "connected_to_phase": "Connected to phase",
                     "charger_priority": "Priority (1 = highest)",
                     "plug_power_monitor_entity_id": "Power monitoring sensor (optional)",
-                    "update_frequency": "Update frequency"
+                    "update_frequency": "Update frequency",
+                    "solar_grace_period": "Solar/Excess grace period"
                 },
                 "data_description": {
                     "plug_power_rating": "The power this device draws when turned on. Used for allocation calculations. Ignored when a power monitor sensor is configured.",
                     "connected_to_phase": "Which electrical phase(s) this plug is wired to. Determines which phase capacity is used in calculations.",
                     "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
-                    "update_frequency": "How often to re-evaluate whether this plug should be turned on or off."
+                    "update_frequency": "How often to re-evaluate whether this plug should be turned on or off.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately."
                 }
             },
             "charger": {
@@ -468,7 +499,8 @@
                     "update_frequency": "Update frequency",
                     "ocpp_profile_timeout": "Profile timeout",
                     "charge_pause_duration": "Charge pause duration",
-                    "stack_level": "OCPP stack level"
+                    "stack_level": "OCPP stack level",
+                    "solar_grace_period": "Solar/Excess grace period"
                 },
                 "data_description": {
                     "charge_rate_unit": "Most OCPP chargers use Amperes. Some chargers (e.g., certain Wallbox models) require Watts instead.",
@@ -476,7 +508,19 @@
                     "update_frequency": "How often to send updated charging profiles to this charger.",
                     "ocpp_profile_timeout": "How long a charging profile remains valid. The charger reverts to default behavior if no new profile is sent within this time.",
                     "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
-                    "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level."
+                    "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
+                }
+            },
+            "group": {
+                "title": "Update Circuit Group",
+                "description": "Update circuit group settings",
+                "data": {
+                    "circuit_group_current_limit": "Circuit breaker rating (per phase)",
+                    "circuit_group_members": "Member loads"
+                },
+                "data_description": {
+                    "circuit_group_current_limit": "The amperage rating of the circuit breaker shared by the loads in this group."
                 }
             }
         }

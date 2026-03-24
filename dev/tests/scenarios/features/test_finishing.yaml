@@ -1,0 +1,282 @@
+# Test scenarios: Charger finishing behavior
+# When a charger's connector_status is "Finishing", it is treated as inactive
+# (0 allocated) and does not participate in power distribution.
+# Remaining active chargers should receive the freed capacity.
+#
+# Scenarios are paired: baseline (both active) + one finishing,
+# to verify redistribution.
+
+scenarios:
+
+  # ========== BASIC: Two 1-phase chargers, priority distribution ==========
+
+  - name: "finish-1ph-both-active-baseline"
+    description: "Baseline: two 1ph chargers both active on constrained site"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 5750
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 3.0
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+      - entity_id: "charger_2"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+    expected:
+      charger_1:
+        allocated: 16  # Priority: gets max first (25-3=22A avail, 16A max)
+      charger_2:
+        allocated: 6   # Remaining: 22-16=6A, exactly min
+
+  - name: "finish-1ph-lower-prio-finishing"
+    description: "Lower priority charger finishes — higher priority unaffected"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 5750
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 3.0
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+      - entity_id: "charger_2"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        connector_status: "Finishing"
+    expected:
+      charger_1:
+        allocated: 16  # Still gets max, no competition
+      charger_2:
+        allocated: 0   # Finishing → inactive → 0
+
+  - name: "finish-1ph-higher-prio-finishing"
+    description: "Higher priority charger finishes — lower priority gets full capacity"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 5750
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 3.0
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        connector_status: "Finishing"
+      - entity_id: "charger_2"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+    expected:
+      charger_1:
+        allocated: 0   # Finishing → inactive → 0
+      charger_2:
+        allocated: 16  # Gets full capacity: 25-3=22A, capped at 16A max
+
+  # ========== 3-PHASE: Shared distribution ==========
+
+  - name: "finish-3ph-shared-baseline"
+    description: "Baseline: two 3ph chargers, shared distribution"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: Shared
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "charger_2"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+    expected:
+      charger_1:
+        allocated: 11.5  # Shared: (25-2)/2 = 11.5A each
+      charger_2:
+        allocated: 11.5
+
+  - name: "finish-3ph-shared-one-finishing"
+    description: "Shared mode: one charger finishes, other gets full capacity"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: Shared
+      solar_production: 0
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+      - entity_id: "charger_2"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 2
+        connector_status: "Finishing"
+    expected:
+      charger_1:
+        allocated: 16  # Sole active charger: 25-2=23A, capped at 16A max
+      charger_2:
+        allocated: 0   # Finishing → 0
+
+  # ========== MIXED MODES: Standard + Solar Only ==========
+
+  - name: "finish-mixed-modes-baseline"
+    description: "Mixed modes: Standard gets priority, Solar Only gets remaining solar"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600  # 20A
+      phase_a_consumption: 3.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+      - entity_id: "charger_2"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+    expected:
+      charger_1:
+        allocated: 16  # Standard: any source, gets max
+      charger_2:
+        allocated: 16  # Solar Only: solar(17A) + discharge(20A) remaining after ch1 deducts from solar pool
+
+  - name: "finish-mixed-standard-finishes"
+    description: "Standard charger finishes — Solar Only gets full solar + discharge pool"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600
+      phase_a_consumption: 3.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        connector_status: "Finishing"
+      - entity_id: "charger_2"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+    expected:
+      charger_1:
+        allocated: 0   # Finishing → 0
+      charger_2:
+        allocated: 16  # Solar Only: solar(17A) + discharge(20A) = 37A, capped at 16A max
+
+  # ========== THREE CHARGERS: Middle priority finishes ==========
+
+  - name: "finish-3c-middle-finishes"
+    description: "Three chargers, middle priority finishes, others redistribute"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 3.0
+    chargers:
+      - entity_id: "charger_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+      - entity_id: "charger_2"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        connector_status: "Finishing"
+      - entity_id: "charger_3"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 3
+    expected:
+      charger_1:
+        allocated: 16  # Priority 1: 35-3=32A, gets 16A max
+      charger_2:
+        allocated: 0   # Finishing → 0
+      charger_3:
+        allocated: 16  # Priority 3: 32-16=16A remaining, gets 16A max

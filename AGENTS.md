@@ -1,18 +1,20 @@
 # AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to LLM Agents when working with code in this repository.
 
 ## Project Overview
 
-Dynamic OCPP EVSE is a Home Assistant custom component that provides intelligent EV charging control via OCPP 1.6J protocol. It dynamically adjusts charging current based on solar production, battery state, grid capacity, and user-defined charging modes.
+Load Juggler is a Home Assistant custom component for intelligent load management. It dynamically distributes available power across managed loads — EV chargers (via OCPP 1.6J), smart plugs, and more — based on solar production, battery state, grid capacity, and per-load operating modes.
 
 **Key Capabilities:**
 
-- Multiple charging modes (Standard, Eco, Solar, Excess)
-- Multi-charger support with priority-based distribution
+- Per-load operating modes (Standard, Solar Priority, Solar Only, Excess for EVSE; Continuous, Solar Only, Excess for plugs)
+- Multi-load support with priority-based distribution and mode urgency sorting
+- Circuit groups — shared breaker limits for co-located loads (post-distribution capping)
 - Battery integration with SOC thresholds
 - Phase-aware handling (1-phase, 2-phase, 3-phase installations)
 - Symmetric and asymmetric inverter support
+- Off-grid support (no grid CTs required — infers phases from inverter output)
 
 **Version 2.0** — disregard backwards compatibility. No migration processes needed.
 
@@ -40,12 +42,16 @@ custom_components/dynamic_ocpp_evse/
 ├── const.py                       # Constants and defaults
 ├── config_flow.py                 # HA configuration flow
 ├── dynamic_ocpp_evse.py          # Main entry point — reads HA states, builds SiteContext, calls engine
+│                                  #   Key helpers: _derive_solar_production(), _smooth(), _coerce(),
+│                                  #   _read_entity() (returns _UNAVAILABLE sentinel), _apply_feedback_loop()
+├── entity_mixins.py              # HubEntityMixin, ChargerEntityMixin (device_info, data write helpers)
+├── auto_detect.py                # Grid CT inversion + phase mapping auto-detection
 ├── [button|number|select|sensor|switch].py  # HA entities
 ├── calculations/                  # Core calculation logic (PURE PYTHON - no HA dependencies)
-│   ├── models.py                  # Data models (SiteContext, LoadContext)
+│   ├── models.py                  # Data models (SiteContext, LoadContext, CircuitGroup, PhaseConstraints)
 │   ├── context.py                 # Context builder (HA → models)
 │   ├── target_calculator.py       # Main calculation engine
-│   └── utils.py                   # Utility functions (is_number)
+│   └── utils.py                   # Utility functions (is_number, compute_household_per_phase)
 └── translations/                  # Localization files
 ```
 
@@ -87,19 +93,22 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 1. Calculate absolute site limits (per-phase physical constraints)
    → _calculate_site_limit()
      ├─ _calculate_grid_limit()      (grid capacity based on breaker rating)
-     └─ _calculate_inverter_limit()  (solar + battery for Standard mode)
+     └─ _calculate_inverter_limit()  (solar + battery)
    ↓
 2. Calculate solar surplus power (includes battery charge/discharge)
    → _calculate_solar_surplus()
    ↓
-3. Calculate excess available power (Excess mode only)
+3. Calculate excess available power
    → _calculate_excess_available()
    ↓
-4. Determine target power based on charging mode
-   → _determine_target_power()
+4. Compute per-load ceilings based on each load's operating mode
+   → _compute_charger_ceiling() per load (mode-aware, uses solar/excess pools)
    ↓
-5. Distribute power among chargers
+5. Distribute power among loads (sorted by mode urgency + priority)
    → _distribute_power()
+   ↓
+6. Enforce circuit group limits (post-distribution capping)
+   → _enforce_circuit_groups()
 ```
 
 ### Data Models
@@ -112,26 +121,36 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 - Electrical: voltage, num_phases, main_breaker_rating
 - Per-phase: consumption (PhaseValues), export_current (PhaseValues), grid_current (PhaseValues)
-- Solar: solar_production_total (derived from grid CT export, or from dedicated entity), solar_is_derived, household_consumption_total
+- Solar: solar_production_total (derived via `_derive_solar_production()`, or from dedicated entity), solar_is_derived, household_consumption_total
 - Derived: total_export_current, total_export_power (computed properties)
 - Battery: battery_soc, battery_soc_min, battery_soc_target, battery_max_charge/discharge_power
-- Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric
-- Charging: charging_mode, distribution_mode, chargers[]
+- Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, wiring_topology, inverter_output_per_phase
+- Charging: distribution_mode, chargers[], circuit_groups[]
 
-**LoadContext** (`calculations/models.py`) — Represents a single EVSE:
+**LoadContext** (`calculations/models.py`) — Represents a single managed load (EVSE or smart plug):
 
-- Config: entity_id, min_current, max_current, phases, car_phases, priority
+- Config: charger_id, min_current, max_current, phases, priority, device_type, operating_mode
 - Status: connector_status (Available, Charging, etc.)
 - Phase tracking: active_phases_mask ("A", "B", "C", "AB", "BC", "AC", "ABC")
 - Current: l1_current, l2_current, l3_current (actual OCPP draw)
 - Calculated: target_current (output of calculation)
 
+**CircuitGroup** (`calculations/models.py`) — Shared breaker limit for co-located loads:
+
+- Config: group_id, name, current_limit (per-phase A), member_ids[]
+- Enforced post-distribution: member allocations per phase capped to current_limit
+
 ### HA Integration Layer
 
 The `calculations/` directory is pure Python and can be imported/tested independently. The HA integration layer:
 
-1. **dynamic_ocpp_evse.py**: Reads HA entity states, builds SiteContext/LoadContext, calls calculation engine
-2. **sensor.py**: Uses engine output (charger_targets) to set OCPP charging profiles via service calls
+1. **dynamic_ocpp_evse.py**: Reads HA entity states, builds SiteContext/LoadContext, calls calculation engine. Key patterns:
+   - `_UNAVAILABLE` sentinel: returned by `_read_entity()` when a configured sensor is unavailable/unknown
+   - `_smooth()`: EMA smoothing with `_UNAVAILABLE` holdover (holds last value instead of decaying to 0), NaN/Inf rejection
+   - `_coerce()`: converts `_UNAVAILABLE` back to safe defaults for non-smoothed values
+   - `_derive_solar_production()`: unified formula for grid and off-grid — uses inverter output when available, falls back to grid export + battery
+   - Off-grid: when no grid CTs are configured, phases with inverter output entities are zeroed (not None), making the site behave like a grid site with 0A grid current
+2. **sensor.py**: Uses engine output (charger_targets) to set OCPP charging profiles via service calls. Hub sensors: Site Available Power, Hub Status, per-metric data sensors. Charger sensors: allocated current, available current, charging status.
 3. **Entities** (button.py, number.py, select.py, etc.): Expose controls and sensors to HA UI
 
 ### Asymmetric vs Symmetric Inverters
@@ -158,11 +177,11 @@ When chargers have explicit phase assignments (e.g., `l1_phase: "B"`):
 - Each phase is allocated independently via `_distribute_power()`
 - 3-phase chargers limited by minimum available phase
 
-## Charging & Distribution Modes
+## Operating & Distribution Modes
 
-Four charging modes: **Standard** (max speed from all sources), **Eco** (solar-first with min rate fallback), **Solar** (pure solar only), **Excess** (threshold-based export charging). See [CHARGE_MODES_GUIDE.md](CHARGE_MODES_GUIDE.md) for full details.
+Per-load operating modes (set independently per load): **Standard** (EVSE: max speed from all sources), **Continuous** (Plug: always on), **Solar Priority** (solar-first with min rate fallback), **Solar Only** (pure solar only), **Excess** (threshold-based export charging). Mode urgency: Standard/Continuous > Solar Priority > Solar Only > Excess. See [CHARGE_MODES_GUIDE.md](CHARGE_MODES_GUIDE.md) for full details.
 
-Four distribution modes for multi-charger setups: **Shared** (equal split), **Priority** (higher priority first), **Optimized** (sequential with leftover sharing), **Strict** (sequential, no sharing). See [DISTRIBUTION_MODES_GUIDE.md](DISTRIBUTION_MODES_GUIDE.md) for full details.
+Four distribution modes for multi-load setups: **Shared** (equal split), **Priority** (higher priority first), **Optimized** (sequential with leftover sharing), **Strict** (sequential, no sharing). See [DISTRIBUTION_MODES_GUIDE.md](DISTRIBUTION_MODES_GUIDE.md) for full details.
 
 ## Development
 
@@ -177,7 +196,7 @@ Four distribution modes for multi-charger setups: **Shared** (equal split), **Pr
 
 ### Adding New Features
 
-1. **Charging Mode**: Add to `_determine_target_power()` in `target_calculator.py`
+1. **Operating Mode**: Add ceiling logic in `_compute_charger_ceiling()` in `target_calculator.py`
 2. **Distribution Mode**: Add to `target_calculator.py` as `_distribute_<mode>()`
 3. **Test Scenarios**: Create YAML scenarios in `dev/tests/scenarios/`
 4. **Documentation**: Update CHARGE_MODES_GUIDE.md, README.md
@@ -198,10 +217,10 @@ Four distribution modes for multi-charger setups: **Shared** (equal split), **Pr
 
 ### Calculation Scenario Tests (Pure Python)
 
-YAML-driven tests that validate the calculation engine directly. Run on any platform.
+YAML-driven tests that validate the calculation engine directly. **Run natively on any platform** — no Home Assistant dependencies.
 
 ```bash
-# Run all scenarios
+# Run all scenarios (from project root)
 python3 dev/tests/run_tests.py dev/tests/scenarios
 
 # Run only verified or unverified
@@ -229,7 +248,6 @@ scenarios:
     human_verified: false
     site:
       voltage: 230
-      charging_mode: Solar
     chargers:
       - entity_id: "charger_1"
         min_current: 6
@@ -237,6 +255,7 @@ scenarios:
         phases: 3
         priority: 1
         l1_phase: "A"
+        operating_mode: "Solar Only"
     expected:
       charger_1:
         allocated: 10.0
@@ -244,24 +263,33 @@ scenarios:
 
 Scenario files in `dev/tests/scenarios/` (organized by site type × charging mode):
 
-```
+```text
 1ph/            — Single-phase, no battery (test_solar, test_eco, test_standard, test_excess)
 1ph_battery/    — Single-phase with battery (test_solar, test_eco, test_standard, test_excess)
 3ph/            — Three-phase, no battery (test_solar, test_eco, test_standard, test_excess)
 3ph_battery/    — Three-phase with battery (test_solar, test_eco, test_standard, test_excess)
-features/       — Cross-cutting tests (test_available, test_plugs, test_phase_mapping)
+features/       — Cross-cutting tests (test_available, test_plugs, test_phase_mapping, test_circuit_groups)
 ```
 
-### HA Integration Tests (WSL/Linux)
+### HA Integration Tests (Docker)
 
-Integration tests use `pytest-homeassistant-custom-component` and run under WSL (HA core requires `fcntl`, Unix-only):
+Integration tests use `pytest-homeassistant-custom-component` and run in Docker for platform independence and system isolation. This ensures tests don't affect the developer's system and work consistently across macOS, Windows, and Linux.
 
 ```bash
-# All integration tests
-wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python3 -m pytest dev/tests/test_init.py dev/tests/test_config_flow.py dev/tests/test_config_flow_e2e.py dev/tests/test_sensor_update.py -v"
+# Build the test image (first time only, or after requirements_dev.txt changes)
+docker build -t dynamic-ocpp-evse-test -f dev/Dockerfile.test .
 
-# Individual test file
-wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python3 -m pytest dev/tests/test_sensor_update.py -v"
+# Run all integration tests
+docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test
+
+# Run a specific test file
+docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests/test_init.py -v
+
+# Run with specific test pattern
+docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests/ -v -k "test_async_setup"
+
+# Run only scenario tests (pure Python, no HA dependencies)
+docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python dev/tests/run_tests.py
 ```
 
 **Integration test files:**
