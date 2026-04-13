@@ -750,7 +750,7 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
 
             # --- Smoothing pipeline: EMA → Schmitt trigger → rate limit ---
             # On mode change or first run: reset and pass through immediately.
-            if mode_changed or self._ema_current is None:
+            if mode_changed or self._ema_current is None or self._schmitt_current is None:
                 self._ema_current = raw_allocated
                 self._schmitt_current = raw_allocated
                 self._schmitt_state = "rising"
