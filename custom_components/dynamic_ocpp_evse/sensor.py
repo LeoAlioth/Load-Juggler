@@ -166,7 +166,9 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
         self._last_set_current = 0
         self._last_set_power = None
         self._ema_current = None             # EMA-smoothed engine output
-        self._rate_limited_current = None   # Final output (after EMA + dead band + rate limit)
+        self._schmitt_current = None        # Schmitt trigger output (after EMA, before rate limit)
+        self._schmitt_state = "rising"      # Schmitt trigger state: "rising" or "falling"
+        self._rate_limited_current = None   # Final output (after EMA + Schmitt + rate limit)
         self._last_commanded_limit = None   # Amps actually sent to charger (for compliance check)
         self._last_command_time: float = -float('inf')  # monotonic time of last OCPP/plug command
         self._mismatch_count = 0           # consecutive non-compliant cycles
@@ -746,41 +748,66 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             charger_avail_data = hub_data.get("charger_available", {})
             self._available_current = round(charger_avail_data.get(self.config_entry.entry_id, 0), 1)
 
-            # --- Smoothing pipeline: EMA → dead band → rate limit ---
+            # --- Smoothing pipeline: EMA → Schmitt trigger → rate limit ---
             # On mode change or first run: reset and pass through immediately.
             if mode_changed or self._ema_current is None:
                 self._ema_current = raw_allocated
+                self._schmitt_current = raw_allocated
+                self._schmitt_state = "rising"
                 self._rate_limited_current = raw_allocated
                 if mode_changed:
                     _LOGGER.debug("Mode changed for %s — smoothing reset (allocated=%.1fA)",
                                   self._attr_name, raw_allocated)
-            elif raw_allocated == 0 or self._rate_limited_current == 0:
-                # Transitions to/from zero pass through immediately (pause/resume)
+            elif self._rate_limited_current == 0:
+                # Resume from zero (or hold at zero): pass through immediately
+                # for snappy restart. Ramping DOWN to zero is handled by the
+                # normal pipeline below — the bypass only fires on the way back up.
                 self._ema_current = raw_allocated
+                self._schmitt_current = raw_allocated
+                self._schmitt_state = "rising"
                 self._rate_limited_current = raw_allocated
             else:
                 # Step 1: EMA smoothing on the raw engine output
                 self._ema_current = round(EMA_ALPHA * raw_allocated + (1 - EMA_ALPHA) * self._ema_current, 2)
 
-                # Step 2: Dead band (Schmitt trigger) — ignore small oscillations
-                if abs(self._ema_current - self._rate_limited_current) < DEAD_BAND:
-                    pass  # Keep current value, skip rate limiter
-                else:
-                    # Step 3: Rate limiter — clamp the change per cycle
-                    site_freq = get_entry_value(hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY)
-                    max_up = RAMP_UP_RATE * site_freq
-                    max_down = RAMP_DOWN_RATE * site_freq
-                    target = self._ema_current
-                    delta = target - self._rate_limited_current
-                    if delta > max_up:
-                        target = self._rate_limited_current + max_up
-                        _LOGGER.debug("Ramp UP for %s: %.1fA → %.1fA (ema=%.1fA, max +%.1fA/cycle)",
-                                      self._attr_name, self._rate_limited_current, target, self._ema_current, max_up)
-                    elif delta < -max_down:
-                        target = self._rate_limited_current - max_down
-                        _LOGGER.debug("Ramp DOWN for %s: %.1fA → %.1fA (ema=%.1fA, max -%.1fA/cycle)",
-                                      self._attr_name, self._rate_limited_current, target, self._ema_current, max_down)
-                    self._rate_limited_current = round(target, 1)
+                # Step 2: Schmitt trigger (stateful hysteresis)
+                # RISING: output tracks input upward freely; on any drop, switch to FALLING (hold).
+                # FALLING: hold until input drops below (prev − DEAD_BAND) → follow down,
+                #          or rises above (prev + DEAD_BAND) → switch to RISING and follow up.
+                ema = self._ema_current
+                prev = self._schmitt_current
+                if self._schmitt_state == "rising":
+                    if ema >= prev:
+                        self._schmitt_current = ema          # follow up freely
+                    else:
+                        self._schmitt_state = "falling"      # input dropped — hold, switch state
+                        _LOGGER.debug("Schmitt RISING→FALLING for %s at %.2fA (prev=%.2fA)",
+                                      self._attr_name, ema, prev)
+                else:  # falling
+                    if ema < prev - DEAD_BAND:
+                        self._schmitt_current = ema          # crossed LTP — follow down
+                    elif ema > prev + DEAD_BAND:
+                        self._schmitt_state = "rising"       # crossed UTP — follow up, switch state
+                        self._schmitt_current = ema
+                        _LOGGER.debug("Schmitt FALLING→RISING for %s at %.2fA (prev=%.2fA)",
+                                      self._attr_name, ema, prev)
+                    # else: within dead band — hold schmitt_current
+
+                # Step 3: Rate limiter — clamp the change per cycle
+                site_freq = get_entry_value(hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY)
+                max_up = RAMP_UP_RATE * site_freq
+                max_down = RAMP_DOWN_RATE * site_freq
+                target = self._schmitt_current
+                delta = target - self._rate_limited_current
+                if delta > max_up:
+                    target = self._rate_limited_current + max_up
+                    _LOGGER.debug("Ramp UP for %s: %.1fA → %.1fA (schmitt=%.1fA, max +%.1fA/cycle)",
+                                  self._attr_name, self._rate_limited_current, target, self._schmitt_current, max_up)
+                elif delta < -max_down:
+                    target = self._rate_limited_current - max_down
+                    _LOGGER.debug("Ramp DOWN for %s: %.1fA → %.1fA (schmitt=%.1fA, max -%.1fA/cycle)",
+                                  self._attr_name, self._rate_limited_current, target, self._schmitt_current, max_down)
+                self._rate_limited_current = round(target, 1)
 
             self._allocated_current = self._rate_limited_current
             self._state = self._available_current
