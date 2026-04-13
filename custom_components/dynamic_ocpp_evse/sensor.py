@@ -749,8 +749,14 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             self._available_current = round(charger_avail_data.get(self.config_entry.entry_id, 0), 1)
 
             # --- Smoothing pipeline: EMA → Schmitt trigger → rate limit ---
+            # Bootstrap _schmitt_current if missing (e.g. upgrade from a version
+            # that didn't have it) without disturbing the rest of the state.
+            if self._schmitt_current is None and self._ema_current is not None:
+                self._schmitt_current = self._rate_limited_current
+                self._schmitt_state = "rising"
+
             # On mode change or first run: reset and pass through immediately.
-            if mode_changed or self._ema_current is None or self._schmitt_current is None:
+            if mode_changed or self._ema_current is None:
                 self._ema_current = raw_allocated
                 self._schmitt_current = raw_allocated
                 self._schmitt_state = "rising"
