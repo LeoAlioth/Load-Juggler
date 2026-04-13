@@ -777,7 +777,9 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                 self._ema_current = round(EMA_ALPHA * raw_allocated + (1 - EMA_ALPHA) * self._ema_current, 2)
 
                 # Step 2: Schmitt trigger (stateful hysteresis)
-                # RISING: output tracks input upward freely; on any drop, switch to FALLING (hold).
+                # RISING: follow up freely; on large drop (>= DEAD_BAND) switch to FALLING
+                #         and follow immediately; on small drop (< DEAD_BAND) switch to
+                #         FALLING but hold for one cycle.
                 # FALLING: hold until input drops below (prev − DEAD_BAND) → follow down,
                 #          or rises above (prev + DEAD_BAND) → switch to RISING and follow up.
                 ema = self._ema_current
@@ -785,9 +787,14 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
                 if self._schmitt_state == "rising":
                     if ema >= prev:
                         self._schmitt_current = ema          # follow up freely
+                    elif prev - ema >= DEAD_BAND:
+                        self._schmitt_state = "falling"      # large drop — switch and follow immediately
+                        self._schmitt_current = ema
+                        _LOGGER.debug("Schmitt RISING→FALLING (large) for %s at %.2fA (prev=%.2fA)",
+                                      self._attr_name, ema, prev)
                     else:
-                        self._schmitt_state = "falling"      # input dropped — hold, switch state
-                        _LOGGER.debug("Schmitt RISING→FALLING for %s at %.2fA (prev=%.2fA)",
+                        self._schmitt_state = "falling"      # small drop — switch but hold
+                        _LOGGER.debug("Schmitt RISING→FALLING (small) for %s at %.2fA (prev=%.2fA)",
                                       self._attr_name, ema, prev)
                 else:  # falling
                     if ema < prev - DEAD_BAND:
