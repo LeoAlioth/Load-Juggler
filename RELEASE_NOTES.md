@@ -1,5 +1,13 @@
 # Release Notes
 
+## 2.0.6
+
+### Improvements
+
+- **Smoother current transitions**: Updated deadband to a propper Schmitt trigger. And applied ramps even if available current momentarily drops below minimum current the EVSE can offer. So a brief large spike in consumption, now just slows down changing instead of stopping it completely.
+
+---
+
 ## 2.0.5
 
 ### Improvements
