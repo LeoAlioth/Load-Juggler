@@ -46,7 +46,7 @@
                 "title": "Konfiguracija omrežja",
                 "description": "Nastavite omrežje in električne nastavitve",
                 "data": {
-                    "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (obvezno)",
+                    "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (neobvezno - nastavite na 'None' za izvenomrežne nastavitve)",
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno - nastavite na 'None' za enofazno)",
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno - nastavite na 'None' za eno/dvofazno)",
                     "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
@@ -204,7 +204,7 @@
                 "title": "Ponovno konfiguriraj nastavitve omrežja",
                 "description": "Posodobite konfiguracijo omrežja",
                 "data": {
-                    "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (obvezno)",
+                    "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (neobvezno - nastavite na 'None' za izvenomrežne nastavitve)",
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno)",
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
                     "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
@@ -378,7 +378,7 @@
                 "title": "Posodobi nastavitve omrežja",
                 "description": "Posodobite omrežje in električne nastavitve",
                 "data": {
-                    "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (obvezno)",
+                    "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (neobvezno - nastavite na 'None' za izvenomrežne nastavitve)",
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno)",
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
                     "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
