@@ -1,5 +1,5 @@
 """
-Dynamic OCPP EVSE - Main calculation module.
+Load Juggler - Main calculation module.
 
 This file provides a unified interface for EVSE calculations.
 All core calculation logic has been refactored into the calculations/ directory.

@@ -15,7 +15,7 @@
     "config": {
         "step": {
             "user": {
-                "title": "Dynamic OCPP EVSE Setup",
+                "title": "Load Juggler Setup",
                 "description": "Choose what you want to configure",
                 "data": {
                     "setup_type": "What would you like to set up?"

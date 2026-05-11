@@ -1,4 +1,4 @@
-"""Phase detection utilities for Dynamic OCPP EVSE."""
+"""Phase detection utilities for Load Juggler."""
 import logging
 from .utils import is_number
 

@@ -91,14 +91,14 @@ def check_inversion(state: dict, smoothed_phases: list, chargers: list,
                         "(%d/%d signals)", hub_name, inv_count, _INV_WINDOW_SIZE,
                     )
                     result = {
-                        "title": "Dynamic OCPP EVSE \u2014 Possible Grid CT Inversion",
+                        "title": "Load Juggler \u2014 Possible Grid CT Inversion",
                         "message": (
                             f"Your grid current sensors for hub '{hub_name}' may be "
                             "installed backwards (inverted).\n\n"
                             "When EV charging increased, the measured grid import "
                             "decreased \u2014 the opposite of what is physically expected.\n\n"
                             "To fix this, go to:\n"
-                            "Settings \u2192 Devices & Services \u2192 Dynamic OCPP EVSE \u2192 "
+                            "Settings \u2192 Devices & Services \u2192 Load Juggler \u2192 "
                             f"'{hub_name}' \u2192 Configure \u2192 Grid Settings \u2192 "
                             "enable 'Invert phase readings'.\n\n"
                             "If already enabled, your CT clamps may still be physically "
@@ -242,7 +242,7 @@ def _handle_mismatch(cs: dict, charger, hub_entry_id: str, cid: str,
         )
         return {
             "title": (
-                f"Dynamic OCPP EVSE \u2014 Phase Mismatch: "
+                f"Load Juggler \u2014 Phase Mismatch: "
                 f"{charger.entity_id}"
             ),
             "message": (
@@ -251,7 +251,7 @@ def _handle_mismatch(cs: dict, charger, hub_entry_id: str, cid: str,
                 f"**Phase {configured_phase}**.\n\n"
                 f"To fix this manually, change '{line_label} \u2192 Site Phase' "
                 f"from **{configured_phase}** to **{detected_phase}** in:\n"
-                "Settings \u2192 Devices & Services \u2192 Dynamic OCPP EVSE "
+                "Settings \u2192 Devices & Services \u2192 Load Juggler "
                 f"\u2192 '{charger.entity_id}' \u2192 Configure.\n\n"
                 "If no action is taken, the mapping will be auto-corrected "
                 "once sufficient confidence is reached."
@@ -277,7 +277,7 @@ def _handle_mismatch(cs: dict, charger, hub_entry_id: str, cid: str,
     )
     return {
         "title": (
-            f"Dynamic OCPP EVSE \u2014 Phase Mapping Auto-Corrected: "
+            f"Load Juggler \u2014 Phase Mapping Auto-Corrected: "
             f"{charger.entity_id}"
         ),
         "message": (

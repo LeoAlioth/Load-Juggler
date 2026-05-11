@@ -1,4 +1,4 @@
-"""Utility functions for Dynamic OCPP EVSE calculations."""
+"""Utility functions for Load Juggler calculations."""
 
 from __future__ import annotations
 from typing import TYPE_CHECKING

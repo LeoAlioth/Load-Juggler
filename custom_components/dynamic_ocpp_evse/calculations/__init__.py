@@ -1,5 +1,5 @@
 """
-Calculation module for Dynamic OCPP EVSE.
+Calculation module for Load Juggler.
 
 New architecture using SiteContext and LoadContext.
 All calculations unified in target_calculator.py.

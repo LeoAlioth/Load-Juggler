@@ -25,7 +25,7 @@
     "config": {
         "step": {
             "user": {
-                "title": "Nastavitev Dynamic OCPP EVSE",
+                "title": "Load Juggler Nastavitve",
                 "description": "Izberite, kaj želite nastaviti",
                 "data": {
                     "setup_type": "Kaj želite nastaviti?"

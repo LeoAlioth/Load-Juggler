@@ -120,7 +120,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
-    """Set up the Dynamic OCPP EVSE component."""
+    """Set up the Load Juggler component."""
     
     async def handle_reset_service(call):
         """Handle the reset service call."""
@@ -332,7 +332,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Set up Dynamic OCPP EVSE from a config entry."""
+    """Set up Load Juggler from a config entry."""
     hass.data.setdefault(DOMAIN, {
         "hubs": {},
         "chargers": {},
@@ -575,7 +575,7 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Unload a Dynamic OCPP EVSE config entry."""
+    """Unload a Load Juggler config entry."""
     entry_type = entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
     
     if entry_type == ENTRY_TYPE_HUB:

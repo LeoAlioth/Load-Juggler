@@ -1,4 +1,4 @@
-"""Helper utilities for Dynamic OCPP EVSE integration."""
+"""Helper utilities for Load Juggler integration."""
 
 from __future__ import annotations
 

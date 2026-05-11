@@ -16,7 +16,7 @@ SCAN_INTERVAL = timedelta(seconds=10)
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities):
-    """Set up the Dynamic OCPP EVSE Sensor from a config entry."""
+    """Set up the Load Juggler Sensor from a config entry."""
     entry_type = config_entry.data.get(ENTRY_TYPE)
     
     # Set up hub sensor for hub entries
@@ -30,8 +30,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         has_phase_c = bool(get_entry_value(config_entry, CONF_PHASE_C_CURRENT_ENTITY_ID, None))
 
         entities = [
-            DynamicOcppEvseHubSensor(hass, config_entry, name, entity_id),
-            DynamicOcppEvseHubStatusSensor(hass, config_entry, name, entity_id),
+            LoadJugglerHubSensor(hass, config_entry, name, entity_id),
+            LoadJugglerHubStatusSensor(hass, config_entry, name, entity_id),
         ]
         # Create individual hub data sensors from definitions
         for defn in HUB_SENSOR_DEFINITIONS:
@@ -41,7 +41,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
                 continue
             if defn.get("requires_phase") == "C" and not has_phase_c:
                 continue
-            entities.append(DynamicOcppEvseHubDataSensor(hass, config_entry, name, entity_id, defn))
+            entities.append(LoadJugglerHubDataSensor(hass, config_entry, name, entity_id, defn))
 
         async_add_entities(entities)
         phases = "A" + ("B" if has_phase_b else "") + ("C" if has_phase_c else "")
@@ -53,7 +53,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         name = config_entry.data.get(CONF_NAME, "Circuit Group")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "circuit_group")
         hub_entry_id = config_entry.data.get(CONF_HUB_ENTRY_ID)
-        sensor = DynamicOcppEvseCircuitGroupSensor(hass, config_entry, name, entity_id, hub_entry_id)
+        sensor = LoadJugglerCircuitGroupSensor(hass, config_entry, name, entity_id, hub_entry_id)
         async_add_entities([sensor])
         _LOGGER.info("Setting up circuit group sensor for %s", name)
         return
@@ -80,7 +80,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
     # Create the sensor FIRST so the coordinator can reference its persistent state
     # (e.g., _last_command_time for throttling OCPP commands).
-    sensor = DynamicOcppEvseChargerSensor(hass, config_entry, hub_entry, name, entity_id, None)
+    sensor = LoadJugglerDeviceSensor(hass, config_entry, hub_entry, name, entity_id, None)
 
     async def async_update_data():
         """Fetch data for the coordinator using the persistent sensor instance."""
@@ -97,13 +97,13 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
-        name=f"Dynamic OCPP EVSE Coordinator - {name}",
+        name=f"Load Juggler Coordinator - {name}",
         update_method=async_update_data,
         update_interval=timedelta(seconds=site_update_frequency),
     )
     sensor.coordinator = coordinator
-    allocated_sensor = DynamicOcppEvseAllocatedCurrentSensor(hass, config_entry, hub_entry, name, entity_id)
-    status_sensor = DynamicOcppEvseChargerStatusSensor(hass, config_entry, hub_entry, name, entity_id)
+    allocated_sensor = LoadJugglerAllocatedCurrentSensor(hass, config_entry, hub_entry, name, entity_id)
+    status_sensor = LoadJugglerDeviceStatusSensor(hass, config_entry, hub_entry, name, entity_id)
     async_add_entities([sensor, allocated_sensor, status_sensor])
 
     # Start the first update
@@ -123,7 +123,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
             coordinator = DataUpdateCoordinator(
                 hass,
                 _LOGGER,
-                name=f"Dynamic OCPP EVSE Coordinator - {name}",
+                name=f"Load Juggler Coordinator - {name}",
                 update_method=async_update_data,
                 update_interval=timedelta(seconds=new_site_freq),
             )
@@ -136,8 +136,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     config_entry.async_on_unload(config_entry.add_update_listener(async_update_listener))
 
 
-class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
-    """Representation of a Dynamic OCPP EVSE Charger Sensor."""
+class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
+    """Representation of a managed device (EVSE, smart plug, etc.)."""
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id, coordinator):
         """Initialize the sensor."""
@@ -969,11 +969,11 @@ class DynamicOcppEvseChargerSensor(ChargerEntityMixin, SensorEntity):
             else:
                 await self._send_ocpp_command(limit, hub_entry, dynamic_control_on, now_mono)
         except Exception as e:
-            _LOGGER.error(f"Error updating Dynamic OCPP EVSE Charger Sensor {self._attr_name}: {e}", exc_info=True)
+            _LOGGER.error(f"Error updating Load Juggler Charger Sensor {self._attr_name}: {e}", exc_info=True)
 
 
-class DynamicOcppEvseAllocatedCurrentSensor(ChargerEntityMixin, SensorEntity):
-    """Sensor showing the allocated (commanded) current for a charger."""
+class LoadJugglerAllocatedCurrentSensor(ChargerEntityMixin, SensorEntity):
+    """Sensor showing the allocated current for a managed device."""
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id):
         """Initialize the allocated current sensor."""
@@ -1014,8 +1014,8 @@ class DynamicOcppEvseAllocatedCurrentSensor(ChargerEntityMixin, SensorEntity):
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
 
 
-class DynamicOcppEvseChargerStatusSensor(ChargerEntityMixin, SensorEntity):
-    """Sensor showing the current charging status reason for a charger."""
+class LoadJugglerDeviceStatusSensor(ChargerEntityMixin, SensorEntity):
+    """Sensor showing the current status reason for a managed device."""
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id):
         """Initialize the charging status sensor."""
@@ -1043,8 +1043,8 @@ class DynamicOcppEvseChargerStatusSensor(ChargerEntityMixin, SensorEntity):
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
 
 
-class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
-    """Hub-level sensor showing site-wide charging information."""
+class LoadJugglerHubSensor(HubEntityMixin, SensorEntity):
+    """Hub-level sensor showing site-wide information."""
 
     def __init__(self, hass, config_entry, name, entity_id):
         """Initialize the hub sensor."""
@@ -1120,7 +1120,7 @@ class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
             _LOGGER.error(f"Error updating hub sensor {self._attr_name}: {e}", exc_info=True)
 
 
-class DynamicOcppEvseHubStatusSensor(HubEntityMixin, SensorEntity):
+class LoadJugglerHubStatusSensor(HubEntityMixin, SensorEntity):
     """Hub-level sensor showing site configuration status and warnings."""
 
     def __init__(self, hass, config_entry, name, entity_id):
@@ -1276,7 +1276,7 @@ HUB_SENSOR_DEFINITIONS = [
 ]
 
 
-class DynamicOcppEvseHubDataSensor(HubEntityMixin, SensorEntity):
+class LoadJugglerHubDataSensor(HubEntityMixin, SensorEntity):
     """Generic hub data sensor driven by a definition dict."""
 
     def __init__(self, hass, config_entry, name, entity_id, defn):
@@ -1304,7 +1304,7 @@ class DynamicOcppEvseHubDataSensor(HubEntityMixin, SensorEntity):
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
 
 
-class DynamicOcppEvseCircuitGroupSensor(GroupEntityMixin, SensorEntity):
+class LoadJugglerCircuitGroupSensor(GroupEntityMixin, SensorEntity):
     """Sensor showing circuit group allocation and headroom."""
 
     def __init__(self, hass, config_entry, name, entity_id, hub_entry_id):

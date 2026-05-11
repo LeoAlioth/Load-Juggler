@@ -21,7 +21,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
-    """Set up the Dynamic OCPP EVSE Select from a config entry."""
+    """Set up the Load Juggler Select from a config entry."""
     entry_type = config_entry.data.get(ENTRY_TYPE)
 
     # Hub entries get distribution_mode selector only
@@ -30,7 +30,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "site_load_management")
 
         entities = [
-            DynamicOcppEvseDistributionModeSelect(hass, config_entry, name, entity_id)
+            LoadJugglerDistributionModeSelect(hass, config_entry, name, entity_id)
         ]
         _LOGGER.info(f"Setting up hub select entities: {[entity.unique_id for entity in entities]}")
         async_add_entities(entities)
@@ -97,8 +97,8 @@ class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
             _LOGGER.error(f"Invalid option selected: {option}")
 
 
-class DynamicOcppEvseDistributionModeSelect(HubEntityMixin, SelectEntity, RestoreEntity):
-    """Representation of a Dynamic OCPP EVSE Distribution Mode Select (Hub-level)."""
+class LoadJugglerDistributionModeSelect(HubEntityMixin, SelectEntity, RestoreEntity):
+    """Representation of a Load Juggler Distribution Mode Select (Hub-level)."""
 
     _hub_data_key = "distribution_mode"
 

@@ -43,8 +43,8 @@ def _validate_entity_units(hass, user_input: dict, field_unit_map: dict, errors:
             errors[field_key] = "invalid_unit"
 
 
-class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Dynamic OCPP EVSE."""
+class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Load Juggler."""
 
     VERSION = 2
     MINOR_VERSION = 2
@@ -1752,21 +1752,21 @@ class DynamicOcppEvseConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
         """Get the options flow for this handler."""
-        return DynamicOcppEvseOptionsFlow()
+        return LoadJugglerOptionsFlow()
 
 
-class DynamicOcppEvseOptionsFlow(config_entries.OptionsFlow):
-    """Handle options flow for Dynamic OCPP EVSE."""
+class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
+    """Handle options flow for Load Juggler."""
 
     def __init__(self):
         self._data = {}
         self._flow = None  # Cached config flow for schema/helper access
 
     @property
-    def _schema_helper(self) -> DynamicOcppEvseConfigFlow:
-        """Cached DynamicOcppEvseConfigFlow instance for schema building."""
+    def _schema_helper(self) -> LoadJugglerConfigFlow:
+        """Cached LoadJugglerConfigFlow instance for schema building."""
         if self._flow is None:
-            self._flow = DynamicOcppEvseConfigFlow()
+            self._flow = LoadJugglerConfigFlow()
             self._flow.hass = self.hass
         return self._flow
 
