@@ -1091,7 +1091,7 @@ class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
         return "power"
 
     async def async_update(self):
-        """Update hub sensor with site-wide data from hass.data."""
+        """Update hub sensor with site-wide data from hass.data or by running calculation."""
         try:
             hub_entry_id = self.config_entry.entry_id
             hub_data = self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
@@ -1100,6 +1100,22 @@ class DynamicOcppEvseHubSensor(HubEntityMixin, SensorEntity):
                 self._total_site_available_power = hub_data.get("total_site_available_power")
                 self._grid_stale = hub_data.get("grid_stale", False)
                 self._last_update = hub_data.get("last_update", datetime.now(timezone.utc))
+            else:
+                _LOGGER.debug("No charger data available for hub %s, running calculation directly", self._attr_name)
+                class MockSensor:
+                    def __init__(self, hass, hub_entry):
+                        self.hass = hass
+                        self.hub_entry = hub_entry
+                mock_sensor = MockSensor(self.hass, self.config_entry)
+                hub_data = run_hub_calculation(mock_sensor)
+                self._total_site_available_power = hub_data.get("total_site_available_power")
+                self._grid_stale = hub_data.get("grid_stale", False)
+                self._last_update = hub_data.get("last_update", datetime.now(timezone.utc))
+                if DOMAIN not in self.hass.data:
+                    self.hass.data[DOMAIN] = {}
+                if "hub_data" not in self.hass.data[DOMAIN]:
+                    self.hass.data[DOMAIN]["hub_data"] = {}
+                self.hass.data[DOMAIN]["hub_data"][hub_entry_id] = hub_data
         except Exception as e:
             _LOGGER.error(f"Error updating hub sensor {self._attr_name}: {e}", exc_info=True)
 
