@@ -407,6 +407,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             if device_type == DEVICE_TYPE_PLUG:
                 await send_plug_command(self, limit, hub_data, now_mono)
             else:
+                await check_profile_compliance(self, limit, dynamic_control_on)
                 await send_ocpp_command(
                     self, limit, hub_entry, dynamic_control_on, now_mono
                 )

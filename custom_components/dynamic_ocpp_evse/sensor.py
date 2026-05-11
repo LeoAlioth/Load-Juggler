@@ -16,12 +16,12 @@ from .hub import (
     LoadJugglerHubDataSensor,
     HUB_SENSOR_DEFINITIONS,
 )
+from .circuit_group import LoadJugglerCircuitGroupSensor
+from . import get_hub_for_charger
 
 DynamicOcppEvseChargerSensor = LoadJugglerDeviceSensor
 DynamicOcppEvseHubSensor = LoadJugglerHubSensor
 DynamicOcppEvseHubDataSensor = LoadJugglerHubDataSensor
-from .circuit_group import LoadJugglerCircuitGroupSensor
-from . import get_hub_for_charger
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=10)
