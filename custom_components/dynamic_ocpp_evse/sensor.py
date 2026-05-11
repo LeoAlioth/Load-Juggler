@@ -16,6 +16,10 @@ from .hub import (
     LoadJugglerHubDataSensor,
     HUB_SENSOR_DEFINITIONS,
 )
+
+DynamicOcppEvseChargerSensor = LoadJugglerDeviceSensor
+DynamicOcppEvseHubSensor = LoadJugglerHubSensor
+DynamicOcppEvseHubDataSensor = LoadJugglerHubDataSensor
 from .circuit_group import LoadJugglerCircuitGroupSensor
 from . import get_hub_for_charger
 
