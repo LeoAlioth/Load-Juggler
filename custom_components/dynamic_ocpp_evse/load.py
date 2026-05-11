@@ -27,8 +27,9 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         self._attr_name = f"{name} Available Current"
         self._attr_unique_id = f"{entity_id}_available_current"
         charger_entity_id = config_entry.data.get(CONF_ENTITY_ID)
-        self._connector_status_entity = f"sensor.{charger_entity_id}_status_connector"
-        self._charge_control_entity = f"switch.{charger_entity_id}_charge_control"
+        ocpp_device_id = config_entry.data.get(CONF_CHARGER_ID, charger_entity_id)
+        self._connector_status_entity = f"sensor.{ocpp_device_id}_status_connector"
+        self._charge_control_entity = f"switch.{ocpp_device_id}_charge_control"
         self._state = None
         self._phases = None
         self._car_active_phases = None
