@@ -1904,7 +1904,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data_schema = self._charger_info_schema(
             {
                 CONF_NAME: self._selected_charger["name"],
-                CONF_ENTITY_ID: self._selected_charger["id"],
+                CONF_ENTITY_ID: f"lj_{self._selected_charger['id']}",
                 CONF_CHARGER_PRIORITY: next_priority,
                 "ocpp_device_id": self._selected_charger.get("device_id"),
             }

@@ -149,14 +149,14 @@
             },
             "charger_info": {
                 "title": "Charger Info",
-                "description": "Set up the charger identity for {charger_name}\n\nDetected OCPP entities:\n- Current Import: {current_import}\n- Current Offered: {current_offered}",
+                "description": "Set up the charger identity for {charger_name}\n\nDetected OCPP entities:\n- {detected_entities}",
                 "data": {
                     "name": "Charger name",
                     "entity_id": "Entity ID prefix",
                     "charger_priority": "Priority (1 = highest)"
                 },
                 "data_description": {
-                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power).",
+                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.[prefix]_power).",
                     "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes."
                 }
             },
