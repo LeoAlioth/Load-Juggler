@@ -78,7 +78,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 CONF_CHARGE_PAUSE_DURATION,
                 DEFAULT_CHARGE_PAUSE_DURATION,
             )
-            elapsed = (datetime.now() - self._pause_started_at).total_seconds()
+            elapsed = time.monotonic() - self._pause_started_at
             pause_remaining = max(0, round(pause_duration_min * 60 - elapsed))
 
         grace_remaining = None
@@ -86,7 +86,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             grace_period_min = get_entry_value(
                 self.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
             )
-            elapsed = (datetime.now() - self._grace_started_at).total_seconds()
+            elapsed = time.monotonic() - self._grace_started_at
             grace_remaining = max(0, round(grace_period_min * 60 - elapsed))
 
         attrs = {
@@ -156,6 +156,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 self.config_entry.entry_id,
                 self._phases or 1,
             )
+            charger_phase_masks = hub_data.get("charger_phase_masks", {})
             current_distribution_mode = hub_data.get("distribution_mode")
 
             charger_modes = hub_data.get("charger_modes", {})
@@ -271,16 +272,14 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                     )
                     if physical_available >= min_charge_current:
                         if self._grace_started_at is None:
-                            self._grace_started_at = datetime.now()
+                            self._grace_started_at = time.monotonic()
                             _LOGGER.debug(
                                 "Grace timer started for %s (mode=%s, grace=%dm)",
                                 self._attr_name,
                                 self._operating_mode,
                                 grace_period_minutes,
                             )
-                        elapsed = (
-                            datetime.now() - self._grace_started_at
-                        ).total_seconds()
+                        elapsed = time.monotonic() - self._grace_started_at
                         if elapsed < grace_period_seconds:
                             self._allocated_current = float(min_charge_current)
                         else:
@@ -315,6 +314,12 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             self.hass.data[DOMAIN]["charger_allocations"][
                 self.config_entry.entry_id
             ] = self._allocated_current
+
+            if "charger_phase_masks" not in self.hass.data[DOMAIN]:
+                self.hass.data[DOMAIN]["charger_phase_masks"] = {}
+            self.hass.data[DOMAIN]["charger_phase_masks"][
+                self.config_entry.entry_id
+            ] = charger_phase_masks.get(self.config_entry.entry_id, "")
 
             command_interval = get_entry_value(
                 self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
@@ -364,7 +369,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                     * 60
                 )
                 if self._pause_started_at is None:
-                    self._pause_started_at = datetime.now()
+                    self._pause_started_at = time.monotonic()
                     _LOGGER.debug("Charge pause started for %s", self._attr_name)
                 limit = 0
             else:
@@ -377,7 +382,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                     * 60
                 )
                 if self._pause_started_at is not None:
-                    elapsed = (datetime.now() - self._pause_started_at).total_seconds()
+                    elapsed = time.monotonic() - self._pause_started_at
                     if elapsed < pause_duration_s:
                         limit = 0
                     else:

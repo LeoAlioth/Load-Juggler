@@ -68,11 +68,16 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     excess_pool = _calculate_excess_available(site)
     _LOGGER.debug(f"Step 3 - Excess pool: {excess_pool}")
 
-    # Step 4: Distribute power among active chargers only
+    # Step 4: Distribute power among active chargers only.
+    # site.chargers is temporarily narrowed to the active set; the try/finally
+    # guarantees it is restored even if _distribute_power raises, so downstream
+    # steps (circuit groups, hub result) still see every charger.
     if active_chargers:
         site.chargers = active_chargers
-        _distribute_power(site, physical_pool, solar_pool, excess_pool)
-        site.chargers = all_chargers
+        try:
+            _distribute_power(site, physical_pool, solar_pool, excess_pool)
+        finally:
+            site.chargers = all_chargers
 
     # Set inactive chargers to 0 allocated
     for charger in inactive_chargers:
@@ -204,10 +209,17 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
 
     Grid power is per-phase and CANNOT be reallocated between phases.
     """
+    # Power buffer (W) is a safety margin kept unused on the grid. Spread it
+    # across the phases as an extra per-phase deduction so it is honored on the
+    # main-breaker limit even when no max_grid_import_power is configured.
+    buffer_per_phase = 0.0
+    if site.power_buffer and site.power_buffer > 0:
+        buffer_per_phase = (site.power_buffer / site.voltage) / (site.num_phases or 1)
+
     # Calculate per-phase limits (only for phases that physically exist)
-    phase_a_limit = max(0, site.main_breaker_rating - site.consumption.a) if site.consumption.a is not None else 0
-    phase_b_limit = max(0, site.main_breaker_rating - site.consumption.b) if site.consumption.b is not None else 0
-    phase_c_limit = max(0, site.main_breaker_rating - site.consumption.c) if site.consumption.c is not None else 0
+    phase_a_limit = max(0, site.main_breaker_rating - site.consumption.a - buffer_per_phase) if site.consumption.a is not None else 0
+    phase_b_limit = max(0, site.main_breaker_rating - site.consumption.b - buffer_per_phase) if site.consumption.b is not None else 0
+    phase_c_limit = max(0, site.main_breaker_rating - site.consumption.c - buffer_per_phase) if site.consumption.c is not None else 0
 
     # If grid charging not allowed (and has battery), limited to export only
     if not site.allow_grid_charging and site.battery_soc is not None:
@@ -222,7 +234,8 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
 
     # Apply max grid import power limit (if configured)
     # This is a total (all-phase) constraint from the grid operator / smart meter.
-    # Power buffer has already been subtracted before reaching SiteContext.
+    # The power buffer is already subtracted from max_grid_import_power upstream
+    # (in run_hub_calculation) and from the per-phase breaker limits above.
     # Applied as a cap on combination fields (ABC, AB, AC, BC) — NOT by scaling
     # per-phase limits, which would be overly conservative for multi-phase chargers.
     if site.max_grid_import_power is not None:

@@ -221,16 +221,21 @@ async def send_ocpp_command(
             )
 
     try:
+        # blocking=True so a dispatch/execution failure raises here and is
+        # caught — with blocking=False the call returns before running and the
+        # command would be recorded as sent even when it never reached the
+        # charger, causing the compliance checker to trigger spurious resets.
         await sensor.hass.services.async_call(
             "ocpp",
             "set_charge_rate",
             {"devid": ocpp_device_id, "custom_profile": charging_profile},
-            blocking=False,
+            blocking=True,
         )
     except Exception as e:
         _LOGGER.warning("OCPP set_charge_rate failed for %s: %s", sensor._attr_name, e)
         return
 
+    # Recorded only after the command was actually sent successfully.
     sensor._last_commanded_limit = limit
     sensor._last_update = datetime.now(timezone.utc)
     sensor._last_command_time = now_mono

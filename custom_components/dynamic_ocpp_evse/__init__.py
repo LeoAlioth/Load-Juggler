@@ -1,5 +1,6 @@
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.config_entries import ConfigEntry, SOURCE_INTEGRATION_DISCOVERY
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.script import Script
@@ -364,8 +365,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry):
-    """Reload the config entry when options are changed."""
+    """Reload the config entry when options are changed.
+
+    For a hub, also reload its chargers and groups so hub-level settings
+    (e.g. site_update_frequency) propagate to them via a clean rebuild.
+    """
     await hass.config_entries.async_reload(entry.entry_id)
+
+    if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_HUB:
+        for child in hass.config_entries.async_entries(DOMAIN):
+            if child.data.get(CONF_HUB_ENTRY_ID) == entry.entry_id:
+                await hass.config_entries.async_reload(child.entry_id)
 
 
 async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -402,12 +412,15 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
     _LOGGER.info("Setting up charger entry: %s", entry.title)
     
     hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
-    
-    # Verify hub exists
+
+    # Verify hub exists. HA sets up config entries concurrently in arbitrary
+    # order, so the hub may not be ready yet — raise ConfigEntryNotReady so HA
+    # retries this charger once the hub has finished setting up.
     if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
-        _LOGGER.error("Hub entry %s not found for charger %s", hub_entry_id, entry.title)
-        return False
-    
+        raise ConfigEntryNotReady(
+            f"Hub {hub_entry_id} not ready for charger {entry.title}"
+        )
+
     # Store charger data (runtime state written by entities, read by calculation)
     device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
     default_mode = DEFAULT_OPERATING_MODE_PLUG if device_type == DEVICE_TYPE_PLUG else DEFAULT_OPERATING_MODE_EVSE
@@ -439,10 +452,12 @@ async def _setup_group_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
 
-    # Verify hub exists
+    # Verify hub exists — raise ConfigEntryNotReady so HA retries this group
+    # once the hub has finished setting up (entry setup order is concurrent).
     if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
-        _LOGGER.error("Hub entry %s not found for group %s", hub_entry_id, entry.title)
-        return False
+        raise ConfigEntryNotReady(
+            f"Hub {hub_entry_id} not ready for group {entry.title}"
+        )
 
     # Store group data
     hass.data[DOMAIN]["groups"][entry.entry_id] = {

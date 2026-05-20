@@ -841,11 +841,17 @@ def _build_hub_result(
     # Per-charger active phase count (for W-based OCPP profiles)
     # Uses actual draw to detect 1-phase car on 3-phase EVSE; falls back to configured phases.
     charger_active_phases = {}
+    charger_phase_masks = {}
     for c in site.chargers:
         active = sum(
             1 for cur in (c.l1_current, c.l2_current, c.l3_current) if cur > 1.0
         )
         charger_active_phases[c.charger_id] = active if active > 0 else c.phases
+        # Live site-phase mask: which site phases A/B/C are actively drawing
+        site_draw = c.get_site_phase_draw()
+        charger_phase_masks[c.charger_id] = "".join(
+            phase for phase, draw in zip(("A", "B", "C"), site_draw) if draw > 1.0
+        )
 
     return {
         CONF_TOTAL_ALLOCATED_CURRENT: round(sum(charger_targets.values()), 1),
@@ -872,6 +878,7 @@ def _build_hub_result(
         "charger_names": charger_names,
         "charger_modes": charger_modes,
         "charger_active_phases": charger_active_phases,
+        "charger_phase_masks": charger_phase_masks,
         "distribution_mode": site.distribution_mode,
         # Auto-detected plug power ratings
         "plug_auto_power": plug_auto_power,

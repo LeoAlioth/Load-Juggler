@@ -2,13 +2,28 @@
 
 ## In Progress
 
-### Add solar/excess mode grace period to EVSE and plug configuration
+_Nothing in progress — see "Bugs" below for the active work queue._
 
-### integration already automatically calls reset occp profile if weird behaviour is detected. If that does not help, an escalation - reset the evse completely should be triggered
+> All four former "In Progress" items are now done: grace period in EVSE/plug config,
+> escalation to hard reset, and the grace-period countdown in status (all three found
+> already implemented during the 2026-05-20 audit), plus the EVSE phase-mask entity —
+> `LoadJugglerPhaseMaskSensor`, created only for 3-phase EVSEs, showing the live
+> site-phase mask (e.g. `A` / `AB` / `ABC`, `Idle` when not drawing).
 
-### Expose current phase mask on EVSE as a separate entity (on 3 phase evse only)
+## Bugs — Codebase Audit 2026-05-20
 
-### update evse/plug status, to show that the grace period timer is running (countdown untill it stops)
+Static audit of all ~9,600 lines. The 3 Critical and all 9 High-severity items
+were fixed on 2026-05-20; the 7 Medium items below remain open.
+
+### Medium — open
+
+- [ ] **Two smart loads default to `entity_id="lj_smart_load"`** → identical `unique_id`s → HA silently drops the second plug's entities. Config flow doesn't validate `CONF_ENTITY_ID` uniqueness (same for a 2nd hub / circuit group).
+- [ ] **No hysteresis on `excess_export_threshold`** — battery SOC has hysteresis, the export threshold doesn't → charger contactor chatter when export hovers near the threshold.
+- [ ] **Circuit-group pool zeroes unmetered phases** (`target_calculator.py:165`) — on a partially-metered site (CT on phase A only), a 3-phase charger in a group is capped to 0.
+- [ ] **`_migrate_hub_entities_if_needed` calls `async_update_entry` unconditionally** on every startup → at least one extra full hub reload on first boot. Guard with an "only if changed" check.
+- [ ] **Auto-detect mismatch notification can re-fire repeatedly** (`auto_detect.py` `_evaluate_score`) — score decay resets `notify_sent_1ph` so the same notification spams on noisy multi-phase sites.
+- [ ] **Service handlers don't enforce min ≤ max** — `set_max_current`/`set_min_current` can set min above max; the engine then sees `min > max`.
+- [ ] **`compliance.py:100` tolerance uses command freq, not site freq** — a legitimately ramping charger can be flagged non-compliant and auto-reset mid-ramp, fighting the smoothing logic.
 
 ## Backlog
 
@@ -18,6 +33,21 @@
 ### Hot Water Tank Device Type — Detailed Implementation Plan
 
 **Overview:** Add support for hot water tanks with resistive heating elements controlled via thermostat. Unlike EVSE (variable current) or plugs (fixed power), hot water tanks are temperature-controlled binary loads (on/off) with hysteresis.
+
+> **⚠️ Plan needs remapping after the sensor.py refactor (2026-05-20).** The file/function
+> map below predates the split of `sensor.py` into `hub.py` / `load.py` / `load_sensors.py` /
+> `ocpp.py` / `plug.py` / `status.py` etc. Before implementing:
+>
+> - **Phase 2** — there is no `_compute_charger_ceiling()` and no per-device "ceiling
+>   function" pattern. The engine uses `_source_limit()` in `target_calculator.py` and has
+>   **no `device_type` branching at all**. Binary on/off conversion is done in the HA layer
+>   (`plug.py`), not the calc engine. Either add `device_type` branching to `_source_limit`,
+>   or model the tank as "a plug with a thermostat gate" entirely in the HA layer.
+> - **Phase 3.3** — switch on/off control already lives in `plug.py` (`plug.py:22-32`), not
+>   `dynamic_ocpp_evse.py`. Put tank switch control there or in a new module.
+> - **Phase 4.1** — "sensor.py — new sensors" is stale; charger/load sensors now live in
+>   `load.py` / `load_sensors.py`.
+> - `const.py` and `calculations/models.py` (`LoadContext`) references are still accurate.
 
 ---
 
@@ -49,8 +79,9 @@ OPERATING_MODES_HOT_WATER_TANK = [
     OPERATING_MODE_EXCESS,
 ]
 
-DEFAULT_TARGET_TEMPERATURE = 55  # °C
-DEFAULT_TEMPERATURE_HYSTERESIS = 5  # °C
+DEFAULT_TARGET_TEMPERATURE = 45  # °C
+DEFAULT_HIGH_TEMP_TARGET = 80 # °C
+DEFAULT_TEMPERATURE_HYSTERESIS = 1  # °C
 DEFAULT_HEATING_ELEMENT_POWER = 2000  # W
 ```
 
@@ -326,114 +357,3 @@ Add translation keys for:
 ## Other
 
 - [ ] **Icon submission** — Submit `icon.png` to [HA brands repo](https://github.com/home-assistant/brands) (see dev/ISSUES.md)
-
-## Completed (107 items)
-
-1. PhaseValues → Optional[float] + helpers
-2. Available current feature
-3. 1-phase grid limit bug fix + test scenarios
-4. SiteContext.num_phases → derived property
-5. Dedicated Solar Power Entity
-6. Smart Load support (device_type evse/plug)
-7. Charge rate unit detection via OCPP
-8. Distribution mode string mismatch fix
-9. PhaseConstraints refactoring
-10. Smart Load UX improvements
-11. Translations (en.json + sl.json)
-12. Current rate limiting
-13. Auto-reset for non-compliant chargers
-14. Inverter configuration in config flow
-15. Grid consumption feedback loop
-16. Charge pause UX improvements
-17. Dual-frequency update loop (site 5s, charger 15s)
-18. Derived solar production formula fix
-19. Multi-cycle test simulation + trace output
-20. Battery-aware derived solar mode
-21. Inverter output cap for battery discharge
-22. Config flow restructuring + charger phase mapping
-23. Per-phase inverter output entities + wiring topology
-24. Test scenario reorganization (99 scenarios)
-25. Eco mode fixes (night surplus, inactive charger minimums, battery min SOC)
-26. Excess mode minimum current fallback
-27. PhaseConstraints.normalize() + combination-field capping
-28. Codebase refactoring (helpers, _read_entity, element_min/max)
-29. Hide Phase B/C sensors on single-phase sites
-30. HA service actions (set_charging_mode, set_distribution_mode, set_max_current)
-31. User documentation / README.md rewrite
-32. Entity selector UX
-33. Auto-detection patterns (12 brand files)
-34. Auto-detect battery + solar entities (SOC, power, charge/discharge)
-35. Options flow auto-detection
-36. Wiring topology auto-detect
-37. Charger name prettification
-38. EVSE charging status sensor
-39. `data_description` help text — all steps
-40. Number selectors with min/max/unit
-41. Max import power → checkbox + slider + optional entity
-42. Inverter power UX: battery power hint
-43. stackLevel Decimal → int bug fix
-44. Feedback loop per-phase draw clamping
-45. Battery power sensor false-positive fix
-46. Hub-aware charger config flow (hide unavailable phases)
-47. Phase mapping help text update
-48. Rename "Smart Plug" → "Smart Load"
-49. Hub debug logging (raw reads, feedback, per-charger, allocation)
-50. Fix entity state lookup bug — use `hass.data[DOMAIN]` shared store
-51. Fix battery SOC target/min sliders not feeding into calculation + create missing MaxImportPowerSlider
-52. Fix EVSE min/max current sliders missing value clamping
-53. Remove unused `ButtonEntity` import from `__init__.py`
-54. Connector status entity ID deduplication in sensor.py
-55. Move `_read_inverter_output()` to module scope
-56. Extract `HubEntityMixin` + `ChargerEntityMixin` into `entity_mixins.py`
-57. Deduplicate `_write_to_hub_data` / `_write_to_charger_data` via mixin
-58. Deduplicate `async_added_to_hass` restore pattern via `_restore_and_publish_number()`
-59. Per-phase loops in `dynamic_ocpp_evse.py` (grid reads, feedback, headroom)
-60. Split `run_hub_calculation()` into subfunctions (~560→~170 lines)
-61. Move rate limiting from OCPP command to allocated current level
-62. Hub sensor cleanup: Solar Surplus → Solar Available Power, deduplicate battery sensors
-63. Debug log: show human-readable charger names instead of entry_id hashes
-64. Hub sensor renames: shorter, consistent naming
-65. Fix entity selector clearing: `suggested_value` instead of `default`
-66. Fix options flow Submit → Next button on non-final steps
-67. Add Sony Xperia phone exclusion to generic battery auto-detection patterns
-68. Reload config entry on options change
-69. EMA smoothing + Schmitt trigger dead band + faster site refresh (2s)
-70. Input-level EMA smoothing on grid CT, solar, battery power, and inverter output
-71. Debug log shows both raw and smoothed values
-72. Auto-detect OCPP `MeterValueSampleInterval` for charger update frequency
-73. Fix "Finishing"/"Faulted" connector status: treat as inactive
-74. Auto-detect power monitoring sensor for smart plugs
-75. Auto-detect grid CT inversion
-76. Auto-detect phase mapping
-77. Solar/Excess grace period (anti-flicker)
-78. Charge pause duration unit change (seconds → minutes) with v2.1→v2.2 migration
-79. Per-load operating modes — foundation
-80. Per-load operating modes — calculation engine
-81. Per-load operating modes — test scenarios (110 passing)
-82. Per-load operating modes — HA integration
-83. Per-load operating modes — translations & services
-84. Rename ChargerContext → LoadContext
-85. Fix case-insensitive OCPP phase attribute reading
-86. Rename "Total EVSE Power" → "Total Managed Power"
-87. Two-stage auto-detect phase mapping with swap logic
-88. 2-phase car inactive line detection
-89. Confidence-weighted auto-detect scoring
-90. 10% clamping tolerance for W-based chargers
-91. Fix W-based OCPP power multiplication
-92. Per-device operating mode in debug logs
-93. Charger targets log: show both allocated and available current
-94. Expose `available_current` as sensor attribute in HA
-95. Available Current sensor shows available (not allocated) current
-96. Circuit Groups — shared breaker limits (9 test scenarios)
-97. Grid CT stale detection with EMA holdover and 60s timeout
-98. Site available power cap by `max_grid_import_power`
-99. Resilience improvements — OCPP try-except, `_UNAVAILABLE` sentinel, NaN/inf guard, stale member filtering
-100. Off-grid support — optional Phase A CT, unified solar derivation, inverter-based phase count fallback
-101. Hub status sensor — config validation + runtime warnings
-102. Cleanup — removed dead `car_phases` field, removed auto-detect state double-init
-103. SuspendedEV handling — near-zero draw treated as inactive after 60s grace period
-104. Battery SOC hysteresis — HA layer hysteresis with 14 boundary test scenarios
-105. Charger finishing test scenarios — 8 scenarios for capacity redistribution
-106. Fix test infrastructure — `minor_version=2`, Python 3.12 CI, pytest-homeassistant-custom-component>=0.13.110
-107. Add HA integration tests to CI — calculation + pytest tests before releases
-

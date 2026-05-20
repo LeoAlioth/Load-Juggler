@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from .const import (
     DOMAIN,
     HARD_RESET_COOLDOWN_SECONDS,
@@ -8,9 +8,11 @@ from .const import (
     ESCALATION_PROFILE_RESET_LIMIT,
     DEFAULT_UPDATE_FREQUENCY,
     RAMP_DOWN_RATE,
+    CONF_ENTITY_ID,
     CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
     CONF_EVSE_POWER_OFFERED_ENTITY_ID,
     CONF_UPDATE_FREQUENCY,
+    CONF_PHASE_VOLTAGE,
     DEFAULT_PHASE_VOLTAGE,
 )
 from .helpers import get_entry_value
@@ -30,13 +32,13 @@ async def check_profile_compliance(
         return
 
     if sensor._last_hard_reset_at is not None:
-        elapsed = (datetime.now() - sensor._last_hard_reset_at).total_seconds()
+        elapsed = (datetime.now(timezone.utc) - sensor._last_hard_reset_at).total_seconds()
         if elapsed < HARD_RESET_COOLDOWN_SECONDS:
             sensor._mismatch_count = 0
             return
 
     if sensor._last_auto_reset_at is not None:
-        elapsed = (datetime.now() - sensor._last_auto_reset_at).total_seconds()
+        elapsed = (datetime.now(timezone.utc) - sensor._last_auto_reset_at).total_seconds()
         if elapsed < AUTO_RESET_COOLDOWN_SECONDS:
             sensor._mismatch_count = 0
             return
@@ -136,7 +138,7 @@ async def check_profile_compliance(
             )
             await perform_hard_reset(sensor)
             sensor._profile_reset_count = 0
-            sensor._last_hard_reset_at = datetime.now()
+            sensor._last_hard_reset_at = datetime.now(timezone.utc)
             sensor._last_auto_reset_at = None
         else:
             _LOGGER.info(
@@ -147,7 +149,7 @@ async def check_profile_compliance(
                 current_offered,
                 sensor._last_commanded_limit,
             )
-            sensor._last_auto_reset_at = datetime.now()
+            sensor._last_auto_reset_at = datetime.now(timezone.utc)
             try:
                 await sensor.hass.services.async_call(
                     DOMAIN,

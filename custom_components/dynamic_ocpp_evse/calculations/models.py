@@ -9,6 +9,11 @@ from dataclasses import dataclass, field, replace
 
 _LOGGER = logging.getLogger(__name__)
 
+# Valid charger phase masks — the site phases a load may occupy. Any other
+# value (e.g. "L1", "D", "BA", "") is rejected by get_available/deduct rather
+# than crashing the calculation with an AttributeError.
+VALID_PHASE_MASKS = frozenset({"A", "B", "C", "AB", "AC", "BC", "ABC"})
+
 
 @dataclass
 class LoadContext:
@@ -249,6 +254,10 @@ class PhaseConstraints:
         - 2-phase on AB: min(A, B, AB/2, ABC/2)
         - 3-phase: min(A, B, C, AB/2, AC/2, BC/2, ABC/3)
         """
+        if mask not in VALID_PHASE_MASKS:
+            _LOGGER.warning("Unknown phase mask '%s', returning 0", mask)
+            return 0
+
         if len(mask) == 1:
             phase = mask
             two_phase_limits = []
@@ -277,6 +286,10 @@ class PhaseConstraints:
 
     def deduct(self, current: float, mask: str) -> PhaseConstraints:
         """Deduct current from all affected phase combinations. Returns new instance."""
+        if mask not in VALID_PHASE_MASKS:
+            _LOGGER.warning("Unknown phase mask '%s', deduct skipped", mask)
+            return self.copy()
+
         result = self.copy()
 
         # Deduct from individual phases

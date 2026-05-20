@@ -4,6 +4,7 @@ from .const import (
     DEAD_BAND,
     RAMP_UP_RATE,
     RAMP_DOWN_RATE,
+    CONF_SITE_UPDATE_FREQUENCY,
     DEFAULT_SITE_UPDATE_FREQUENCY,
 )
 from .helpers import get_entry_value
@@ -79,7 +80,7 @@ def apply_smoothing(
                 )
 
         site_freq = get_entry_value(
-            hub_entry, DEFAULT_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
+            hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
         )
         max_up = RAMP_UP_RATE * site_freq
         max_down = RAMP_DOWN_RATE * site_freq

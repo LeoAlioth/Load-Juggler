@@ -1,9 +1,11 @@
 import logging
-from datetime import datetime
+import time
 from .const import (
     OPERATING_MODE_SOLAR_ONLY,
     OPERATING_MODE_SOLAR_PRIORITY,
     OPERATING_MODE_EXCESS,
+    CONF_SOLAR_GRACE_PERIOD,
+    CONF_CHARGE_PAUSE_DURATION,
     DEFAULT_SOLAR_GRACE_PERIOD,
     DEFAULT_CHARGE_PAUSE_DURATION,
 )
@@ -31,12 +33,12 @@ def determine_charging_status(
 
     if (
         sensor._grace_started_at is not None
-        and sensor._allocated_current >= sensor._min_charge_current
+        and sensor._allocated_current >= min_charge_current
     ):
         grace_min = get_entry_value(
-            sensor.config_entry, DEFAULT_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
+            sensor.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
         )
-        elapsed = (datetime.now() - sensor._grace_started_at).total_seconds()
+        elapsed = time.monotonic() - sensor._grace_started_at
         remaining = max(0, int(grace_min * 60 - elapsed))
         return f"Grace: {remaining}s"
 
@@ -44,12 +46,12 @@ def determine_charging_status(
         pause_dur_s = (
             get_entry_value(
                 sensor.config_entry,
-                DEFAULT_CHARGE_PAUSE_DURATION,
+                CONF_CHARGE_PAUSE_DURATION,
                 DEFAULT_CHARGE_PAUSE_DURATION,
             )
             * 60
         )
-        elapsed = (datetime.now() - sensor._pause_started_at).total_seconds()
+        elapsed = time.monotonic() - sensor._pause_started_at
         remaining = max(0, int(pause_dur_s - elapsed))
         return f"Paused: {remaining}s"
 

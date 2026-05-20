@@ -9,6 +9,7 @@ from .load import LoadJugglerDeviceSensor
 from .load_sensors import (
     LoadJugglerAllocatedCurrentSensor,
     LoadJugglerDeviceStatusSensor,
+    LoadJugglerPhaseMaskSensor,
 )
 from .hub import (
     LoadJugglerHubSensor,
@@ -130,39 +131,26 @@ async def async_setup_entry(
     status_sensor = LoadJugglerDeviceStatusSensor(
         hass, config_entry, hub_entry, name, entity_id
     )
-    async_add_entities([sensor, allocated_sensor, status_sensor])
+    entities = [sensor, allocated_sensor, status_sensor]
+
+    # Phase mask sensor — only for 3-phase EVSEs (L1/L2/L3 mapped to 3 distinct
+    # site phases). For 1-/2-phase loads the mask is trivial, so it is omitted.
+    device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    l1 = get_entry_value(config_entry, CONF_CHARGER_L1_PHASE, "A")
+    l2 = get_entry_value(config_entry, CONF_CHARGER_L2_PHASE, "B")
+    l3 = get_entry_value(config_entry, CONF_CHARGER_L3_PHASE, "C")
+    if device_type == DEVICE_TYPE_EVSE and len({l1, l2, l3}) == 3:
+        entities.append(
+            LoadJugglerPhaseMaskSensor(hass, config_entry, hub_entry, name, entity_id)
+        )
+
+    async_add_entities(entities)
 
     await coordinator.async_config_entry_first_refresh()
 
-    async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry):
-        """Handle options update."""
-        nonlocal site_update_frequency
-        _LOGGER.debug("async_update_listener triggered for %s", name)
-        current_hub = get_hub_for_charger(hass, entry.entry_id)
-        new_site_freq = (
-            get_entry_value(
-                current_hub, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
-            )
-            if current_hub
-            else site_update_frequency
-        )
-        if new_site_freq != site_update_frequency:
-            _LOGGER.info(
-                f"Updating site_update_frequency to {new_site_freq}s for {name}"
-            )
-            nonlocal coordinator
-            coordinator = DataUpdateCoordinator(
-                hass,
-                _LOGGER,
-                name=f"Load Juggler Coordinator - {name}",
-                update_method=async_update_data,
-                update_interval=timedelta(seconds=new_site_freq),
-            )
-            site_update_frequency = new_site_freq
-            await coordinator.async_config_entry_first_refresh()
-            sensor.coordinator = coordinator
-
-    _LOGGER.debug("Registering async_on_update listener for %s", name)
-    config_entry.async_on_unload(
-        config_entry.add_update_listener(async_update_listener)
-    )
+    # No per-charger options-update listener is registered here. Option changes
+    # are handled centrally by _async_options_updated (in __init__.py), which
+    # does a clean full reload of the entry — and, for a hub, of its chargers —
+    # so site_update_frequency changes are picked up by rebuilding the
+    # coordinator from scratch. A second listener that swapped the coordinator
+    # in place raced with that reload and leaked the old coordinator's timer.

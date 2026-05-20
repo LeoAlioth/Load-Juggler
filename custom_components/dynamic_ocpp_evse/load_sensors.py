@@ -1,6 +1,11 @@
 import logging
 from homeassistant.components.sensor import SensorEntity
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_CHARGER_L1_PHASE,
+    CONF_CHARGER_L2_PHASE,
+    CONF_CHARGER_L3_PHASE,
+)
 from .entity_mixins import ChargerEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,5 +78,47 @@ class LoadJugglerDeviceStatusSensor(ChargerEntityMixin, SensorEntity):
         try:
             status = self.hass.data.get(DOMAIN, {}).get("charger_status", {})
             self._state = status.get(self.config_entry.entry_id, "Unknown")
+        except Exception as e:
+            _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+
+
+class LoadJugglerPhaseMaskSensor(ChargerEntityMixin, SensorEntity):
+    """Sensor showing which site phases a 3-phase EVSE is currently drawing on."""
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id):
+        """Initialize the phase mask sensor."""
+        self.hass = hass
+        self.config_entry = config_entry
+        self.hub_entry = hub_entry
+        self._attr_name = f"{name} Phase Mask"
+        self._attr_unique_id = f"{entity_id}_phase_mask"
+        self._state = "Idle"
+        l1 = config_entry.data.get(CONF_CHARGER_L1_PHASE, "A")
+        l2 = config_entry.data.get(CONF_CHARGER_L2_PHASE, "B")
+        l3 = config_entry.data.get(CONF_CHARGER_L3_PHASE, "C")
+        self._wiring_mask = "".join(sorted({l1, l2, l3}))
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def icon(self):
+        return "mdi:sine-wave"
+
+    @property
+    def extra_state_attributes(self):
+        active = 0 if self._state in ("Idle", "Unknown") else len(self._state)
+        return {
+            "wiring_phases": self._wiring_mask,
+            "active_phase_count": active,
+        }
+
+    async def async_update(self):
+        """Read the live phase mask from hass.data (populated by the charger sensor)."""
+        try:
+            masks = self.hass.data.get(DOMAIN, {}).get("charger_phase_masks", {})
+            mask = masks.get(self.config_entry.entry_id)
+            self._state = mask if mask else "Idle"
         except Exception as e:
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
