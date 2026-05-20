@@ -38,11 +38,30 @@ Within the same mode, the load's priority number decides who gets power first.
 
 ### Smart Plug Modes
 
-| Mode | Behavior |
-|------|----------|
-| **Continuous** | Always on |
-| **Solar Only** | On only when solar surplus is available |
-| **Excess** | On only when export exceeds threshold |
+A smart plug is a binary on/off load, so its modes resolve to a simple
+on/off decision. How surplus is gauged depends on whether a **battery** is
+configured for the hub.
+
+| Mode | Without battery | With battery (hybrid or off-grid) |
+|------|-----------------|-----------------------------------|
+| **Continuous** | Always on | Always on |
+| **Solar Only** | On when live solar surplus covers the plug | On whenever battery SOC is **above the minimum** |
+| **Excess** | On when grid export exceeds the threshold | On only when battery SOC is **above the target** |
+
+**Why the battery changes things:** with a battery, the battery *is* the
+surplus buffer — it stores solar. "Solar Only" means "never draw from the
+grid", and stored solar in the battery counts, so the plug runs off the
+battery down to the minimum SOC. "Excess" means genuine surplus, which with a
+battery is when the battery is already charged past its target. This is the
+same on a hybrid grid-tied site and an off-grid site — the grid connection is
+irrelevant; only the presence of a battery matters.
+
+Without a battery there is no buffer, so the plug falls back to reading live
+grid export: Solar Only needs enough export to cover the plug, and Excess
+needs export above the configured threshold.
+
+> EVSEs are unaffected by this — they modulate charge current to the available
+> solar/excess power rather than switching fully on/off.
 
 ---
 

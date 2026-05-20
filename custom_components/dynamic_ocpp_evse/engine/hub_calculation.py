@@ -1082,10 +1082,24 @@ def run_hub_calculation(sensor):
     raw_phases, _, _ = _read_grid_phases(hass, hub_entry)
     has_grid_cts = any(r is not None for r in raw_phases)
 
-    # Off-grid (no grid CTs): set all grid phases to 0.
-    # This makes the site behave like a grid site with 0A grid current.
+    # Off-grid (no grid CTs): treat grid current as 0 A, but only for the
+    # phases the site actually has — derived from the configured inverter
+    # output sensors. Forcing all three phases to 0 would make a 1-phase
+    # off-grid site look 3-phase (num_phases counts non-None phases), which
+    # then splits per-phase figures across phantom phases.
     if not has_grid_cts:
-        raw_phases = [0.0, 0.0, 0.0]
+        inv_phase_confs = (
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+        )
+        raw_phases = [
+            0.0 if get_entry_value(hub_entry, conf, None) else None
+            for conf in inv_phase_confs
+        ]
+        # No inverter phase sensors either — fall back to a single phase.
+        if not any(r is not None for r in raw_phases):
+            raw_phases = [0.0, None, None]
 
     # --- Input EMA smoothing (grid CT, solar, battery power) ---
     hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})

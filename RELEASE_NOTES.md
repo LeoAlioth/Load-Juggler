@@ -36,6 +36,7 @@
 - **Off-grid Site Remaining Power**: On a hub with no grid CTs, Site Remaining Power was clamped to 0 W even with battery and solar available. It now correctly reports grid headroom plus inverter-sourced (solar + battery) power.
 - **Inverter capacity honored in headroom**: Site Remaining Power and Battery Remaining Power now subtract the power the inverter is *already* delivering to the household, and are capped by the inverter's rated capacity — previously a 4 kW inverter already supplying 1 kW still reported its full rating as available.
 - **Remaining Current A/B/C includes the inverter**: The per-phase remaining-current sensors now report total remaining current per phase (grid headroom + inverter share) and sum to Site Remaining Power ÷ voltage — previously they showed only grid breaker headroom and could contradict Site Remaining Power.
+- **Off-grid phase count fixed**: An off-grid site forced all three grid phases to 0, making a 1- or 2-phase site look 3-phase — which split per-phase figures (e.g. Remaining Current A) across phantom phases. The phase count is now taken from the configured inverter output sensors.
 - **Status sensor names the missing input**: When a required sensor (solar, battery, grid, inverter output) is unavailable, the hub Status sensor now states exactly which input is needed instead of failing silently.
 
 ---
