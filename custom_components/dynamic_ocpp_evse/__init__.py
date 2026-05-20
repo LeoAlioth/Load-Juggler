@@ -222,6 +222,19 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 return eid
         return None
 
+    def _read_other_current(suffix: str, config_entry_id: str):
+        """Read the float value of a charger's _min/_max current entity, or None."""
+        eid = _find_entity_state(suffix, config_entry_id)
+        if not eid:
+            return None
+        state = hass.states.get(eid)
+        if not state or state.state in ("unknown", "unavailable"):
+            return None
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            return None
+
     # --- set_operating_mode service ---
     async def handle_set_operating_mode(call: ServiceCall):
         """Set the operating mode for a charger."""
@@ -290,6 +303,16 @@ async def async_setup(hass: HomeAssistant, config: dict):
             _LOGGER.error("Could not find max current entity for charger %s", entry_id)
             return
 
+        # Enforce min ≤ max — the min/max sliders are independent entities, so a
+        # service call could otherwise leave the engine with min > max.
+        min_value = _read_other_current("_min_current", entry_id)
+        if min_value is not None and current < min_value:
+            _LOGGER.error(
+                "set_max_current for %s rejected: %.1fA is below min current %.1fA",
+                entry_id, current, min_value,
+            )
+            return
+
         await hass.services.async_call(
             "number", "set_value",
             {"entity_id": entity_id, "value": current},
@@ -313,6 +336,15 @@ async def async_setup(hass: HomeAssistant, config: dict):
         entity_id = _find_entity_state("_min_current", entry_id)
         if not entity_id:
             _LOGGER.error("Could not find min current entity for charger %s", entry_id)
+            return
+
+        # Enforce min ≤ max — see handle_set_max_current.
+        max_value = _read_other_current("_max_current", entry_id)
+        if max_value is not None and current > max_value:
+            _LOGGER.error(
+                "set_min_current for %s rejected: %.1fA is above max current %.1fA",
+                entry_id, current, max_value,
+            )
             return
 
         await hass.services.async_call(
@@ -584,9 +616,14 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
     updated_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
     updated_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
     updated_data["integration_version"] = INTEGRATION_VERSION
-    
-    hass.config_entries.async_update_entry(entry, data=updated_data)
-    _LOGGER.info(f"Updated hub config entry with entity IDs. Migrated {len(entities_migrated)} entities")
+
+    # Only write the entry when something actually changed — an unconditional
+    # async_update_entry on every startup triggers an extra hub reload.
+    if updated_data != dict(entry.data):
+        hass.config_entries.async_update_entry(entry, data=updated_data)
+        _LOGGER.info(f"Updated hub config entry with entity IDs. Migrated {len(entities_migrated)} entities")
+    else:
+        _LOGGER.debug("Hub config entry already current — no entity-ID migration needed")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):

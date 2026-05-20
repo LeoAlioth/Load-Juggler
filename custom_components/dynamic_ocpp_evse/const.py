@@ -128,6 +128,9 @@ DEFAULT_SOLAR_GRACE_PERIOD = 5  # minutes
 DEFAULT_STACK_LEVEL = 3
 DEFAULT_CHARGER_PRIORITY = 1
 DEFAULT_EXCESS_EXPORT_THRESHOLD = 13000
+EXCESS_EXPORT_HYSTERESIS = 500  # W — deadband below the threshold; once Excess
+# mode is on it stays on until export drops this far below the threshold,
+# preventing charger on/off chatter when export hovers near the threshold.
 DEFAULT_BATTERY_MAX_POWER = 5000
 DEFAULT_BATTERY_SOC_MIN = 20  # Default minimum SOC (20%)
 DEFAULT_BATTERY_SOC_TARGET = 80  # Default SOC target (80%)

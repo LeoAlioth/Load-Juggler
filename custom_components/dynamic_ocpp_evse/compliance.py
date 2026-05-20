@@ -8,6 +8,7 @@ from .const import (
     ESCALATION_PROFILE_RESET_LIMIT,
     DEFAULT_UPDATE_FREQUENCY,
     RAMP_DOWN_RATE,
+    DEAD_BAND,
     CONF_ENTITY_ID,
     CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
     CONF_EVSE_POWER_OFFERED_ENTITY_ID,
@@ -100,6 +101,16 @@ async def check_profile_compliance(
         sensor.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
     )
     tolerance = RAMP_DOWN_RATE * update_freq
+
+    # Skip while the commanded limit is still ramping — the charger's offered
+    # current legitimately lags a ramp (up or down), which a single-sample diff
+    # cannot tell apart from genuine non-compliance. The Schmitt trigger holds a
+    # steady-state command within DEAD_BAND, so a larger change means a ramp.
+    prev_limit = getattr(sensor, "_last_compliance_limit", None)
+    sensor._last_compliance_limit = sensor._last_commanded_limit
+    if prev_limit is not None and abs(sensor._last_commanded_limit - prev_limit) > DEAD_BAND:
+        sensor._mismatch_count = 0
+        return
 
     diff = abs(current_offered - sensor._last_commanded_limit)
     if diff > tolerance:

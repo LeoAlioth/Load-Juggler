@@ -365,6 +365,7 @@
             "no_loads_available": "No loads available on this hub. Add chargers or smart loads first.",
             "invalid_current": "Charge current values must be greater than zero.",
             "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
+            "entity_id_in_use": "This entity ID is already used by another Load Juggler device — choose a unique one.",
             "unknown": "An unknown error occurred"
         },
         "abort": {

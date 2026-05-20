@@ -1065,6 +1065,13 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     # ==================== HUB CONFIGURATION STEPS ====================
 
+    def _entity_id_in_use(self, entity_id: str) -> bool:
+        """True if entity_id is already used by another Load Juggler config entry."""
+        return any(
+            entry.data.get(CONF_ENTITY_ID) == entity_id
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+        )
+
     async def async_step_hub_info(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
@@ -1073,13 +1080,23 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             self._data.update(user_input)
-            self._data[ENTRY_TYPE] = ENTRY_TYPE_HUB
-            return await self.async_step_hub_grid()
+            entity_id = self._data.get(CONF_ENTITY_ID)
+            if entity_id and self._entity_id_in_use(entity_id):
+                errors[CONF_ENTITY_ID] = "entity_id_in_use"
+            else:
+                self._data[ENTRY_TYPE] = ENTRY_TYPE_HUB
+                return await self.async_step_hub_grid()
 
         data_schema = vol.Schema(
             {
-                vol.Required(CONF_NAME, default="Site Load Management"): str,
-                vol.Required(CONF_ENTITY_ID, default="lj_site_load_management"): str,
+                vol.Required(
+                    CONF_NAME,
+                    default=self._data.get(CONF_NAME, "Site Load Management"),
+                ): str,
+                vol.Required(
+                    CONF_ENTITY_ID,
+                    default=self._data.get(CONF_ENTITY_ID, "lj_site_load_management"),
+                ): str,
             }
         )
 
@@ -1430,41 +1447,54 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             plug_name = self._data.get(CONF_NAME, "Smart Load")
             plug_entity_id = self._data.get(CONF_ENTITY_ID, "lj_smart_load")
 
-            static_data = {
-                CONF_ENTITY_ID: plug_entity_id,
-                CONF_NAME: plug_name,
-                ENTRY_TYPE: ENTRY_TYPE_CHARGER,
-                CONF_DEVICE_TYPE: DEVICE_TYPE_PLUG,
-                CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
-                CONF_PLUG_SWITCH_ENTITY_ID: self._data.get(CONF_PLUG_SWITCH_ENTITY_ID),
-            }
-            options_data = {k: v for k, v in self._data.items() if k not in static_data}
+            if self._entity_id_in_use(plug_entity_id):
+                errors[CONF_ENTITY_ID] = "entity_id_in_use"
+            else:
+                static_data = {
+                    CONF_ENTITY_ID: plug_entity_id,
+                    CONF_NAME: plug_name,
+                    ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+                    CONF_DEVICE_TYPE: DEVICE_TYPE_PLUG,
+                    CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
+                    CONF_PLUG_SWITCH_ENTITY_ID: self._data.get(
+                        CONF_PLUG_SWITCH_ENTITY_ID
+                    ),
+                }
+                options_data = {
+                    k: v for k, v in self._data.items() if k not in static_data
+                }
 
-            return self._create_entry_and_seed_options(
-                f"{plug_name} Smart Load", static_data, options_data
-            )
+                return self._create_entry_and_seed_options(
+                    f"{plug_name} Smart Load", static_data, options_data
+                )
 
         existing_chargers = self._get_charger_entries()
         next_priority = len(existing_chargers) + 1
 
-        # Name + entity_id fields, then the plug-specific schema
+        # Name + entity_id fields, then the plug-specific schema. self._data is
+        # merged last so a validation-error re-show keeps the user's input.
+        plug_defaults = {
+            CONF_CHARGER_PRIORITY: next_priority,
+            CONF_PLUG_POWER_RATING: DEFAULT_PLUG_POWER_RATING,
+            CONF_CONNECTED_TO_PHASE: "A",
+            CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+            CONF_PLUG_POWER_MONITOR_ENTITY_ID: self._auto_detect_entity(
+                PLUG_POWER_MONITOR_PATTERNS
+            ),
+        }
+        plug_defaults.update(self._data)
         name_schema = vol.Schema(
             {
-                vol.Required(CONF_NAME, default="Smart Load"): str,
-                vol.Required(CONF_ENTITY_ID, default="lj_smart_load"): str,
+                vol.Required(
+                    CONF_NAME, default=plug_defaults.get(CONF_NAME, "Smart Load")
+                ): str,
+                vol.Required(
+                    CONF_ENTITY_ID,
+                    default=plug_defaults.get(CONF_ENTITY_ID, "lj_smart_load"),
+                ): str,
             }
         )
-        plug_fields = self._plug_schema(
-            {
-                CONF_CHARGER_PRIORITY: next_priority,
-                CONF_PLUG_POWER_RATING: DEFAULT_PLUG_POWER_RATING,
-                CONF_CONNECTED_TO_PHASE: "A",
-                CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
-                CONF_PLUG_POWER_MONITOR_ENTITY_ID: self._auto_detect_entity(
-                    PLUG_POWER_MONITOR_PATTERNS
-                ),
-            }
-        )
+        plug_fields = self._plug_schema(plug_defaults)
         # Merge both schemas
         combined = vol.Schema({**name_schema.schema, **plug_fields.schema})
 
@@ -1485,15 +1515,27 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_group_members()
+            entity_id = self._data.get(CONF_ENTITY_ID)
+            if entity_id and self._entity_id_in_use(entity_id):
+                errors[CONF_ENTITY_ID] = "entity_id_in_use"
+            else:
+                return await self.async_step_group_members()
 
         data_schema = vol.Schema(
             {
-                vol.Required(CONF_NAME, default="Circuit Group"): str,
-                vol.Required(CONF_ENTITY_ID, default="lj_circuit_group"): str,
+                vol.Required(
+                    CONF_NAME, default=self._data.get(CONF_NAME, "Circuit Group")
+                ): str,
+                vol.Required(
+                    CONF_ENTITY_ID,
+                    default=self._data.get(CONF_ENTITY_ID, "lj_circuit_group"),
+                ): str,
                 vol.Required(
                     CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
-                    default=DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
+                    default=self._data.get(
+                        CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
+                        DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
+                    ),
                 ): selector(
                     {
                         "number": {
@@ -1896,17 +1938,29 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             self._data.update(user_input)
-            return await self.async_step_charger_current()
+            entity_id = self._data.get(CONF_ENTITY_ID)
+            if entity_id and self._entity_id_in_use(entity_id):
+                errors[CONF_ENTITY_ID] = "entity_id_in_use"
+            else:
+                return await self.async_step_charger_current()
 
         existing_chargers = self._get_charger_entries()
         next_priority = len(existing_chargers) + 1
 
         data_schema = self._charger_info_schema(
             {
-                CONF_NAME: self._selected_charger["name"],
-                CONF_ENTITY_ID: f"lj_{self._selected_charger['id']}",
-                CONF_CHARGER_PRIORITY: next_priority,
-                "ocpp_device_id": self._selected_charger.get("device_id"),
+                CONF_NAME: self._data.get(
+                    CONF_NAME, self._selected_charger["name"]
+                ),
+                CONF_ENTITY_ID: self._data.get(
+                    CONF_ENTITY_ID, f"lj_{self._selected_charger['id']}"
+                ),
+                CONF_CHARGER_PRIORITY: self._data.get(
+                    CONF_CHARGER_PRIORITY, next_priority
+                ),
+                "ocpp_device_id": self._data.get(
+                    "ocpp_device_id", self._selected_charger.get("device_id")
+                ),
             }
         )
 

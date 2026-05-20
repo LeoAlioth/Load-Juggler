@@ -1124,6 +1124,18 @@ def run_hub_calculation(sensor):
     if max_grid_import_power is not None and power_buffer > 0:
         max_grid_import_power = max(0, max_grid_import_power - power_buffer)
 
+    # Apply excess-export hysteresis — keep the engine stateless. Once Excess
+    # mode is on, the effective threshold drops by EXCESS_EXPORT_HYSTERESIS so a
+    # charger doesn't chatter on/off when export hovers near the threshold.
+    was_excess_on = hub_runtime.get("_excess_on", False)
+    if was_excess_on:
+        excess_on = total_export_power >= excess_threshold - EXCESS_EXPORT_HYSTERESIS
+    else:
+        excess_on = total_export_power > excess_threshold
+    hub_runtime["_excess_on"] = excess_on
+    if excess_on:
+        excess_threshold = max(0, excess_threshold - EXCESS_EXPORT_HYSTERESIS)
+
     # --- Debug logging ---
     invert_phases = get_entry_value(hub_entry, CONF_INVERT_PHASES, False)
     _LOGGER.debug(

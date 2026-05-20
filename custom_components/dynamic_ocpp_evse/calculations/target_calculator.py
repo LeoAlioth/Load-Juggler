@@ -165,11 +165,17 @@ def _enforce_circuit_groups(site: SiteContext) -> None:
         if not members:
             continue
 
-        # Build group budget — per-phase limit based on site phases
+        # Build group budget — per-phase limit on every phase the group's
+        # members occupy. The group breaker limit is a property of the group's
+        # wiring, independent of which site phases happen to have CT metering.
+        group_phases = set()
+        for m in members:
+            if m.active_phases_mask:
+                group_phases.update(m.active_phases_mask)
         limit = group.current_limit
-        a = limit if site.consumption.a is not None else 0
-        b = limit if site.consumption.b is not None else 0
-        c = limit if site.consumption.c is not None else 0
+        a = limit if "A" in group_phases else 0
+        b = limit if "B" in group_phases else 0
+        c = limit if "C" in group_phases else 0
         group_pool = PhaseConstraints.from_per_phase(a, b, c)
 
         # Walk members in priority order (highest urgency+priority first → keeps allocation)

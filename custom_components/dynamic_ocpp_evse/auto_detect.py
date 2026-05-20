@@ -410,10 +410,11 @@ def _check_draw_phase_correlation(pm_state: dict,
     if not cs["confirmed_1ph"]:
         result_1ph = _evaluate_score(cs["score"], _PM_NOTIFY_SCORE)
         if result_1ph is False:
-            # Soft decay instead of hard reset
+            # Soft decay instead of hard reset. notify_sent_1ph is intentionally
+            # NOT reset here — clearing it makes the same mismatch notification
+            # re-fire every time the score oscillates around the threshold.
             for p in cs["score"]:
                 cs["score"][p] *= _PM_DECAY_FACTOR
-            cs["notify_sent_1ph"] = False
             _LOGGER.debug(
                 "AutoDetect 1ph for %s: inconclusive, decaying scores "
                 "(A:%.1f B:%.1f C:%.1f)",
@@ -442,10 +443,10 @@ def _check_draw_phase_correlation(pm_state: dict,
     if not cs["confirmed_2ph"] and cs.get("inactive_line"):
         result_2ph = _evaluate_score(cs["score_2ph"], _PM_NOTIFY_SCORE)
         if result_2ph is False:
-            # Soft decay instead of hard reset
+            # Soft decay instead of hard reset. notify_sent_2ph is intentionally
+            # NOT reset here (see the 1-phase branch above).
             for p in cs["score_2ph"]:
                 cs["score_2ph"][p] *= _PM_DECAY_FACTOR
-            cs["notify_sent_2ph"] = False
             _LOGGER.debug(
                 "AutoDetect 2ph for %s: inconclusive, decaying scores "
                 "(A:%.1f B:%.1f C:%.1f)",

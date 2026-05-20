@@ -50,6 +50,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         self._schmitt_state = "rising"
         self._rate_limited_current = None
         self._last_commanded_limit = None
+        self._last_compliance_limit = None
         self._last_command_time: float = -float("inf")
         self._mismatch_count = 0
         self._last_auto_reset_at = None

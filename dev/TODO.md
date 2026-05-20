@@ -2,28 +2,11 @@
 
 ## In Progress
 
-_Nothing in progress — see "Bugs" below for the active work queue._
+_Nothing in progress — next up is the Backlog below._
 
-> All four former "In Progress" items are now done: grace period in EVSE/plug config,
-> escalation to hard reset, and the grace-period countdown in status (all three found
-> already implemented during the 2026-05-20 audit), plus the EVSE phase-mask entity —
-> `LoadJugglerPhaseMaskSensor`, created only for 3-phase EVSEs, showing the live
-> site-phase mask (e.g. `A` / `AB` / `ABC`, `Idle` when not drawing).
-
-## Bugs — Codebase Audit 2026-05-20
-
-Static audit of all ~9,600 lines. The 3 Critical and all 9 High-severity items
-were fixed on 2026-05-20; the 7 Medium items below remain open.
-
-### Medium — open
-
-- [ ] **Two smart loads default to `entity_id="lj_smart_load"`** → identical `unique_id`s → HA silently drops the second plug's entities. Config flow doesn't validate `CONF_ENTITY_ID` uniqueness (same for a 2nd hub / circuit group).
-- [ ] **No hysteresis on `excess_export_threshold`** — battery SOC has hysteresis, the export threshold doesn't → charger contactor chatter when export hovers near the threshold.
-- [ ] **Circuit-group pool zeroes unmetered phases** (`target_calculator.py:165`) — on a partially-metered site (CT on phase A only), a 3-phase charger in a group is capped to 0.
-- [ ] **`_migrate_hub_entities_if_needed` calls `async_update_entry` unconditionally** on every startup → at least one extra full hub reload on first boot. Guard with an "only if changed" check.
-- [ ] **Auto-detect mismatch notification can re-fire repeatedly** (`auto_detect.py` `_evaluate_score`) — score decay resets `notify_sent_1ph` so the same notification spams on noisy multi-phase sites.
-- [ ] **Service handlers don't enforce min ≤ max** — `set_max_current`/`set_min_current` can set min above max; the engine then sees `min > max`.
-- [ ] **`compliance.py:100` tolerance uses command freq, not site freq** — a legitimately ramping charger can be flagged non-compliant and auto-reset mid-ramp, fighting the smoothing logic.
+> The 2026-05-20 codebase audit is fully resolved: 3 Critical, 9 High and 7 Medium
+> bugs all fixed and verified (141 calc-scenario + 93 HA-layer tests pass). The EVSE
+> phase-mask entity (`LoadJugglerPhaseMaskSensor`, 3-phase EVSEs only) was also added.
 
 ## Backlog
 
