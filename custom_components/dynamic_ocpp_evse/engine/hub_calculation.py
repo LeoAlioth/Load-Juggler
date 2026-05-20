@@ -141,6 +141,33 @@ def _coerce(v, default=0):
     return default if v is _UNAVAILABLE else v
 
 
+def _check_entity_availability(hass, hub_entry) -> list:
+    """Return warnings for hub-configured entities that are currently unavailable.
+
+    Grid CTs are tracked separately (stale-timeout logic); this covers the
+    solar, battery, inverter-output and max-import-power sensors so a missing
+    feed shows up on the hub Status sensor instead of silently defaulting to 0.
+    """
+    warnings = []
+    checks = (
+        ("Solar production sensor", CONF_SOLAR_PRODUCTION_ENTITY_ID),
+        ("Battery SOC sensor", CONF_BATTERY_SOC_ENTITY_ID),
+        ("Battery power sensor", CONF_BATTERY_POWER_ENTITY_ID),
+        ("Inverter output sensor (L1)", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
+        ("Inverter output sensor (L2)", CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
+        ("Inverter output sensor (L3)", CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
+        ("Max import power sensor", CONF_MAX_IMPORT_POWER_ENTITY_ID),
+    )
+    for label, conf_key in checks:
+        entity_id = get_entry_value(hub_entry, conf_key, None)
+        if not entity_id:
+            continue
+        state = hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable", ""):
+            warnings.append(f"{label} ({entity_id}) is unavailable")
+    return warnings
+
+
 def _fv(v):
     """Format value for debug: None->'n/a', number->'12.3'."""
     if v is None:
@@ -1081,6 +1108,11 @@ def run_hub_calculation(sensor):
             hass, solar_production_entity, 0, unit="W"
         )  # Convert kW→W if needed
         solar_production_total = _smooth(ema_inputs, "solar", raw_solar)
+        # _smooth returns None when the solar entity is unavailable and there
+        # is no EMA history yet (e.g. a fresh start at night). Treat that as
+        # 0 W — None would crash the household-consumption math further down.
+        if solar_production_total is None:
+            solar_production_total = 0
     else:
         raw_solar = None  # derived — calculated after inverter output is read
         solar_production_total = 0  # placeholder
@@ -1460,20 +1492,55 @@ def run_hub_calculation(sensor):
             auto_notifications.append(notif)
 
     # --- Hub status (config validation + runtime state) ---
+    # The hub Status sensor names exactly which sensor/input is missing or
+    # unavailable so the user knows precisely what to fix.
     hub_status = "OK"
     hub_warnings = []
-    if (
-        not has_grid_cts
-        and inverter_output_per_phase is None
-        and not solar_production_entity
-    ):
-        hub_status = "No power measurement"
-        hub_warnings.append("No grid CTs, inverter output, or solar entity configured")
+
+    has_inverter_output = inverter_output_per_phase is not None
+    has_solar_entity = bool(solar_production_entity)
+
+    if not has_grid_cts and not has_inverter_output and not has_solar_entity:
+        hub_status = "Setup incomplete"
+        hub_warnings.append(
+            "No power-measurement input configured. Add at least one in the "
+            "hub options: grid CT current sensors (grid-tied sites), inverter "
+            "output power sensors, or a solar production sensor."
+        )
     elif not has_grid_cts:
+        # Off-grid: no grid CTs, so the battery is the primary state source.
         hub_warnings.append("Off-grid mode (no grid CTs)")
+        if not battery_soc_entity:
+            hub_status = "Setup incomplete"
+            hub_warnings.append(
+                "Off-grid hub needs a battery SOC sensor — it drives the "
+                "operating-mode logic. Set it in the hub options."
+            )
+        if not battery_power_entity:
+            hub_status = "Setup incomplete"
+            hub_warnings.append(
+                "Off-grid hub needs a battery power sensor — it is used to "
+                "detect available solar surplus. Set it in the hub options."
+            )
+        if not has_inverter_output and not has_solar_entity:
+            hub_warnings.append(
+                "Off-grid hub has no inverter output or solar production "
+                "sensor — available solar can only be inferred from battery "
+                "charging. Add one for an accurate measurement."
+            )
+
     if grid_stale:
         hub_status = "Grid sensors unavailable"
-        hub_warnings.append(f"Grid CT readings stale for {grid_stale_duration:.0f}s")
+        hub_warnings.append(
+            f"Grid CT sensors unavailable (stale for {grid_stale_duration:.0f}s)."
+        )
+
+    # Configured non-grid sensors that are currently unavailable.
+    unavailable_warnings = _check_entity_availability(hass, hub_entry)
+    if unavailable_warnings:
+        hub_warnings.extend(unavailable_warnings)
+        if hub_status == "OK":
+            hub_status = "Sensor unavailable"
 
     # --- Build result ---
     return _build_hub_result(
