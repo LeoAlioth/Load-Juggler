@@ -8,6 +8,12 @@ from .mixins import HubEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
 
+# Charger/load sensors refresh hub_data every scan cycle (SCAN_INTERVAL = 10s).
+# If hub_data has not been refreshed within this window, no load is driving the
+# calculation (e.g. a hub with no loads configured), so the hub sensor must run
+# the calculation itself instead of reading stale data.
+_HUB_DATA_STALE_SECONDS = 30
+
 
 class LoadJugglerHubSensor(HubEntityMixin, SensorEntity):
     """Hub-level sensor showing site-wide information."""
@@ -58,17 +64,25 @@ class LoadJugglerHubSensor(HubEntityMixin, SensorEntity):
                 self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
             )
 
-            if hub_data:
+            # hub_data is kept fresh by load sensors, which recalculate every
+            # scan cycle. When it is missing or stale, no load is driving the
+            # calculation (e.g. a hub with no loads), so run it here ourselves.
+            now = datetime.now(timezone.utc)
+            last_update = hub_data.get("last_update") if hub_data else None
+            is_stale = (
+                last_update is None
+                or (now - last_update).total_seconds() > _HUB_DATA_STALE_SECONDS
+            )
+
+            if hub_data and not is_stale:
                 self._total_site_available_power = hub_data.get(
                     "total_site_available_power"
                 )
                 self._grid_stale = hub_data.get("grid_stale", False)
-                self._last_update = hub_data.get(
-                    "last_update", datetime.now(timezone.utc)
-                )
+                self._last_update = last_update or now
             else:
                 _LOGGER.debug(
-                    "No charger data available for hub %s, running calculation directly",
+                    "No fresh load data for hub %s, running calculation directly",
                     self._attr_name,
                 )
 
@@ -79,13 +93,12 @@ class LoadJugglerHubSensor(HubEntityMixin, SensorEntity):
 
                 mock_sensor = MockSensor(self.hass, self.config_entry)
                 hub_data = run_hub_calculation(mock_sensor)
+                hub_data["last_update"] = now
                 self._total_site_available_power = hub_data.get(
                     "total_site_available_power"
                 )
                 self._grid_stale = hub_data.get("grid_stale", False)
-                self._last_update = hub_data.get(
-                    "last_update", datetime.now(timezone.utc)
-                )
+                self._last_update = now
                 if DOMAIN not in self.hass.data:
                     self.hass.data[DOMAIN] = {}
                 if "hub_data" not in self.hass.data[DOMAIN]:

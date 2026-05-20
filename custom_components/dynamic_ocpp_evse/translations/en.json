@@ -103,7 +103,7 @@
                 },
                 "data_description": {
                     "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
-                    "battery_power_entity_id": "Positive values = battery discharging, negative values = battery charging.",
+                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign \u2014 otherwise battery power will never be offered to loads.",
                     "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
                     "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%."
@@ -294,7 +294,7 @@
                 },
                 "data_description": {
                     "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
-                    "battery_power_entity_id": "Positive values = battery discharging, negative values = battery charging.",
+                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign \u2014 otherwise battery power will never be offered to loads.",
                     "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
                     "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%."
@@ -487,7 +487,7 @@
                 },
                 "data_description": {
                     "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
-                    "battery_power_entity_id": "Positive values = battery discharging, negative values = battery charging.",
+                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign \u2014 otherwise battery power will never be offered to loads.",
                     "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
                     "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%."

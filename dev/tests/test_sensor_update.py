@@ -828,9 +828,15 @@ async def test_result_dict_values_are_reasonable(
     assert result["available_current_a"] == 20.0
     assert result["available_current_b"] == 20.5
     assert result["available_current_c"] == 21.2
-    # Total site available: breaker headroom ≈ 14191W,
-    # capped by max_import (17050W) - net_consumption (3059W) ≈ 13991W
-    assert 13500 < result["total_site_available_power"] < 14500
+    # Total site available = grid import headroom + inverter-sourced power
+    # (solar available + battery discharge available). Verified against the
+    # individual components rather than a magic number.
+    assert result["total_site_available_power"] == pytest.approx(
+        result["available_grid_power"]
+        + result["available_solar_power"]
+        + result["available_battery_power"],
+        abs=1.0,
+    )
     # Net consumption: (5.0 + 4.5 + 3.8) * 230 ≈ 3059W
     assert 3000 < result["grid_power"] < 3200
     # Grid headroom: breaker ≈ 14191W,

@@ -878,10 +878,6 @@ def _build_hub_result(
         else:
             available_per_phase.append(0)
 
-    total_site_available = sum(
-        max(0, main_breaker_rating - r) * voltage for r in raw_phases if r is not None
-    )
-
     # Grid available power (based on consumption after feedback loop)
     grid_headroom = sum(
         max(0, main_breaker_rating - c) * voltage
@@ -912,10 +908,8 @@ def _build_hub_result(
     # Net site consumption
     net_consumption = sum(r for r in raw_phases if r is not None) * voltage
 
-    # Cap available power by max grid import power limit (if configured)
+    # Cap grid headroom by max grid import power limit (if configured)
     if site.max_grid_import_power is not None:
-        import_headroom = max(0, site.max_grid_import_power - max(0, net_consumption))
-        total_site_available = min(total_site_available, import_headroom)
         post_feedback_import = sum(
             c * voltage
             for c in (site.consumption.a, site.consumption.b, site.consumption.c)
@@ -936,6 +930,15 @@ def _build_hub_result(
         else:
             # Derived solar mode: export IS the solar available (best approximation)
             solar_available = max(0, site.solar_production_total)
+
+    # Total site available power = grid import headroom + power the inverter
+    # can source from solar and battery. On an off-grid system grid_headroom
+    # is 0, so this is purely inverter-sourced; on a grid-tied system it is
+    # the sum of both paths. Capped by inverter capacity when configured.
+    inverter_sourced = solar_available + available_battery_power
+    if site.inverter_max_power:
+        inverter_sourced = min(inverter_sourced, site.inverter_max_power)
+    total_site_available = grid_headroom + inverter_sourced
 
     # Build per-charger operating modes dict
     charger_modes = {c.charger_id: c.operating_mode for c in site.chargers}

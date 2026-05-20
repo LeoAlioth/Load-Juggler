@@ -28,6 +28,10 @@
 - **Service input validation**: The `set_min_current` / `set_max_current` services now reject a value that would make the minimum exceed the maximum.
 - **Fewer false notifications**: Phase-mismatch auto-detect notifications no longer re-fire repeatedly on noisy sites.
 - **Robustness**: An invalid phase configuration value no longer crashes the power calculation.
+- **Off-grid hub no longer stuck "Initializing"**: A solar entity that was unavailable at startup (e.g. a fresh restart at night) crashed the hub calculation, leaving the hub permanently in "Initializing". Fixed.
+- **Hub updates continuously with no loads**: A hub with no loads configured ran its calculation only once and then showed stale values. It now recalculates every scan cycle.
+- **Off-grid site available power**: On a hub with no grid CTs, Site Available Power was clamped to 0 W even with battery and solar available. It now correctly reports grid headroom plus inverter-sourced (solar + battery) power.
+- **Status sensor names the missing input**: When a required sensor (solar, battery, grid, inverter output) is unavailable, the hub Status sensor now states exactly which input is needed instead of failing silently.
 
 ---
 
