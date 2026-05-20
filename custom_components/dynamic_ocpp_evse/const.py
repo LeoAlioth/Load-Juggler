@@ -70,15 +70,31 @@ CONF_OCPP_PROFILE_TIMEOUT = "ocpp_profile_timeout"
 CONF_CHARGE_PAUSE_DURATION = "charge_pause_duration"
 CONF_STACK_LEVEL = "stack_level"
 
-# Device type (charger-level) — EVSE (OCPP) or smart load
+# Device type (charger-level) — EVSE (OCPP), smart load, or hot water tank
 CONF_DEVICE_TYPE = "device_type"
 DEVICE_TYPE_EVSE = "evse"
 DEVICE_TYPE_PLUG = "plug"
+DEVICE_TYPE_HOT_WATER_TANK = "hot_water_tank"
 CONF_PLUG_SWITCH_ENTITY_ID = "plug_switch_entity_id"  # HA switch entity to control on/off
 CONF_PLUG_POWER_RATING = "plug_power_rating"  # Fixed power draw in watts
 CONF_PLUG_POWER_MONITOR_ENTITY_ID = "plug_power_monitor_entity_id"  # Optional power monitoring sensor
 CONF_CONNECTED_TO_PHASE = "connected_to_phase"  # Which phase(s) the device is wired to
 DEFAULT_PLUG_POWER_RATING = 2000
+
+# Hot water tank (charger-level) — climate-entity-driven binary heating load.
+# The climate entity owns all temperature regulation; Load Juggler only gates
+# power and writes the setpoint.
+CONF_CLIMATE_ENTITY_ID = "climate_entity_id"              # HA climate entity (read + control)
+CONF_HEATING_ELEMENT_POWER = "heating_element_power"      # Element rating in watts
+CONF_TANK_POWER_ENTITY_ID = "tank_power_entity_id"        # Optional live power sensor
+CONF_TANK_POWER_DEVICE_ID = "tank_power_device_id"        # Optional device to resolve a power sensor from
+CONF_TANK_AWAY_TEMPERATURE = "tank_away_temperature"      # Frost-protection / minimal setpoint
+CONF_TANK_NORMAL_TEMPERATURE = "tank_normal_temperature"  # Baseline setpoint
+CONF_TANK_BOOST_TEMPERATURE = "tank_boost_temperature"    # High setpoint (surplus available)
+DEFAULT_HEATING_ELEMENT_POWER = 2000      # W
+DEFAULT_TANK_AWAY_TEMPERATURE = 30        # °C
+DEFAULT_TANK_NORMAL_TEMPERATURE = 45      # °C
+DEFAULT_TANK_BOOST_TEMPERATURE = 65       # °C
 
 # Circuit group — shared breaker limit for co-located loads
 DEVICE_TYPE_GROUP = "group"
@@ -175,8 +191,11 @@ OPERATING_MODE_CONTINUOUS = "Continuous"     # Plug: always on
 OPERATING_MODE_SOLAR_PRIORITY = "Solar Priority"
 OPERATING_MODE_SOLAR_ONLY = "Solar Only"
 OPERATING_MODE_EXCESS = "Excess"
+OPERATING_MODE_NORMAL = "Normal"                        # Hot water tank: baseline target
+OPERATING_MODE_FREEZE_PROTECTION = "Freeze Protection"  # Hot water tank: away target only
 DEFAULT_OPERATING_MODE_EVSE = OPERATING_MODE_STANDARD
 DEFAULT_OPERATING_MODE_PLUG = OPERATING_MODE_CONTINUOUS
+DEFAULT_OPERATING_MODE_HOT_WATER_TANK = OPERATING_MODE_NORMAL
 
 # Available modes per device type
 OPERATING_MODES_EVSE = [
@@ -189,6 +208,14 @@ OPERATING_MODES_PLUG = [
     OPERATING_MODE_CONTINUOUS,
     OPERATING_MODE_SOLAR_ONLY,
     OPERATING_MODE_EXCESS,
+]
+# Hot water tank modes select a setpoint (away/normal/boost) dynamically; each
+# is mapped to an engine mode in the HA layer (Freeze/Normal → Continuous,
+# Solar Only → Solar Only).
+OPERATING_MODES_HOT_WATER_TANK = [
+    OPERATING_MODE_FREEZE_PROTECTION,
+    OPERATING_MODE_NORMAL,
+    OPERATING_MODE_SOLAR_ONLY,
 ]
 
 # Mode urgency for distribution sorting (lower = higher urgency)

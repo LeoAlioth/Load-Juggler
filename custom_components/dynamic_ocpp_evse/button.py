@@ -5,7 +5,15 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from .entity_mixins import ChargerEntityMixin
-from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID
+from .const import (
+    DOMAIN,
+    ENTRY_TYPE,
+    ENTRY_TYPE_CHARGER,
+    CONF_NAME,
+    CONF_ENTITY_ID,
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_EVSE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -15,6 +23,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entry_type = entry.data.get(ENTRY_TYPE)
     if entry_type != ENTRY_TYPE_CHARGER:
         _LOGGER.debug("Skipping button setup for non-charger entry: %s", entry.title)
+        return
+
+    # The reset button performs an OCPP reset — only meaningful for EVSEs.
+    if entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE) != DEVICE_TYPE_EVSE:
+        _LOGGER.debug("Skipping OCPP reset button for non-EVSE device: %s", entry.title)
         return
 
     name = entry.data.get(CONF_NAME, "OCPP Charger")

@@ -1,0 +1,61 @@
+alias: Bathroom Heating Controller
+description: >
+  Bathroom IR panel heating, gated by battery SOC and inverter capacity. Load
+  priority: 4 (lowest) — EVSE > Boiler > Pump > Bathroom. Only enables when the
+  battery is essentially full (SOC > 95) and there is comfortable inverter
+  headroom (remaining_capacity > 1600), so it yields to all other controllers in
+  practice.
+triggers:
+  - minutes: "20"
+    trigger: time_pattern
+  - trigger: homeassistant
+    event: start
+  - entity_id:
+      - sensor.sbms0_charge
+    above: 95
+    trigger: numeric_state
+    for:
+      hours: 0
+      minutes: 1
+      seconds: 0
+  - entity_id:
+      - sensor.sbms0_charge
+    below: 90
+    trigger: numeric_state
+    for:
+      hours: 0
+      minutes: 1
+      seconds: 0
+  - entity_id:
+      - sensor.inverter_5000_24_remaining_capacity
+    above: 1600
+    trigger: numeric_state
+    for: "00:02:00"
+  - entity_id:
+      - sensor.inverter_5000_24_remaining_capacity
+    below: 800
+    for: "00:00:05"
+    trigger: numeric_state
+actions:
+  - choose:
+      - conditions:
+          - condition: numeric_state
+            entity_id: sensor.sbms0_charge
+            above: 95
+          - condition: numeric_state
+            entity_id: sensor.inverter_5000_24_remaining_capacity
+            above: 1600
+        sequence:
+          - target:
+              entity_id: climate.bathroom_ir_panel_termostat_kopalnica
+            action: climate.turn_on
+          - target:
+              entity_id: climate.bathroom_ir_panel_termostat_kopalnica
+            data:
+              preset_mode: eco
+            action: climate.set_preset_mode
+    default:
+      - target:
+          entity_id: climate.bathroom_ir_panel_termostat_kopalnica
+        action: climate.turn_off
+mode: single

@@ -140,6 +140,39 @@
                     "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately."
                 }
             },
+            "hot_water_tank_config": {
+                "title": "Hot Water Tank Configuration",
+                "description": "Configure a hot water tank controlled through a climate entity (for example a Generic Thermostat).",
+                "data": {
+                    "name": "Name for this device",
+                    "entity_id": "Entity ID prefix",
+                    "climate_entity_id": "Climate entity (thermostat)",
+                    "heating_element_power": "Heating element power",
+                    "tank_away_temperature": "Away temperature",
+                    "tank_normal_temperature": "Normal temperature",
+                    "tank_boost_temperature": "Boost temperature",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest)",
+                    "tank_power_entity_id": "Power sensor (optional)",
+                    "tank_power_device_id": "Power device (optional)",
+                    "update_frequency": "Update frequency",
+                    "solar_grace_period": "Solar/Excess grace period"
+                },
+                "data_description": {
+                    "entity_id": "Used as a prefix for entities created by this integration.",
+                    "climate_entity_id": "The climate entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint.",
+                    "heating_element_power": "Rated power of the heating element — used for power allocation when no power sensor is configured.",
+                    "tank_away_temperature": "Minimal / frost-protection setpoint. Used by Freeze Protection mode and as the low end of Solar Only.",
+                    "tank_normal_temperature": "Baseline target temperature.",
+                    "tank_boost_temperature": "High target used when surplus energy is available or the battery is above its target SOC.",
+                    "connected_to_phase": "Which electrical phase(s) the heating element is wired to.",
+                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "tank_power_entity_id": "Optional sensor reporting the element's live power draw — used instead of the fixed rating when present.",
+                    "tank_power_device_id": "Optionally pick the smart relay/outlet powering the tank; its power sensor is resolved automatically.",
+                    "update_frequency": "How often to re-evaluate the tank.",
+                    "solar_grace_period": "In Solar Only mode, how long to keep heating at minimum when conditions are no longer met before stopping."
+                }
+            },
             "discover_chargers": {
                 "title": "Discovered Chargers",
                 "description": "Select an OCPP charger to configure",
@@ -286,6 +319,23 @@
                     "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
                     "update_frequency": "How often to re-evaluate whether this plug should be turned on or off.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately."
+                }
+            },
+            "reconfigure_hot_water_tank": {
+                "title": "Reconfigure Hot Water Tank",
+                "description": "Update hot water tank settings",
+                "data": {
+                    "climate_entity_id": "Climate entity (thermostat)",
+                    "heating_element_power": "Heating element power",
+                    "tank_away_temperature": "Away temperature",
+                    "tank_normal_temperature": "Normal temperature",
+                    "tank_boost_temperature": "Boost temperature",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest)",
+                    "tank_power_entity_id": "Power sensor (optional)",
+                    "tank_power_device_id": "Power device (optional)",
+                    "update_frequency": "Update frequency",
+                    "solar_grace_period": "Solar/Excess grace period"
                 }
             },
             "reconfigure_charger": {
@@ -462,6 +512,23 @@
                     "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
                     "update_frequency": "How often to re-evaluate whether this plug should be turned on or off.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately."
+                }
+            },
+            "hot_water_tank": {
+                "title": "Update Hot Water Tank Settings",
+                "description": "Update hot water tank settings",
+                "data": {
+                    "climate_entity_id": "Climate entity (thermostat)",
+                    "heating_element_power": "Heating element power",
+                    "tank_away_temperature": "Away temperature",
+                    "tank_normal_temperature": "Normal temperature",
+                    "tank_boost_temperature": "Boost temperature",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest)",
+                    "tank_power_entity_id": "Power sensor (optional)",
+                    "tank_power_device_id": "Power device (optional)",
+                    "update_frequency": "Update frequency",
+                    "solar_grace_period": "Solar/Excess grace period"
                 }
             },
             "charger": {

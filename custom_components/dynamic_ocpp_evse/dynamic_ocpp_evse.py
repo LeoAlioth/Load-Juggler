@@ -563,6 +563,77 @@ def _build_plug_charger(
     return charger
 
 
+def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, priority):
+    """Build a LoadContext for a hot water tank (climate-driven binary load).
+
+    To the engine the tank is a smart load (plug): a fixed-power binary draw.
+    The climate entity owns temperature regulation; the HA layer reads its
+    hvac_action and writes the setpoint. Tank operating modes (Freeze
+    Protection / Normal / Solar Only) map to engine modes here.
+    """
+    charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
+
+    # Power rating: live power sensor when available, else configured element power
+    element_power = get_entry_value(
+        entry, CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER
+    )
+    power_rating = element_power
+    power_entity = get_entry_value(entry, CONF_TANK_POWER_ENTITY_ID, None)
+    if power_entity:
+        live = _coerce(_read_entity(hass, power_entity, 0, unit="W"))
+        if live and live > 10:
+            power_rating = live
+
+    connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
+    phases = len(connected_to_phase)
+
+    # Connector status from the climate entity's hvac_action: a thermostat
+    # reporting "idle" means the tank is satisfied — mark it inactive so the
+    # engine reallocates that power. Anything else is treated as an active load.
+    climate_entity = entry.data.get(CONF_CLIMATE_ENTITY_ID)
+    connector_status = "Charging"
+    climate_state = hass.states.get(climate_entity) if climate_entity else None
+    if climate_state and climate_state.attributes.get("hvac_action") == "idle":
+        connector_status = "Available"
+
+    equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
+
+    # Tank mode → engine mode: Solar Only keeps the solar pool; Freeze
+    # Protection and Normal heat from any source (Continuous).
+    tank_mode = charger_rt.get(
+        "operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK
+    )
+    engine_mode = (
+        OPERATING_MODE_SOLAR_ONLY
+        if tank_mode == OPERATING_MODE_SOLAR_ONLY
+        else OPERATING_MODE_CONTINUOUS
+    )
+
+    charger = LoadContext(
+        charger_id=entry.entry_id,
+        entity_id=charger_entity_id,
+        min_current=equivalent_current,
+        max_current=equivalent_current,
+        phases=phases,
+        priority=priority,
+        active_phases_mask=connected_to_phase,
+        connector_status=connector_status,
+        device_type=DEVICE_TYPE_HOT_WATER_TANK,
+        operating_mode=engine_mode,
+    )
+    _LOGGER.debug(
+        "  Tank %s [%s→%s]: %.0fW on %s prio=%d [%s]",
+        charger_entity_id,
+        tank_mode,
+        engine_mode,
+        power_rating,
+        connected_to_phase,
+        priority,
+        connector_status,
+    )
+    return charger
+
+
 def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
     """Build LoadContext objects for all chargers and add them to the site.
 
@@ -586,6 +657,10 @@ def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
         if device_type == DEVICE_TYPE_PLUG:
             charger = _build_plug_charger(
                 hass, entry, site.voltage, charger_entity_id, priority, plug_auto_power
+            )
+        elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
+            charger = _build_hot_water_tank_charger(
+                hass, entry, site.voltage, charger_entity_id, priority
             )
         else:
             charger = _build_evse_charger(
@@ -872,6 +947,7 @@ def _build_hub_result(
         "total_evse_power": total_evse_power,
         "solar_power": round(site.solar_production_total or 0, 0),
         "available_solar_power": round(solar_available, 0),
+        "total_export_power": round(site.total_export_power, 0),
         # Per-charger targets
         "charger_targets": charger_targets,
         "charger_available": charger_available,

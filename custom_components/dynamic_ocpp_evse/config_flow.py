@@ -875,6 +875,124 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
+    def _hot_water_tank_schema(self, defaults: dict | None = None) -> vol.Schema:
+        """Build schema for hot water tank configuration."""
+        defaults = defaults or {}
+        phase_options = [
+            {"value": "A", "label": "Phase A"},
+            {"value": "B", "label": "Phase B"},
+            {"value": "C", "label": "Phase C"},
+            {"value": "AB", "label": "Phase A+B"},
+            {"value": "BC", "label": "Phase B+C"},
+            {"value": "AC", "label": "Phase A+C"},
+            {"value": "ABC", "label": "Phase A+B+C"},
+        ]
+
+        def _temp_selector():
+            return selector(
+                {
+                    "number": {
+                        "min": 10,
+                        "max": 90,
+                        "step": 1,
+                        "mode": "box",
+                        "unit_of_measurement": "°C",
+                    }
+                }
+            )
+
+        return vol.Schema(
+            {
+                vol.Required(
+                    CONF_CLIMATE_ENTITY_ID,
+                    default=defaults.get(CONF_CLIMATE_ENTITY_ID),
+                ): selector({"entity": {"domain": "climate"}}),
+                vol.Required(
+                    CONF_HEATING_ELEMENT_POWER,
+                    default=defaults.get(
+                        CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER
+                    ),
+                ): selector(
+                    {
+                        "number": {
+                            "min": 100,
+                            "max": 25000,
+                            "step": 100,
+                            "mode": "box",
+                            "unit_of_measurement": "W",
+                        }
+                    }
+                ),
+                vol.Required(
+                    CONF_TANK_AWAY_TEMPERATURE,
+                    default=defaults.get(
+                        CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE
+                    ),
+                ): _temp_selector(),
+                vol.Required(
+                    CONF_TANK_NORMAL_TEMPERATURE,
+                    default=defaults.get(
+                        CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE
+                    ),
+                ): _temp_selector(),
+                vol.Required(
+                    CONF_TANK_BOOST_TEMPERATURE,
+                    default=defaults.get(
+                        CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE
+                    ),
+                ): _temp_selector(),
+                vol.Required(
+                    CONF_CONNECTED_TO_PHASE,
+                    default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
+                ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
+                vol.Required(
+                    CONF_CHARGER_PRIORITY,
+                    default=defaults.get(
+                        CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY
+                    ),
+                ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
+                self._optional_entity_field(
+                    CONF_TANK_POWER_ENTITY_ID,
+                    defaults.get(CONF_TANK_POWER_ENTITY_ID),
+                ): selector({"entity": {"domain": ["sensor", "input_number"]}}),
+                vol.Optional(CONF_TANK_POWER_DEVICE_ID): selector(
+                    {"device": {"entity": {"device_class": "power"}}}
+                ),
+                vol.Required(
+                    CONF_UPDATE_FREQUENCY,
+                    default=defaults.get(
+                        CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
+                    ),
+                ): selector(
+                    {
+                        "number": {
+                            "min": 5,
+                            "max": 300,
+                            "step": 1,
+                            "mode": "box",
+                            "unit_of_measurement": "s",
+                        }
+                    }
+                ),
+                vol.Required(
+                    CONF_SOLAR_GRACE_PERIOD,
+                    default=defaults.get(
+                        CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
+                    ),
+                ): selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 30,
+                            "step": 1,
+                            "mode": "box",
+                            "unit_of_measurement": "min",
+                        }
+                    }
+                ),
+            }
+        )
+
     # Optional entity keys grouped by config step (for entity selector clearing)
     _GRID_ENTITY_KEYS = [
         CONF_PHASE_A_CURRENT_ENTITY_ID,
@@ -893,6 +1011,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
     ]
     _PLUG_ENTITY_KEYS = [CONF_PLUG_POWER_MONITOR_ENTITY_ID]
+    _TANK_ENTITY_KEYS = [CONF_TANK_POWER_ENTITY_ID, CONF_TANK_POWER_DEVICE_ID]
 
     def _normalize_optional_inputs(
         self, data: dict[str, Any], step_entity_keys: list[str] | None = None
@@ -910,6 +1029,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             + self._BATTERY_ENTITY_KEYS
             + self._INVERTER_ENTITY_KEYS
             + self._PLUG_ENTITY_KEYS
+            + self._TANK_ENTITY_KEYS
         ):
             if key in normalized:
                 normalized[key] = normalize_optional_entity(normalized.get(key))
@@ -1014,13 +1134,15 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             setup_type = user_input.get("setup_type")
             if setup_type == "hub":
                 return await self.async_step_hub_info()
-            elif setup_type in ("evse", "plug"):
+            elif setup_type in ("evse", "plug", "tank"):
                 if not hubs:
                     errors["base"] = "no_hub_configured"
                 else:
-                    self._data[CONF_DEVICE_TYPE] = (
-                        DEVICE_TYPE_EVSE if setup_type == "evse" else DEVICE_TYPE_PLUG
-                    )
+                    self._data[CONF_DEVICE_TYPE] = {
+                        "evse": DEVICE_TYPE_EVSE,
+                        "plug": DEVICE_TYPE_PLUG,
+                        "tank": DEVICE_TYPE_HOT_WATER_TANK,
+                    }[setup_type]
                     return await self.async_step_select_hub()
             elif setup_type == "group":
                 if not hubs:
@@ -1036,6 +1158,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if hubs:
             options.append({"value": "evse", "label": "Add OCPP Charger (EVSE)"})
             options.append({"value": "plug", "label": "Add Smart Outlet / Relay"})
+            options.append({"value": "tank", "label": "Add Hot Water Tank"})
             options.append(
                 {"value": "group", "label": "Add Circuit Group (Shared Breaker)"}
             )
@@ -1076,6 +1199,17 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             entry.data.get(CONF_ENTITY_ID) == entity_id
             for entry in self.hass.config_entries.async_entries(DOMAIN)
         )
+
+    def _resolve_device_power_entity(self, device_id: str) -> str | None:
+        """Return the first power-class sensor entity belonging to a device."""
+        entity_registry = async_get_entity_registry(self.hass)
+        for entity in entity_registry.entities.values():
+            if entity.device_id != device_id:
+                continue
+            device_class = entity.device_class or entity.original_device_class
+            if device_class == "power":
+                return entity.entity_id
+        return None
 
     async def async_step_hub_info(
         self, user_input: dict[str, Any] | None = None
@@ -1399,6 +1533,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         device_type = self._data.get(CONF_DEVICE_TYPE)
         if device_type == DEVICE_TYPE_PLUG:
             return await self.async_step_plug_config()
+        if device_type == DEVICE_TYPE_HOT_WATER_TANK:
+            return await self.async_step_hot_water_tank_config()
         if device_type == DEVICE_TYPE_GROUP:
             return await self.async_step_group_config()
         return await self.async_step_discover_chargers()
@@ -1506,6 +1642,82 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="plug_config",
+            data_schema=combined,
+            errors=errors,
+            last_step=True,
+        )
+
+    async def async_step_hot_water_tank_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Hot water tank configuration step."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            user_input = self._normalize_optional_inputs(
+                user_input, self._TANK_ENTITY_KEYS
+            )
+            self._data.update(user_input)
+
+            # A picked power device is resolved to its power-sensor entity now,
+            # so runtime only ever deals with CONF_TANK_POWER_ENTITY_ID.
+            device_id = self._data.pop(CONF_TANK_POWER_DEVICE_ID, None)
+            if device_id and not self._data.get(CONF_TANK_POWER_ENTITY_ID):
+                resolved = self._resolve_device_power_entity(device_id)
+                if resolved:
+                    self._data[CONF_TANK_POWER_ENTITY_ID] = resolved
+
+            tank_name = self._data.get(CONF_NAME, "Hot Water Tank")
+            tank_entity_id = self._data.get(CONF_ENTITY_ID, "lj_hot_water_tank")
+
+            if self._entity_id_in_use(tank_entity_id):
+                errors[CONF_ENTITY_ID] = "entity_id_in_use"
+            else:
+                static_data = {
+                    CONF_ENTITY_ID: tank_entity_id,
+                    CONF_NAME: tank_name,
+                    ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+                    CONF_DEVICE_TYPE: DEVICE_TYPE_HOT_WATER_TANK,
+                    CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
+                    CONF_CLIMATE_ENTITY_ID: self._data.get(CONF_CLIMATE_ENTITY_ID),
+                }
+                options_data = {
+                    k: v for k, v in self._data.items() if k not in static_data
+                }
+                return self._create_entry_and_seed_options(
+                    f"{tank_name} Hot Water Tank", static_data, options_data
+                )
+
+        # Defaults; self._data is merged last so a validation-error re-show
+        # keeps the user's input.
+        tank_defaults = {
+            CONF_CHARGER_PRIORITY: len(self._get_charger_entries()) + 1,
+            CONF_HEATING_ELEMENT_POWER: DEFAULT_HEATING_ELEMENT_POWER,
+            CONF_TANK_AWAY_TEMPERATURE: DEFAULT_TANK_AWAY_TEMPERATURE,
+            CONF_TANK_NORMAL_TEMPERATURE: DEFAULT_TANK_NORMAL_TEMPERATURE,
+            CONF_TANK_BOOST_TEMPERATURE: DEFAULT_TANK_BOOST_TEMPERATURE,
+            CONF_CONNECTED_TO_PHASE: "A",
+            CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
+        }
+        tank_defaults.update(self._data)
+        name_schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_NAME,
+                    default=tank_defaults.get(CONF_NAME, "Hot Water Tank"),
+                ): str,
+                vol.Required(
+                    CONF_ENTITY_ID,
+                    default=tank_defaults.get(CONF_ENTITY_ID, "lj_hot_water_tank"),
+                ): str,
+            }
+        )
+        tank_fields = self._hot_water_tank_schema(tank_defaults)
+        combined = vol.Schema({**name_schema.schema, **tank_fields.schema})
+
+        return self.async_show_form(
+            step_id="hot_water_tank_config",
             data_schema=combined,
             errors=errors,
             last_step=True,
@@ -2199,6 +2411,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_reconfigure_hub_grid()
         elif entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG:
             return await self.async_step_reconfigure_plug()
+        elif entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_HOT_WATER_TANK:
+            return await self.async_step_reconfigure_hot_water_tank()
         else:
             return await self.async_step_reconfigure_charger()
 
@@ -2495,6 +2709,41 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=True,
         )
 
+    async def async_step_reconfigure_hot_water_tank(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Reconfigure hot water tank settings."""
+        errors: dict[str, str] = {}
+        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
+        defaults = {**entry.data, **entry.options}
+
+        if user_input is not None:
+            user_input = self._normalize_optional_inputs(
+                user_input, self._TANK_ENTITY_KEYS
+            )
+            self._data.update(user_input)
+
+            device_id = self._data.pop(CONF_TANK_POWER_DEVICE_ID, None)
+            if device_id and not self._data.get(CONF_TANK_POWER_ENTITY_ID):
+                resolved = self._resolve_device_power_entity(device_id)
+                if resolved:
+                    self._data[CONF_TANK_POWER_ENTITY_ID] = resolved
+
+            self.hass.config_entries.async_update_entry(
+                entry,
+                options={**entry.options, **self._data},
+            )
+            return self.async_abort(reason="reconfigure_successful")
+
+        data_schema = self._hot_water_tank_schema(defaults)
+
+        return self.async_show_form(
+            step_id="reconfigure_hot_water_tank",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=True,
+        )
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
@@ -2525,8 +2774,11 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         if entry_type == ENTRY_TYPE_HUB:
             return await self.async_step_hub_grid()
         if entry_type == ENTRY_TYPE_CHARGER:
-            if self.config_entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG:
+            device_type = self.config_entry.data.get(CONF_DEVICE_TYPE)
+            if device_type == DEVICE_TYPE_PLUG:
                 return await self.async_step_plug()
+            if device_type == DEVICE_TYPE_HOT_WATER_TANK:
+                return await self.async_step_hot_water_tank()
             return await self.async_step_charger()
         if entry_type == ENTRY_TYPE_GROUP:
             return await self.async_step_group()
@@ -2845,6 +3097,35 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="plug",
             data_schema=f._plug_schema(defaults),
+            errors=errors,
+            last_step=True,
+        )
+
+    async def async_step_hot_water_tank(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        errors: dict[str, str] = {}
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+        f = self._schema_helper
+
+        if user_input is not None:
+            user_input = f._normalize_optional_inputs(user_input, f._TANK_ENTITY_KEYS)
+            self._data.update(user_input)
+
+            device_id = self._data.pop(CONF_TANK_POWER_DEVICE_ID, None)
+            if device_id and not self._data.get(CONF_TANK_POWER_ENTITY_ID):
+                resolved = f._resolve_device_power_entity(device_id)
+                if resolved:
+                    self._data[CONF_TANK_POWER_ENTITY_ID] = resolved
+
+            return self.async_create_entry(
+                title="",
+                data={**self.config_entry.options, **self._data},
+            )
+
+        return self.async_show_form(
+            step_id="hot_water_tank",
+            data_schema=f._hot_water_tank_schema(defaults),
             errors=errors,
             last_step=True,
         )

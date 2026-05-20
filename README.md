@@ -29,6 +29,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 - **Off-grid support** — grid CTs optional, infers phases from inverter output
 - **Auto-detection** of sensors, phase mapping, and charger settings
 - **OCPP 1.6J** control for EV chargers (Amps or Watts, auto-detected)
+- **Hot water tank control** — climate-entity-driven binary heating loads with away/normal/boost setpoints
 - **Relative and absolute OCPP profile modes** for different charger compatibility
 - **Current rate limiting** (ramp up/down) for stable operation
 - **Failsafe operation** — loads revert to safe defaults if sensors become unavailable (EMA holdover, grid stale detection)
@@ -39,7 +40,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 |------|---------------|-----------------|-------------|
 | **EVSE** | OCPP 1.6J current/power profiles | Standard, Solar Priority, Solar Only, Excess | EV chargers with variable current control |
 | **Smart Plug** | On/off switch | Continuous, Solar Only, Excess | Any device behind a smart plug (heaters, pumps, etc.) |
-| **Hot Water Tank** | *Planned* | Solar Only, Excess | Thermostat control with Normal/Boost |
+| **Hot Water Tank** | Climate entity (on/off + setpoint) | Freeze Protection, Normal, Solar Only | Tank with a thermostat (e.g. Generic Thermostat); the mode picks an away/normal/boost setpoint |
 | **SG Ready** | *Planned* | Automatic | 2-relay site-state mapping (Block/Normal/Recommend/Force) |
 
 ## Operating Modes
@@ -58,6 +59,14 @@ Each load has its own operating mode, set independently. This allows mixing mode
 - **Continuous**: Always on (when connected).
 - **Solar Only**: Turns on only when solar surplus is available.
 - **Excess**: Turns on only when export exceeds the configured threshold.
+
+### Hot Water Tank Modes
+
+A hot water tank is driven through a `climate` entity (e.g. a Generic Thermostat) — the climate entity handles temperature regulation, while Load Juggler picks one of three setpoints (**Away**, **Normal**, **Boost**) based on the mode and conditions.
+
+- **Freeze Protection**: Always targets the Away setpoint — minimal / frost protection.
+- **Normal**: Targets the Normal setpoint, raised to Boost when there is surplus energy (grid export exceeds the element's draw, or the home battery is above its target SOC).
+- **Solar Only**: Targets Away below the battery minimum SOC, Normal up to the battery target SOC, and Boost at/above the target — heats from solar surplus only.
 
 ### Mode Urgency
 

@@ -2,9 +2,32 @@
 
 ## 2.0.6
 
+### New Features
+
+- **Hot Water Tank device type**: Manage a hot water tank as a binary heating load, driven through a Home Assistant `climate` entity (e.g. a Generic Thermostat). Three configurable setpoints (Away / Normal / Boost) and three operating modes — Freeze Protection, Normal, and Solar Only — that pick a setpoint based on solar surplus and battery state. The climate entity keeps doing the temperature regulation; Load Juggler decides when heating is allowed and which target to write. See the [Charge Modes Guide](CHARGE_MODES_GUIDE.md#hot-water-tank-modes).
+- **EVSE phase mask sensor**: 3-phase EV chargers get a new sensor showing which site phases the car is actively drawing on (e.g. `A`, `AB`, `ABC`, or `Idle`).
+
 ### Improvements
 
-- **Smoother current transitions**: Updated deadband to a propper Schmitt trigger. And applied ramps even if available current momentarily drops below minimum current the EVSE can offer. So a brief large spike in consumption, now just slows down changing instead of stopping it completely.
+- **Smoother current transitions**: Updated the deadband to a proper Schmitt trigger, and ramps are now applied even if the available current momentarily drops below the minimum the EVSE can offer — a brief consumption spike now just slows the change down instead of stopping it.
+- **Excess mode anti-chatter**: Added a hysteresis band to the export threshold so a load in Excess mode no longer flips on/off when export hovers right at the threshold.
+- **Power buffer honored on the breaker limit**: The configured power buffer is now subtracted from the per-phase main-breaker limit as well as the grid-import limit — previously it had no effect on sites without a grid-import limit configured.
+- **Off-grid hubs require a battery**: A hub configured without grid CT sensors runs off-grid, where the battery is the primary state signal. Hub setup now requires a battery SOC entity and a battery power entity in that case.
+
+### Bug Fixes
+
+- **Charger auto-reset escalation restored**: The OCPP profile-reset → hard-reset escalation was crashing on a missing import and never ran. Fixed.
+- **Grace-period status restored**: The charger status sensor crashed during the solar/excess grace period. Fixed — it now shows the grace countdown.
+- **Configured timings now applied**: The site update frequency, solar grace period, and charge pause duration were silently ignored (always using defaults). They are now applied as configured.
+- **More reliable startup**: A charger set up before its hub could stay permanently broken; it now retries. Also removed a leaked polling timer when the site update frequency changes, and an extra hub reload on startup.
+- **OCPP command reliability**: OCPP charge-rate commands that failed to dispatch were wrongly recorded as sent, which could trigger spurious resets. Fixed.
+- **Compliance check vs ramping**: A charger legitimately ramping up or down is no longer wrongly flagged as non-compliant.
+- **DST-safe timers**: Pause and grace timers no longer jump by an hour across a daylight-saving transition.
+- **Duplicate entity IDs prevented**: The config flow now rejects an entity ID already used by another Load Juggler device (previously a second smart load could silently lose its entities).
+- **Circuit groups on partially-metered sites**: A 3-phase load in a circuit group is no longer wrongly capped to zero when the site meters only some phases.
+- **Service input validation**: The `set_min_current` / `set_max_current` services now reject a value that would make the minimum exceed the maximum.
+- **Fewer false notifications**: Phase-mismatch auto-detect notifications no longer re-fire repeatedly on noisy sites.
+- **Robustness**: An invalid phase configuration value no longer crashes the power calculation.
 
 ---
 

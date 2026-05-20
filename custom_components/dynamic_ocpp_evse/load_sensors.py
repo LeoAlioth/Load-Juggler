@@ -5,6 +5,7 @@ from .const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
+    CONF_CLIMATE_ENTITY_ID,
 )
 from .entity_mixins import ChargerEntityMixin
 
@@ -120,5 +121,80 @@ class LoadJugglerPhaseMaskSensor(ChargerEntityMixin, SensorEntity):
             masks = self.hass.data.get(DOMAIN, {}).get("charger_phase_masks", {})
             mask = masks.get(self.config_entry.entry_id)
             self._state = mask if mask else "Idle"
+        except Exception as e:
+            _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+
+
+class LoadJugglerTankStatusSensor(ChargerEntityMixin, SensorEntity):
+    """Status sensor for a hot water tank — heating state, temp, and setpoint."""
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id):
+        """Initialize the hot water tank status sensor."""
+        self.hass = hass
+        self.config_entry = config_entry
+        self.hub_entry = hub_entry
+        self._attr_name = f"{name} Tank Status"
+        self._attr_unique_id = f"{entity_id}_tank_status"
+        self._climate_entity = config_entry.data.get(CONF_CLIMATE_ENTITY_ID)
+        self._state = "Unknown"
+        self._attrs = {}
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def icon(self):
+        return "mdi:water-boiler"
+
+    @property
+    def extra_state_attributes(self):
+        return self._attrs
+
+    async def async_update(self):
+        """Derive the tank state from the climate entity + shared charger data."""
+        try:
+            charger_rt = (
+                self.hass.data.get(DOMAIN, {})
+                .get("chargers", {})
+                .get(self.config_entry.entry_id, {})
+            )
+            climate_state = (
+                self.hass.states.get(self._climate_entity)
+                if self._climate_entity
+                else None
+            )
+            hvac_action = (
+                climate_state.attributes.get("hvac_action")
+                if climate_state
+                else None
+            )
+            current_temp = (
+                climate_state.attributes.get("current_temperature")
+                if climate_state
+                else None
+            )
+
+            if climate_state is None or climate_state.state in (
+                "unknown",
+                "unavailable",
+            ):
+                self._state = "Unavailable"
+            elif not charger_rt.get("tank_heating_permitted", True):
+                self._state = "Waiting for Power"
+            else:
+                self._state = {
+                    "heating": "Heating",
+                    "idle": "Idle",
+                    "off": "Off",
+                }.get(hvac_action, "Idle")
+
+            self._attrs = {
+                "operating_mode": charger_rt.get("operating_mode"),
+                "current_temperature": current_temp,
+                "target_setpoint": charger_rt.get("tank_setpoint"),
+                "setpoint_source": charger_rt.get("tank_setpoint_label"),
+                "heating_permitted": charger_rt.get("tank_heating_permitted"),
+            }
         except Exception as e:
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)

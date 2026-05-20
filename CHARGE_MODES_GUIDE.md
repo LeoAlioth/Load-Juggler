@@ -10,7 +10,8 @@ For circuit groups (shared breaker limits), see [DISTRIBUTION_MODES_GUIDE.md](DI
 4. [Solar Priority Mode](#solar-priority-mode)
 5. [Solar Only Mode](#solar-only-mode)
 6. [Excess Mode](#excess-mode)
-7. [Configuration Parameters](#configuration-parameters)
+7. [Hot Water Tank Modes](#hot-water-tank-modes)
+8. [Configuration Parameters](#configuration-parameters)
 
 ---
 
@@ -391,6 +392,61 @@ Result: Start charging at available current
 Battery SOC: 98%
 Current Export: 8000W
 Result: Charge at solar rate (like Solar Only mode)
+```
+
+---
+
+## Hot Water Tank Modes
+
+**Available for:** Hot Water Tank
+
+A hot water tank is a binary (on/off) load driven through a Home Assistant `climate` entity — for example a [Generic Thermostat](https://www.home-assistant.io/integrations/generic_thermostat/). The climate entity owns all temperature regulation (hysteresis, minimum cycle duration, the temperature sensor). Load Juggler only decides **when** heating is allowed and **which target temperature** to write.
+
+### Setpoints
+
+The tank has three configurable target temperatures — set during setup and adjustable afterwards as number sliders:
+
+| Setpoint | Typical use |
+| -------- | ----------- |
+| **Away** | Minimal / frost-protection temperature |
+| **Normal** | Everyday baseline temperature |
+| **Boost** | High temperature, used when surplus energy is available |
+
+### Modes
+
+The operating mode decides which setpoint the tank targets, based on conditions:
+
+| Mode | Target setpoint | Power source |
+| ---- | --------------- | ------------ |
+| **Freeze Protection** | Always `Away` | Any source |
+| **Normal** | `Normal`, raised to `Boost` when there is surplus — grid export exceeds the element's power, or the home battery is above its target SOC | Any source |
+| **Solar Only** | `Away` below the battery minimum SOC, `Normal` up to the battery target SOC, `Boost` at/above the target SOC | Solar surplus only |
+
+### How It Works
+
+- Load Juggler reads the climate entity's `hvac_action`. When the thermostat reports `idle` (water already at temperature), the tank frees its reserved power for other loads.
+- When heating is allowed, Load Juggler sets the climate entity to `heat` and writes the resolved setpoint; when not, it sets the entity to `off`.
+- To the power-distribution engine the tank behaves like a smart load — a fixed-power binary draw — so it competes for power with EVSEs and smart plugs by priority and mode urgency.
+- On an **off-grid** system there is no grid export, so the Normal-mode boost is driven by the battery SOC (above target = surplus). The Solar Only SOC bands work unchanged.
+
+### Example Scenarios
+
+*Scenario 1: Normal mode, sunny afternoon, battery full*
+```
+Mode: Normal | Battery SOC: 90% (target 80%)
+Result: Target = Boost — the full battery signals surplus energy
+```
+
+*Scenario 2: Solar Only, battery still charging*
+```
+Mode: Solar Only | Battery SOC: 55% (min 20%, target 80%)
+Result: Target = Normal — heat to the baseline, from solar surplus only
+```
+
+*Scenario 3: Solar Only, battery depleted*
+```
+Mode: Solar Only | Battery SOC: 15% (min 20%)
+Result: Target = Away — frost protection only; let solar refill the battery first
 ```
 
 ---

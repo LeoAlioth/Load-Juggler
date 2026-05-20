@@ -26,6 +26,13 @@ from .const import (
     CONF_DEVICE_TYPE,
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
+    DEVICE_TYPE_HOT_WATER_TANK,
+    CONF_TANK_AWAY_TEMPERATURE,
+    CONF_TANK_NORMAL_TEMPERATURE,
+    CONF_TANK_BOOST_TEMPERATURE,
+    DEFAULT_TANK_AWAY_TEMPERATURE,
+    DEFAULT_TANK_NORMAL_TEMPERATURE,
+    DEFAULT_TANK_BOOST_TEMPERATURE,
     CONF_ENABLE_MAX_IMPORT_POWER,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_MAIN_BREAKER_RATING,
@@ -82,6 +89,23 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         if device_type == DEVICE_TYPE_PLUG:
             entities = [PlugDevicePowerSlider(hass, config_entry, name, entity_id)]
+        elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
+            entities = [
+                TankTemperatureSlider(
+                    hass, config_entry, name, entity_id, "away",
+                    CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE, "Away",
+                ),
+                TankTemperatureSlider(
+                    hass, config_entry, name, entity_id, "normal",
+                    CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE,
+                    "Normal",
+                ),
+                TankTemperatureSlider(
+                    hass, config_entry, name, entity_id, "boost",
+                    CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE,
+                    "Boost",
+                ),
+            ]
         else:
             entities = [
                 EVSEMinCurrentSlider(hass, config_entry, name, entity_id),
@@ -181,6 +205,39 @@ class PlugDevicePowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        self._write_to_charger_data(value)
+
+
+class TankTemperatureSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+    """Slider for a hot water tank setpoint temperature (away / normal / boost)."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self, hass: HomeAssistant, config_entry: ConfigEntry, name: str,
+        entity_id: str, kind: str, conf_key: str, default: float, label: str,
+    ):
+        self.hass = hass
+        self.config_entry = config_entry
+        # Instance-level data key — matches what hot_water_tank.py reads back.
+        self._charger_data_key = f"tank_{kind}_temperature"
+        self._attr_name = f"{name} {label} Temperature"
+        self._attr_unique_id = f"{entity_id}_tank_{kind}_temperature"
+        self._attr_native_min_value = 10
+        self._attr_native_max_value = 90
+        self._attr_native_step = 1
+        self._attr_native_value = get_entry_value(config_entry, conf_key, default)
+        self._attr_native_unit_of_measurement = "°C"
+        self._attr_icon = "mdi:thermometer-water"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._restore_and_publish_number()
+
+    async def async_set_native_value(self, value: float) -> None:
+        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
         self._attr_native_value = value
         self.async_write_ha_state()
         self._write_to_charger_data(value)

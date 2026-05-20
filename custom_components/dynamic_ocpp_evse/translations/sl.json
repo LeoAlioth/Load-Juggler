@@ -140,6 +140,39 @@
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop."
                 }
             },
+            "hot_water_tank_config": {
+                "title": "Konfiguracija grelnika vode",
+                "description": "Nastavite grelnik vode, krmiljen prek entitete climate (npr. Generic Thermostat).",
+                "data": {
+                    "name": "Ime te naprave",
+                    "entity_id": "Predpona ID entitete",
+                    "climate_entity_id": "Entiteta climate (termostat)",
+                    "heating_element_power": "Moč grelnega elementa",
+                    "tank_away_temperature": "Temperatura odsotnosti",
+                    "tank_normal_temperature": "Normalna temperatura",
+                    "tank_boost_temperature": "Boost temperatura",
+                    "connected_to_phase": "Priključeno na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "tank_power_entity_id": "Senzor moči (neobvezno)",
+                    "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
+                    "update_frequency": "Pogostost posodabljanja",
+                    "solar_grace_period": "Obdobje strpnosti za način Sonce/Presežek"
+                },
+                "data_description": {
+                    "entity_id": "Uporabljeno kot predpona za entitete, ki jih ustvari ta integracija.",
+                    "climate_entity_id": "Entiteta climate, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo.",
+                    "heating_element_power": "Nazivna moč grelnega elementa — uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen.",
+                    "tank_away_temperature": "Minimalna / protizmrzovalna ciljna temperatura. Uporablja jo način Zaščita pred zmrzovanjem in kot spodnja meja načina Samo sonce.",
+                    "tank_normal_temperature": "Osnovna ciljna temperatura.",
+                    "tank_boost_temperature": "Višja ciljna temperatura ob presežku energije ali ko je baterija nad ciljnim SOC.",
+                    "connected_to_phase": "Na katere faze je priključen grelni element.",
+                    "charger_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa — uporabljen namesto fiksne moči, kadar je prisoten.",
+                    "tank_power_device_id": "Lahko izberete pametni rele/vtičnico, ki napaja grelnik; njen senzor moči se poišče samodejno.",
+                    "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
+                    "solar_grace_period": "V načinu Samo sonce, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi."
+                }
+            },
             "discover_chargers": {
                 "title": "Odkriti polnilniki",
                 "description": "Izberite OCPP polnilnik za konfiguracijo",
@@ -286,6 +319,23 @@
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop."
+                }
+            },
+            "reconfigure_hot_water_tank": {
+                "title": "Ponovna nastavitev grelnika vode",
+                "description": "Posodobite nastavitve grelnika vode",
+                "data": {
+                    "climate_entity_id": "Entiteta climate (termostat)",
+                    "heating_element_power": "Moč grelnega elementa",
+                    "tank_away_temperature": "Temperatura odsotnosti",
+                    "tank_normal_temperature": "Normalna temperatura",
+                    "tank_boost_temperature": "Boost temperatura",
+                    "connected_to_phase": "Priključeno na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "tank_power_entity_id": "Senzor moči (neobvezno)",
+                    "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
+                    "update_frequency": "Pogostost posodabljanja",
+                    "solar_grace_period": "Obdobje strpnosti za način Sonce/Presežek"
                 }
             },
             "reconfigure_charger": {
@@ -462,6 +512,23 @@
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop."
+                }
+            },
+            "hot_water_tank": {
+                "title": "Posodobi nastavitve grelnika vode",
+                "description": "Posodobite nastavitve grelnika vode",
+                "data": {
+                    "climate_entity_id": "Entiteta climate (termostat)",
+                    "heating_element_power": "Moč grelnega elementa",
+                    "tank_away_temperature": "Temperatura odsotnosti",
+                    "tank_normal_temperature": "Normalna temperatura",
+                    "tank_boost_temperature": "Boost temperatura",
+                    "connected_to_phase": "Priključeno na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "tank_power_entity_id": "Senzor moči (neobvezno)",
+                    "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
+                    "update_frequency": "Pogostost posodabljanja",
+                    "solar_grace_period": "Obdobje strpnosti za način Sonce/Presežek"
                 }
             },
             "charger": {

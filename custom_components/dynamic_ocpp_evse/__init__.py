@@ -455,7 +455,12 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     # Store charger data (runtime state written by entities, read by calculation)
     device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-    default_mode = DEFAULT_OPERATING_MODE_PLUG if device_type == DEVICE_TYPE_PLUG else DEFAULT_OPERATING_MODE_EVSE
+    if device_type == DEVICE_TYPE_PLUG:
+        default_mode = DEFAULT_OPERATING_MODE_PLUG
+    elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
+        default_mode = DEFAULT_OPERATING_MODE_HOT_WATER_TANK
+    else:
+        default_mode = DEFAULT_OPERATING_MODE_EVSE
     hass.data[DOMAIN]["chargers"][entry.entry_id] = {
         "entry": entry,
         "hub_entry_id": hub_entry_id,

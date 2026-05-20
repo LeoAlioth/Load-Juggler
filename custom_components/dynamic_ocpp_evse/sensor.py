@@ -10,6 +10,7 @@ from .load_sensors import (
     LoadJugglerAllocatedCurrentSensor,
     LoadJugglerDeviceStatusSensor,
     LoadJugglerPhaseMaskSensor,
+    LoadJugglerTankStatusSensor,
 )
 from .hub import (
     LoadJugglerHubSensor,
@@ -128,14 +129,20 @@ async def async_setup_entry(
     allocated_sensor = LoadJugglerAllocatedCurrentSensor(
         hass, config_entry, hub_entry, name, entity_id
     )
-    status_sensor = LoadJugglerDeviceStatusSensor(
-        hass, config_entry, hub_entry, name, entity_id
-    )
+
+    device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    if device_type == DEVICE_TYPE_HOT_WATER_TANK:
+        status_sensor = LoadJugglerTankStatusSensor(
+            hass, config_entry, hub_entry, name, entity_id
+        )
+    else:
+        status_sensor = LoadJugglerDeviceStatusSensor(
+            hass, config_entry, hub_entry, name, entity_id
+        )
     entities = [sensor, allocated_sensor, status_sensor]
 
     # Phase mask sensor — only for 3-phase EVSEs (L1/L2/L3 mapped to 3 distinct
     # site phases). For 1-/2-phase loads the mask is trivial, so it is omitted.
-    device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
     l1 = get_entry_value(config_entry, CONF_CHARGER_L1_PHASE, "A")
     l2 = get_entry_value(config_entry, CONF_CHARGER_L2_PHASE, "B")
     l3 = get_entry_value(config_entry, CONF_CHARGER_L3_PHASE, "C")

@@ -7,14 +7,16 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .entity_mixins import HubEntityMixin, ChargerEntityMixin
 from .const import (
     DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID,
-    CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG,
+    CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK,
     DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
     DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
     DEFAULT_DISTRIBUTION_MODE,
     OPERATING_MODE_STANDARD, OPERATING_MODE_CONTINUOUS,
     OPERATING_MODE_SOLAR_PRIORITY, OPERATING_MODE_SOLAR_ONLY, OPERATING_MODE_EXCESS,
-    OPERATING_MODES_EVSE, OPERATING_MODES_PLUG,
+    OPERATING_MODE_NORMAL, OPERATING_MODE_FREEZE_PROTECTION,
+    OPERATING_MODES_EVSE, OPERATING_MODES_PLUG, OPERATING_MODES_HOT_WATER_TANK,
     DEFAULT_OPERATING_MODE_EVSE, DEFAULT_OPERATING_MODE_PLUG,
+    DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,6 +66,9 @@ class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
         if device_type == DEVICE_TYPE_PLUG:
             self._attr_options = list(OPERATING_MODES_PLUG)
             self._attr_current_option = DEFAULT_OPERATING_MODE_PLUG
+        elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
+            self._attr_options = list(OPERATING_MODES_HOT_WATER_TANK)
+            self._attr_current_option = DEFAULT_OPERATING_MODE_HOT_WATER_TANK
         else:
             self._attr_options = list(OPERATING_MODES_EVSE)
             self._attr_current_option = DEFAULT_OPERATING_MODE_EVSE
@@ -76,6 +81,8 @@ class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
             OPERATING_MODE_SOLAR_PRIORITY: "mdi:leaf",
             OPERATING_MODE_SOLAR_ONLY: "mdi:solar-power",
             OPERATING_MODE_EXCESS: "mdi:solar-power-variant",
+            OPERATING_MODE_NORMAL: "mdi:water-boiler",
+            OPERATING_MODE_FREEZE_PROTECTION: "mdi:snowflake",
         }
         return icons.get(self._attr_current_option, "mdi:flash")
 

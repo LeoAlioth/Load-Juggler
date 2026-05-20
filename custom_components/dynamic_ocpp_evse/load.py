@@ -12,6 +12,7 @@ from .status import determine_charging_status
 from .compliance import check_profile_compliance
 from .ocpp import send_ocpp_command
 from .plug import send_plug_command
+from .hot_water_tank import send_hot_water_tank_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -413,6 +414,8 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
             if device_type == DEVICE_TYPE_PLUG:
                 await send_plug_command(self, limit, hub_data, now_mono)
+            elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
+                await send_hot_water_tank_command(self, limit, hub_data, now_mono)
             else:
                 await check_profile_compliance(self, limit, dynamic_control_on)
                 await send_ocpp_command(
