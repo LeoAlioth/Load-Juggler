@@ -415,7 +415,13 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             if device_type == DEVICE_TYPE_PLUG:
                 await send_plug_command(self, limit, hub_data, now_mono)
             elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
-                await send_hot_water_tank_command(self, limit, hub_data, now_mono)
+                # Dynamic Control off → Load Juggler does not touch the climate
+                # entity at all. The tank then behaves as a normal, un-managed
+                # thermostat fully under the user's control.
+                if dynamic_control_on:
+                    await send_hot_water_tank_command(
+                        self, limit, hub_data, now_mono
+                    )
             else:
                 await check_profile_compliance(self, limit, dynamic_control_on)
                 await send_ocpp_command(

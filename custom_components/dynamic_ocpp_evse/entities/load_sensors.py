@@ -180,6 +180,10 @@ class LoadJugglerTankStatusSensor(ChargerEntityMixin, SensorEntity):
                 "unavailable",
             ):
                 self._state = "Unavailable"
+            elif not charger_rt.get("dynamic_control", True):
+                # Dynamic Control off — Load Juggler is not managing the tank;
+                # the thermostat runs on its own.
+                self._state = "Manual"
             elif not charger_rt.get("tank_heating_permitted", True):
                 self._state = "Waiting for Power"
             else:
