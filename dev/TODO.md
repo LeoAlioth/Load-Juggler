@@ -10,332 +10,135 @@ _Nothing in progress — next up is the Backlog below._
 
 ## Backlog
 
-- [ ] **Device-based OCPP discovery** — select OCPP device instead of entity, auto-find all entities (supports per-phase separate entities)
+- [ ] **Device-based OCPP discovery (refactor)** — discovery already works and auto-finds per-phase L1/L2/L3 entities, but by _guessing_ sibling entity names from a `base_name` prefix (`_discover_ocpp_chargers` in `config_flow.py`), and the OCPP device ID is a free-text field. Replace with a device-registry **device selector** + enumerate entities via `entity.device_id`, so it's robust to non-standard OCPP entity naming and supports per-phase separate entities reliably.
 - [ ] **SG Ready device type** — 2-relay site-state mapping (Block/Normal/Recommend ON/Force ON), no user modes
 
-### Hot Water Tank Device Type — Detailed Implementation Plan
+### Hot Water Tank Device Type — Implementation Plan (rev. 2026-05-20)
 
-**Overview:** Add support for hot water tanks with resistive heating elements controlled via thermostat. Unlike EVSE (variable current) or plugs (fixed power), hot water tanks are temperature-controlled binary loads (on/off) with hysteresis.
+**Overview:** Add a `hot_water_tank` device type — a binary (on/off) load driven through
+a Home Assistant `climate` entity (e.g. a Generic Thermostat). Mixable with EVSEs and
+smart loads on the same hub.
 
-> **⚠️ Plan needs remapping after the sensor.py refactor (2026-05-20).** The file/function
-> map below predates the split of `sensor.py` into `hub.py` / `load.py` / `load_sensors.py` /
-> `ocpp.py` / `plug.py` / `status.py` etc. Before implementing:
->
-> - **Phase 2** — there is no `_compute_charger_ceiling()` and no per-device "ceiling
->   function" pattern. The engine uses `_source_limit()` in `target_calculator.py` and has
->   **no `device_type` branching at all**. Binary on/off conversion is done in the HA layer
->   (`plug.py`), not the calc engine. Either add `device_type` branching to `_source_limit`,
->   or model the tank as "a plug with a thermostat gate" entirely in the HA layer.
-> - **Phase 3.3** — switch on/off control already lives in `plug.py` (`plug.py:22-32`), not
->   `dynamic_ocpp_evse.py`. Put tank switch control there or in a new module.
-> - **Phase 4.1** — "sensor.py — new sensors" is stale; charger/load sensors now live in
->   `load.py` / `load_sensors.py`.
-> - `const.py` and `calculations/models.py` (`LoadContext`) references are still accurate.
+**Core design — "a plug that speaks `climate`":** the climate entity owns _all_
+temperature regulation (current temperature, setpoint, hysteresis via cold/hot tolerance,
+min cycle duration). Load Juggler only does power management — exactly two writes and one
+read on the climate entity:
 
----
+| Op | Action | Purpose |
+| -- | ------ | ------- |
+| write | `climate.set_temperature` → mode target | Normal vs Boost = a different setpoint |
+| write | `climate.set_hvac_mode` → `heat` / `off` | `heat` = heating permitted; `off` = forbidden |
+| read | `hvac_action` attribute | `heating` = drawing; `idle` = satisfied (free the power) |
 
-#### Phase 1: Data Model & Constants
+The calculation engine treats the tank as a smart load (plug) — **no engine changes**.
 
-##### 1.1 const.py — New constants
-
-```python
-# Device type
-DEVICE_TYPE_HOT_WATER_TANK = "hot_water_tank"
-
-# Configuration keys
-CONF_THERMOSTAT_ENTITY_ID = "thermostat_entity_id"      # HA climate entity or temperature sensor
-CONF_TEMPERATURE_SENSOR_ENTITY_ID = "temperature_sensor_entity_id"  # Optional: separate temp sensor
-CONF_TARGET_TEMPERATURE = "target_temperature"          # Target water temp (°C)
-CONF_TEMPERATURE_HYSTERESIS = "temperature_hysteresis"  # Deadband (°C, default 5)
-CONF_HEATING_ELEMENT_POWER = "heating_element_power"    # Fixed power rating (W)
-CONF_HEATING_ELEMENT_PHASES = "heating_element_phases"  # Phase connection (A, AB, ABC, etc.)
-
-# Operating modes for hot water tank
-OPERATING_MODE_NORMAL = "Normal"        # Heat from any source when temp below target
-OPERATING_MODE_BOOST = "Boost"          # Force heating regardless of solar/temp
-# Solar Only and Excess inherited from existing modes
-
-OPERATING_MODES_HOT_WATER_TANK = [
-    OPERATING_MODE_NORMAL,
-    OPERATING_MODE_BOOST,
-    OPERATING_MODE_SOLAR_ONLY,
-    OPERATING_MODE_EXCESS,
-]
-
-DEFAULT_TARGET_TEMPERATURE = 45  # °C
-DEFAULT_HIGH_TEMP_TARGET = 80 # °C
-DEFAULT_TEMPERATURE_HYSTERESIS = 1  # °C
-DEFAULT_HEATING_ELEMENT_POWER = 2000  # W
-```
-
-##### 1.2 models.py — Extend LoadContext
-
-```python
-@dataclass
-class LoadContext:
-    # ... existing fields ...
-    
-    # Hot water tank specific (only used when device_type == "hot_water_tank")
-    current_temperature: float | None = None      # Current water temperature (°C)
-    target_temperature: float = 55.0              # Target temperature (°C)
-    temperature_hysteresis: float = 5.0           # Deadband (°C)
-    heating_element_power: float = 2000.0         # Fixed power (W)
-    
-    # Computed property for temperature control
-    @property
-    def needs_heating(self) -> bool:
-        """Returns True if tank needs heating based on temperature and hysteresis."""
-        if self.current_temperature is None:
-            return False  # No sensor reading, don't heat
-        threshold = self.target_temperature - self.temperature_hysteresis
-        return self.current_temperature < threshold
-```
-
----
-
-#### Phase 2: Calculation Engine
-
-##### 2.1 target_calculator.py — New ceiling function
-
-Add `_compute_hot_water_tank_ceiling()` that returns binary decision (ON/OFF) converted to allocated_current:
-
-```python
-def _compute_hot_water_tank_ceiling(
-    charger: LoadContext,
-    site: SiteContext,
-    physical: PhaseConstraints,
-    solar: PhaseConstraints,
-    excess: PhaseConstraints,
-) -> float:
-    """Compute allocated current for hot water tank (binary ON/OFF).
-    
-    Returns:
-        0.0 = OFF (don't heat)
-        charging_current = ON (heat at element's rated power)
-    """
-    mode = charger.operating_mode
-    mask = charger.active_phases_mask
-    
-    # Temperature check (except Boost mode)
-    if mode != OPERATING_MODE_BOOST:
-        if not charger.needs_heating:
-            return 0.0  # Temperature satisfied, don't heat
-    
-    # Convert heating element power to current
-    element_current = charger.heating_element_power / site.voltage
-    
-    # Mode-specific logic
-    if mode == OPERATING_MODE_BOOST:
-        # Always ON if temperature not at target, regardless of power source
-        if charger.needs_heating:
-            phys_avail = physical.get_available(mask)
-            return min(element_current, phys_avail)
-        return 0.0
-    
-    if mode == OPERATING_MODE_NORMAL:
-        # Heat from any available source when temperature is low
-        phys_avail = physical.get_available(mask)
-        if phys_avail >= element_current:
-            return element_current
-        return 0.0
-    
-    if mode == OPERATING_MODE_SOLAR_ONLY:
-        # Heat only from solar surplus
-        solar_avail = solar.get_available(mask)
-        if solar_avail >= element_current:
-            return element_current
-        return 0.0
-    
-    if mode == OPERATING_MODE_EXCESS:
-        # Heat only when export exceeds threshold
-        excess_avail = excess.get_available(mask)
-        if excess_avail >= element_current:
-            return element_current
-        return 0.0
-    
-    return 0.0
-```
-
-##### 2.2 target_calculator.py — Update `_compute_charger_ceiling()`
-
-Add branch for hot_water_tank device type:
-
-```python
-def _compute_charger_ceiling(...):
-    if charger.device_type == DEVICE_TYPE_HOT_WATER_TANK:
-        return _compute_hot_water_tank_ceiling(charger, site, physical, solar, excess)
-    # ... existing EVSE/plug logic ...
-```
-
-**2.3 target_calculator.py — Mode urgency for Normal/Boost**
-
-```python
-MODE_URGENCY = {
-    # ... existing modes ...
-    OPERATING_MODE_BOOST: 0,      # Same urgency as Standard (highest)
-    OPERATING_MODE_NORMAL: 1,     # Same urgency as Solar Priority
-}
-```
-
----
-
-#### Phase 3: HA Integration Layer
-
-##### 3.1 config_flow.py — New config step
-
-Add `async_step_hot_water_tank_config()` with schema:
-
-- Name + entity_id (standard fields)
-- Thermostat entity selector (climate domain) OR temperature sensor selector
-- Target temperature (number slider, 30-80°C)
-- Temperature hysteresis (number slider, 1-15°C)
-- Heating element power (number, 500-6000W)
-- Phase connection (select: A, B, C, AB, BC, AC, ABC)
-- Switch entity to control heating element (required)
-- Priority (1-10)
-- Operating mode (select)
-- Grace period (for Solar/Excess modes)
-
-##### 3.2 dynamic_ocpp_evse.py — Temperature reading
-
-Add `_read_tank_temperature()` helper:
-
-```python
-def _read_tank_temperature(hass, config: dict) -> float | None:
-    """Read current tank temperature from climate entity or sensor."""
-    thermostat_id = config.get(CONF_THERMOSTAT_ENTITY_ID)
-    if thermostat_id:
-        state = hass.states.get(thermostat_id)
-        if state and state.state not in ("unknown", "unavailable"):
-            # Climate entity: get current_temperature attribute
-            if state.domain == "climate":
-                return state.attributes.get("current_temperature")
-            # Sensor entity: state is the temperature
-            try:
-                return float(state.state)
-            except (ValueError, TypeError):
-                return None
-    return None
-```
-
-##### 3.3 dynamic_ocpp_evse.py — Switch control
-
-Add `_write_hot_water_tank_state()` helper:
-
-```python
-def _write_hot_water_tank_state(charger: LoadContext, turn_on: bool) -> None:
-    """Turn hot water tank heating element on/off via switch entity."""
-    switch_entity = charger.extra_state.get("switch_entity_id")
-    if switch_entity:
-        service = "switch.turn_on" if turn_on else "switch.turn_off"
-        hass.services.async_call("switch", service.split(".")[1], 
-                                  {"entity_id": switch_entity})
-```
-
----
-
-#### Phase 4: Entities & UI
-
-##### 4.1 sensor.py — New sensors
-
-- Hot Water Tank Status sensor (attribute: current_temperature, target_temperature)
-- Allocated Power sensor (0 or element_power)
-
-##### 4.2 select.py — Operating mode selector
-
-- Reuse existing `OperatingModeSelect` with `OPERATING_MODES_HOT_WATER_TANK`
-
-##### 4.3 number.py — Configuration sliders
-
-- Target Temperature (30-80°C, default 55°C)
-- Temperature Hysteresis (1-15°C, default 5°C)
-
----
-
-#### Phase 5: Tests
-
-##### 5.1 Unit tests — calculations/**
-
-Create `test_hot_water_tank.py`:
-
-- Test temperature hysteresis (heat below target - hysteresis, stop at target)
-- Test Solar Only mode (only heat when solar available)
-- Test Excess mode (only heat when export > threshold)
-- Test Normal mode (heat whenever power available, temperature permitting)
-- Test Boost mode (always heat until target reached)
-
-##### 5.2 Scenario tests — dev/tests/scenarios/
-
-Create `features/test_hot_water_tank.yaml`:
-
-- Tank at 40°C, target 55°C, solar available → ON in Normal mode
-- Tank at 55°C (target) → OFF
-- Tank at 53°C, hysteresis 5°C → OFF (within deadband)
-- Tank at 48°C, hysteresis 5°C, target 55°C → ON (below 50°C threshold)
-- Solar Only mode, no solar → OFF
-- Solar Only mode, solar surplus → ON
-- Excess mode, export below threshold → OFF
-- Excess mode, export above threshold → ON
-
----
-
-#### Phase 6: Documentation
-
-##### 6.1 CHARGE_MODES_GUIDE.md — Add Hot Water Tank section
-
-```markdown
-## Hot Water Tank Modes
-
-| Mode | Behavior |
-| -----|----------|
-| **Normal** | Heat from any power source when temperature below target-hysteresis |
-| **Boost** | Always heat (ignores solar constraints, respects temperature limit) |
-| **Solar Only** | Heat only from solar surplus when temperature low |
-| **Excess** | Heat only when export exceeds threshold |
-```
-
-##### 6.2 README.md — Add hot water tank to supported devices
-
-##### 6.3 Translations — en.json, sl.json
-
-Add translation keys for:
-
-- Device type name: "Hot Water Tank"
-- Mode names and descriptions
-- Configuration field labels
-
----
-
-#### Implementation Order
-
-1. **Phase 1** — Constants and data model (foundation)
-2. **Phase 2** — Calculation engine (pure Python, testable)
-3. **Phase 3** — Config flow and HA integration
-4. **Phase 4** — Entities and UI
-5. **Phase 5** — Tests
-6. **Phase 6** — Documentation
-
----
-
-#### Key Design Decisions
+#### Design decisions
 
 | Decision | Rationale |
 | -------- | --------- |
-| Binary output (ON/OFF) | Resistive heating elements cannot modulate power |
-| Temperature hysteresis | Prevents rapid cycling, extends element life |
-| Fixed power rating | Simpler than variable current allocation |
-| Reuse Solar/Excess modes | Consistent with existing plug behavior |
-| New Normal/Boost modes | Unique to temperature-controlled loads |
-| Switch entity control | Compatible with any HA-controllable relay/thermostat |
+| Delegate all temperature logic to the climate entity | The Generic Thermostat already does hysteresis, min-cycle, sensor reading — don't reimplement it |
+| Engine treats the tank as a plug (`power_rating` = element power) | Binary load identical to a smart load; zero engine churn |
+| Normal vs Boost = setpoint only | Normal heats to a baseline target, Boost to a high target; same priority |
+| `connector_status` derived from `hvac_action` | `idle` → inactive so the engine reallocates power away from an already-hot tank; self-corrects within a cycle |
+| Element power: fixed W + optional live power entity/device | Mirrors the smart-load power-monitor pattern; live measurement preferred when present |
+
+#### Mode → engine-mode mapping (done in the HA layer)
+
+| Tank mode | Engine mode | Setpoint written |
+| --------- | ----------- | ---------------- |
+| Normal | `Continuous` | baseline target |
+| Boost | `Continuous` | boost target |
+| Solar Only | `Solar Only` | baseline target |
+| Excess | `Excess` | baseline target |
 
 ---
 
-#### Out of Scope (Future Enhancements)
+#### Phase 1 — Constants (`const.py`)
 
-- Heat pump water heaters (variable power, COP awareness)
-- Multiple heating elements (staged control)
-- Schedule-based heating (time-of-use optimization)
-- Grid tariff integration (heat when electricity is cheap)
+```python
+DEVICE_TYPE_HOT_WATER_TANK = "hot_water_tank"
+
+CONF_CLIMATE_ENTITY_ID = "climate_entity_id"          # climate entity (read + control)
+CONF_HEATING_ELEMENT_POWER = "heating_element_power"  # fixed element rating (W) — fallback
+CONF_TANK_POWER_ENTITY_ID = "tank_power_entity_id"    # optional power sensor (live draw)
+CONF_TANK_POWER_DEVICE_ID = "tank_power_device_id"    # optional: device whose power sensor we resolve
+CONF_TANK_TARGET_TEMPERATURE = "tank_target_temperature"  # Normal/Solar/Excess setpoint
+CONF_TANK_BOOST_TEMPERATURE = "tank_boost_temperature"    # Boost setpoint
+
+OPERATING_MODE_NORMAL = "Normal"
+OPERATING_MODE_BOOST = "Boost"
+OPERATING_MODES_HOT_WATER_TANK = [
+    OPERATING_MODE_NORMAL, OPERATING_MODE_BOOST,
+    OPERATING_MODE_SOLAR_ONLY, OPERATING_MODE_EXCESS,
+]
+
+DEFAULT_TANK_TARGET_TEMPERATURE = 45  # °C
+DEFAULT_TANK_BOOST_TEMPERATURE = 80   # °C
+DEFAULT_HEATING_ELEMENT_POWER = 2000  # W
+```
+
+Phase connection reuses the existing `CONF_CONNECTED_TO_PHASE`. **No `LoadContext` or
+calculation-engine changes** — the tank is a plug to the engine.
+
+#### Phase 2 — Config flow (`config_flow.py`)
+
+- Add "Hot Water Tank" as a third device-type option on the device-type selection step.
+- New `async_step_hot_water_tank_config()` — schema:
+  - Name + entity_id (reuse the `_entity_id_in_use` uniqueness check)
+  - Climate entity selector (`domain: climate`) — required
+  - Element power (number, W) **+** optional power-sensor entity selector
+    (`device_class: power`) **+** optional device selector. A picked device is resolved
+    to its `device_class: power` entity at config time and stored as
+    `CONF_TANK_POWER_ENTITY_ID`, so runtime only ever sees one entity + the fallback W.
+  - Phase connection (`CONF_CONNECTED_TO_PHASE`), operating mode, priority.
+- Reconfigure step (`async_step_reconfigure_hot_water_tank`).
+- Target / Boost temperatures are runtime number sliders (Phase 5), not config-flow fields.
+
+#### Phase 3 — Tank LoadContext builder (`dynamic_ocpp_evse.py`)
+
+`_build_hot_water_tank_charger()` — mirrors `_build_plug_charger`:
+
+- Read the climate entity's `hvac_action` attribute.
+- `connector_status` = inactive when `hvac_action == "idle"`, else active.
+- `power_rating` = live power-entity reading when available, else `CONF_HEATING_ELEMENT_POWER`.
+- Map the user's tank mode → engine operating mode (table above).
+- **No temperature read, no hysteresis** — the climate entity owns that.
+
+#### Phase 4 — Tank command (`hot_water_tank.py`, new module)
+
+`send_hot_water_tank_command()` — mirrors `plug.py` `send_plug_command`, throttled:
+
+- Heating permitted (engine allocation ≥ threshold): `climate.set_hvac_mode → heat`
+  **and** `climate.set_temperature` to the active mode's target.
+- Otherwise: `climate.set_hvac_mode → off`.
+- Only call the climate services when the desired state actually changes.
+- `load.py` — add a dispatch branch for `DEVICE_TYPE_HOT_WATER_TANK` alongside EVSE/plug.
+
+#### Phase 5 — Entities (`load_sensors.py`, `number.py`, `select.py`)
+
+- **Status sensor** (`load_sensors.py`) — state e.g. `Heating` / `Idle` / `Off`;
+  attributes: current temperature, active setpoint, mode.
+- **Number sliders** (`number.py`) — Target Temperature, Boost Temperature.
+- **Mode select** (`select.py`) — reuse `OperatingModeSelect` with `OPERATING_MODES_HOT_WATER_TANK`.
+- Tank entries are `ENTRY_TYPE_CHARGER` with `device_type = hot_water_tank`, so they flow
+  through the existing charger platform setup in `__init__.py` / `sensor.py`.
+
+#### Phase 6 — Tests, translations, docs
+
+- **Scenario tests** (`dev/tests/scenarios/features/`) — tank as a plug-like load across
+  Normal / Boost / Solar Only / Excess; verify it competes for power and goes inactive
+  when `hvac_action == idle`.
+- **HA-layer tests** — new config-flow step + entity-id uniqueness; the
+  `_build_hot_water_tank_charger` mode mapping; `send_hot_water_tank_command` climate
+  service calls. Run via `dev/Dockerfile.test`.
+- **Translations** — `strings.json`, `translations/en.json`, `translations/sl.json`.
+- **Docs** — `CHARGE_MODES_GUIDE.md` (tank modes table), `README.md` (supported devices).
+
+#### Out of scope
+
+- Heat-pump water heaters (variable power / COP awareness)
+- Multiple staged heating elements
+- Schedule- or tariff-aware heating
 
 ## Other
 
