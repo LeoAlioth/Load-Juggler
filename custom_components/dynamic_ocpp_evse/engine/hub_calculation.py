@@ -885,16 +885,17 @@ def _build_hub_result(
         if c is not None
     )
 
-    # Battery discharge power available for EV charging
+    # Battery rated discharge power (gated by SOC >= minimum). This is the
+    # battery's capability, not what is spare right now — see battery_remaining.
     if (
         battery_soc is not None
         and battery_soc_min is not None
         and battery_soc >= battery_soc_min
         and battery_max_discharge_power
     ):
-        available_battery_power = round(float(battery_max_discharge_power), 0)
+        battery_rated_discharge = round(float(battery_max_discharge_power), 0)
     else:
-        available_battery_power = 0
+        battery_rated_discharge = 0
 
     # Total EVSE power = sum of actual charger draws
     total_evse_power = round(
@@ -931,13 +932,30 @@ def _build_hub_result(
             # Derived solar mode: export IS the solar available (best approximation)
             solar_available = max(0, site.solar_production_total)
 
-    # Total site available power = grid import headroom + power the inverter
-    # can source from solar and battery. On an off-grid system grid_headroom
-    # is 0, so this is purely inverter-sourced; on a grid-tied system it is
-    # the sum of both paths. Capped by inverter capacity when configured.
-    inverter_sourced = solar_available + available_battery_power
+    # Battery power still spare for managed loads = rated discharge minus the
+    # discharge already serving the household.
+    current_battery_discharge = max(0, battery_power or 0)
+    battery_remaining = max(0, battery_rated_discharge - current_battery_discharge)
+
+    # Site remaining power = grid import headroom + power the inverter can
+    # still source from solar and battery for managed loads. On an off-grid
+    # system grid_headroom is 0, so this is purely inverter-sourced; on a
+    # grid-tied system it is the sum of both paths.
+    #
+    # Two ceilings apply, and we take the lower:
+    #  - Source: solar surplus + spare battery discharge.
+    #  - Inverter: rated capacity minus what the inverter is *already*
+    #    outputting (its AC output ≈ solar production + battery discharge).
+    inverter_sourced = solar_available + battery_remaining
     if site.inverter_max_power:
-        inverter_sourced = min(inverter_sourced, site.inverter_max_power)
+        current_inverter_output = max(
+            0, (site.solar_production_total or 0) + (battery_power or 0)
+        )
+        inverter_headroom = max(0, site.inverter_max_power - current_inverter_output)
+        inverter_sourced = min(inverter_sourced, inverter_headroom)
+        # Battery Remaining Power is likewise bounded by the inverter: the
+        # battery cannot deliver more to loads than the inverter can pass.
+        battery_remaining = min(battery_remaining, inverter_headroom)
     total_site_available = grid_headroom + inverter_sourced
 
     # Build per-charger operating modes dict
@@ -973,7 +991,7 @@ def _build_hub_result(
         "total_site_available_power": round(total_site_available, 0),
         "grid_power": round(net_consumption, 0),
         "available_grid_power": round(grid_headroom, 0),
-        "available_battery_power": available_battery_power,
+        "available_battery_power": battery_remaining,
         "total_evse_power": total_evse_power,
         "solar_power": round(site.solar_production_total or 0, 0),
         "available_solar_power": round(solar_available, 0),

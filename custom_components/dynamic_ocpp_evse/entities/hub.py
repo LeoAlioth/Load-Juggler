@@ -22,7 +22,7 @@ class LoadJugglerHubSensor(HubEntityMixin, SensorEntity):
         """Initialize the hub sensor."""
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = f"{name} Site Available Power"
+        self._attr_name = f"{name} Site Remaining Power"
         self._attr_unique_id = f"{entity_id}_site_info"
         self._total_site_available_power = None
         self._grid_stale = False
@@ -196,7 +196,7 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_battery": True,
     },
     {
-        "name_suffix": "Available Current A",
+        "name_suffix": "Remaining Current A",
         "unique_id_suffix": "site_available_current_phase_a",
         "hub_data_key": "available_current_a",
         "unit": "A",
@@ -205,7 +205,7 @@ HUB_SENSOR_DEFINITIONS = [
         "decimals": 1,
     },
     {
-        "name_suffix": "Available Current B",
+        "name_suffix": "Remaining Current B",
         "unique_id_suffix": "site_available_current_phase_b",
         "hub_data_key": "available_current_b",
         "unit": "A",
@@ -215,7 +215,7 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_phase": "B",
     },
     {
-        "name_suffix": "Available Current C",
+        "name_suffix": "Remaining Current C",
         "unique_id_suffix": "site_available_current_phase_c",
         "hub_data_key": "available_current_c",
         "unit": "A",
@@ -225,7 +225,7 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_phase": "C",
     },
     {
-        "name_suffix": "Available Grid Power",
+        "name_suffix": "Grid Remaining Power",
         "unique_id_suffix": "site_grid_available_power",
         "hub_data_key": "available_grid_power",
         "unit": "W",
@@ -234,7 +234,7 @@ HUB_SENSOR_DEFINITIONS = [
         "decimals": 0,
     },
     {
-        "name_suffix": "Available Solar Power",
+        "name_suffix": "Solar Remaining Power",
         "unique_id_suffix": "solar_available_power",
         "hub_data_key": "available_solar_power",
         "unit": "W",
@@ -243,7 +243,7 @@ HUB_SENSOR_DEFINITIONS = [
         "decimals": 0,
     },
     {
-        "name_suffix": "Available Battery Power",
+        "name_suffix": "Battery Remaining Power",
         "unique_id_suffix": "battery_available_power",
         "hub_data_key": "available_battery_power",
         "unit": "W",
@@ -253,7 +253,7 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_battery": True,
     },
     {
-        "name_suffix": "Total Managed Power",
+        "name_suffix": "Current Managed Power",
         "unique_id_suffix": "total_evse_power",
         "hub_data_key": "total_evse_power",
         "unit": "W",
