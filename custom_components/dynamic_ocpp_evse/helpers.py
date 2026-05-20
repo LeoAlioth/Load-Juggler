@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 
+from .const import (
+    CONF_PHASE_A_CURRENT_ENTITY_ID,
+    CONF_PHASE_B_CURRENT_ENTITY_ID,
+    CONF_PHASE_C_CURRENT_ENTITY_ID,
+    CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_POWER_ENTITY_ID,
+)
+
 
 def prettify_name(name: str) -> str:
     """Convert raw device names (e.g. 'evbox_elvi') to human-friendly format.
@@ -54,3 +62,32 @@ def validate_charger_settings(data: dict[str, any], errors: dict[str, str]) -> N
             errors["base"] = "invalid_current"
         elif min_current > max_current:
             errors["base"] = "min_exceeds_max"
+
+
+def validate_offgrid_battery_requirement(
+    grid_data: dict, battery_data: dict, errors: dict[str, str]
+) -> None:
+    """Require a battery on hubs with no grid CTs (hard block).
+
+    A hub with no grid CT entities runs off-grid: the battery SOC drives the
+    mode logic and battery power drives off-grid solar-surplus detection, so
+    both entities are mandatory. Adds an error to ``errors`` in-place.
+
+    Args:
+        grid_data: config holding the phase-current entity keys (may be None).
+        battery_data: config holding the battery SOC / power entity keys.
+        errors: error dict to populate (modified in-place).
+    """
+    has_grid_cts = any(
+        grid_data.get(key)
+        for key in (
+            CONF_PHASE_A_CURRENT_ENTITY_ID,
+            CONF_PHASE_B_CURRENT_ENTITY_ID,
+            CONF_PHASE_C_CURRENT_ENTITY_ID,
+        )
+    )
+    if not has_grid_cts and not (
+        battery_data.get(CONF_BATTERY_SOC_ENTITY_ID)
+        and battery_data.get(CONF_BATTERY_POWER_ENTITY_ID)
+    ):
+        errors["base"] = "battery_required_no_cts"

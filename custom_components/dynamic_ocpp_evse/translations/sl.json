@@ -366,6 +366,7 @@
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
             "entity_id_in_use": "Ta ID entitete že uporablja druga naprava Load Juggler — izberite enoličnega.",
+            "battery_required_no_cts": "Ta hub nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta SOC baterije in entiteta moči baterije.",
             "unknown": "Prišlo je do neznane napake"
         },
         "abort": {

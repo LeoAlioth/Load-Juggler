@@ -366,6 +366,7 @@
             "invalid_current": "Charge current values must be greater than zero.",
             "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
             "entity_id_in_use": "This entity ID is already used by another Load Juggler device — choose a unique one.",
+            "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. A battery SOC entity and a battery power entity are both required.",
             "unknown": "An unknown error occurred"
         },
         "abort": {

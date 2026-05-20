@@ -2,7 +2,7 @@
 
 ## In Progress
 
-_Nothing in progress — next up is the Backlog below._
+- [x] **Hub config flow: no grid CTs ⇒ battery required (hard block)** — _done 2026-05-20._ A hub with no grid CT entities runs off-grid, so the battery is its primary state source (SOC drives mode logic; battery power drives off-grid solar-surplus detection). Hard-blocks the hub **config**, **reconfigure** and **options** flows unless a battery SOC entity **and** a battery power entity are both configured. Logic: `validate_offgrid_battery_requirement` in `helpers.py`; error key `battery_required_no_cts`; 7 tests in `test_config_flow.py`.
 
 > The 2026-05-20 codebase audit is fully resolved: 3 Critical, 9 High and 7 Medium
 > bugs all fixed and verified (141 calc-scenario + 93 HA-layer tests pass). The EVSE
@@ -20,36 +20,52 @@ a Home Assistant `climate` entity (e.g. a Generic Thermostat). Mixable with EVSE
 smart loads on the same hub.
 
 **Core design — "a plug that speaks `climate`":** the climate entity owns _all_
-temperature regulation (current temperature, setpoint, hysteresis via cold/hot tolerance,
-min cycle duration). Load Juggler only does power management — exactly two writes and one
-read on the climate entity:
+temperature regulation (current temperature, hysteresis via cold/hot tolerance, min cycle
+duration). Load Juggler does power management and chooses the setpoint. Each cycle it
+performs two writes and one read on the climate entity:
 
 | Op | Action | Purpose |
 | -- | ------ | ------- |
-| write | `climate.set_temperature` → mode target | Normal vs Boost = a different setpoint |
+| write | `climate.set_temperature` → the active setpoint | mode + conditions pick away/normal/boost |
 | write | `climate.set_hvac_mode` → `heat` / `off` | `heat` = heating permitted; `off` = forbidden |
 | read | `hvac_action` attribute | `heating` = drawing; `idle` = satisfied (free the power) |
 
 The calculation engine treats the tank as a smart load (plug) — **no engine changes**.
 
+#### Setpoints and operating modes
+
+**Three setpoints** — `away`, `normal`, `boost` — are just target temperatures, not
+modes. They are prompted during setup **and** exposed as runtime number sliders.
+
+**Three operating modes** — each dynamically selects which setpoint to target:
+
+| Mode | Target setpoint | Power source |
+| ---- | --------------- | ------------ |
+| **Freeze Protection** | always `away` | any source |
+| **Normal** | `boost` when excess export is available **or** battery SOC > target; otherwise `normal` | any source |
+| **Solar Only** | SOC < battery-min → `away`; battery-min ≤ SOC < battery-target → `normal`; SOC ≥ battery-target → `boost` | solar surplus only |
+
+Assumptions: "excess export available" = `total_export_power > excess_export_threshold`
+(the hub's existing excess concept); battery min/target reuse the hub's existing
+`battery_soc_min` / `battery_soc_target`.
+
+#### Mode → engine-mode mapping (done in the HA layer)
+
+| Tank mode | Engine mode | Notes |
+| --------- | ----------- | ----- |
+| Freeze Protection | `Continuous` | any source; target = away |
+| Normal | `Continuous` | any source; target = normal/boost |
+| Solar Only | `Solar Only` | solar pool only; target = away/normal/boost by SOC |
+
 #### Design decisions
 
 | Decision | Rationale |
 | -------- | --------- |
-| Delegate all temperature logic to the climate entity | The Generic Thermostat already does hysteresis, min-cycle, sensor reading — don't reimplement it |
+| Delegate all temperature regulation to the climate entity | The Generic Thermostat already does hysteresis, min-cycle, sensor reading — don't reimplement it |
 | Engine treats the tank as a plug (`power_rating` = element power) | Binary load identical to a smart load; zero engine churn |
-| Normal vs Boost = setpoint only | Normal heats to a baseline target, Boost to a high target; same priority |
-| `connector_status` derived from `hvac_action` | `idle` → inactive so the engine reallocates power away from an already-hot tank; self-corrects within a cycle |
+| away/normal/boost are setpoints, not modes | The mode + power/SOC conditions choose which setpoint to write |
+| `connector_status` derived from `hvac_action` | `idle` → inactive so the engine reallocates power away from an already-hot tank |
 | Element power: fixed W + optional live power entity/device | Mirrors the smart-load power-monitor pattern; live measurement preferred when present |
-
-#### Mode → engine-mode mapping (done in the HA layer)
-
-| Tank mode | Engine mode | Setpoint written |
-| --------- | ----------- | ---------------- |
-| Normal | `Continuous` | baseline target |
-| Boost | `Continuous` | boost target |
-| Solar Only | `Solar Only` | baseline target |
-| Excess | `Excess` | baseline target |
 
 ---
 
@@ -62,18 +78,20 @@ CONF_CLIMATE_ENTITY_ID = "climate_entity_id"          # climate entity (read + c
 CONF_HEATING_ELEMENT_POWER = "heating_element_power"  # fixed element rating (W) — fallback
 CONF_TANK_POWER_ENTITY_ID = "tank_power_entity_id"    # optional power sensor (live draw)
 CONF_TANK_POWER_DEVICE_ID = "tank_power_device_id"    # optional: device whose power sensor we resolve
-CONF_TANK_TARGET_TEMPERATURE = "tank_target_temperature"  # Normal/Solar/Excess setpoint
-CONF_TANK_BOOST_TEMPERATURE = "tank_boost_temperature"    # Boost setpoint
+CONF_TANK_AWAY_TEMPERATURE = "tank_away_temperature"
+CONF_TANK_NORMAL_TEMPERATURE = "tank_normal_temperature"
+CONF_TANK_BOOST_TEMPERATURE = "tank_boost_temperature"
 
+OPERATING_MODE_FREEZE_PROTECTION = "Freeze Protection"
 OPERATING_MODE_NORMAL = "Normal"
-OPERATING_MODE_BOOST = "Boost"
+# OPERATING_MODE_SOLAR_ONLY already exists
 OPERATING_MODES_HOT_WATER_TANK = [
-    OPERATING_MODE_NORMAL, OPERATING_MODE_BOOST,
-    OPERATING_MODE_SOLAR_ONLY, OPERATING_MODE_EXCESS,
+    OPERATING_MODE_FREEZE_PROTECTION, OPERATING_MODE_NORMAL, OPERATING_MODE_SOLAR_ONLY,
 ]
 
-DEFAULT_TANK_TARGET_TEMPERATURE = 45  # °C
-DEFAULT_TANK_BOOST_TEMPERATURE = 80   # °C
+DEFAULT_TANK_AWAY_TEMPERATURE = 30    # °C
+DEFAULT_TANK_NORMAL_TEMPERATURE = 45  # °C
+DEFAULT_TANK_BOOST_TEMPERATURE = 65   # °C
 DEFAULT_HEATING_ELEMENT_POWER = 2000  # W
 ```
 
@@ -90,9 +108,10 @@ calculation-engine changes** — the tank is a plug to the engine.
     (`device_class: power`) **+** optional device selector. A picked device is resolved
     to its `device_class: power` entity at config time and stored as
     `CONF_TANK_POWER_ENTITY_ID`, so runtime only ever sees one entity + the fallback W.
-  - Phase connection (`CONF_CONNECTED_TO_PHASE`), operating mode, priority.
+  - **Away / Normal / Boost temperatures** (three number inputs — prompted at setup)
+  - Phase connection (`CONF_CONNECTED_TO_PHASE`), operating mode, priority
 - Reconfigure step (`async_step_reconfigure_hot_water_tank`).
-- Target / Boost temperatures are runtime number sliders (Phase 5), not config-flow fields.
+- The three setpoints are also runtime number sliders (Phase 5); config-flow values seed them.
 
 #### Phase 3 — Tank LoadContext builder (`dynamic_ocpp_evse.py`)
 
@@ -101,36 +120,38 @@ calculation-engine changes** — the tank is a plug to the engine.
 - Read the climate entity's `hvac_action` attribute.
 - `connector_status` = inactive when `hvac_action == "idle"`, else active.
 - `power_rating` = live power-entity reading when available, else `CONF_HEATING_ELEMENT_POWER`.
-- Map the user's tank mode → engine operating mode (table above).
+- Map the tank mode → engine operating mode (table above).
 - **No temperature read, no hysteresis** — the climate entity owns that.
 
-#### Phase 4 — Tank command (`hot_water_tank.py`, new module)
+#### Phase 4 — Setpoint logic + tank command (`hot_water_tank.py`, new module)
 
-`send_hot_water_tank_command()` — mirrors `plug.py` `send_plug_command`, throttled:
-
-- Heating permitted (engine allocation ≥ threshold): `climate.set_hvac_mode → heat`
-  **and** `climate.set_temperature` to the active mode's target.
-- Otherwise: `climate.set_hvac_mode → off`.
-- Only call the climate services when the desired state actually changes.
+- `resolve_tank_setpoint(mode, temps, hub_data)` — pure function returning the active
+  setpoint from the mode + battery SOC + excess-export condition (table above). Unit-testable.
+- `send_hot_water_tank_command()` — mirrors `plug.py` `send_plug_command`, throttled:
+  - Heating permitted (engine allocation ≥ threshold): `climate.set_hvac_mode → heat`
+    **and** `climate.set_temperature` to the resolved setpoint.
+  - Otherwise: `climate.set_hvac_mode → off`.
+  - Only call the climate services when the desired state actually changes.
 - `load.py` — add a dispatch branch for `DEVICE_TYPE_HOT_WATER_TANK` alongside EVSE/plug.
 
 #### Phase 5 — Entities (`load_sensors.py`, `number.py`, `select.py`)
 
 - **Status sensor** (`load_sensors.py`) — state e.g. `Heating` / `Idle` / `Off`;
-  attributes: current temperature, active setpoint, mode.
-- **Number sliders** (`number.py`) — Target Temperature, Boost Temperature.
+  attributes: current temperature, active setpoint + which (away/normal/boost), mode.
+- **Number sliders** (`number.py`) — Away Temperature, Normal Temperature, Boost Temperature.
 - **Mode select** (`select.py`) — reuse `OperatingModeSelect` with `OPERATING_MODES_HOT_WATER_TANK`.
 - Tank entries are `ENTRY_TYPE_CHARGER` with `device_type = hot_water_tank`, so they flow
   through the existing charger platform setup in `__init__.py` / `sensor.py`.
 
 #### Phase 6 — Tests, translations, docs
 
-- **Scenario tests** (`dev/tests/scenarios/features/`) — tank as a plug-like load across
-  Normal / Boost / Solar Only / Excess; verify it competes for power and goes inactive
-  when `hvac_action == idle`.
+- **Unit tests** — `resolve_tank_setpoint` across every mode × SOC band × excess condition.
+- **Scenario tests** (`dev/tests/scenarios/features/`) — tank as a plug-like load;
+  verify it competes for power, goes inactive when `hvac_action == idle`, and that
+  Solar Only only draws from the solar pool.
 - **HA-layer tests** — new config-flow step + entity-id uniqueness; the
-  `_build_hot_water_tank_charger` mode mapping; `send_hot_water_tank_command` climate
-  service calls. Run via `dev/Dockerfile.test`.
+  `_build_hot_water_tank_charger` mapping; `send_hot_water_tank_command` climate service
+  calls. Run via `dev/Dockerfile.test`.
 - **Translations** — `strings.json`, `translations/en.json`, `translations/sl.json`.
 - **Docs** — `CHARGE_MODES_GUIDE.md` (tank modes table), `README.md` (supported devices).
 

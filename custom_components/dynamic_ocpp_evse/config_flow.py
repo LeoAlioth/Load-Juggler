@@ -18,7 +18,12 @@ from .detection_patterns import (
     BATTERY_MAX_DISCHARGE_POWER_PATTERNS,
     PLUG_POWER_MONITOR_PATTERNS,
 )
-from .helpers import normalize_optional_entity, prettify_name, validate_charger_settings
+from .helpers import (
+    normalize_optional_entity,
+    prettify_name,
+    validate_charger_settings,
+    validate_offgrid_battery_requirement,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _POWER_FACTOR = 0.9  # 90% of detected limit for safe headroom
@@ -1216,6 +1221,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
                 errors,
             )
+            validate_offgrid_battery_requirement(self._data, user_input, errors)
             if not errors:
                 self._data.update(user_input)
 
@@ -2265,6 +2271,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
                 errors,
             )
+            validate_offgrid_battery_requirement(
+                {**defaults, **self._data}, user_input, errors
+            )
             if not errors:
                 self._data.update(user_input)
                 self.hass.config_entries.async_update_entry(
@@ -2674,6 +2683,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                     CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
                 },
                 errors,
+            )
+            validate_offgrid_battery_requirement(
+                {**defaults, **self._data}, user_input, errors
             )
             if not errors:
                 self._data.update(user_input)

@@ -546,3 +546,91 @@ async def test_power_sensors_with_watts_unit_without_device_class(
     )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
+
+
+# ---------------------------------------------------------------------------
+# Off-grid battery requirement — a hub with no grid CTs must configure a
+# battery (SOC + power). Hard block in the hub config / reconfigure / options
+# flows. Machine-authored tests — not yet human-reviewed.
+# ---------------------------------------------------------------------------
+
+from custom_components.dynamic_ocpp_evse.helpers import (  # noqa: E402
+    validate_offgrid_battery_requirement,
+)
+from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+    CONF_PHASE_A_CURRENT_ENTITY_ID,
+    CONF_PHASE_B_CURRENT_ENTITY_ID,
+    CONF_PHASE_C_CURRENT_ENTITY_ID,
+    CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_POWER_ENTITY_ID,
+)
+
+_BATTERY_FULL = {
+    CONF_BATTERY_SOC_ENTITY_ID: "sensor.bat_soc",
+    CONF_BATTERY_POWER_ENTITY_ID: "sensor.bat_power",
+}
+
+
+def test_offgrid_battery_grid_cts_present_no_battery_ok():
+    """Grid CTs configured → battery not required."""
+    errors = {}
+    validate_offgrid_battery_requirement(
+        {CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_a"}, {}, errors
+    )
+    assert errors == {}
+
+
+def test_offgrid_battery_no_cts_with_full_battery_ok():
+    """No grid CTs but SOC + power both configured → valid."""
+    errors = {}
+    validate_offgrid_battery_requirement({}, _BATTERY_FULL, errors)
+    assert errors == {}
+
+
+def test_offgrid_battery_no_cts_no_battery_blocked():
+    """No grid CTs and no battery → hard block."""
+    errors = {}
+    validate_offgrid_battery_requirement({}, {}, errors)
+    assert errors.get("base") == "battery_required_no_cts"
+
+
+def test_offgrid_battery_no_cts_only_soc_blocked():
+    """No grid CTs, battery SOC but no power → hard block."""
+    errors = {}
+    validate_offgrid_battery_requirement(
+        {}, {CONF_BATTERY_SOC_ENTITY_ID: "sensor.bat_soc"}, errors
+    )
+    assert errors.get("base") == "battery_required_no_cts"
+
+
+def test_offgrid_battery_no_cts_only_power_blocked():
+    """No grid CTs, battery power but no SOC → hard block."""
+    errors = {}
+    validate_offgrid_battery_requirement(
+        {}, {CONF_BATTERY_POWER_ENTITY_ID: "sensor.bat_power"}, errors
+    )
+    assert errors.get("base") == "battery_required_no_cts"
+
+
+def test_offgrid_battery_partial_cts_count_as_grid():
+    """A single phase CT counts as grid-connected → battery not required."""
+    errors = {}
+    validate_offgrid_battery_requirement(
+        {CONF_PHASE_C_CURRENT_ENTITY_ID: "sensor.grid_c"}, {}, errors
+    )
+    assert errors == {}
+
+
+def test_offgrid_battery_none_grid_values_blocked():
+    """Grid CT keys explicitly None → treated as no CTs."""
+    grid = {
+        CONF_PHASE_A_CURRENT_ENTITY_ID: None,
+        CONF_PHASE_B_CURRENT_ENTITY_ID: None,
+        CONF_PHASE_C_CURRENT_ENTITY_ID: None,
+    }
+    errors = {}
+    validate_offgrid_battery_requirement(grid, _BATTERY_FULL, errors)
+    assert errors == {}
+    errors = {}
+    validate_offgrid_battery_requirement(grid, {}, errors)
+    assert errors.get("base") == "battery_required_no_cts"
