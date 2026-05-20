@@ -21,6 +21,7 @@ from ..const import (
     OPERATING_MODE_SOLAR_ONLY,
     OPERATING_MODE_EXCESS,
     MODE_URGENCY,
+    DEVICE_TYPE_PLUG,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -523,6 +524,29 @@ def _source_limit(
     """
     mask = charger.active_phases_mask
     mode = charger.operating_mode
+
+    # Battery-backed smart plugs: when a battery is configured it acts as the
+    # surplus buffer (stored solar), so a plug's Solar Only / Excess modes are
+    # gauged by battery SOC rather than live grid export. Solar Only runs the
+    # plug whenever the battery is above its minimum SOC; Excess runs it only
+    # once the battery is above target SOC. This applies to hybrid grid-tied
+    # and off-grid sites alike — "Solar Only" means "never use the grid", and
+    # the battery is stored solar. (EVSEs keep modulating; a plug is binary.)
+    if (
+        charger.device_type == DEVICE_TYPE_PLUG
+        and site.battery_soc is not None
+    ):
+        if mode == OPERATING_MODE_SOLAR_ONLY:
+            soc_min = site.battery_soc_min or 0
+            return charger.max_current if site.battery_soc > soc_min else 0
+        if mode == OPERATING_MODE_EXCESS:
+            if site.battery_soc_target is None:
+                return 0
+            return (
+                charger.max_current
+                if site.battery_soc > site.battery_soc_target
+                else 0
+            )
 
     if mode in (OPERATING_MODE_STANDARD, OPERATING_MODE_CONTINUOUS):
         return charger.max_current

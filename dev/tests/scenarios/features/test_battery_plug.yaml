@@ -1,0 +1,136 @@
+# Test scenarios: Battery-backed smart plug SOC-based on/off
+#
+# When a battery is configured it acts as the surplus buffer (stored solar),
+# so a smart plug's Solar Only / Excess modes are gauged by battery SOC rather
+# than live grid export. This applies to hybrid grid-tied and off-grid sites
+# alike:
+#   - Solar Only: plug ON whenever battery SOC > minimum SOC
+#   - Excess:     plug ON only when battery SOC > target SOC
+# EVSEs are unaffected (they keep modulating). See _source_limit() in
+# target_calculator.py.
+#
+# All scenarios use a dedicated solar entity (solar_production_direct: true) so
+# battery discharge is added to the inverter pool, and night-time solar (0 W)
+# so the plug must run off the battery — the point of SOC-based control.
+
+scenarios:
+
+  - name: "battery-plug-solar-only-above-min"
+    description: "Battery plug, Solar Only, SOC 50% > min 20% → plug ON"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production_direct: true
+      solar_production: 0
+      phase_a_consumption: 1.0
+      battery_soc: 50
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        operating_mode: Solar
+        power_rating: 1500
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      plug_1:
+        allocated: 6.5  # SOC 50 > min 20 → on; 1500W / 230V = 6.5A
+
+  - name: "battery-plug-solar-only-below-min"
+    description: "Battery plug, Solar Only, SOC 15% < min 20% → plug OFF"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production_direct: true
+      solar_production: 0
+      phase_a_consumption: 1.0
+      battery_soc: 15
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        operating_mode: Solar
+        power_rating: 1500
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      plug_1:
+        allocated: 0.0  # SOC 15 below min 20 → off
+
+  - name: "battery-plug-excess-above-target"
+    description: "Battery plug, Excess, SOC 85% > target 80% → plug ON"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production_direct: true
+      solar_production: 0
+      phase_a_consumption: 1.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        operating_mode: Excess
+        power_rating: 1500
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      plug_1:
+        allocated: 6.5  # SOC 85 > target 80 → on; 1500W / 230V = 6.5A
+
+  - name: "battery-plug-excess-below-target"
+    description: "Battery plug, Excess, SOC 50% (> min, < target 80%) → plug OFF"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production_direct: true
+      solar_production: 0
+      phase_a_consumption: 1.0
+      battery_soc: 50
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        operating_mode: Excess
+        power_rating: 1500
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      plug_1:
+        allocated: 0.0  # SOC 50 below target 80 → off

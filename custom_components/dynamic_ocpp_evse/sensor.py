@@ -10,6 +10,7 @@ from .entities.load_sensors import (
     LoadJugglerAllocatedCurrentSensor,
     LoadJugglerDeviceStatusSensor,
     LoadJugglerPhaseMaskSensor,
+    LoadJugglerPlugStatusSensor,
     LoadJugglerTankStatusSensor,
 )
 from .entities.hub import (
@@ -133,6 +134,10 @@ async def async_setup_entry(
     device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
     if device_type == DEVICE_TYPE_HOT_WATER_TANK:
         status_sensor = LoadJugglerTankStatusSensor(
+            hass, config_entry, hub_entry, name, entity_id
+        )
+    elif device_type == DEVICE_TYPE_PLUG:
+        status_sensor = LoadJugglerPlugStatusSensor(
             hass, config_entry, hub_entry, name, entity_id
         )
     else:

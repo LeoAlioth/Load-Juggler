@@ -315,10 +315,16 @@ async def test_calculate_available_current_reads_ha_entities(
         "Battery SOC should be read from the HA entity"
     )
 
-    # Grid importing ~5A/phase with 25A breaker → ~20A available per phase
-    assert result.get("available_current_a") == 20.0
-    assert result.get("available_current_b") == 20.5
-    assert result.get("available_current_c") == 21.2
+    # Per-phase remaining current (grid + inverter share) sums to
+    # Site Remaining Power / voltage.
+    per_phase_sum = (
+        result.get("available_current_a", 0)
+        + result.get("available_current_b", 0)
+        + result.get("available_current_c", 0)
+    )
+    assert per_phase_sum == pytest.approx(
+        result["total_site_available_power"] / 230, abs=1.0
+    )
 
     # Charger targets should contain our charger with a real allocation
     charger_targets = result.get("charger_targets", {})
@@ -824,10 +830,16 @@ async def test_result_dict_values_are_reasonable(
 
     # --- Grid / phase values ---
     assert result[CONF_PHASES] == 3
-    # Importing ~5A/phase with 25A breaker → ~20A available per phase
-    assert result["available_current_a"] == 20.0
-    assert result["available_current_b"] == 20.5
-    assert result["available_current_c"] == 21.2
+    # Per-phase remaining current = grid + inverter share; the three phases
+    # sum to Site Remaining Power / voltage.
+    per_phase_sum = (
+        result["available_current_a"]
+        + result["available_current_b"]
+        + result["available_current_c"]
+    )
+    assert per_phase_sum == pytest.approx(
+        result["total_site_available_power"] / 230, abs=1.0
+    )
     # Total site available = grid import headroom + inverter-sourced power
     # (solar available + battery discharge available). Verified against the
     # individual components rather than a magic number.
@@ -1252,12 +1264,16 @@ async def test_feedback_loop_subtracts_charger_draw_from_consumption(
         f"With feedback loop fix, charger should get full 16A (max), got {target}A"
     )
 
-    # NOTE: The hub sensor display values (available_current_a etc.)
-    # use the raw grid readings, NOT the adjusted consumption. This is intentional:
-    # the display shows actual grid state, the engine uses adjusted values.
-    assert result["available_current_a"] == 20.0
-    assert result["available_current_b"] == 20.5
-    assert result["available_current_c"] == 21.2
+    # The per-phase remaining current display (grid + inverter share) sums to
+    # Site Remaining Power / voltage.
+    per_phase_sum = (
+        result["available_current_a"]
+        + result["available_current_b"]
+        + result["available_current_c"]
+    )
+    assert per_phase_sum == pytest.approx(
+        result["total_site_available_power"] / 230, abs=1.0
+    )
 
 
 async def test_feedback_loop_with_constrained_breaker(
@@ -1305,10 +1321,16 @@ async def test_feedback_loop_with_constrained_breaker(
         f"With feedback loop fix, charger should get 16A (max), got {target}A"
     )
 
-    # Verify the display values still use raw readings (not adjusted)
-    assert result["available_current_a"] == 20.0
-    assert result["available_current_b"] == 20.5
-    assert result["available_current_c"] == 21.2
+    # Per-phase remaining current display (grid + inverter share) sums to
+    # Site Remaining Power / voltage.
+    per_phase_sum = (
+        result["available_current_a"]
+        + result["available_current_b"]
+        + result["available_current_c"]
+    )
+    assert per_phase_sum == pytest.approx(
+        result["total_site_available_power"] / 230, abs=1.0
+    )
 
 
 async def test_charge_pause_cancelled_on_charging_mode_change(

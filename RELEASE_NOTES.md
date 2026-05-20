@@ -14,6 +14,8 @@
 - **Power buffer honored on the breaker limit**: The configured power buffer is now subtracted from the per-phase main-breaker limit as well as the grid-import limit — previously it had no effect on sites without a grid-import limit configured.
 - **Off-grid hubs require a battery**: A hub configured without grid CT sensors runs off-grid, where the battery is the primary state signal. Hub setup now requires a battery SOC entity and a battery power entity in that case.
 - **Clearer hub sensor names**: The headroom sensors are renamed from "Available …" to "… Remaining Power" (Site Remaining Power, Grid/Solar/Battery Remaining Power, Remaining Current A/B/C) and "Total Managed Power" → "Current Managed Power", to remove ambiguity between power *used*, power *remaining*, and total capacity. Entity IDs are unchanged.
+- **Smart plug status sensor**: A smart plug now has a plain "Status" sensor showing `On` / `Off` (plus `Unavailable` / `Not Configured` error states) instead of the EVSE "Charging Status" — the charging-status vocabulary ("Unplugged", "Charging", …) does not apply to a plug.
+- **Battery-backed plug Solar Only / Excess by SOC**: When a battery is configured, a smart plug in Solar Only or Excess mode is now driven by battery SOC — the battery is the surplus buffer (stored solar). Solar Only runs the plug whenever SOC is above the minimum; Excess runs it only above the target SOC. This works the same on hybrid grid-tied and off-grid sites. EVSEs are unaffected (they keep modulating).
 
 ### Bug Fixes
 
@@ -33,6 +35,7 @@
 - **Hub updates continuously with no loads**: A hub with no loads configured ran its calculation only once and then showed stale values. It now recalculates every scan cycle.
 - **Off-grid Site Remaining Power**: On a hub with no grid CTs, Site Remaining Power was clamped to 0 W even with battery and solar available. It now correctly reports grid headroom plus inverter-sourced (solar + battery) power.
 - **Inverter capacity honored in headroom**: Site Remaining Power and Battery Remaining Power now subtract the power the inverter is *already* delivering to the household, and are capped by the inverter's rated capacity — previously a 4 kW inverter already supplying 1 kW still reported its full rating as available.
+- **Remaining Current A/B/C includes the inverter**: The per-phase remaining-current sensors now report total remaining current per phase (grid headroom + inverter share) and sum to Site Remaining Power ÷ voltage — previously they showed only grid breaker headroom and could contradict Site Remaining Power.
 - **Status sensor names the missing input**: When a required sensor (solar, battery, grid, inverter output) is unavailable, the hub Status sensor now states exactly which input is needed instead of failing silently.
 
 ---

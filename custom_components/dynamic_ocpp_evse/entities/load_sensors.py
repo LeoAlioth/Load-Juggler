@@ -6,6 +6,7 @@ from ..const import (
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
     CONF_CLIMATE_ENTITY_ID,
+    CONF_PLUG_SWITCH_ENTITY_ID,
 )
 from .mixins import ChargerEntityMixin
 
@@ -79,6 +80,58 @@ class LoadJugglerDeviceStatusSensor(ChargerEntityMixin, SensorEntity):
         try:
             status = self.hass.data.get(DOMAIN, {}).get("charger_status", {})
             self._state = status.get(self.config_entry.entry_id, "Unknown")
+        except Exception as e:
+            _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+
+
+class LoadJugglerPlugStatusSensor(ChargerEntityMixin, SensorEntity):
+    """Status sensor for a smart plug — on/off plus error states.
+
+    A plug has no connector to plug a car into, so the EVSE charging-status
+    vocabulary ("Unplugged", "Charging", ...) does not apply. This simply
+    reflects the controlled switch: ``On`` / ``Off``, or an error state when
+    the switch entity is missing or unavailable.
+    """
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id):
+        """Initialize the smart plug status sensor."""
+        self.hass = hass
+        self.config_entry = config_entry
+        self.hub_entry = hub_entry
+        self._attr_name = f"{name} Status"
+        # Keep the original unique_id suffix so existing installs upgrade in
+        # place (the entity is renamed, not duplicated).
+        self._attr_unique_id = f"{entity_id}_charging_status"
+        self._switch_entity = config_entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
+        self._state = "Unknown"
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def icon(self):
+        return {
+            "On": "mdi:power-plug",
+            "Off": "mdi:power-plug-off",
+        }.get(self._state, "mdi:power-plug-off-outline")
+
+    async def async_update(self):
+        """Reflect the smart plug's switch state, surfacing error states."""
+        try:
+            if not self._switch_entity:
+                self._state = "Not Configured"
+                return
+            switch_state = self.hass.states.get(self._switch_entity)
+            if switch_state is None or switch_state.state in (
+                "unknown",
+                "unavailable",
+            ):
+                self._state = "Unavailable"
+            elif switch_state.state == "on":
+                self._state = "On"
+            else:
+                self._state = "Off"
         except Exception as e:
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
 

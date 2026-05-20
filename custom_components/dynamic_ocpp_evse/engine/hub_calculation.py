@@ -870,14 +870,6 @@ def _build_hub_result(
     hub_warnings=None,
 ):
     """Build the result dict returned by run_hub_calculation."""
-    # Grid headroom per phase
-    available_per_phase = []
-    for raw in raw_phases:
-        if raw is not None:
-            available_per_phase.append(round(main_breaker_rating - raw, 1))
-        else:
-            available_per_phase.append(0)
-
     # Grid available power (based on consumption after feedback loop)
     grid_headroom = sum(
         max(0, main_breaker_rating - c) * voltage
@@ -957,6 +949,33 @@ def _build_hub_result(
         # battery cannot deliver more to loads than the inverter can pass.
         battery_remaining = min(battery_remaining, inverter_headroom)
     total_site_available = grid_headroom + inverter_sourced
+
+    # Per-phase remaining current (A) = total remaining current on that phase,
+    # i.e. grid + inverter. Each phase gets its share of grid headroom
+    # (proportional to its raw breaker headroom, preserving asymmetric
+    # loading) plus an equal share of inverter-sourced power. Summed across
+    # the active phases this matches Site Remaining Power / voltage.
+    num_phases = site.num_phases or 1
+    phase_cons = (site.consumption.a, site.consumption.b, site.consumption.c)
+    raw_phase_headroom = [
+        max(0, main_breaker_rating - c) if c is not None else 0.0
+        for c in phase_cons
+    ]
+    total_raw_headroom = sum(raw_phase_headroom[:num_phases])
+    grid_current = grid_headroom / voltage if voltage else 0
+    inverter_current_share = (
+        inverter_sourced / voltage / num_phases if voltage else 0
+    )
+    available_per_phase = []
+    for i, raw_hr in enumerate(raw_phase_headroom):
+        if i >= num_phases:
+            available_per_phase.append(0)
+            continue
+        if total_raw_headroom > 0:
+            grid_part = grid_current * (raw_hr / total_raw_headroom)
+        else:
+            grid_part = 0
+        available_per_phase.append(round(grid_part + inverter_current_share, 1))
 
     # Build per-charger operating modes dict
     charger_modes = {c.charger_id: c.operating_mode for c in site.chargers}
