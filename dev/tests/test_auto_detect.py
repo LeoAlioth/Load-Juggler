@@ -18,13 +18,19 @@ _calc_dir = _comp_dir / "calculations"
 _PKG_ROOT = "custom_components"
 _PKG_COMP = "custom_components.dynamic_ocpp_evse"
 _PKG_CALC = "custom_components.dynamic_ocpp_evse.calculations"
+_PKG_ENGINE = "custom_components.dynamic_ocpp_evse.engine"
 
-for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC):
+for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC, _PKG_ENGINE):
     if _pkg_name not in sys.modules:
         _pkg = types.ModuleType(_pkg_name)
         _pkg.__path__ = []
         _pkg.__package__ = _pkg_name
         sys.modules[_pkg_name] = _pkg
+
+# Other test files share this pytest process and import real engine submodules
+# (e.g. engine.hub_calculation). Give the engine package its real search path
+# so those imports resolve instead of hitting the empty stub created above.
+sys.modules[_PKG_ENGINE].__path__ = [str(_comp_dir / "engine")]
 
 
 def _load_module_as(fqn, path):
@@ -46,12 +52,12 @@ _load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
 _load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
 _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
 _load_module_as(_PKG_CALC, _calc_dir / "__init__.py")
-_load_module_as(f"{_PKG_COMP}.auto_detect", _comp_dir / "auto_detect.py")
+_load_module_as(f"{_PKG_ENGINE}.auto_detect", _comp_dir / "engine" / "auto_detect.py")
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext, SiteContext, PhaseValues,
 )
-from custom_components.dynamic_ocpp_evse.auto_detect import (
+from custom_components.dynamic_ocpp_evse.engine.auto_detect import (
     check_inversion, check_phase_mapping,
     _INV_WINDOW_SIZE, _INV_THRESHOLD,
     _PM_NOTIFY_SCORE, _PM_REMAP_SCORE,

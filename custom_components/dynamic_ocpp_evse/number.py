@@ -6,7 +6,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from .entity_mixins import HubEntityMixin, ChargerEntityMixin
+from .entities.mixins import HubEntityMixin, ChargerEntityMixin
 from .const import (
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,

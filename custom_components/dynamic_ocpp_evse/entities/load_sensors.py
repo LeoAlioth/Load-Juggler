@@ -1,13 +1,13 @@
 import logging
 from homeassistant.components.sensor import SensorEntity
-from .const import (
+from ..const import (
     DOMAIN,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
     CONF_CLIMATE_ENTITY_ID,
 )
-from .entity_mixins import ChargerEntityMixin
+from .mixins import ChargerEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
 

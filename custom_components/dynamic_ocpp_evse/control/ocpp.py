@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta, timezone
-from .const import (
+from ..const import (
     CONF_OCPP_DEVICE_ID,
     CONF_OCPP_PROFILE_TIMEOUT,
     DEFAULT_OCPP_PROFILE_TIMEOUT,
@@ -18,7 +18,7 @@ from .const import (
     CONF_UPDATE_FREQUENCY,
     DEFAULT_UPDATE_FREQUENCY,
 )
-from .helpers import get_entry_value
+from ..helpers import get_entry_value
 
 _LOGGER = logging.getLogger(__name__)
 

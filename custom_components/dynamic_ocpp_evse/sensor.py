@@ -5,20 +5,20 @@ from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import *
 from .helpers import get_entry_value
-from .load import LoadJugglerDeviceSensor
-from .load_sensors import (
+from .entities.load import LoadJugglerDeviceSensor
+from .entities.load_sensors import (
     LoadJugglerAllocatedCurrentSensor,
     LoadJugglerDeviceStatusSensor,
     LoadJugglerPhaseMaskSensor,
     LoadJugglerTankStatusSensor,
 )
-from .hub import (
+from .entities.hub import (
     LoadJugglerHubSensor,
     LoadJugglerHubStatusSensor,
     LoadJugglerHubDataSensor,
     HUB_SENSOR_DEFINITIONS,
 )
-from .circuit_group import LoadJugglerCircuitGroupSensor
+from .entities.circuit_group import LoadJugglerCircuitGroupSensor
 from . import get_hub_for_charger
 
 DynamicOcppEvseChargerSensor = LoadJugglerDeviceSensor

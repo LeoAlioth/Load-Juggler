@@ -5,7 +5,7 @@ device_info, _write_to_*_data, and state-restore boilerplate across
 number.py, select.py, switch.py, sensor.py, and button.py.
 """
 
-from .const import DOMAIN, CONF_NAME, CONF_HUB_ENTRY_ID, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG
+from ..const import DOMAIN, CONF_NAME, CONF_HUB_ENTRY_ID, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG
 
 
 class HubEntityMixin:
@@ -69,7 +69,7 @@ class ChargerEntityMixin:
         """Get the hub ConfigEntry for this charger."""
         if hasattr(self, 'hub_entry') and self.hub_entry:
             return self.hub_entry
-        from . import get_hub_for_charger
+        from .. import get_hub_for_charger
         return get_hub_for_charger(self.hass, self.config_entry.entry_id)
 
     @property

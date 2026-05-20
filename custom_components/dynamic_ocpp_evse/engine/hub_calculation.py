@@ -9,16 +9,16 @@ import logging
 import math
 import time
 
-from .calculations import (
+from ..calculations import (
     SiteContext,
     LoadContext,
     PhaseValues,
     CircuitGroup,
     calculate_all_charger_targets,
 )
-from .const import *
-from .calculations.utils import is_number, compute_household_per_phase
-from .helpers import get_entry_value
+from ..const import *
+from ..calculations.utils import is_number, compute_household_per_phase
+from ..helpers import get_entry_value
 from .auto_detect import check_inversion, check_phase_mapping
 
 _LOGGER = logging.getLogger(__name__)
@@ -639,7 +639,7 @@ def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
 
     Returns plug_auto_power dict for auto-adjusted plug power ratings.
     """
-    from . import get_chargers_for_hub
+    from .. import get_chargers_for_hub
 
     if hasattr(sensor, "_charger_entries"):
         chargers = sensor._charger_entries
@@ -780,7 +780,7 @@ def _build_circuit_groups(hass, hub_entry_id):
 
     Returns list of CircuitGroup model objects for the calculation engine.
     """
-    from . import get_groups_for_hub
+    from .. import get_groups_for_hub
 
     group_entries = get_groups_for_hub(hass, hub_entry_id)
     # Build set of valid charger entry_ids for member validation

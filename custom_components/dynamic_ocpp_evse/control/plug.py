@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from .const import DOMAIN, CONF_PLUG_SWITCH_ENTITY_ID
+from ..const import DOMAIN, CONF_PLUG_SWITCH_ENTITY_ID
 
 _LOGGER = logging.getLogger(__name__)
 

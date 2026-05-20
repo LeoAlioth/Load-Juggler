@@ -291,7 +291,7 @@ async def test_calculate_available_current_reads_ha_entities(
     With 3-phase Standard mode, 25A breaker, grid importing ~5A/phase,
     the charger (3p, min=6A, max=16A) should get a real allocation.
     """
-    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
@@ -753,7 +753,7 @@ async def test_result_dict_all_keys_populated(
     sensor.py but not to the result dict in dynamic_ocpp_evse.py, this
     test will catch the mismatch.
     """
-    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
@@ -810,7 +810,7 @@ async def test_result_dict_values_are_reasonable(
     Test scenario: 3-phase, 25A breaker, importing ~5A/phase, battery at 80%
     SOC discharging 500W, charger drawing 10A on L1.
     """
-    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
@@ -866,7 +866,7 @@ async def test_allow_grid_charging_off_reduces_available(
 ):
     """When allow_grid_charging switch is OFF, the grid contribution is removed
     so the charger target should be lower than when ON (inverter-only power)."""
-    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
@@ -906,7 +906,7 @@ async def test_power_buffer_reduces_grid_available(
     grid_power_limit = 6000W → available for EVs = (6000-3060)/230 ≈ 12.8A total → 4.3A/phase.
     With 2000W buffer → effective = 4000W → (4000-3060)/230 ≈ 4.1A total → below min_current → 0A.
     """
-    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
@@ -1223,7 +1223,7 @@ async def test_feedback_loop_subtracts_charger_draw_from_consumption(
     This means the engine sees more available headroom on phase A than the
     raw sensor reading would suggest.
     """
-    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
@@ -1266,7 +1266,7 @@ async def test_feedback_loop_with_constrained_breaker(
     the engine sees 5A consumption; with fix it sees max(0, 5-4)=1A, giving
     more headroom: 25-1=24A on phase A vs 25-5=20A without fix.
     """
-    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
@@ -1455,7 +1455,7 @@ async def test_eco_mode_night_with_feedback_loop(
     With the fix, solar_production_total is recalculated after the feedback loop
     adjustment, so the surplus is correctly near zero at night.
     """
-    from custom_components.dynamic_ocpp_evse.dynamic_ocpp_evse import (
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 

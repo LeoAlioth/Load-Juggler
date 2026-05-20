@@ -8,7 +8,7 @@ setpoint chosen by the tank's operating mode.
 import logging
 from datetime import datetime, timezone
 
-from .const import (
+from ..const import (
     DOMAIN,
     CONF_CLIMATE_ENTITY_ID,
     CONF_HEATING_ELEMENT_POWER,
@@ -23,7 +23,7 @@ from .const import (
     OPERATING_MODE_SOLAR_ONLY,
     DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
 )
-from .helpers import get_entry_value
+from ..helpers import get_entry_value
 
 _LOGGER = logging.getLogger(__name__)
 

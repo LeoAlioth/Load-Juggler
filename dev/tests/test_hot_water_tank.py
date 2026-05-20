@@ -7,7 +7,7 @@ the three setpoints, the element power and the hub state, it picks which
 setpoint (away / normal / boost) the climate entity should target.
 """
 
-from custom_components.dynamic_ocpp_evse.hot_water_tank import resolve_tank_setpoint
+from custom_components.dynamic_ocpp_evse.control.hot_water_tank import resolve_tank_setpoint
 from custom_components.dynamic_ocpp_evse.const import (
     OPERATING_MODE_FREEZE_PROTECTION,
     OPERATING_MODE_NORMAL,

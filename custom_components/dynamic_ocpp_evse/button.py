@@ -4,7 +4,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
-from .entity_mixins import ChargerEntityMixin
+from .entities.mixins import ChargerEntityMixin
 from .const import (
     DOMAIN,
     ENTRY_TYPE,
