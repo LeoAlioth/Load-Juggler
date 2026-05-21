@@ -490,7 +490,7 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
         "  EVSE %s [%s]: %s-%sA %dph(hw) L1->%s/L2->%s/L3->%s mask=%s(%dph) "
         "prio=%d [%s] draw=L1:%s/L2:%s/L3:%s",
         charger_entity_id,
-        operating_mode,
+        mode.key,
         _fv(min_current),
         _fv(max_current),
         phases,
