@@ -660,16 +660,21 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     else:
         actual_draw_w = power_rating if hvac_action == "heating" else 0
 
-    # Tank mode → engine mode: a tank always maps to Continuous. All three
-    # tank modes (Freeze Protection / Normal / Solar Only) decide *which
-    # setpoint* to heat to, not *whether* to run — resolve_tank_setpoint()
-    # encodes that, including the Solar Only away/normal/boost SOC bands.
-    # Mapping Solar Only to the engine's Solar Only mode would forbid heating
-    # below target SOC and override the tank's own setpoint logic.
+    # Tank mode → engine mode. Freeze Protection and Normal are must-run loads
+    # that always heat to their setpoint, so they map to Continuous. Solar Only
+    # follows the sun: it maps to Solar Priority, so the tank yields to higher-
+    # urgency loads and tracks solar surplus, while the guaranteed minimum still
+    # lets it heat below target SOC. resolve_tank_setpoint() independently picks
+    # *which* setpoint (away/normal/boost) to aim at — the engine mode only
+    # decides how the tank competes for power, not whether it runs.
     tank_mode = charger_rt.get(
         "operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK
     )
-    engine_mode = OPERATING_MODE_CONTINUOUS
+    engine_mode = (
+        OPERATING_MODE_SOLAR_PRIORITY
+        if tank_mode == OPERATING_MODE_SOLAR_ONLY
+        else OPERATING_MODE_CONTINUOUS
+    )
 
     charger = LoadContext(
         charger_id=entry.entry_id,
@@ -1009,6 +1014,17 @@ def _build_hub_result(
     # Build per-charger operating modes dict
     charger_modes = {c.charger_id: c.operating_mode for c in site.chargers}
 
+    # Per-charger effective priority rank — the order the engine serves loads
+    # when power is contended: mode urgency first, then the configured priority
+    # number (the same sort key _sort_chargers uses to distribute power). Rank
+    # 1 is served first. Exposed so each device can show where it really
+    # stands, since mode urgency can override the configured priority number.
+    _ranked = sorted(
+        site.chargers,
+        key=lambda c: (MODE_URGENCY.get(c.operating_mode, 0), c.priority),
+    )
+    charger_rank = {c.charger_id: idx + 1 for idx, c in enumerate(_ranked)}
+
     # Per-charger active phase count (for W-based OCPP profiles)
     # Uses actual draw to detect 1-phase car on 3-phase EVSE; falls back to configured phases.
     charger_active_phases = {}
@@ -1049,6 +1065,7 @@ def _build_hub_result(
         "charger_available": charger_available,
         "charger_names": charger_names,
         "charger_modes": charger_modes,
+        "charger_rank": charger_rank,
         "charger_active_phases": charger_active_phases,
         "charger_phase_masks": charger_phase_masks,
         "distribution_mode": site.distribution_mode,

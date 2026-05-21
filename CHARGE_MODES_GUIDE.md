@@ -437,15 +437,15 @@ The operating mode decides which setpoint the tank targets, based on conditions:
 
 | Mode | Target setpoint | Power source |
 | ---- | --------------- | ------------ |
-| **Freeze Protection** | Always `Away` | Any source |
-| **Normal** | `Normal`, raised to `Boost` when there is surplus — grid export exceeds the element's power, or the home battery is above its target SOC | Any source |
-| **Solar Only** | `Away` below the battery minimum SOC, `Normal` up to the battery target SOC, `Boost` at/above the target SOC | Solar surplus only |
+| **Freeze Protection** | Always `Away` | Any source (Continuous urgency) |
+| **Normal** | `Normal`, raised to `Boost` when there is surplus — grid export exceeds the element's power, or the home battery is above its target SOC | Any source (Continuous urgency) |
+| **Solar Only** | `Away` below the battery minimum SOC, `Normal` up to the battery target SOC, `Boost` at/above the target SOC | Solar surplus, with a grid-backed minimum below target SOC (Solar Priority urgency) |
 
 ### How It Works
 
 - Load Juggler reads the climate entity's `hvac_action`. When the thermostat reports `idle` (water already at temperature), the tank frees its reserved power for other loads.
 - When heating is allowed, Load Juggler sets the climate entity to `heat` and writes the resolved setpoint; when not, it sets the entity to `off`.
-- To the power-distribution engine the tank behaves like a smart load — a fixed-power binary draw — so it competes for power with EVSEs and smart plugs by priority and mode urgency.
+- To the power-distribution engine the tank behaves like a smart load — a fixed-power binary draw — so it competes for power with EVSEs and smart plugs by mode urgency, then priority. Freeze Protection and Normal compete at **Continuous** urgency (must-run); Solar Only competes at **Solar Priority** urgency, so it yields to must-run loads but still outranks Solar Only / Excess loads.
 - On an **off-grid** system there is no grid export, so the Normal-mode boost is driven by the battery SOC (above target = surplus). The Solar Only SOC bands work unchanged.
 
 ### Example Scenarios

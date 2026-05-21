@@ -47,21 +47,23 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     # SuspendedEVSE = charger is throttling (our profile active), still active.
     # SuspendedEV idle timeout is handled in the HA layer (dynamic_ocpp_evse.py),
     # which overrides connector_status to "Finishing" after the grace period.
-    # EVSEs receive power only with a car connected (connector status). Plugs
-    # and hot water tanks have no connector — they are always eligible for
-    # allocation. Otherwise a plug that is currently off (which makes its
-    # connector status "Available") could never be allocated power to turn
-    # back on, leaving it stuck off forever.
+    # An EVSE receives power only with a car connected; a hot water tank only
+    # while its thermostat is calling for heat (the HA layer reports connector
+    # status "Available" when the climate's hvac_action is "idle"). Both are
+    # inactive otherwise — they get 0 allocated, but still see an available
+    # current so the HA layer can permit them to switch back on. A plug has no
+    # connector and is always active: an off plug reports "Available", and
+    # treating that as inactive would leave it stuck off forever.
     _INACTIVE_STATUSES = {"Available", "Unknown", "Unavailable", "Finishing", "Faulted"}
     all_chargers = site.chargers
     active_chargers = [
         c for c in all_chargers
-        if c.device_type != DEVICE_TYPE_EVSE
+        if c.device_type == DEVICE_TYPE_PLUG
         or c.connector_status not in _INACTIVE_STATUSES
     ]
     inactive_chargers = [
         c for c in all_chargers
-        if c.device_type == DEVICE_TYPE_EVSE
+        if c.device_type != DEVICE_TYPE_PLUG
         and c.connector_status in _INACTIVE_STATUSES
     ]
 

@@ -7,7 +7,10 @@ from ..const import (
     CONF_CHARGER_L3_PHASE,
     CONF_CLIMATE_ENTITY_ID,
     CONF_PLUG_SWITCH_ENTITY_ID,
+    CONF_CHARGER_PRIORITY,
+    DEFAULT_CHARGER_PRIORITY,
 )
+from ..helpers import get_entry_value
 from .mixins import ChargerEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,6 +54,57 @@ class LoadJugglerAllocatedCurrentSensor(ChargerEntityMixin, SensorEntity):
             allocations = self.hass.data.get(DOMAIN, {}).get("charger_allocations", {})
             value = allocations.get(self.config_entry.entry_id, 0)
             self._state = round(float(value), 1)
+        except Exception as e:
+            _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+
+
+class LoadJugglerEffectivePrioritySensor(ChargerEntityMixin, SensorEntity):
+    """Sensor showing a device's effective priority rank within its hub.
+
+    When power is contended the engine serves loads by mode urgency first, then
+    the configured priority number — so a device's real standing can differ
+    from the priority it was given (e.g. a Continuous load outranks a
+    higher-priority Solar Only load). This sensor reports that resolved rank:
+    1 = served first.
+    """
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id):
+        """Initialize the effective priority sensor."""
+        self.hass = hass
+        self.config_entry = config_entry
+        self.hub_entry = hub_entry
+        self._attr_name = f"{name} Effective Priority"
+        self._attr_unique_id = f"{entity_id}_effective_priority"
+        self._state = None
+        self._attrs = {}
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def icon(self):
+        return "mdi:sort-numeric-ascending"
+
+    @property
+    def extra_state_attributes(self):
+        return self._attrs
+
+    async def async_update(self):
+        """Read the effective priority rank from hass.data (set by the engine)."""
+        try:
+            ranks = self.hass.data.get(DOMAIN, {}).get("charger_ranks", {})
+            self._state = ranks.get(self.config_entry.entry_id)
+            self._attrs = {
+                "configured_priority": get_entry_value(
+                    self.config_entry,
+                    CONF_CHARGER_PRIORITY,
+                    DEFAULT_CHARGER_PRIORITY,
+                ),
+                "total_devices": len(
+                    [r for r in ranks.values() if r is not None]
+                ),
+            }
         except Exception as e:
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
 

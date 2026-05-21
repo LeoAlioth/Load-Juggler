@@ -9,6 +9,7 @@ from .entities.load import LoadJugglerDeviceSensor
 from .entities.load_sensors import (
     LoadJugglerAllocatedCurrentSensor,
     LoadJugglerDeviceStatusSensor,
+    LoadJugglerEffectivePrioritySensor,
     LoadJugglerPhaseMaskSensor,
     LoadJugglerPlugStatusSensor,
     LoadJugglerTankStatusSensor,
@@ -130,6 +131,9 @@ async def async_setup_entry(
     allocated_sensor = LoadJugglerAllocatedCurrentSensor(
         hass, config_entry, hub_entry, name, entity_id
     )
+    effective_priority_sensor = LoadJugglerEffectivePrioritySensor(
+        hass, config_entry, hub_entry, name, entity_id
+    )
 
     device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
     if device_type == DEVICE_TYPE_HOT_WATER_TANK:
@@ -144,7 +148,7 @@ async def async_setup_entry(
         status_sensor = LoadJugglerDeviceStatusSensor(
             hass, config_entry, hub_entry, name, entity_id
         )
-    entities = [sensor, allocated_sensor, status_sensor]
+    entities = [sensor, allocated_sensor, effective_priority_sensor, status_sensor]
 
     # Phase mask sensor — only for 3-phase EVSEs (L1/L2/L3 mapped to 3 distinct
     # site phases). For 1-/2-phase loads the mask is trivial, so it is omitted.

@@ -211,7 +211,7 @@ OPERATING_MODES_PLUG = [
 ]
 # Hot water tank modes select a setpoint (away/normal/boost) dynamically; each
 # is mapped to an engine mode in the HA layer (Freeze/Normal → Continuous,
-# Solar Only → Solar Only).
+# Solar Only → Solar Priority).
 OPERATING_MODES_HOT_WATER_TANK = [
     OPERATING_MODE_FREEZE_PROTECTION,
     OPERATING_MODE_NORMAL,

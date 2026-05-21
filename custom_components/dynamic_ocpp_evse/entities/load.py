@@ -327,6 +327,14 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 self.config_entry.entry_id
             ] = self._allocated_current
 
+            # Effective priority rank from the engine — the order this device
+            # is served when power is contended (mode urgency, then priority).
+            if "charger_ranks" not in self.hass.data[DOMAIN]:
+                self.hass.data[DOMAIN]["charger_ranks"] = {}
+            self.hass.data[DOMAIN]["charger_ranks"][
+                self.config_entry.entry_id
+            ] = hub_data.get("charger_rank", {}).get(self.config_entry.entry_id)
+
             if "charger_phase_masks" not in self.hass.data[DOMAIN]:
                 self.hass.data[DOMAIN]["charger_phase_masks"] = {}
             self.hass.data[DOMAIN]["charger_phase_masks"][
@@ -363,11 +371,20 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             )
             dynamic_control_on = charger_rt.get("dynamic_control", True)
 
-            if device_type != DEVICE_TYPE_EVSE:
-                # Binary loads (smart plug, hot water tank): the engine's
-                # allocation is already the on/off answer — equivalent current
-                # when on, 0 when off. The EVSE min-current pause threshold
-                # does not apply to a binary load.
+            if device_type == DEVICE_TYPE_HOT_WATER_TANK:
+                # The tank is a binary load whose thermostat — not the engine —
+                # decides moment-to-moment draw. While the thermostat is
+                # satisfied the engine classes the tank inactive and allocates
+                # it 0, so the heating-permitted gate follows the *available*
+                # current instead: heating stays permitted whenever the site
+                # has room for the tank, and is only forbidden when it does
+                # not. The EVSE min-current pause threshold does not apply.
+                limit = round(self._available_current, 1)
+                self._pause_started_at = None
+            elif device_type == DEVICE_TYPE_PLUG:
+                # A plug is always active — the engine's allocation is already
+                # the on/off answer (equivalent current when on, 0 when off).
+                # The EVSE min-current pause threshold does not apply.
                 limit = round(self._allocated_current, 1)
                 self._pause_started_at = None
             elif not dynamic_control_on:
