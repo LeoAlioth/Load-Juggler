@@ -38,27 +38,45 @@ Within the same mode, the load's priority number decides who gets power first.
 
 ### Smart Plug Modes
 
-A smart plug is a binary on/off load, so its modes resolve to a simple
-on/off decision. How surplus is gauged depends on whether a **battery** is
-configured for the hub.
+A smart plug is a binary on/off load, so its modes resolve to a simple on/off
+decision. It has **four** modes that form a ladder — each one drains the home
+**battery** to a progressively higher SOC floor, and none of them (bar
+Continuous) ever use the grid:
 
-| Mode | Without battery | With battery (hybrid or off-grid) |
-|------|-----------------|-----------------------------------|
-| **Continuous** | Always on | Always on |
-| **Solar Only** | On when live solar surplus covers the plug | On whenever battery SOC is **above the minimum** |
-| **Excess** | On when grid export exceeds the threshold | On only when battery SOC is **above the target** |
+| Mode | Battery floor | With battery (hybrid or off-grid) | Without battery |
+|------|---------------|-----------------------------------|-----------------|
+| **Continuous** | minimum, then grid | Always on | Always on |
+| **Solar Priority** | minimum | On while battery SOC is **above the minimum** | On when live solar surplus covers the plug |
+| **Solar Only** | target | On while battery SOC is **above the target** | On when live solar surplus covers the plug |
+| **Excess** | near-full | On while battery SOC is **at/above the "full" SOC** (default 97%), or the site is exporting | On when grid export exceeds the threshold |
 
 **Why the battery changes things:** with a battery, the battery *is* the
-surplus buffer — it stores solar. "Solar Only" means "never draw from the
-grid", and stored solar in the battery counts, so the plug runs off the
-battery down to the minimum SOC. "Excess" means genuine surplus, which with a
-battery is when the battery is already charged past its target. This is the
-same on a hybrid grid-tied site and an off-grid site — the grid connection is
-irrelevant; only the presence of a battery matters.
+surplus buffer — it stores solar. Each mode decides how deep into that buffer
+the plug may dig:
 
-Without a battery there is no buffer, so the plug falls back to reading live
-grid export: Solar Only needs enough export to cover the plug, and Excess
-needs export above the configured threshold.
+- **Continuous** — a must-run load: drains the battery to its minimum SOC,
+  then pulls from the grid, and stops only if neither can supply it.
+- **Solar Priority** — drains the battery to its minimum SOC, then stops.
+  Never uses the grid.
+- **Solar Only** — drains only the band *above the target* SOC (genuine stored
+  surplus), then stops. Never uses the grid.
+- **Excess** — runs only when the battery is essentially full (the configurable
+  "full" SOC, default 97%), or the site is actively exporting — export can
+  reach the threshold before the battery fills if battery charging is
+  rate-limited.
+
+This is the same on a hybrid grid-tied site and an off-grid site — only the
+presence of a battery matters, not the grid connection.
+
+Without a battery there is no buffer: **Solar Priority** and **Solar Only**
+both fall back to "on when live solar surplus covers the plug" (they differ
+only on a battery system), and **Excess** needs grid export above the
+configured threshold.
+
+A plug's solar mode competes for power at the same urgency tier as the
+matching EVSE mode — Solar Priority at tier 2, Solar Only at tier 3 — so a
+plug and an EVSE in the same mode are ordered by their configured priority
+numbers.
 
 > EVSEs are unaffected by this — they modulate charge current to the available
 > solar/excess power rather than switching fully on/off.
@@ -144,10 +162,12 @@ Always-on operation. The load stays powered whenever it is connected.
 
 ## Solar Priority Mode
 
-**Available for:** EVSE
+**Available for:** EVSE, Smart Plug
 
 ### Purpose
 Economical charging that prioritizes solar production and minimizes grid export while maintaining a minimum charging rate. Formerly known as "Eco" mode.
+
+> For a **smart plug** this mode is a binary on/off — see [Smart Plug Modes](#smart-plug-modes) for how the battery SOC band gates it. The sections below describe the EVSE's modulating behaviour.
 
 ### Without Battery
 
@@ -261,6 +281,8 @@ Battery discharges to provide full speed charging
 ### Purpose
 Pure solar charging — stricter than Solar Priority about using only solar power (no grid import, no battery discharge below target SOC).
 
+> For a **smart plug** this mode is a binary on/off — see [Smart Plug Modes](#smart-plug-modes) for how the battery SOC band gates it. The sections below describe the EVSE's modulating behaviour.
+
 ### Without Battery
 
 **Behavior:**
@@ -327,6 +349,8 @@ Result: No charging (prioritize battery charging)
 
 ### Purpose
 Threshold-based charging that starts when excess export exceeds a configured threshold, preventing excessive solar export while managing battery capacity.
+
+> For a **smart plug** this mode is a binary on/off — see [Smart Plug Modes](#smart-plug-modes) for how it is gated (battery near-full, or the site exporting). The sections below describe the EVSE's modulating behaviour.
 
 ### Without Battery
 
@@ -483,6 +507,7 @@ Result: Target = Away — frost protection only; let solar refill the battery fi
 | **Battery SOC Min** | Minimum battery SOC for charging (%) | 20% | All modes (with battery) |
 | **Battery SOC Target** | Target battery SOC (%) | 80% | Solar Priority, Solar Only |
 | **Battery SOC Hysteresis** | SOC hysteresis to prevent oscillation (%) | 3% | Solar Priority, Solar Only |
+| **Battery Full SOC** | SOC at/above which the battery counts as full (%) | 97% | Excess mode (Smart Plug) |
 | **Battery Max Charge Power** | Maximum battery charging power (W) | 5000W | Excess mode |
 | **Battery Max Discharge Power** | Maximum battery discharge power (W) | 5000W | Standard, Solar Priority |
 | **Power Buffer** | Safety buffer in Standard mode (W) | 0W | Standard mode |

@@ -14,6 +14,7 @@ from .const import (
     OPERATING_MODES_EVSE, OPERATING_MODES_PLUG, OPERATING_MODES_HOT_WATER_TANK,
     DEFAULT_OPERATING_MODE_EVSE, DEFAULT_OPERATING_MODE_PLUG,
     DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
+    MIGRATE_PLUG_SOLAR_ONLY_FLAG,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -89,11 +90,33 @@ class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
         if last_state is not None:
+            restored = last_state.state
+            # One-time plug migration (2.2 → 2.3): the old "Solar Only" plug
+            # mode was renamed to "Solar Priority"; the key "Solar Only" now
+            # denotes a different, target-gated mode. async_migrate_entry sets
+            # the flag on the entry; it is consumed and cleared once below.
+            if (
+                self.config_entry.data.get(MIGRATE_PLUG_SOLAR_ONLY_FLAG)
+                and restored == "Solar Only"
+            ):
+                restored = "Solar Priority"
+            # Tank: "Solar Only" was renamed to "Solar Priority" (no key reuse,
+            # so this remap is unconditional and safe).
             restored = self._RENAMED_MODE_KEYS.get(self._device_type, {}).get(
-                last_state.state, last_state.state
+                restored, restored
             )
             if restored in self._attr_options:
                 self._attr_current_option = restored
+        # Consume the one-time plug migration flag so it never re-applies.
+        if self.config_entry.data.get(MIGRATE_PLUG_SOLAR_ONLY_FLAG):
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                data={
+                    k: v
+                    for k, v in self.config_entry.data.items()
+                    if k != MIGRATE_PLUG_SOLAR_ONLY_FLAG
+                },
+            )
         self.async_write_ha_state()
         self._write_to_charger_data(self._attr_current_option)
 

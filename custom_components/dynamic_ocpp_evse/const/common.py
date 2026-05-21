@@ -74,6 +74,11 @@ HARD_RESET_COOLDOWN_SECONDS = 300    # seconds to wait after hard reset (5 minut
 # const/evse.py, const/plug.py, const/hot_water_tank.py.
 CONF_OPERATING_MODE = "operating_mode"
 
+# Transient marker set in a plug charger entry's data by async_migrate_entry
+# (2.2 → 2.3): the operating-mode select migrates its restored "Solar Only"
+# state to "Solar Priority" once, then clears the marker.
+MIGRATE_PLUG_SOLAR_ONLY_FLAG = "_migrate_plug_solar_only"
+
 # Engine behaviors — how a load competes for power. The distribution engine
 # switches on the behavior, never on the device type or the mode label. Which
 # behavior each operating mode uses is mapped centrally in const/modes.py

@@ -85,14 +85,16 @@
                     "battery_power_entity_id": "Battery power sensor",
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
-                    "battery_soc_hysteresis": "Battery SOC hysteresis"
+                    "battery_soc_hysteresis": "Battery SOC hysteresis",
+                    "battery_soc_full": "Battery full SOC"
                 },
                 "data_description": {
                     "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
                     "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign \u2014 otherwise battery power will never be offered to loads.",
                     "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
                     "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
-                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%."
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
+                    "battery_soc_full": "SOC at or above which the battery counts as full. A smart plug in Excess mode runs once the battery reaches this level (or whenever the site is exporting)."
                 }
             },
             "select_hub": {
@@ -279,14 +281,16 @@
                     "battery_power_entity_id": "Battery power sensor",
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
-                    "battery_soc_hysteresis": "Battery SOC hysteresis"
+                    "battery_soc_hysteresis": "Battery SOC hysteresis",
+                    "battery_soc_full": "Battery full SOC"
                 },
                 "data_description": {
                     "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
                     "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign \u2014 otherwise battery power will never be offered to loads.",
                     "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
                     "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
-                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%."
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
+                    "battery_soc_full": "SOC at or above which the battery counts as full. A smart plug in Excess mode runs once the battery reaches this level (or whenever the site is exporting)."
                 }
             },
             "reconfigure_plug": {
@@ -449,14 +453,16 @@
                     "battery_power_entity_id": "Battery power sensor",
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
-                    "battery_soc_hysteresis": "Battery SOC hysteresis"
+                    "battery_soc_hysteresis": "Battery SOC hysteresis",
+                    "battery_soc_full": "Battery full SOC"
                 },
                 "data_description": {
                     "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
                     "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign \u2014 otherwise battery power will never be offered to loads.",
                     "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
                     "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
-                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%."
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
+                    "battery_soc_full": "SOC at or above which the battery counts as full. A smart plug in Excess mode runs once the battery reaches this level (or whenever the site is exporting)."
                 }
             },
             "plug": {

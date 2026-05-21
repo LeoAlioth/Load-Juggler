@@ -101,14 +101,16 @@
                     "battery_power_entity_id": "Senzor moči baterije",
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije",
                     "battery_max_discharge_power": "Maksimalna moč praznjenja baterije",
-                    "battery_soc_hysteresis": "Histereza SOC baterije"
+                    "battery_soc_hysteresis": "Histereza SOC baterije",
+                    "battery_soc_full": "SOC polne baterije"
                 },
                 "data_description": {
                     "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
                     "battery_power_entity_id": "Mora prikazovati POZITIVNO \u0161tevilo, ko se baterija prazni (oddaja mo\u010d), in negativno med polnjenjem. \u010ce je senzor obrnjen, ga ovijte v predlogo (template sensor), da obrnete predznak \u2014 sicer mo\u010d baterije ne bo nikoli na voljo porabnikom.",
                     "battery_max_charge_power": "Maksimalna moč, ki jo razsmernik uporabi za polnjenje baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
                     "battery_max_discharge_power": "Maksimalna moč, ki jo razsmernik lahko prazni iz baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
-                    "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%."
+                    "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%.",
+                    "battery_soc_full": "SOC, pri katerem ali nad katerim se baterija šteje za polno. Pametni vtič v načinu Presežek se vklopi, ko baterija doseže to raven (ali ko mesto oddaja v omrežje)."
                 }
             },
             "select_hub": {
@@ -292,14 +294,16 @@
                     "battery_power_entity_id": "Senzor moči baterije",
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije",
                     "battery_max_discharge_power": "Maksimalna moč praznjenja baterije",
-                    "battery_soc_hysteresis": "Histereza SOC baterije"
+                    "battery_soc_hysteresis": "Histereza SOC baterije",
+                    "battery_soc_full": "SOC polne baterije"
                 },
                 "data_description": {
                     "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
                     "battery_power_entity_id": "Mora prikazovati POZITIVNO \u0161tevilo, ko se baterija prazni (oddaja mo\u010d), in negativno med polnjenjem. \u010ce je senzor obrnjen, ga ovijte v predlogo (template sensor), da obrnete predznak \u2014 sicer mo\u010d baterije ne bo nikoli na voljo porabnikom.",
                     "battery_max_charge_power": "Maksimalna moč, ki jo razsmernik uporabi za polnjenje baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
                     "battery_max_discharge_power": "Maksimalna moč, ki jo razsmernik lahko prazni iz baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
-                    "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%."
+                    "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%.",
+                    "battery_soc_full": "SOC, pri katerem ali nad katerim se baterija šteje za polno. Pametni vtič v načinu Presežek se vklopi, ko baterija doseže to raven (ali ko mesto oddaja v omrežje)."
                 }
             },
             "reconfigure_plug": {
@@ -486,14 +490,16 @@
                     "battery_power_entity_id": "Senzor moči baterije",
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije",
                     "battery_max_discharge_power": "Maksimalna moč praznjenja baterije",
-                    "battery_soc_hysteresis": "Histereza SOC baterije"
+                    "battery_soc_hysteresis": "Histereza SOC baterije",
+                    "battery_soc_full": "SOC polne baterije"
                 },
                 "data_description": {
                     "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
                     "battery_power_entity_id": "Mora prikazovati POZITIVNO \u0161tevilo, ko se baterija prazni (oddaja mo\u010d), in negativno med polnjenjem. \u010ce je senzor obrnjen, ga ovijte v predlogo (template sensor), da obrnete predznak \u2014 sicer mo\u010d baterije ne bo nikoli na voljo porabnikom.",
                     "battery_max_charge_power": "Maksimalna moč, ki jo razsmernik uporabi za polnjenje baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
                     "battery_max_discharge_power": "Maksimalna moč, ki jo razsmernik lahko prazni iz baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
-                    "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%."
+                    "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%.",
+                    "battery_soc_full": "SOC, pri katerem ali nad katerim se baterija šteje za polno. Pametni vtič v načinu Presežek se vklopi, ko baterija doseže to raven (ali ko mesto oddaja v omrežje)."
                 }
             },
             "plug": {

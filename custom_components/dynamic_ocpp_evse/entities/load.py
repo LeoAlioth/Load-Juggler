@@ -323,9 +323,20 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 self.hass.data[DOMAIN] = {}
             if "charger_allocations" not in self.hass.data[DOMAIN]:
                 self.hass.data[DOMAIN]["charger_allocations"] = {}
+            # Binary loads (smart plug, hot water tank) — their reserved
+            # allocation can sit far above what the device actually draws
+            # (switch on but appliance idle, or a tank element warming).
+            # Report the engine's measured draw so "Allocated Current" reflects
+            # real consumption; EVSEs report the commanded allocation.
+            if device_type in (DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK):
+                reported_allocation = hub_data.get("charger_draw", {}).get(
+                    self.config_entry.entry_id, 0
+                )
+            else:
+                reported_allocation = self._allocated_current
             self.hass.data[DOMAIN]["charger_allocations"][
                 self.config_entry.entry_id
-            ] = self._allocated_current
+            ] = reported_allocation
 
             # Effective priority rank from the engine — the order this device
             # is served when power is contended (mode urgency, then priority).

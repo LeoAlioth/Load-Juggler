@@ -1030,6 +1030,15 @@ def _build_hub_result(
     )
     charger_rank = {c.charger_id: idx + 1 for idx, c in enumerate(_ranked)}
 
+    # Per-charger actual draw — the measured current the load is really
+    # pulling (sum of phase currents). For a binary load this is what the
+    # device draws right now, which can be far below its reserved allocation
+    # (e.g. a metered plug switched on but its appliance idle).
+    charger_draw = {
+        c.charger_id: round(c.l1_current + c.l2_current + c.l3_current, 1)
+        for c in site.chargers
+    }
+
     # Per-charger active phase count (for W-based OCPP profiles)
     # Uses actual draw to detect 1-phase car on 3-phase EVSE; falls back to configured phases.
     charger_active_phases = {}
@@ -1071,6 +1080,7 @@ def _build_hub_result(
         "charger_names": charger_names,
         "charger_modes": charger_modes,
         "charger_rank": charger_rank,
+        "charger_draw": charger_draw,
         "charger_active_phases": charger_active_phases,
         "charger_phase_masks": charger_phase_masks,
         "distribution_mode": site.distribution_mode,

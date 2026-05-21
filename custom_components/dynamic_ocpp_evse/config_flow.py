@@ -58,7 +58,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Load Juggler."""
 
     VERSION = 2
-    MINOR_VERSION = 2
+    MINOR_VERSION = 3
 
     def __init__(self):
         self._data = {}
@@ -397,6 +397,25 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "number": {
                             "min": 1,
                             "max": 10,
+                            "step": 1,
+                            "mode": "slider",
+                            "unit_of_measurement": "%",
+                        }
+                    }
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_BATTERY_SOC_FULL,
+                    default=defaults.get(
+                        CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 50,
+                            "max": 100,
                             "step": 1,
                             "mode": "slider",
                             "unit_of_measurement": "%",

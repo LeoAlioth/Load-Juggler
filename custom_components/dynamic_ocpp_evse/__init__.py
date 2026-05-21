@@ -117,6 +117,24 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("Updated minor version to 2")
         return True
 
+    # Migrate 2.2 → 2.3: the smart-plug "Solar Only" mode was split. Its old
+    # behavior (run while battery SOC > minimum) is now "Solar Priority", and
+    # the key "Solar Only" was reused for a new target-gated mode. Flag plug
+    # charger entries so the operating-mode select migrates its restored
+    # "Solar Only" state to "Solar Priority" exactly once (see select.py).
+    if entry.version == 2 and getattr(entry, 'minor_version', 0) < 3:
+        new_data = dict(entry.data)
+        if (
+            entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+            and entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG
+        ):
+            new_data[MIGRATE_PLUG_SOLAR_ONLY_FLAG] = True
+        hass.config_entries.async_update_entry(
+            entry, data=new_data, minor_version=3
+        )
+        _LOGGER.info("Updated minor version to 3")
+        return True
+
     return True
 
 
