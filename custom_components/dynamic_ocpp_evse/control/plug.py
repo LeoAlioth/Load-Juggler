@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from ..const import DOMAIN, CONF_PLUG_SWITCH_ENTITY_ID
+from ..const import CONF_PLUG_SWITCH_ENTITY_ID
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,17 +37,6 @@ async def send_plug_command(
         _LOGGER.warning(
             "Smart load switch command failed for %s: %s", sensor._attr_name, e
         )
-
-    plug_auto_power = hub_data.get("plug_auto_power", {})
-    auto_power = plug_auto_power.get(sensor.config_entry.entry_id)
-    if auto_power is not None:
-        charger_data = (
-            sensor.hass.data.get(DOMAIN, {})
-            .get("chargers", {})
-            .get(sensor.config_entry.entry_id)
-        )
-        if charger_data is not None:
-            charger_data["device_power"] = auto_power
 
     sensor._last_update = datetime.now(timezone.utc)
     sensor._last_command_time = now_mono

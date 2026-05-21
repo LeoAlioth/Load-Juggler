@@ -503,17 +503,35 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     return charger
 
 
-def _build_plug_charger(
-    hass, entry, voltage, charger_entity_id, priority, plug_auto_power
-):
+def _phase_draw(draw_w, connected_to_phase, voltage):
+    """Distribute a binary load's total draw (W) across its connected phases.
+
+    Returns a dict of LoadContext kwargs (l1/l2/l3 phase + current) so the
+    load's actual draw is counted in Total Managed Power and subtracted by
+    the consumption feedback loop, exactly like an EVSE's metered draw.
+    """
+    chars = list(connected_to_phase) or ["A"]
+    phases = len(chars)
+    per_phase = draw_w / (voltage * phases) if voltage > 0 and phases > 0 else 0
+    return {
+        "l1_phase": chars[0],
+        "l2_phase": chars[1] if phases > 1 else "B",
+        "l3_phase": chars[2] if phases > 2 else "C",
+        "l1_current": per_phase if phases >= 1 else 0,
+        "l2_current": per_phase if phases >= 2 else 0,
+        "l3_current": per_phase if phases >= 3 else 0,
+    }
+
+
+def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     """Build a LoadContext for a smart load (plug) device."""
     charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
     slider_power = charger_rt.get("device_power", None)
     config_power = get_entry_value(
         entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING
     )
-    # Configured fallback: the runtime slider if set, else the config value.
-    configured_power = (
+    # Set power: the runtime slider if set, else the configured rating.
+    power_rating = (
         slider_power if slider_power is not None and slider_power > 0 else config_power
     )
 
@@ -525,30 +543,25 @@ def _build_plug_charger(
         hass.states.get(plug_switch_entity) if plug_switch_entity else None
     )
 
-    # The plug's allocated current is always derived from its set power. When
-    # a power-monitor entity is configured and the plug is drawing, the set
-    # power is updated from the live measurement (lightly smoothed); that
-    # updated value is written back to the plug's device_power and used from
-    # the next cycle. Without a monitor the configured set power is used and
-    # on/off is read from the switch.
-    power_rating = configured_power
+    # A configured power-monitor entity is read directly: while the plug is
+    # drawing, its live measurement is used as the power rating AND written
+    # back to the device_power slider so it learns the device's real draw.
+    # While the plug is off the slider holds that last value. On/off
+    # (connector status) follows the monitor, else the switch state.
     power_monitor_entity = get_entry_value(
         entry, CONF_PLUG_POWER_MONITOR_ENTITY_ID, None
     )
+    power_draw = None
     if power_monitor_entity:
         power_draw = _coerce(
             _read_entity(hass, power_monitor_entity, 0, unit="W")
         )  # Convert kW→W if needed
         drawing = power_draw is not None and power_draw > 10
-        connector_status = "Charging" if drawing else "Available"
         if drawing:
-            # Update the set power from the measurement (light EMA smoothing).
-            updated = (
-                power_draw
-                if not configured_power
-                else 0.5 * power_draw + 0.5 * configured_power
-            )
-            plug_auto_power[entry.entry_id] = round(updated, 0)
+            power_rating = power_draw
+            # Learn the device's real power: update the set-power slider.
+            charger_rt["device_power"] = round(power_draw, 0)
+        connector_status = "Charging" if drawing else "Available"
     elif plug_switch_state:
         connector_status = (
             "Charging" if plug_switch_state.state == "on" else "Available"
@@ -557,6 +570,14 @@ def _build_plug_charger(
         connector_status = "Charging"
 
     equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
+
+    # Actual draw — the measured draw if a monitor is configured, else the set
+    # power while the plug is on. Populates the load's per-phase currents so
+    # the plug counts toward Total Managed Power and the consumption feedback.
+    if power_monitor_entity:
+        actual_draw_w = power_draw if (power_draw and power_draw > 0) else 0
+    else:
+        actual_draw_w = power_rating if connector_status == "Charging" else 0
 
     # Read per-charger operating mode from runtime data
     operating_mode = charger_rt.get("operating_mode", OPERATING_MODE_CONTINUOUS)
@@ -572,6 +593,7 @@ def _build_plug_charger(
         connector_status=connector_status,
         device_type=DEVICE_TYPE_PLUG,
         operating_mode=operating_mode,
+        **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
     _LOGGER.debug(
         "  Plug %s [%s]: %.0fW on %s prio=%d [%s]%s",
@@ -581,7 +603,7 @@ def _build_plug_charger(
         connected_to_phase,
         priority,
         connector_status,
-        " (auto-adj)" if entry.entry_id in plug_auto_power else "",
+        " (metered)" if power_monitor_entity else "",
     )
     return charger
 
@@ -596,16 +618,21 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     """
     charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
 
-    # Power rating: live power sensor when available, else configured element power
+    # Set power: the runtime slider if set, else the configured element
+    # power. A configured tank power sensor overrides it with the live draw
+    # while the element is heating, and is written back so the slider learns.
     element_power = get_entry_value(
         entry, CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER
     )
-    power_rating = element_power
+    slider_power = charger_rt.get("device_power")
+    power_rating = slider_power if slider_power else element_power
     power_entity = get_entry_value(entry, CONF_TANK_POWER_ENTITY_ID, None)
+    live = None
     if power_entity:
         live = _coerce(_read_entity(hass, power_entity, 0, unit="W"))
         if live and live > 10:
             power_rating = live
+            charger_rt["device_power"] = round(live, 0)
 
     connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
     phases = len(connected_to_phase)
@@ -616,10 +643,22 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     climate_entity = entry.data.get(CONF_CLIMATE_ENTITY_ID)
     connector_status = "Charging"
     climate_state = hass.states.get(climate_entity) if climate_entity else None
-    if climate_state and climate_state.attributes.get("hvac_action") == "idle":
+    hvac_action = (
+        climate_state.attributes.get("hvac_action") if climate_state else None
+    )
+    if hvac_action == "idle":
         connector_status = "Available"
 
     equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
+
+    # Actual draw — the element only consumes while the thermostat is calling
+    # for heat. Use the live power sensor if configured, else the element
+    # rating while hvac_action is "heating". Populates per-phase currents so
+    # the tank counts toward Total Managed Power and the feedback loop.
+    if power_entity:
+        actual_draw_w = live if (live and live > 0) else 0
+    else:
+        actual_draw_w = power_rating if hvac_action == "heating" else 0
 
     # Tank mode → engine mode: a tank always maps to Continuous. All three
     # tank modes (Freeze Protection / Normal / Solar Only) decide *which
@@ -643,6 +682,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
         connector_status=connector_status,
         device_type=DEVICE_TYPE_HOT_WATER_TANK,
         operating_mode=engine_mode,
+        **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
     _LOGGER.debug(
         "  Tank %s [%s→%s]: %.0fW on %s prio=%d [%s]",
@@ -658,10 +698,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
 
 
 def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
-    """Build LoadContext objects for all chargers and add them to the site.
-
-    Returns plug_auto_power dict for auto-adjusted plug power ratings.
-    """
+    """Build LoadContext objects for all chargers and add them to the site."""
     from .. import get_chargers_for_hub
 
     if hasattr(sensor, "_charger_entries"):
@@ -669,7 +706,6 @@ def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
     else:
         chargers = get_chargers_for_hub(hass, hub_entry_id)
 
-    plug_auto_power = {}
     for entry in chargers:
         device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         charger_entity_id = entry.data.get(CONF_ENTITY_ID, f"charger_{entry.entry_id}")
@@ -679,7 +715,7 @@ def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
 
         if device_type == DEVICE_TYPE_PLUG:
             charger = _build_plug_charger(
-                hass, entry, site.voltage, charger_entity_id, priority, plug_auto_power
+                hass, entry, site.voltage, charger_entity_id, priority
             )
         elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
             charger = _build_hot_water_tank_charger(
@@ -715,8 +751,6 @@ def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
             charger.active_phases_mask = clamped
 
         site.chargers.append(charger)
-
-    return plug_auto_power
 
 
 def _apply_feedback_loop(site, solar_is_derived, voltage):
@@ -858,7 +892,6 @@ def _build_hub_result(
     charger_targets,
     charger_available,
     charger_names,
-    plug_auto_power,
     auto_detect_notifications=None,
     group_data=None,
     grid_stale=False,
@@ -1019,8 +1052,6 @@ def _build_hub_result(
         "charger_active_phases": charger_active_phases,
         "charger_phase_masks": charger_phase_masks,
         "distribution_mode": site.distribution_mode,
-        # Auto-detected plug power ratings
-        "plug_auto_power": plug_auto_power,
         # Auto-detection notifications (inversion, phase mapping)
         "auto_detect_notifications": auto_detect_notifications or [],
         # Circuit group data (for group sensors)
@@ -1392,7 +1423,7 @@ def run_hub_calculation(sensor):
         if hasattr(hub_entry, "entry_id")
         else hub_entry.data.get("hub_entry_id")
     )
-    plug_auto_power = _add_chargers_to_site(hass, site, hub_entry_id, sensor)
+    _add_chargers_to_site(hass, site, hub_entry_id, sensor)
 
     # --- Build circuit groups ---
     site.circuit_groups = _build_circuit_groups(hass, hub_entry_id)
@@ -1604,7 +1635,6 @@ def run_hub_calculation(sensor):
         charger_targets,
         charger_available,
         charger_names,
-        plug_auto_power,
         auto_notifications,
         group_data,
         grid_stale=grid_stale,

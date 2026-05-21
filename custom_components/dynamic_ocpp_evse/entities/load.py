@@ -247,9 +247,19 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 charger_avail_data.get(self.config_entry.entry_id, 0), 1
             )
 
-            self._allocated_current = apply_smoothing(
-                self, raw_allocated, mode_changed, hub_entry
+            device_type = self.config_entry.data.get(
+                CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE
             )
+            if device_type == DEVICE_TYPE_EVSE:
+                self._allocated_current = apply_smoothing(
+                    self, raw_allocated, mode_changed, hub_entry
+                )
+            else:
+                # Smart plugs and hot water tanks are binary on/off loads —
+                # smoothing the allocated current would produce meaningless
+                # intermediate values and delay the off transition. Use the
+                # engine's target directly.
+                self._allocated_current = raw_allocated
             self._state = self._available_current
 
             min_charge_current = get_entry_value(

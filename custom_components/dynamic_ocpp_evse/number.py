@@ -8,6 +8,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from .entities.mixins import HubEntityMixin, ChargerEntityMixin
 from .const import (
+    DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_CHARGER,
@@ -17,6 +18,8 @@ from .const import (
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
     CONF_PLUG_POWER_RATING,
     DEFAULT_PLUG_POWER_RATING,
+    CONF_HEATING_ELEMENT_POWER,
+    DEFAULT_HEATING_ELEMENT_POWER,
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_BATTERY_SOC_MIN,
@@ -88,7 +91,12 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     elif entry_type == ENTRY_TYPE_CHARGER:
         device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         if device_type == DEVICE_TYPE_PLUG:
-            entities = [PlugDevicePowerSlider(hass, config_entry, name, entity_id)]
+            entities = [
+                LoadPowerSlider(
+                    hass, config_entry, name, entity_id, "Device Power",
+                    CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING,
+                )
+            ]
         elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
             entities = [
                 TankTemperatureSlider(
@@ -104,6 +112,10 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
                     hass, config_entry, name, entity_id, "boost",
                     CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE,
                     "Boost",
+                ),
+                LoadPowerSlider(
+                    hass, config_entry, name, entity_id, "Element Power",
+                    CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER,
                 ),
             ]
         else:
@@ -180,24 +192,32 @@ class EVSEMaxCurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         self._write_to_charger_data(value)
 
 
-class PlugDevicePowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
-    """Slider for device power rating in Watts (smart load devices)."""
+class LoadPowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+    """Slider for a binary load's power rating in Watts (smart plug or tank).
+
+    Holds the load's set power. When a power-measurement entity is configured
+    the engine overwrites ``device_power`` with the live measured draw each
+    cycle, so this slider both seeds and then displays the device's real power.
+    """
 
     _attr_entity_category = EntityCategory.CONFIG
     _charger_data_key = "device_power"
 
-    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
+    def __init__(
+        self, hass: HomeAssistant, config_entry: ConfigEntry, name: str,
+        entity_id: str, label: str, conf_key: str, default: float,
+    ):
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = f"{name} Device Power"
+        self._attr_name = f"{name} {label}"
         self._attr_unique_id = f"{entity_id}_device_power"
-        power_rating = get_entry_value(config_entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
+        default_power = get_entry_value(config_entry, conf_key, default)
         self._attr_native_min_value = 100
-        self._attr_native_max_value = power_rating
+        self._attr_native_max_value = max(default_power, 30000)
         self._attr_native_step = 100
-        self._attr_native_value = power_rating
+        self._attr_native_value = default_power
         self._attr_native_unit_of_measurement = "W"
-        self._attr_icon = "mdi:power-plug"
+        self._attr_icon = "mdi:flash"
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -208,6 +228,17 @@ class PlugDevicePowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         self._attr_native_value = value
         self.async_write_ha_state()
         self._write_to_charger_data(value)
+
+    async def async_update(self) -> None:
+        """Reflect the value the engine learned from the power-measurement entity."""
+        charger_data = (
+            self.hass.data.get(DOMAIN, {})
+            .get("chargers", {})
+            .get(self.config_entry.entry_id, {})
+        )
+        learned = charger_data.get("device_power")
+        if learned is not None:
+            self._attr_native_value = learned
 
 
 class TankTemperatureSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
