@@ -1301,6 +1301,9 @@ def run_hub_calculation(sensor):
         "battery_soc_target", DEFAULT_BATTERY_SOC_TARGET
     )
     battery_soc_min = hub_runtime.get("battery_soc_min", DEFAULT_BATTERY_SOC_MIN)
+    battery_soc_full = get_entry_value(
+        hub_entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL
+    )
 
     # Apply SOC hysteresis — adjust thresholds so engine stays stateless
     now_above_target = False
@@ -1411,6 +1414,9 @@ def run_hub_calculation(sensor):
         battery_soc_min=float(battery_soc_min) if battery_soc_min is not None else None,
         battery_soc_target=float(battery_soc_target)
         if battery_soc_target is not None
+        else None,
+        battery_soc_full=float(battery_soc_full)
+        if battery_soc_full is not None
         else None,
         battery_soc_hysteresis=float(battery_soc_hysteresis)
         if battery_soc_hysteresis is not None

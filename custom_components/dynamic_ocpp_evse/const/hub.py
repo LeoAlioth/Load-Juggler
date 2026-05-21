@@ -29,6 +29,7 @@ CONF_BATTERY_POWER_ENTITY_ID = "battery_power_entity_id"
 CONF_BATTERY_SOC_ENTITY_ID = "battery_soc_entity_id"
 CONF_BATTERY_SOC_TARGET_ENTITY_ID = "battery_soc_target_entity_id"
 CONF_BATTERY_SOC_MIN = "battery_soc_min"  # Minimum SOC below which EV should not charge
+CONF_BATTERY_SOC_FULL = "battery_soc_full"  # SOC at/above which the battery counts as "full" (plug Excess mode)
 CONF_BATTERY_SOC_HYSTERESIS = "battery_soc_hysteresis"  # Hysteresis percentage for SOC thresholds
 CONF_BATTERY_MAX_CHARGE_POWER = "battery_max_charge_power"  # W
 CONF_BATTERY_MAX_DISCHARGE_POWER = "battery_max_discharge_power"  # W
@@ -52,6 +53,7 @@ EXCESS_EXPORT_HYSTERESIS = 500  # W — deadband below the threshold; once Exces
 DEFAULT_BATTERY_MAX_POWER = 5000
 DEFAULT_BATTERY_SOC_MIN = 20  # Default minimum SOC (20%)
 DEFAULT_BATTERY_SOC_TARGET = 80  # Default SOC target (80%)
+DEFAULT_BATTERY_SOC_FULL = 97  # Default "full" SOC — plug Excess mode trigger (%)
 DEFAULT_BATTERY_SOC_HYSTERESIS = 3  # Default hysteresis (3%)
 
 # Distribution mode configuration (hub-level)

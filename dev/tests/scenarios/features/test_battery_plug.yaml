@@ -1,13 +1,14 @@
 # Test scenarios: Battery-backed smart plug SOC-based on/off
 #
-# When a battery is configured it acts as the surplus buffer (stored solar),
-# so a smart plug's Solar Only / Excess modes are gauged by battery SOC rather
-# than live grid export. This applies to hybrid grid-tied and off-grid sites
-# alike:
-#   - Solar Only: plug ON whenever battery SOC > minimum SOC
-#   - Excess:     plug ON only when battery SOC > target SOC
+# A smart plug is a binary on/off load. With a battery configured the battery
+# is the stored-solar buffer, and each plug mode drains it only to a
+# progressively higher SOC floor (none of them use the grid):
+#   - Solar Priority: plug ON while battery SOC > minimum SOC
+#   - Solar Only:     plug ON while battery SOC > target SOC
+#   - Excess:         plug ON while battery SOC >= "full" SOC, or the site is
+#                     exporting
 # EVSEs are unaffected (they keep modulating). See _source_limit() in
-# target_calculator.py.
+# target_calculator.py and BEHAVIOR_BY_MODE in const/modes.py.
 #
 # All scenarios use a dedicated solar entity (solar_production_direct: true) so
 # battery discharge is added to the inverter pool, and night-time solar (0 W)
@@ -15,8 +16,8 @@
 
 scenarios:
 
-  - name: "battery-plug-solar-only-above-min"
-    description: "Battery plug, Solar Only, SOC 50% > min 20% → plug ON"
+  - name: "battery-plug-solar-priority-above-min"
+    description: "Battery plug, Solar Priority, SOC 50% > min 20% → plug ON"
     human_verified: false
     site:
       voltage: 230
@@ -36,7 +37,7 @@ scenarios:
     chargers:
       - entity_id: "plug_1"
         device_type: "plug"
-        operating_mode: Solar
+        operating_mode: "Solar Priority"
         power_rating: 1500
         phases: 1
         priority: 1
@@ -45,8 +46,8 @@ scenarios:
       plug_1:
         allocated: 6.5  # SOC 50 > min 20 → on; 1500W / 230V = 6.5A
 
-  - name: "battery-plug-solar-only-below-min"
-    description: "Battery plug, Solar Only, SOC 15% < min 20% → plug OFF"
+  - name: "battery-plug-solar-priority-below-min"
+    description: "Battery plug, Solar Priority, SOC 15% < min 20% → plug OFF"
     human_verified: false
     site:
       voltage: 230
@@ -66,7 +67,7 @@ scenarios:
     chargers:
       - entity_id: "plug_1"
         device_type: "plug"
-        operating_mode: Solar
+        operating_mode: "Solar Priority"
         power_rating: 1500
         phases: 1
         priority: 1
@@ -75,8 +76,8 @@ scenarios:
       plug_1:
         allocated: 0.0  # SOC 15 below min 20 → off
 
-  - name: "battery-plug-excess-above-target"
-    description: "Battery plug, Excess, SOC 85% > target 80% → plug ON"
+  - name: "battery-plug-solar-only-above-target"
+    description: "Battery plug, Solar Only, SOC 85% > target 80% → plug ON"
     human_verified: false
     site:
       voltage: 230
@@ -96,7 +97,7 @@ scenarios:
     chargers:
       - entity_id: "plug_1"
         device_type: "plug"
-        operating_mode: Excess
+        operating_mode: "Solar Only"
         power_rating: 1500
         phases: 1
         priority: 1
@@ -105,8 +106,8 @@ scenarios:
       plug_1:
         allocated: 6.5  # SOC 85 > target 80 → on; 1500W / 230V = 6.5A
 
-  - name: "battery-plug-excess-below-target"
-    description: "Battery plug, Excess, SOC 50% (> min, < target 80%) → plug OFF"
+  - name: "battery-plug-solar-only-below-target"
+    description: "Battery plug, Solar Only, SOC 50% (> min, < target 80%) → plug OFF"
     human_verified: false
     site:
       voltage: 230
@@ -126,7 +127,7 @@ scenarios:
     chargers:
       - entity_id: "plug_1"
         device_type: "plug"
-        operating_mode: Excess
+        operating_mode: "Solar Only"
         power_rating: 1500
         phases: 1
         priority: 1
@@ -134,3 +135,65 @@ scenarios:
     expected:
       plug_1:
         allocated: 0.0  # SOC 50 below target 80 → off
+
+  - name: "battery-plug-excess-near-full"
+    description: "Battery plug, Excess, SOC 98% >= full 97% → plug ON"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production_direct: true
+      solar_production: 0
+      phase_a_consumption: 1.0
+      battery_soc: 98
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_soc_full: 97
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        operating_mode: "Excess"
+        power_rating: 1500
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      plug_1:
+        allocated: 6.5  # SOC 98 >= full 97 → on; 1500W / 230V = 6.5A
+
+  - name: "battery-plug-excess-below-full"
+    description: "Battery plug, Excess, SOC 85% < full 97%, no export → plug OFF"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production_direct: true
+      solar_production: 0
+      phase_a_consumption: 1.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_soc_full: 97
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        operating_mode: "Excess"
+        power_rating: 1500
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      plug_1:
+        allocated: 0.0  # SOC 85 below full 97 and no export → off

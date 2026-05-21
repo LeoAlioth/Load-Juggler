@@ -19,8 +19,9 @@ from ..const import (
     BEHAVIOR_SOLAR_PRIORITY,
     BEHAVIOR_SOLAR_ONLY,
     BEHAVIOR_EXCESS,
-    BEHAVIOR_SOLAR_BINARY,
-    BEHAVIOR_EXCESS_BINARY,
+    BEHAVIOR_BINARY_ABOVE_MIN,
+    BEHAVIOR_BINARY_ABOVE_TARGET,
+    BEHAVIOR_BINARY_EXCESS,
     DEVICE_TYPE_PLUG,
 )
 
@@ -541,20 +542,21 @@ def _source_limit(
     mask = charger.active_phases_mask
     behavior = charger.mode_behavior
 
-    # Binary smart-plug solar: when a battery is configured it acts as the
-    # surplus buffer (stored solar), so the plug runs whenever the battery is
-    # above its minimum SOC — "never use the grid", and the battery is stored
-    # solar. With no battery, fall back to the modulating solar-only rule
-    # (live solar surplus must cover the plug).
-    if behavior == BEHAVIOR_SOLAR_BINARY:
+    # Binary smart-plug behaviors — on/off, never grid. With a battery the
+    # battery is the stored-solar buffer, and each mode drains it only to a
+    # progressively higher SOC floor; with no battery they fall back to a
+    # live-surplus rule.
+
+    # Solar Priority: run while the battery is above its minimum SOC.
+    if behavior == BEHAVIOR_BINARY_ABOVE_MIN:
         if site.battery_soc is not None:
             soc_min = site.battery_soc_min or 0
             return charger.max_current if site.battery_soc > soc_min else 0
         behavior = BEHAVIOR_SOLAR_ONLY
 
-    # Binary smart-plug excess: with a battery, run only once the battery is
-    # above its target SOC. With no battery, fall back to the excess rule.
-    if behavior == BEHAVIOR_EXCESS_BINARY:
+    # Solar Only: run while the battery is above its target SOC (only the
+    # above-target band counts as stored surplus).
+    if behavior == BEHAVIOR_BINARY_ABOVE_TARGET:
         if site.battery_soc is not None:
             if site.battery_soc_target is None:
                 return 0
@@ -563,7 +565,20 @@ def _source_limit(
                 if site.battery_soc > site.battery_soc_target
                 else 0
             )
-        behavior = BEHAVIOR_EXCESS
+        behavior = BEHAVIOR_SOLAR_ONLY
+
+    # Excess: run while the battery is near-full, OR whenever the site is
+    # exporting — export can reach the threshold before the battery fills
+    # (battery charge-rate limited). With no battery it is purely
+    # export-driven.
+    if behavior == BEHAVIOR_BINARY_EXCESS:
+        if (
+            site.battery_soc is not None
+            and site.battery_soc_full is not None
+            and site.battery_soc >= site.battery_soc_full
+        ):
+            return charger.max_current
+        return charger.max_current if excess.get_available(mask) > 0 else 0
 
     if behavior == BEHAVIOR_FULL_POWER:
         return charger.max_current

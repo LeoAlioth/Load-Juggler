@@ -143,6 +143,7 @@ class SiteContext:
     battery_power: float | None = None  # Positive = discharging, Negative = charging
     battery_soc_target: float | None = None
     battery_soc_min: float | None = None
+    battery_soc_full: float | None = None  # SOC at/above which the battery counts as "full"
     battery_soc_hysteresis: float = 5
     battery_max_charge_power: float | None = None
     battery_max_discharge_power: float | None = None

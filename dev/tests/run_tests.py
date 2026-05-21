@@ -74,6 +74,7 @@ from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext,
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 from custom_components.dynamic_ocpp_evse.calculations.utils import compute_household_per_phase
 from custom_components.dynamic_ocpp_evse.const.modes import resolve_operating_mode, behavior_for
+from custom_components.dynamic_ocpp_evse.const import DEFAULT_BATTERY_SOC_FULL
 
 # ---------------------------------------------------------------------------
 # Mode name migration (old YAML → new operating modes)
@@ -160,9 +161,6 @@ def set_charger_phase_currents(charger, commanded_limit):
         charger.l3_current = commanded_limit
 
 
-BATTERY_FULL_SOC = 97  # Battery considered full above this SOC
-
-
 def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
     """Compute grid CT readings using self-consumption battery model.
 
@@ -209,7 +207,7 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
                 max_discharge = min(max_discharge, inverter_headroom)
             discharge = min(total_raw, max_discharge)
             battery_per_phase = -(discharge / num_phases)
-        elif total_raw < 0 and site.battery_soc < BATTERY_FULL_SOC:
+        elif total_raw < 0 and site.battery_soc < (site.battery_soc_full or DEFAULT_BATTERY_SOC_FULL):
             # Surplus: battery charges from it
             max_charge = (site.battery_max_charge_power or 0) / site.voltage
             charge = min(abs(total_raw), max_charge)
@@ -380,6 +378,7 @@ def build_site_from_scenario(scenario):
         battery_soc=site_data.get('battery_soc'),
         battery_soc_min=site_data.get('battery_soc_min', 20),
         battery_soc_target=site_data.get('battery_soc_target', 80),
+        battery_soc_full=site_data.get('battery_soc_full', DEFAULT_BATTERY_SOC_FULL),
         excess_export_threshold=site_data.get('excess_export_threshold', 13000),
         battery_max_charge_power=site_data.get('battery_max_charge_power', 5000),
         battery_max_discharge_power=site_data.get('battery_max_discharge_power', 5000),

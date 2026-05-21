@@ -78,15 +78,19 @@ CONF_OPERATING_MODE = "operating_mode"
 # switches on the behavior, never on the device type or the mode label. Which
 # behavior each operating mode uses is mapped centrally in const/modes.py
 # (BEHAVIOR_BY_MODE) — the const device modules stay free of engine concepts.
+# Modulating behaviors (EVSE — varies the current).
 BEHAVIOR_FULL_POWER = "full_power"          # draw at max from any source
 BEHAVIOR_SOLAR_PRIORITY = "solar_priority"  # follow solar, grid-backed minimum
 BEHAVIOR_SOLAR_ONLY = "solar_only"          # solar surplus only, no grid
 BEHAVIOR_EXCESS = "excess"                  # only run on excess export
-BEHAVIOR_SOLAR_BINARY = "solar_binary"      # binary load: battery-SOC-gated solar
-BEHAVIOR_EXCESS_BINARY = "excess_binary"    # binary load: battery-SOC-gated excess
+# Binary behaviors (smart plug — on/off, never grid; with a battery the SOC
+# band gates it, without a battery it falls back to live solar surplus).
+BEHAVIOR_BINARY_ABOVE_MIN = "binary_above_min"        # run while battery > minimum SOC
+BEHAVIOR_BINARY_ABOVE_TARGET = "binary_above_target"  # run while battery > target SOC
+BEHAVIOR_BINARY_EXCESS = "binary_excess"              # run while battery near-full or exporting
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class OperatingMode:
     """One device-type operating mode — the user-facing definition.
 
@@ -96,7 +100,10 @@ class OperatingMode:
     icon      mdi icon for the select entity
 
     The engine behavior a mode competes with is mapped separately in
-    const/modes.py, keeping the device modules free of engine concepts.
+    const/modes.py, keyed by the mode object — so each module-level instance
+    is a distinct mode. ``eq=False`` keeps identity equality/hashing: two
+    device types whose modes coincide on every display field (e.g. EVSE and
+    plug "Excess") are still distinct modes, never a collapsed dict key.
     """
 
     key: str
