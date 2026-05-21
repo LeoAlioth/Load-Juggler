@@ -259,7 +259,8 @@ async def async_setup(hass: HomeAssistant, config: dict):
             vol.Required("mode"): vol.In([
                 OPERATING_MODE_STANDARD, OPERATING_MODE_CONTINUOUS,
                 OPERATING_MODE_SOLAR_PRIORITY, OPERATING_MODE_SOLAR_ONLY,
-                OPERATING_MODE_EXCESS,
+                OPERATING_MODE_EXCESS, OPERATING_MODE_NORMAL,
+                OPERATING_MODE_FREEZE_PROTECTION,
             ]),
         }),
     )

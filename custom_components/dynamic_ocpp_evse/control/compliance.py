@@ -10,6 +10,7 @@ from ..const import (
     RAMP_DOWN_RATE,
     DEAD_BAND,
     CONF_ENTITY_ID,
+    CONF_CHARGER_ID,
     CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
     CONF_EVSE_POWER_OFFERED_ENTITY_ID,
     CONF_UPDATE_FREQUENCY,
@@ -175,10 +176,15 @@ async def check_profile_compliance(
 
 async def perform_hard_reset(sensor) -> None:
     """Perform an OCPP hard reset by pressing the charger's reset button entity."""
-    charger_id = sensor.config_entry.data.get(CONF_ENTITY_ID)
+    # The OCPP reset button is named after the OCPP charge point ID, not the
+    # Load Juggler entity_id — same resolution as the connector/control
+    # entities in load.py and hub_calculation.py.
+    charger_id = sensor.config_entry.data.get(
+        CONF_CHARGER_ID
+    ) or sensor.config_entry.data.get(CONF_ENTITY_ID)
     if not charger_id:
         _LOGGER.error(
-            "Cannot hard reset %s: no entity_id configured", sensor._attr_name
+            "Cannot hard reset %s: no OCPP charger ID configured", sensor._attr_name
         )
         return
 

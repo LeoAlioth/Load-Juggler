@@ -186,9 +186,9 @@ scenarios:
         # Standard mode: grid limit = 63 - 5 = 58A per phase. 15.9 < 58 → full allocation
         allocated: 15.9
 
-  - name: "plug-idle"
-    description: "Plug with connector_status=Available, verify available_current shows correct value"
-    human_verified: true
+  - name: "plug-switch-off-gets-allocated"
+    description: "Plug whose switch is currently off (connector_status=Available) must still be allocated — a plug has no connector, so being off must not prevent it turning on."
+    human_verified: false
     site:
       voltage: 230
       main_breaker_rating: 35
@@ -216,5 +216,38 @@ scenarios:
         active: false
     expected:
       plug_1:
-        allocated: 0.0  # Idle — not charging
-        available: 8.7  # 2000/230 = 8.7A equivalent; solar available = 5000/230 - 2 = 19.7A > 8.7A → would get 8.7A if active
+        allocated: 8.7  # Solar Only, solar surplus = 5000/230 - 2 = 19.7A > 8.7A → plug ON despite switch currently off
+        available: 8.7  # 2000/230 = 8.7A equivalent
+
+  - name: "plug-continuous-switch-off-turns-on"
+    description: "Continuous plug whose switch is currently off must be allocated power to turn on (regression: an off plug must not be stuck off)."
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.0
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        operating_mode: Continuous
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+        connector_status: "Available"
+        active: false
+    expected:
+      plug_1:
+        allocated: 8.7  # Continuous → always on; 2000/230 = 8.7A, grid headroom available
+        available: 8.7

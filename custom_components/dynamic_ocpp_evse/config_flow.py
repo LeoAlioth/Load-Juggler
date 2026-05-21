@@ -1871,11 +1871,18 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             selected_charger_id = user_input.get("charger")
-            for charger in self._discovered_chargers:
-                if charger["id"] == selected_charger_id:
-                    self._selected_charger = charger
-                    break
-            return await self.async_step_charger_info()
+            self._selected_charger = next(
+                (c for c in self._discovered_chargers
+                 if c["id"] == selected_charger_id),
+                None,
+            )
+            if self._selected_charger is not None:
+                return await self.async_step_charger_info()
+            # Selected charger is no longer among the discovered set (it
+            # disappeared between rendering and submitting the form). Re-show
+            # the form rather than proceeding with _selected_charger = None,
+            # which would crash the downstream steps.
+            errors["base"] = "charger_not_found"
 
         charger_options = [
             {"value": charger["id"], "label": charger["name"]}
@@ -2283,14 +2290,15 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Charger step 3c: Units and timing configuration (final — creates entry)."""
         errors: dict[str, str] = {}
 
-        # Use user-provided OCPP device ID if edited, otherwise use detected
-        ocpp_device_id = (
-            user_input.get("ocpp_device_id")
-            if user_input
-            else self._selected_charger.get("device_id")
+        # The OCPP device ID may have been edited on the charger_info step
+        # (the timing step has no such field), so it lives in self._data.
+        # Fall back to the detected value from discovery.
+        detected_device_id = (
+            self._selected_charger.get("device_id")
+            if self._selected_charger
+            else None
         )
-        if not ocpp_device_id:
-            ocpp_device_id = self._selected_charger.get("device_id")
+        ocpp_device_id = self._data.get(CONF_OCPP_DEVICE_ID) or detected_device_id
 
         # Detect charger capabilities via OCPP
         detected_unit = await self._detect_charge_rate_unit(ocpp_device_id)
@@ -2301,10 +2309,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             self._data[ENTRY_TYPE] = ENTRY_TYPE_CHARGER
             self._data[CONF_CHARGER_ID] = self._selected_charger["id"]
-            # Use user-edited OCPP device ID if provided, otherwise detected
-            self._data[CONF_OCPP_DEVICE_ID] = user_input.get(
-                "ocpp_device_id"
-            ) or self._selected_charger.get("device_id")
+            # Keep the OCPP device ID resolved above (user edit or detected).
+            self._data[CONF_OCPP_DEVICE_ID] = ocpp_device_id
             self._data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID] = self._selected_charger[
                 "current_import_entity"
             ]

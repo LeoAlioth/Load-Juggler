@@ -411,6 +411,7 @@
         "error": {
             "no_hub_configured": "Hub ni konfiguriran. Najprej nastavite domači električni hub.",
             "no_ocpp_chargers_found": "OCPP polnilniki niso najdeni. Prepričajte se, da imate nameščeno in konfigurirano integracijo OCPP z vsaj enim polnilnikom.",
+            "charger_not_found": "Izbrani polnilnik ni več na voljo. Morda je bil odstranjen iz integracije OCPP. Poskusite znova.",
             "no_members_selected": "Izberite vsaj eno breme za to skupino tokokroga.",
             "no_loads_available": "Na tem hubu ni na voljo nobenih bremen. Najprej dodajte polnilnike ali pametna bremena.",
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",

@@ -21,6 +21,7 @@ from ..const import (
     OPERATING_MODE_SOLAR_ONLY,
     OPERATING_MODE_EXCESS,
     MODE_URGENCY,
+    DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
 )
 
@@ -46,10 +47,23 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     # SuspendedEVSE = charger is throttling (our profile active), still active.
     # SuspendedEV idle timeout is handled in the HA layer (dynamic_ocpp_evse.py),
     # which overrides connector_status to "Finishing" after the grace period.
+    # EVSEs receive power only with a car connected (connector status). Plugs
+    # and hot water tanks have no connector — they are always eligible for
+    # allocation. Otherwise a plug that is currently off (which makes its
+    # connector status "Available") could never be allocated power to turn
+    # back on, leaving it stuck off forever.
     _INACTIVE_STATUSES = {"Available", "Unknown", "Unavailable", "Finishing", "Faulted"}
     all_chargers = site.chargers
-    active_chargers = [c for c in all_chargers if c.connector_status not in _INACTIVE_STATUSES]
-    inactive_chargers = [c for c in all_chargers if c.connector_status in _INACTIVE_STATUSES]
+    active_chargers = [
+        c for c in all_chargers
+        if c.device_type != DEVICE_TYPE_EVSE
+        or c.connector_status not in _INACTIVE_STATUSES
+    ]
+    inactive_chargers = [
+        c for c in all_chargers
+        if c.device_type == DEVICE_TYPE_EVSE
+        and c.connector_status in _INACTIVE_STATUSES
+    ]
 
     _mode_summary = ", ".join(
         f"{c.entity_id}={c.operating_mode}" for c in active_chargers

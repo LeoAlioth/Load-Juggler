@@ -512,20 +512,26 @@ def _build_plug_charger(
     config_power = get_entry_value(
         entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING
     )
-    power_rating = (
+    # Configured fallback: the runtime slider if set, else the config value.
+    configured_power = (
         slider_power if slider_power is not None and slider_power > 0 else config_power
     )
 
     connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
     phases = len(connected_to_phase)
 
-    # Determine connector status from plug switch state
     plug_switch_entity = entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
     plug_switch_state = (
         hass.states.get(plug_switch_entity) if plug_switch_entity else None
     )
 
-    # Check power monitor if available (more reliable than switch state)
+    # The plug's allocated current is always derived from its set power. When
+    # a power-monitor entity is configured and the plug is drawing, the set
+    # power is updated from the live measurement (lightly smoothed); that
+    # updated value is written back to the plug's device_power and used from
+    # the next cycle. Without a monitor the configured set power is used and
+    # on/off is read from the switch.
+    power_rating = configured_power
     power_monitor_entity = get_entry_value(
         entry, CONF_PLUG_POWER_MONITOR_ENTITY_ID, None
     )
@@ -533,26 +539,16 @@ def _build_plug_charger(
         power_draw = _coerce(
             _read_entity(hass, power_monitor_entity, 0, unit="W")
         )  # Convert kW→W if needed
-        connector_status = "Charging" if power_draw > 10 else "Available"
-
-        # Auto-adjust power rating from monitored draw (rolling average)
-        if power_draw > 10:
-            if DOMAIN not in hass.data:
-                hass.data[DOMAIN] = {}
-            avg_key = f"plug_power_avg_{entry.entry_id}"
-            readings = hass.data[DOMAIN].get(avg_key, [])
-            readings.append(power_draw)
-            if len(readings) > 5:
-                readings = readings[-5:]
-            hass.data[DOMAIN][avg_key] = readings
-            power_rating = sum(readings) / len(readings)
-            plug_auto_power[entry.entry_id] = round(power_rating, 0)
-            _LOGGER.debug(
-                "Plug %s: auto-adjusted power rating to %.0fW (avg of %d readings)",
-                charger_entity_id,
-                power_rating,
-                len(readings),
+        drawing = power_draw is not None and power_draw > 10
+        connector_status = "Charging" if drawing else "Available"
+        if drawing:
+            # Update the set power from the measurement (light EMA smoothing).
+            updated = (
+                power_draw
+                if not configured_power
+                else 0.5 * power_draw + 0.5 * configured_power
             )
+            plug_auto_power[entry.entry_id] = round(updated, 0)
     elif plug_switch_state:
         connector_status = (
             "Charging" if plug_switch_state.state == "on" else "Available"
@@ -625,16 +621,16 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
 
     equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
 
-    # Tank mode → engine mode: Solar Only keeps the solar pool; Freeze
-    # Protection and Normal heat from any source (Continuous).
+    # Tank mode → engine mode: a tank always maps to Continuous. All three
+    # tank modes (Freeze Protection / Normal / Solar Only) decide *which
+    # setpoint* to heat to, not *whether* to run — resolve_tank_setpoint()
+    # encodes that, including the Solar Only away/normal/boost SOC bands.
+    # Mapping Solar Only to the engine's Solar Only mode would forbid heating
+    # below target SOC and override the tank's own setpoint logic.
     tank_mode = charger_rt.get(
         "operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK
     )
-    engine_mode = (
-        OPERATING_MODE_SOLAR_ONLY
-        if tank_mode == OPERATING_MODE_SOLAR_ONLY
-        else OPERATING_MODE_CONTINUOUS
-    )
+    engine_mode = OPERATING_MODE_CONTINUOUS
 
     charger = LoadContext(
         charger_id=entry.entry_id,
@@ -1082,24 +1078,23 @@ def run_hub_calculation(sensor):
     raw_phases, _, _ = _read_grid_phases(hass, hub_entry)
     has_grid_cts = any(r is not None for r in raw_phases)
 
-    # Off-grid (no grid CTs): treat grid current as 0 A, but only for the
-    # phases the site actually has — derived from the configured inverter
-    # output sensors. Forcing all three phases to 0 would make a 1-phase
-    # off-grid site look 3-phase (num_phases counts non-None phases), which
-    # then splits per-phase figures across phantom phases.
-    if not has_grid_cts:
-        inv_phase_confs = (
-            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-        )
-        raw_phases = [
-            0.0 if get_entry_value(hub_entry, conf, None) else None
-            for conf in inv_phase_confs
-        ]
-        # No inverter phase sensors either — fall back to a single phase.
-        if not any(r is not None for r in raw_phases):
-            raw_phases = [0.0, None, None]
+    # A site phase exists if it has EITHER a grid CT or an inverter output
+    # sensor configured — the phase count is the combination of both. For a
+    # phase with an inverter sensor but no grid CT (an off-grid site, or a
+    # partially grid-metered one), grid current is taken as 0 A so the phase
+    # still counts. Without this a 1-phase off-grid site would look 3-phase
+    # and per-phase figures would be split across phantom phases.
+    inv_phase_confs = (
+        CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+        CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+        CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+    )
+    for i, conf in enumerate(inv_phase_confs):
+        if raw_phases[i] is None and get_entry_value(hub_entry, conf, None):
+            raw_phases[i] = 0.0
+    # Nothing configured at all — fall back to a single phase.
+    if all(r is None for r in raw_phases):
+        raw_phases = [0.0, None, None]
 
     # --- Input EMA smoothing (grid CT, solar, battery power) ---
     hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
