@@ -19,8 +19,8 @@ from ..const import (
     DEFAULT_TANK_AWAY_TEMPERATURE,
     DEFAULT_TANK_NORMAL_TEMPERATURE,
     DEFAULT_TANK_BOOST_TEMPERATURE,
-    OPERATING_MODE_FREEZE_PROTECTION,
-    OPERATING_MODE_SOLAR_ONLY,
+    TANK_MODE_FREEZE_PROTECTION,
+    TANK_MODE_SOLAR_PRIORITY,
     DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
 )
 from ..helpers import get_entry_value
@@ -41,8 +41,8 @@ def resolve_tank_setpoint(
     Pure function — unit-testable. ``label`` is "away" / "normal" / "boost".
 
     - Freeze Protection: always the away setpoint.
-    - Solar Only: away below battery-min SOC, normal up to battery-target SOC,
-      boost at/above target SOC.
+    - Solar Priority: away below battery-min SOC, normal up to battery-target
+      SOC, boost at/above target SOC.
     - Normal: normal setpoint, raised to boost when there is surplus — export
       exceeds the element's draw, or the battery is over its target SOC.
     """
@@ -51,10 +51,10 @@ def resolve_tank_setpoint(
     soc_target = hub_data.get("battery_soc_target")
     export = hub_data.get("total_export_power") or 0
 
-    if mode == OPERATING_MODE_FREEZE_PROTECTION:
+    if mode == TANK_MODE_FREEZE_PROTECTION.key:
         return away, "away"
 
-    if mode == OPERATING_MODE_SOLAR_ONLY:
+    if mode == TANK_MODE_SOLAR_PRIORITY.key:
         if soc is not None and soc_min is not None and soc < soc_min:
             return away, "away"
         if soc is not None and soc_target is not None and soc >= soc_target:
@@ -92,7 +92,7 @@ async def send_hot_water_tank_command(
         .get(sensor.config_entry.entry_id, {})
     )
     mode = charger_rt.get(
-        "operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK
+        "operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key
     )
     away = charger_rt.get("tank_away_temperature") or get_entry_value(
         sensor.config_entry,

@@ -1,11 +1,6 @@
 """EVSE (OCPP charger) constants — entities, OCPP, charge limits, modes."""
 
-from .common import (
-    OPERATING_MODE_STANDARD,
-    OPERATING_MODE_SOLAR_PRIORITY,
-    OPERATING_MODE_SOLAR_ONLY,
-    OPERATING_MODE_EXCESS,
-)
+from .common import OperatingMode
 
 # EVSE configuration keys
 CONF_OCPP_DEVICE_ID = "ocpp_device_id"
@@ -60,11 +55,23 @@ PROFILE_VALIDITY_MODE_RELATIVE = "relative"
 PROFILE_VALIDITY_MODE_ABSOLUTE = "absolute"
 DEFAULT_PROFILE_VALIDITY_MODE = PROFILE_VALIDITY_MODE_ABSOLUTE
 
-# EVSE operating modes
+# EVSE operating modes — priority is the distribution urgency tier (1-4).
+EVSE_MODE_STANDARD = OperatingMode(
+    key="Standard", label="Standard", priority=1, icon="mdi:flash",
+)
+EVSE_MODE_SOLAR_PRIORITY = OperatingMode(
+    key="Solar Priority", label="Solar Priority", priority=2, icon="mdi:leaf",
+)
+EVSE_MODE_SOLAR_ONLY = OperatingMode(
+    key="Solar Only", label="Solar Only", priority=3, icon="mdi:solar-power",
+)
+EVSE_MODE_EXCESS = OperatingMode(
+    key="Excess", label="Excess", priority=4, icon="mdi:solar-power-variant",
+)
 OPERATING_MODES_EVSE = [
-    OPERATING_MODE_STANDARD,
-    OPERATING_MODE_SOLAR_PRIORITY,
-    OPERATING_MODE_SOLAR_ONLY,
-    OPERATING_MODE_EXCESS,
+    EVSE_MODE_STANDARD,
+    EVSE_MODE_SOLAR_PRIORITY,
+    EVSE_MODE_SOLAR_ONLY,
+    EVSE_MODE_EXCESS,
 ]
-DEFAULT_OPERATING_MODE_EVSE = OPERATING_MODE_STANDARD
+DEFAULT_OPERATING_MODE_EVSE = EVSE_MODE_STANDARD

@@ -274,7 +274,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
 
             if (
                 self._operating_mode
-                in (OPERATING_MODE_SOLAR_ONLY, OPERATING_MODE_EXCESS)
+                in (EVSE_MODE_SOLAR_ONLY.key, EVSE_MODE_EXCESS.key)
                 and grace_period_seconds > 0
             ):
                 if self._allocated_current < min_charge_current:

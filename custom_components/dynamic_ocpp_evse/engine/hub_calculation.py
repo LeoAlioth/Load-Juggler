@@ -318,8 +318,11 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     l2_phase = get_entry_value(entry, CONF_CHARGER_L2_PHASE, "B")
     l3_phase = get_entry_value(entry, CONF_CHARGER_L3_PHASE, "C")
 
-    # Read per-charger operating mode from runtime data
-    operating_mode = charger_rt.get("operating_mode", OPERATING_MODE_STANDARD)
+    # Resolve the per-charger operating mode from runtime data.
+    mode = resolve_operating_mode(
+        DEVICE_TYPE_EVSE,
+        charger_rt.get("operating_mode", DEFAULT_OPERATING_MODE_EVSE.key),
+    )
 
     charger = LoadContext(
         charger_id=entry.entry_id,
@@ -329,7 +332,9 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
         phases=phases,
         priority=priority,
         connector_status=connector_status,
-        operating_mode=operating_mode,
+        operating_mode=mode.key,
+        mode_behavior=behavior_for(mode),
+        mode_priority=mode.priority,
         l1_phase=l1_phase,
         l2_phase=l2_phase,
         l3_phase=l3_phase,
@@ -579,8 +584,11 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     else:
         actual_draw_w = power_rating if on else 0
 
-    # Read per-charger operating mode from runtime data
-    operating_mode = charger_rt.get("operating_mode", OPERATING_MODE_CONTINUOUS)
+    # Resolve the per-charger operating mode from runtime data.
+    mode = resolve_operating_mode(
+        DEVICE_TYPE_PLUG,
+        charger_rt.get("operating_mode", DEFAULT_OPERATING_MODE_PLUG.key),
+    )
 
     charger = LoadContext(
         charger_id=entry.entry_id,
@@ -592,13 +600,15 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
         active_phases_mask=connected_to_phase,
         connector_status=connector_status,
         device_type=DEVICE_TYPE_PLUG,
-        operating_mode=operating_mode,
+        operating_mode=mode.key,
+        mode_behavior=behavior_for(mode),
+        mode_priority=mode.priority,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
     _LOGGER.debug(
         "  Plug %s [%s]: %.0fW on %s prio=%d [%s]%s",
         charger_entity_id,
-        operating_mode,
+        mode.key,
         power_rating,
         connected_to_phase,
         priority,
@@ -660,20 +670,14 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     else:
         actual_draw_w = power_rating if hvac_action == "heating" else 0
 
-    # Tank mode → engine mode. Freeze Protection and Normal are must-run loads
-    # that always heat to their setpoint, so they map to Continuous. Solar Only
-    # follows the sun: it maps to Solar Priority, so the tank yields to higher-
-    # urgency loads and tracks solar surplus, while the guaranteed minimum still
-    # lets it heat below target SOC. resolve_tank_setpoint() independently picks
-    # *which* setpoint (away/normal/boost) to aim at — the engine mode only
+    # Resolve the tank's operating mode. Its behavior (Freeze Protection /
+    # Normal are must-run Full Power; Solar Priority follows the sun) is mapped
+    # centrally in const/modes.py. resolve_tank_setpoint() independently picks
+    # *which* setpoint (away/normal/boost) to aim at — the mode behavior only
     # decides how the tank competes for power, not whether it runs.
-    tank_mode = charger_rt.get(
-        "operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK
-    )
-    engine_mode = (
-        OPERATING_MODE_SOLAR_PRIORITY
-        if tank_mode == OPERATING_MODE_SOLAR_ONLY
-        else OPERATING_MODE_CONTINUOUS
+    mode = resolve_operating_mode(
+        DEVICE_TYPE_HOT_WATER_TANK,
+        charger_rt.get("operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key),
     )
 
     charger = LoadContext(
@@ -686,14 +690,15 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
         active_phases_mask=connected_to_phase,
         connector_status=connector_status,
         device_type=DEVICE_TYPE_HOT_WATER_TANK,
-        operating_mode=engine_mode,
+        operating_mode=mode.key,
+        mode_behavior=behavior_for(mode),
+        mode_priority=mode.priority,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
     _LOGGER.debug(
-        "  Tank %s [%s→%s]: %.0fW on %s prio=%d [%s]",
+        "  Tank %s [%s]: %.0fW on %s prio=%d [%s]",
         charger_entity_id,
-        tank_mode,
-        engine_mode,
+        mode.key,
         power_rating,
         connected_to_phase,
         priority,
@@ -1021,7 +1026,7 @@ def _build_hub_result(
     # stands, since mode urgency can override the configured priority number.
     _ranked = sorted(
         site.chargers,
-        key=lambda c: (MODE_URGENCY.get(c.operating_mode, 0), c.priority),
+        key=lambda c: (c.mode_priority, c.priority),
     )
     charger_rank = {c.charger_id: idx + 1 for idx, c in enumerate(_ranked)}
 

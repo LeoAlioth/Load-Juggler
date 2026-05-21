@@ -15,13 +15,12 @@ import logging
 
 from .models import SiteContext, LoadContext, PhaseConstraints, CircuitGroup
 from ..const import (
-    OPERATING_MODE_STANDARD,
-    OPERATING_MODE_CONTINUOUS,
-    OPERATING_MODE_SOLAR_PRIORITY,
-    OPERATING_MODE_SOLAR_ONLY,
-    OPERATING_MODE_EXCESS,
-    MODE_URGENCY,
-    DEVICE_TYPE_EVSE,
+    BEHAVIOR_FULL_POWER,
+    BEHAVIOR_SOLAR_PRIORITY,
+    BEHAVIOR_SOLAR_ONLY,
+    BEHAVIOR_EXCESS,
+    BEHAVIOR_SOLAR_BINARY,
+    BEHAVIOR_EXCESS_BINARY,
     DEVICE_TYPE_PLUG,
 )
 
@@ -531,31 +530,32 @@ def _source_limit(
     """Compute source-limited maximum allocation for a charger.
 
     Returns the maximum per-phase current this charger may receive based on its
-    operating mode and available energy sources. Physical pool limits are applied
-    separately by the caller.
+    mode behavior and available energy sources. Physical pool limits are applied
+    separately by the caller. Switches purely on ``charger.mode_behavior`` — the
+    operating mode and device type never enter here.
 
     Args:
         base: Current already reserved in pass 1 (accounts for prior deductions
               from source pools so the ceiling includes the pass-1 allocation).
     """
     mask = charger.active_phases_mask
-    mode = charger.operating_mode
+    behavior = charger.mode_behavior
 
-    # Battery-backed smart plugs: when a battery is configured it acts as the
-    # surplus buffer (stored solar), so a plug's Solar Only / Excess modes are
-    # gauged by battery SOC rather than live grid export. Solar Only runs the
-    # plug whenever the battery is above its minimum SOC; Excess runs it only
-    # once the battery is above target SOC. This applies to hybrid grid-tied
-    # and off-grid sites alike — "Solar Only" means "never use the grid", and
-    # the battery is stored solar. (EVSEs keep modulating; a plug is binary.)
-    if (
-        charger.device_type == DEVICE_TYPE_PLUG
-        and site.battery_soc is not None
-    ):
-        if mode == OPERATING_MODE_SOLAR_ONLY:
+    # Binary smart-plug solar: when a battery is configured it acts as the
+    # surplus buffer (stored solar), so the plug runs whenever the battery is
+    # above its minimum SOC — "never use the grid", and the battery is stored
+    # solar. With no battery, fall back to the modulating solar-only rule
+    # (live solar surplus must cover the plug).
+    if behavior == BEHAVIOR_SOLAR_BINARY:
+        if site.battery_soc is not None:
             soc_min = site.battery_soc_min or 0
             return charger.max_current if site.battery_soc > soc_min else 0
-        if mode == OPERATING_MODE_EXCESS:
+        behavior = BEHAVIOR_SOLAR_ONLY
+
+    # Binary smart-plug excess: with a battery, run only once the battery is
+    # above its target SOC. With no battery, fall back to the excess rule.
+    if behavior == BEHAVIOR_EXCESS_BINARY:
+        if site.battery_soc is not None:
             if site.battery_soc_target is None:
                 return 0
             return (
@@ -563,21 +563,22 @@ def _source_limit(
                 if site.battery_soc > site.battery_soc_target
                 else 0
             )
+        behavior = BEHAVIOR_EXCESS
 
-    if mode in (OPERATING_MODE_STANDARD, OPERATING_MODE_CONTINUOUS):
+    if behavior == BEHAVIOR_FULL_POWER:
         return charger.max_current
 
-    if mode == OPERATING_MODE_SOLAR_PRIORITY:
+    if behavior == BEHAVIOR_SOLAR_PRIORITY:
         if _below_soc_target(site):
             return charger.min_current  # Grid-backed minimum only
         return max(charger.min_current, base + solar.get_available(mask))
 
-    if mode == OPERATING_MODE_SOLAR_ONLY:
+    if behavior == BEHAVIOR_SOLAR_ONLY:
         if _below_soc_target(site):
             return 0  # Battery needs to charge
         return base + solar.get_available(mask)
 
-    if mode == OPERATING_MODE_EXCESS:
+    if behavior == BEHAVIOR_EXCESS:
         e_avail = excess.get_available(mask)
         if e_avail <= 0:
             return 0
@@ -608,10 +609,10 @@ def _deduct_from_sources(
 
 
 def _sort_chargers(chargers: list[LoadContext]) -> list[LoadContext]:
-    """Sort chargers by (mode_urgency, priority) for distribution order."""
+    """Sort chargers by (mode urgency tier, per-load priority) for distribution."""
     return sorted(
         chargers,
-        key=lambda c: (MODE_URGENCY.get(c.operating_mode, 0), c.priority),
+        key=lambda c: (c.mode_priority, c.priority),
     )
 
 

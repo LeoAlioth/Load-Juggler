@@ -3,8 +3,9 @@
 Split into per-area modules; this aggregator re-exports every name so
 ``from .const import *`` and ``from .const import (NAMES)`` keep working
 unchanged. ``common.py`` is the leaf (no sibling imports) and is imported
-first, since the per-device modules pull shared ``OPERATING_MODE_*`` strings
-from it.
+first, since the per-device modules pull the shared ``OperatingMode`` class
+and ``BEHAVIOR_*`` constants from it. ``modes.py`` is imported last, as it
+aggregates the per-device mode catalogs.
 """
 
 from .common import *          # noqa: F401,F403
@@ -13,3 +14,4 @@ from .group import *           # noqa: F401,F403
 from .evse import *            # noqa: F401,F403
 from .plug import *            # noqa: F401,F403
 from .hot_water_tank import *  # noqa: F401,F403
+from .modes import *           # noqa: F401,F403

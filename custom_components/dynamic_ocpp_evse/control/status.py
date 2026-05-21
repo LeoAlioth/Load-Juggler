@@ -1,9 +1,9 @@
 import logging
 import time
 from ..const import (
-    OPERATING_MODE_SOLAR_ONLY,
-    OPERATING_MODE_SOLAR_PRIORITY,
-    OPERATING_MODE_EXCESS,
+    EVSE_MODE_SOLAR_ONLY,
+    EVSE_MODE_SOLAR_PRIORITY,
+    EVSE_MODE_EXCESS,
     CONF_SOLAR_GRACE_PERIOD,
     CONF_CHARGE_PAUSE_DURATION,
     DEFAULT_SOLAR_GRACE_PERIOD,
@@ -65,14 +65,14 @@ def determine_charging_status(
         bat_soc is not None and bat_target is not None and bat_soc < bat_target
     )
     if (
-        mode in (OPERATING_MODE_SOLAR_ONLY, OPERATING_MODE_SOLAR_PRIORITY)
+        mode in (EVSE_MODE_SOLAR_ONLY.key, EVSE_MODE_SOLAR_PRIORITY.key)
         and bat_below_target
     ):
         return "Battery Priority"
-    if mode == OPERATING_MODE_SOLAR_ONLY:
+    if mode == EVSE_MODE_SOLAR_ONLY.key:
         return "Insufficient Solar"
-    if mode == OPERATING_MODE_SOLAR_PRIORITY:
+    if mode == EVSE_MODE_SOLAR_PRIORITY.key:
         return "Insufficient Solar"
-    if mode == OPERATING_MODE_EXCESS:
+    if mode == EVSE_MODE_EXCESS.key:
         return "No Excess"
     return "Insufficient Power"

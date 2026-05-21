@@ -9,9 +9,9 @@ setpoint (away / normal / boost) the climate entity should target.
 
 from custom_components.dynamic_ocpp_evse.control.hot_water_tank import resolve_tank_setpoint
 from custom_components.dynamic_ocpp_evse.const import (
-    OPERATING_MODE_FREEZE_PROTECTION,
-    OPERATING_MODE_NORMAL,
-    OPERATING_MODE_SOLAR_ONLY,
+    TANK_MODE_FREEZE_PROTECTION,
+    TANK_MODE_NORMAL,
+    TANK_MODE_SOLAR_PRIORITY,
 )
 
 AWAY, NORMAL, BOOST = 30.0, 45.0, 65.0
@@ -33,7 +33,7 @@ def _hub(soc=None, soc_min=20, soc_target=80, export=0):
 def test_freeze_protection_always_away():
     for hub in (_hub(), _hub(soc=10), _hub(soc=95, export=9999)):
         result = resolve_tank_setpoint(
-            OPERATING_MODE_FREEZE_PROTECTION, AWAY, NORMAL, BOOST, ELEMENT_POWER, hub
+            TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, hub
         )
         assert result == (AWAY, "away")
 
@@ -42,14 +42,14 @@ def test_freeze_protection_always_away():
 
 def test_solar_only_below_min_soc_is_away():
     result = resolve_tank_setpoint(
-        OPERATING_MODE_SOLAR_ONLY, AWAY, NORMAL, BOOST, ELEMENT_POWER, _hub(soc=15)
+        TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, _hub(soc=15)
     )
     assert result == (AWAY, "away")
 
 
 def test_solar_only_between_min_and_target_is_normal():
     result = resolve_tank_setpoint(
-        OPERATING_MODE_SOLAR_ONLY, AWAY, NORMAL, BOOST, ELEMENT_POWER, _hub(soc=50)
+        TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, _hub(soc=50)
     )
     assert result == (NORMAL, "normal")
 
@@ -57,7 +57,7 @@ def test_solar_only_between_min_and_target_is_normal():
 def test_solar_only_at_or_above_target_is_boost():
     for soc in (80, 95):
         result = resolve_tank_setpoint(
-            OPERATING_MODE_SOLAR_ONLY, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+            TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
             _hub(soc=soc),
         )
         assert result == (BOOST, "boost")
@@ -65,7 +65,7 @@ def test_solar_only_at_or_above_target_is_boost():
 
 def test_solar_only_no_battery_defaults_normal():
     result = resolve_tank_setpoint(
-        OPERATING_MODE_SOLAR_ONLY, AWAY, NORMAL, BOOST, ELEMENT_POWER, _hub(soc=None)
+        TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, _hub(soc=None)
     )
     assert result == (NORMAL, "normal")
 
@@ -74,7 +74,7 @@ def test_solar_only_no_battery_defaults_normal():
 
 def test_normal_no_surplus_is_normal():
     result = resolve_tank_setpoint(
-        OPERATING_MODE_NORMAL, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
         _hub(soc=50, export=0),
     )
     assert result == (NORMAL, "normal")
@@ -82,7 +82,7 @@ def test_normal_no_surplus_is_normal():
 
 def test_normal_export_above_element_power_is_boost():
     result = resolve_tank_setpoint(
-        OPERATING_MODE_NORMAL, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
         _hub(soc=50, export=ELEMENT_POWER + 500),
     )
     assert result == (BOOST, "boost")
@@ -90,7 +90,7 @@ def test_normal_export_above_element_power_is_boost():
 
 def test_normal_export_below_element_power_is_normal():
     result = resolve_tank_setpoint(
-        OPERATING_MODE_NORMAL, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
         _hub(soc=50, export=ELEMENT_POWER - 500),
     )
     assert result == (NORMAL, "normal")
@@ -98,7 +98,7 @@ def test_normal_export_below_element_power_is_normal():
 
 def test_normal_soc_over_target_is_boost():
     result = resolve_tank_setpoint(
-        OPERATING_MODE_NORMAL, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
         _hub(soc=85, soc_target=80, export=0),
     )
     assert result == (BOOST, "boost")
@@ -106,7 +106,7 @@ def test_normal_soc_over_target_is_boost():
 
 def test_normal_no_battery_low_export_is_normal():
     result = resolve_tank_setpoint(
-        OPERATING_MODE_NORMAL, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
         _hub(soc=None, export=0),
     )
     assert result == (NORMAL, "normal")
@@ -114,7 +114,7 @@ def test_normal_no_battery_low_export_is_normal():
 
 def test_normal_no_battery_high_export_is_boost():
     result = resolve_tank_setpoint(
-        OPERATING_MODE_NORMAL, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
         _hub(soc=None, export=9999),
     )
     assert result == (BOOST, "boost")
@@ -123,7 +123,7 @@ def test_normal_no_battery_high_export_is_boost():
 def test_normal_offgrid_full_battery_boosts_without_export():
     """Off-grid: export is always ~0; the SOC > target clause carries boost."""
     result = resolve_tank_setpoint(
-        OPERATING_MODE_NORMAL, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
         _hub(soc=90, soc_target=80, export=0),
     )
     assert result == (BOOST, "boost")

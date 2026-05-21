@@ -17,7 +17,9 @@
                     "continuous": "Neprekinjeni",
                     "solar_priority": "Prednost Sončne",
                     "solar_only": "Samo Sončna",
-                    "excess": "Presežek"
+                    "excess": "Presežek",
+                    "freeze_protection": "Zaščita Pred Zmrzaljo",
+                    "normal": "Normalni"
                 }
             }
         }

@@ -58,7 +58,7 @@ def _load_module_as(fqn, path):
 #    Sub-modules load first in dependency order (common is the leaf); the
 #    aggregator __init__ loads last and re-exports every name.
 _const_dir = _comp_dir / "const"
-for _const_sub in ("common", "hub", "group", "evse", "plug", "hot_water_tank"):
+for _const_sub in ("common", "hub", "group", "evse", "plug", "hot_water_tank", "modes"):
     _load_module_as(f"{_PKG_COMP}.const.{_const_sub}", _const_dir / f"{_const_sub}.py")
 _load_module_as(f"{_PKG_COMP}.const", _const_dir / "__init__.py")
 
@@ -73,6 +73,7 @@ _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator
 from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues, CircuitGroup
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 from custom_components.dynamic_ocpp_evse.calculations.utils import compute_household_per_phase
+from custom_components.dynamic_ocpp_evse.const.modes import resolve_operating_mode, behavior_for
 
 # ---------------------------------------------------------------------------
 # Mode name migration (old YAML → new operating modes)
@@ -437,6 +438,8 @@ def build_site_from_scenario(scenario):
             operating_mode = "Continuous" if device_type == "plug" else "Standard"
         # Migrate old mode names
         operating_mode = _MIGRATE_MODE_NAMES.get(operating_mode, operating_mode)
+        # Resolve to the device type's OperatingMode → engine behavior + urgency
+        _mode = resolve_operating_mode(device_type, operating_mode)
 
         charger = LoadContext(
             charger_id=f"charger_{idx}",
@@ -446,7 +449,9 @@ def build_site_from_scenario(scenario):
             phases=phases,
             priority=charger_data.get("priority", idx),
             device_type=device_type,
-            operating_mode=operating_mode,
+            operating_mode=_mode.key,
+            mode_behavior=behavior_for(_mode),
+            mode_priority=_mode.priority,
             l1_phase=charger_data.get("l1_phase", "A"),
             l2_phase=charger_data.get("l2_phase", "B"),
             l3_phase=charger_data.get("l3_phase", "C"),

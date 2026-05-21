@@ -256,12 +256,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
         DOMAIN, "set_operating_mode", handle_set_operating_mode,
         schema=vol.Schema({
             vol.Required("entry_id"): cv.string,
-            vol.Required("mode"): vol.In([
-                OPERATING_MODE_STANDARD, OPERATING_MODE_CONTINUOUS,
-                OPERATING_MODE_SOLAR_PRIORITY, OPERATING_MODE_SOLAR_ONLY,
-                OPERATING_MODE_EXCESS, OPERATING_MODE_NORMAL,
-                OPERATING_MODE_FREEZE_PROTECTION,
-            ]),
+            vol.Required("mode"): vol.In(ALL_OPERATING_MODE_KEYS),
         }),
     )
 
@@ -469,7 +464,7 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
         "max_current": None,
         "device_power": None,
         "dynamic_control": True,
-        "operating_mode": default_mode,
+        "operating_mode": default_mode.key,
     }
     
     # Link charger to hub

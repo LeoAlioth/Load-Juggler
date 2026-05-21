@@ -17,7 +17,9 @@
                     "continuous": "Continuous",
                     "solar_priority": "Solar Priority",
                     "solar_only": "Solar Only",
-                    "excess": "Excess"
+                    "excess": "Excess",
+                    "freeze_protection": "Freeze Protection",
+                    "normal": "Normal"
                 }
             }
         }

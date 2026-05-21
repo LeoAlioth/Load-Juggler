@@ -11,9 +11,6 @@ from .const import (
     DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
     DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
     DEFAULT_DISTRIBUTION_MODE,
-    OPERATING_MODE_STANDARD, OPERATING_MODE_CONTINUOUS,
-    OPERATING_MODE_SOLAR_PRIORITY, OPERATING_MODE_SOLAR_ONLY, OPERATING_MODE_EXCESS,
-    OPERATING_MODE_NORMAL, OPERATING_MODE_FREEZE_PROTECTION,
     OPERATING_MODES_EVSE, OPERATING_MODES_PLUG, OPERATING_MODES_HOT_WATER_TANK,
     DEFAULT_OPERATING_MODE_EVSE, DEFAULT_OPERATING_MODE_PLUG,
     DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
@@ -52,9 +49,19 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
 
 class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
-    """Per-charger operating mode selector (EVSE or Smart Load)."""
+    """Per-charger operating mode selector (EVSE / Smart Load / Hot Water Tank).
+
+    Each device type has its own independent list of OperatingMode objects;
+    the select exposes their keys as options.
+    """
 
     _charger_data_key = "operating_mode"
+
+    # Mode keys renamed across versions — a restored value is migrated before
+    # use so existing installs keep a valid selection.
+    _RENAMED_MODE_KEYS = {
+        DEVICE_TYPE_HOT_WATER_TANK: {"Solar Only": "Solar Priority"},
+    }
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -62,35 +69,31 @@ class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
         self._attr_name = f"{name} Operating Mode"
         self._attr_unique_id = f"{entity_id}_operating_mode"
 
-        device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        if device_type == DEVICE_TYPE_PLUG:
-            self._attr_options = list(OPERATING_MODES_PLUG)
-            self._attr_current_option = DEFAULT_OPERATING_MODE_PLUG
-        elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
-            self._attr_options = list(OPERATING_MODES_HOT_WATER_TANK)
-            self._attr_current_option = DEFAULT_OPERATING_MODE_HOT_WATER_TANK
+        self._device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        if self._device_type == DEVICE_TYPE_PLUG:
+            modes, default = OPERATING_MODES_PLUG, DEFAULT_OPERATING_MODE_PLUG
+        elif self._device_type == DEVICE_TYPE_HOT_WATER_TANK:
+            modes, default = OPERATING_MODES_HOT_WATER_TANK, DEFAULT_OPERATING_MODE_HOT_WATER_TANK
         else:
-            self._attr_options = list(OPERATING_MODES_EVSE)
-            self._attr_current_option = DEFAULT_OPERATING_MODE_EVSE
+            modes, default = OPERATING_MODES_EVSE, DEFAULT_OPERATING_MODE_EVSE
+        self._modes = modes
+        self._attr_options = [m.key for m in modes]
+        self._attr_current_option = default.key
 
     @property
     def icon(self):
-        icons = {
-            OPERATING_MODE_STANDARD: "mdi:flash",
-            OPERATING_MODE_CONTINUOUS: "mdi:flash",
-            OPERATING_MODE_SOLAR_PRIORITY: "mdi:leaf",
-            OPERATING_MODE_SOLAR_ONLY: "mdi:solar-power",
-            OPERATING_MODE_EXCESS: "mdi:solar-power-variant",
-            OPERATING_MODE_NORMAL: "mdi:water-boiler",
-            OPERATING_MODE_FREEZE_PROTECTION: "mdi:snowflake",
-        }
+        icons = {m.key: m.icon for m in self._modes}
         return icons.get(self._attr_current_option, "mdi:flash")
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state in self._attr_options:
-            self._attr_current_option = last_state.state
+        if last_state is not None:
+            restored = self._RENAMED_MODE_KEYS.get(self._device_type, {}).get(
+                last_state.state, last_state.state
+            )
+            if restored in self._attr_options:
+                self._attr_current_option = restored
         self.async_write_ha_state()
         self._write_to_charger_data(self._attr_current_option)
 

@@ -2,8 +2,11 @@
 
 This is the leaf module of the ``const`` package: it imports nothing from its
 siblings, so the per-device modules (evse / plug / hot_water_tank) can safely
-import the shared ``OPERATING_MODE_*`` strings from here.
+import the shared ``OPERATING_MODE_*`` keys, ``BEHAVIOR_*`` constants and the
+``OperatingMode`` dataclass from here.
 """
+
+from dataclasses import dataclass
 
 DOMAIN = "dynamic_ocpp_evse"
 
@@ -65,23 +68,38 @@ AUTO_RESET_COOLDOWN_SECONDS = 120    # seconds to wait after reset before checki
 ESCALATION_PROFILE_RESET_LIMIT = 3   # profile resets before escalating to hard reset
 HARD_RESET_COOLDOWN_SECONDS = 300    # seconds to wait after hard reset (5 minutes)
 
-# Operating mode configuration (per-load) — shared mode strings + urgency.
-# The per-device-type mode lists and defaults live in each device's module.
+# Operating mode configuration (per-load). The shared pieces are only the
+# OperatingMode dataclass and the BEHAVIOR_* engine behaviors below. Each
+# device type defines its own operating modes independently — see
+# const/evse.py, const/plug.py, const/hot_water_tank.py.
 CONF_OPERATING_MODE = "operating_mode"
-OPERATING_MODE_STANDARD = "Standard"        # EVSE: charge from any source at max
-OPERATING_MODE_CONTINUOUS = "Continuous"     # Plug: always on
-OPERATING_MODE_SOLAR_PRIORITY = "Solar Priority"
-OPERATING_MODE_SOLAR_ONLY = "Solar Only"
-OPERATING_MODE_EXCESS = "Excess"
-OPERATING_MODE_NORMAL = "Normal"                        # Hot water tank: baseline target
-OPERATING_MODE_FREEZE_PROTECTION = "Freeze Protection"  # Hot water tank: away target only
 
-# Mode urgency for distribution sorting (lower = higher urgency)
-# Standard and Continuous share urgency 0 — same engine behavior, different labels
-MODE_URGENCY = {
-    OPERATING_MODE_STANDARD: 0,
-    OPERATING_MODE_CONTINUOUS: 0,
-    OPERATING_MODE_SOLAR_PRIORITY: 1,
-    OPERATING_MODE_SOLAR_ONLY: 2,
-    OPERATING_MODE_EXCESS: 3,
-}
+# Engine behaviors — how a load competes for power. The distribution engine
+# switches on the behavior, never on the device type or the mode label. Which
+# behavior each operating mode uses is mapped centrally in const/modes.py
+# (BEHAVIOR_BY_MODE) — the const device modules stay free of engine concepts.
+BEHAVIOR_FULL_POWER = "full_power"          # draw at max from any source
+BEHAVIOR_SOLAR_PRIORITY = "solar_priority"  # follow solar, grid-backed minimum
+BEHAVIOR_SOLAR_ONLY = "solar_only"          # solar surplus only, no grid
+BEHAVIOR_EXCESS = "excess"                  # only run on excess export
+BEHAVIOR_SOLAR_BINARY = "solar_binary"      # binary load: battery-SOC-gated solar
+BEHAVIOR_EXCESS_BINARY = "excess_binary"    # binary load: battery-SOC-gated excess
+
+
+@dataclass(frozen=True)
+class OperatingMode:
+    """One device-type operating mode — the user-facing definition.
+
+    key       stored string value (select entity state + runtime dict)
+    label     user-facing display name
+    priority  distribution urgency tier, 1-4 (lower = served first)
+    icon      mdi icon for the select entity
+
+    The engine behavior a mode competes with is mapped separately in
+    const/modes.py, keeping the device modules free of engine concepts.
+    """
+
+    key: str
+    label: str
+    priority: int
+    icon: str
