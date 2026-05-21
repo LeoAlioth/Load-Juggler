@@ -39,7 +39,7 @@ Each In Progress and Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bug
 custom_components/dynamic_ocpp_evse/
 ├── __init__.py                    # HA component initialization
 ├── manifest.json                  # Component metadata
-├── const.py                       # Constants and defaults
+├── const/                         # Constants, split per area: common, hub, evse, plug, hot_water_tank, group
 ├── config_flow.py                 # HA configuration flow
 ├── dynamic_ocpp_evse.py          # Main entry point — reads HA states, builds SiteContext, calls engine
 │                                  #   Key helpers: _derive_solar_production(), _smooth(), _coerce(),

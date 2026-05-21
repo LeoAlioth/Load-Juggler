@@ -40,6 +40,7 @@ def _load_module_as(fqn, path):
     # for regular modules it's the parent package.
     if Path(path).name == "__init__.py":
         module.__package__ = fqn
+        module.__path__ = [str(Path(path).parent)]
     else:
         module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
     sys.modules[fqn] = module
@@ -47,7 +48,12 @@ def _load_module_as(fqn, path):
     return module
 
 
-_load_module_as(f"{_PKG_COMP}.const", _comp_dir / "const.py")
+# const is a package — load sub-modules first (common is the leaf), then the
+# aggregator __init__ which re-exports every name.
+_const_dir = _comp_dir / "const"
+for _const_sub in ("common", "hub", "group", "evse", "plug", "hot_water_tank"):
+    _load_module_as(f"{_PKG_COMP}.const.{_const_sub}", _const_dir / f"{_const_sub}.py")
+_load_module_as(f"{_PKG_COMP}.const", _const_dir / "__init__.py")
 _load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
 _load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
 _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")

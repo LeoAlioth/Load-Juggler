@@ -42,15 +42,25 @@ def _load_module_as(fqn, path):
     """Load a module with its fully-qualified name so relative imports resolve."""
     spec = importlib.util.spec_from_file_location(fqn, str(path))
     module = importlib.util.module_from_spec(spec)
-    # Set __package__ to the parent package so `from .x` and `from ..x` work
-    module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
+    if Path(path).name == "__init__.py":
+        # Package: __package__ is the package itself; expose __path__.
+        module.__package__ = fqn
+        module.__path__ = [str(Path(path).parent)]
+    else:
+        # Module: __package__ is the parent package so `from .x`/`from ..x` work.
+        module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
     sys.modules[fqn] = module
     spec.loader.exec_module(module)
     return module
 
 
-# 1) Load const (needed by target_calculator's `from ..const import ...`)
-_load_module_as(f"{_PKG_COMP}.const", _comp_dir / "const.py")
+# 1) Load the const package (needed by target_calculator's `from ..const ...`).
+#    Sub-modules load first in dependency order (common is the leaf); the
+#    aggregator __init__ loads last and re-exports every name.
+_const_dir = _comp_dir / "const"
+for _const_sub in ("common", "hub", "group", "evse", "plug", "hot_water_tank"):
+    _load_module_as(f"{_PKG_COMP}.const.{_const_sub}", _const_dir / f"{_const_sub}.py")
+_load_module_as(f"{_PKG_COMP}.const", _const_dir / "__init__.py")
 
 # 2) Load models and utils (no relative imports of their own)
 _load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
