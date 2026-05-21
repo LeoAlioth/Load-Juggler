@@ -212,9 +212,12 @@ class LoadPowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         self._attr_name = f"{name} {label}"
         self._attr_unique_id = f"{entity_id}_device_power"
         default_power = get_entry_value(config_entry, conf_key, default)
-        self._attr_native_min_value = 100
+        # A managed load can be anything from a small pump to a 3-phase
+        # heater, so the range is wide and the step fine — the value is
+        # mostly auto-learned from the power-measurement entity anyway.
+        self._attr_native_min_value = 10
         self._attr_native_max_value = max(default_power, 30000)
-        self._attr_native_step = 100
+        self._attr_native_step = 10
         self._attr_native_value = default_power
         self._attr_native_unit_of_measurement = "W"
         self._attr_icon = "mdi:flash"

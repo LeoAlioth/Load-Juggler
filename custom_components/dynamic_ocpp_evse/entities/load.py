@@ -363,7 +363,14 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             )
             dynamic_control_on = charger_rt.get("dynamic_control", True)
 
-            if not dynamic_control_on:
+            if device_type != DEVICE_TYPE_EVSE:
+                # Binary loads (smart plug, hot water tank): the engine's
+                # allocation is already the on/off answer — equivalent current
+                # when on, 0 when off. The EVSE min-current pause threshold
+                # does not apply to a binary load.
+                limit = round(self._allocated_current, 1)
+                self._pause_started_at = None
+            elif not dynamic_control_on:
                 limit = round(float(max_charge_current), 1)
                 self._pause_started_at = None
                 _LOGGER.debug(
@@ -421,9 +428,11 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 self._charging_status
             )
 
-            device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
             if device_type == DEVICE_TYPE_PLUG:
-                await send_plug_command(self, limit, hub_data, now_mono)
+                # Dynamic Control off → hands off: leave the plug in whatever
+                # state the user set, like an un-managed switch.
+                if dynamic_control_on:
+                    await send_plug_command(self, limit, hub_data, now_mono)
             elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
                 # Dynamic Control off → Load Juggler does not touch the climate
                 # entity at all. The tank then behaves as a normal, un-managed

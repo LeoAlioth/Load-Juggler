@@ -542,42 +542,42 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     plug_switch_state = (
         hass.states.get(plug_switch_entity) if plug_switch_entity else None
     )
-
-    # A configured power-monitor entity is read directly: while the plug is
-    # drawing, its live measurement is used as the power rating AND written
-    # back to the device_power slider so it learns the device's real draw.
-    # While the plug is off the slider holds that last value. On/off
-    # (connector status) follows the monitor, else the switch state.
     power_monitor_entity = get_entry_value(
         entry, CONF_PLUG_POWER_MONITOR_ENTITY_ID, None
     )
+
     power_draw = None
     if power_monitor_entity:
         power_draw = _coerce(
             _read_entity(hass, power_monitor_entity, 0, unit="W")
         )  # Convert kW→W if needed
-        drawing = power_draw is not None and power_draw > 10
-        if drawing:
-            power_rating = power_draw
-            # Learn the device's real power: update the set-power slider.
-            charger_rt["device_power"] = round(power_draw, 0)
-        connector_status = "Charging" if drawing else "Available"
-    elif plug_switch_state:
-        connector_status = (
-            "Charging" if plug_switch_state.state == "on" else "Available"
-        )
+
+    # On/off: the switch is authoritative when present; without a switch the
+    # power monitor decides; with neither, assume the load is on.
+    if plug_switch_state is not None:
+        on = plug_switch_state.state == "on"
+    elif power_monitor_entity:
+        on = power_draw is not None and power_draw > 10
     else:
-        connector_status = "Charging"
+        on = True
+    connector_status = "Charging" if on else "Available"
+
+    # Learn the device's real power from the monitor — but only while the plug
+    # is actually on. A reading taken while it is off is standby/phantom draw,
+    # not the device's rating, so it must not overwrite the set power.
+    if power_monitor_entity and on and power_draw and power_draw > 10:
+        power_rating = power_draw
+        charger_rt["device_power"] = round(power_draw, 0)
 
     equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
 
-    # Actual draw — the measured draw if a monitor is configured, else the set
-    # power while the plug is on. Populates the load's per-phase currents so
-    # the plug counts toward Total Managed Power and the consumption feedback.
+    # Actual draw — the measured draw while the plug is on (else the set power
+    # if there is no monitor), 0 when off. Populates the load's per-phase
+    # currents so the plug counts toward Total Managed Power and the feedback.
     if power_monitor_entity:
-        actual_draw_w = power_draw if (power_draw and power_draw > 0) else 0
+        actual_draw_w = power_draw if (on and power_draw and power_draw > 0) else 0
     else:
-        actual_draw_w = power_rating if connector_status == "Charging" else 0
+        actual_draw_w = power_rating if on else 0
 
     # Read per-charger operating mode from runtime data
     operating_mode = charger_rt.get("operating_mode", OPERATING_MODE_CONTINUOUS)
