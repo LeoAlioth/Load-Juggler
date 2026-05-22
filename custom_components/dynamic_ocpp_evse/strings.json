@@ -119,6 +119,7 @@
                     "entity_id": "Entity ID prefix",
                     "plug_switch_entity_id": "Switch entity that controls the plug on/off",
                     "plug_power_rating": "Power rating",
+                    "plug_max_current": "Maximum current rating",
                     "connected_to_phase": "Connected to phase",
                     "charger_priority": "Priority (1 = highest)",
                     "plug_power_monitor_entity_id": "Power monitoring sensor (optional)",
@@ -128,6 +129,7 @@
                 "data_description": {
                     "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power).",
                     "plug_power_rating": "The power this device draws when turned on. Used for allocation calculations. Ignored when a power monitor sensor is configured.",
+                    "plug_max_current": "The plug's hardware current rating — its socket/relay limit. Caps the current the engine will route to this plug; separate from the set power above.",
                     "connected_to_phase": "Which electrical phase(s) this plug is wired to. Determines which phase capacity is used in calculations.",
                     "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
@@ -299,6 +301,7 @@
                 "data": {
                     "plug_switch_entity_id": "Switch entity that controls the plug on/off",
                     "plug_power_rating": "Power rating",
+                    "plug_max_current": "Maximum current rating",
                     "connected_to_phase": "Connected to phase",
                     "charger_priority": "Priority (1 = highest)",
                     "plug_power_monitor_entity_id": "Power monitoring sensor (optional)",
@@ -307,6 +310,7 @@
                 },
                 "data_description": {
                     "plug_power_rating": "The power this device draws when turned on. Used for allocation calculations. Ignored when a power monitor sensor is configured.",
+                    "plug_max_current": "The plug's hardware current rating — its socket/relay limit. Caps the current the engine will route to this plug; separate from the set power above.",
                     "connected_to_phase": "Which electrical phase(s) this plug is wired to. Determines which phase capacity is used in calculations.",
                     "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
@@ -471,6 +475,7 @@
                 "data": {
                     "plug_switch_entity_id": "Switch entity that controls the plug on/off",
                     "plug_power_rating": "Power rating",
+                    "plug_max_current": "Maximum current rating",
                     "connected_to_phase": "Connected to phase",
                     "charger_priority": "Priority (1 = highest)",
                     "plug_power_monitor_entity_id": "Power monitoring sensor (optional)",
@@ -479,6 +484,7 @@
                 },
                 "data_description": {
                     "plug_power_rating": "The power this device draws when turned on. Used for allocation calculations. Ignored when a power monitor sensor is configured.",
+                    "plug_max_current": "The plug's hardware current rating — its socket/relay limit. Caps the current the engine will route to this plug; separate from the set power above.",
                     "connected_to_phase": "Which electrical phase(s) this plug is wired to. Determines which phase capacity is used in calculations.",
                     "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",

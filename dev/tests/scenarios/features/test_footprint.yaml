@@ -1,0 +1,78 @@
+scenarios:
+  # The footprint model: the pools are reduced by allocated_current — a load's
+  # real draw — not by available_current (its permit ceiling). A plug/tank
+  # removes only what it actually draws, so an idle or under-drawing plug
+  # frees its unused capacity to lower-priority loads.
+  #
+  # `utilization` is the fraction of its set power a plug actually draws
+  # (1.0 = full, 0.0 = switched on but idle).
+
+  - name: "footprint-idle-plug-frees-heater"
+    description: >
+      A metered plug switched on but idle (drawing 0 W) no longer blocks a
+      lower-priority water heater. The plug's 0 A footprint — not its 13 A set
+      power — is what leaves the pool for the heater. Under the old model the
+      plug's 13 A reservation starved the heater on an 18 A pool.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 18
+      phase_a_consumption: 0
+      distribution_mode: "priority"
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        power_rating: 3000
+        phases: 1
+        operating_mode: "Continuous"
+        priority: 1
+        utilization: 0.0      # switched on, appliance idle
+      - entity_id: "heater_1"
+        device_type: "plug"
+        power_rating: 2000
+        phases: 1
+        operating_mode: "Continuous"
+        priority: 2
+        utilization: 1.0
+    expected:
+      plug_1:
+        allocated: 0.0        # footprint — drawing nothing
+        available: 16.0       # permit ceiling — the plug's hardware rating
+      heater_1:
+        allocated: 8.7        # footprint — its 2 kW element
+        available: 16.0
+
+  - name: "footprint-plug-partial-draw-frees-load"
+    description: >
+      A 3 kW-rated plug whose appliance only draws half (1.5 kW) removes just
+      its 6.5 A footprint from the pool — not its 13 A set power — leaving room
+      for a lower-priority 2 kW load on a 16 A pool. The old model reserved the
+      full 13 A and denied the second load.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 16
+      phase_a_consumption: 0
+      distribution_mode: "priority"
+    chargers:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        power_rating: 3000
+        phases: 1
+        operating_mode: "Continuous"
+        priority: 1
+        utilization: 0.5      # appliance draws half the set power
+      - entity_id: "load_2"
+        device_type: "plug"
+        power_rating: 2000
+        phases: 1
+        operating_mode: "Continuous"
+        priority: 2
+        utilization: 1.0
+    expected:
+      plug_1:
+        allocated: 6.5        # footprint — half of its 13 A set power
+        available: 16.0
+      load_2:
+        allocated: 8.7
+        available: 9.5        # pool headroom left after plug_1's 6.5 A footprint

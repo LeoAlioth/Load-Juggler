@@ -193,6 +193,7 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 4. **Logging**: Use `_LOGGER.debug()` extensively for troubleshooting
 5. **Test First**: Run relevant tests before and after changes
 6. **Helper Functions**: Prefer helper functions over inline logic for maintainability
+7. **General naming**: When something concerns more than one device type, name it by the general concept — prefer `load` over `charger` for the generic managed-device idea (the codebase already uses `LoadContext` / `LoadJuggler`). Rename mis-named identifiers opportunistically while editing nearby code, not only in dedicated rename passes.
 
 ### Adding New Features
 

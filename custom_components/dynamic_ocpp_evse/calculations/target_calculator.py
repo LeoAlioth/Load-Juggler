@@ -22,10 +22,30 @@ from ..const import (
     BEHAVIOR_BINARY_ABOVE_MIN,
     BEHAVIOR_BINARY_ABOVE_TARGET,
     BEHAVIOR_BINARY_EXCESS,
+    DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
+    DEVICE_TYPE_HOT_WATER_TANK,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Binary on/off loads — a plug or a hot water tank.
+_BINARY_DEVICES = (DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK)
+
+
+def _pool_deduction(charger: LoadContext, evse_amount: float) -> float:
+    """The current a charger removes from the shared pools — its footprint.
+
+    Premise: pools are reduced by *allocated* current (the real draw), never
+    by the permit. A plug or tank removes its measured draw — which the
+    builder placed into l1/l2/l3 (the metered value, or its set power when
+    unmetered, or 0 when off) — regardless of the rating reserved for it. An
+    EVSE removes the given allocation amount (the current signalled to it),
+    exactly as before.
+    """
+    if charger.device_type in _BINARY_DEVICES:
+        return max(charger.l1_current, charger.l2_current, charger.l3_current)
+    return evse_amount
 
 
 def calculate_all_charger_targets(site: SiteContext) -> None:
@@ -104,11 +124,21 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
     if site.circuit_groups:
         _enforce_circuit_groups(site)
 
-    # Step 5: Calculate available current for all chargers (mode-aware)
+    # Step 5: Calculate available current for all chargers (the permit ceiling)
     _set_available_current_for_chargers(
         all_chargers, active_chargers, inactive_chargers,
         physical_pool, solar_pool, excess_pool, site,
     )
+
+    # Step 7: Translate plug/tank allocated_current to the real footprint —
+    # the measured draw (or set power) the load removes from the pools, not
+    # the rating reserved for it. allocated_current > 0 meant "the engine
+    # powered it"; _set_available_current_for_chargers already used that.
+    for charger in active_chargers:
+        if charger.device_type in _BINARY_DEVICES and charger.allocated_current > 0:
+            charger.allocated_current = round(
+                max(charger.l1_current, charger.l2_current, charger.l3_current), 1
+            )
 
     for charger in all_chargers:
         _draw = charger.l1_current + charger.l2_current + charger.l3_current
@@ -130,30 +160,49 @@ def _set_available_current_for_chargers(
     site: SiteContext,
 ) -> None:
     """
-    Calculate available current for all chargers (mode-aware).
+    Set available_current — the permit ceiling — for every charger.
 
-    - Active chargers: available = allocated (they're getting what's available)
-    - Inactive chargers: available = what they could get from remaining capacity
-      after active chargers are deducted, capped by their mode's source limit.
-      Each idle charger independently sees the same remaining pools.
+    available_current is what the device *could* draw: the pool headroom
+    capped by the device's hardware rating. It is informational, computed
+    per-device, and may sum to more than the pool.
+
+    - EVSE: the current it was signalled (its allocated_current).
+    - Plug / tank the engine powered: the pool headroom left after
+      higher-priority loads' real footprints, capped by the hardware rating.
+      0 when the engine did not power it.
+    - Inactive charger: what it could get from the leftover capacity.
+
+    Pools are reduced by each active charger's footprint (real draw), per the
+    allocated-current premise.
     """
-    # Active chargers: available = allocated (already rounded)
-    for charger in active_chargers:
-        charger.available_current = round(charger.allocated_current, 1)
-
-    # Calculate remaining pools after active allocations
     remaining = physical_pool.copy()
     solar_rem = solar_pool.copy()
     excess_rem = excess_pool.copy()
-    for charger in active_chargers:
-        if charger.allocated_current > 0 and charger.active_phases_mask:
-            remaining = remaining.deduct(charger.allocated_current, charger.active_phases_mask)
+
+    # Active chargers, in distribution order.
+    for charger in _sort_chargers(active_chargers):
+        mask = charger.active_phases_mask
+        if charger.device_type == DEVICE_TYPE_EVSE:
+            # EVSE: available_current is the signalled current.
+            charger.available_current = round(charger.allocated_current, 1)
+        elif mask and charger.allocated_current > 0:
+            # Plug / tank the engine powered: pool headroom, capped by the
+            # device's hardware rating.
+            cap = charger.rated_current or charger.max_current
+            charger.available_current = round(
+                max(0, min(remaining.get_available(mask), cap)), 1
+            )
+        else:
+            charger.available_current = 0
+        # Reduce the pools by this charger's real footprint before the next.
+        footprint = _pool_deduction(charger, charger.allocated_current)
+        if footprint > 0 and mask:
+            remaining = remaining.deduct(footprint, mask)
             solar_rem, excess_rem = _deduct_from_sources(
-                charger.allocated_current, charger.active_phases_mask,
-                solar_rem, excess_rem,
+                footprint, mask, solar_rem, excess_rem
             )
 
-    # Inactive chargers: mode-aware available (each independently sees remaining pools)
+    # Inactive chargers: what they could get from the leftover capacity.
     for charger in inactive_chargers:
         mask = charger.active_phases_mask
         if not mask:
@@ -433,6 +482,7 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
     #    Discharge headroom = inverter_max - estimated_solar.
     charge_back = 0
     discharge_potential = 0
+    discharge_drain = 0
 
     if site.battery_power is not None:
         # Charge absorption: battery_power < 0 = charging
@@ -445,6 +495,12 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
             actual_discharge = max(0, site.battery_power) / site.voltage
             max_discharge = site.battery_max_discharge_power / site.voltage
             discharge_potential = max(0, max_discharge - actual_discharge)
+        # At/below target the battery is NOT surplus. A discharge here is
+        # covering a load deficit, which props the grid CT up and inflates
+        # the export the surplus is derived from — strip it back out so
+        # Solar loads cannot quietly drain the battery.
+        elif site.battery_power > 0:
+            discharge_drain = site.battery_power / site.voltage
 
     # Limit discharge by inverter headroom
     if site.inverter_max_power and discharge_potential > 0:
@@ -461,7 +517,7 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
         inverter_headroom = max(0, inverter_max_current - estimated_solar)
         discharge_potential = min(discharge_potential, inverter_headroom)
 
-    battery_adjustment_total = charge_back + discharge_potential
+    battery_adjustment_total = charge_back + discharge_potential - discharge_drain
 
     battery_adjustment_per_phase = battery_adjustment_total / (
         site.export_current.active_count or site.consumption.active_count or 1
@@ -717,10 +773,13 @@ def _allocate_minimums(
             allocated[charger.entity_id] = 0
             continue
 
-        # Reserve minimum
+        # Reserve minimum (the permit base). The pools, though, are reduced
+        # by the charger's real footprint — for a plug/tank that is its
+        # measured draw, not the rating reserved here.
         allocated[charger.entity_id] = charger.min_current
-        physical = physical.deduct(charger.min_current, mask)
-        solar, excess = _deduct_from_sources(charger.min_current, mask, solar, excess)
+        draw = _pool_deduction(charger, charger.min_current)
+        physical = physical.deduct(draw, mask)
+        solar, excess = _deduct_from_sources(draw, mask, solar, excess)
 
     return allocated, physical, solar, excess
 
@@ -895,9 +954,10 @@ def _distribute_per_phase_strict(
             continue
 
         charger.allocated_current = allocation
-        remaining = remaining.deduct(allocation, mask)
+        draw = _pool_deduction(charger, allocation)
+        remaining = remaining.deduct(draw, mask)
         solar_rem, excess_rem = _deduct_from_sources(
-            allocation, mask, solar_rem, excess_rem
+            draw, mask, solar_rem, excess_rem
         )
 
 
@@ -958,9 +1018,10 @@ def _distribute_per_phase_optimized(
             continue
 
         charger.allocated_current = round(wanted, 1)
-        remaining = remaining.deduct(charger.allocated_current, mask)
+        draw = _pool_deduction(charger, charger.allocated_current)
+        remaining = remaining.deduct(draw, mask)
         solar_rem, excess_rem = _deduct_from_sources(
-            charger.allocated_current, mask, solar_rem, excess_rem
+            draw, mask, solar_rem, excess_rem
         )
 
 

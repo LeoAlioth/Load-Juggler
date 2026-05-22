@@ -74,7 +74,7 @@ from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext,
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 from custom_components.dynamic_ocpp_evse.calculations.utils import compute_household_per_phase
 from custom_components.dynamic_ocpp_evse.const.modes import resolve_operating_mode, behavior_for
-from custom_components.dynamic_ocpp_evse.const import DEFAULT_BATTERY_SOC_FULL
+from custom_components.dynamic_ocpp_evse.const import DEFAULT_BATTERY_SOC_FULL, DEFAULT_PLUG_MAX_CURRENT
 
 # ---------------------------------------------------------------------------
 # Mode name migration (old YAML → new operating modes)
@@ -425,9 +425,13 @@ def build_site_from_scenario(scenario):
             equiv_current = round(power_rating / (voltage * phases), 1)
             min_current = equiv_current
             max_current = equiv_current
+            # Plug hardware rating (A) — the cap for available_current,
+            # separate from the set-power slider.
+            rated_current = charger_data.get("plug_max_current", DEFAULT_PLUG_MAX_CURRENT)
         else:
             min_current = charger_data.get("min_current", 6)
             max_current = charger_data.get("max_current", 16)
+            rated_current = max_current
 
         # Resolve operating mode: per-charger > site-level fallback > device default
         operating_mode = charger_data.get("operating_mode")
@@ -459,6 +463,8 @@ def build_site_from_scenario(scenario):
             l1_current=charger_data.get("l1_current", 0),
             l2_current=charger_data.get("l2_current", 0),
             l3_current=charger_data.get("l3_current", 0),
+            unmetered=charger_data.get("unmetered", False),
+            rated_current=rated_current,
         )
         site.chargers.append(charger)
 
@@ -601,6 +607,15 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
     commanded_limits = {}  # entity_id -> current commanded limit
     history = []
 
+    # Per-charger utilization (0.0–1.0): the fraction of the commanded permit
+    # the device actually draws. 1.0 (default) = draws its full permit; 0.0 =
+    # switched on but idle. Models a car taking less than offered, or an
+    # appliance behind a plug drawing nothing.
+    utilization = {}
+    for idx, cd in enumerate(scenario['chargers']):
+        eid = cd.get('entity_id', f"charger_{idx}")
+        utilization[eid] = cd.get('utilization', 1.0)
+
     for cycle in range(TOTAL_CYCLES):
         # 1. Build site from YAML (household consumption, solar production, battery)
         site = build_site_from_scenario(scenario)
@@ -613,9 +628,12 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         # Save household consumption before CT simulation overwrites it
         household = PhaseValues(site.consumption.a, site.consumption.b, site.consumption.c)
 
-        # 3. Set charger l1/l2/l3_current from previous commanded limits
+        # 3. Set charger l1/l2/l3_current from previous commanded limits,
+        #    scaled by utilization — the device may draw less than its permit.
         for charger in site.chargers:
-            set_charger_phase_currents(charger, commanded_limits.get(charger.entity_id, 0))
+            cmd = commanded_limits.get(charger.entity_id, 0)
+            util = utilization.get(charger.entity_id, 1.0)
+            set_charger_phase_currents(charger, cmd * util)
 
         # 4. Compute grid CT values from physical inputs
         #    net = household - solar_per_phase + battery_per_phase + charger_draw
@@ -635,11 +653,19 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         # 7. Run calculation engine
         calculate_all_charger_targets(site)
 
-        # 8. Apply ramp rate limiting to engine targets
+        # 8. Set each charger's commanded value for the next cycle.
+        #    EVSE: ramp-limited toward the permit (available_current).
+        #    Plug/tank: binary — its set power when the engine powers it
+        #    (permit > 0), else 0; no ramp.
         for charger in site.chargers:
-            target = charger.allocated_current
-            prev = commanded_limits.get(charger.entity_id, 0)
-            commanded_limits[charger.entity_id] = apply_ramp_rate(prev, target)
+            if charger.device_type == "plug":
+                commanded_limits[charger.entity_id] = (
+                    charger.max_current if charger.available_current > 0 else 0
+                )
+            else:
+                target = charger.available_current
+                prev = commanded_limits.get(charger.entity_id, 0)
+                commanded_limits[charger.entity_id] = apply_ramp_rate(prev, target)
 
         # 9. Record history
         history.append({

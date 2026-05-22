@@ -245,7 +245,8 @@ async def test_charger_config_creates_entry(
     )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Valid Charger Charger"
+    # Name already contains "Charger" — the type label is not appended again.
+    assert result["title"] == "Valid Charger"
     assert result["data"][ENTRY_TYPE] == ENTRY_TYPE_CHARGER
 
 

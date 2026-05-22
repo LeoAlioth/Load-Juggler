@@ -54,6 +54,22 @@ def _validate_entity_units(
             errors[field_key] = "invalid_unit"
 
 
+def _compose_entry_title(name: str, type_label: str) -> str:
+    """Compose a config-entry title without doubling the device-type label.
+
+    The type label is appended only when the user's name doesn't already
+    contain it — so a device left at its default name (e.g. "Hot Water Tank")
+    becomes just "Hot Water Tank", not "Hot Water Tank Hot Water Tank", while
+    a custom name like "Kitchen" still becomes "Kitchen Hot Water Tank".
+    """
+    name = (name or "").strip()
+    if not name:
+        return type_label
+    if type_label.lower() in name.lower():
+        return name
+    return f"{name} {type_label}"
+
+
 class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Load Juggler."""
 
@@ -846,6 +862,22 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     }
                 ),
                 vol.Required(
+                    CONF_PLUG_MAX_CURRENT,
+                    default=defaults.get(
+                        CONF_PLUG_MAX_CURRENT, DEFAULT_PLUG_MAX_CURRENT
+                    ),
+                ): selector(
+                    {
+                        "number": {
+                            "min": 6,
+                            "max": 63,
+                            "step": 1,
+                            "mode": "box",
+                            "unit_of_measurement": "A",
+                        }
+                    }
+                ),
+                vol.Required(
                     CONF_CONNECTED_TO_PHASE,
                     default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
                 ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
@@ -1626,7 +1658,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
 
                 return self._create_entry_and_seed_options(
-                    f"{plug_name} Smart Load", static_data, options_data
+                    _compose_entry_title(plug_name, "Smart Load"),
+                    static_data, options_data
                 )
 
         existing_chargers = self._get_charger_entries()
@@ -1637,6 +1670,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         plug_defaults = {
             CONF_CHARGER_PRIORITY: next_priority,
             CONF_PLUG_POWER_RATING: DEFAULT_PLUG_POWER_RATING,
+            CONF_PLUG_MAX_CURRENT: DEFAULT_PLUG_MAX_CURRENT,
             CONF_CONNECTED_TO_PHASE: "A",
             CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
             CONF_PLUG_POWER_MONITOR_ENTITY_ID: self._auto_detect_entity(
@@ -1704,7 +1738,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     k: v for k, v in self._data.items() if k not in static_data
                 }
                 return self._create_entry_and_seed_options(
-                    f"{tank_name} Hot Water Tank", static_data, options_data
+                    _compose_entry_title(tank_name, "Hot Water Tank"),
+                    static_data, options_data
                 )
 
         # Defaults; self._data is merged last so a validation-error re-show
@@ -2397,7 +2432,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             options_data = {k: v for k, v in self._data.items() if k not in static_data}
 
             return self._create_entry_and_seed_options(
-                f"{charger_name} Charger", static_data, options_data
+                _compose_entry_title(charger_name, "Charger"),
+                static_data, options_data
             )
 
         data_schema = self._charger_timing_schema(

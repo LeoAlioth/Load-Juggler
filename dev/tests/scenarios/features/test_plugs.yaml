@@ -216,8 +216,8 @@ scenarios:
         active: false
     expected:
       plug_1:
-        allocated: 8.7  # Solar Only, solar surplus = 5000/230 - 2 = 19.7A > 8.7A → plug ON despite switch currently off
-        available: 8.7  # 2000/230 = 8.7A equivalent
+        allocated: 8.7  # Solar Only, solar surplus = 5000/230 - 2 = 19.7A > 8.7A → plug ON; footprint = 2000/230 = 8.7A
+        available: 16.0  # permit ceiling = plug hardware rating (default 16A)
 
   - name: "plug-continuous-switch-off-turns-on"
     description: "Continuous plug whose switch is currently off must be allocated power to turn on (regression: an off plug must not be stuck off)."
@@ -249,5 +249,5 @@ scenarios:
         active: false
     expected:
       plug_1:
-        allocated: 8.7  # Continuous → always on; 2000/230 = 8.7A, grid headroom available
-        available: 8.7
+        allocated: 8.7  # Continuous → always on; footprint = 2000/230 = 8.7A
+        available: 16.0  # permit ceiling = plug hardware rating (default 16A)

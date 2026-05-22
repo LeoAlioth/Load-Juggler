@@ -33,7 +33,7 @@ def determine_charging_status(
 
     if (
         sensor._grace_started_at is not None
-        and sensor._allocated_current >= min_charge_current
+        and sensor._available_current >= min_charge_current
     ):
         grace_min = get_entry_value(
             sensor.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD

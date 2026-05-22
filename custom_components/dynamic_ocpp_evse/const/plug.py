@@ -3,9 +3,11 @@
 from .common import OperatingMode
 
 CONF_PLUG_SWITCH_ENTITY_ID = "plug_switch_entity_id"  # HA switch entity to control on/off
-CONF_PLUG_POWER_RATING = "plug_power_rating"  # Fixed power draw in watts
+CONF_PLUG_POWER_RATING = "plug_power_rating"  # Set power — the load's draw, in watts
+CONF_PLUG_MAX_CURRENT = "plug_max_current"  # Plug hardware current rating (A)
 CONF_PLUG_POWER_MONITOR_ENTITY_ID = "plug_power_monitor_entity_id"  # Optional power monitoring sensor
 DEFAULT_PLUG_POWER_RATING = 2000
+DEFAULT_PLUG_MAX_CURRENT = 16
 
 # Smart-plug operating modes — priority is the distribution urgency tier (1-4).
 # A binary on/off load; each mode (bar Continuous) never uses the grid and

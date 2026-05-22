@@ -60,10 +60,28 @@ class LoadContext:
     l1_current: float = 0  # L1 current (A) — maps to l1_phase
     l2_current: float = 0  # L2 current (A) — maps to l2_phase
     l3_current: float = 0  # L3 current (A) — maps to l3_phase
-    
+
+    # True when the engine has no live draw measurement for this load (an EVSE
+    # with no current-import sensor). The load's footprint then falls back to
+    # its permit — without a meter we cannot see it draw less than it is
+    # granted. Plugs and tanks always carry a correct l1/l2/l3 draw (rating
+    # when on, 0 when off), so they are never flagged unmetered.
+    unmetered: bool = False
+
+    # Device hardware current rating (A) — the ceiling for available_current.
+    # EVSE: its configured max current. Plug: the socket/relay rating, which
+    # is separate from the set-power slider (the slider tracks the connected
+    # load, not the plug's capability). Tank: the heating-element current.
+    # 0 → callers fall back to max_current.
+    rated_current: float = 0
+
     # Calculated values (populated during calculation)
-    allocated_current: float = 0   # What the charger actually gets (sent via OCPP)
-    available_current: float = 0   # What the charger could get if a car were plugged in
+    # allocated_current = the load's real FOOTPRINT on the budget (measured
+    #   draw) — what other loads are budgeted against.
+    # available_current = the PERMIT — what the engine grants the device to
+    #   draw, up to its rated/max. Drives the device command.
+    allocated_current: float = 0
+    available_current: float = 0
 
     # OCPP settings
     ocpp_device_id: str = None

@@ -240,10 +240,19 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                     ),
                 )
 
-            raw_allocated = round(charger_targets.get(self.config_entry.entry_id, 0), 1)
+            # allocated_current = the load's real footprint (measured draw).
+            # It is what the "Allocated Current" sensor shows, for every
+            # device type — no smoothing, it is a measurement.
+            self._allocated_current = round(
+                charger_targets.get(self.config_entry.entry_id, 0), 1
+            )
 
+            # available_current = the permit the engine grants this device,
+            # up to its rated/max. It drives the device command. For an EVSE
+            # the OCPP charge limit is the permit, smoothed to avoid
+            # oscillation; binary loads (plug, tank) use it directly.
             charger_avail_data = hub_data.get("charger_available", {})
-            self._available_current = round(
+            raw_permit = round(
                 charger_avail_data.get(self.config_entry.entry_id, 0), 1
             )
 
@@ -251,15 +260,11 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE
             )
             if device_type == DEVICE_TYPE_EVSE:
-                self._allocated_current = apply_smoothing(
-                    self, raw_allocated, mode_changed, hub_entry
+                self._available_current = apply_smoothing(
+                    self, raw_permit, mode_changed, hub_entry
                 )
             else:
-                # Smart plugs and hot water tanks are binary on/off loads —
-                # smoothing the allocated current would produce meaningless
-                # intermediate values and delay the off transition. Use the
-                # engine's target directly.
-                self._allocated_current = raw_allocated
+                self._available_current = raw_permit
             self._state = self._available_current
 
             min_charge_current = get_entry_value(
@@ -277,7 +282,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 in (EVSE_MODE_SOLAR_ONLY.key, EVSE_MODE_EXCESS.key)
                 and grace_period_seconds > 0
             ):
-                if self._allocated_current < min_charge_current:
+                if self._available_current < min_charge_current:
                     charger_avail = hub_data.get("charger_available", {})
                     physical_available = charger_avail.get(
                         self.config_entry.entry_id, 0
@@ -293,7 +298,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                             )
                         elapsed = time.monotonic() - self._grace_started_at
                         if elapsed < grace_period_seconds:
-                            self._allocated_current = float(min_charge_current)
+                            self._available_current = float(min_charge_current)
                         else:
                             _LOGGER.info(
                                 "Grace timer expired for %s after %dm — allowing pause",
@@ -323,20 +328,11 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 self.hass.data[DOMAIN] = {}
             if "charger_allocations" not in self.hass.data[DOMAIN]:
                 self.hass.data[DOMAIN]["charger_allocations"] = {}
-            # Binary loads (smart plug, hot water tank) — their reserved
-            # allocation can sit far above what the device actually draws
-            # (switch on but appliance idle, or a tank element warming).
-            # Report the engine's measured draw so "Allocated Current" reflects
-            # real consumption; EVSEs report the commanded allocation.
-            if device_type in (DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK):
-                reported_allocation = hub_data.get("charger_draw", {}).get(
-                    self.config_entry.entry_id, 0
-                )
-            else:
-                reported_allocation = self._allocated_current
+            # "Allocated Current" reflects the real footprint for every device
+            # type — _allocated_current is the engine's measured draw.
             self.hass.data[DOMAIN]["charger_allocations"][
                 self.config_entry.entry_id
-            ] = reported_allocation
+            ] = self._allocated_current
 
             # Effective priority rank from the engine — the order this device
             # is served when power is contended (mode urgency, then priority).
@@ -393,10 +389,10 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 limit = round(self._available_current, 1)
                 self._pause_started_at = None
             elif device_type == DEVICE_TYPE_PLUG:
-                # A plug is always active — the engine's allocation is already
-                # the on/off answer (equivalent current when on, 0 when off).
-                # The EVSE min-current pause threshold does not apply.
-                limit = round(self._allocated_current, 1)
+                # A plug is a binary load — the permit is the on/off answer
+                # (its rated current when granted, 0 when denied). The EVSE
+                # min-current pause threshold does not apply.
+                limit = round(self._available_current, 1)
                 self._pause_started_at = None
             elif not dynamic_control_on:
                 limit = round(float(max_charge_current), 1)
@@ -406,7 +402,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                     self._attr_name,
                     limit,
                 )
-            elif self._allocated_current < min_charge_current:
+            elif self._available_current < min_charge_current:
                 pause_duration_s = (
                     get_entry_value(
                         self.config_entry,
@@ -434,9 +430,9 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                         limit = 0
                     else:
                         self._pause_started_at = None
-                        limit = round(self._allocated_current, 1)
+                        limit = round(self._available_current, 1)
                 else:
-                    limit = round(self._allocated_current, 1)
+                    limit = round(self._available_current, 1)
 
             connector_state = self.hass.states.get(self._connector_status_entity)
             connector_status = connector_state.state if connector_state else "unknown"

@@ -335,6 +335,7 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
         operating_mode=mode.key,
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
+        rated_current=max_current,
         l1_phase=l1_phase,
         l2_phase=l2_phase,
         l3_phase=l3_phase,
@@ -467,6 +468,12 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
             "EVSE %s: Current draw source: %s", charger_entity_id, current_draw
         )
 
+    # No current-import source found — the engine cannot see this EVSE's real
+    # draw, so its footprint falls back to its permit (it may reserve more than
+    # it uses). Plugs and tanks always carry a correct draw and are never
+    # flagged unmetered.
+    charger.unmetered = current_draw is None
+
     # SuspendedEV grace period: car may briefly pause during normal charging (BMS
     # balancing). Only treat as inactive after SUSPENDED_EV_IDLE_TIMEOUT seconds
     # of continuous SuspendedEV + near-zero draw.
@@ -534,6 +541,9 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     slider_power = charger_rt.get("device_power", None)
     config_power = get_entry_value(
         entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING
+    )
+    plug_max_current = get_entry_value(
+        entry, CONF_PLUG_MAX_CURRENT, DEFAULT_PLUG_MAX_CURRENT
     )
     # Set power: the runtime slider if set, else the configured rating.
     power_rating = (
@@ -603,6 +613,7 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
         operating_mode=mode.key,
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
+        rated_current=plug_max_current,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
     _LOGGER.debug(
@@ -693,6 +704,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
         operating_mode=mode.key,
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
+        rated_current=equivalent_current,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
     _LOGGER.debug(
