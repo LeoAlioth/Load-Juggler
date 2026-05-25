@@ -76,3 +76,81 @@ scenarios:
       load_2:
         allocated: 8.7
         available: 9.5        # pool headroom left after plug_1's 6.5 A footprint
+
+  - name: "footprint-evse-underdraw-frees-evse"
+    description: >
+      A priority-1 EVSE offered 16 A whose car settles at 8 A (drawing half)
+      frees the unused 8 A to a lower-priority EVSE. Once the higher EVSE's
+      draw has held steady for a few cycles the engine trusts it as a real
+      ceiling and budgets the lower EVSE against the 8 A footprint, not the
+      16 A permit — so the lower EVSE reaches 16 A instead of the 8 A the old
+      permit-reservation model left it.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 24
+      phase_a_consumption: 0
+      distribution_mode: "priority"
+    chargers:
+      - entity_id: "evse_1"
+        device_type: "evse"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        utilization: 0.5      # car settles at half the offered current
+      - entity_id: "evse_2"
+        device_type: "evse"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        operating_mode: "Standard"
+        priority: 2
+        utilization: 1.0
+    expected:
+      evse_1:
+        allocated: 8.0        # footprint — the car's settled draw
+        available: 16.0       # permit — still offered its full 16 A
+      evse_2:
+        allocated: 16.0       # gets evse_1's freed 8 A on top of its own 8 A
+        available: 16.0
+
+  - name: "footprint-shared-evse-underdraw-frees-evse"
+    description: >
+      Shared mode equivalent of the priority scenario: two 32 A EVSEs on a
+      50 A pool. The first car is hardware-capped at 16 A (a small car on a
+      big EVSE) — its draw stays at 16 A regardless of what we offer. Naive
+      shared would split 25/25 and leave the second EVSE 7 A short of its
+      max. Once the first car's draw has settled the engine treats it as a
+      16 A footprint and the second EVSE fills to its full 32 A.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 50
+      phase_a_consumption: 0
+      distribution_mode: "shared"
+    chargers:
+      - entity_id: "evse_1"
+        device_type: "evse"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        draw_cap: 16          # car hardware-caps at 16 A no matter the offer
+      - entity_id: "evse_2"
+        device_type: "evse"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 2
+        utilization: 1.0
+    expected:
+      evse_1:
+        allocated: 16.0       # footprint — the car's hardware cap
+        available: 32.0       # permit — still offered its full 32 A
+      evse_2:
+        allocated: 32.0       # got evse_1's freed 16 A on top of its share
+        available: 32.0

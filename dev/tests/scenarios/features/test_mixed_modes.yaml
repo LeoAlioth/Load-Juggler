@@ -81,9 +81,11 @@ scenarios:
         priority: 2
     expected:
       charger_1:
-        allocated: 7.5  # Shared: Continuous gets equal split (not source-limited)
+        allocated: 16.0  # Shared: Continuous (no source limit) fills to its
+                         # max once the Solar-Only charger caps at its solar
+                         # share — equal-split among unconstrained.
       charger_2:
-        allocated: 6.3  # Shared: Solar Only capped by solar pool
+        allocated: 6.3   # Shared: Solar Only capped by solar pool
 
   # ===== SOLAR PRIORITY + SOLAR ONLY =====
 

@@ -68,6 +68,13 @@ class LoadContext:
     # when on, 0 when off), so they are never flagged unmetered.
     unmetered: bool = False
 
+    # EVSE only: True when the car's measured draw has held steady for several
+    # cycles — it has reached a ceiling below what we offered, rather than
+    # still tracking our ramping permit. Only then is the draw trusted as the
+    # EVSE's footprint; while it is moving the engine reserves the full permit.
+    # Set by the HA layer (or the test harness) from per-charger draw history.
+    draw_settled: bool = False
+
     # Device hardware current rating (A) — the ceiling for available_current.
     # EVSE: its configured max current. Plug: the socket/relay rating, which
     # is separate from the set-power slider (the slider tracks the connected

@@ -62,6 +62,19 @@ DEAD_BAND = 0.3          # Ignore changes smaller than this (Schmitt trigger, am
 GRID_STALE_TIMEOUT = 60  # Seconds of grid CT unavailability before falling to min_current
 SUSPENDED_EV_IDLE_TIMEOUT = 60  # Seconds of SuspendedEV + near-zero draw before treating as inactive
 
+# EVSE draw-settle detection — the measured draw is trusted as the EVSE's real
+# footprint (freeing the unused gap to lower-priority loads) only once it has
+# held steady for SETTLE_DRAW_CYCLES consecutive cycles within SETTLE_DRAW_TOLERANCE.
+# A car still ramping toward its permit keeps changing and stays "unsettled".
+SETTLE_DRAW_TOLERANCE = 0.5   # Amps — draw change below this counts as steady
+SETTLE_DRAW_CYCLES = 3        # Consecutive steady cycles before the draw is trusted
+# An EVSE only counts as settled-and-capped when its draw is also measurably
+# below the permit we offered it last cycle — that is the under-drawing case
+# the footprint model is meant to free. A car drawing essentially what we
+# offered (util ≈ 1.0) is using all of it, so the permit, not the draw, is
+# the correct pool footprint.
+SETTLE_PERMIT_MARGIN = 1.0    # Amps — draw must be this far below last permit
+
 # Auto-reset detection — triggers reset_ocpp_evse when charger ignores profiles
 AUTO_RESET_MISMATCH_THRESHOLD = 5    # consecutive mismatched cycles before reset
 AUTO_RESET_COOLDOWN_SECONDS = 120    # seconds to wait after reset before checking again

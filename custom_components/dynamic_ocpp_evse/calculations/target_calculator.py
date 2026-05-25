@@ -24,28 +24,37 @@ from ..const import (
     BEHAVIOR_BINARY_EXCESS,
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
-    DEVICE_TYPE_HOT_WATER_TANK,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Binary on/off loads — a plug or a hot water tank.
-_BINARY_DEVICES = (DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK)
+
+def _measured_draw(charger: LoadContext) -> float:
+    """The charger's real per-phase draw — the max across its occupied phases."""
+    return max(charger.l1_current, charger.l2_current, charger.l3_current)
 
 
-def _pool_deduction(charger: LoadContext, evse_amount: float) -> float:
+def _pool_deduction(charger: LoadContext, fallback: float) -> float:
     """The current a charger removes from the shared pools — its footprint.
 
-    Premise: pools are reduced by *allocated* current (the real draw), never
-    by the permit. A plug or tank removes its measured draw — which the
-    builder placed into l1/l2/l3 (the metered value, or its set power when
-    unmetered, or 0 when off) — regardless of the rating reserved for it. An
-    EVSE removes the given allocation amount (the current signalled to it),
-    exactly as before.
+    Premise: pools are reduced by the load's real draw, not by the permit
+    reserved for it. A plug or tank removes its measured draw — which the
+    builder placed into l1/l2/l3 (the metered value, its set power when
+    unmetered, or 0 when off) — regardless of the rating reserved for it.
+
+    An EVSE is footprint-accounted only once its draw has *settled* — held
+    steady for several cycles, meaning the car has reached a ceiling below
+    what we offered. A 32 A EVSE feeding a car that holds at 16 A then frees
+    the other 16 A to lower-priority loads. While the draw is still moving it
+    is merely following our ramping permit (not a real ceiling), and an
+    unmetered EVSE has no draw at all — both fall back to ``fallback``, the
+    reserved current.
     """
-    if charger.device_type in _BINARY_DEVICES:
-        return max(charger.l1_current, charger.l2_current, charger.l3_current)
-    return evse_amount
+    if charger.device_type == DEVICE_TYPE_EVSE:
+        if charger.unmetered or not charger.draw_settled:
+            return fallback
+        return _measured_draw(charger)
+    return _measured_draw(charger)
 
 
 def calculate_all_charger_targets(site: SiteContext) -> None:
@@ -130,14 +139,16 @@ def calculate_all_charger_targets(site: SiteContext) -> None:
         physical_pool, solar_pool, excess_pool, site,
     )
 
-    # Step 7: Translate plug/tank allocated_current to the real footprint —
-    # the measured draw (or set power) the load removes from the pools, not
-    # the rating reserved for it. allocated_current > 0 meant "the engine
-    # powered it"; _set_available_current_for_chargers already used that.
+    # Step 7: Translate allocated_current to the real footprint — the measured
+    # draw (or set power) the load removes from the pools, not the rating
+    # reserved for it. available_current (the permit) was already captured by
+    # _set_available_current_for_chargers above. A ramping or unmetered EVSE
+    # has no trustworthy draw; _pool_deduction leaves it at the signalled
+    # current.
     for charger in active_chargers:
-        if charger.device_type in _BINARY_DEVICES and charger.allocated_current > 0:
+        if charger.allocated_current > 0:
             charger.allocated_current = round(
-                max(charger.l1_current, charger.l2_current, charger.l3_current), 1
+                _pool_deduction(charger, charger.allocated_current), 1
             )
 
     for charger in all_chargers:
@@ -746,42 +757,54 @@ def _allocate_minimums(
     physical: PhaseConstraints,
     solar: PhaseConstraints,
     excess: PhaseConstraints,
-) -> tuple[dict[str, float], PhaseConstraints, PhaseConstraints, PhaseConstraints]:
+) -> tuple[dict[str, float], dict[str, float], PhaseConstraints, PhaseConstraints, PhaseConstraints]:
     """Pass 1: Reserve minimum current for all eligible chargers.
 
     Source-aware: each mode checks its allowed energy sources.
     All allocations deduct from physical pool (wire limits apply to all).
     All allocations deduct from solar and excess pools (any draw reduces export).
 
-    Returns (allocated dict, remaining physical, remaining solar, remaining excess).
+    Returns (allocated dict, footprints dict, remaining physical, remaining
+    solar, remaining excess). ``footprints`` is the real draw deducted here
+    for each charger — never more than the minimum reserved; a load that
+    draws above its minimum has the surplus deducted in pass 2, where it
+    fills. Pass 2 uses ``footprints`` to deduct only the *additional* real
+    draw, so the pools end up reduced by each load's true footprint.
     """
     allocated = {}
+    footprints = {}
     for charger in chargers:
         mask = charger.active_phases_mask
         if not mask:
             allocated[charger.entity_id] = 0
+            footprints[charger.entity_id] = 0
             continue
 
         # Source limit: is this mode allowed to charge at all?
         src_max = _source_limit(charger, site, solar, excess, base=0)
         if src_max < charger.min_current:
             allocated[charger.entity_id] = 0
+            footprints[charger.entity_id] = 0
             continue
 
         # Physical pool must have room on the wire
         if physical.get_available(mask) < charger.min_current:
             allocated[charger.entity_id] = 0
+            footprints[charger.entity_id] = 0
             continue
 
-        # Reserve minimum (the permit base). The pools, though, are reduced
-        # by the charger's real footprint — for a plug/tank that is its
-        # measured draw, not the rating reserved here.
+        # Reserve minimum (the permit base). The pools are reduced by the
+        # charger's real footprint, but never more than this minimum — a
+        # load drawing above its minimum has the surplus deducted in pass 2.
         allocated[charger.entity_id] = charger.min_current
-        draw = _pool_deduction(charger, charger.min_current)
+        draw = min(
+            _pool_deduction(charger, charger.min_current), charger.min_current
+        )
+        footprints[charger.entity_id] = draw
         physical = physical.deduct(draw, mask)
         solar, excess = _deduct_from_sources(draw, mask, solar, excess)
 
-    return allocated, physical, solar, excess
+    return allocated, footprints, physical, solar, excess
 
 
 def _distribute_per_phase_priority(
@@ -803,7 +826,7 @@ def _distribute_per_phase_priority(
     remaining = physical_pool.copy()
     solar_rem = solar_pool.copy()
     excess_rem = excess_pool.copy()
-    allocated, remaining, solar_rem, excess_rem = _allocate_minimums(
+    allocated, footprints, remaining, solar_rem, excess_rem = _allocate_minimums(
         sorted_chargers, site, remaining, solar_rem, excess_rem
     )
 
@@ -825,10 +848,16 @@ def _distribute_per_phase_priority(
         total = base + additional
 
         charger.allocated_current = round(total, 1)
-        if additional > 0:
-            remaining = remaining.deduct(additional, mask)
+        # Deduct this charger's real footprint, beyond what pass 1 already
+        # took. A ramping charger / plug consumes its full permit; a settled
+        # EVSE drawing below its permit consumes only its measured draw,
+        # leaving the gap for lower-priority loads.
+        consumption = _pool_deduction(charger, total)
+        pool_delta = consumption - footprints.get(charger.entity_id, 0)
+        if pool_delta > 0:
+            remaining = remaining.deduct(pool_delta, mask)
             solar_rem, excess_rem = _deduct_from_sources(
-                additional, mask, solar_rem, excess_rem
+                pool_delta, mask, solar_rem, excess_rem
             )
 
 
@@ -852,7 +881,7 @@ def _distribute_per_phase_shared(
     remaining = physical_pool.copy()
     solar_rem = solar_pool.copy()
     excess_rem = excess_pool.copy()
-    allocated, remaining, solar_rem, excess_rem = _allocate_minimums(
+    allocated, footprints, remaining, solar_rem, excess_rem = _allocate_minimums(
         sorted_chargers, site, remaining, solar_rem, excess_rem
     )
 
@@ -861,6 +890,14 @@ def _distribute_per_phase_shared(
         for charger in site.chargers:
             charger.allocated_current = 0
         return
+
+    # Track each charger's cumulative pool consumption so the loop can deduct
+    # only the *real* draw, not the permit increment. A settled EVSE drawing
+    # below its permit never consumes more than its measured draw, so the
+    # surplus permit doesn't drain the pool — equal-split then routes the
+    # slack to other charging loads (the user's "free 9 A to the second
+    # EVSE" case). Initialised from pass-1 footprints.
+    consumed = dict(footprints)
 
     # Pass 2: Split remainder equally, respecting source limits.
     # Batch compute increments to avoid order-dependent solar depletion.
@@ -902,15 +939,21 @@ def _distribute_per_phase_shared(
                 scale = min_solar / total_increment
                 batch = [(c, m, incr * scale) for c, m, incr in batch]
 
-        # Apply all increments
+        # Apply all increments, deducting each charger's real consumption
+        # growth (not the permit increment) so a settled-and-under-drawing
+        # EVSE leaves the unused gap in the pool for others.
         any_progress = False
         for charger, mask, additional in batch:
             if additional > 0.001:
                 allocated[charger.entity_id] += additional
-                remaining = remaining.deduct(additional, mask)
-                solar_rem, excess_rem = _deduct_from_sources(
-                    additional, mask, solar_rem, excess_rem
-                )
+                new_cons = _pool_deduction(charger, allocated[charger.entity_id])
+                pool_delta = new_cons - consumed.get(charger.entity_id, 0)
+                consumed[charger.entity_id] = new_cons
+                if pool_delta > 0:
+                    remaining = remaining.deduct(pool_delta, mask)
+                    solar_rem, excess_rem = _deduct_from_sources(
+                        pool_delta, mask, solar_rem, excess_rem
+                    )
                 any_progress = True
 
         if not any_progress:

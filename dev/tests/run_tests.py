@@ -96,6 +96,18 @@ UPDATE_FREQ = 15        # seconds per cycle
 RAMP_UP_PER_CYCLE = 1.5   # 0.1 A/s * 15s
 RAMP_DOWN_PER_CYCLE = 3.0  # 0.2 A/s * 15s
 
+# EVSE draw-settle detection: the measured draw counts as "settled" once it
+# has held within SETTLE_TOLERANCE for SETTLE_CYCLES consecutive cycles — the
+# car has reached a ceiling rather than still tracking a ramping permit.
+SETTLE_TOLERANCE = 0.5  # A
+SETTLE_CYCLES = 3
+# An EVSE only counts as settled-and-under-drawing — the case the footprint
+# model frees to lower-priority loads — when its measured draw is also
+# measurably below the permit we offered it last cycle. A car at util ≈ 1.0
+# draws what it is offered; treating that as "capped" would let the engine
+# repeatedly over-allocate and oscillate.
+SETTLE_PERMIT_MARGIN = 1.0  # A
+
 
 # ---------------------------------------------------------------------------
 # Simulation helpers
@@ -607,14 +619,28 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
     commanded_limits = {}  # entity_id -> current commanded limit
     history = []
 
+    # Per-charger draw-settle tracking: last measured draw and the count of
+    # consecutive cycles it has held steady. Mirrors the HA layer's per-charger
+    # runtime state so the engine sees the same draw_settled flag.
+    settle_last_draw = {}   # entity_id -> last cycle's measured draw
+    settle_count = {}       # entity_id -> consecutive steady cycles
+    last_permit = {}        # entity_id -> last cycle's available_current
+
     # Per-charger utilization (0.0–1.0): the fraction of the commanded permit
     # the device actually draws. 1.0 (default) = draws its full permit; 0.0 =
     # switched on but idle. Models a car taking less than offered, or an
     # appliance behind a plug drawing nothing.
+    #
+    # draw_cap (optional, Amps): hard ceiling on the simulated draw — models a
+    # car whose battery limits how much it can take regardless of what we
+    # offer (e.g. a 16 A car on a 32 A EVSE). measured = min(commanded × util,
+    # draw_cap). Defaults to no cap.
     utilization = {}
+    draw_cap = {}
     for idx, cd in enumerate(scenario['chargers']):
         eid = cd.get('entity_id', f"charger_{idx}")
         utilization[eid] = cd.get('utilization', 1.0)
+        draw_cap[eid] = cd.get('draw_cap')
 
     for cycle in range(TOTAL_CYCLES):
         # 1. Build site from YAML (household consumption, solar production, battery)
@@ -630,10 +656,28 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
 
         # 3. Set charger l1/l2/l3_current from previous commanded limits,
         #    scaled by utilization — the device may draw less than its permit.
+        #    Then update draw-settle tracking: a draw that has held steady for
+        #    SETTLE_CYCLES is trusted as the EVSE's real footprint.
         for charger in site.chargers:
             cmd = commanded_limits.get(charger.entity_id, 0)
             util = utilization.get(charger.entity_id, 1.0)
-            set_charger_phase_currents(charger, cmd * util)
+            simulated = cmd * util
+            cap = draw_cap.get(charger.entity_id)
+            if cap is not None:
+                simulated = min(simulated, cap)
+            set_charger_phase_currents(charger, simulated)
+
+            eid = charger.entity_id
+            draw = max(charger.l1_current, charger.l2_current, charger.l3_current)
+            prev = settle_last_draw.get(eid)
+            if prev is not None and abs(draw - prev) <= SETTLE_TOLERANCE:
+                settle_count[eid] = settle_count.get(eid, 0) + 1
+            else:
+                settle_count[eid] = 0
+            settle_last_draw[eid] = draw
+            steady = settle_count[eid] >= SETTLE_CYCLES
+            under_permit = draw + SETTLE_PERMIT_MARGIN < last_permit.get(eid, 0)
+            charger.draw_settled = steady and under_permit
 
         # 4. Compute grid CT values from physical inputs
         #    net = household - solar_per_phase + battery_per_phase + charger_draw
@@ -652,6 +696,11 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
 
         # 7. Run calculation engine
         calculate_all_charger_targets(site)
+
+        # Remember this cycle's permit per charger — the next cycle's settle
+        # check uses it to tell "car capped below offer" from "car at offer".
+        for c in site.chargers:
+            last_permit[c.entity_id] = c.available_current
 
         # 8. Set each charger's commanded value for the next cycle.
         #    EVSE: ramp-limited toward the permit (available_current).

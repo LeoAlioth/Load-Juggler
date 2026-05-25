@@ -474,6 +474,32 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     # flagged unmetered.
     charger.unmetered = current_draw is None
 
+    # Draw-settle detection: the measured draw is trusted as the EVSE's real
+    # footprint — freeing the unused gap to lower-priority loads — only when
+    # two conditions hold: it has held steady for SETTLE_DRAW_CYCLES cycles
+    # *and* it is measurably below the permit we offered last cycle. A car
+    # drawing essentially what we offered (util ≈ 1.0) is using all of it, so
+    # we keep treating the permit as its footprint. A still-ramping car keeps
+    # changing and stays unsettled. Unmetered chargers have no draw to settle.
+    measured_draw = max(charger.l1_current, charger.l2_current, charger.l3_current)
+    if charger.unmetered:
+        charger.draw_settled = False
+        charger_rt.pop("_settle_last_draw", None)
+        charger_rt.pop("_settle_count", None)
+    else:
+        last_draw = charger_rt.get("_settle_last_draw")
+        if last_draw is not None and abs(measured_draw - last_draw) <= SETTLE_DRAW_TOLERANCE:
+            charger_rt["_settle_count"] = charger_rt.get("_settle_count", 0) + 1
+        else:
+            charger_rt["_settle_count"] = 0
+        charger_rt["_settle_last_draw"] = measured_draw
+        steady = charger_rt["_settle_count"] >= SETTLE_DRAW_CYCLES
+        under_permit = (
+            measured_draw + SETTLE_PERMIT_MARGIN
+            < charger_rt.get("_last_permit", 0)
+        )
+        charger.draw_settled = steady and under_permit
+
     # SuspendedEV grace period: car may briefly pause during normal charging (BMS
     # balancing). Only treat as inactive after SUSPENDED_EV_IDLE_TIMEOUT seconds
     # of continuous SuspendedEV + near-zero draw.
@@ -1561,6 +1587,15 @@ def run_hub_calculation(sensor):
     charger_targets = {c.charger_id: c.allocated_current for c in site.chargers}
     charger_available = {c.charger_id: c.available_current for c in site.chargers}
     charger_names = {c.charger_id: c.entity_id for c in site.chargers}
+
+    # Persist this cycle's permit for next-cycle settle detection — an EVSE
+    # only counts as "settled and under-drawing" when its measured draw stays
+    # below the permit we last offered it.
+    chargers_rt = hass.data[DOMAIN].get("chargers", {})
+    for c in site.chargers:
+        rt = chargers_rt.get(c.charger_id)
+        if rt is not None:
+            rt["_last_permit"] = c.available_current
 
     # --- Build per-group allocation data for group sensors ---
     group_data = {}
