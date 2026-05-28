@@ -604,13 +604,29 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     connector_status = "Charging" if on else "Available"
 
     # Learn the device's real power from the monitor — but only while the plug
-    # is actually on. A reading taken while it is off is standby/phantom draw,
-    # not the device's rating, so it must not overwrite the set power.
+    # is on AND the reading is steady. A transient low reading during switch-off
+    # must not overwrite the configured rating, so we require N consecutive
+    # readings within ±20 % of each other before committing the value.
+    _POWER_STABLE_CYCLES = 3
+    _POWER_STABLE_TOLERANCE = 0.20
     if power_monitor_entity and on and power_draw and power_draw > 10:
-        power_rating = power_draw
-        charger_rt["device_power"] = round(power_draw, 0)
+        candidate = charger_rt.get("power_candidate", power_draw)
+        stable_count = charger_rt.get("power_stable_count", 0)
+        if abs(power_draw - candidate) <= candidate * _POWER_STABLE_TOLERANCE:
+            stable_count += 1
+            charger_rt["power_stable_count"] = stable_count
+            if stable_count >= _POWER_STABLE_CYCLES:
+                power_rating = power_draw
+                charger_rt["device_power"] = math.ceil(power_draw / 10) * 10
+        else:
+            charger_rt["power_candidate"] = power_draw
+            charger_rt["power_stable_count"] = 1
+    else:
+        charger_rt["power_stable_count"] = 0
 
-    equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
+    # Clamp to 0.1 A so the value survives the calculator's round(x, 1) and the
+    # plug is not permanently locked off due to a very low power rating.
+    equivalent_current = max(0.1, power_rating / (voltage * phases)) if voltage > 0 else 0
 
     # Actual draw — the measured draw while the plug is on (else the set power
     # if there is no monitor), 0 when off. Populates the load's per-phase

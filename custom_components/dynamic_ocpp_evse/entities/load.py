@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 from homeassistant.components.sensor import SensorEntity
 from datetime import datetime, timezone
@@ -392,7 +393,10 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 # A plug is a binary load — the permit is the on/off answer
                 # (its rated current when granted, 0 when denied). The EVSE
                 # min-current pause threshold does not apply.
-                limit = round(self._available_current, 1)
+                # Use a fixed 1.0 A sentinel rather than the tiny equivalent
+                # current, so plugs with a very low power rating (e.g. 10 W →
+                # 0.04 A) still round to > 0 and send the turn-on command.
+                limit = math.ceil(self._available_current * 10) / 10 if self._available_current > 0 else 0.0
                 self._pause_started_at = None
             elif not dynamic_control_on:
                 limit = round(float(max_charge_current), 1)
