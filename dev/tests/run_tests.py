@@ -213,7 +213,10 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
             max_discharge = (site.battery_max_discharge_power or 0) / site.voltage
             # Inverter output cap: battery discharge goes through the inverter.
             # If solar already uses all inverter capacity, battery can't discharge.
-            if site.inverter_max_power:
+            # Off-grid the battery covers the whole deficit regardless — the
+            # inverter physically overloads past its rating (observed in the
+            # field), which is exactly the state the engine must correct.
+            if site.inverter_max_power and not site.is_off_grid:
                 inverter_max_current = site.inverter_max_power / site.voltage
                 inverter_headroom = max(0, inverter_max_current - solar_total)
                 max_discharge = min(max_discharge, inverter_headroom)
@@ -238,6 +241,14 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
 
     site.consumption = PhaseValues(ct_a_cons, ct_b_cons, ct_c_cons)
     site.export_current = PhaseValues(ct_a_exp, ct_b_exp, ct_c_exp)
+
+    # Off-grid: there are no grid CTs — production injects 0 A for phases that
+    # have inverter output sensors, so the engine always sees zero grid flow.
+    if site.is_off_grid:
+        def _zero(h):
+            return 0.0 if h is not None else None
+        site.consumption = PhaseValues(_zero(household.a), _zero(household.b), _zero(household.c))
+        site.export_current = PhaseValues(_zero(household.a), _zero(household.b), _zero(household.c))
 
     # Set battery_power for engine battery awareness in derived mode.
     # Convention: positive = discharging, negative = charging.
@@ -287,7 +298,10 @@ def apply_feedback_adjustment(site):
     total_l2 = total_phase_b
     total_l3 = total_phase_c
 
-    if total_l1 > 0 or total_l2 > 0 or total_l3 > 0:
+    # Off-grid: the grid readings are synthetic zeros that never contained the
+    # charger draws — production's _apply_feedback_loop returns early without
+    # adjusting them (subtracting would fabricate export).
+    if not site.is_off_grid and (total_l1 > 0 or total_l2 > 0 or total_l3 > 0):
         def _adjust(cons, exp, draw):
             if cons is None:
                 return None, None
@@ -305,9 +319,21 @@ def apply_feedback_adjustment(site):
     # Derived mode: recalculate solar_production_total from adjusted export.
     # Battery charging absorbs solar power invisible to grid CT — add it back.
     if site.solar_is_derived:
-        site.solar_production_total = site.export_current.total * site.voltage
-        if site.battery_power is not None and site.battery_power < 0:
-            site.solar_production_total += abs(site.battery_power)
+        if site.is_off_grid and site.inverter_output_per_phase is not None:
+            # Off-grid: export is always 0 — production's _derive_solar_production
+            # uses the inverter output instead.
+            # Series: inverter_output = solar + battery_power → solar = output − battery.
+            # Parallel: inverter output IS solar.
+            inv_watts = site.inverter_output_per_phase.total * site.voltage
+            if site.wiring_topology == 'series':
+                bp = site.battery_power if site.battery_power is not None else 0
+                site.solar_production_total = max(0, inv_watts - bp)
+            else:
+                site.solar_production_total = max(0, inv_watts)
+        else:
+            site.solar_production_total = site.export_current.total * site.voltage
+            if site.battery_power is not None and site.battery_power < 0:
+                site.solar_production_total += abs(site.battery_power)
     else:
         # Dedicated solar entity mode: compute household_consumption_total
         # via energy balance: household = solar + battery_power - export
@@ -401,6 +427,7 @@ def build_site_from_scenario(scenario):
         inverter_supports_asymmetric=site_data.get('inverter_supports_asymmetric', False),
         wiring_topology=site_data.get('wiring_topology', 'parallel'),
         allow_grid_charging=site_data.get('allow_grid_charging', True),
+        is_off_grid=site_data.get('off_grid', False),
     )
 
     # Per-phase inverter output: explicit values or auto-derived from simulation

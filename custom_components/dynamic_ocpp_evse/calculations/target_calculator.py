@@ -292,6 +292,12 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
 
     Grid power is per-phase and CANNOT be reallocated between phases.
     """
+    # Off-grid: there is no grid feed, so the main breaker rating must not be
+    # turned into phantom headroom (consumption reads 0 without grid CTs).
+    # All power comes through the inverter pool.
+    if site.is_off_grid:
+        return PhaseConstraints.zeros()
+
     # Power buffer (W) is a safety margin kept unused on the grid. Spread it
     # across the phases as an extra per-phase deduction so it is honored on the
     # main-breaker limit even when no max_grid_import_power is configured.
@@ -368,17 +374,20 @@ def _build_inverter_constraints(site: SiteContext, total_pool: float) -> PhaseCo
     capped by inverter_max_power_per_phase.
     """
     max_per_phase = site.inverter_max_power_per_phase / site.voltage if site.inverter_max_power_per_phase else float('inf')
+    hh_a, hh_b, hh_c = _get_household_per_phase(site)
     if site.inverter_supports_asymmetric:
-        hh_a, hh_b, hh_c = _get_household_per_phase(site)
         phase_a = min(total_pool, max(0, max_per_phase - hh_a)) if site.consumption.a is not None else 0
         phase_b = min(total_pool, max(0, max_per_phase - hh_b)) if site.consumption.b is not None else 0
         phase_c = min(total_pool, max(0, max_per_phase - hh_c)) if site.consumption.c is not None else 0
         return PhaseConstraints.from_pool(phase_a, phase_b, phase_c, total_pool)
     else:
+        # Same per-phase capacity rule as the asymmetric branch: the inverter
+        # phase already serving the household can only hand the remainder to
+        # chargers.
         per_phase = total_pool / site.num_phases
-        phase_a = min(per_phase, max_per_phase) if site.consumption.a is not None else 0
-        phase_b = min(per_phase, max_per_phase) if site.consumption.b is not None else 0
-        phase_c = min(per_phase, max_per_phase) if site.consumption.c is not None else 0
+        phase_a = min(per_phase, max(0, max_per_phase - hh_a)) if site.consumption.a is not None else 0
+        phase_b = min(per_phase, max(0, max_per_phase - hh_b)) if site.consumption.b is not None else 0
+        phase_c = min(per_phase, max(0, max_per_phase - hh_c)) if site.consumption.c is not None else 0
         return PhaseConstraints.from_per_phase(phase_a, phase_b, phase_c)
 
 
@@ -435,6 +444,12 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     # Cap combination fields (not per-phase) — same principle as grid limit.
     if site.inverter_max_power:
         max_total_current = site.inverter_max_power / site.voltage
+        if site.is_off_grid:
+            # Off-grid the household is invisible to the (nonexistent) grid
+            # CTs, yet the same inverter must keep serving it — only the
+            # capacity left after the household can go to managed loads.
+            household = sum(_get_household_per_phase(site))
+            max_total_current = max(0, max_total_current - household)
         constraints.ABC = min(constraints.ABC, max_total_current)
         constraints = constraints.normalize()
 
@@ -513,19 +528,35 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
         elif site.battery_power > 0:
             discharge_drain = site.battery_power / site.voltage
 
-    # Limit discharge by inverter headroom
+    # Limit discharge by inverter headroom: additional discharge only fits in
+    # the capacity the inverter is not already using for solar plus the
+    # discharge in flight.
     if site.inverter_max_power and discharge_potential > 0:
         inverter_max_current = site.inverter_max_power / site.voltage
-        if site.household_consumption_total is not None:
-            # Accurate: solar entity provides true household consumption
-            estimated_solar = site.solar_production_total / site.voltage
+        actual_discharge = max(0, site.battery_power or 0) / site.voltage
+        if (
+            site.household_consumption_total is not None
+            or site.inverter_output_per_phase is not None
+        ):
+            # Accurate: solar_production_total comes from a dedicated solar
+            # entity or was derived from the inverter output sensors, so the
+            # inverter's current output is simply solar + in-flight discharge.
+            estimated_output = (
+                site.solar_production_total / site.voltage + actual_discharge
+            )
         else:
-            # Estimate from CT readings (derived mode)
+            # Estimate from CT readings (derived mode). When the site is
+            # exporting, the export already CONTAINS the battery discharge
+            # (export = solar + discharge − household), so adding the
+            # discharge would double-count it. When the battery is only
+            # covering local load the CT reads ~0 and the discharge is
+            # invisible. The inverter's output is at least the larger of the
+            # two views.
             export_total = site.export_current.total if site.export_current else 0
             base_pool = export_total + charge_back
             household = site.consumption.total or 0
-            estimated_solar = base_pool + household
-        inverter_headroom = max(0, inverter_max_current - estimated_solar)
+            estimated_output = max(base_pool + household, actual_discharge)
+        inverter_headroom = max(0, inverter_max_current - estimated_output)
         discharge_potential = min(discharge_potential, inverter_headroom)
 
     battery_adjustment_total = charge_back + discharge_potential - discharge_drain
@@ -540,10 +571,16 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
         total_pool = (site.export_current.total if site.export_current else 0) + battery_adjustment_total
         constraints = _build_inverter_constraints(site, total_pool)
     else:
-        # Symmetric: per-phase export + battery adjustment = per-phase surplus
-        phase_a_available = min((site.export_current.a or 0) + battery_adjustment_per_phase, max_per_phase) if site.export_current.a is not None else 0
-        phase_b_available = min((site.export_current.b or 0) + battery_adjustment_per_phase, max_per_phase) if site.export_current.b is not None else 0
-        phase_c_available = min((site.export_current.c or 0) + battery_adjustment_per_phase, max_per_phase) if site.export_current.c is not None else 0
+        # Symmetric: per-phase export + battery adjustment = per-phase surplus,
+        # capped by the per-phase inverter capacity left after the household
+        # (mirrors _build_inverter_constraints).
+        hh_a, hh_b, hh_c = _get_household_per_phase(site)
+        cap_a = max(0, max_per_phase - hh_a)
+        cap_b = max(0, max_per_phase - hh_b)
+        cap_c = max(0, max_per_phase - hh_c)
+        phase_a_available = min((site.export_current.a or 0) + battery_adjustment_per_phase, cap_a) if site.export_current.a is not None else 0
+        phase_b_available = min((site.export_current.b or 0) + battery_adjustment_per_phase, cap_b) if site.export_current.b is not None else 0
+        phase_c_available = min((site.export_current.c or 0) + battery_adjustment_per_phase, cap_c) if site.export_current.c is not None else 0
         constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
 
     # Apply total inverter limit if configured, accounting for household.

@@ -57,6 +57,35 @@ def _smooth(ema_dict: dict, key: str, raw, alpha: float = EMA_ALPHA):
     return round(smoothed, 2)
 
 
+def _stale_guard(hub_runtime: dict, ema_dict: dict, key: str, raw, fallback):
+    """Bound how long an unavailable sensor may coast on its held EMA value.
+
+    While `raw` is _UNAVAILABLE the EMA downstream holds the last known value —
+    fine for a brief dropout, but a sensor that died at 8 kW must not feed
+    phantom power forever. After INPUT_STALE_TIMEOUT seconds of continuous
+    unavailability this clears the EMA state and returns `fallback` instead,
+    so the safe value takes effect immediately rather than decaying through
+    the EMA. A fresh reading clears the timer.
+    """
+    stale_since = hub_runtime.setdefault("_input_stale_since", {})
+    if raw is _UNAVAILABLE:
+        since = stale_since.setdefault(key, time.monotonic())
+        elapsed = time.monotonic() - since
+        if elapsed > INPUT_STALE_TIMEOUT:
+            if ema_dict.pop(key, None) is not None:
+                _LOGGER.warning(
+                    "Input '%s' unavailable for %.0fs (>%ds) — falling back to %s",
+                    key,
+                    elapsed,
+                    INPUT_STALE_TIMEOUT,
+                    fallback,
+                )
+            return fallback
+        return raw
+    stale_since.pop(key, None)
+    return raw
+
+
 def _read_phase_attr(attrs: dict, keys: tuple) -> float | None:
     """Try to read a numeric phase current from entity attributes using multiple naming conventions.
 
@@ -116,16 +145,21 @@ def _read_entity(hass, entity_id: str, default=0, unit: str = None):
 
 
 def _read_inverter_output(hass, entity_id, voltage):
-    """Read inverter output, auto-detecting A vs W vs kW and converting to A."""
+    """Read inverter output, auto-detecting A vs W vs kW and converting to A.
+
+    Returns None for an unconfigured phase, _UNAVAILABLE for a configured
+    sensor that is temporarily unreadable (the EMA smoother holds the last
+    known value for those).
+    """
     if not entity_id:
         return None
     st = hass.states.get(entity_id)
     if not st or st.state in ("unknown", "unavailable", None, ""):
-        return None
+        return _UNAVAILABLE
     try:
         value = abs(float(st.state))
     except (ValueError, TypeError):
-        return None
+        return _UNAVAILABLE
     # Auto-detect unit from entity attributes
     unit = st.attributes.get("unit_of_measurement", "").upper()
     if unit == "KW" and voltage > 0:
@@ -274,11 +308,14 @@ def _read_inverter_config(hass, hub_entry, voltage):
             CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
         )
     ]
+    # Each configured phase is read independently — a B/C-only configuration
+    # is valid, and one phase being momentarily unavailable must not discard
+    # the others. Unavailable phases carry the _UNAVAILABLE sentinel, which
+    # the EMA smoothing downstream resolves to the last known value.
     inverter_output_per_phase = None
-    if inv_entities[0]:
+    if any(inv_entities):
         inv_values = [_read_inverter_output(hass, e, voltage) for e in inv_entities]
-        if inv_values[0] is not None:
-            inverter_output_per_phase = PhaseValues(*inv_values)
+        inverter_output_per_phase = PhaseValues(*inv_values)
 
     return (
         inverter_max_power,
@@ -825,6 +862,13 @@ def _apply_feedback_loop(site, solar_is_derived, voltage):
     and 'charger demand'. Modifies site.consumption and site.export_current
     in-place.
     """
+    # Off-grid: the grid phase readings are synthetic zeros (no CTs exist) and
+    # never contained the charger draws — subtracting them here would fabricate
+    # export equal to each charger's own draw. Solar was already derived from
+    # the inverter output upstream, so nothing needs re-deriving either.
+    if site.is_off_grid:
+        return
+
     # Sum charger draws per site phase
     total_draws = [0.0, 0.0, 0.0]
     for c in site.chargers:
@@ -963,12 +1007,16 @@ def _build_hub_result(
     hub_warnings=None,
 ):
     """Build the result dict returned by run_hub_calculation."""
-    # Grid available power (based on consumption after feedback loop)
-    grid_headroom = sum(
-        max(0, main_breaker_rating - c) * voltage
-        for c in (site.consumption.a, site.consumption.b, site.consumption.c)
-        if c is not None
-    )
+    # Grid available power (based on consumption after feedback loop).
+    # Off-grid there is no grid feed at all — headroom is 0 by definition.
+    if site.is_off_grid:
+        grid_headroom = 0.0
+    else:
+        grid_headroom = sum(
+            max(0, main_breaker_rating - c) * voltage
+            for c in (site.consumption.a, site.consumption.b, site.consumption.c)
+            if c is not None
+        )
 
     # Battery rated discharge power (gated by SOC >= minimum). This is the
     # battery's capability, not what is spare right now — see battery_remaining.
@@ -1229,7 +1277,16 @@ def run_hub_calculation(sensor):
         if not entity_id:
             continue  # Phase not configured
         state = hass.states.get(entity_id)
-        if state is None or state.state in ("unknown", "unavailable", None, ""):
+        stale = state is None or state.state in ("unknown", "unavailable", None, "")
+        if not stale:
+            # A non-numeric state (e.g. "--", an error string) is just as
+            # stale as "unavailable" — without this it silently reads 0 A
+            # and grants full breaker headroom on the phase.
+            try:
+                stale = not math.isfinite(float(state.state))
+            except (ValueError, TypeError):
+                stale = True
+        if stale:
             # Sensor is unavailable — hold last EMA value instead of using 0
             held = ema_inputs.get(f"grid_{i}")
             if held is not None:
@@ -1273,6 +1330,9 @@ def run_hub_calculation(sensor):
         raw_solar = _read_entity(
             hass, solar_production_entity, 0, unit="W"
         )  # Convert kW→W if needed
+        # A dead solar sensor must not keep feeding its last reading forever
+        # (e.g. 8 kW held into the night) — fall back to 0 W after timeout.
+        raw_solar = _stale_guard(hub_runtime, ema_inputs, "solar", raw_solar, 0.0)
         solar_production_total = _smooth(ema_inputs, "solar", raw_solar)
         # _smooth returns None when the solar entity is unavailable and there
         # is no EMA history yet (e.g. a fresh start at night). Treat that as
@@ -1298,6 +1358,13 @@ def run_hub_calculation(sensor):
         if battery_power_entity
         else None
     )  # Convert kW→W if needed
+    # A dead battery power sensor falls back to None after timeout, dropping
+    # all battery-power-derived terms (charge-back, spare discharge) from the
+    # pools instead of coasting on the last reading.
+    if battery_power_entity:
+        raw_battery_power = _stale_guard(
+            hub_runtime, ema_inputs, "battery_power", raw_battery_power, None
+        )
     battery_power = (
         _smooth(ema_inputs, "battery_power", raw_battery_power)
         if battery_power_entity
@@ -1337,10 +1404,22 @@ def run_hub_calculation(sensor):
         inverter_output_per_phase,
     ) = _read_inverter_config(hass, hub_entry, voltage)
 
-    # Smooth inverter output per-phase (if configured)
+    # Smooth inverter output per-phase (if configured). A phase whose sensor
+    # has been unavailable past the timeout falls back to None (phase output
+    # unknown) instead of coasting on its held EMA value.
     if inverter_output_per_phase is not None:
         inv_smoothed = [
-            _smooth(ema_inputs, f"inv_{i}", getattr(inverter_output_per_phase, p))
+            _smooth(
+                ema_inputs,
+                f"inv_{i}",
+                _stale_guard(
+                    hub_runtime,
+                    ema_inputs,
+                    f"inv_{i}",
+                    getattr(inverter_output_per_phase, p),
+                    None,
+                ),
+            )
             for i, p in enumerate(("a", "b", "c"))
         ]
         inverter_output_per_phase = PhaseValues(*inv_smoothed)
@@ -1401,17 +1480,9 @@ def run_hub_calculation(sensor):
     if max_grid_import_power is not None and power_buffer > 0:
         max_grid_import_power = max(0, max_grid_import_power - power_buffer)
 
-    # Apply excess-export hysteresis — keep the engine stateless. Once Excess
-    # mode is on, the effective threshold drops by EXCESS_EXPORT_HYSTERESIS so a
-    # charger doesn't chatter on/off when export hovers near the threshold.
-    was_excess_on = hub_runtime.get("_excess_on", False)
-    if was_excess_on:
-        excess_on = total_export_power >= excess_threshold - EXCESS_EXPORT_HYSTERESIS
-    else:
-        excess_on = total_export_power > excess_threshold
-    hub_runtime["_excess_on"] = excess_on
-    if excess_on:
-        excess_threshold = max(0, excess_threshold - EXCESS_EXPORT_HYSTERESIS)
+    # (Excess-export hysteresis is applied after the feedback loop below — it
+    # must see the same post-feedback export figure the engine's excess pool
+    # compares against the threshold.)
 
     # --- Debug logging ---
     invert_phases = get_entry_value(hub_entry, CONF_INVERT_PHASES, False)
@@ -1507,6 +1578,7 @@ def run_hub_calculation(sensor):
         allow_grid_charging=allow_grid_charging,
         power_buffer=power_buffer,
         distribution_mode=distribution_mode,
+        is_off_grid=not has_grid_cts,
     )
 
     # --- Add chargers ---
@@ -1556,6 +1628,27 @@ def run_hub_calculation(sensor):
     # --- Feedback loop ---
     _apply_feedback_loop(site, solar_is_derived, voltage)
 
+    # Apply excess-export hysteresis — keep the engine stateless. Once Excess
+    # mode is on, the effective threshold drops by EXCESS_EXPORT_HYSTERESIS so a
+    # charger doesn't chatter on/off when export hovers near the threshold.
+    # Evaluated on POST-feedback export: the engine's excess pool compares
+    # post-feedback export (charger draws added back) against the threshold,
+    # and pre-feedback export is already eaten by the Excess charger's own
+    # draw — the band would never engage exactly when a load is running.
+    was_excess_on = hub_runtime.get("_excess_on", False)
+    if was_excess_on:
+        excess_on = (
+            site.total_export_power
+            >= site.excess_export_threshold - EXCESS_EXPORT_HYSTERESIS
+        )
+    else:
+        excess_on = site.total_export_power > site.excess_export_threshold
+    hub_runtime["_excess_on"] = excess_on
+    if excess_on:
+        site.excess_export_threshold = max(
+            0, site.excess_export_threshold - EXCESS_EXPORT_HYSTERESIS
+        )
+
     # Compute household_consumption_total when solar entity provides ground truth
     if not solar_is_derived and solar_production_total > 0:
         export_power_after_feedback = site.export_current.total * site.voltage
@@ -1590,15 +1683,26 @@ def run_hub_calculation(sensor):
     grid_stale = grid_stale_duration > GRID_STALE_TIMEOUT
     if grid_stale:
         _LOGGER.warning(
-            "Grid CT unavailable for %.0fs (>%ds) — all chargers falling to minimum current",
+            "Grid CT unavailable for %.0fs (>%ds) — charging EVSEs falling to "
+            "minimum current, binary loads switched off",
             grid_stale_duration,
             GRID_STALE_TIMEOUT,
         )
         for charger in site.chargers:
-            charger.allocated_current = (
-                charger.min_current if charger.connector_status == "Charging" else 0
-            )
-            charger.available_current = charger.min_current
+            # Only an EVSE already charging keeps a minimum-current permit (a
+            # hard stop mid-charge is worse than 6 A on a blind site). Binary
+            # loads (plugs/tanks) and idle EVSEs get no permit — a permit > 0
+            # switches a binary load ON, and energizing a load the engine had
+            # deliberately shed while it cannot see the site is unsafe.
+            if (
+                charger.device_type == DEVICE_TYPE_EVSE
+                and charger.connector_status == "Charging"
+            ):
+                charger.allocated_current = charger.min_current
+                charger.available_current = charger.min_current
+            else:
+                charger.allocated_current = 0
+                charger.available_current = 0
 
     charger_targets = {c.charger_id: c.allocated_current for c in site.chargers}
     charger_available = {c.charger_id: c.available_current for c in site.chargers}

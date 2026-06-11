@@ -186,6 +186,7 @@ class SiteContext:
     power_buffer: float = 0
     excess_export_threshold: float = 13000
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
+    is_off_grid: bool = False  # True when no grid CT sensors are configured
 
     # Chargers at this site
     chargers: list[LoadContext] = field(default_factory=list)

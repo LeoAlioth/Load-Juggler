@@ -60,6 +60,7 @@ RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
 EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothing)
 DEAD_BAND = 0.3          # Ignore changes smaller than this (Schmitt trigger, amps)
 GRID_STALE_TIMEOUT = 60  # Seconds of grid CT unavailability before falling to min_current
+INPUT_STALE_TIMEOUT = 60  # Seconds of solar/battery/inverter sensor unavailability before falling back to a safe value
 SUSPENDED_EV_IDLE_TIMEOUT = 60  # Seconds of SuspendedEV + near-zero draw before treating as inactive
 
 # EVSE draw-settle detection — the measured draw is trusted as the EVSE's real
