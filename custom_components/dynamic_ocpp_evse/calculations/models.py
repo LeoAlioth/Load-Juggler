@@ -194,6 +194,16 @@ class SiteContext:
     # Circuit groups (shared breaker limits)
     circuit_groups: list[CircuitGroup] = field(default_factory=list)
 
+    def __post_init__(self):
+        # Voltage divides nearly every power→current conversion in the target
+        # calculator; a 0/negative reading (dead or misconfigured voltage entity)
+        # would raise ZeroDivisionError. Clamp to the standard default.
+        if not self.voltage or self.voltage <= 0:
+            _LOGGER.warning(
+                "SiteContext voltage was %s; clamping to 230 V", self.voltage
+            )
+            self.voltage = 230
+
     @property
     def num_phases(self) -> int:
         """Number of phases at this site, derived from consumption data."""

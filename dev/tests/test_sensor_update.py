@@ -24,6 +24,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_OCPP_DEVICE_ID,
     CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
     CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
+    CONF_EVSE_POWER_OFFERED_ENTITY_ID,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
@@ -1590,3 +1591,128 @@ async def test_dual_frequency_throttles_ocpp_commands(
         # Verify hub_data was STILL refreshed (site info updates every cycle)
         hub_data_2 = hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
         assert hub_data_2, "Hub data should still be populated on throttled cycle"
+
+
+# ── Watts-profile compliance: phase-count regression (ISSUES.md #9) ─────
+
+
+def _watts_power_offered_charger(hub_entry):
+    """A Watts-unit charger that reports compliance via a power_offered entity.
+
+    charger_id is "test_charger" so the derived connector-status entity matches
+    the one _set_ha_states drives to "Charging". No current_offered entity is
+    configured, forcing check_profile_compliance down the power_offered (W→A)
+    decode path.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Watts Power-Offered Charger",
+        data={
+            CONF_ENTITY_ID: "test_charger",
+            CONF_NAME: "Test Charger",
+            ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+            CONF_CHARGER_ID: "test_charger",
+            CONF_OCPP_DEVICE_ID: "test_charger",
+            CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.test_charger_current_import",
+            CONF_EVSE_POWER_OFFERED_ENTITY_ID: "sensor.test_charger_power_offered",
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={
+            CONF_CHARGER_PRIORITY: 1,
+            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+            CONF_CHARGE_RATE_UNIT: "W",
+            CONF_PROFILE_VALIDITY_MODE: "relative",
+            CONF_UPDATE_FREQUENCY: 15,
+            CONF_OCPP_PROFILE_TIMEOUT: 120,
+            CONF_CHARGE_PAUSE_DURATION: 3,
+            CONF_STACK_LEVEL: 3,
+        },
+    )
+
+
+async def test_compliance_watts_decode_uses_car_active_phases(
+    hass,
+    hub_entry,
+    setup_domain_data,
+):
+    """Regression for ISSUES.md #9: a 1-phase car on a 3-phase EVSE must not
+    trip a false compliance mismatch.
+
+    The command side (control/ocpp.py) encodes the W limit as
+    A x V x _car_active_phases, so 16 A on a 1-phase car => 3680 W. The
+    compliance decode must invert with the SAME factor. Decoding with the
+    hardware _phases (3) instead yields 3680 / (230 x 3) = 5.3 A, a permanent
+    ~10.7 A mismatch that drives the auto-reset loop.
+    """
+    from custom_components.dynamic_ocpp_evse.control.compliance import (
+        check_profile_compliance,
+    )
+
+    _set_ha_states(hass, hub_entry)
+
+    charger = _watts_power_offered_charger(hub_entry)
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger, hub_entry, "Test Charger", "test_charger", None
+    )
+    # 3-phase EVSE hardware, 1-phase car connected.
+    sensor._phases = 3
+    sensor._car_active_phases = 1
+    sensor._last_commanded_limit = 16.0
+    sensor._mismatch_count = 0
+
+    # Charger reports back the commanded power: 16 A x 230 V x 1 phase = 3680 W.
+    hass.states.async_set(
+        "sensor.test_charger_power_offered", "3680",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    await check_profile_compliance(sensor, 16.0, True)
+
+    assert sensor._mismatch_count == 0, (
+        "1-phase car at 16A on a 3-phase EVSE reporting 3680W is compliant; "
+        f"got mismatch_count={sensor._mismatch_count} (decode likely used the "
+        "hardware phase count instead of _car_active_phases)"
+    )
+
+
+async def test_compliance_watts_decode_detects_real_mismatch(
+    hass,
+    hub_entry,
+    setup_domain_data,
+):
+    """Positive control for #9: the W decode path is actually exercised and a
+    genuine shortfall still increments the mismatch counter.
+
+    Guards against the regression test passing only because an early return
+    (connector idle / cooldown) zeroed the counter.
+    """
+    from custom_components.dynamic_ocpp_evse.control.compliance import (
+        check_profile_compliance,
+    )
+
+    _set_ha_states(hass, hub_entry)
+
+    charger = _watts_power_offered_charger(hub_entry)
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger, hub_entry, "Test Charger", "test_charger", None
+    )
+    sensor._phases = 3
+    sensor._car_active_phases = 1
+    sensor._last_commanded_limit = 16.0
+    sensor._mismatch_count = 0
+
+    # Charger only offers 1840 W = 8 A on one phase, half the commanded 16 A.
+    hass.states.async_set(
+        "sensor.test_charger_power_offered", "1840",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    await check_profile_compliance(sensor, 16.0, True)
+
+    assert sensor._mismatch_count >= 1, (
+        "A real 8A-vs-16A shortfall on the W decode path should increment the "
+        f"mismatch counter; got mismatch_count={sensor._mismatch_count}"
+    )

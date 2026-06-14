@@ -75,7 +75,12 @@ async def check_profile_compliance(
         if state and state.state not in ("unknown", "unavailable", None, ""):
             try:
                 power_w = float(state.state)
-                phases = sensor._phases or 1
+                # Must mirror the command-side encoding in control/ocpp.py: the
+                # W limit is sent as A × V × _car_active_phases. Decoding with the
+                # hardware _phases instead would understate the offered current for
+                # a 1-phase car on a multi-phase EVSE (e.g. 3680W/3φ = 5.3A vs the
+                # 16A commanded), producing a perpetual compliance mismatch.
+                phases = sensor._car_active_phases or sensor._phases or 1
                 voltage = (
                     sensor.hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
                     if sensor.hub_entry

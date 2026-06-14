@@ -46,6 +46,8 @@
 - **`set_operating_mode` service accepts tank modes**: The service schema rejected the hot water tank modes ("Normal", "Freeze Protection"); they can now be set via the service.
 - **Config flow: edited OCPP device ID kept**: Editing the auto-detected OCPP device ID during charger setup was silently discarded and the detected value used instead. The edit is now honored.
 - **Status sensor names the missing input**: When a required sensor (solar, battery, grid, inverter output) is unavailable, the hub Status sensor now states exactly which input is needed instead of failing silently.
+- **1-phase cars on watt-reporting chargers no longer reset-loop**: On a 3-phase EVSE that takes its limit in watts, a 1-phase car was checked for compliance using the charger's hardware phase count instead of the car's active phases — so a correctly-followed 16 A limit read back as ~5 A and triggered a perpetual non-compliance auto-reset loop. The compliance check now uses the same phase count the limit was sent with.
+- **Zero site voltage no longer crashes the calculation**: A site phase voltage configured as 0 (or negative) caused a division-by-zero in the power calculation. It now falls back to 230 V with a warning.
 
 ---
 
