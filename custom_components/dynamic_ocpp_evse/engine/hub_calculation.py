@@ -1048,11 +1048,21 @@ def _build_hub_result(
 
     # Battery rated discharge power (gated by SOC >= minimum). This is the
     # battery's capability, not what is spare right now — see battery_remaining.
+    #
+    # Mirror the distribution engine's gate (_calculate_inverter_limit): in
+    # derived-solar mode the engine can only add battery discharge to the pool
+    # when a battery-power sensor is present (without it the battery's effect on
+    # the grid CT can't be untangled, so the engine treats it as 0). The display
+    # must use the same gate or these sensors would advertise battery headroom
+    # the engine never actually grants — masking exactly the case where a large
+    # load stays off despite a healthy SOC.
+    battery_discharge_unusable = site.solar_is_derived and battery_power is None
     if (
         battery_soc is not None
         and battery_soc_min is not None
         and battery_soc >= battery_soc_min
         and battery_max_discharge_power
+        and not battery_discharge_unusable
     ):
         battery_rated_discharge = round(float(battery_max_discharge_power), 0)
     else:
@@ -1146,6 +1156,20 @@ def _build_hub_result(
             grid_part = 0
         available_per_phase.append(round(grid_part + inverter_current_share, 1))
 
+    # Per-pool remaining current (A) — the headroom each source still offers to
+    # managed loads, broken out for diagnostics. grid + inverter is the total
+    # remaining current available to loads. solar and battery are the two parts
+    # that feed the inverter pool: the inverter figure is their sum capped by
+    # the inverter's own rated headroom, so it can be smaller than solar +
+    # battery when the inverter is the binding constraint. A managed load only
+    # turns on if its minimum current fits within the inverter (off-grid) or
+    # grid + inverter (grid-tied) figure — so a battery reading of ~0 here is
+    # the usual reason a large load stays off despite a healthy SOC.
+    grid_remaining_current = grid_headroom / voltage if voltage else 0
+    solar_remaining_current = solar_available / voltage if voltage else 0
+    battery_remaining_current = battery_remaining / voltage if voltage else 0
+    inverter_remaining_current = inverter_sourced / voltage if voltage else 0
+
     # Build per-charger operating modes dict
     charger_modes = {c.charger_id: c.operating_mode for c in site.chargers}
 
@@ -1196,6 +1220,10 @@ def _build_hub_result(
         "available_current_a": available_per_phase[0],
         "available_current_b": available_per_phase[1],
         "available_current_c": available_per_phase[2],
+        "available_grid_current": round(grid_remaining_current, 1),
+        "available_solar_current": round(solar_remaining_current, 1),
+        "available_battery_current": round(battery_remaining_current, 1),
+        "available_inverter_current": round(inverter_remaining_current, 1),
         "total_site_available_power": round(total_site_available, 0),
         "grid_power": round(net_consumption, 0),
         "available_grid_power": round(grid_headroom, 0),
