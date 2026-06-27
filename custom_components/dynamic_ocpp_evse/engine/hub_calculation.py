@@ -770,6 +770,34 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
         charger_rt.get("operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key),
     )
 
+    # Cold-tank promotion: a Solar Priority tank below its normal temperature is
+    # bumped to the Normal urgency tier so it beats other solar-priority loads
+    # in contention. Only the tier is raised — the behavior stays Solar Priority,
+    # so the tank still draws from solar + above-min battery and never deep-cycles
+    # the bank below its minimum SOC. Toggleable per tank (default on).
+    raw_temp = (
+        climate_state.attributes.get("current_temperature") if climate_state else None
+    )
+    try:
+        current_temp = float(raw_temp) if raw_temp is not None else None
+    except (TypeError, ValueError):
+        current_temp = None
+    normal_temp = charger_rt.get("tank_normal_temperature") or get_entry_value(
+        entry, CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE
+    )
+    mode_priority, elevated = resolve_tank_mode_priority(
+        mode.key,
+        mode.priority,
+        current_temp,
+        normal_temp,
+        get_entry_value(
+            entry,
+            CONF_TANK_PRIORITIZE_BELOW_NORMAL,
+            DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL,
+        ),
+    )
+    charger_rt["tank_priority_elevated"] = elevated
+
     charger = LoadContext(
         charger_id=entry.entry_id,
         entity_id=charger_entity_id,
@@ -782,7 +810,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
         device_type=DEVICE_TYPE_HOT_WATER_TANK,
         operating_mode=mode.key,
         mode_behavior=behavior_for(mode),
-        mode_priority=mode.priority,
+        mode_priority=mode_priority,
         rated_current=equivalent_current,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )

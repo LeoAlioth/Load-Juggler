@@ -13,10 +13,16 @@ CONF_TANK_POWER_DEVICE_ID = "tank_power_device_id"        # Optional device to r
 CONF_TANK_AWAY_TEMPERATURE = "tank_away_temperature"      # Frost-protection / minimal setpoint
 CONF_TANK_NORMAL_TEMPERATURE = "tank_normal_temperature"  # Baseline setpoint
 CONF_TANK_BOOST_TEMPERATURE = "tank_boost_temperature"    # High setpoint (surplus available)
+# When on, a Solar Priority tank that has dropped below its normal temperature
+# is promoted to the Normal urgency tier so it wins contention against other
+# solar-priority loads — without changing its source behavior, so it still
+# won't drain the battery below its minimum SOC.
+CONF_TANK_PRIORITIZE_BELOW_NORMAL = "tank_prioritize_below_normal"
 DEFAULT_HEATING_ELEMENT_POWER = 2000      # W
 DEFAULT_TANK_AWAY_TEMPERATURE = 30        # °C
 DEFAULT_TANK_NORMAL_TEMPERATURE = 45      # °C
 DEFAULT_TANK_BOOST_TEMPERATURE = 65       # °C
+DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL = True
 
 # Hot water tank operating modes. Each picks a setpoint (away/normal/boost)
 # dynamically via resolve_tank_setpoint(); priority is the distribution
@@ -37,3 +43,27 @@ OPERATING_MODES_HOT_WATER_TANK = [
     TANK_MODE_SOLAR_PRIORITY,
 ]
 DEFAULT_OPERATING_MODE_HOT_WATER_TANK = TANK_MODE_NORMAL
+
+
+def resolve_tank_mode_priority(
+    mode_key, mode_priority, current_temp, normal_temp, prioritize_cold
+):
+    """Effective urgency tier for a tank load.
+
+    A Solar Priority tank that has dropped below its normal setpoint is promoted
+    to the Normal urgency tier so it outranks other solar-priority loads when
+    power is contended. Only the tier changes — the caller keeps the Solar
+    Priority *behavior*, so the tank still draws from solar + above-minimum
+    battery and never deep-cycles the bank below its minimum SOC.
+
+    Pure function — unit-testable. Returns ``(effective_priority, elevated)``.
+    """
+    if (
+        prioritize_cold
+        and mode_key == TANK_MODE_SOLAR_PRIORITY.key
+        and current_temp is not None
+        and normal_temp is not None
+        and current_temp < normal_temp
+    ):
+        return TANK_MODE_NORMAL.priority, True
+    return mode_priority, False

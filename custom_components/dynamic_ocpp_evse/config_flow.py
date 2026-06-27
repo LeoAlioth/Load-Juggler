@@ -19,6 +19,7 @@ from .detection_patterns import (
     PLUG_POWER_MONITOR_PATTERNS,
 )
 from .helpers import (
+    get_entry_value,
     normalize_optional_entity,
     prettify_name,
     validate_charger_settings,
@@ -992,6 +993,13 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE
                     ),
                 ): _temp_selector(),
+                vol.Required(
+                    CONF_TANK_PRIORITIZE_BELOW_NORMAL,
+                    default=defaults.get(
+                        CONF_TANK_PRIORITIZE_BELOW_NORMAL,
+                        DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL,
+                    ),
+                ): selector({"boolean": {}}),
                 vol.Required(
                     CONF_CONNECTED_TO_PHASE,
                     default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
@@ -3002,15 +3010,12 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             )
             if not errors:
                 self._data.update(user_input)
-                return self.async_create_entry(
-                    title="",
-                    data={**self.config_entry.options, **self._data},
-                )
+                return await self.async_step_priority()
             return self.async_show_form(
                 step_id="hub",
                 data_schema=f._hub_battery_schema(user_input),
                 errors=errors,
-                last_step=True,
+                last_step=False,
             )
 
         # Auto-detect empty battery/solar entity fields
@@ -3038,8 +3043,96 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             step_id="hub",
             data_schema=f._hub_battery_schema(defaults),
             errors=errors,
+            last_step=False,
+        )
+
+    async def async_step_priority(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Hub options final step: reorder all controlled devices by priority.
+
+        Presents one ordered multi-select listing every load (EVSE, smart plug,
+        hot-water tank) linked to this hub. The selection order becomes the
+        served-first order: the first chip is priority 1, the next is 2, and so
+        on. This is the single place to set relative priority — the per-device
+        number is written back to each child entry from the chosen order.
+        """
+        chargers = self._controlled_devices()
+
+        def _save_hub() -> config_entries.FlowResult:
+            return self.async_create_entry(
+                title="",
+                data={**self.config_entry.options, **self._data},
+            )
+
+        # No loads to order yet — just persist the hub settings and finish.
+        if not chargers:
+            return _save_hub()
+
+        # Current order: by effective priority, then title for a stable tie-break.
+        ordered_now = sorted(
+            chargers,
+            key=lambda e: (
+                get_entry_value(e, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
+                e.title,
+            ),
+        )
+
+        if user_input is not None:
+            chosen = list(user_input.get(CONF_PRIORITY_ORDER, []))
+            # Append any device the user didn't place, preserving current order,
+            # so a missing chip never silently loses its ranking.
+            for entry in ordered_now:
+                if entry.entry_id not in chosen:
+                    chosen.append(entry.entry_id)
+
+            for rank, entry_id in enumerate(chosen, start=1):
+                child = self.hass.config_entries.async_get_entry(entry_id)
+                if not child:
+                    continue
+                if get_entry_value(child, CONF_CHARGER_PRIORITY, None) == rank:
+                    continue
+                self.hass.config_entries.async_update_entry(
+                    child,
+                    options={**child.options, CONF_CHARGER_PRIORITY: rank},
+                )
+            return _save_hub()
+
+        options = [
+            {"value": e.entry_id, "label": e.title or e.data.get(CONF_NAME, e.entry_id)}
+            for e in ordered_now
+        ]
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_PRIORITY_ORDER,
+                    default=[e.entry_id for e in ordered_now],
+                ): selector(
+                    {
+                        "select": {
+                            "options": options,
+                            "multiple": True,
+                            "mode": "dropdown",
+                            "sort": False,
+                        }
+                    }
+                ),
+            }
+        )
+        return self.async_show_form(
+            step_id="priority",
+            data_schema=schema,
             last_step=True,
         )
+
+    def _controlled_devices(self) -> list[config_entries.ConfigEntry]:
+        """All controllable load entries (EVSE, plug, tank) linked to this hub."""
+        return [
+            e
+            for e in self.hass.config_entries.async_entries(DOMAIN)
+            if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+            and e.data.get(CONF_HUB_ENTRY_ID) == self.config_entry.entry_id
+        ]
 
     async def async_step_charger(
         self, user_input: dict[str, Any] | None = None

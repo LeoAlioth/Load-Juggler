@@ -74,6 +74,10 @@ from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext,
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
 from custom_components.dynamic_ocpp_evse.calculations.utils import compute_household_per_phase
 from custom_components.dynamic_ocpp_evse.const.modes import resolve_operating_mode, behavior_for
+from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
+    resolve_tank_mode_priority,
+    DEFAULT_TANK_NORMAL_TEMPERATURE,
+)
 from custom_components.dynamic_ocpp_evse.const import DEFAULT_BATTERY_SOC_FULL, DEFAULT_PLUG_MAX_CURRENT
 
 # ---------------------------------------------------------------------------
@@ -467,6 +471,14 @@ def build_site_from_scenario(scenario):
             # Plug hardware rating (A) — the cap for available_current,
             # separate from the set-power slider.
             rated_current = charger_data.get("plug_max_current", DEFAULT_PLUG_MAX_CURRENT)
+        elif device_type == "hot_water_tank":
+            # Tank is a fixed-power binary load (like a plug): the heating
+            # element draws its full rating or nothing.
+            power_rating = charger_data.get("power_rating", 2000)
+            equiv_current = round(power_rating / (voltage * phases), 1)
+            min_current = equiv_current
+            max_current = equiv_current
+            rated_current = equiv_current
         else:
             min_current = charger_data.get("min_current", 6)
             max_current = charger_data.get("max_current", 16)
@@ -483,6 +495,19 @@ def build_site_from_scenario(scenario):
         # Resolve to the device type's OperatingMode → engine behavior + urgency
         _mode = resolve_operating_mode(device_type, operating_mode)
 
+        # Cold-tank promotion: a Solar Priority tank below its normal temperature
+        # is bumped to the Normal urgency tier (behavior unchanged). Mirrors the
+        # production builder in engine/hub_calculation.py.
+        mode_priority = _mode.priority
+        if device_type == "hot_water_tank":
+            mode_priority, _ = resolve_tank_mode_priority(
+                _mode.key,
+                _mode.priority,
+                charger_data.get("current_temperature"),
+                charger_data.get("normal_temperature", DEFAULT_TANK_NORMAL_TEMPERATURE),
+                charger_data.get("prioritize_below_normal", True),
+            )
+
         charger = LoadContext(
             charger_id=f"charger_{idx}",
             entity_id=charger_data.get("entity_id", f"charger_{idx}"),
@@ -493,7 +518,7 @@ def build_site_from_scenario(scenario):
             device_type=device_type,
             operating_mode=_mode.key,
             mode_behavior=behavior_for(_mode),
-            mode_priority=_mode.priority,
+            mode_priority=mode_priority,
             l1_phase=charger_data.get("l1_phase", "A"),
             l2_phase=charger_data.get("l2_phase", "B"),
             l3_phase=charger_data.get("l3_phase", "C"),
@@ -614,10 +639,29 @@ def print_scenario_params(scenario):
         if dev_type == 'plug':
             power = ch.get('power_rating', 2000)
             print(f"  Charger {eid}: plug {power}W {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
+        elif dev_type == 'hot_water_tank':
+            power = ch.get('power_rating', 2000)
+            ctemp = ch.get('current_temperature')
+            ntemp = ch.get('normal_temperature', DEFAULT_TANK_NORMAL_TEMPERATURE)
+            # Mirror resolve_tank_mode_priority: a cold Solar Priority tank is
+            # promoted to the Normal urgency tier (1) for the distribution sort.
+            promoted = (
+                ch.get('prioritize_below_normal', True)
+                and op_mode == 'Solar Priority'
+                and ctemp is not None
+                and ctemp < ntemp
+            )
+            if ctemp is None:
+                temp_str = ""
+            elif promoted:
+                temp_str = f" temp={ctemp}<{ntemp}°C→PROMOTED(tier 1)"
+            else:
+                temp_str = f" temp={ctemp}°C"
+            print(f"  Charger {eid}: tank {power}W {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str}{temp_str} [{status}]")
         else:
             min_c = ch.get('min_current', 6)
             max_c = ch.get('max_current', 16)
-            print(f"  Charger {eid}: {min_c}-{max_c}A {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
+            print(f"  Charger {eid}: evse {min_c}-{max_c}A {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
 
     # Expected
     expected = scenario.get('expected', {})

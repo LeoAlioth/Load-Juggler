@@ -13,6 +13,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     TANK_MODE_NORMAL,
     TANK_MODE_SOLAR_PRIORITY,
 )
+from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
+    resolve_tank_mode_priority,
+)
 
 AWAY, NORMAL, BOOST = 30.0, 45.0, 65.0
 ELEMENT_POWER = 2000.0
@@ -38,23 +41,26 @@ def test_freeze_protection_always_away():
         assert result == (AWAY, "away")
 
 
-# --- Solar Only: setpoint follows the battery SOC band ---
+# --- Solar Priority: setpoint follows the battery SOC band ---
+#   below min SOC      → away
+#   between min/target → normal
+#   at or above target → boost
 
-def test_solar_only_below_min_soc_is_away():
+def test_solar_priority_below_min_soc_is_away():
     result = resolve_tank_setpoint(
         TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, _hub(soc=15)
     )
     assert result == (AWAY, "away")
 
 
-def test_solar_only_between_min_and_target_is_normal():
+def test_solar_priority_between_min_and_target_is_normal():
     result = resolve_tank_setpoint(
         TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, _hub(soc=50)
     )
     assert result == (NORMAL, "normal")
 
 
-def test_solar_only_at_or_above_target_is_boost():
+def test_solar_priority_at_or_above_target_is_boost():
     for soc in (80, 95):
         result = resolve_tank_setpoint(
             TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
@@ -63,7 +69,7 @@ def test_solar_only_at_or_above_target_is_boost():
         assert result == (BOOST, "boost")
 
 
-def test_solar_only_no_battery_defaults_normal():
+def test_solar_priority_no_battery_defaults_normal():
     result = resolve_tank_setpoint(
         TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, _hub(soc=None)
     )
@@ -127,3 +133,58 @@ def test_normal_offgrid_full_battery_boosts_without_export():
         _hub(soc=90, soc_target=80, export=0),
     )
     assert result == (BOOST, "boost")
+
+
+# --- Cold-tank priority promotion ---------------------------------------------
+#
+# resolve_tank_mode_priority promotes a Solar Priority tank below its normal
+# temperature to the Normal urgency tier (1) so it outranks other solar-priority
+# loads. Only the tier changes — the behavior stays Solar Priority elsewhere.
+
+SOLAR = TANK_MODE_SOLAR_PRIORITY.key
+SOLAR_TIER = TANK_MODE_SOLAR_PRIORITY.priority   # 2
+NORMAL_TIER = TANK_MODE_NORMAL.priority          # 1
+
+
+def test_promotion_cold_solar_priority_tank_is_elevated():
+    assert resolve_tank_mode_priority(SOLAR, SOLAR_TIER, 38, 45, True) == (
+        NORMAL_TIER,
+        True,
+    )
+
+
+def test_promotion_warm_tank_keeps_tier():
+    assert resolve_tank_mode_priority(SOLAR, SOLAR_TIER, 47, 45, True) == (
+        SOLAR_TIER,
+        False,
+    )
+
+
+def test_promotion_at_normal_temp_is_not_elevated():
+    # Exactly at the setpoint counts as warm — only strictly below promotes.
+    assert resolve_tank_mode_priority(SOLAR, SOLAR_TIER, 45, 45, True) == (
+        SOLAR_TIER,
+        False,
+    )
+
+
+def test_promotion_disabled_toggle_keeps_tier():
+    assert resolve_tank_mode_priority(SOLAR, SOLAR_TIER, 38, 45, False) == (
+        SOLAR_TIER,
+        False,
+    )
+
+
+def test_promotion_only_applies_to_solar_priority():
+    # A Normal-mode tank is already tier 1; promotion logic must not touch it.
+    assert resolve_tank_mode_priority(
+        TANK_MODE_NORMAL.key, NORMAL_TIER, 38, 45, True
+    ) == (NORMAL_TIER, False)
+
+
+def test_promotion_missing_temperature_keeps_tier():
+    # Climate entity not reporting a current temperature → no promotion.
+    assert resolve_tank_mode_priority(SOLAR, SOLAR_TIER, None, 45, True) == (
+        SOLAR_TIER,
+        False,
+    )

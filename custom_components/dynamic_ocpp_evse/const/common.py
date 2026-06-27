@@ -31,6 +31,7 @@ DEVICE_TYPE_GROUP = "group"
 CONF_HUB_ENTRY_ID = "hub_entry_id"
 CONF_CHARGER_ID = "charger_id"
 CONF_CHARGER_PRIORITY = "charger_priority"
+CONF_PRIORITY_ORDER = "priority_order"  # Transient form key: ordered list of device entry_ids (hub options)
 CONF_CONNECTED_TO_PHASE = "connected_to_phase"  # Which phase(s) the device is wired to
 CONF_UPDATE_FREQUENCY = "update_frequency"
 

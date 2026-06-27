@@ -1,0 +1,233 @@
+# Test scenarios: cold hot-water-tank priority promotion (off-grid)
+#
+# Site = Anže's off-grid setup: Victron MultiPlus 5000/24 (single phase),
+# 10 kWh battery, 3 MPPTs. Three managed loads, all in Solar Priority:
+#   - pond pump   (smart plug, 1.4 kW, priority 1)
+#   - power strip (smart plug, 200 W,  priority 2)
+#   - hot water tank (boiler,  2 kW,   priority 3)
+#
+# All three share the Solar Priority urgency tier, so the configured priority
+# number (1/2/3) normally decides who wins when power is short — leaving the
+# tank, at priority 3, to lose. The cold-tank promotion changes that: a Solar
+# Priority tank BELOW its normal temperature is bumped to the Normal urgency
+# tier, so it outranks the other solar-priority loads until it warms up.
+#
+# Contention is created with the inverter, not the battery: the battery sits at
+# 50% (above its 20% minimum, so the SOC-gated smart plugs are eligible to run)
+# and the inverter per-phase output is capped so the three loads cannot all be
+# served at once. ~2 kW of throughput is enough for the two plugs OR the tank
+# alone — forcing the contest the promotion is meant to resolve.
+
+scenarios:
+
+  - name: "tank-cold-wins-over-solar-priority-plugs"
+    description: "Cold tank (38<45°C) promoted to Normal tier → wins the capped 2kW pool; pond + strip shed"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 32
+      distribution_mode: priority
+      solar_production: 1500
+      phase_a_consumption: 0.0
+      battery_soc: 50            # above minimum → plugs eligible; inverter cap forces the contest
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 2100
+      inverter_max_power_per_phase: 2100
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    chargers:
+      - entity_id: "pond_pump"
+        device_type: "plug"
+        operating_mode: "Solar Priority"
+        power_rating: 1400
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "power_strip"
+        device_type: "plug"
+        operating_mode: "Solar Priority"
+        power_rating: 200
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+      - entity_id: "water_tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Solar Priority"
+        power_rating: 2000
+        phases: 1
+        priority: 3
+        current_temperature: 38
+        normal_temperature: 45
+        prioritize_below_normal: true
+        l1_phase: "A"
+    expected:
+      water_tank:
+        allocated: 8.7    # 2000 W / 230 V — promoted tank takes the pool first
+      pond_pump:
+        allocated: 0.0
+      power_strip:
+        allocated: 0.0
+
+  - name: "tank-warm-yields-to-configured-priority"
+    description: "Warm tank (47>45°C) stays tier 2 → pond + strip win on prio 1/2, tank sheds"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 32
+      distribution_mode: priority
+      solar_production: 1500
+      phase_a_consumption: 0.0
+      battery_soc: 50
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 2100
+      inverter_max_power_per_phase: 2100
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    chargers:
+      - entity_id: "pond_pump"
+        device_type: "plug"
+        operating_mode: "Solar Priority"
+        power_rating: 1400
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "power_strip"
+        device_type: "plug"
+        operating_mode: "Solar Priority"
+        power_rating: 200
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+      - entity_id: "water_tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Solar Priority"
+        power_rating: 2000
+        phases: 1
+        priority: 3
+        current_temperature: 47
+        normal_temperature: 45
+        prioritize_below_normal: true
+        l1_phase: "A"
+    expected:
+      pond_pump:
+        allocated: 6.1    # 1400 W
+      power_strip:
+        allocated: 0.9    # 200 W — fits in remaining pool
+      water_tank:
+        allocated: 0.0    # 2 kW does not fit after pond + strip
+
+  - name: "tank-cold-but-promotion-disabled-keeps-priority"
+    description: "Cold tank but prioritize_below_normal=false → no promotion → behaves like the warm case"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 32
+      distribution_mode: priority
+      solar_production: 1500
+      phase_a_consumption: 0.0
+      battery_soc: 50
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 2100
+      inverter_max_power_per_phase: 2100
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    chargers:
+      - entity_id: "pond_pump"
+        device_type: "plug"
+        operating_mode: "Solar Priority"
+        power_rating: 1400
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "power_strip"
+        device_type: "plug"
+        operating_mode: "Solar Priority"
+        power_rating: 200
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+      - entity_id: "water_tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Solar Priority"
+        power_rating: 2000
+        phases: 1
+        priority: 3
+        current_temperature: 38
+        normal_temperature: 45
+        prioritize_below_normal: false
+        l1_phase: "A"
+    expected:
+      pond_pump:
+        allocated: 6.1
+      power_strip:
+        allocated: 0.9
+      water_tank:
+        allocated: 0.0
+
+  - name: "tank-cold-plenty-of-power-all-run"
+    description: "Cold tank promoted but the inverter has headroom for all three → nobody is shed (promotion is harmless when uncontended)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 32
+      distribution_mode: priority
+      solar_production: 4000
+      phase_a_consumption: 0.0
+      battery_soc: 50
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 5000
+      inverter_max_power_per_phase: 5000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    chargers:
+      - entity_id: "pond_pump"
+        device_type: "plug"
+        operating_mode: "Solar Priority"
+        power_rating: 1400
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "power_strip"
+        device_type: "plug"
+        operating_mode: "Solar Priority"
+        power_rating: 200
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+      - entity_id: "water_tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Solar Priority"
+        power_rating: 2000
+        phases: 1
+        priority: 3
+        current_temperature: 38
+        normal_temperature: 45
+        prioritize_below_normal: true
+        l1_phase: "A"
+    expected:
+      pond_pump:
+        allocated: 6.1
+      power_strip:
+        allocated: 0.9
+      water_tank:
+        allocated: 8.7

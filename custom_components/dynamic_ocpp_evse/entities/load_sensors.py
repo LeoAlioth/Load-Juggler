@@ -306,6 +306,7 @@ class LoadJugglerTankStatusSensor(ChargerEntityMixin, SensorEntity):
                 "target_setpoint": charger_rt.get("tank_setpoint"),
                 "setpoint_source": charger_rt.get("tank_setpoint_label"),
                 "heating_permitted": charger_rt.get("tank_heating_permitted"),
+                "priority_elevated": charger_rt.get("tank_priority_elevated", False),
             }
         except Exception as e:
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)

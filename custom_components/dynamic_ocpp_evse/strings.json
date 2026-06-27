@@ -148,6 +148,7 @@
                     "tank_away_temperature": "Away temperature",
                     "tank_normal_temperature": "Normal temperature",
                     "tank_boost_temperature": "Boost temperature",
+                    "tank_prioritize_below_normal": "Prioritize over other solar-priority loads when below normal temperature",
                     "connected_to_phase": "Connected to phase",
                     "charger_priority": "Priority (1 = highest)",
                     "tank_power_entity_id": "Power sensor (optional)",
@@ -327,6 +328,7 @@
                     "tank_away_temperature": "Away temperature",
                     "tank_normal_temperature": "Normal temperature",
                     "tank_boost_temperature": "Boost temperature",
+                    "tank_prioritize_below_normal": "Prioritize over other solar-priority loads when below normal temperature",
                     "connected_to_phase": "Connected to phase",
                     "charger_priority": "Priority (1 = highest)",
                     "tank_power_entity_id": "Power sensor (optional)",
@@ -404,6 +406,13 @@
     },
     "options": {
         "step": {
+            "priority": {
+                "title": "Device Priority Order",
+                "description": "Pick the devices in the order you want them served — the first one you select is priority 1 (served first when power is contended), the next is priority 2, and so on. To change the order, remove the chips and re-add them in the order you want. Any device you leave out keeps its current ranking at the end. Note: an operating mode's urgency tier can still override this order.",
+                "data": {
+                    "priority_order": "Priority order (first = highest priority)"
+                }
+            },
             "hub_grid": {
                 "title": "Update Grid Settings",
                 "description": "Update your grid and electrical configuration",
@@ -501,6 +510,7 @@
                     "tank_away_temperature": "Away temperature",
                     "tank_normal_temperature": "Normal temperature",
                     "tank_boost_temperature": "Boost temperature",
+                    "tank_prioritize_below_normal": "Prioritize over other solar-priority loads when below normal temperature",
                     "connected_to_phase": "Connected to phase",
                     "charger_priority": "Priority (1 = highest)",
                     "tank_power_entity_id": "Power sensor (optional)",

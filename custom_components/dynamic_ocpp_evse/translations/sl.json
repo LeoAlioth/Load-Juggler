@@ -155,6 +155,7 @@
                     "tank_away_temperature": "Temperatura odsotnosti",
                     "tank_normal_temperature": "Normalna temperatura",
                     "tank_boost_temperature": "Boost temperatura",
+                    "tank_prioritize_below_normal": "Prednost pred drugimi solarno-prioritetnimi porabniki, ko je pod normalno temperaturo",
                     "connected_to_phase": "Priključeno na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
@@ -336,6 +337,7 @@
                     "tank_away_temperature": "Temperatura odsotnosti",
                     "tank_normal_temperature": "Normalna temperatura",
                     "tank_boost_temperature": "Boost temperatura",
+                    "tank_prioritize_below_normal": "Prednost pred drugimi solarno-prioritetnimi porabniki, ko je pod normalno temperaturo",
                     "connected_to_phase": "Priključeno na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
@@ -433,6 +435,13 @@
     },
     "options": {
         "step": {
+            "priority": {
+                "title": "Vrstni red prioritet naprav",
+                "description": "Naprave izbirajte v vrstnem redu, po katerem želite, da se napajajo — prva izbrana ima prioriteto 1 (napaja se prva, ko zmanjka moči), naslednja prioriteto 2 itd. Za spremembo vrstnega reda odstranite oznake in jih znova dodajte v želenem vrstnem redu. Naprava, ki jo izpustite, ohrani svojo trenutno prioriteto na koncu. Opomba: stopnja nujnosti načina delovanja lahko še vedno prevlada nad tem vrstnim redom.",
+                "data": {
+                    "priority_order": "Vrstni red prioritet (prva = najvišja prioriteta)"
+                }
+            },
             "hub_grid": {
                 "title": "Posodobi nastavitve omrežja",
                 "description": "Posodobite omrežje in električne nastavitve",
@@ -532,6 +541,7 @@
                     "tank_away_temperature": "Temperatura odsotnosti",
                     "tank_normal_temperature": "Normalna temperatura",
                     "tank_boost_temperature": "Boost temperatura",
+                    "tank_prioritize_below_normal": "Prednost pred drugimi solarno-prioritetnimi porabniki, ko je pod normalno temperaturo",
                     "connected_to_phase": "Priključeno na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
