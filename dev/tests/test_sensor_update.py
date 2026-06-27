@@ -744,6 +744,41 @@ async def test_watts_charge_rate_conversion(
         assert profile["chargingSchedule"]["chargingRateUnit"] == "W"
 
 
+# ── Hub status: name the unavailable sensor ──────────────────────────
+
+
+async def test_hub_status_names_unavailable_sensor(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """An unavailable configured sensor is named in the status line itself,
+    not just buried in the warnings attribute."""
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    # Knock out the battery power sensor.
+    hass.states.async_set(
+        "sensor.battery_power", "unavailable",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    result = run_hub_calculation(sensor)
+
+    # The status line names the sensor; the warning carries the entity_id.
+    assert result["hub_status"].startswith("Sensor unavailable:")
+    assert "Battery power sensor" in result["hub_status"]
+    assert any(
+        "sensor.battery_power" in w for w in result["hub_warnings"]
+    )
+
+
 # ── Result dict completeness test ────────────────────────────────────
 
 
@@ -786,6 +821,10 @@ async def test_result_dict_all_keys_populated(
         "available_current_a",
         "available_current_b",
         "available_current_c",
+        "available_grid_current",
+        "available_solar_current",
+        "available_battery_current",
+        "available_inverter_current",
         "total_site_available_power",
         "grid_power",
         "available_grid_power",

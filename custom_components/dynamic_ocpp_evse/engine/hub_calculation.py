@@ -176,13 +176,15 @@ def _coerce(v, default=0):
 
 
 def _check_entity_availability(hass, hub_entry) -> list:
-    """Return warnings for hub-configured entities that are currently unavailable.
+    """Return unavailable hub-configured entities as ``(label, entity_id)``.
 
     Grid CTs are tracked separately (stale-timeout logic); this covers the
     solar, battery, inverter-output and max-import-power sensors so a missing
     feed shows up on the hub Status sensor instead of silently defaulting to 0.
+    Returns the short label and the entity_id so the caller can both name the
+    sensor in the status line and spell out the full detail in a warning.
     """
-    warnings = []
+    unavailable = []
     checks = (
         ("Solar production sensor", CONF_SOLAR_PRODUCTION_ENTITY_ID),
         ("Battery SOC sensor", CONF_BATTERY_SOC_ENTITY_ID),
@@ -198,8 +200,8 @@ def _check_entity_availability(hass, hub_entry) -> list:
             continue
         state = hass.states.get(entity_id)
         if state is None or state.state in ("unknown", "unavailable", ""):
-            warnings.append(f"{label} ({entity_id}) is unavailable")
-    return warnings
+            unavailable.append((label, entity_id))
+    return unavailable
 
 
 def _fv(v):
@@ -1876,12 +1878,20 @@ def run_hub_calculation(sensor):
             f"Grid CT sensors unavailable (stale for {grid_stale_duration:.0f}s)."
         )
 
-    # Configured non-grid sensors that are currently unavailable.
-    unavailable_warnings = _check_entity_availability(hass, hub_entry)
-    if unavailable_warnings:
-        hub_warnings.extend(unavailable_warnings)
+    # Configured non-grid sensors that are currently unavailable. Name them in
+    # the status line itself (not just the warnings attribute) so the user sees
+    # *which* sensor dropped out at a glance, without expanding attributes.
+    unavailable = _check_entity_availability(hass, hub_entry)
+    if unavailable:
+        hub_warnings.extend(
+            f"{label} ({entity_id}) is unavailable" for label, entity_id in unavailable
+        )
         if hub_status == "OK":
-            hub_status = "Sensor unavailable"
+            labels = [label for label, _ in unavailable]
+            named = ", ".join(labels[:2])
+            if len(labels) > 2:
+                named += f" +{len(labels) - 2} more"
+            hub_status = f"Sensor unavailable: {named}"
 
     # --- Build result ---
     return _build_hub_result(
