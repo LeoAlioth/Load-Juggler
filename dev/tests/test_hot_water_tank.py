@@ -31,14 +31,31 @@ def _hub(soc=None, soc_min=20, soc_target=80, export=0):
     }
 
 
-# --- Freeze Protection: always the away setpoint ---
+# --- Freeze Protection: away, raised to boost on surplus (export or full battery) ---
 
-def test_freeze_protection_always_away():
-    for hub in (_hub(), _hub(soc=10), _hub(soc=95, export=9999)):
+def test_freeze_protection_no_surplus_is_away():
+    for hub in (_hub(), _hub(soc=10), _hub(soc=50, export=0)):
         result = resolve_tank_setpoint(
             TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, hub
         )
         assert result == (AWAY, "away")
+
+
+def test_freeze_protection_over_target_soc_is_boost():
+    result = resolve_tank_setpoint(
+        TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        _hub(soc=85, soc_target=80, export=0),
+    )
+    assert result == (BOOST, "boost")
+
+
+def test_freeze_protection_export_above_element_power_is_boost():
+    # On-grid, no battery: export surplus alone lifts freeze protection to boost.
+    result = resolve_tank_setpoint(
+        TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        _hub(soc=None, export=ELEMENT_POWER + 500),
+    )
+    assert result == (BOOST, "boost")
 
 
 # --- Solar Priority: setpoint follows the battery SOC band ---

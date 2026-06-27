@@ -160,7 +160,7 @@
                     "entity_id": "Used as a prefix for entities created by this integration.",
                     "climate_entity_id": "The climate entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint.",
                     "heating_element_power": "Rated power of the heating element — used for power allocation when no power sensor is configured.",
-                    "tank_away_temperature": "Minimal / frost-protection setpoint. Used by Freeze Protection mode and as the low end of Solar Only.",
+                    "tank_away_temperature": "Minimal / frost-protection setpoint. Used by Freeze Protection mode and as the low end of Solar Priority.",
                     "tank_normal_temperature": "Baseline target temperature.",
                     "tank_boost_temperature": "High target used when surplus energy is available or the battery is above its target SOC.",
                     "connected_to_phase": "Which electrical phase(s) the heating element is wired to.",
@@ -168,7 +168,7 @@
                     "tank_power_entity_id": "Optional sensor reporting the element's live power draw — used instead of the fixed rating when present.",
                     "tank_power_device_id": "Optionally pick the smart relay/outlet powering the tank; its power sensor is resolved automatically.",
                     "update_frequency": "How often to re-evaluate the tank.",
-                    "solar_grace_period": "In Solar Only mode, how long to keep heating at minimum when conditions are no longer met before stopping."
+                    "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping."
                 }
             },
             "discover_chargers": {
@@ -229,6 +229,27 @@
                     "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
                     "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
+                }
+            },
+            "reconfigure": {
+                "title": "Reconfigure",
+                "description": "Pick what you'd like to change. Each section is saved when you submit it — choose Done when you're finished.",
+                "menu_options": {
+                    "reconfigure_hub_grid": "Grid settings",
+                    "reconfigure_hub_inverter": "Inverter settings",
+                    "reconfigure_hub_battery": "Battery & solar settings",
+                    "reconfigure_priority": "Device priority order",
+                    "reconfigure_charger": "Priority & OCPP device",
+                    "reconfigure_charger_current": "Current limits & phases",
+                    "reconfigure_charger_timing": "Units & timing",
+                    "reconfigure_finish": "Done"
+                }
+            },
+            "reconfigure_priority": {
+                "title": "Device Priority Order",
+                "description": "Pick the devices in the order you want them served — the first one you select is priority 1 (served first when power is contended), the next is priority 2, and so on. To change the order, remove the chips and re-add them in the order you want. Any device you leave out keeps its current ranking at the end. Note: an operating mode's urgency tier can still override this order.",
+                "data": {
+                    "priority_order": "Priority order (first = highest priority)"
                 }
             },
             "reconfigure_hub_grid": {

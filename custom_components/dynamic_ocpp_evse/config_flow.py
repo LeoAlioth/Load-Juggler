@@ -71,6 +71,75 @@ def _compose_entry_title(name: str, type_label: str) -> str:
     return f"{name} {type_label}"
 
 
+# --- Device-priority reordering (shared by the options and reconfigure flows) ---
+
+def _controlled_devices(hass, hub_entry_id: str) -> list:
+    """All controllable load entries (EVSE, plug, tank) linked to a hub."""
+    return [
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+        and e.data.get(CONF_HUB_ENTRY_ID) == hub_entry_id
+    ]
+
+
+def _devices_by_priority(devices: list) -> list:
+    """Devices sorted by effective priority, then title for a stable tie-break."""
+    return sorted(
+        devices,
+        key=lambda e: (
+            get_entry_value(e, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
+            e.title,
+        ),
+    )
+
+
+def _priority_order_schema(devices: list) -> vol.Schema:
+    """Ordered multi-select listing every controlled device, current order first."""
+    ordered = _devices_by_priority(devices)
+    options = [
+        {"value": e.entry_id, "label": e.title or e.data.get(CONF_NAME, e.entry_id)}
+        for e in ordered
+    ]
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_PRIORITY_ORDER,
+                default=[e.entry_id for e in ordered],
+            ): selector(
+                {
+                    "select": {
+                        "options": options,
+                        "multiple": True,
+                        "mode": "dropdown",
+                        "sort": False,
+                    }
+                }
+            ),
+        }
+    )
+
+
+def _apply_priority_order(hass, devices: list, chosen: list) -> None:
+    """Write rank 1..N to each device from the chosen order.
+
+    Devices the user left out keep their current ranking at the end. Only the
+    per-device priority number is touched, so the distribution engine is
+    unchanged — it still sorts by (mode urgency, priority).
+    """
+    placed = list(chosen)
+    for entry in _devices_by_priority(devices):
+        if entry.entry_id not in placed:
+            placed.append(entry.entry_id)
+    for rank, entry_id in enumerate(placed, start=1):
+        child = hass.config_entries.async_get_entry(entry_id)
+        if not child or get_entry_value(child, CONF_CHARGER_PRIORITY, None) == rank:
+            continue
+        hass.config_entries.async_update_entry(
+            child, options={**child.options, CONF_CHARGER_PRIORITY: rank}
+        )
+
+
 class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Load Juggler."""
 
@@ -2467,7 +2536,13 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Handle reconfiguration."""
+        """Reconfigure entry point — a menu that routes to focused setup pages.
+
+        Multi-section devices (hub, EVSE) show a menu; each page saves on submit
+        and returns here so several sections can be edited in one sitting, then
+        "Done" closes. Single-page devices (plug, tank) go straight to their
+        form.
+        """
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         if not entry:
             return self.async_abort(reason="entry_not_found")
@@ -2477,13 +2552,61 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Legacy entries without entry_type are hubs
         if not entry_type or entry_type == ENTRY_TYPE_HUB:
-            return await self.async_step_reconfigure_hub_grid()
-        elif entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG:
-            return await self.async_step_reconfigure_plug()
-        elif entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_HOT_WATER_TANK:
-            return await self.async_step_reconfigure_hot_water_tank()
-        else:
-            return await self.async_step_reconfigure_charger()
+            return self.async_show_menu(
+                step_id="reconfigure",
+                menu_options=[
+                    "reconfigure_hub_grid",
+                    "reconfigure_hub_inverter",
+                    "reconfigure_hub_battery",
+                    "reconfigure_priority",
+                    "reconfigure_finish",
+                ],
+            )
+        if entry_type == ENTRY_TYPE_CHARGER:
+            device_type = entry.data.get(CONF_DEVICE_TYPE)
+            if device_type == DEVICE_TYPE_PLUG:
+                return await self.async_step_reconfigure_plug()
+            if device_type == DEVICE_TYPE_HOT_WATER_TANK:
+                return await self.async_step_reconfigure_hot_water_tank()
+            return self.async_show_menu(
+                step_id="reconfigure",
+                menu_options=[
+                    "reconfigure_charger",
+                    "reconfigure_charger_current",
+                    "reconfigure_charger_timing",
+                    "reconfigure_finish",
+                ],
+            )
+        return await self.async_step_reconfigure_charger()
+
+    async def async_step_reconfigure_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Close the reconfigure menu — each section was saved when submitted."""
+        return self.async_abort(reason="reconfigure_successful")
+
+    async def async_step_reconfigure_priority(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Reorder all controlled devices by priority, then return to the menu."""
+        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
+        devices = _controlled_devices(self.hass, entry.entry_id)
+
+        # Nothing to order yet — drop straight back to the menu.
+        if not devices:
+            return await self.async_step_reconfigure()
+
+        if user_input is not None:
+            _apply_priority_order(
+                self.hass, devices, list(user_input.get(CONF_PRIORITY_ORDER, []))
+            )
+            return await self.async_step_reconfigure()
+
+        return self.async_show_form(
+            step_id="reconfigure_priority",
+            data_schema=_priority_order_schema(devices),
+            last_step=False,
+        )
 
     async def async_step_reconfigure_hub_grid(
         self, user_input: dict[str, Any] | None = None
@@ -2509,8 +2632,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors,
             )
             if not errors:
-                self._data.update(user_input)
-                return await self.async_step_reconfigure_hub_inverter()
+                self.hass.config_entries.async_update_entry(
+                    entry, options={**entry.options, **user_input}
+                )
+                return await self.async_step_reconfigure()
             return self.async_show_form(
                 step_id="reconfigure_hub_grid",
                 data_schema=self._hub_grid_schema(user_input),
@@ -2554,21 +2679,18 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
                 errors,
             )
-            validate_offgrid_battery_requirement(
-                {**defaults, **self._data}, user_input, errors
-            )
+            validate_offgrid_battery_requirement(defaults, user_input, errors)
             if not errors:
-                self._data.update(user_input)
                 self.hass.config_entries.async_update_entry(
                     entry,
-                    options={**entry.options, **self._data},
+                    options={**entry.options, **user_input},
                 )
-                return self.async_abort(reason="reconfigure_successful")
+                return await self.async_step_reconfigure()
             return self.async_show_form(
                 step_id="reconfigure_hub_battery",
                 data_schema=self._hub_battery_schema(user_input),
                 errors=errors,
-                last_step=True,
+                last_step=False,
             )
 
         data_schema = self._hub_battery_schema(defaults)
@@ -2577,7 +2699,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reconfigure_hub_battery",
             data_schema=data_schema,
             errors=errors,
-            last_step=True,
+            last_step=False,
         )
 
     async def async_step_reconfigure_hub_inverter(
@@ -2606,9 +2728,12 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors,
             )
             if not errors:
-                self._data.update(user_input)
+                self._data = dict(user_input)
                 self._normalize_inverter_powers()
-                return await self.async_step_reconfigure_hub_battery()
+                self.hass.config_entries.async_update_entry(
+                    entry, options={**entry.options, **self._data}
+                )
+                return await self.async_step_reconfigure()
             battery_hint = self._auto_detect_entity_value(
                 BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR
             )
@@ -2646,14 +2771,16 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure_charger(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Reconfigure charger step 1: Info (priority and OCPP device ID)."""
+        """Reconfigure charger: priority and OCPP device ID."""
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         defaults = {**entry.data, **entry.options}
 
         if user_input is not None:
-            self._data.update(user_input)
-            return await self.async_step_reconfigure_charger_current()
+            self.hass.config_entries.async_update_entry(
+                entry, options={**entry.options, **user_input}
+            )
+            return await self.async_step_reconfigure()
 
         # Build schema with priority and OCPP Device ID
         fields = {
@@ -2693,25 +2820,28 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         hub_phases = self._get_hub_phase_count(hub_entry_id)
 
         if user_input is not None:
-            self._data.update(user_input)
+            data = dict(user_input)
             # Auto-fill hidden phase mappings to match L1
-            l1 = self._data.get(CONF_CHARGER_L1_PHASE, "A")
+            l1 = data.get(CONF_CHARGER_L1_PHASE, "A")
             if hub_phases < 2:
-                self._data[CONF_CHARGER_L2_PHASE] = l1
+                data[CONF_CHARGER_L2_PHASE] = l1
             if hub_phases < 3:
-                self._data[CONF_CHARGER_L3_PHASE] = l1
+                data[CONF_CHARGER_L3_PHASE] = l1
 
-            validate_charger_settings(self._data, errors)
+            validate_charger_settings(data, errors)
             if errors:
                 return self.async_show_form(
                     step_id="reconfigure_charger_current",
                     data_schema=self._charger_current_schema(
-                        self._data, hub_phases=hub_phases
+                        data, hub_phases=hub_phases
                     ),
                     errors=errors,
                     last_step=False,
                 )
-            return await self.async_step_reconfigure_charger_timing()
+            self.hass.config_entries.async_update_entry(
+                entry, options={**entry.options, **data}
+            )
+            return await self.async_step_reconfigure()
 
         data_schema = self._charger_current_schema(defaults, hub_phases=hub_phases)
 
@@ -2725,7 +2855,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure_charger_timing(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Reconfigure charger step 3: Units and timing (final — saves)."""
+        """Reconfigure charger: units and timing."""
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         defaults = {**entry.data, **entry.options}
@@ -2734,12 +2864,11 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         detected_unit = await self._detect_charge_rate_unit(ocpp_device_id)
 
         if user_input is not None:
-            self._data.update(user_input)
             self.hass.config_entries.async_update_entry(
                 entry,
-                options={**entry.options, **self._data},
+                options={**entry.options, **user_input},
             )
-            return self.async_abort(reason="reconfigure_successful")
+            return await self.async_step_reconfigure()
 
         data_schema = self._charger_timing_schema(defaults, detected_unit=detected_unit)
 
@@ -2747,7 +2876,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reconfigure_charger_timing",
             data_schema=data_schema,
             errors=errors,
-            last_step=True,
+            last_step=False,
         )
 
     async def async_step_reconfigure_plug(
@@ -3057,7 +3186,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         on. This is the single place to set relative priority — the per-device
         number is written back to each child entry from the chosen order.
         """
-        chargers = self._controlled_devices()
+        devices = _controlled_devices(self.hass, self.config_entry.entry_id)
 
         def _save_hub() -> config_entries.FlowResult:
             return self.async_create_entry(
@@ -3066,73 +3195,20 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             )
 
         # No loads to order yet — just persist the hub settings and finish.
-        if not chargers:
+        if not devices:
             return _save_hub()
-
-        # Current order: by effective priority, then title for a stable tie-break.
-        ordered_now = sorted(
-            chargers,
-            key=lambda e: (
-                get_entry_value(e, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
-                e.title,
-            ),
-        )
 
         if user_input is not None:
-            chosen = list(user_input.get(CONF_PRIORITY_ORDER, []))
-            # Append any device the user didn't place, preserving current order,
-            # so a missing chip never silently loses its ranking.
-            for entry in ordered_now:
-                if entry.entry_id not in chosen:
-                    chosen.append(entry.entry_id)
-
-            for rank, entry_id in enumerate(chosen, start=1):
-                child = self.hass.config_entries.async_get_entry(entry_id)
-                if not child:
-                    continue
-                if get_entry_value(child, CONF_CHARGER_PRIORITY, None) == rank:
-                    continue
-                self.hass.config_entries.async_update_entry(
-                    child,
-                    options={**child.options, CONF_CHARGER_PRIORITY: rank},
-                )
+            _apply_priority_order(
+                self.hass, devices, list(user_input.get(CONF_PRIORITY_ORDER, []))
+            )
             return _save_hub()
 
-        options = [
-            {"value": e.entry_id, "label": e.title or e.data.get(CONF_NAME, e.entry_id)}
-            for e in ordered_now
-        ]
-        schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_PRIORITY_ORDER,
-                    default=[e.entry_id for e in ordered_now],
-                ): selector(
-                    {
-                        "select": {
-                            "options": options,
-                            "multiple": True,
-                            "mode": "dropdown",
-                            "sort": False,
-                        }
-                    }
-                ),
-            }
-        )
         return self.async_show_form(
             step_id="priority",
-            data_schema=schema,
+            data_schema=_priority_order_schema(devices),
             last_step=True,
         )
-
-    def _controlled_devices(self) -> list[config_entries.ConfigEntry]:
-        """All controllable load entries (EVSE, plug, tank) linked to this hub."""
-        return [
-            e
-            for e in self.hass.config_entries.async_entries(DOMAIN)
-            if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
-            and e.data.get(CONF_HUB_ENTRY_ID) == self.config_entry.entry_id
-        ]
 
     async def async_step_charger(
         self, user_input: dict[str, Any] | None = None

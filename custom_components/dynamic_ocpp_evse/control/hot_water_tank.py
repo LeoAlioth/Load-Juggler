@@ -40,7 +40,9 @@ def resolve_tank_setpoint(
 
     Pure function — unit-testable. ``label`` is "away" / "normal" / "boost".
 
-    - Freeze Protection: always the away setpoint.
+    - Freeze Protection: the away setpoint, raised to boost when there is
+      surplus — export exceeds the element's draw, or the battery is over its
+      target SOC (ride free energy whenever it's available).
     - Solar Priority: away below battery-min SOC, normal up to battery-target
       SOC, boost at/above target SOC.
     - Normal: normal setpoint, raised to boost when there is surplus — export
@@ -51,8 +53,14 @@ def resolve_tank_setpoint(
     soc_target = hub_data.get("battery_soc_target")
     export = hub_data.get("total_export_power") or 0
 
+    # Free energy is available when grid export covers the element, or the
+    # battery has charged past its target SOC. Both Freeze Protection and Normal
+    # ride this surplus up to the boost setpoint.
+    over_target = soc is not None and soc_target is not None and soc > soc_target
+    surplus_available = over_target or export > element_power
+
     if mode == TANK_MODE_FREEZE_PROTECTION.key:
-        return away, "away"
+        return (boost, "boost") if surplus_available else (away, "away")
 
     if mode == TANK_MODE_SOLAR_PRIORITY.key:
         if soc is not None and soc_min is not None and soc < soc_min:
@@ -62,13 +70,7 @@ def resolve_tank_setpoint(
         return normal, "normal"
 
     # Normal mode (and any unrecognized mode).
-    over_target = (
-        soc is not None and soc_target is not None and soc > soc_target
-    )
-    excess_available = export > element_power
-    if over_target or excess_available:
-        return boost, "boost"
-    return normal, "normal"
+    return (boost, "boost") if surplus_available else (normal, "normal")
 
 
 async def send_hot_water_tank_command(

@@ -167,7 +167,7 @@
                     "entity_id": "Uporabljeno kot predpona za entitete, ki jih ustvari ta integracija.",
                     "climate_entity_id": "Entiteta climate, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo.",
                     "heating_element_power": "Nazivna moč grelnega elementa — uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen.",
-                    "tank_away_temperature": "Minimalna / protizmrzovalna ciljna temperatura. Uporablja jo način Zaščita pred zmrzovanjem in kot spodnja meja načina Samo sonce.",
+                    "tank_away_temperature": "Minimalna / protizmrzovalna ciljna temperatura. Uporablja jo način Zaščita pred zmrzovanjem in kot spodnja meja načina Prednost Sončne.",
                     "tank_normal_temperature": "Osnovna ciljna temperatura.",
                     "tank_boost_temperature": "Višja ciljna temperatura ob presežku energije ali ko je baterija nad ciljnim SOC.",
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
@@ -175,7 +175,7 @@
                     "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa — uporabljen namesto fiksne moči, kadar je prisoten.",
                     "tank_power_device_id": "Lahko izberete pametni rele/vtičnico, ki napaja grelnik; njen senzor moči se poišče samodejno.",
                     "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
-                    "solar_grace_period": "V načinu Samo sonce, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi."
+                    "solar_grace_period": "V načinu Prednost Sončne, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi."
                 }
             },
             "discover_chargers": {
@@ -236,6 +236,27 @@
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilnik drži na 0A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilnik ignorira profile polnjenja na privzetem nivoju.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
+                }
+            },
+            "reconfigure": {
+                "title": "Ponovna nastavitev",
+                "description": "Izberite, kaj želite spremeniti. Vsak razdelek se shrani, ko ga potrdite — ko končate, izberite Končano.",
+                "menu_options": {
+                    "reconfigure_hub_grid": "Nastavitve omrežja",
+                    "reconfigure_hub_inverter": "Nastavitve razsmernika",
+                    "reconfigure_hub_battery": "Nastavitve baterije in sonca",
+                    "reconfigure_priority": "Vrstni red prioritet naprav",
+                    "reconfigure_charger": "Prioriteta in OCPP naprava",
+                    "reconfigure_charger_current": "Tokovne omejitve in faze",
+                    "reconfigure_charger_timing": "Enote in časovne nastavitve",
+                    "reconfigure_finish": "Končano"
+                }
+            },
+            "reconfigure_priority": {
+                "title": "Vrstni red prioritet naprav",
+                "description": "Naprave izbirajte v vrstnem redu, po katerem želite, da se napajajo — prva izbrana ima prioriteto 1 (napaja se prva, ko zmanjka moči), naslednja prioriteto 2 itd. Za spremembo vrstnega reda odstranite oznake in jih znova dodajte v želenem vrstnem redu. Naprava, ki jo izpustite, ohrani svojo trenutno prioriteto na koncu. Opomba: stopnja nujnosti načina delovanja lahko še vedno prevlada nad tem vrstnim redom.",
+                "data": {
+                    "priority_order": "Vrstni red prioritet (prva = najvišja prioriteta)"
                 }
             },
             "reconfigure_hub_grid": {
