@@ -247,11 +247,10 @@ async def test_draw_falls_back_to_commanded_speed_without_sensors(
 ):
     # No AC sensors configured: trust what we last told the station, but only
     # while we actually asked it to charge.
-    entry = station_entry
-    options = dict(entry.options)
-    options.pop(CONF_STATION_AC_INPUT_ENTITY_ID)
-    options.pop(CONF_STATION_AC_OUTPUT_ENTITY_ID)
-    hass.config_entries.async_update_entry(entry, options=options)
+    entry = _entry_variant(
+        station_entry,
+        drop_options=(CONF_STATION_AC_INPUT_ENTITY_ID, CONF_STATION_AC_OUTPUT_ENTITY_ID),
+    )
     _set_states(hass, speed="800")
 
     domain_data["station_charging"] = True
@@ -298,6 +297,24 @@ async def test_unavailable_speed_entity_marks_the_station_unavailable(
 # ── Command module ────────────────────────────────────────────────────
 
 
+def _entry_variant(station_entry, drop_data=(), drop_options=()):
+    """A copy of the station entry with some keys removed.
+
+    The entries in these tests are never added to hass, so
+    hass.config_entries.async_update_entry cannot be used on them.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=station_entry.version,
+        minor_version=station_entry.minor_version,
+        title=station_entry.title,
+        data={k: v for k, v in station_entry.data.items() if k not in drop_data},
+        options={
+            k: v for k, v in station_entry.options.items() if k not in drop_options
+        },
+    )
+
+
 def _sensor(hass, station_entry):
     sensor = MagicMock()
     sensor.hass = hass
@@ -311,16 +328,17 @@ async def _send(hass, hub_entry, station_entry, limit):
         send_power_station_command,
     )
 
-    with patch.object(
-        hass.services, "async_call", new_callable=AsyncMock
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
     ) as call:
         await send_power_station_command(
             _sensor(hass, station_entry), limit, hub_entry, time.monotonic()
         )
+    # Class-level patch, so call args are (domain, service, data) with no self.
     return {
-        c.args[2]["entity_id"]: c.args[2]["value"]
+        c[0][2]["entity_id"]: c[0][2]["value"]
         for c in call.call_args_list
-        if c.args[0] == "number"
+        if c[0][0] == "number" and c[0][1] == "set_value"
     }
 
 
@@ -406,9 +424,9 @@ async def test_published_state_feeds_the_status_sensor(
 async def test_missing_control_entities_write_nothing(
     hass, hub_entry, station_entry, domain_data
 ):
-    data = dict(station_entry.data)
-    data.pop(CONF_STATION_RESERVE_ENTITY_ID)
-    hass.config_entries.async_update_entry(station_entry, data=data)
+    entry = _entry_variant(
+        station_entry, drop_data=(CONF_STATION_RESERVE_ENTITY_ID,)
+    )
     _set_states(hass)
-    written = await _send(hass, hub_entry, station_entry, 900 / 230)
+    written = await _send(hass, hub_entry, entry, 900 / 230)
     assert written == {}
