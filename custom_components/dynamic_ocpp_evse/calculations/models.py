@@ -185,6 +185,10 @@ class SiteContext:
     allow_grid_charging: bool = True
     power_buffer: float = 0
     excess_export_threshold: float = 13000
+    # Deadband subtracted from the excess absorption capacity while Excess is
+    # engaged, so a load doesn't chatter at the trigger point. The engine owns
+    # the latch and sets this; the calculator stays stateless.
+    excess_hysteresis: float = 0
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
     is_off_grid: bool = False  # True when no grid CT sensors are configured
 

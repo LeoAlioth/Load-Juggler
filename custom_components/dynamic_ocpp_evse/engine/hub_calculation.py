@@ -15,10 +15,10 @@ from ..calculations import (
     PhaseValues,
     CircuitGroup,
     calculate_all_charger_targets,
+    excess_margin,
 )
 from ..const import *
 from ..calculations.utils import is_number, compute_household_per_phase
-from ..control.hot_water_tank import resolve_tank_setpoint
 from ..helpers import get_entry_value
 from .auto_detect import check_inversion, check_phase_mapping
 
@@ -711,9 +711,7 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     return charger
 
 
-def _build_hot_water_tank_charger(
-    hass, entry, voltage, charger_entity_id, priority, site
-):
+def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, priority):
     """Build a LoadContext for a hot water tank (climate-driven binary load).
 
     To the engine the tank is a smart load (plug): a fixed-power binary draw.
@@ -794,32 +792,13 @@ def _build_hot_water_tank_charger(
 
     # Surplus demotion: a tank aiming at boost is heating on energy the site
     # would otherwise dump, so it competes at the Excess tier instead of its
-    # mode's own. Resolve the setpoint here rather than reading back what the
-    # command layer published, so the tier and the setpoint agree within the
-    # cycle. The threshold read from the site is the raw one — the hysteresis
-    # band is applied later, on post-feedback export — so within that 500 W band
-    # the tier can lag the setpoint by a cycle. Harmless: at those export levels
-    # the site is nowhere near contended.
-    _, setpoint_label = resolve_tank_setpoint(
-        mode.key,
-        charger_rt.get("tank_away_temperature")
-        or get_entry_value(
-            entry, CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE
-        ),
-        normal_temp,
-        charger_rt.get("tank_boost_temperature")
-        or get_entry_value(
-            entry, CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE
-        ),
-        element_power,
-        {
-            "battery_soc": site.battery_soc,
-            "battery_soc_min": site.battery_soc_min,
-            "battery_soc_target": site.battery_soc_target,
-            "total_export_power": site.total_export_power,
-            "excess_export_threshold": site.excess_export_threshold,
-        },
-    )
+    # mode's own. The label is whatever the command layer last wrote — one cycle
+    # stale, which is the honest reading. Resolving it here instead would have to
+    # use PRE-feedback export (chargers are built before the feedback loop and
+    # the excess latch), and that figure is already depressed by the tank's own
+    # draw, so a boosting tank would look like it wasn't. The lag only shifts
+    # allocation order, and only while the site is contended.
+    setpoint_label = charger_rt.get("tank_setpoint_label")
 
     mode_priority, elevated = resolve_tank_mode_priority(
         mode.key,
@@ -887,7 +866,7 @@ def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
             )
         elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
             charger = _build_hot_water_tank_charger(
-                hass, entry, site.voltage, charger_entity_id, priority, site
+                hass, entry, site.voltage, charger_entity_id, priority
             )
         else:
             charger = _build_evse_charger(
@@ -1072,6 +1051,8 @@ def _build_hub_result(
     grid_stale=False,
     hub_status="OK",
     hub_warnings=None,
+    excess_available=False,
+    excess_margin_power=0,
 ):
     """Build the result dict returned by run_hub_calculation."""
     # Grid available power (based on consumption after feedback loop).
@@ -1271,9 +1252,13 @@ def _build_hub_result(
         "solar_power": round(site.solar_production_total or 0, 0),
         "available_solar_power": round(solar_available, 0),
         "total_export_power": round(site.total_export_power, 0),
-        # Effective threshold — already lowered by the hysteresis band when
-        # excess is engaged, so consumers inherit the same sticky decision.
-        "excess_export_threshold": site.excess_export_threshold,
+        # The one Excess decision, computed by excess_margin() with the hysteresis
+        # latch applied. Every Excess-mode load reads this rather than re-deriving
+        # the rule — including the hot water tank, whose boost setpoint is
+        # resolved in the HA layer. The margin is how many watts past (or short
+        # of) the trigger the site is; the per-sink split is in the debug log.
+        "excess_available": excess_available,
+        "excess_margin_power": round(excess_margin_power, 0),
         # Per-charger targets
         "charger_targets": charger_targets,
         "charger_available": charger_available,
@@ -1726,26 +1711,28 @@ def run_hub_calculation(sensor):
     # --- Feedback loop ---
     _apply_feedback_loop(site, solar_is_derived, voltage)
 
-    # Apply excess-export hysteresis — keep the engine stateless. Once Excess
-    # mode is on, the effective threshold drops by EXCESS_EXPORT_HYSTERESIS so a
-    # charger doesn't chatter on/off when export hovers near the threshold.
-    # Evaluated on POST-feedback export: the engine's excess pool compares
-    # post-feedback export (charger draws added back) against the threshold,
-    # and pre-feedback export is already eaten by the Excess charger's own
-    # draw — the band would never engage exactly when a load is running.
+    # Excess trigger + hysteresis latch. excess_margin() returns the watts by
+    # which everything the site is absorbing (grid export + battery charging)
+    # exceeds everything it is allowed to absorb (export allowance + battery
+    # charge allowance); >= 0 means on. Once engaged, the band widens by
+    # EXCESS_EXPORT_HYSTERESIS so a load doesn't chatter at the trigger point.
+    # The latch lives here so the calculator stays stateless — it just reads
+    # site.excess_hysteresis. The per-sink breakdown goes to excess_margin()'s
+    # own debug line.
+    #
+    # Evaluated on POST-feedback figures: the pools compare export with charger
+    # draws added back, and pre-feedback export is already eaten by the Excess
+    # load's own draw — the band would never engage exactly when a load is running.
     was_excess_on = hub_runtime.get("_excess_on", False)
-    if was_excess_on:
-        excess_on = (
-            site.total_export_power
-            >= site.excess_export_threshold - EXCESS_EXPORT_HYSTERESIS
-        )
-    else:
-        excess_on = site.total_export_power > site.excess_export_threshold
+    margin = excess_margin(
+        site, EXCESS_EXPORT_HYSTERESIS if was_excess_on else 0
+    )
+    excess_on = margin >= 0
     hub_runtime["_excess_on"] = excess_on
-    if excess_on:
-        site.excess_export_threshold = max(
-            0, site.excess_export_threshold - EXCESS_EXPORT_HYSTERESIS
-        )
+    site.excess_hysteresis = EXCESS_EXPORT_HYSTERESIS if excess_on else 0
+    _LOGGER.debug(
+        "Excess %s (margin %+.0fW)", "ON" if excess_on else "off", margin
+    )
 
     # Compute household_consumption_total when solar entity provides ground truth
     if not solar_is_derived and solar_production_total > 0:
@@ -1951,6 +1938,8 @@ def run_hub_calculation(sensor):
         grid_stale=grid_stale,
         hub_status=hub_status,
         hub_warnings=hub_warnings,
+        excess_available=excess_on,
+        excess_margin_power=margin,
     )
 
 

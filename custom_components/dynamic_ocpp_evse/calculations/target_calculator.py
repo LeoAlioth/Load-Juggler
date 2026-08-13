@@ -597,23 +597,123 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
     return constraints
 
 
+def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
+    """Watts by which the site is over the point where Excess mode triggers.
+
+    Excess means the site can no longer place its own production anywhere else:
+    the grid export allowance is used up AND the battery is taking all it can.
+    Both sinks are summed, so one number decides Excess for every load —
+
+        margin = (grid export + battery charge power + our own managed draws)
+               - (export allowance + battery charge allowance - hysteresis)
+
+    The managed-draw term is explicit only off-grid; grid-tied the feedback loop
+    has already folded it into ``export``.
+
+    — where ``margin >= 0`` means Excess is on, and the value *is* the excess
+    pool in watts. Callers need nothing else; the breakdown goes to the debug log.
+
+    A sink contributes its allowance only while it can actually absorb:
+
+    - **No grid** (off-grid site): export allowance is 0 — nothing can leave.
+    - **No battery configured**, or **battery at/above its full SOC**: charge
+      allowance is 0. A full battery draws no charge power, so leaving its rating
+      in the allowance would make the sum unreachable exactly when the site is
+      dumping the most energy.
+
+    Zero counts as on, because it is the saturated case — export sitting at the
+    allowance *and* the battery pulling its maximum charge rate is precisely
+    "nothing more can be absorbed".
+
+    ``hysteresis`` widens the band once Excess is engaged so a load doesn't
+    chatter at the trigger point. It shrinks the allowance rather than shifting
+    the margin, and the allowance is clamped at zero — otherwise a site with no
+    allowance at all would report a pool larger than the power it actually has.
+
+    A site with no allowance therefore sits exactly at 0: off-grid with a full
+    battery. That is correct rather than degenerate — a full battery cannot take
+    another watt, and an off-grid inverter in that state is curtailing — and it is
+    self-limiting, because a margin of 0 is a pool of 0, so EVSEs and plugs (which
+    need a pool strictly above zero) still get nothing. Only a consumer reading the
+    plain verdict acts on it: the hot water tank's boost setpoint. If that load
+    runs and production cannot cover it, the battery discharges, SOC falls below
+    full, its charge allowance returns and the verdict clears.
+
+    Pure function — unit-testable.
+    """
+    export = max(0.0, site.total_export_power)
+    # battery_power is positive discharging, negative charging.
+    charge_power = max(0.0, -(site.battery_power or 0))
+
+    # Off-grid, add our managed loads' draws back. _apply_feedback_loop returns
+    # early there (the grid readings are synthetic zeros that never contained the
+    # draws), so without this a load's own consumption comes straight out of the
+    # battery's charge rate and suppresses the very margin that engaged it — the
+    # verdict would chatter every cycle. Adding it back makes each load a probe:
+    # drawing power makes a curtailing inverter ramp up, and the margin settles at
+    # the site's *true* surplus, which is otherwise invisible off-grid. This is
+    # the same quantity the feedback loop reconstructs grid-tied — what the site
+    # would be putting elsewhere if we ran nothing — so `export` already carries
+    # it there and this must not double-count.
+    managed_draw = 0.0
+    if site.is_off_grid:
+        managed_draw = (
+            sum(sum(c.get_site_phase_draw()) for c in site.chargers) * site.voltage
+        )
+
+    export_allowance = 0.0 if site.is_off_grid else (site.excess_export_threshold or 0)
+
+    battery_present = site.battery_power is not None or site.battery_soc is not None
+    battery_full = (
+        site.battery_soc is not None
+        and site.battery_soc_full is not None
+        and site.battery_soc >= site.battery_soc_full
+    )
+    if not battery_present or battery_full:
+        charge_allowance = 0.0
+    else:
+        charge_allowance = site.battery_max_charge_power or 0
+
+    allowance = max(0.0, export_allowance + charge_allowance - hysteresis)
+    absorbed = export + charge_power + managed_draw
+    margin = absorbed - allowance
+
+    _LOGGER.debug(
+        "Excess margin %+.0fW: placing %.0fW (export %.0fW + battery charge %.0fW"
+        " + managed loads %.0fW) vs allowance %.0fW (export %.0fW + battery %.0fW"
+        " - hysteresis %.0fW)",
+        margin,
+        absorbed,
+        export,
+        charge_power,
+        managed_draw,
+        allowance,
+        export_allowance,
+        charge_allowance,
+        hysteresis,
+    )
+    return margin
+
+
 def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
     """
     Step 3: Calculate excess available power.
 
     Returns PhaseConstraints for ALL phase combinations.
-    Excess mode only charges when export exceeds threshold.
+    Excess mode only charges once the site has run out of places to put its own
+    production — see excess_margin() for what that means.
 
     For ASYMMETRIC inverters: Excess power can be allocated to any phase.
     For SYMMETRIC inverters: Excess power is divided per-phase.
     """
-    if site.total_export_power > site.excess_export_threshold:
-        available_power = site.total_export_power - site.excess_export_threshold
-        total_available = available_power / site.voltage if site.voltage > 0 else 0
+    margin = excess_margin(site, site.excess_hysteresis)
 
+    if margin >= 0:
+        total_available = margin / site.voltage if site.voltage > 0 else 0
         constraints = _build_inverter_constraints(site, total_available)
-
-        _LOGGER.debug(f"Excess available constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}")
+        _LOGGER.debug(
+            f"Excess constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}"
+        )
         return constraints
 
     return PhaseConstraints.zeros()

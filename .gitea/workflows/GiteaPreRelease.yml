@@ -351,5 +351,27 @@ jobs:
             -H "Content-Type: application/zip" \
             --data-binary @custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip \
             "https://uploads.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
-          
+
           echo "GitHub pre-release created successfully!"
+
+      - name: Tell Home Assistant to download the new build
+        # Optional — skipped unless HA_WEBHOOK_URL is configured. Fires a webhook
+        # so HACS downloads this exact tag instead of waiting for its own update
+        # check. See dev/HA_AUTO_UPDATE.md for the receiving automation.
+        run: |
+          if [ -z "${{ secrets.HA_WEBHOOK_URL }}" ]; then
+            echo "HA_WEBHOOK_URL not set — skipping."
+            exit 0
+          fi
+
+          # The release asset was uploaded a moment ago; give GitHub a beat to
+          # start serving it before HACS asks for it.
+          sleep 5
+
+          # Never fail the release over an unreachable HA (it may be restarting
+          # or off) — the build itself succeeded.
+          curl -fsS -X POST "${{ secrets.HA_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"version\": \"$TAG_NAME\"}" \
+            && echo "Home Assistant notified: $TAG_NAME" \
+            || echo "HA notify failed — download $TAG_NAME manually in HACS"

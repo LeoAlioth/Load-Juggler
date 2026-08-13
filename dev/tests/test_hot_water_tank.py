@@ -20,24 +20,27 @@ from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
 
 AWAY, NORMAL, BOOST = 30.0, 45.0, 65.0
 ELEMENT_POWER = 2000.0
-# The hub's excess-export threshold — what "surplus" is measured against.
-THRESHOLD = 13000.0
 
 
-def _hub(soc=None, soc_min=20, soc_target=80, export=0, threshold=THRESHOLD):
-    """Build a hub_data dict for resolve_tank_setpoint."""
+def _hub(soc=None, soc_min=20, soc_target=80, export=0, excess=False):
+    """Build a hub_data dict for resolve_tank_setpoint.
+
+    ``excess`` is the hub's excess verdict — the one number every Excess-mode
+    load reads (see calculations.excess_margin). Pass None to simulate a
+    hub that published no verdict, which exercises the element-power fallback.
+    """
     return {
         "battery_soc": soc,
         "battery_soc_min": soc_min,
         "battery_soc_target": soc_target,
         "total_export_power": export,
-        "excess_export_threshold": threshold,
+        "excess_available": excess,
     }
 
 
 # --- Freeze Protection: away, raised to boost on surplus ---
-#   Surplus means export past the hub's excess-export threshold, or a battery
-#   over its target SOC. The element's own draw is NOT a surplus test.
+#   Surplus means the hub reported excess (its absorption capacity is used up),
+#   or the battery is over its target SOC. The element's own draw is NOT a test.
 
 def test_freeze_protection_no_surplus_is_away():
     for hub in (_hub(), _hub(soc=10), _hub(soc=50, export=0)):
@@ -55,32 +58,36 @@ def test_freeze_protection_over_target_soc_is_boost():
     assert result == (BOOST, "boost")
 
 
-def test_freeze_protection_export_above_threshold_is_boost():
-    # On-grid, no battery: export past the threshold alone lifts it to boost.
+def test_freeze_protection_hub_excess_is_boost():
+    # On-grid, no battery: the hub's excess verdict alone lifts it to boost.
     result = resolve_tank_setpoint(
         TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=None, export=THRESHOLD + 500),
+        _hub(soc=None, excess=True),
     )
     assert result == (BOOST, "boost")
 
 
-def test_freeze_protection_export_covering_element_only_is_away():
-    # Enough export to run the element but far below the site's surplus
-    # threshold — the element's rating must not be mistaken for surplus.
+def test_freeze_protection_export_without_excess_is_away():
+    # Plenty of export in absolute terms, but the hub says the site can still
+    # absorb it (e.g. the battery has charge headroom) — no boost.
     result = resolve_tank_setpoint(
         TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=None, export=ELEMENT_POWER + 500),
+        _hub(soc=None, export=9999, excess=False),
     )
     assert result == (AWAY, "away")
 
 
-def test_freeze_protection_missing_threshold_falls_back_to_element_power():
-    # No hub threshold published (stale hub_data) — degrade to the old test
-    # rather than never boosting.
+def test_freeze_protection_missing_verdict_falls_back_to_element_power():
+    # Hub published no verdict (stale hub_data) — degrade to the old export vs
+    # element test rather than stranding the tank at its floor forever.
     assert resolve_tank_setpoint(
         TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=None, export=ELEMENT_POWER + 500, threshold=None),
+        _hub(soc=None, export=ELEMENT_POWER + 500, excess=None),
     ) == (BOOST, "boost")
+    assert resolve_tank_setpoint(
+        TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        _hub(soc=None, export=ELEMENT_POWER - 500, excess=None),
+    ) == (AWAY, "away")
 
 
 # --- Solar Priority: setpoint follows the battery SOC band ---
@@ -128,21 +135,21 @@ def test_normal_no_surplus_is_normal():
     assert result == (NORMAL, "normal")
 
 
-def test_normal_export_above_threshold_is_boost():
+def test_normal_hub_excess_is_boost():
     result = resolve_tank_setpoint(
         TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=50, export=THRESHOLD + 500),
+        _hub(soc=50, excess=True),
     )
     assert result == (BOOST, "boost")
 
 
-def test_normal_export_below_threshold_is_normal():
-    # Normal shares Freeze Protection's surplus test, so an export that merely
-    # covers the element leaves it at the normal setpoint.
-    for export in (ELEMENT_POWER + 500, THRESHOLD - 500):
+def test_normal_export_without_excess_is_normal():
+    # Normal shares Freeze Protection's surplus test, so export the site can
+    # still absorb leaves it at the normal setpoint.
+    for export in (ELEMENT_POWER + 500, 12500):
         result = resolve_tank_setpoint(
             TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-            _hub(soc=50, export=export),
+            _hub(soc=50, export=export, excess=False),
         )
         assert result == (NORMAL, "normal")
 
@@ -163,10 +170,10 @@ def test_normal_no_battery_low_export_is_normal():
     assert result == (NORMAL, "normal")
 
 
-def test_normal_no_battery_high_export_is_boost():
+def test_normal_no_battery_excess_is_boost():
     result = resolve_tank_setpoint(
         TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=None, export=THRESHOLD + 1000),
+        _hub(soc=None, export=14000, excess=True),
     )
     assert result == (BOOST, "boost")
 

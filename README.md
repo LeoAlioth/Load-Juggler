@@ -52,20 +52,20 @@ Each load has its own operating mode, set independently. This allows mixing mode
 - **Standard**: Charges as fast as possible from all available power sources (grid + solar + battery). Ideal for maximum charging speed.
 - **Solar Priority**: Charges at minimum current, increases with solar production. Prevents grid export while maintaining minimum charge rate. With battery: graduates charging based on SOC thresholds.
 - **Solar Only**: Only charges when sufficient solar power is available. Zero grid import — stops if import would be required.
-- **Excess**: Starts charging only when solar export exceeds a configurable threshold. Designed for large solar systems to utilize excess power.
+- **Excess**: Starts charging only once the site can no longer absorb its own production — grid export has reached the configured threshold *and* the home battery is charging at its maximum (or is full). Designed for large solar systems to soak up power that would otherwise be curtailed.
 
 ### Smart Plug Modes
 
 - **Continuous**: Always on (when connected) — uses the grid if needed.
 - **Solar Priority**: On while the battery is above its minimum SOC (drains stored solar down to the minimum; no grid). Without a battery, on when live solar surplus covers the plug.
 - **Solar Only**: On while the battery is above its target SOC (uses only the surplus stored above target). Without a battery, on when live solar surplus covers the plug.
-- **Excess**: Turns on only when the battery is near-full or export exceeds the configured threshold.
+- **Excess**: Turns on only when the battery is near-full, or the site has run out of places to put its production — grid export at its allowance *and* the battery already charging as fast as it can.
 
 ### Hot Water Tank Modes
 
 A hot water tank is driven through a `climate` entity (e.g. a Generic Thermostat) — the climate entity handles temperature regulation, while Load Juggler picks one of three setpoints (**Away**, **Normal**, **Boost**) based on the mode and conditions.
 
-- **Freeze Protection**: Targets the Away setpoint (minimal / frost protection), raised to Boost when there is surplus energy — grid export above the hub's Excess Export Threshold, or the home battery above its target SOC.
+- **Freeze Protection**: Targets the Away setpoint (minimal / frost protection), raised to Boost when there is surplus energy — the hub reports Excess (see Excess mode above), or the home battery is above its target SOC.
 - **Normal**: Targets the Normal setpoint, raised to Boost on the same surplus test.
 - **Solar Priority**: Targets Away below the battery minimum SOC, Normal up to the battery target SOC, and Boost at/above the target — heats from solar surplus only. Without a battery there is no SOC band to follow, so it stays at Normal.
 

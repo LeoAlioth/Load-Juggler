@@ -40,9 +40,9 @@ def resolve_tank_setpoint(
 
     Pure function — unit-testable. ``label`` is "away" / "normal" / "boost".
 
-    - Freeze Protection: the away setpoint, raised to boost when there is
-      surplus — export past the hub's excess-export threshold, or the battery
-      over its target SOC (ride free energy whenever it's available).
+    - Freeze Protection: the away setpoint, raised to boost when the hub reports
+      excess — the site can't absorb its own production anywhere else — or the
+      battery is over its target SOC (ride free energy whenever it's available).
     - Solar Priority: away below battery-min SOC, normal up to battery-target
       SOC, boost at/above target SOC.
     - Normal: normal setpoint, raised to boost on the same surplus test as
@@ -53,19 +53,20 @@ def resolve_tank_setpoint(
     soc_target = hub_data.get("battery_soc_target")
     export = hub_data.get("total_export_power") or 0
 
-    # Surplus is measured against the hub's excess-export threshold — the same
-    # figure an Excess-mode load triggers on. Only energy that would otherwise
-    # leave the site counts as free; the element's own draw is no measure of
-    # surplus. Falls back to the element power if no threshold was published.
-    threshold = hub_data.get("excess_export_threshold")
-    if threshold is None:
-        threshold = element_power
+    # "There is real surplus" is decided once, by the hub's excess gate
+    # (calculations.excess_margin + its hysteresis latch), and every
+    # Excess-mode load reads that same verdict. Fall back to comparing export
+    # against the element's own draw only if the hub published no verdict —
+    # a stale hub_data shouldn't strand the tank at its floor forever.
+    excess_available = hub_data.get("excess_available")
+    if excess_available is None:
+        excess_available = export > element_power
 
-    # Free energy is available when export passes that threshold, or the battery
-    # has charged past its target SOC. Both Freeze Protection and Normal ride
-    # this surplus up to the boost setpoint.
+    # Free energy is available on that verdict, or once the battery has charged
+    # past its target SOC. Both Freeze Protection and Normal ride this surplus
+    # up to the boost setpoint.
     over_target = soc is not None and soc_target is not None and soc > soc_target
-    surplus_available = over_target or export > threshold
+    surplus_available = over_target or excess_available
 
     if mode == TANK_MODE_FREEZE_PROTECTION.key:
         return (boost, "boost") if surplus_available else (away, "away")
