@@ -9,6 +9,8 @@
 
 ### Improvements
 
+- **Hot water tank boost now triggers on real surplus**: A tank in Freeze Protection or Normal mode raised its target to the Boost setpoint as soon as grid export exceeded the *heating element's own draw* — around 2 kW, which is no measure of site surplus, so the tank boosted on almost any sunny day. Both modes now measure surplus against the hub's **Excess Export Threshold**, the same figure an Excess-mode EVSE or plug triggers on (hysteresis band included), so the tank only boosts on energy that would otherwise leave the site.
+- **Hot water tank yields power while boosting**: A boosting tank now competes at the **Excess** urgency tier instead of its mode's own — heating past the temperature its mode asks for is opportunistic and must not outrank must-run loads. At its Away/Normal floor it keeps its normal tier, and the cold-tank promotion still wins: a Solar Priority tank below its Normal temperature stays at tier 1 even while boosting.
 - **Smoother current transitions**: Updated the deadband to a proper Schmitt trigger, and ramps are now applied even if the available current momentarily drops below the minimum the EVSE can offer — a brief consumption spike now just slows the change down instead of stopping it.
 - **Excess mode anti-chatter**: Added a hysteresis band to the export threshold so a load in Excess mode no longer flips on/off when export hovers right at the threshold.
 - **Power buffer honored on the breaker limit**: The configured power buffer is now subtracted from the per-phase main-breaker limit as well as the grid-import limit — previously it had no effect on sites without a grid-import limit configured.

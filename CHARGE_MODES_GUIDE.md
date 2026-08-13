@@ -461,8 +461,8 @@ The operating mode decides which setpoint the tank targets, based on conditions:
 
 | Mode | Target setpoint | Power source |
 | ---- | --------------- | ------------ |
-| **Freeze Protection** | `Away`, raised to `Boost` when there is surplus — grid export exceeds the element's power, or the home battery is above its target SOC | Any source (Continuous urgency) |
-| **Normal** | `Normal`, raised to `Boost` when there is surplus — grid export exceeds the element's power, or the home battery is above its target SOC | Any source (Continuous urgency) |
+| **Freeze Protection** | `Away`, raised to `Boost` when there is surplus — grid export exceeds the **Excess Export Threshold**, or the home battery is above its target SOC | Any source (Continuous urgency at the floor, Excess urgency while boosting) |
+| **Normal** | `Normal`, raised to `Boost` on the same surplus test | Any source (Continuous urgency at the floor, Excess urgency while boosting) |
 | **Solar Priority** | `Away` below the battery minimum SOC, `Normal` up to the battery target SOC, `Boost` at/above the target SOC | Solar surplus, with a grid-backed minimum below target SOC (Solar Priority urgency) |
 
 ### How It Works
@@ -470,7 +470,11 @@ The operating mode decides which setpoint the tank targets, based on conditions:
 - Load Juggler reads the climate entity's `hvac_action`. When the thermostat reports `idle` (water already at temperature), the tank frees its reserved power for other loads.
 - When heating is allowed, Load Juggler sets the climate entity to `heat` and writes the resolved setpoint; when not, it sets the entity to `off`.
 - To the power-distribution engine the tank behaves like a smart load — a fixed-power binary draw — so it competes for power with EVSEs and smart plugs by mode urgency, then priority. Freeze Protection and Normal compete at **Continuous** urgency (must-run); Solar Priority competes at **Solar Priority** urgency, so it yields to must-run loads but still outranks Solar Only / Excess loads.
-- On an **off-grid** system there is no grid export, so the Normal-mode boost is driven by the battery SOC (above target = surplus). The Solar Priority SOC bands work unchanged.
+- **Surplus demotion:** whichever mode is selected, a tank aiming at its `Boost` setpoint drops to the **Excess** urgency tier for as long as it is boosting. Heating past the temperature the mode actually asks for is opportunistic, so it must not outrank must-run loads. The cold-tank promotion takes precedence: a Solar Priority tank below its Normal temperature keeps tier 1 even while boosting.
+- Every tank mode always keeps heating *permitted* — the mode moves the target temperature, and the grid may cover the floor. A tank is only starved of power by contention (its tier losing out), never by its mode.
+- **What counts as surplus:** export measured against the hub's Excess Export Threshold — the same figure an Excess-mode EVSE or plug triggers on, including its 500 W hysteresis band, so the boost decision doesn't chatter. The threshold is compared against export with all managed load draws added back, so a tank already boosting does not disqualify itself: it stays on until export *minus its own draw* falls a further element's-worth below the band.
+- On an **off-grid** system there is no grid export, so the boost is driven by the battery SOC (above target = surplus). The Solar Priority SOC bands work unchanged.
+- On a **no-battery grid-tied** system every SOC clause drops out: Freeze Protection and Normal become purely export-driven, and Solar Priority has no band to follow — it stays at `Normal` and never boosts.
 
 ### Example Scenarios
 

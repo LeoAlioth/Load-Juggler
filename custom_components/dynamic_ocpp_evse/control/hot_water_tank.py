@@ -41,23 +41,31 @@ def resolve_tank_setpoint(
     Pure function — unit-testable. ``label`` is "away" / "normal" / "boost".
 
     - Freeze Protection: the away setpoint, raised to boost when there is
-      surplus — export exceeds the element's draw, or the battery is over its
-      target SOC (ride free energy whenever it's available).
+      surplus — export past the hub's excess-export threshold, or the battery
+      over its target SOC (ride free energy whenever it's available).
     - Solar Priority: away below battery-min SOC, normal up to battery-target
       SOC, boost at/above target SOC.
-    - Normal: normal setpoint, raised to boost when there is surplus — export
-      exceeds the element's draw, or the battery is over its target SOC.
+    - Normal: normal setpoint, raised to boost on the same surplus test as
+      Freeze Protection.
     """
     soc = hub_data.get("battery_soc")
     soc_min = hub_data.get("battery_soc_min")
     soc_target = hub_data.get("battery_soc_target")
     export = hub_data.get("total_export_power") or 0
 
-    # Free energy is available when grid export covers the element, or the
-    # battery has charged past its target SOC. Both Freeze Protection and Normal
-    # ride this surplus up to the boost setpoint.
+    # Surplus is measured against the hub's excess-export threshold — the same
+    # figure an Excess-mode load triggers on. Only energy that would otherwise
+    # leave the site counts as free; the element's own draw is no measure of
+    # surplus. Falls back to the element power if no threshold was published.
+    threshold = hub_data.get("excess_export_threshold")
+    if threshold is None:
+        threshold = element_power
+
+    # Free energy is available when export passes that threshold, or the battery
+    # has charged past its target SOC. Both Freeze Protection and Normal ride
+    # this surplus up to the boost setpoint.
     over_target = soc is not None and soc_target is not None and soc > soc_target
-    surplus_available = over_target or export > element_power
+    surplus_available = over_target or export > threshold
 
     if mode == TANK_MODE_FREEZE_PROTECTION.key:
         return (boost, "boost") if surplus_available else (away, "away")

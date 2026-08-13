@@ -3012,18 +3012,10 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 last_step=False,
             )
 
-        # Auto-detect empty grid CT entity fields
-        phase_keys = {
-            "phase_a": CONF_PHASE_A_CURRENT_ENTITY_ID,
-            "phase_b": CONF_PHASE_B_CURRENT_ENTITY_ID,
-            "phase_c": CONF_PHASE_C_CURRENT_ENTITY_ID,
-        }
-        if any(not defaults.get(k) for k in phase_keys.values()):
-            ct_detected = f._auto_detect_phase_entities(PHASE_PATTERNS)
-            for phase, conf_key in phase_keys.items():
-                if not defaults.get(conf_key):
-                    defaults[conf_key] = ct_detected[phase]
-
+        # No auto-detection when editing an existing hub — only the initial
+        # install scans for entities. Re-detecting here can grab entities from
+        # an unrelated system (e.g. a second inverter in another building),
+        # silently adding phantom phases. Show the existing values as-is.
         return self.async_show_form(
             step_id="hub_grid",
             data_schema=f._hub_grid_schema(defaults),
@@ -3079,27 +3071,14 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             if inverter_defaults.get(key) is None:
                 inverter_defaults[key] = 0
 
-        # Auto-detect empty inverter output entity fields
-        inv_keys = {
-            "phase_a": CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-            "phase_b": CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-            "phase_c": CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-        }
-        if any(not inverter_defaults.get(k) for k in inv_keys.values()):
-            inv_detected = f._auto_detect_phase_entities(INVERTER_OUTPUT_PATTERNS)
-            for phase, conf_key in inv_keys.items():
-                if not inverter_defaults.get(conf_key):
-                    inverter_defaults[conf_key] = inv_detected[phase]
+        # No auto-detection when editing an existing hub — only the initial
+        # install scans for entities. Re-detecting the inverter output phases
+        # here can grab a different inverter's per-phase sensors (e.g. a 3-phase
+        # system in another building), creating phantom L2/L3 phases that split
+        # the available power across phases that don't exist on this site. Show
+        # the existing values as-is.
 
-        # Suggest series topology if battery entities exist and topology is at default
-        if inverter_defaults.get(CONF_WIRING_TOPOLOGY) == DEFAULT_WIRING_TOPOLOGY:
-            has_battery = defaults.get(
-                CONF_BATTERY_SOC_ENTITY_ID
-            ) or f._auto_detect_entity(BATTERY_SOC_PATTERNS)
-            if has_battery:
-                inverter_defaults[CONF_WIRING_TOPOLOGY] = WIRING_TOPOLOGY_SERIES
-
-        # Auto-detect battery discharge power for description hint
+        # Battery discharge power hint (informational text only — sets nothing)
         battery_hint = f._auto_detect_entity_value(
             BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR
         )
@@ -3147,27 +3126,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 last_step=False,
             )
 
-        # Auto-detect empty battery/solar entity fields
-        auto_detect_map = {
-            CONF_SOLAR_PRODUCTION_ENTITY_ID: SOLAR_PRODUCTION_PATTERNS,
-            CONF_BATTERY_SOC_ENTITY_ID: BATTERY_SOC_PATTERNS,
-            CONF_BATTERY_POWER_ENTITY_ID: BATTERY_POWER_PATTERNS,
-        }
-        for conf_key, patterns in auto_detect_map.items():
-            if not defaults.get(conf_key):
-                defaults[conf_key] = f._auto_detect_entity(patterns)
-
-        # Auto-detect battery power limits when at default
-        power_detect_map = {
-            CONF_BATTERY_MAX_CHARGE_POWER: BATTERY_MAX_CHARGE_POWER_PATTERNS,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: BATTERY_MAX_DISCHARGE_POWER_PATTERNS,
-        }
-        for conf_key, patterns in power_detect_map.items():
-            if defaults.get(conf_key) == DEFAULT_BATTERY_MAX_POWER:
-                detected = f._auto_detect_entity_value(patterns, _POWER_FACTOR)
-                if detected:
-                    defaults[conf_key] = detected
-
+        # No auto-detection when editing an existing hub — only the initial
+        # install scans for entities. Re-detecting here can grab battery/solar
+        # entities from an unrelated system. Show the existing values as-is.
         return self.async_show_form(
             step_id="hub",
             data_schema=f._hub_battery_schema(defaults),

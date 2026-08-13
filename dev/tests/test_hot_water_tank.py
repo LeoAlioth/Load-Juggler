@@ -15,23 +15,29 @@ from custom_components.dynamic_ocpp_evse.const import (
 )
 from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
     resolve_tank_mode_priority,
+    TANK_SURPLUS_URGENCY_TIER,
 )
 
 AWAY, NORMAL, BOOST = 30.0, 45.0, 65.0
 ELEMENT_POWER = 2000.0
+# The hub's excess-export threshold — what "surplus" is measured against.
+THRESHOLD = 13000.0
 
 
-def _hub(soc=None, soc_min=20, soc_target=80, export=0):
+def _hub(soc=None, soc_min=20, soc_target=80, export=0, threshold=THRESHOLD):
     """Build a hub_data dict for resolve_tank_setpoint."""
     return {
         "battery_soc": soc,
         "battery_soc_min": soc_min,
         "battery_soc_target": soc_target,
         "total_export_power": export,
+        "excess_export_threshold": threshold,
     }
 
 
-# --- Freeze Protection: away, raised to boost on surplus (export or full battery) ---
+# --- Freeze Protection: away, raised to boost on surplus ---
+#   Surplus means export past the hub's excess-export threshold, or a battery
+#   over its target SOC. The element's own draw is NOT a surplus test.
 
 def test_freeze_protection_no_surplus_is_away():
     for hub in (_hub(), _hub(soc=10), _hub(soc=50, export=0)):
@@ -49,13 +55,32 @@ def test_freeze_protection_over_target_soc_is_boost():
     assert result == (BOOST, "boost")
 
 
-def test_freeze_protection_export_above_element_power_is_boost():
-    # On-grid, no battery: export surplus alone lifts freeze protection to boost.
+def test_freeze_protection_export_above_threshold_is_boost():
+    # On-grid, no battery: export past the threshold alone lifts it to boost.
+    result = resolve_tank_setpoint(
+        TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        _hub(soc=None, export=THRESHOLD + 500),
+    )
+    assert result == (BOOST, "boost")
+
+
+def test_freeze_protection_export_covering_element_only_is_away():
+    # Enough export to run the element but far below the site's surplus
+    # threshold — the element's rating must not be mistaken for surplus.
     result = resolve_tank_setpoint(
         TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
         _hub(soc=None, export=ELEMENT_POWER + 500),
     )
-    assert result == (BOOST, "boost")
+    assert result == (AWAY, "away")
+
+
+def test_freeze_protection_missing_threshold_falls_back_to_element_power():
+    # No hub threshold published (stale hub_data) — degrade to the old test
+    # rather than never boosting.
+    assert resolve_tank_setpoint(
+        TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        _hub(soc=None, export=ELEMENT_POWER + 500, threshold=None),
+    ) == (BOOST, "boost")
 
 
 # --- Solar Priority: setpoint follows the battery SOC band ---
@@ -103,20 +128,23 @@ def test_normal_no_surplus_is_normal():
     assert result == (NORMAL, "normal")
 
 
-def test_normal_export_above_element_power_is_boost():
+def test_normal_export_above_threshold_is_boost():
     result = resolve_tank_setpoint(
         TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=50, export=ELEMENT_POWER + 500),
+        _hub(soc=50, export=THRESHOLD + 500),
     )
     assert result == (BOOST, "boost")
 
 
-def test_normal_export_below_element_power_is_normal():
-    result = resolve_tank_setpoint(
-        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=50, export=ELEMENT_POWER - 500),
-    )
-    assert result == (NORMAL, "normal")
+def test_normal_export_below_threshold_is_normal():
+    # Normal shares Freeze Protection's surplus test, so an export that merely
+    # covers the element leaves it at the normal setpoint.
+    for export in (ELEMENT_POWER + 500, THRESHOLD - 500):
+        result = resolve_tank_setpoint(
+            TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+            _hub(soc=50, export=export),
+        )
+        assert result == (NORMAL, "normal")
 
 
 def test_normal_soc_over_target_is_boost():
@@ -138,7 +166,7 @@ def test_normal_no_battery_low_export_is_normal():
 def test_normal_no_battery_high_export_is_boost():
     result = resolve_tank_setpoint(
         TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=None, export=9999),
+        _hub(soc=None, export=THRESHOLD + 1000),
     )
     assert result == (BOOST, "boost")
 
@@ -203,5 +231,63 @@ def test_promotion_missing_temperature_keeps_tier():
     # Climate entity not reporting a current temperature → no promotion.
     assert resolve_tank_mode_priority(SOLAR, SOLAR_TIER, None, 45, True) == (
         SOLAR_TIER,
+        False,
+    )
+
+
+# --- Surplus demotion --------------------------------------------------------
+#
+# A tank aiming at its boost setpoint is heating past what its mode asks for, on
+# energy the site would otherwise dump — so it competes at the Excess tier (4)
+# instead of its own, and yields the wire to every must-run load.
+
+FREEZE = TANK_MODE_FREEZE_PROTECTION.key
+FREEZE_TIER = TANK_MODE_FREEZE_PROTECTION.priority   # 1
+
+
+def test_boosting_freeze_protection_tank_drops_to_excess_tier():
+    assert resolve_tank_mode_priority(
+        FREEZE, FREEZE_TIER, 32, 45, True, "boost"
+    ) == (TANK_SURPLUS_URGENCY_TIER, False)
+
+
+def test_boosting_normal_tank_drops_to_excess_tier():
+    assert resolve_tank_mode_priority(
+        TANK_MODE_NORMAL.key, NORMAL_TIER, 47, 45, True, "boost"
+    ) == (TANK_SURPLUS_URGENCY_TIER, False)
+
+
+def test_boosting_solar_priority_tank_drops_to_excess_tier():
+    # Warm tank at/above target SOC — nothing urgent, so the surplus tier wins.
+    assert resolve_tank_mode_priority(
+        SOLAR, SOLAR_TIER, 47, 45, True, "boost"
+    ) == (TANK_SURPLUS_URGENCY_TIER, False)
+
+
+def test_cold_promotion_outranks_surplus_demotion():
+    # A cold Solar Priority tank keeps tier 1 even while boosting: needing heat
+    # beats merely having free energy available.
+    assert resolve_tank_mode_priority(SOLAR, SOLAR_TIER, 38, 45, True, "boost") == (
+        NORMAL_TIER,
+        True,
+    )
+
+
+def test_away_and_normal_setpoints_keep_the_mode_tier():
+    for label in ("away", "normal"):
+        assert resolve_tank_mode_priority(FREEZE, FREEZE_TIER, 32, 45, True, label) == (
+            FREEZE_TIER,
+            False,
+        )
+        assert resolve_tank_mode_priority(SOLAR, SOLAR_TIER, 47, 45, True, label) == (
+            SOLAR_TIER,
+            False,
+        )
+
+
+def test_missing_label_keeps_the_mode_tier():
+    # Callers that don't pass a label (older call sites) behave as before.
+    assert resolve_tank_mode_priority(FREEZE, FREEZE_TIER, 47, 45, True) == (
+        FREEZE_TIER,
         False,
     )

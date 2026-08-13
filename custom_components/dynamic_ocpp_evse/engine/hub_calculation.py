@@ -18,6 +18,7 @@ from ..calculations import (
 )
 from ..const import *
 from ..calculations.utils import is_number, compute_household_per_phase
+from ..control.hot_water_tank import resolve_tank_setpoint
 from ..helpers import get_entry_value
 from .auto_detect import check_inversion, check_phase_mapping
 
@@ -710,13 +711,16 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     return charger
 
 
-def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, priority):
+def _build_hot_water_tank_charger(
+    hass, entry, voltage, charger_entity_id, priority, site
+):
     """Build a LoadContext for a hot water tank (climate-driven binary load).
 
     To the engine the tank is a smart load (plug): a fixed-power binary draw.
     The climate entity owns temperature regulation; the HA layer reads its
     hvac_action and writes the setpoint. Tank operating modes (Freeze
-    Protection / Normal / Solar Only) map to engine modes here.
+    Protection / Normal / Solar Priority / Solar Excess) map to engine modes
+    here.
     """
     charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
 
@@ -787,6 +791,36 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     normal_temp = charger_rt.get("tank_normal_temperature") or get_entry_value(
         entry, CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE
     )
+
+    # Surplus demotion: a tank aiming at boost is heating on energy the site
+    # would otherwise dump, so it competes at the Excess tier instead of its
+    # mode's own. Resolve the setpoint here rather than reading back what the
+    # command layer published, so the tier and the setpoint agree within the
+    # cycle. The threshold read from the site is the raw one — the hysteresis
+    # band is applied later, on post-feedback export — so within that 500 W band
+    # the tier can lag the setpoint by a cycle. Harmless: at those export levels
+    # the site is nowhere near contended.
+    _, setpoint_label = resolve_tank_setpoint(
+        mode.key,
+        charger_rt.get("tank_away_temperature")
+        or get_entry_value(
+            entry, CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE
+        ),
+        normal_temp,
+        charger_rt.get("tank_boost_temperature")
+        or get_entry_value(
+            entry, CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE
+        ),
+        element_power,
+        {
+            "battery_soc": site.battery_soc,
+            "battery_soc_min": site.battery_soc_min,
+            "battery_soc_target": site.battery_soc_target,
+            "total_export_power": site.total_export_power,
+            "excess_export_threshold": site.excess_export_threshold,
+        },
+    )
+
     mode_priority, elevated = resolve_tank_mode_priority(
         mode.key,
         mode.priority,
@@ -797,6 +831,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
             CONF_TANK_PRIORITIZE_BELOW_NORMAL,
             DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL,
         ),
+        setpoint_label,
     )
     charger_rt["tank_priority_elevated"] = elevated
 
@@ -817,12 +852,14 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
     _LOGGER.debug(
-        "  Tank %s [%s]: %.0fW on %s prio=%d [%s]",
+        "  Tank %s [%s]: %.0fW on %s prio=%d tier=%d (%s) [%s]",
         charger_entity_id,
         mode.key,
         power_rating,
         connected_to_phase,
         priority,
+        mode_priority,
+        setpoint_label,
         connector_status,
     )
     return charger
@@ -850,7 +887,7 @@ def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
             )
         elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
             charger = _build_hot_water_tank_charger(
-                hass, entry, site.voltage, charger_entity_id, priority
+                hass, entry, site.voltage, charger_entity_id, priority, site
             )
         else:
             charger = _build_evse_charger(
@@ -1234,6 +1271,9 @@ def _build_hub_result(
         "solar_power": round(site.solar_production_total or 0, 0),
         "available_solar_power": round(solar_available, 0),
         "total_export_power": round(site.total_export_power, 0),
+        # Effective threshold — already lowered by the hysteresis band when
+        # excess is engaged, so consumers inherit the same sticky decision.
+        "excess_export_threshold": site.excess_export_threshold,
         # Per-charger targets
         "charger_targets": charger_targets,
         "charger_available": charger_available,

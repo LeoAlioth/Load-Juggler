@@ -42,19 +42,37 @@ OPERATING_MODES_HOT_WATER_TANK = [
     TANK_MODE_NORMAL,
     TANK_MODE_SOLAR_PRIORITY,
 ]
+
+# Urgency tier a tank competes at while it is riding surplus (boost setpoint).
+# Matches the Excess tier used by EVSEs and plugs: heating past the mode's own
+# floor temperature is opportunistic, so it must not outrank must-run loads.
+TANK_SURPLUS_URGENCY_TIER = 4
 DEFAULT_OPERATING_MODE_HOT_WATER_TANK = TANK_MODE_NORMAL
 
 
 def resolve_tank_mode_priority(
-    mode_key, mode_priority, current_temp, normal_temp, prioritize_cold
+    mode_key,
+    mode_priority,
+    current_temp,
+    normal_temp,
+    prioritize_cold,
+    setpoint_label=None,
 ):
     """Effective urgency tier for a tank load.
 
-    A Solar Priority tank that has dropped below its normal setpoint is promoted
-    to the Normal urgency tier so it outranks other solar-priority loads when
-    power is contended. Only the tier changes — the caller keeps the Solar
-    Priority *behavior*, so the tank still draws from solar + above-minimum
-    battery and never deep-cycles the bank below its minimum SOC.
+    Two adjustments, in precedence order:
+
+    1. Cold promotion — a Solar Priority tank that has dropped below its normal
+       setpoint is promoted to the Normal urgency tier so it outranks other
+       solar-priority loads when power is contended. Only the tier changes; the
+       caller keeps the Solar Priority *behavior*, so the tank still draws from
+       solar + above-minimum battery and never deep-cycles the bank below its
+       minimum SOC.
+    2. Surplus demotion — a tank aiming at its *boost* setpoint is heating past
+       the temperature its mode actually asks for, on energy the site would
+       otherwise dump. That is opportunistic, so it drops to the Excess tier and
+       yields the wire to every must-run load. A cold tank (1) keeps its
+       promotion: needing heat outranks having free energy.
 
     Pure function — unit-testable. Returns ``(effective_priority, elevated)``.
     """
@@ -66,4 +84,6 @@ def resolve_tank_mode_priority(
         and current_temp < normal_temp
     ):
         return TANK_MODE_NORMAL.priority, True
+    if setpoint_label == "boost":
+        return TANK_SURPLUS_URGENCY_TIER, False
     return mode_priority, False

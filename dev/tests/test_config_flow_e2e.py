@@ -539,6 +539,68 @@ async def test_options_flow_hub_saves_changes(
     assert mock_hub_entry.options.get(CONF_INVERTER_SUPPORTS_ASYMMETRIC) is False
 
 
+def _suggested_value(data_schema, key):
+    """Read the suggested default a form schema offers for a field key."""
+    for marker in data_schema.schema:
+        if getattr(marker, "schema", None) == key:
+            desc = getattr(marker, "description", None) or {}
+            return desc.get("suggested_value")
+    raise AssertionError(f"{key} not present in schema")
+
+
+async def test_options_flow_does_not_autodetect_inverter_phases(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """Editing an existing hub must NOT auto-pick inverter-output entities.
+
+    Regression: the options flow used to re-run auto-detection into empty
+    fields, which could grab a 3-phase inverter from an unrelated building and
+    silently add phantom L2/L3 phases. The hub has no inverter-output phases
+    configured; even with SolarEdge-matching entities present in HA, the
+    inverter step must leave those fields empty.
+    """
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Entities the hub already references (so the schemas render).
+    for ent in ("sensor.inverter_phase_a", "sensor.inverter_phase_b", "sensor.inverter_phase_c"):
+        hass.states.async_set(ent, "5.0", {"device_class": "current", "unit_of_measurement": "A"})
+    hass.states.async_set("sensor.grid_power_limit", "8050", {"device_class": "power", "unit_of_measurement": "W"})
+
+    # An UNRELATED 3-phase SolarEdge inverter in another building — matches
+    # INVERTER_OUTPUT_PATTERNS, so the old auto-detect would have grabbed it.
+    for phase in ("a", "b", "c"):
+        hass.states.async_set(
+            f"sensor.solaredge_i1_ac_current_{phase}", "3.0",
+            {"device_class": "current", "unit_of_measurement": "A"},
+        )
+
+    result = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
+    assert result["step_id"] == "hub_grid"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_INVERT_PHASES: False,
+            CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_EXCESS_EXPORT_THRESHOLD: 13000,
+            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
+        },
+    )
+
+    # On the inverter step, none of the three phase fields may be pre-filled.
+    assert result["step_id"] == "hub_inverter"
+    schema = result["data_schema"]
+    assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID) is None
+    assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID) is None
+    assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID) is None
+
+
 async def test_options_flow_charger_saves_changes(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
