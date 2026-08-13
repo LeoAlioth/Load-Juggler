@@ -130,10 +130,12 @@ def domain_data(hass: HomeAssistant, hub_entry, station_entry):
     return hass.data[DOMAIN]["chargers"][station_entry.entry_id]
 
 
-def _set_states(hass, speed="200", soc="60", limit="90", ac_in="0", ac_out="0"):
+def _set_states(
+    hass, speed="200", soc="60", limit="90", ac_in="0", ac_out="0", reserve="30"
+):
     """Populate the station's entities. Values mirror the real integration."""
     hass.states.async_set(SPEED, speed, {"unit_of_measurement": "W"})
-    hass.states.async_set(RESERVE, "30", {"unit_of_measurement": "%"})
+    hass.states.async_set(RESERVE, reserve, {"unit_of_measurement": "%"})
     hass.states.async_set(SOC, soc, {"device_class": "battery", "unit_of_measurement": "%"})
     hass.states.async_set(LIMIT, limit, {"unit_of_measurement": "%"})
     hass.states.async_set(AC_IN, ac_in, {"device_class": "power", "unit_of_measurement": "W"})
@@ -305,6 +307,9 @@ def _entry_variant(station_entry, drop_data=(), drop_options=()):
     """
     return MockConfigEntry(
         domain=DOMAIN,
+        # Same entry_id: the builder and command module look their runtime state
+        # up by it in hass.data[DOMAIN]["chargers"].
+        entry_id=station_entry.entry_id,
         version=station_entry.version,
         minor_version=station_entry.minor_version,
         title=station_entry.title,
@@ -357,12 +362,24 @@ async def test_allocation_below_the_minimum_drops_the_reserve(
     hass, hub_entry, station_entry, domain_data
 ):
     # 150 W is below the station's 200 W floor, so there is no speed to write —
-    # dropping the reserve is what stops the charge.
-    _set_states(hass, speed="200", soc="60", limit="90")
+    # dropping the reserve is what stops the charge. Start from a raised reserve,
+    # as if the station had been charging: writes are deadbanded against the
+    # entity's current value, so dropping to a reserve it already holds is a no-op.
+    _set_states(hass, speed="200", soc="60", limit="90", reserve="90")
     written = await _send(hass, hub_entry, station_entry, 150 / 230)
     assert SPEED not in written
     assert written[RESERVE] == 30
     assert domain_data["station_charging"] is False
+
+
+async def test_reserve_write_is_skipped_when_already_at_the_target(
+    hass, hub_entry, station_entry, domain_data
+):
+    # Idle station already sitting at its normal reserve — nothing to write.
+    _set_states(hass, speed="200", soc="60", limit="90", reserve="30")
+    written = await _send(hass, hub_entry, station_entry, 150 / 230)
+    assert written == {}
+    assert domain_data["station_reserve_label"] == "normal"
 
 
 async def test_speed_is_floored_to_the_device_step(
