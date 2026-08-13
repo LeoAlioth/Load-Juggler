@@ -144,6 +144,75 @@
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop."
                 }
             },
+            "power_station_config": {
+                "title": "Nastavitev prenosne elektrarne",
+                "description": "Nastavite prenosno elektrarno (EcoFlow Delta in podobne) kot regulirano breme. Load Juggler nastavlja njeno moč polnjenja glede na razpoložljivo moč, raven rezerve pa uporablja kot stikalo za vklop/izklop.",
+                "data": {
+                    "name": "Ime te naprave",
+                    "entity_id": "Predpona ID entitete",
+                    "station_charge_speed_entity_id": "Hitrost AC polnjenja (number)",
+                    "station_reserve_entity_id": "Raven rezerve (number)",
+                    "station_battery_level_entity_id": "Senzor napolnjenosti baterije",
+                    "station_charge_limit_entity_id": "Zgornja meja polnjenja (neobvezno)",
+                    "station_ac_input_entity_id": "Senzor vhodne AC moči (neobvezno)",
+                    "station_ac_output_entity_id": "Senzor izhodne AC moči (neobvezno)",
+                    "station_min_charge_power": "Minimalna moč polnjenja",
+                    "station_max_charge_power": "Maksimalna moč polnjenja",
+                    "station_normal_reserve": "Običajna rezerva",
+                    "station_storm_reserve": "Rezerva za nevihto",
+                    "connected_to_phase": "Priklopljeno na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "update_frequency": "Pogostost osveževanja",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
+                },
+                "data_description": {
+                    "entity_id": "Uporabljeno kot predpona za entitete, ki jih ustvari ta integracija.",
+                    "station_charge_speed_entity_id": "Nastavitev hitrosti AC polnjenja postaje. Load Juggler sem zapiše dodeljeno moč polnjenja.",
+                    "station_reserve_entity_id": "Raven rezerve postaje. To je stikalo za vklop/izklop: pod trenutno napolnjenostjo baterije postaja preneha jemati moč iz omrežja in svoja bremena napaja iz baterije.",
+                    "station_battery_level_entity_id": "Stanje napolnjenosti. Ko je postaja polna, se njena dodeljena moč sprosti drugim bremenom.",
+                    "station_charge_limit_entity_id": "Lastna zgornja meja polnjenja postaje. Rezerva se nikoli ne dvigne nad njo, zato je vaša omejitev za zdravje baterije upoštevana. Privzeto 90 %.",
+                    "station_ac_input_entity_id": "Skupna moč, vzeta iz omrežja. Skupaj s senzorjem izhodne moči izlušči le del za polnjenje — kar je priklopljeno na postajo, je poraba gospodinjstva, ne tega bremena.",
+                    "station_ac_output_entity_id": "Moč, ki jo postaja oddaja na svoje izhode. Odšteta od vhodne AC moči da moč polnjenja.",
+                    "station_min_charge_power": "Najnižja hitrost, ki jo postaja sprejme (200 W pri modelih EcoFlow Delta). Pod tem se ne more polniti, zato se namesto tega spusti rezerva.",
+                    "station_max_charge_power": "Največ, kar sme postaja vzeti. Nastavite pod strojno mejo za dodatno omejitev.",
+                    "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoja bremena in se iz omrežja ne polni višje.",
+                    "station_storm_reserve": "Vzdrževana, ko je stikalo Rezerva za nevihto vklopljeno — polni se iz katerega koli vira in se ne prazni pod to raven.",
+                    "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji solar/excess niso več izpolnjeni."
+                }
+            },
+            "reconfigure_power_station": {
+                "title": "Ponovna nastavitev prenosne elektrarne",
+                "description": "Posodobite entitete, omejitve polnjenja in ravni rezerve prenosne elektrarne.",
+                "data": {
+                    "station_charge_speed_entity_id": "Hitrost AC polnjenja (number)",
+                    "station_reserve_entity_id": "Raven rezerve (number)",
+                    "station_battery_level_entity_id": "Senzor napolnjenosti baterije",
+                    "station_charge_limit_entity_id": "Zgornja meja polnjenja (neobvezno)",
+                    "station_ac_input_entity_id": "Senzor vhodne AC moči (neobvezno)",
+                    "station_ac_output_entity_id": "Senzor izhodne AC moči (neobvezno)",
+                    "station_min_charge_power": "Minimalna moč polnjenja",
+                    "station_max_charge_power": "Maksimalna moč polnjenja",
+                    "station_normal_reserve": "Običajna rezerva",
+                    "station_storm_reserve": "Rezerva za nevihto",
+                    "connected_to_phase": "Priklopljeno na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "update_frequency": "Pogostost osveževanja",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
+                },
+                "data_description": {
+                    "station_charge_speed_entity_id": "Nastavitev hitrosti AC polnjenja postaje. Load Juggler sem zapiše dodeljeno moč polnjenja.",
+                    "station_reserve_entity_id": "Raven rezerve postaje. To je stikalo za vklop/izklop: pod trenutno napolnjenostjo baterije postaja preneha jemati moč iz omrežja in svoja bremena napaja iz baterije.",
+                    "station_battery_level_entity_id": "Stanje napolnjenosti. Ko je postaja polna, se njena dodeljena moč sprosti drugim bremenom.",
+                    "station_charge_limit_entity_id": "Lastna zgornja meja polnjenja postaje. Rezerva se nikoli ne dvigne nad njo, zato je vaša omejitev za zdravje baterije upoštevana. Privzeto 90 %.",
+                    "station_ac_input_entity_id": "Skupna moč, vzeta iz omrežja. Skupaj s senzorjem izhodne moči izlušči le del za polnjenje — kar je priklopljeno na postajo, je poraba gospodinjstva, ne tega bremena.",
+                    "station_ac_output_entity_id": "Moč, ki jo postaja oddaja na svoje izhode. Odšteta od vhodne AC moči da moč polnjenja.",
+                    "station_min_charge_power": "Najnižja hitrost, ki jo postaja sprejme (200 W pri modelih EcoFlow Delta). Pod tem se ne more polniti, zato se namesto tega spusti rezerva.",
+                    "station_max_charge_power": "Največ, kar sme postaja vzeti. Nastavite pod strojno mejo za dodatno omejitev.",
+                    "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoja bremena in se iz omrežja ne polni višje.",
+                    "station_storm_reserve": "Vzdrževana, ko je stikalo Rezerva za nevihto vklopljeno — polni se iz katerega koli vira in se ne prazni pod to raven.",
+                    "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji solar/excess niso več izpolnjeni."
+                }
+            },
             "hot_water_tank_config": {
                 "title": "Konfiguracija grelnika vode",
                 "description": "Nastavite grelnik vode, krmiljen prek entitete climate (npr. Generic Thermostat).",
@@ -438,6 +507,7 @@
             }
         },
         "error": {
+            "station_max_below_min": "Minimalna moč polnjenja ne more presegati maksimalne.",
             "no_hub_configured": "Hub ni konfiguriran. Najprej nastavite domači električni hub.",
             "no_ocpp_chargers_found": "OCPP polnilniki niso najdeni. Prepričajte se, da imate nameščeno in konfigurirano integracijo OCPP z vsaj enim polnilnikom.",
             "charger_not_found": "Izbrani polnilnik ni več na voljo. Morda je bil odstranjen iz integracije OCPP. Poskusite znova.",
@@ -455,6 +525,9 @@
         }
     },
     "options": {
+        "error": {
+            "station_max_below_min": "Minimalna moč polnjenja ne more presegati maksimalne."
+        },
         "step": {
             "priority": {
                 "title": "Vrstni red prioritet naprav",
@@ -551,6 +624,39 @@
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop."
+                }
+            },
+            "power_station": {
+                "title": "Nastavitve prenosne elektrarne",
+                "description": "Prilagodite omejitve polnjenja, ravni rezerve in krmiljene entitete.",
+                "data": {
+                    "station_charge_speed_entity_id": "Hitrost AC polnjenja (number)",
+                    "station_reserve_entity_id": "Raven rezerve (number)",
+                    "station_battery_level_entity_id": "Senzor napolnjenosti baterije",
+                    "station_charge_limit_entity_id": "Zgornja meja polnjenja (neobvezno)",
+                    "station_ac_input_entity_id": "Senzor vhodne AC moči (neobvezno)",
+                    "station_ac_output_entity_id": "Senzor izhodne AC moči (neobvezno)",
+                    "station_min_charge_power": "Minimalna moč polnjenja",
+                    "station_max_charge_power": "Maksimalna moč polnjenja",
+                    "station_normal_reserve": "Običajna rezerva",
+                    "station_storm_reserve": "Rezerva za nevihto",
+                    "connected_to_phase": "Priklopljeno na fazo",
+                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "update_frequency": "Pogostost osveževanja",
+                    "solar_grace_period": "Odlog za Solar/Excess način"
+                },
+                "data_description": {
+                    "station_charge_speed_entity_id": "Nastavitev hitrosti AC polnjenja postaje. Load Juggler sem zapiše dodeljeno moč polnjenja.",
+                    "station_reserve_entity_id": "Raven rezerve postaje. To je stikalo za vklop/izklop: pod trenutno napolnjenostjo baterije postaja preneha jemati moč iz omrežja in svoja bremena napaja iz baterije.",
+                    "station_battery_level_entity_id": "Stanje napolnjenosti. Ko je postaja polna, se njena dodeljena moč sprosti drugim bremenom.",
+                    "station_charge_limit_entity_id": "Lastna zgornja meja polnjenja postaje. Rezerva se nikoli ne dvigne nad njo, zato je vaša omejitev za zdravje baterije upoštevana. Privzeto 90 %.",
+                    "station_ac_input_entity_id": "Skupna moč, vzeta iz omrežja. Skupaj s senzorjem izhodne moči izlušči le del za polnjenje — kar je priklopljeno na postajo, je poraba gospodinjstva, ne tega bremena.",
+                    "station_ac_output_entity_id": "Moč, ki jo postaja oddaja na svoje izhode. Odšteta od vhodne AC moči da moč polnjenja.",
+                    "station_min_charge_power": "Najnižja hitrost, ki jo postaja sprejme (200 W pri modelih EcoFlow Delta). Pod tem se ne more polniti, zato se namesto tega spusti rezerva.",
+                    "station_max_charge_power": "Največ, kar sme postaja vzeti. Nastavite pod strojno mejo za dodatno omejitev.",
+                    "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoja bremena in se iz omrežja ne polni višje.",
+                    "station_storm_reserve": "Vzdrževana, ko je stikalo Rezerva za nevihto vklopljeno — polni se iz katerega koli vira in se ne prazni pod to raven.",
+                    "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji solar/excess niso več izpolnjeni."
                 }
             },
             "hot_water_tank": {

@@ -30,6 +30,16 @@ from .const import (
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_HOT_WATER_TANK,
+    DEVICE_TYPE_POWER_STATION,
+    CONF_STATION_MIN_CHARGE_POWER,
+    CONF_STATION_MAX_CHARGE_POWER,
+    CONF_STATION_NORMAL_RESERVE,
+    CONF_STATION_STORM_RESERVE,
+    DEFAULT_STATION_MIN_CHARGE_POWER,
+    DEFAULT_STATION_MAX_CHARGE_POWER,
+    DEFAULT_STATION_NORMAL_RESERVE,
+    DEFAULT_STATION_STORM_RESERVE,
+    STATION_CHARGE_POWER_STEP,
     CONF_TANK_AWAY_TEMPERATURE,
     CONF_TANK_NORMAL_TEMPERATURE,
     CONF_TANK_BOOST_TEMPERATURE,
@@ -116,6 +126,29 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
                 LoadPowerSlider(
                     hass, config_entry, name, entity_id, "Element Power",
                     CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER,
+                ),
+            ]
+        elif device_type == DEVICE_TYPE_POWER_STATION:
+            entities = [
+                StationChargePowerSlider(
+                    hass, config_entry, name, entity_id, "min",
+                    CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER,
+                    "Minimum Charge Power",
+                ),
+                StationChargePowerSlider(
+                    hass, config_entry, name, entity_id, "max",
+                    CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER,
+                    "Maximum Charge Power",
+                ),
+                StationReserveSlider(
+                    hass, config_entry, name, entity_id, "normal",
+                    CONF_STATION_NORMAL_RESERVE, DEFAULT_STATION_NORMAL_RESERVE,
+                    "Normal Reserve",
+                ),
+                StationReserveSlider(
+                    hass, config_entry, name, entity_id, "storm",
+                    CONF_STATION_STORM_RESERVE, DEFAULT_STATION_STORM_RESERVE,
+                    "Storm Reserve",
                 ),
             ]
         else:
@@ -272,6 +305,92 @@ class TankTemperatureSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        self._write_to_charger_data(value)
+
+
+class StationChargePowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+    """Slider for a power station's min/max charge power in Watts.
+
+    These bound what the engine may allocate, deliberately *configured* rather
+    than read from the device — a station whose hardware accepts 2400 W can be
+    held to less. The engine reads them back from the runtime dict, so a change
+    takes effect on the next cycle without a reconfigure.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self, hass: HomeAssistant, config_entry: ConfigEntry, name: str,
+        entity_id: str, kind: str, conf_key: str, default: float, label: str,
+    ):
+        self.hass = hass
+        self.config_entry = config_entry
+        # Instance-level key — matches what power_station.py reads back.
+        self._charger_data_key = f"station_{kind}_charge_power"
+        self._attr_name = f"{name} {label}"
+        self._attr_unique_id = f"{entity_id}_station_{kind}_charge_power"
+        self._attr_native_min_value = 0
+        self._attr_native_max_value = 5000
+        self._attr_native_step = STATION_CHARGE_POWER_STEP
+        self._attr_native_value = get_entry_value(config_entry, conf_key, default)
+        self._attr_native_unit_of_measurement = "W"
+        self._attr_icon = "mdi:lightning-bolt-outline"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._restore_and_publish_number()
+
+    async def async_set_native_value(self, value: float) -> None:
+        step = self._attr_native_step
+        value = max(
+            self._attr_native_min_value,
+            min(self._attr_native_max_value, round(value / step) * step),
+        )
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        self._write_to_charger_data(value)
+
+
+class StationReserveSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+    """Slider for a power station's normal or storm backup reserve (%).
+
+    The reserve is the station's on/off gate: below its current battery level it
+    stops drawing from the wall and serves its own loads from its battery. The
+    normal value is what it falls back to whenever there is nothing to absorb.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self, hass: HomeAssistant, config_entry: ConfigEntry, name: str,
+        entity_id: str, kind: str, conf_key: str, default: float, label: str,
+    ):
+        self.hass = hass
+        self.config_entry = config_entry
+        self._charger_data_key = (
+            "station_normal_reserve" if kind == "normal"
+            else "station_storm_reserve_level"
+        )
+        self._attr_name = f"{name} {label}"
+        self._attr_unique_id = f"{entity_id}_station_{kind}_reserve"
+        self._attr_native_min_value = 0
+        self._attr_native_max_value = 100
+        self._attr_native_step = 1
+        self._attr_native_value = get_entry_value(config_entry, conf_key, default)
+        self._attr_native_unit_of_measurement = "%"
+        self._attr_icon = "mdi:battery-charging-30"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._restore_and_publish_number()
+
+    async def async_set_native_value(self, value: float) -> None:
+        value = max(
+            self._attr_native_min_value,
+            min(self._attr_native_max_value, round(value)),
+        )
         self._attr_native_value = value
         self.async_write_ha_state()
         self._write_to_charger_data(value)

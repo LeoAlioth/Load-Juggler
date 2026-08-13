@@ -12,6 +12,7 @@ from .entities.load_sensors import (
     LoadJugglerEffectivePrioritySensor,
     LoadJugglerPhaseMaskSensor,
     LoadJugglerPlugStatusSensor,
+    LoadJugglerStationStatusSensor,
     LoadJugglerTankStatusSensor,
 )
 from .entities.hub import (
@@ -142,6 +143,10 @@ async def async_setup_entry(
         )
     elif device_type == DEVICE_TYPE_PLUG:
         status_sensor = LoadJugglerPlugStatusSensor(
+            hass, config_entry, hub_entry, name, entity_id
+        )
+    elif device_type == DEVICE_TYPE_POWER_STATION:
+        status_sensor = LoadJugglerStationStatusSensor(
             hass, config_entry, hub_entry, name, entity_id
         )
     else:

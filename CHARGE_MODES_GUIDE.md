@@ -11,7 +11,8 @@ For circuit groups (shared breaker limits), see [DISTRIBUTION_MODES_GUIDE.md](DI
 5. [Solar Only Mode](#solar-only-mode)
 6. [Excess Mode](#excess-mode)
 7. [Hot Water Tank Modes](#hot-water-tank-modes)
-8. [Configuration Parameters](#configuration-parameters)
+8. [Power Station Modes](#power-station-modes)
+9. [Configuration Parameters](#configuration-parameters)
 
 ---
 
@@ -562,6 +563,99 @@ Result: Target = Normal — heat to the baseline, from solar surplus only
 ```
 Mode: Solar Priority | Battery SOC: 15% (min 20%)
 Result: Target = Away — frost protection only; let solar refill the battery first
+```
+
+---
+
+## Power Station Modes
+
+**Available for:** Portable Power Station
+
+A portable power station (EcoFlow Delta and similar, via a local integration such
+as [ha-ef-ble](https://github.com/rabits/ha-ef-ble)) is a battery you can charge
+at a commandable rate. To the engine it is an EVSE without the OCPP: it modulates,
+so it uses the **same four modes and the same behaviors** — see [Excess
+Mode](#excess-mode), which is the default and the point of the device type.
+
+### Two knobs, two jobs
+
+| Knob | Entity | What Load Juggler does with it |
+| ---- | ------ | ------------------------------ |
+| **AC charging speed** | `number`, W | The engine's allocation, floored to the device's 100 W step |
+| **Backup reserve** | `number`, % | The on/off gate — see below |
+
+The charge-rate knob has no zero: a station with a 200 W minimum cannot be told
+"don't charge". What stops it is the **backup reserve**. In the station's
+self-powered mode the reserve is both the SOC it grid-charges *up to* and the
+floor it discharges *down to*, so dropping it below the current battery level
+stops the wall draw completely — and the station then spends what it stored on its
+own loads until it reaches that floor.
+
+So the reserve is resolved every command cycle, like a hot water tank's setpoint:
+
+| State | Reserve written | Effect |
+| ----- | --------------- | ------ |
+| Nothing to absorb | **Normal Reserve** (default 30%) | Draws nothing; discharges into its own loads down to 30% |
+| Engine allocated ≥ the minimum charge power | The station's own **Max Charge Limit** | Accepts the charge, at the allocated rate |
+| **Storm Reserve** switch on | **Storm Reserve** (default 80%) | Charges from any source at full rate and holds it |
+
+The reserve is never raised above the station's own Max Charge Limit — that is
+your battery-health cap, read and respected rather than overwritten. Storm reserve
+overrides the operating mode (the station competes as a must-run load while it is
+on), because a backup reserve that may only be filled from surplus is not a
+reserve.
+
+### Pass-through is not this load's draw
+
+Whatever is plugged into the station passes through to its outputs. That
+consumption is ordinary household load, not something Load Juggler controls, so
+only the *charging* component counts as the station's managed draw:
+`AC input power − AC output power`. Counting the whole wall draw would let the
+feedback loop add the pass-through back as available surplus. Without those two
+sensors configured the commanded speed is used instead.
+
+### Charge bounds are configured, not read
+
+Minimum and Maximum Charge Power are set during configuration and adjustable as
+sliders afterwards. They are deliberately *not* read from the device: a station
+whose hardware accepts 2400 W can be held to less. The minimum matters more than
+it sounds — an allocation below it cannot be expressed at all, so the mode drops
+the reserve instead of writing a rate.
+
+### How It Works
+
+- Once the station reaches its Max Charge Limit it reports as inactive, and the
+  engine hands its allocated power to other loads.
+- These integrations typically talk **Bluetooth LE, one connection at a time**, so
+  opening the vendor's phone app silently takes control away from Home Assistant.
+  A station whose charge-speed entity goes unavailable is treated as unavailable
+  rather than continuing to be allocated power it cannot accept.
+- Writes are deadbanded to one device step (100 W), so a jittering allocation
+  doesn't spam the BLE link with values the device would round to what it already has.
+- The station is a **load, not a sink**: unlike the home battery in
+  [Excess Mode](#excess-mode), its charging is ours to command, so it competes for
+  the excess pool rather than contributing to the absorption allowance.
+
+### Example Scenarios
+
+*Scenario 1: Excess mode, clipping inverter*
+```
+Mode: Excess | Margin: 900W | Min/Max charge power: 200/2400W
+Result: Charge at 900W (floored to 900), reserve raised to the 90% charge limit
+```
+
+*Scenario 2: Excess mode, margin too small*
+```
+Mode: Excess | Margin: 150W (below the 200W minimum)
+Result: Not charging — reserve dropped to 30%, wall draw goes to zero, and the
+        station runs its own loads from its battery
+```
+
+*Scenario 3: Storm reserve*
+```
+Storm Reserve switch: on | Storm level: 80%
+Result: Reserve 80%, charge speed at maximum, competing as a must-run load
+        regardless of the selected mode
 ```
 
 ---

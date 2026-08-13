@@ -14,6 +14,7 @@ from ..control.compliance import check_profile_compliance
 from ..control.ocpp import send_ocpp_command
 from ..control.plug import send_plug_command
 from ..control.hot_water_tank import send_hot_water_tank_command
+from ..control.power_station import send_power_station_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -468,6 +469,13 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 if dynamic_control_on:
                     await send_hot_water_tank_command(
                         self, limit, hub_data, now_mono
+                    )
+            elif device_type == DEVICE_TYPE_POWER_STATION:
+                # Dynamic Control off → leave the station's own charge speed and
+                # reserve exactly as the user set them.
+                if dynamic_control_on:
+                    await send_power_station_command(
+                        self, limit, hub_entry, now_mono
                     )
             else:
                 await check_profile_compliance(self, limit, dynamic_control_on)

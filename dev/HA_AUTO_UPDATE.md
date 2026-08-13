@@ -56,11 +56,32 @@ Secrets):
 
 | Secret | Value |
 | ------ | ----- |
-| `HA_WEBHOOK_URL` | `http://<ha-host>:8123/api/webhook/load-juggler-build` |
+| `HA_WEBHOOK_URLS` | One webhook URL per line — see below |
+| `HA_WEBHOOK_URL` | Single-instance alternative, still honoured |
 
-Use HA's IP rather than a hostname — `act_runner` in a container often can't
-resolve local hostnames. If the secret is absent the workflow step logs that it
-is skipping and moves on, so this is entirely opt-in.
+Use each instance's IP rather than a hostname — `act_runner` in a container often
+can't resolve local hostnames. If neither secret is set the workflow step logs that
+it is skipping and moves on, so this is entirely opt-in.
+
+### Several instances
+
+`HA_WEBHOOK_URLS` is split on whitespace, so a multi-line secret notifies every
+system from one release. Lines beginning with `#` are ignored:
+
+```
+# on-grid test system
+http://192.168.1.20:8123/api/webhook/load-juggler-build-ongrid
+# off-grid test system
+http://192.168.5.20:8123/api/webhook/load-juggler-build-offgrid
+```
+
+Give each instance its **own** `webhook_id` and use it in that instance's
+automation. They are the only credential on the endpoint, so a shared one means
+either system can be triggered by anyone who learns it — and distinct IDs make the
+workflow log say which system answered.
+
+Each URL is notified independently: one unreachable instance logs a failure line
+and the others still get their build. The step never fails the release.
 
 ## Why it passes an explicit version
 

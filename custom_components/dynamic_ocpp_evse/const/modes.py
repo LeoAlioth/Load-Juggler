@@ -12,6 +12,7 @@ from .common import (
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_HOT_WATER_TANK,
+    DEVICE_TYPE_POWER_STATION,
     BEHAVIOR_FULL_POWER,
     BEHAVIOR_SOLAR_PRIORITY,
     BEHAVIOR_SOLAR_ONLY,
@@ -43,6 +44,14 @@ from .hot_water_tank import (
     TANK_MODE_NORMAL,
     TANK_MODE_SOLAR_PRIORITY,
 )
+from .power_station import (
+    OPERATING_MODES_POWER_STATION,
+    DEFAULT_OPERATING_MODE_POWER_STATION,
+    STATION_MODE_STANDARD,
+    STATION_MODE_SOLAR_PRIORITY,
+    STATION_MODE_SOLAR_ONLY,
+    STATION_MODE_EXCESS,
+)
 
 # The one place every operating mode is mapped to its engine behavior.
 # Multiple modes — across device types — may map to the same behavior.
@@ -58,6 +67,13 @@ BEHAVIOR_BY_MODE = {
     TANK_MODE_FREEZE_PROTECTION: BEHAVIOR_FULL_POWER,
     TANK_MODE_NORMAL: BEHAVIOR_FULL_POWER,
     TANK_MODE_SOLAR_PRIORITY: BEHAVIOR_SOLAR_PRIORITY,
+    # A power station modulates its charge rate, so it competes exactly as an
+    # EVSE does. Its second knob (the backup reserve) is resolved separately in
+    # const/power_station.py and never reaches the engine.
+    STATION_MODE_STANDARD: BEHAVIOR_FULL_POWER,
+    STATION_MODE_SOLAR_PRIORITY: BEHAVIOR_SOLAR_PRIORITY,
+    STATION_MODE_SOLAR_ONLY: BEHAVIOR_SOLAR_ONLY,
+    STATION_MODE_EXCESS: BEHAVIOR_EXCESS,
 }
 
 _MODES_BY_TYPE = {
@@ -66,6 +82,10 @@ _MODES_BY_TYPE = {
     DEVICE_TYPE_HOT_WATER_TANK: (
         OPERATING_MODES_HOT_WATER_TANK,
         DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
+    ),
+    DEVICE_TYPE_POWER_STATION: (
+        OPERATING_MODES_POWER_STATION,
+        DEFAULT_OPERATING_MODE_POWER_STATION,
     ),
 }
 

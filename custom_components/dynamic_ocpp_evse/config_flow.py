@@ -1121,6 +1121,145 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
+    def _power_station_schema(self, defaults: dict | None = None) -> vol.Schema:
+        """Build schema for portable power station configuration.
+
+        The charge bounds are configured rather than read from the device, so a
+        station whose hardware accepts more can be held below that. The reserve
+        is the station's on/off gate — dropped below its current battery level it
+        stops drawing from the wall — so both the day-to-day and the storm level
+        are set here.
+        """
+        defaults = defaults or {}
+        phase_options = [
+            {"value": "A", "label": "Phase A"},
+            {"value": "B", "label": "Phase B"},
+            {"value": "C", "label": "Phase C"},
+        ]
+
+        def _power_selector():
+            return selector(
+                {
+                    "number": {
+                        "min": 0,
+                        "max": 5000,
+                        "step": STATION_CHARGE_POWER_STEP,
+                        "mode": "box",
+                        "unit_of_measurement": "W",
+                    }
+                }
+            )
+
+        def _percent_selector():
+            return selector(
+                {
+                    "number": {
+                        "min": 0,
+                        "max": 100,
+                        "step": 1,
+                        "mode": "slider",
+                        "unit_of_measurement": "%",
+                    }
+                }
+            )
+
+        return vol.Schema(
+            {
+                vol.Required(
+                    CONF_STATION_CHARGE_SPEED_ENTITY_ID,
+                    default=defaults.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID),
+                ): selector({"entity": {"domain": "number"}}),
+                vol.Required(
+                    CONF_STATION_RESERVE_ENTITY_ID,
+                    default=defaults.get(CONF_STATION_RESERVE_ENTITY_ID),
+                ): selector({"entity": {"domain": "number"}}),
+                vol.Required(
+                    CONF_STATION_BATTERY_LEVEL_ENTITY_ID,
+                    default=defaults.get(CONF_STATION_BATTERY_LEVEL_ENTITY_ID),
+                ): selector({"entity": {"domain": ["sensor", "input_number"]}}),
+                self._optional_entity_field(
+                    CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
+                    defaults.get(CONF_STATION_CHARGE_LIMIT_ENTITY_ID),
+                ): selector({"entity": {"domain": ["number", "sensor"]}}),
+                self._optional_entity_field(
+                    CONF_STATION_AC_INPUT_ENTITY_ID,
+                    defaults.get(CONF_STATION_AC_INPUT_ENTITY_ID),
+                ): selector({"entity": {"domain": ["sensor", "input_number"]}}),
+                self._optional_entity_field(
+                    CONF_STATION_AC_OUTPUT_ENTITY_ID,
+                    defaults.get(CONF_STATION_AC_OUTPUT_ENTITY_ID),
+                ): selector({"entity": {"domain": ["sensor", "input_number"]}}),
+                vol.Required(
+                    CONF_STATION_MIN_CHARGE_POWER,
+                    default=defaults.get(
+                        CONF_STATION_MIN_CHARGE_POWER,
+                        DEFAULT_STATION_MIN_CHARGE_POWER,
+                    ),
+                ): _power_selector(),
+                vol.Required(
+                    CONF_STATION_MAX_CHARGE_POWER,
+                    default=defaults.get(
+                        CONF_STATION_MAX_CHARGE_POWER,
+                        DEFAULT_STATION_MAX_CHARGE_POWER,
+                    ),
+                ): _power_selector(),
+                vol.Required(
+                    CONF_STATION_NORMAL_RESERVE,
+                    default=defaults.get(
+                        CONF_STATION_NORMAL_RESERVE, DEFAULT_STATION_NORMAL_RESERVE
+                    ),
+                ): _percent_selector(),
+                vol.Required(
+                    CONF_STATION_STORM_RESERVE,
+                    default=defaults.get(
+                        CONF_STATION_STORM_RESERVE, DEFAULT_STATION_STORM_RESERVE
+                    ),
+                ): _percent_selector(),
+                vol.Required(
+                    CONF_CONNECTED_TO_PHASE,
+                    default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
+                ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
+                vol.Required(
+                    CONF_CHARGER_PRIORITY,
+                    default=defaults.get(
+                        CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY
+                    ),
+                ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
+                vol.Required(
+                    CONF_UPDATE_FREQUENCY,
+                    default=defaults.get(
+                        CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
+                    ),
+                ): selector(
+                    {
+                        "number": {
+                            "min": 5,
+                            "max": 300,
+                            "step": 1,
+                            "mode": "box",
+                            "unit_of_measurement": "s",
+                        }
+                    }
+                ),
+                vol.Required(
+                    CONF_SOLAR_GRACE_PERIOD,
+                    default=defaults.get(
+                        CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
+                    ),
+                ): selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 30,
+                            "step": 1,
+                            "mode": "box",
+                            "unit_of_measurement": "min",
+                        }
+                    }
+                ),
+            }
+        )
+
     # Optional entity keys grouped by config step (for entity selector clearing)
     _GRID_ENTITY_KEYS = [
         CONF_PHASE_A_CURRENT_ENTITY_ID,
@@ -1140,6 +1279,11 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ]
     _PLUG_ENTITY_KEYS = [CONF_PLUG_POWER_MONITOR_ENTITY_ID]
     _TANK_ENTITY_KEYS = [CONF_TANK_POWER_ENTITY_ID, CONF_TANK_POWER_DEVICE_ID]
+    _STATION_ENTITY_KEYS = [
+        CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
+        CONF_STATION_AC_INPUT_ENTITY_ID,
+        CONF_STATION_AC_OUTPUT_ENTITY_ID,
+    ]
 
     def _normalize_optional_inputs(
         self, data: dict[str, Any], step_entity_keys: list[str] | None = None
@@ -1262,7 +1406,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             setup_type = user_input.get("setup_type")
             if setup_type == "hub":
                 return await self.async_step_hub_info()
-            elif setup_type in ("evse", "plug", "tank"):
+            elif setup_type in ("evse", "plug", "tank", "station"):
                 if not hubs:
                     errors["base"] = "no_hub_configured"
                 else:
@@ -1270,6 +1414,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "evse": DEVICE_TYPE_EVSE,
                         "plug": DEVICE_TYPE_PLUG,
                         "tank": DEVICE_TYPE_HOT_WATER_TANK,
+                        "station": DEVICE_TYPE_POWER_STATION,
                     }[setup_type]
                     return await self.async_step_select_hub()
             elif setup_type == "group":
@@ -1287,6 +1432,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             options.append({"value": "evse", "label": "Add OCPP Charger (EVSE)"})
             options.append({"value": "plug", "label": "Add Smart Outlet / Relay"})
             options.append({"value": "tank", "label": "Add Hot Water Tank"})
+            options.append(
+                {"value": "station", "label": "Add Portable Power Station"}
+            )
             options.append(
                 {"value": "group", "label": "Add Circuit Group (Shared Breaker)"}
             )
@@ -1663,6 +1811,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_plug_config()
         if device_type == DEVICE_TYPE_HOT_WATER_TANK:
             return await self.async_step_hot_water_tank_config()
+        if device_type == DEVICE_TYPE_POWER_STATION:
+            return await self.async_step_power_station_config()
         if device_type == DEVICE_TYPE_GROUP:
             return await self.async_step_group_config()
         return await self.async_step_discover_chargers()
@@ -1849,6 +1999,88 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="hot_water_tank_config",
+            data_schema=combined,
+            errors=errors,
+            last_step=True,
+        )
+
+    async def async_step_power_station_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Portable power station configuration step."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            user_input = self._normalize_optional_inputs(
+                user_input, self._STATION_ENTITY_KEYS
+            )
+            self._data.update(user_input)
+
+            station_name = self._data.get(CONF_NAME, "Power Station")
+            station_entity_id = self._data.get(CONF_ENTITY_ID, "lj_power_station")
+
+            min_power = self._data.get(
+                CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
+            )
+            max_power = self._data.get(
+                CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
+            )
+            if self._entity_id_in_use(station_entity_id):
+                errors[CONF_ENTITY_ID] = "entity_id_in_use"
+            elif max_power < min_power:
+                errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
+            else:
+                static_data = {
+                    CONF_ENTITY_ID: station_entity_id,
+                    CONF_NAME: station_name,
+                    ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+                    CONF_DEVICE_TYPE: DEVICE_TYPE_POWER_STATION,
+                    CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
+                    CONF_STATION_CHARGE_SPEED_ENTITY_ID: self._data.get(
+                        CONF_STATION_CHARGE_SPEED_ENTITY_ID
+                    ),
+                    CONF_STATION_RESERVE_ENTITY_ID: self._data.get(
+                        CONF_STATION_RESERVE_ENTITY_ID
+                    ),
+                }
+                options_data = {
+                    k: v for k, v in self._data.items() if k not in static_data
+                }
+                return self._create_entry_and_seed_options(
+                    _compose_entry_title(station_name, "Power Station"),
+                    static_data, options_data
+                )
+
+        # Defaults; self._data is merged last so a validation-error re-show
+        # keeps the user's input.
+        station_defaults = {
+            CONF_CHARGER_PRIORITY: len(self._get_charger_entries()) + 1,
+            CONF_STATION_MIN_CHARGE_POWER: DEFAULT_STATION_MIN_CHARGE_POWER,
+            CONF_STATION_MAX_CHARGE_POWER: DEFAULT_STATION_MAX_CHARGE_POWER,
+            CONF_STATION_NORMAL_RESERVE: DEFAULT_STATION_NORMAL_RESERVE,
+            CONF_STATION_STORM_RESERVE: DEFAULT_STATION_STORM_RESERVE,
+            CONF_CONNECTED_TO_PHASE: "A",
+            CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
+        }
+        station_defaults.update(self._data)
+        name_schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_NAME,
+                    default=station_defaults.get(CONF_NAME, "Power Station"),
+                ): str,
+                vol.Required(
+                    CONF_ENTITY_ID,
+                    default=station_defaults.get(CONF_ENTITY_ID, "lj_power_station"),
+                ): str,
+            }
+        )
+        station_fields = self._power_station_schema(station_defaults)
+        combined = vol.Schema({**name_schema.schema, **station_fields.schema})
+
+        return self.async_show_form(
+            step_id="power_station_config",
             data_schema=combined,
             errors=errors,
             last_step=True,
@@ -2568,6 +2800,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_reconfigure_plug()
             if device_type == DEVICE_TYPE_HOT_WATER_TANK:
                 return await self.async_step_reconfigure_hot_water_tank()
+            if device_type == DEVICE_TYPE_POWER_STATION:
+                return await self.async_step_reconfigure_power_station()
             return self.async_show_menu(
                 step_id="reconfigure",
                 menu_options=[
@@ -2942,6 +3176,39 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=True,
         )
 
+    async def async_step_reconfigure_power_station(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Reconfigure portable power station settings."""
+        errors: dict[str, str] = {}
+        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
+        defaults = {**entry.data, **entry.options}
+
+        if user_input is not None:
+            user_input = self._normalize_optional_inputs(
+                user_input, self._STATION_ENTITY_KEYS
+            )
+            self._data.update(user_input)
+            if self._data.get(
+                CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
+            ) < self._data.get(
+                CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
+            ):
+                errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
+            else:
+                self.hass.config_entries.async_update_entry(
+                    entry,
+                    options={**entry.options, **self._data},
+                )
+                return self.async_abort(reason="reconfigure_successful")
+
+        return self.async_show_form(
+            step_id="reconfigure_power_station",
+            data_schema=self._power_station_schema({**defaults, **self._data}),
+            errors=errors,
+            last_step=True,
+        )
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
@@ -2977,6 +3244,8 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_plug()
             if device_type == DEVICE_TYPE_HOT_WATER_TANK:
                 return await self.async_step_hot_water_tank()
+            if device_type == DEVICE_TYPE_POWER_STATION:
+                return await self.async_step_power_station()
             return await self.async_step_charger()
         if entry_type == ENTRY_TYPE_GROUP:
             return await self.async_step_group()
@@ -3317,6 +3586,37 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="hot_water_tank",
             data_schema=f._hot_water_tank_schema(defaults),
+            errors=errors,
+            last_step=True,
+        )
+
+    async def async_step_power_station(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        errors: dict[str, str] = {}
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+        f = self._schema_helper
+
+        if user_input is not None:
+            user_input = f._normalize_optional_inputs(
+                user_input, f._STATION_ENTITY_KEYS
+            )
+            self._data.update(user_input)
+            if self._data.get(
+                CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
+            ) < self._data.get(
+                CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
+            ):
+                errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
+            else:
+                return self.async_create_entry(
+                    title="",
+                    data={**self.config_entry.options, **self._data},
+                )
+
+        return self.async_show_form(
+            step_id="power_station",
+            data_schema=f._power_station_schema({**defaults, **self._data}),
             errors=errors,
             last_step=True,
         )

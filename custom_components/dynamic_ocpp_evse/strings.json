@@ -137,6 +137,75 @@
                     "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately."
                 }
             },
+            "power_station_config": {
+                "title": "Portable Power Station Configuration",
+                "description": "Configure a portable power station (EcoFlow Delta and similar) as a modulating load. Load Juggler sets its charge rate from available power, and uses its backup reserve as the on/off gate.",
+                "data": {
+                    "name": "Name for this device",
+                    "entity_id": "Entity ID prefix",
+                    "station_charge_speed_entity_id": "AC charging speed (number)",
+                    "station_reserve_entity_id": "Backup reserve level (number)",
+                    "station_battery_level_entity_id": "Battery level sensor",
+                    "station_charge_limit_entity_id": "Max charge limit (optional)",
+                    "station_ac_input_entity_id": "AC input power sensor (optional)",
+                    "station_ac_output_entity_id": "AC output power sensor (optional)",
+                    "station_min_charge_power": "Minimum charge power",
+                    "station_max_charge_power": "Maximum charge power",
+                    "station_normal_reserve": "Normal backup reserve",
+                    "station_storm_reserve": "Storm backup reserve",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest)",
+                    "update_frequency": "Update frequency",
+                    "solar_grace_period": "Solar/Excess grace period"
+                },
+                "data_description": {
+                    "entity_id": "Used as a prefix for entities created by this integration.",
+                    "station_charge_speed_entity_id": "The station's AC charging speed control. Load Juggler writes the charge rate it allocates here.",
+                    "station_reserve_entity_id": "The station's backup reserve level. This is the on/off gate: below the current battery level the station stops drawing from the wall and runs its own loads from its battery.",
+                    "station_battery_level_entity_id": "State of charge. Used to free the station's allocated power for other loads once it is full.",
+                    "station_charge_limit_entity_id": "The station's own maximum charge limit. The reserve is never raised above it, so your battery-health cap is respected. Defaults to 90% if not set.",
+                    "station_ac_input_entity_id": "Total power drawn from the wall. With the AC output sensor it isolates the charging component — anything plugged into the station is household consumption, not this load's draw.",
+                    "station_ac_output_entity_id": "Power the station is supplying to its own outputs. Subtracted from AC input to get the charge rate.",
+                    "station_min_charge_power": "The lowest rate the station accepts (200 W on EcoFlow Delta models). Below this it cannot charge at all, so the reserve is dropped instead.",
+                    "station_max_charge_power": "The most the station may draw. Set below the hardware's own maximum to cap it.",
+                    "station_normal_reserve": "Held day to day. The station discharges down to this level to run its own loads, and charges no further from the grid.",
+                    "station_storm_reserve": "Held while the Storm Reserve switch is on — charged from any source and not discharged below.",
+                    "solar_grace_period": "How long to keep charging at minimum when solar/excess conditions are no longer met."
+                }
+            },
+            "reconfigure_power_station": {
+                "title": "Reconfigure Power Station",
+                "description": "Update the power station's entities, charge limits and reserve levels.",
+                "data": {
+                    "station_charge_speed_entity_id": "AC charging speed (number)",
+                    "station_reserve_entity_id": "Backup reserve level (number)",
+                    "station_battery_level_entity_id": "Battery level sensor",
+                    "station_charge_limit_entity_id": "Max charge limit (optional)",
+                    "station_ac_input_entity_id": "AC input power sensor (optional)",
+                    "station_ac_output_entity_id": "AC output power sensor (optional)",
+                    "station_min_charge_power": "Minimum charge power",
+                    "station_max_charge_power": "Maximum charge power",
+                    "station_normal_reserve": "Normal backup reserve",
+                    "station_storm_reserve": "Storm backup reserve",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest)",
+                    "update_frequency": "Update frequency",
+                    "solar_grace_period": "Solar/Excess grace period"
+                },
+                "data_description": {
+                    "station_charge_speed_entity_id": "The station's AC charging speed control. Load Juggler writes the charge rate it allocates here.",
+                    "station_reserve_entity_id": "The station's backup reserve level. This is the on/off gate: below the current battery level the station stops drawing from the wall and runs its own loads from its battery.",
+                    "station_battery_level_entity_id": "State of charge. Used to free the station's allocated power for other loads once it is full.",
+                    "station_charge_limit_entity_id": "The station's own maximum charge limit. The reserve is never raised above it, so your battery-health cap is respected. Defaults to 90% if not set.",
+                    "station_ac_input_entity_id": "Total power drawn from the wall. With the AC output sensor it isolates the charging component — anything plugged into the station is household consumption, not this load's draw.",
+                    "station_ac_output_entity_id": "Power the station is supplying to its own outputs. Subtracted from AC input to get the charge rate.",
+                    "station_min_charge_power": "The lowest rate the station accepts (200 W on EcoFlow Delta models). Below this it cannot charge at all, so the reserve is dropped instead.",
+                    "station_max_charge_power": "The most the station may draw. Set below the hardware's own maximum to cap it.",
+                    "station_normal_reserve": "Held day to day. The station discharges down to this level to run its own loads, and charges no further from the grid.",
+                    "station_storm_reserve": "Held while the Storm Reserve switch is on — charged from any source and not discharged below.",
+                    "solar_grace_period": "How long to keep charging at minimum when solar/excess conditions are no longer met."
+                }
+            },
             "hot_water_tank_config": {
                 "title": "Hot Water Tank Configuration",
                 "description": "Configure a hot water tank controlled through a climate entity (for example a Generic Thermostat).",
@@ -410,6 +479,7 @@
             }
         },
         "error": {
+            "station_max_below_min": "Minimum charge power cannot exceed maximum charge power.",
             "no_hub_configured": "No hub configured. Please set up a Home Electrical Hub first.",
             "no_ocpp_chargers_found": "No OCPP chargers found. Make sure you have the OCPP integration installed and configured with at least one charger.",
             "charger_not_found": "The selected charger is no longer available. It may have been removed from the OCPP integration. Please try again.",
@@ -522,6 +592,39 @@
                     "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately."
                 }
             },
+            "power_station": {
+                "title": "Power Station Settings",
+                "description": "Adjust charge limits, reserve levels and the controlled entities.",
+                "data": {
+                    "station_charge_speed_entity_id": "AC charging speed (number)",
+                    "station_reserve_entity_id": "Backup reserve level (number)",
+                    "station_battery_level_entity_id": "Battery level sensor",
+                    "station_charge_limit_entity_id": "Max charge limit (optional)",
+                    "station_ac_input_entity_id": "AC input power sensor (optional)",
+                    "station_ac_output_entity_id": "AC output power sensor (optional)",
+                    "station_min_charge_power": "Minimum charge power",
+                    "station_max_charge_power": "Maximum charge power",
+                    "station_normal_reserve": "Normal backup reserve",
+                    "station_storm_reserve": "Storm backup reserve",
+                    "connected_to_phase": "Connected to phase",
+                    "charger_priority": "Priority (1 = highest)",
+                    "update_frequency": "Update frequency",
+                    "solar_grace_period": "Solar/Excess grace period"
+                },
+                "data_description": {
+                    "station_charge_speed_entity_id": "The station's AC charging speed control. Load Juggler writes the charge rate it allocates here.",
+                    "station_reserve_entity_id": "The station's backup reserve level. This is the on/off gate: below the current battery level the station stops drawing from the wall and runs its own loads from its battery.",
+                    "station_battery_level_entity_id": "State of charge. Used to free the station's allocated power for other loads once it is full.",
+                    "station_charge_limit_entity_id": "The station's own maximum charge limit. The reserve is never raised above it, so your battery-health cap is respected. Defaults to 90% if not set.",
+                    "station_ac_input_entity_id": "Total power drawn from the wall. With the AC output sensor it isolates the charging component — anything plugged into the station is household consumption, not this load's draw.",
+                    "station_ac_output_entity_id": "Power the station is supplying to its own outputs. Subtracted from AC input to get the charge rate.",
+                    "station_min_charge_power": "The lowest rate the station accepts (200 W on EcoFlow Delta models). Below this it cannot charge at all, so the reserve is dropped instead.",
+                    "station_max_charge_power": "The most the station may draw. Set below the hardware's own maximum to cap it.",
+                    "station_normal_reserve": "Held day to day. The station discharges down to this level to run its own loads, and charges no further from the grid.",
+                    "station_storm_reserve": "Held while the Storm Reserve switch is on — charged from any source and not discharged below.",
+                    "solar_grace_period": "How long to keep charging at minimum when solar/excess conditions are no longer met."
+                }
+            },
             "hot_water_tank": {
                 "title": "Update Hot Water Tank Settings",
                 "description": "Update hot water tank settings",
@@ -592,6 +695,7 @@
             }
         },
         "error": {
+            "station_max_below_min": "Minimum charge power cannot exceed maximum charge power.",
             "invalid_unit": "Sensor unit mismatch — check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %).",
             "unknown": "An unknown error occurred"
         }

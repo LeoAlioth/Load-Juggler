@@ -30,6 +30,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 - **Auto-detection** of sensors, phase mapping, and charger settings
 - **OCPP 1.6J** control for EV chargers (Amps or Watts, auto-detected)
 - **Hot water tank control** — climate-entity-driven binary heating loads with away/normal/boost setpoints
+- **Portable power station control** — modulated charge rate plus a managed backup reserve, so a station soaks up surplus and spends it again
 - **Relative and absolute OCPP profile modes** for different charger compatibility
 - **Current rate limiting** (ramp up/down) for stable operation
 - **Failsafe operation** — loads revert to safe defaults if sensors become unavailable (EMA holdover, grid stale detection)
@@ -41,6 +42,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 | **EVSE** | OCPP 1.6J current/power profiles | Standard, Solar Priority, Solar Only, Excess | EV chargers with variable current control |
 | **Smart Plug** | On/off switch | Continuous, Solar Priority, Solar Only, Excess | Any device behind a smart plug (heaters, pumps, etc.) |
 | **Hot Water Tank** | Climate entity (on/off + setpoint) | Freeze Protection, Normal, Solar Priority | Tank with a thermostat (e.g. Generic Thermostat); the mode picks an away/normal/boost setpoint |
+| **Power Station** | Charge-speed + backup-reserve numbers | Standard, Solar Priority, Solar Only, Excess | Portable station (EcoFlow Delta and similar); modulates its charge rate, and its reserve is the on/off gate |
 | **SG Ready** | *Planned* | Automatic | 2-relay site-state mapping (Block/Normal/Recommend/Force) |
 
 ## Operating Modes
@@ -70,6 +72,18 @@ A hot water tank is driven through a `climate` entity (e.g. a Generic Thermostat
 - **Solar Priority**: Targets Away below the battery minimum SOC, Normal up to the battery target SOC, and Boost at/above the target — heats from solar surplus only. Without a battery there is no SOC band to follow, so it stays at Normal.
 
 While a tank is aiming at its **Boost** setpoint it is heating past what its mode asks for, on energy the site would otherwise dump — so it competes at the Excess urgency tier instead of its own, and yields power to every must-run load. A Solar Priority tank that has dropped below its Normal temperature keeps its promoted tier: needing heat outranks having free energy.
+
+### Power Station Modes
+
+A portable power station (EcoFlow Delta and similar, via a local integration such as [ha-ef-ble](https://github.com/rabits/ha-ef-ble)) charges at a rate Load Juggler sets, so it uses the same four modes as an EVSE — **Excess** by default, since absorbing surplus is the point.
+
+Its second knob does the gating. The charge-speed control has no zero (200 W is typically the floor), so "don't charge" is expressed through the **backup reserve** instead: below the station's current battery level it draws nothing from the wall and runs its own loads from its battery.
+
+- **Nothing to absorb**: reserve drops to the **Normal Reserve** (default 30%) — the station discharges into its own loads down to that floor.
+- **Power allocated**: reserve rises to the station's own Max Charge Limit and it charges at the allocated rate.
+- **Storm Reserve switch on**: reserve holds at the **Storm Reserve** (default 80%), charged from any source at full rate and not discharged below — this overrides the operating mode.
+
+Whatever is plugged into the station passes through to its outputs and counts as household consumption; only the charging component (`AC input − AC output`) is treated as this load's draw. Minimum and maximum charge power are configured rather than read from the device, so a station can be held below what its hardware allows.
 
 ### Mode Urgency
 

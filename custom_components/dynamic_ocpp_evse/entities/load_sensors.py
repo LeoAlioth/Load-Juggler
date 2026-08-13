@@ -7,6 +7,9 @@ from ..const import (
     CONF_CHARGER_L3_PHASE,
     CONF_CLIMATE_ENTITY_ID,
     CONF_PLUG_SWITCH_ENTITY_ID,
+    CONF_STATION_CHARGE_SPEED_ENTITY_ID,
+    CONF_STATION_BATTERY_LEVEL_ENTITY_ID,
+    CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGER_PRIORITY,
     DEFAULT_CHARGER_PRIORITY,
 )
@@ -188,6 +191,120 @@ class LoadJugglerPlugStatusSensor(ChargerEntityMixin, SensorEntity):
                 self._state = "Off"
         except Exception as e:
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+
+
+class LoadJugglerStationStatusSensor(ChargerEntityMixin, SensorEntity):
+    """Status sensor for a portable power station.
+
+    Shows what Load Juggler last asked of it — ``Charging`` with the resolved
+    speed, ``Storm Reserve`` while holding for an outage, ``Full`` once it has
+    reached its charge limit, or ``Idle`` when the reserve has been dropped and
+    the station is running on (and off) its own battery. Attributes carry the
+    resolved reserve so the two knobs are visible in one place.
+    """
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id):
+        self.hass = hass
+        self.config_entry = config_entry
+        self.hub_entry = hub_entry
+        self._attr_name = f"{name} Status"
+        # Same unique_id suffix as the other device types, so switching a
+        # device's type upgrades the entity in place.
+        self._attr_unique_id = f"{entity_id}_charging_status"
+        self._state = "Unknown"
+        self._attrs = {}
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def extra_state_attributes(self):
+        return self._attrs
+
+    @property
+    def icon(self):
+        return {
+            "Charging": "mdi:battery-charging",
+            "Storm Reserve": "mdi:weather-lightning",
+            "Full": "mdi:battery",
+            "Idle": "mdi:battery-arrow-down",
+            "Manual": "mdi:hand-back-right",
+        }.get(self._state, "mdi:battery-unknown")
+
+    async def async_update(self):
+        try:
+            charger_rt = (
+                self.hass.data.get(DOMAIN, {})
+                .get("chargers", {})
+                .get(self.config_entry.entry_id, {})
+            )
+            speed_entity = self.config_entry.data.get(
+                CONF_STATION_CHARGE_SPEED_ENTITY_ID
+            )
+            soc = _read_float(
+                self.hass,
+                get_entry_value(
+                    self.config_entry, CONF_STATION_BATTERY_LEVEL_ENTITY_ID, None
+                ),
+            )
+            charge_limit = _read_float(
+                self.hass,
+                get_entry_value(
+                    self.config_entry, CONF_STATION_CHARGE_LIMIT_ENTITY_ID, None
+                ),
+            )
+            speed_state = (
+                self.hass.states.get(speed_entity) if speed_entity else None
+            )
+
+            if not speed_entity:
+                self._state = "Not Configured"
+            elif speed_state is None or speed_state.state in (
+                "unknown",
+                "unavailable",
+            ):
+                # These integrations talk BLE, one connection at a time — the
+                # vendor app taking over looks exactly like this.
+                self._state = "Unavailable"
+            elif not charger_rt.get("dynamic_control", True):
+                self._state = "Manual"
+            elif charger_rt.get("station_storm_reserve"):
+                self._state = "Storm Reserve"
+            elif (
+                soc is not None
+                and charge_limit is not None
+                and soc >= charge_limit
+            ):
+                self._state = "Full"
+            elif charger_rt.get("station_charging"):
+                self._state = "Charging"
+            else:
+                self._state = "Idle"
+
+            self._attrs = {
+                "operating_mode": charger_rt.get("operating_mode"),
+                "battery_level": soc,
+                "charge_limit": charge_limit,
+                "charge_speed": charger_rt.get("station_charge_speed"),
+                "backup_reserve": charger_rt.get("station_reserve"),
+                "reserve_source": charger_rt.get("station_reserve_label"),
+            }
+        except Exception as e:
+            _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+
+
+def _read_float(hass, entity_id):
+    """Current numeric state of ``entity_id``, or None if unusable."""
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if state is None or state.state in ("unknown", "unavailable"):
+        return None
+    try:
+        return float(state.state)
+    except (TypeError, ValueError):
+        return None
 
 
 class LoadJugglerPhaseMaskSensor(ChargerEntityMixin, SensorEntity):

@@ -473,6 +473,8 @@ async def _setup_charger_entry(hass: HomeAssistant, entry: ConfigEntry):
         default_mode = DEFAULT_OPERATING_MODE_PLUG
     elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
         default_mode = DEFAULT_OPERATING_MODE_HOT_WATER_TANK
+    elif device_type == DEVICE_TYPE_POWER_STATION:
+        default_mode = DEFAULT_OPERATING_MODE_POWER_STATION
     else:
         default_mode = DEFAULT_OPERATING_MODE_EVSE
     hass.data[DOMAIN]["chargers"][entry.entry_id] = {

@@ -5,7 +5,7 @@ device_info, _write_to_*_data, and state-restore boilerplate across
 number.py, select.py, switch.py, sensor.py, and button.py.
 """
 
-from ..const import DOMAIN, CONF_NAME, CONF_HUB_ENTRY_ID, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK
+from ..const import DOMAIN, CONF_NAME, CONF_HUB_ENTRY_ID, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK, DEVICE_TYPE_POWER_STATION
 
 
 class HubEntityMixin:
@@ -78,6 +78,7 @@ class ChargerEntityMixin:
         model = {
             DEVICE_TYPE_PLUG: "Smart Load",
             DEVICE_TYPE_HOT_WATER_TANK: "Hot Water Tank",
+            DEVICE_TYPE_POWER_STATION: "Power Station",
         }.get(device_type, "EV Charger")
         hub = self._hub_entry
         return {

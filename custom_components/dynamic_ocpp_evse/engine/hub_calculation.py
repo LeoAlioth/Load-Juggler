@@ -711,6 +711,140 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     return charger
 
 
+def _build_power_station_charger(hass, entry, voltage, charger_entity_id, priority):
+    """Build a LoadContext for a portable power station (modulating load).
+
+    The station charges at a commandable rate, so to the engine it is an EVSE
+    without the OCPP: min/max current from the *configured* watt bounds (not the
+    device's own, so it can be held below what the hardware allows), and the
+    allocation is written back as an AC charging speed.
+
+    Its managed draw is the charging component only — ``ac_input - ac_output``.
+    Whatever is plugged into the station passes through to its outputs and is
+    ordinary household consumption, not ours: counting it here would let the
+    feedback loop add it back as available surplus.
+    """
+    charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
+
+    # Charge bounds: runtime sliders win over the configured values, mirroring
+    # the EVSE's min/max current.
+    config_min = get_entry_value(
+        entry, CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
+    )
+    config_max = get_entry_value(
+        entry, CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
+    )
+    min_power = charger_rt.get("station_min_charge_power") or config_min
+    max_power = charger_rt.get("station_max_charge_power") or config_max
+    if max_power < min_power:
+        max_power = min_power
+
+    connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
+    phases = len(connected_to_phase)
+    denom = voltage * phases
+    min_current = min_power / denom if denom > 0 else 0
+    max_current = max_power / denom if denom > 0 else 0
+
+    speed_entity = entry.data.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID)
+    soc = _coerce(
+        _read_entity(
+            hass, get_entry_value(entry, CONF_STATION_BATTERY_LEVEL_ENTITY_ID, None), None
+        ),
+        None,
+    )
+    charge_limit = _coerce(
+        _read_entity(
+            hass, get_entry_value(entry, CONF_STATION_CHARGE_LIMIT_ENTITY_ID, None), None
+        ),
+        None,
+    )
+    if charge_limit is None:
+        charge_limit = DEFAULT_STATION_CHARGE_LIMIT
+
+    # Status. The station is inactive — and its power goes back to other loads —
+    # once it has reached its own charge limit. It is *unavailable* when the
+    # control entity is gone: these integrations talk BLE, which allows one
+    # connection at a time, so opening the vendor app silently takes control
+    # away from Home Assistant. Continuing to allocate power to a station we
+    # cannot command would strand that power.
+    speed_state = hass.states.get(speed_entity) if speed_entity else None
+    if speed_state is None or speed_state.state in ("unknown", "unavailable"):
+        connector_status = "Unavailable"
+    elif soc is not None and soc >= charge_limit:
+        connector_status = "Available"
+    else:
+        connector_status = "Charging"
+
+    # Managed draw: the charging component of the wall draw. Falls back to the
+    # commanded speed when the AC sensors aren't configured, and only while the
+    # station was last told to charge — an idle station draws nothing.
+    ac_in = _coerce(
+        _read_entity(
+            hass,
+            get_entry_value(entry, CONF_STATION_AC_INPUT_ENTITY_ID, None),
+            None,
+            unit="W",
+        ),
+        None,
+    )
+    ac_out = _coerce(
+        _read_entity(
+            hass,
+            get_entry_value(entry, CONF_STATION_AC_OUTPUT_ENTITY_ID, None),
+            None,
+            unit="W",
+        ),
+        None,
+    )
+    if ac_in is not None and ac_out is not None:
+        actual_draw_w = max(0.0, ac_in - abs(ac_out))
+    elif charger_rt.get("station_charging"):
+        actual_draw_w = _coerce(speed_state.state, 0) if speed_state else 0
+    else:
+        actual_draw_w = 0
+
+    mode = resolve_operating_mode(
+        DEVICE_TYPE_POWER_STATION,
+        charger_rt.get("operating_mode", DEFAULT_OPERATING_MODE_POWER_STATION.key),
+    )
+    # Storm reserve overrides the mode: filling a backup reserve only from
+    # surplus is not a reserve, so it competes as a must-run load.
+    if charger_rt.get("station_storm_reserve"):
+        mode = STATION_MODE_STANDARD
+
+    charger = LoadContext(
+        charger_id=entry.entry_id,
+        entity_id=charger_entity_id,
+        min_current=min_current,
+        max_current=max_current,
+        phases=phases,
+        priority=priority,
+        active_phases_mask=connected_to_phase,
+        connector_status=connector_status,
+        device_type=DEVICE_TYPE_POWER_STATION,
+        operating_mode=mode.key,
+        mode_behavior=behavior_for(mode),
+        mode_priority=mode.priority,
+        rated_current=max_current,
+        **_phase_draw(actual_draw_w, connected_to_phase, voltage),
+    )
+    _LOGGER.debug(
+        "  Station %s [%s]: %.0f-%.0fW on %s prio=%d soc=%s%% limit=%s%% "
+        "draw=%.0fW [%s]",
+        charger_entity_id,
+        mode.key,
+        min_power,
+        max_power,
+        connected_to_phase,
+        priority,
+        _fv(soc),
+        _fv(charge_limit),
+        actual_draw_w,
+        connector_status,
+    )
+    return charger
+
+
 def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, priority):
     """Build a LoadContext for a hot water tank (climate-driven binary load).
 
@@ -866,6 +1000,10 @@ def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
             )
         elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
             charger = _build_hot_water_tank_charger(
+                hass, entry, site.voltage, charger_entity_id, priority
+            )
+        elif device_type == DEVICE_TYPE_POWER_STATION:
+            charger = _build_power_station_charger(
                 hass, entry, site.voltage, charger_entity_id, priority
             )
         else:

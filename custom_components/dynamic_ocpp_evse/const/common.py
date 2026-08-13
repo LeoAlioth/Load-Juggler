@@ -20,11 +20,13 @@ ENTRY_TYPE_GROUP = "group"
 CONF_NAME = "name"
 CONF_ENTITY_ID = "entity_id"
 
-# Device type (charger-level) — EVSE (OCPP), smart load, hot water tank, group
+# Device type (charger-level) — EVSE (OCPP), smart load, hot water tank,
+# portable power station, group
 CONF_DEVICE_TYPE = "device_type"
 DEVICE_TYPE_EVSE = "evse"
 DEVICE_TYPE_PLUG = "plug"
 DEVICE_TYPE_HOT_WATER_TANK = "hot_water_tank"
+DEVICE_TYPE_POWER_STATION = "power_station"
 DEVICE_TYPE_GROUP = "group"
 
 # Charger-specific configuration keys shared by every device type

@@ -61,7 +61,19 @@ wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Docu
 | `test_config_flow.py` | Config flow step navigation and input validation |
 | `test_config_flow_e2e.py` | Full hub/charger creation, discovery, options flow |
 | `test_sensor_update.py` | Sensor init, update cycle, OCPP calls, charge pause, profiles |
+| `test_power_station_ha.py` | Power station builder (bounds, managed draw, status) and command module (what is written where) |
 | `conftest.py` | Shared fixtures (`mock_hub_entry`, `mock_charger_entry`, `mock_setup`) |
+
+### Pure-python unit test files
+
+These live alongside the integration tests and are collected by the same pytest
+run, but have no Home Assistant dependency of their own:
+
+| File | What it tests |
+|---|---|
+| `test_hot_water_tank.py` | Tank setpoint resolution and urgency-tier promotion/demotion |
+| `test_excess_margin.py` | The Excess trigger — `excess_margin()` across grid/battery/off-grid states |
+| `test_power_station.py` | Power station charge-speed quantisation and reserve resolution |
 
 ## Debug Runner
 

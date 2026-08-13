@@ -58,7 +58,7 @@ def _load_module_as(fqn, path):
 #    Sub-modules load first in dependency order (common is the leaf); the
 #    aggregator __init__ loads last and re-exports every name.
 _const_dir = _comp_dir / "const"
-for _const_sub in ("common", "hub", "group", "evse", "plug", "hot_water_tank", "modes"):
+for _const_sub in ("common", "hub", "group", "evse", "plug", "hot_water_tank", "power_station", "modes"):
     _load_module_as(f"{_PKG_COMP}.const.{_const_sub}", _const_dir / f"{_const_sub}.py")
 _load_module_as(f"{_PKG_COMP}.const", _const_dir / "__init__.py")
 
