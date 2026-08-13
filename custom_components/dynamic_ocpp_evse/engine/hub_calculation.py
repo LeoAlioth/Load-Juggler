@@ -799,7 +799,9 @@ def _build_power_station_charger(hass, entry, voltage, charger_entity_id, priori
     if ac_in is not None and ac_out is not None:
         actual_draw_w = max(0.0, ac_in - abs(ac_out))
     elif charger_rt.get("station_charging"):
-        actual_draw_w = _coerce(speed_state.state, 0) if speed_state else 0
+        # _read_entity parses and unit-converts; _coerce only maps the
+        # unavailable sentinel, so the raw state string must not go through it.
+        actual_draw_w = _coerce(_read_entity(hass, speed_entity, 0, unit="W"), 0) or 0
     else:
         actual_draw_w = 0
 
