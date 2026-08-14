@@ -85,7 +85,11 @@ from custom_components.dynamic_ocpp_evse.const import (
 
 
 async def test_hub_creation_full_flow(hass: HomeAssistant):
-    """Walk through user → hub_info → hub_grid → hub_inverter → hub_battery and verify the created entry."""
+    """Walk through user → hub_info → hub_grid → hub_battery and verify the created entry.
+
+    Inverter/battery hardware is no longer part of hub creation — it is added
+    afterwards as its own inverter entry.
+    """
 
     # Provide mock sensor entities so the entity selector can find them
     hass.states.async_set(
@@ -575,7 +579,10 @@ async def test_options_flow_hub_saves_changes(
 ):
     """Test that submitting hub options actually updates the config entry.
 
-    The hub options flow has three steps: hub_grid → hub_inverter → hub (battery).
+    Setting the hub up auto-imports its legacy inverter/battery hardware onto a
+    standalone inverter entry, so the options flow is two steps from then on:
+    hub_grid → hub (hub-scoped solar/forecast settings). The inverter page is
+    gone — that hardware is edited on the inverter entry.
     """
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
@@ -606,6 +613,10 @@ async def test_options_flow_hub_saves_changes(
         "sensor.battery_power", "1500",
         {"device_class": "power", "unit_of_measurement": "W"},
     )
+    hass.states.async_set(
+        "sensor.solar_production", "3200",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
 
     # Step 1: hub_grid (electrical settings)
     result = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
@@ -625,43 +636,34 @@ async def test_options_flow_hub_saves_changes(
         },
     )
 
-    # Step 2: hub_inverter (inverter settings)
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_inverter"
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_INVERTER_MAX_POWER: 8000,
-            CONF_INVERTER_MAX_POWER_PER_PHASE: 3000,
-            CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
-            CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
-        },
-    )
-
-    # Step 3: hub (battery settings) — saves
+    # Step 2: hub (hub-scoped solar/forecast settings) — saves and closes,
+    # since this hub has no loads to prioritise.
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub"
+    # Battery hardware is no longer offered here — it lives on the inverter entry.
+    assert not _schema_has(result["data_schema"], CONF_BATTERY_MAX_CHARGE_POWER)
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
-            CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
-            CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
-            CONF_BATTERY_MAX_CHARGE_POWER: 7000,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: 7000,
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.solar_production",
             CONF_BATTERY_SOC_HYSTERESIS: 5,
+            CONF_SOLAR_FORECAST_DEVICE_IDS: [],
+            CONF_BASE_CONSUMPTION: 400,
+            CONF_FORECAST_SOC_FLOOR: 35,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     # Options should now contain the submitted values
-    assert mock_hub_entry.options.get(CONF_BATTERY_MAX_CHARGE_POWER) == 7000
-    assert mock_hub_entry.options.get(CONF_BATTERY_MAX_DISCHARGE_POWER) == 7000
+    assert mock_hub_entry.options.get(CONF_MAIN_BREAKER_RATING) == 25
+    assert mock_hub_entry.options.get(CONF_GRID_EXPORT_LIMIT) == 13500
+    assert mock_hub_entry.options.get(CONF_SOLAR_PRODUCTION_ENTITY_ID) == (
+        "sensor.solar_production"
+    )
     assert mock_hub_entry.options.get(CONF_BATTERY_SOC_HYSTERESIS) == 5
-    assert mock_hub_entry.options.get(CONF_INVERTER_MAX_POWER) == 8000
-    assert mock_hub_entry.options.get(CONF_INVERTER_MAX_POWER_PER_PHASE) == 3000
-    assert mock_hub_entry.options.get(CONF_INVERTER_SUPPORTS_ASYMMETRIC) is False
+    assert mock_hub_entry.options.get(CONF_BASE_CONSUMPTION) == 400
+    assert mock_hub_entry.options.get(CONF_FORECAST_SOC_FLOOR) == 35
 
 
 def _suggested_value(data_schema, key):
@@ -673,22 +675,41 @@ def _suggested_value(data_schema, key):
     raise AssertionError(f"{key} not present in schema")
 
 
-async def test_options_flow_does_not_autodetect_inverter_phases(
+def _schema_has(data_schema, key) -> bool:
+    """Whether a form schema offers a field at all."""
+    return any(
+        getattr(marker, "schema", None) == key for marker in data_schema.schema
+    )
+
+
+async def test_reconfigure_inverter_does_not_autodetect_phases(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Editing an existing hub must NOT auto-pick inverter-output entities.
+    """Editing an existing inverter must NOT auto-pick inverter-output entities.
 
-    Regression: the options flow used to re-run auto-detection into empty
-    fields, which could grab a 3-phase inverter from an unrelated building and
-    silently add phantom L2/L3 phases. The hub has no inverter-output phases
-    configured; even with SolarEdge-matching entities present in HA, the
-    inverter step must leave those fields empty.
+    Regression: the flow used to re-run auto-detection into empty fields, which
+    could grab a 3-phase inverter from an unrelated building and silently add
+    phantom L2/L3 phases that split available power across phases the site does
+    not have. The hub here has no inverter-output phases, so neither does the
+    inverter entry auto-imported from it; even with SolarEdge-matching entities
+    present in HA, its reconfigure page must leave those fields empty.
     """
+    from homeassistant.config_entries import SOURCE_RECONFIGURE
+    from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
+
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
+
+    # Setting the hub up auto-imports its legacy battery config onto an
+    # inverter entry — that entry is where the inverter page lives now.
+    inverter = next(
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+    )
 
     # Entities the hub already references (so the schemas render).
     for ent in ("sensor.inverter_phase_a", "sensor.inverter_phase_b", "sensor.inverter_phase_c"):
@@ -703,23 +724,14 @@ async def test_options_flow_does_not_autodetect_inverter_phases(
             {"device_class": "current", "unit_of_measurement": "A"},
         )
 
-    result = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
-    assert result["step_id"] == "hub_grid"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
-            CONF_MAIN_BREAKER_RATING: 25,
-            CONF_INVERT_PHASES: False,
-            CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
-            CONF_PHASE_VOLTAGE: 230,
-            CONF_GRID_EXPORT_LIMIT: 13500,
-            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
-        },
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": inverter.entry_id},
     )
 
-    # On the inverter step, none of the three phase fields may be pre-filled.
-    assert result["step_id"] == "hub_inverter"
+    # None of the three phase fields may be pre-filled.
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "reconfigure_inverter"
     schema = result["data_schema"]
     assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID) is None
     assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID) is None
