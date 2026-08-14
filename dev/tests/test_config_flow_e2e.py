@@ -38,6 +38,11 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_SOC_TARGET_ENTITY_ID,
     CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
     CONF_POWER_BUFFER_ENTITY_ID,
+    CONF_GRID_EXPORT_LIMIT,
+    CONF_SOLAR_FORECAST_ENTITY_IDS,
+    CONF_BATTERY_CAPACITY_KWH,
+    CONF_BASE_CONSUMPTION,
+    CONF_FORECAST_SOC_FLOOR,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_SUPPORTS_ASYMMETRIC,
@@ -198,6 +203,164 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
     assert hub_entry.data[CONF_NAME] == "My Solar Hub"
     assert hub_entry.data[CONF_ENTITY_ID] == "my_solar_hub"
     assert hub_entry.data[ENTRY_TYPE] == ENTRY_TYPE_HUB
+
+
+async def test_hub_battery_forecast_entities_validated(hass: HomeAssistant):
+    """The battery step rejects a forecast entity without a ``watts`` attribute,
+    accepts a valid multi-entity selection, and stores the list."""
+
+    hass.states.async_set(
+        "sensor.inverter_phase_a", "5.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    # A valid Open-Meteo-style forecast sensor exposes watts: {timestamp: W}
+    hass.states.async_set(
+        "sensor.forecast_array_east", "12.5",
+        {"watts": {"2026-08-14T10:00:00+00:00": 4000.0}},
+    )
+    hass.states.async_set(
+        "sensor.forecast_array_west", "10.1",
+        {"watts": {"2026-08-14T10:00:00+00:00": 3000.0}},
+    )
+    # A plain sensor with no watts attribute — must be rejected
+    hass.states.async_set(
+        "sensor.not_a_forecast", "1.0",
+        {"unit_of_measurement": "kWh"},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "hub"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={CONF_NAME: "Forecast Hub", CONF_ENTITY_ID: "forecast_hub"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
+            CONF_MAIN_BREAKER_RATING: 32,
+            CONF_INVERT_PHASES: False,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_EXCESS_EXPORT_THRESHOLD: 10000,
+            CONF_GRID_EXPORT_LIMIT: 5000,
+        },
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_INVERTER_MAX_POWER: 0,
+            CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
+            CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
+            CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
+        },
+    )
+    assert result["step_id"] == "hub_battery"
+
+    # An entity without a watts attribute is rejected with the named error
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_BATTERY_SOC_HYSTERESIS: 3,
+            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.not_a_forecast"],
+            CONF_BATTERY_CAPACITY_KWH: 10,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {
+        CONF_SOLAR_FORECAST_ENTITY_IDS: "forecast_entity_no_watts"
+    }
+    # The offending entity is named in the error via description_placeholders
+    assert result["description_placeholders"] == {"entity": "sensor.not_a_forecast"}
+
+    # A valid multi-entity selection is accepted and stored
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_BATTERY_SOC_HYSTERESIS: 3,
+            CONF_SOLAR_FORECAST_ENTITY_IDS: [
+                "sensor.forecast_array_east",
+                "sensor.forecast_array_west",
+            ],
+            CONF_BATTERY_CAPACITY_KWH: 10,
+            CONF_BASE_CONSUMPTION: 300,
+            CONF_FORECAST_SOC_FLOOR: 30,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    hub_entry = next(e for e in entries if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_HUB)
+    stored = {**hub_entry.data, **hub_entry.options}
+    assert stored[CONF_SOLAR_FORECAST_ENTITY_IDS] == [
+        "sensor.forecast_array_east",
+        "sensor.forecast_array_west",
+    ]
+    assert stored[CONF_GRID_EXPORT_LIMIT] == 5000
+    assert stored[CONF_BATTERY_CAPACITY_KWH] == 10
+
+
+async def test_hub_battery_empty_forecast_selection_accepted(hass: HomeAssistant):
+    """Leaving the forecast selector empty is valid — the feature is simply off."""
+
+    hass.states.async_set(
+        "sensor.inverter_phase_a", "5.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "hub"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={CONF_NAME: "Plain Hub", CONF_ENTITY_ID: "plain_hub"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
+            CONF_MAIN_BREAKER_RATING: 32,
+            CONF_INVERT_PHASES: False,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_EXCESS_EXPORT_THRESHOLD: 10000,
+        },
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_INVERTER_MAX_POWER: 0,
+            CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
+            CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
+            CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
+        },
+    )
+    # The multi-entity selector omits its key entirely when left empty
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_BATTERY_SOC_HYSTERESIS: 3,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    hub_entry = next(e for e in entries if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_HUB)
+    stored = {**hub_entry.data, **hub_entry.options}
+    assert stored.get(CONF_SOLAR_FORECAST_ENTITY_IDS) == []
 
 
 async def test_hub_creation_single_phase(hass: HomeAssistant):

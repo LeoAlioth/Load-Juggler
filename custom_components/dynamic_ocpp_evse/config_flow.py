@@ -55,6 +55,28 @@ def _validate_entity_units(
             errors[field_key] = "invalid_unit"
 
 
+def _validate_forecast_entities(hass, user_input: dict, errors: dict) -> str | None:
+    """Every selected solar forecast entity must expose a ``watts`` attribute.
+
+    That attribute (a mapping of block-start timestamps to average watts, as
+    the Open-Meteo Solar Forecast integration provides) is what the clipping
+    forecast reads — the sensor's own state and unit are irrelevant, which is
+    why this is not part of _validate_entity_units. Mirrors its philosophy
+    otherwise: an entity with missing state never blocks the user.
+
+    Returns the first offending entity_id so the step can name it in the form
+    error via description_placeholders, or None when the selection is valid.
+    """
+    for entity_id in user_input.get(CONF_SOLAR_FORECAST_ENTITY_IDS) or []:
+        state = hass.states.get(entity_id)
+        if not state or state.state in ("unavailable", "unknown"):
+            continue
+        if not isinstance(state.attributes.get("watts"), dict):
+            errors[CONF_SOLAR_FORECAST_ENTITY_IDS] = "forecast_entity_no_watts"
+            return entity_id
+    return None
+
+
 def _compose_entry_title(name: str, type_label: str) -> str:
     """Compose a config-entry title without doubling the device-type label.
 
@@ -337,6 +359,27 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
             ),
             (
+                # Physical/contract export ceiling — distinct from the Excess
+                # trigger above. 0 = no limit, PV clipping forecast off.
+                vol.Optional(
+                    CONF_GRID_EXPORT_LIMIT,
+                    default=defaults.get(
+                        CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 50000,
+                            "step": 100,
+                            "mode": "box",
+                            "unit_of_measurement": "W",
+                        }
+                    }
+                ),
+            ),
+            (
                 vol.Optional(
                     CONF_SITE_UPDATE_FREQUENCY,
                     default=defaults.get(
@@ -502,6 +545,73 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "number": {
                             "min": 50,
                             "max": 100,
+                            "step": 1,
+                            "mode": "slider",
+                            "unit_of_measurement": "%",
+                        }
+                    }
+                ),
+            ),
+            # --- PV clipping forecast (advisory battery headroom) ---
+            # Active only when the grid export limit (hub grid step), a battery
+            # capacity and at least one forecast entity are all set.
+            (
+                vol.Optional(
+                    CONF_SOLAR_FORECAST_ENTITY_IDS,
+                    default=defaults.get(CONF_SOLAR_FORECAST_ENTITY_IDS) or [],
+                ),
+                selector({"entity": {"multiple": True, "domain": "sensor"}}),
+            ),
+            (
+                vol.Optional(
+                    CONF_BATTERY_CAPACITY_KWH,
+                    default=defaults.get(
+                        CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 1000,
+                            "step": 0.1,
+                            "mode": "box",
+                            "unit_of_measurement": "kWh",
+                        }
+                    }
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_BASE_CONSUMPTION,
+                    default=defaults.get(
+                        CONF_BASE_CONSUMPTION, DEFAULT_BASE_CONSUMPTION
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 10000,
+                            "step": 50,
+                            "mode": "box",
+                            "unit_of_measurement": "W",
+                        }
+                    }
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_FORECAST_SOC_FLOOR,
+                    default=defaults.get(
+                        CONF_FORECAST_SOC_FLOOR, DEFAULT_FORECAST_SOC_FLOOR
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 90,
                             "step": 1,
                             "mode": "slider",
                             "unit_of_measurement": "%",
@@ -1312,6 +1422,19 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     normalized[key] = None
         return normalized
 
+    def _normalize_forecast_list(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Normalize the solar forecast entity list (battery step).
+
+        Separate from _normalize_optional_inputs, which is per-key scalar: the
+        multi-entity selector yields a list and omits the key entirely when
+        cleared, so an emptied selection must become [] (feature off), not a
+        stale stored value.
+        """
+        data[CONF_SOLAR_FORECAST_ENTITY_IDS] = [
+            e for e in (data.get(CONF_SOLAR_FORECAST_ENTITY_IDS) or []) if e
+        ]
+        return data
+
     def _normalize_inverter_powers(self):
         """Normalize inverter power values: 0 means 'not configured' → store as None."""
         for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
@@ -1621,6 +1744,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input = self._normalize_optional_inputs(
                 user_input, self._BATTERY_ENTITY_KEYS
             )
+            user_input = self._normalize_forecast_list(user_input)
             _validate_entity_units(
                 self.hass,
                 user_input,
@@ -1630,6 +1754,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
                 },
                 errors,
+            )
+            bad_forecast_entity = _validate_forecast_entities(
+                self.hass, user_input, errors
             )
             validate_offgrid_battery_requirement(self._data, user_input, errors)
             if not errors:
@@ -1664,6 +1791,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="hub_battery",
                 data_schema=self._hub_battery_schema(user_input),
                 errors=errors,
+                description_placeholders=(
+                    {"entity": bad_forecast_entity} if bad_forecast_entity else None
+                ),
                 last_step=True,
             )
 
@@ -2903,6 +3033,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input = self._normalize_optional_inputs(
                 user_input, self._BATTERY_ENTITY_KEYS
             )
+            user_input = self._normalize_forecast_list(user_input)
             _validate_entity_units(
                 self.hass,
                 user_input,
@@ -2912,6 +3043,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
                 },
                 errors,
+            )
+            bad_forecast_entity = _validate_forecast_entities(
+                self.hass, user_input, errors
             )
             validate_offgrid_battery_requirement(defaults, user_input, errors)
             if not errors:
@@ -2924,6 +3058,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="reconfigure_hub_battery",
                 data_schema=self._hub_battery_schema(user_input),
                 errors=errors,
+                description_placeholders=(
+                    {"entity": bad_forecast_entity} if bad_forecast_entity else None
+                ),
                 last_step=False,
             )
 
@@ -3372,6 +3509,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             user_input = f._normalize_optional_inputs(
                 user_input, f._BATTERY_ENTITY_KEYS
             )
+            user_input = f._normalize_forecast_list(user_input)
             _validate_entity_units(
                 self.hass,
                 user_input,
@@ -3381,6 +3519,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                     CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
                 },
                 errors,
+            )
+            bad_forecast_entity = _validate_forecast_entities(
+                self.hass, user_input, errors
             )
             validate_offgrid_battery_requirement(
                 {**defaults, **self._data}, user_input, errors
@@ -3392,6 +3533,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 step_id="hub",
                 data_schema=f._hub_battery_schema(user_input),
                 errors=errors,
+                description_placeholders=(
+                    {"entity": bad_forecast_entity} if bad_forecast_entity else None
+                ),
                 last_step=False,
             )
 

@@ -298,6 +298,59 @@ HUB_SENSOR_DEFINITIONS = [
         "icon": "mdi:ev-station",
         "decimals": 0,
     },
+    # PV clipping forecast — advisory battery headroom. The kWh sensors get no
+    # device_class: "energy" implies total/total_increasing statistics, and
+    # these are advisory values that fall as well as rise.
+    {
+        "name_suffix": "Forecast Clippable Energy",
+        "unique_id_suffix": "forecast_clippable_energy",
+        "hub_data_key": "forecast_clipped_kwh",
+        "unit": "kWh",
+        "device_class": None,
+        "icon": "mdi:content-cut",
+        "decimals": 2,
+        "requires_forecast": True,
+    },
+    {
+        "name_suffix": "Forecast Storable Energy",
+        "unique_id_suffix": "forecast_storable_energy",
+        "hub_data_key": "forecast_absorbable_kwh",
+        "unit": "kWh",
+        "device_class": None,
+        "icon": "mdi:battery-plus-variant",
+        "decimals": 2,
+        "requires_forecast": True,
+    },
+    {
+        "name_suffix": "Recommended Battery Max SOC",
+        "unique_id_suffix": "forecast_battery_max_soc",
+        "hub_data_key": "forecast_battery_max_soc",
+        "unit": "%",
+        "device_class": "battery",
+        "icon": "mdi:battery-lock",
+        "decimals": 0,
+        "requires_forecast": True,
+    },
+    {
+        "name_suffix": "Battery Headroom Deficit",
+        "unique_id_suffix": "forecast_headroom_deficit",
+        "hub_data_key": "forecast_headroom_deficit_kwh",
+        "unit": "kWh",
+        "device_class": None,
+        "icon": "mdi:battery-alert",
+        "decimals": 2,
+        "requires_forecast": True,
+    },
+    {
+        "name_suffix": "Recommended Battery Charge Limit",
+        "unique_id_suffix": "forecast_charge_limit",
+        "hub_data_key": "forecast_charge_limit_w",
+        "unit": "W",
+        "device_class": "power",
+        "icon": "mdi:battery-charging-wireless",
+        "decimals": 0,
+        "requires_forecast": True,
+    },
 ]
 
 

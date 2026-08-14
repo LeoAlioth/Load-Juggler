@@ -658,6 +658,98 @@ Result: Reserve 80%, charge speed at maximum, competing as a must-run load
         regardless of the selected mode
 ```
 
+### Automating the Storm Reserve
+
+The Storm Reserve switch is deliberately a plain switch, so *when* to hold a
+reserve is your decision rather than something baked into the integration. The
+natural trigger is a severe-weather warning, which is issued precisely because
+disruption is expected — a better predictor of an outage than any forecast
+condition or gust threshold.
+
+Be aware what you are automating: the switch forces the station to charge from
+whatever source is available, at full rate, until it reaches the storm level. A
+trigger-happy automation costs real grid import, which is the argument for
+warning-based triggers over "the forecast mentions thunder".
+
+**Official warnings (recommended).** In the EU, [MeteoAlarm](https://www.home-assistant.io/integrations/meteoalarm/)
+covers most countries but is YAML-configured. Where a national integration exists
+it is usually both UI-configurable and more detailed — for Slovenia,
+[the ARSO integration](https://github.com/andrejs2/slovenian_weather_integration)
+exposes a warning binary sensor whose `najvisja_stopnja` attribute is the highest
+active warning level (1 minor → 4 extreme):
+
+```yaml
+alias: Storm reserve follows weather warnings
+triggers:
+  - trigger: numeric_state
+    entity_id: binary_sensor.arso_opozorila_<location>_aktivno_opozorilo
+    attribute: najvisja_stopnja
+    above: 2
+    id: arm
+  - trigger: numeric_state
+    entity_id: binary_sensor.arso_opozorila_<location>_aktivno_opozorilo
+    attribute: najvisja_stopnja
+    below: 3
+    for: "02:00:00"
+    id: stand_down
+actions:
+  - action: "switch.turn_{{ 'on' if trigger.id == 'arm' else 'off' }}"
+    target:
+      entity_id: switch.<station_name>_storm_reserve
+mode: single
+```
+
+Level 3 (orange/severe) is roughly where outage risk becomes real; level 2 fires
+often enough that you would be grid-charging on most summer afternoons. The
+two-hour `for:` on stand-down matters — warnings flap at their edges, and each
+flip swings the station between full-rate charging and idling.
+
+**Forecast-based, without a warnings integration.** Forecasts are no longer
+attributes, so scanning them means calling
+[`weather.get_forecasts`](https://www.home-assistant.io/actions/weather.get_forecasts/)
+and reading its response. Put that in a trigger-based template binary sensor and
+point the automation above at it:
+
+```yaml
+template:
+  - trigger:
+      - trigger: time_pattern
+        minutes: "/30"
+      - trigger: homeassistant
+        event: start
+    action:
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_home      # or weather.openmeteo
+        data:
+          type: hourly
+        response_variable: fc
+    binary_sensor:
+      - name: Storm expected
+        state: >
+          {% set f = fc['weather.forecast_home'].forecast[:8] %}
+          {% set stormy = f | selectattr('condition', 'in',
+                              ['lightning', 'lightning-rainy']) | list %}
+          {% set g = f | selectattr('wind_gust_speed', 'defined')
+                       | map(attribute='wind_gust_speed') | list %}
+          {{ stormy | count > 0 or (g and g | max > 70) }}
+```
+
+Check what your provider actually returns before trusting the gust test — call
+`weather.get_forecasts` in Developer Tools → Actions and read the response.
+`wind_gust_speed` is missing from some providers' hourly forecasts, and the
+`defined` guard then silently leaves you with condition-matching only. Gusts are
+in km/h.
+
+Eight hours of lookahead is generous: filling from the normal reserve to the storm
+level is well under an hour at full charge rate. The longer window mainly buys a
+chance to fill from surplus before falling back to the grid.
+
+Prefer keeping this in an **automation** rather than a template sensor if you want
+to stay UI-managed — trigger-based template sensors cannot be created through
+Helpers, but an automation can hold the same trigger, action and template
+condition, and lives in Home Assistant's own storage.
+
 ---
 
 ## Configuration Parameters

@@ -60,6 +60,11 @@ from custom_components.dynamic_ocpp_evse.const import (
     DEFAULT_BATTERY_MAX_POWER,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
     DEFAULT_CHARGE_PAUSE_DURATION,
+    CONF_GRID_EXPORT_LIMIT,
+    CONF_SOLAR_FORECAST_ENTITY_IDS,
+    CONF_BASE_CONSUMPTION,
+    CONF_BATTERY_CAPACITY_KWH,
+    CONF_FORECAST_SOC_FLOOR,
 )
 from custom_components.dynamic_ocpp_evse.sensor import (
     DynamicOcppEvseChargerSensor,
@@ -392,6 +397,34 @@ async def test_charger_sensor_update_writes_hub_data(
     assert hub_data, "hub_data should be populated after charger sensor update"
     assert "last_update" in hub_data
     assert "total_site_available_power" in hub_data
+
+
+async def test_charger_update_republishes_every_hub_sensor_key(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Every HUB_SENSOR_DEFINITIONS key must survive a load's async_update.
+
+    Regression test: the republish used to be a hand-written key list that
+    silently dropped sensor keys (available_grid_current & co.), leaving
+    those hub sensors permanently unknown on any site with a load — the hub
+    sensor's own self-calculating path never fires while loads refresh it.
+    """
+    _set_ha_states(hass, hub_entry)
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await sensor.async_update()
+
+    hub_data = hass.data[DOMAIN].get("hub_data", {}).get(hub_entry.entry_id, {})
+    missing = [
+        d["hub_data_key"] for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] not in hub_data
+    ]
+    assert not missing, f"hub sensor keys dropped by the load republish: {missing}"
 
 
 async def test_hub_sensor_reads_hub_data(
@@ -1755,3 +1788,106 @@ async def test_compliance_watts_decode_detects_real_mismatch(
         "A real 8A-vs-16A shortfall on the W decode path should increment the "
         f"mismatch counter; got mismatch_count={sensor._mismatch_count}"
     )
+
+
+# ── PV clipping forecast: hub_runtime ratchet ─────────────────────────
+
+
+async def test_forecast_max_soc_ratchet(hass):
+    """The published max-SOC recommendation rises immediately when the forecast
+    improves, but falls only past the FORECAST_SOC_HYSTERESIS band, so forecast
+    refreshes don't chatter the advice.
+
+    Fixed clock (freezegun) so the forecast blocks sit inside "the rest of
+    today" regardless of when the test runs. Threshold = 5000 W export limit
+    + 300 W base consumption = 5300 W; capacity 10 kWh, floor 30 %.
+    """
+    from types import SimpleNamespace
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Forecast Hub",
+        data={
+            CONF_NAME: "Forecast Hub",
+            CONF_ENTITY_ID: "forecast_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.fc_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_EXCESS_EXPORT_THRESHOLD: 13000,
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.fc_battery_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.fc_battery_power",
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_GRID_EXPORT_LIMIT: 5000,
+            CONF_BASE_CONSUMPTION: 300,
+            CONF_BATTERY_CAPACITY_KWH: 10,
+            CONF_FORECAST_SOC_FLOOR: 30,
+            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.fc_forecast"],
+        },
+    )
+    # Minimal runtime structures — the ratchet state must live in this dict
+    # across calls, exactly as it does in production.
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"chargers": []}},
+        "chargers": {},
+        "charger_allocations": {},
+    }
+
+    hass.states.async_set(
+        "sensor.fc_phase_a", "2.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.fc_battery_soc", "80",
+        {"device_class": "battery", "unit_of_measurement": "%"},
+    )
+    hass.states.async_set(
+        "sensor.fc_battery_power", "-500",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    sensor = SimpleNamespace(hass=hass, hub_entry=hub)
+
+    def set_forecast(watts_by_hour):
+        hass.states.async_set(
+            "sensor.fc_forecast",
+            "1.0",
+            {
+                "watts": {
+                    f"2026-08-14T{10 + i:02d}:00:00+00:00": w
+                    for i, w in enumerate(watts_by_hour)
+                }
+            },
+        )
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        # 2 h at 10300 W = 5000 W over the threshold → 10 kWh, the whole pack:
+        # raw ceiling 0 %, clamped to the 30 % floor.
+        set_forecast([10300, 10300, 0])
+        result = run_hub_calculation(sensor)
+        assert result["forecast_clipped_kwh"] == 10.0
+        assert result["forecast_battery_max_soc"] == 30
+
+        # Forecast improves to 2.5 kWh → ceiling 75 %: rises immediately.
+        set_forecast([7800, 0])
+        result = run_hub_calculation(sensor)
+        assert result["forecast_battery_max_soc"] == 75
+
+        # Slightly worse (raw 74 %) — within the 2 % band, holds at 75.
+        set_forecast([7900, 0])
+        result = run_hub_calculation(sensor)
+        assert result["forecast_battery_max_soc"] == 75
+
+        # Clearly worse (raw 60 %) — beyond the band, falls.
+        set_forecast([9300, 0])
+        result = run_hub_calculation(sensor)
+        assert result["forecast_battery_max_soc"] == 60

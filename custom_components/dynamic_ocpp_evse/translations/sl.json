@@ -57,6 +57,7 @@
                     "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
                     "phase_voltage": "Napetost na fazo",
                     "excess_export_threshold": "Prag izvoza za način Excess",
+                    "grid_export_limit": "Omejitev izvoza v omrežje",
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije",
                     "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
                     "solar_grace_period": "Odlog za Solar/Excess način"
@@ -68,6 +69,7 @@
                     "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
+                    "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje — ločena od praga Excess zgoraj, ki je vedenjski sprožilec. Skupaj s kapaciteto baterije in senzorji sončne napovedi (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve, napoved izklopljena.",
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom.",
                     "auto_detect_phase_mapping": "Spremlja tokove polnilnikov za zaznavo nepravilnega faznega ožičenja. Deluje za vse vrste polnilnikov na večfaznih lokacijah. Onemogočite ob lažnih opozorilih.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
@@ -102,7 +104,11 @@
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije",
                     "battery_max_discharge_power": "Maksimalna moč praznjenja baterije",
                     "battery_soc_hysteresis": "Histereza SOC baterije",
-                    "battery_soc_full": "SOC polne baterije"
+                    "battery_soc_full": "SOC polne baterije",
+                    "solar_forecast_entity_ids": "Senzorji sončne napovedi (po en za vsako PV polje)",
+                    "battery_capacity_kwh": "Kapaciteta baterije",
+                    "base_consumption": "Osnovna poraba hiše",
+                    "forecast_soc_floor": "Spodnja meja priporočenega SOC"
                 },
                 "data_description": {
                     "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
@@ -110,7 +116,11 @@
                     "battery_max_charge_power": "Maksimalna moč, ki jo razsmernik uporabi za polnjenje baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
                     "battery_max_discharge_power": "Maksimalna moč, ki jo razsmernik lahko prazni iz baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%.",
-                    "battery_soc_full": "SOC, pri katerem ali nad katerim se baterija šteje za polno. Pametni vtič v načinu Presežek se vklopi, ko baterija doseže to raven (ali ko mesto oddaja v omrežje)."
+                    "battery_soc_full": "SOC, pri katerem ali nad katerim se baterija šteje za polno. Pametni vtič v načinu Presežek se vklopi, ko baterija doseže to raven (ali ko mesto oddaja v omrežje).",
+                    "solar_forecast_entity_ids": "Senzorji proizvodnje energije iz integracije Open-Meteo Solar Forecast — po en za vsako PV polje, ne skupnega. Skupaj z omejitvijo izvoza in kapaciteto baterije omogoči svetovalne senzorje, ki priporočajo, kako polna sme biti baterija pred opoldanskim vrhom proizvodnje.",
+                    "battery_capacity_kwh": "kWh, ki jih pokriva odstotek SOC baterije (uporabna kapaciteta). 0 izklopi napoved rezanja PV proizvodnje.",
+                    "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva — vnos vršne porabe funkcijo v praksi izklopi.",
+                    "forecast_soc_floor": "Priporočeni največji SOC baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
                 }
             },
             "select_hub": {
@@ -341,6 +351,7 @@
                     "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
                     "phase_voltage": "Napetost na fazo",
                     "excess_export_threshold": "Prag izvoza za način Excess",
+                    "grid_export_limit": "Omejitev izvoza v omrežje",
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije",
                     "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
                     "solar_grace_period": "Odlog za Solar/Excess način"
@@ -352,6 +363,7 @@
                     "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
+                    "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje — ločena od praga Excess zgoraj, ki je vedenjski sprožilec. Skupaj s kapaciteto baterije in senzorji sončne napovedi (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve, napoved izklopljena.",
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom.",
                     "auto_detect_phase_mapping": "Spremlja tokove polnilnikov za zaznavo nepravilnega faznega ožičenja. Deluje za vse vrste polnilnikov na večfaznih lokacijah. Onemogočite ob lažnih opozorilih.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
@@ -386,7 +398,11 @@
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije",
                     "battery_max_discharge_power": "Maksimalna moč praznjenja baterije",
                     "battery_soc_hysteresis": "Histereza SOC baterije",
-                    "battery_soc_full": "SOC polne baterije"
+                    "battery_soc_full": "SOC polne baterije",
+                    "solar_forecast_entity_ids": "Senzorji sončne napovedi (po en za vsako PV polje)",
+                    "battery_capacity_kwh": "Kapaciteta baterije",
+                    "base_consumption": "Osnovna poraba hiše",
+                    "forecast_soc_floor": "Spodnja meja priporočenega SOC"
                 },
                 "data_description": {
                     "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
@@ -394,7 +410,11 @@
                     "battery_max_charge_power": "Maksimalna moč, ki jo razsmernik uporabi za polnjenje baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
                     "battery_max_discharge_power": "Maksimalna moč, ki jo razsmernik lahko prazni iz baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%.",
-                    "battery_soc_full": "SOC, pri katerem ali nad katerim se baterija šteje za polno. Pametni vtič v načinu Presežek se vklopi, ko baterija doseže to raven (ali ko mesto oddaja v omrežje)."
+                    "battery_soc_full": "SOC, pri katerem ali nad katerim se baterija šteje za polno. Pametni vtič v načinu Presežek se vklopi, ko baterija doseže to raven (ali ko mesto oddaja v omrežje).",
+                    "solar_forecast_entity_ids": "Senzorji proizvodnje energije iz integracije Open-Meteo Solar Forecast — po en za vsako PV polje, ne skupnega. Skupaj z omejitvijo izvoza in kapaciteto baterije omogoči svetovalne senzorje, ki priporočajo, kako polna sme biti baterija pred opoldanskim vrhom proizvodnje.",
+                    "battery_capacity_kwh": "kWh, ki jih pokriva odstotek SOC baterije (uporabna kapaciteta). 0 izklopi napoved rezanja PV proizvodnje.",
+                    "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva — vnos vršne porabe funkcijo v praksi izklopi.",
+                    "forecast_soc_floor": "Priporočeni največji SOC baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
                 }
             },
             "reconfigure_plug": {
@@ -508,6 +528,7 @@
         },
         "error": {
             "station_max_below_min": "Minimalna moč polnjenja ne more presegati maksimalne.",
+            "forecast_entity_no_watts": "{entity} nima atributa 'watts' — izberite senzorje proizvodnje energije iz integracije Open-Meteo Solar Forecast.",
             "no_hub_configured": "Hub ni konfiguriran. Najprej nastavite domači električni hub.",
             "no_ocpp_chargers_found": "OCPP polnilniki niso najdeni. Prepričajte se, da imate nameščeno in konfigurirano integracijo OCPP z vsaj enim polnilnikom.",
             "charger_not_found": "Izbrani polnilnik ni več na voljo. Morda je bil odstranjen iz integracije OCPP. Poskusite znova.",
@@ -526,7 +547,8 @@
     },
     "options": {
         "error": {
-            "station_max_below_min": "Minimalna moč polnjenja ne more presegati maksimalne."
+            "station_max_below_min": "Minimalna moč polnjenja ne more presegati maksimalne.",
+            "forecast_entity_no_watts": "{entity} nima atributa 'watts' — izberite senzorje proizvodnje energije iz integracije Open-Meteo Solar Forecast."
         },
         "step": {
             "priority": {
@@ -549,6 +571,7 @@
                     "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
                     "phase_voltage": "Napetost na fazo",
                     "excess_export_threshold": "Prag izvoza za način Excess",
+                    "grid_export_limit": "Omejitev izvoza v omrežje",
                     "site_update_frequency": "Hitrost osveževanja senzorjev lokacije",
                     "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
                     "solar_grace_period": "Odlog za Solar/Excess način"
@@ -560,6 +583,7 @@
                     "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "excess_export_threshold": "V načinu Excess se polnjenje EV začne šele, ko izvoz omrežja preseže to vrednost. Nastavite na želeni minimalni izvoz pred začetkom polnjenja.",
+                    "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje — ločena od praga Excess zgoraj, ki je vedenjski sprožilec. Skupaj s kapaciteto baterije in senzorji sončne napovedi (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve, napoved izklopljena.",
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja polnilnikom.",
                     "auto_detect_phase_mapping": "Spremlja tokove polnilnikov za zaznavo nepravilnega faznega ožičenja. Deluje za vse vrste polnilnikov na večfaznih lokacijah. Onemogočite ob lažnih opozorilih.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
@@ -594,7 +618,11 @@
                     "battery_max_charge_power": "Maksimalna moč polnjenja baterije",
                     "battery_max_discharge_power": "Maksimalna moč praznjenja baterije",
                     "battery_soc_hysteresis": "Histereza SOC baterije",
-                    "battery_soc_full": "SOC polne baterije"
+                    "battery_soc_full": "SOC polne baterije",
+                    "solar_forecast_entity_ids": "Senzorji sončne napovedi (po en za vsako PV polje)",
+                    "battery_capacity_kwh": "Kapaciteta baterije",
+                    "base_consumption": "Osnovna poraba hiše",
+                    "forecast_soc_floor": "Spodnja meja priporočenega SOC"
                 },
                 "data_description": {
                     "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
@@ -602,7 +630,11 @@
                     "battery_max_charge_power": "Maksimalna moč, ki jo razsmernik uporabi za polnjenje baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
                     "battery_max_discharge_power": "Maksimalna moč, ki jo razsmernik lahko prazni iz baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov SOC. Npr. s 3% histerezo in 90% ciljem se polnjenje nadaljuje pri 87% in zaustavi pri 90%.",
-                    "battery_soc_full": "SOC, pri katerem ali nad katerim se baterija šteje za polno. Pametni vtič v načinu Presežek se vklopi, ko baterija doseže to raven (ali ko mesto oddaja v omrežje)."
+                    "battery_soc_full": "SOC, pri katerem ali nad katerim se baterija šteje za polno. Pametni vtič v načinu Presežek se vklopi, ko baterija doseže to raven (ali ko mesto oddaja v omrežje).",
+                    "solar_forecast_entity_ids": "Senzorji proizvodnje energije iz integracije Open-Meteo Solar Forecast — po en za vsako PV polje, ne skupnega. Skupaj z omejitvijo izvoza in kapaciteto baterije omogoči svetovalne senzorje, ki priporočajo, kako polna sme biti baterija pred opoldanskim vrhom proizvodnje.",
+                    "battery_capacity_kwh": "kWh, ki jih pokriva odstotek SOC baterije (uporabna kapaciteta). 0 izklopi napoved rezanja PV proizvodnje.",
+                    "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva — vnos vršne porabe funkcijo v praksi izklopi.",
+                    "forecast_soc_floor": "Priporočeni največji SOC baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
                 }
             },
             "plug": {

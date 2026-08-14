@@ -15,8 +15,23 @@ from ..control.ocpp import send_ocpp_command
 from ..control.plug import send_plug_command
 from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
+from .hub import HUB_SENSOR_DEFINITIONS
 
 _LOGGER = logging.getLogger(__name__)
+
+# Every hub_data key the load sensors republish into hass.data for the hub
+# entities to read. Projected from HUB_SENSOR_DEFINITIONS so a new hub sensor
+# republishes automatically, plus keys read by non-sensor consumers.
+_HUB_REPUBLISH_KEYS = frozenset(
+    d["hub_data_key"] for d in HUB_SENSOR_DEFINITIONS
+) | {
+    "battery_soc_min",
+    "battery_soc_target",
+    "total_site_available_power",
+    "total_export_power",
+    "excess_available",
+    "excess_margin_power",
+}
 
 
 class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
@@ -201,29 +216,17 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 self.hass.data[DOMAIN] = {}
             if "hub_data" not in self.hass.data[DOMAIN]:
                 self.hass.data[DOMAIN]["hub_data"] = {}
-            self.hass.data[DOMAIN]["hub_data"][hub_entry_id] = {
-                "battery_soc": hub_data.get("battery_soc"),
-                "battery_soc_min": hub_data.get("battery_soc_min"),
-                "battery_soc_target": hub_data.get("battery_soc_target"),
-                "battery_power": hub_data.get("battery_power"),
-                "available_current_a": hub_data.get("available_current_a"),
-                "available_current_b": hub_data.get("available_current_b"),
-                "available_current_c": hub_data.get("available_current_c"),
-                "grid_power": hub_data.get("grid_power"),
-                "solar_power": hub_data.get("solar_power"),
-                "available_grid_power": hub_data.get("available_grid_power"),
-                "available_solar_power": hub_data.get("available_solar_power"),
-                "available_battery_power": hub_data.get("available_battery_power"),
-                "total_site_available_power": hub_data.get(
-                    "total_site_available_power"
-                ),
-                "total_evse_power": hub_data.get("total_evse_power"),
-                "last_update": datetime.now(timezone.utc),
-                "grid_stale": hub_data.get("grid_stale", False),
-                "group_data": hub_data.get("group_data", {}),
-                "hub_status": hub_data.get("hub_status", "OK"),
-                "hub_warnings": hub_data.get("hub_warnings", []),
-            }
+            republished = {key: hub_data.get(key) for key in _HUB_REPUBLISH_KEYS}
+            republished.update(
+                {
+                    "last_update": datetime.now(timezone.utc),
+                    "grid_stale": hub_data.get("grid_stale", False),
+                    "group_data": hub_data.get("group_data", {}),
+                    "hub_status": hub_data.get("hub_status", "OK"),
+                    "hub_warnings": hub_data.get("hub_warnings", []),
+                }
+            )
+            self.hass.data[DOMAIN]["hub_data"][hub_entry_id] = republished
 
             charger_targets = hub_data.get("charger_targets", {})
 

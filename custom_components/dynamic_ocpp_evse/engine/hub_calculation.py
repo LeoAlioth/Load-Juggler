@@ -16,11 +16,16 @@ from ..calculations import (
     CircuitGroup,
     calculate_all_charger_targets,
     excess_margin,
+    clipping_forecast,
+    battery_max_soc,
+    headroom_deficit_kwh,
+    recommended_charge_limit,
 )
 from ..const import *
 from ..calculations.utils import is_number, compute_household_per_phase
 from ..helpers import get_entry_value
 from .auto_detect import check_inversion, check_phase_mapping
+from .forecast_reader import read_forecast_series, forecast_window
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -202,6 +207,12 @@ def _check_entity_availability(hass, hub_entry) -> list:
         state = hass.states.get(entity_id)
         if state is None or state.state in ("unknown", "unavailable", ""):
             unavailable.append((label, entity_id))
+    # Forecast entities are a list, and the clipping maths fails open when one
+    # drops out — the status sensor is the only place the dropout is visible.
+    for entity_id in get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []:
+        state = hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable", ""):
+            unavailable.append(("Solar forecast sensor", entity_id))
     return unavailable
 
 
@@ -1174,6 +1185,115 @@ def _build_circuit_groups(hass, hub_entry_id):
     return groups
 
 
+def _compute_forecast_advice(
+    hass,
+    hub_entry,
+    hub_runtime,
+    site,
+    battery_soc,
+    battery_max_charge_power,
+    inverter_max_power,
+):
+    """Advisory battery headroom from the PV clipping forecast, or None.
+
+    Enabled only when an export limit, a battery capacity and at least one
+    forecast entity are configured — the hub publishes advice sensors, it
+    never commands the house battery (a future battery-inverter device type
+    will optionally write these values to a device).
+
+    The published SOC ceiling is ratcheted in hub_runtime, mirroring the
+    Excess latch: it rises freely as the remaining clip shrinks (reaching
+    100 % once the clipping window has passed, so the battery still finishes
+    full), but falls only past FORECAST_SOC_HYSTERESIS, so forecast refreshes
+    don't chatter the advice. Published in whole percent — inverter SOC
+    registers are integers.
+    """
+    export_limit = (
+        get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT)
+        or 0
+    )
+    capacity_kwh = (
+        get_entry_value(
+            hub_entry, CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH
+        )
+        or 0
+    )
+    entity_ids = get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []
+    if export_limit <= 0 or capacity_kwh <= 0 or not entity_ids:
+        hub_runtime.pop("_forecast_max_soc", None)
+        hub_runtime.pop("_forecast_parse_memo", None)
+        return None
+
+    base_consumption = (
+        get_entry_value(hub_entry, CONF_BASE_CONSUMPTION, DEFAULT_BASE_CONSUMPTION) or 0
+    )
+    soc_floor = get_entry_value(
+        hub_entry, CONF_FORECAST_SOC_FLOOR, DEFAULT_FORECAST_SOC_FLOOR
+    )
+    threshold = export_limit + base_consumption
+
+    # Cap the summed series at what the site can physically produce — an
+    # AC-coupled string inverter cannot deliver what Open-Meteo models from
+    # kWp, and without the cap an oversized array over-reserves badly.
+    power_cap = None
+    if inverter_max_power:
+        power_cap = inverter_max_power + (battery_max_charge_power or 0)
+
+    series = read_forecast_series(hass, entity_ids, hub_runtime)
+    now, until = forecast_window()
+    fc = clipping_forecast(
+        series,
+        threshold,
+        now,
+        until,
+        charge_cap_w=battery_max_charge_power or None,
+        power_cap_w=power_cap,
+    )
+
+    max_soc = battery_max_soc(fc.absorbable_kwh, capacity_kwh, soc_floor)
+    proposed = round(max_soc)
+    prev = hub_runtime.get("_forecast_max_soc")
+    if prev is not None and prev - FORECAST_SOC_HYSTERESIS <= proposed < prev:
+        proposed = prev
+    hub_runtime["_forecast_max_soc"] = proposed
+
+    deficit = headroom_deficit_kwh(fc.absorbable_kwh, capacity_kwh, battery_soc)
+    charge_limit = None
+    if battery_max_charge_power:
+        charge_limit = recommended_charge_limit(
+            fc.absorbable_kwh,
+            battery_soc,
+            proposed,
+            battery_max_charge_power,
+            site.solar_production_total or 0,
+            threshold,
+            FORECAST_SOC_HYSTERESIS,
+        )
+
+    _LOGGER.debug(
+        "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW to %s"
+        " | max SOC %d%% (raw %.1f) deficit %.2f kWh charge cap %s",
+        fc.clipped_kwh,
+        fc.absorbable_kwh,
+        threshold,
+        until,
+        proposed,
+        max_soc,
+        deficit,
+        f"{charge_limit:.0f}W" if charge_limit is not None else "n/a",
+    )
+
+    return {
+        "forecast_clipped_kwh": round(fc.clipped_kwh, 2),
+        "forecast_absorbable_kwh": round(fc.absorbable_kwh, 2),
+        "forecast_battery_max_soc": proposed,
+        "forecast_headroom_deficit_kwh": round(deficit, 2),
+        "forecast_charge_limit_w": (
+            round(charge_limit, 0) if charge_limit is not None else None
+        ),
+    }
+
+
 def _build_hub_result(
     site,
     raw_phases,
@@ -1193,6 +1313,7 @@ def _build_hub_result(
     hub_warnings=None,
     excess_available=False,
     excess_margin_power=0,
+    forecast_advice=None,
 ):
     """Build the result dict returned by run_hub_calculation."""
     # Grid available power (based on consumption after feedback loop).
@@ -1418,6 +1539,10 @@ def _build_hub_result(
         # Hub status
         "hub_status": hub_status,
         "hub_warnings": hub_warnings or [],
+        # Advisory battery headroom from the PV clipping forecast. Keys are
+        # present only while the feature is configured — the matching sensors
+        # are gated the same way.
+        **(forecast_advice or {}),
     }
 
 
@@ -2060,6 +2185,18 @@ def run_hub_calculation(sensor):
                 named += f" +{len(labels) - 2} more"
             hub_status = f"Sensor unavailable: {named}"
 
+    # --- PV clipping forecast (advisory battery headroom) ---
+    # Computed post-feedback so solar_production_total excludes managed draws.
+    forecast_advice = _compute_forecast_advice(
+        hass,
+        hub_entry,
+        hub_runtime,
+        site,
+        battery_soc,
+        battery_max_charge_power,
+        inverter_max_power,
+    )
+
     # --- Build result ---
     return _build_hub_result(
         site,
@@ -2080,6 +2217,7 @@ def run_hub_calculation(sensor):
         hub_warnings=hub_warnings,
         excess_available=excess_on,
         excess_margin_power=margin,
+        forecast_advice=forecast_advice,
     )
 
 

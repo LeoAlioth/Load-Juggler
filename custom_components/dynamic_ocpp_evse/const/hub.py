@@ -56,6 +56,26 @@ DEFAULT_BATTERY_SOC_TARGET = 80  # Default SOC target (80%)
 DEFAULT_BATTERY_SOC_FULL = 97  # Default "full" SOC — plug Excess mode trigger (%)
 DEFAULT_BATTERY_SOC_HYSTERESIS = 3  # Default hysteresis (3%)
 
+# PV clipping forecast (hub-level). Sites with more PV than they may export
+# (e.g. 15 kWp behind a 5 kW export limit) should keep battery headroom for
+# the forecast midday peak instead of filling up on morning production that
+# could have been exported. The hub publishes advisory sensors only — a
+# future battery-inverter device type will optionally write them to a device.
+CONF_GRID_EXPORT_LIMIT = "grid_export_limit"  # W — hardware/contract export limit.
+# 0 = feature off. Distinct from CONF_EXCESS_EXPORT_THRESHOLD, which is the
+# *behavioural* trigger for Excess mode; this is the physical ceiling.
+CONF_SOLAR_FORECAST_ENTITY_IDS = "solar_forecast_entity_ids"  # list — one per PV array
+CONF_BASE_CONSUMPTION = "base_consumption"  # W — typical daytime minimum house draw
+CONF_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"  # kWh the SOC percentage spans; 0 = off
+CONF_FORECAST_SOC_FLOOR = "forecast_soc_floor"  # % — never recommend a ceiling below this
+DEFAULT_GRID_EXPORT_LIMIT = 0
+DEFAULT_BASE_CONSUMPTION = 300
+DEFAULT_BATTERY_CAPACITY_KWH = 0
+DEFAULT_FORECAST_SOC_FLOOR = 30
+FORECAST_SOC_HYSTERESIS = 2  # % — the published ceiling rises freely but only
+# falls by more than this band, and the charge cap stays released while SOC is
+# this far below the ceiling, so forecast refreshes don't chatter the advice.
+
 # Distribution mode configuration (hub-level)
 CONF_DISTRIBUTION_MODE = "distribution_mode"
 DISTRIBUTION_MODE_SHARED = "Shared"

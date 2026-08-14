@@ -132,6 +132,20 @@ Configure inverter output entities in the hub settings. The hub status sensor sh
 
 Battery entities (SOC Target, SOC Min, Allow Grid Charging) are only shown when a battery sensor is configured.
 
+### PV Clipping Forecast (export-limited sites)
+
+Sites with more PV than they may export (e.g. 15 kWp behind a 5 kW export limit) curtail the midday peak if the home battery fills up on morning production — energy that could have been exported instead. When a **grid export limit**, a **battery capacity** and one or more **solar forecast sensors** (from the [Open-Meteo Solar Forecast](https://github.com/rany2/ha-open-meteo-solar-forecast) integration, one per PV array) are configured, the hub computes how much of the forecast production cannot be exported or consumed, and publishes **advisory sensors** — Load Juggler never commands the house battery itself:
+
+| Sensor | Meaning |
+|---|---|
+| Forecast Clippable Energy (kWh) | Production above the export limit + base consumption for the rest of the day |
+| Forecast Storable Energy (kWh) | The part of that the battery could physically absorb at its charge rate |
+| Recommended Battery Max SOC (%) | SOC ceiling that leaves exactly that much headroom; rises to 100% as the peak passes, so the battery still ends the day full |
+| Battery Headroom Deficit (kWh) | Non-zero when the battery already holds more than the recommendation allows |
+| Recommended Battery Charge Limit (W) | Charge-rate cap protecting the reserved headroom; released (full rate) whenever there is nothing left to clip or SOC is comfortably below the ceiling |
+
+Feed these to your inverter with an automation, or wait for the upcoming battery-inverter device type that writes them directly.
+
 ## Installation
 
 **Method 1 _(easiest)_:**
@@ -182,6 +196,7 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
 | Phase voltage | Voltage per phase (V) | 230V |
 | Max import power entity | Template sensor for grid import limit (W) | — |
 | Excess export threshold | Solar export threshold for Excess mode (W) | 13000W |
+| Grid export limit | Hardware/contract export ceiling — enables the PV clipping forecast (0 = off) | 0 |
 | Invert phases | Flip CT polarity if installed backwards | Off |
 | Distribution mode | How to allocate power between loads | Priority |
 | Battery SOC entity | Battery state of charge sensor | — |
@@ -189,6 +204,10 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
 | Battery max charge/discharge power | Battery power limits (W) | 5000W |
 | Battery SOC hysteresis | SOC change before triggering mode switches (%) | 5% |
 | Solar production entity | Dedicated solar power sensor (optional) | — |
+| Solar forecast sensors | Open-Meteo Solar Forecast sensors, one per PV array (PV clipping forecast) | — |
+| Battery capacity | kWh the battery SOC spans (PV clipping forecast, 0 = off) | 0 |
+| Base house consumption | Typical daytime minimum draw (PV clipping forecast) (W) | 300W |
+| Forecast SOC floor | Lowest max-SOC the forecast may recommend (%) | 30% |
 | Inverter max power | Total inverter capacity (W) | — |
 | Inverter max power per phase | Per-phase inverter limit (W) | — |
 | Inverter supports asymmetric | Can inverter balance power across phases | Off |

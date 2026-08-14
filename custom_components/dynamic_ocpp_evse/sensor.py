@@ -51,6 +51,14 @@ async def async_setup_entry(
         has_phase_c = bool(
             get_entry_value(config_entry, CONF_PHASE_C_CURRENT_ENTITY_ID, None)
         )
+        # PV clipping forecast needs all three of its inputs configured —
+        # matches the gate in _compute_forecast_advice, so a disabled feature
+        # creates no sensors rather than five permanently-unknown ones.
+        has_forecast = (
+            bool(get_entry_value(config_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None))
+            and (get_entry_value(config_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
+            and (get_entry_value(config_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0) > 0
+        )
 
         entities = [
             LoadJugglerHubSensor(hass, config_entry, name, entity_id),
@@ -62,6 +70,8 @@ async def async_setup_entry(
             if defn.get("requires_phase") == "B" and not has_phase_b:
                 continue
             if defn.get("requires_phase") == "C" and not has_phase_c:
+                continue
+            if defn.get("requires_forecast") and not has_forecast:
                 continue
             entities.append(
                 LoadJugglerHubDataSensor(hass, config_entry, name, entity_id, defn)
