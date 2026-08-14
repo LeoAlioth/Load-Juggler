@@ -32,7 +32,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_INVERT_PHASES,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
-    CONF_EXCESS_EXPORT_THRESHOLD,
+    CONF_GRID_EXPORT_LIMIT,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
@@ -56,7 +56,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_PHASE_VOLTAGE,
     DEFAULT_MAIN_BREAKER_RATING,
-    DEFAULT_EXCESS_EXPORT_THRESHOLD,
     DEFAULT_BATTERY_MAX_POWER,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
     DEFAULT_CHARGE_PAUSE_DURATION,
@@ -101,7 +100,7 @@ def hub_entry() -> MockConfigEntry:
             CONF_INVERT_PHASES: False,
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
             CONF_PHASE_VOLTAGE: 230,
-            CONF_EXCESS_EXPORT_THRESHOLD: 13000,
+            CONF_GRID_EXPORT_LIMIT: 13500,
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
             CONF_BATTERY_MAX_CHARGE_POWER: 5000,
@@ -1822,7 +1821,6 @@ async def test_forecast_max_soc_ratchet(hass):
             CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.fc_phase_a",
             CONF_MAIN_BREAKER_RATING: 25,
             CONF_PHASE_VOLTAGE: 230,
-            CONF_EXCESS_EXPORT_THRESHOLD: 13000,
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.fc_battery_soc",
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.fc_battery_power",
             CONF_BATTERY_MAX_CHARGE_POWER: 5000,
@@ -1831,6 +1829,8 @@ async def test_forecast_max_soc_ratchet(hass):
             CONF_BASE_CONSUMPTION: 300,
             CONF_BATTERY_CAPACITY_KWH: 10,
             CONF_FORECAST_SOC_FLOOR: 30,
+            # Legacy direct-sensor key (pre-device-selector) — still honored
+            # at runtime, and this test doubles as coverage for that path.
             CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.fc_forecast"],
         },
     )

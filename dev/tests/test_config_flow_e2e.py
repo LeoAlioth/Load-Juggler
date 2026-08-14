@@ -28,7 +28,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_INVERT_PHASES,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
-    CONF_EXCESS_EXPORT_THRESHOLD,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_POWER_ENTITY_ID,
@@ -39,7 +38,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
     CONF_POWER_BUFFER_ENTITY_ID,
     CONF_GRID_EXPORT_LIMIT,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
+    CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BASE_CONSUMPTION,
     CONF_FORECAST_SOC_FLOOR,
@@ -69,7 +68,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     DEFAULT_SOLAR_GRACE_PERIOD,
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
-    DEFAULT_EXCESS_EXPORT_THRESHOLD,
     DEFAULT_BATTERY_MAX_POWER,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
     DEFAULT_MIN_CHARGE_CURRENT,
@@ -151,7 +149,7 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
             CONF_INVERT_PHASES: False,
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
             CONF_PHASE_VOLTAGE: 230,
-            CONF_EXCESS_EXPORT_THRESHOLD: 10000,
+            CONF_GRID_EXPORT_LIMIT: 10500,
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
         },
     )
@@ -205,27 +203,49 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
     assert hub_entry.data[ENTRY_TYPE] == ENTRY_TYPE_HUB
 
 
-async def test_hub_battery_forecast_entities_validated(hass: HomeAssistant):
-    """The battery step rejects a forecast entity without a ``watts`` attribute,
-    accepts a valid multi-entity selection, and stores the list."""
+def _make_forecast_device(hass, slug, watts=True, name=None):
+    """Register a forecast-style device with one sensor, Open-Meteo shape.
+
+    Returns the device id. The sensor carries a ``watts`` mapping when
+    ``watts`` is True, mimicking the per-array device the Open-Meteo Solar
+    Forecast integration creates; otherwise a plain sensor (wrong device).
+    """
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+
+    source_entry = MockConfigEntry(domain="open_meteo_solar_forecast", title=slug)
+    source_entry.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=source_entry.entry_id,
+        identifiers={("open_meteo_solar_forecast", slug)},
+        name=name or slug,
+    )
+    reg_entry = er.async_get(hass).async_get_or_create(
+        "sensor",
+        "open_meteo_solar_forecast",
+        f"{slug}_energy_production_today",
+        device_id=device.id,
+        config_entry=source_entry,
+        suggested_object_id=f"{slug}_energy_production_today",
+    )
+    attributes = {"unit_of_measurement": "kWh"}
+    if watts:
+        attributes["watts"] = {"2026-08-14T10:00:00+00:00": 4000.0}
+    hass.states.async_set(reg_entry.entity_id, "12.5", attributes)
+    return device.id
+
+
+async def test_hub_battery_forecast_devices_validated(hass: HomeAssistant):
+    """The battery step rejects a device without any ``watts`` sensor,
+    accepts a valid multi-device selection, and stores the device list."""
 
     hass.states.async_set(
         "sensor.inverter_phase_a", "5.0",
         {"device_class": "current", "unit_of_measurement": "A"},
     )
-    # A valid Open-Meteo-style forecast sensor exposes watts: {timestamp: W}
-    hass.states.async_set(
-        "sensor.forecast_array_east", "12.5",
-        {"watts": {"2026-08-14T10:00:00+00:00": 4000.0}},
-    )
-    hass.states.async_set(
-        "sensor.forecast_array_west", "10.1",
-        {"watts": {"2026-08-14T10:00:00+00:00": 3000.0}},
-    )
-    # A plain sensor with no watts attribute — must be rejected
-    hass.states.async_set(
-        "sensor.not_a_forecast", "1.0",
-        {"unit_of_measurement": "kWh"},
+    east = _make_forecast_device(hass, "array_east")
+    west = _make_forecast_device(hass, "array_west")
+    wrong = _make_forecast_device(
+        hass, "not_a_forecast", watts=False, name="Weather Station"
     )
 
     result = await hass.config_entries.flow.async_init(
@@ -245,7 +265,6 @@ async def test_hub_battery_forecast_entities_validated(hass: HomeAssistant):
             CONF_MAIN_BREAKER_RATING: 32,
             CONF_INVERT_PHASES: False,
             CONF_PHASE_VOLTAGE: 230,
-            CONF_EXCESS_EXPORT_THRESHOLD: 10000,
             CONF_GRID_EXPORT_LIMIT: 5000,
         },
     )
@@ -260,35 +279,31 @@ async def test_hub_battery_forecast_entities_validated(hass: HomeAssistant):
     )
     assert result["step_id"] == "hub_battery"
 
-    # An entity without a watts attribute is rejected with the named error
+    # A device without any watts-bearing sensor is rejected, named in the error
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             CONF_BATTERY_MAX_CHARGE_POWER: 5000,
             CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
-            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.not_a_forecast"],
+            CONF_SOLAR_FORECAST_DEVICE_IDS: [wrong],
             CONF_BATTERY_CAPACITY_KWH: 10,
         },
     )
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {
-        CONF_SOLAR_FORECAST_ENTITY_IDS: "forecast_entity_no_watts"
+        CONF_SOLAR_FORECAST_DEVICE_IDS: "forecast_device_no_watts"
     }
-    # The offending entity is named in the error via description_placeholders
-    assert result["description_placeholders"] == {"entity": "sensor.not_a_forecast"}
+    assert result["description_placeholders"] == {"entity": "Weather Station"}
 
-    # A valid multi-entity selection is accepted and stored
+    # A valid multi-device selection is accepted and stored
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             CONF_BATTERY_MAX_CHARGE_POWER: 5000,
             CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
-            CONF_SOLAR_FORECAST_ENTITY_IDS: [
-                "sensor.forecast_array_east",
-                "sensor.forecast_array_west",
-            ],
+            CONF_SOLAR_FORECAST_DEVICE_IDS: [east, west],
             CONF_BATTERY_CAPACITY_KWH: 10,
             CONF_BASE_CONSUMPTION: 300,
             CONF_FORECAST_SOC_FLOOR: 30,
@@ -300,10 +315,7 @@ async def test_hub_battery_forecast_entities_validated(hass: HomeAssistant):
     entries = hass.config_entries.async_entries(DOMAIN)
     hub_entry = next(e for e in entries if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_HUB)
     stored = {**hub_entry.data, **hub_entry.options}
-    assert stored[CONF_SOLAR_FORECAST_ENTITY_IDS] == [
-        "sensor.forecast_array_east",
-        "sensor.forecast_array_west",
-    ]
+    assert stored[CONF_SOLAR_FORECAST_DEVICE_IDS] == [east, west]
     assert stored[CONF_GRID_EXPORT_LIMIT] == 5000
     assert stored[CONF_BATTERY_CAPACITY_KWH] == 10
 
@@ -333,7 +345,7 @@ async def test_hub_battery_empty_forecast_selection_accepted(hass: HomeAssistant
             CONF_MAIN_BREAKER_RATING: 32,
             CONF_INVERT_PHASES: False,
             CONF_PHASE_VOLTAGE: 230,
-            CONF_EXCESS_EXPORT_THRESHOLD: 10000,
+            CONF_GRID_EXPORT_LIMIT: 10500,
         },
     )
     result = await hass.config_entries.flow.async_configure(
@@ -345,7 +357,7 @@ async def test_hub_battery_empty_forecast_selection_accepted(hass: HomeAssistant
             CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
         },
     )
-    # The multi-entity selector omits its key entirely when left empty
+    # The multi-device selector omits its key entirely when left empty
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
@@ -360,7 +372,7 @@ async def test_hub_battery_empty_forecast_selection_accepted(hass: HomeAssistant
     entries = hass.config_entries.async_entries(DOMAIN)
     hub_entry = next(e for e in entries if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_HUB)
     stored = {**hub_entry.data, **hub_entry.options}
-    assert stored.get(CONF_SOLAR_FORECAST_ENTITY_IDS) == []
+    assert stored.get(CONF_SOLAR_FORECAST_DEVICE_IDS) == []
 
 
 async def test_hub_creation_single_phase(hass: HomeAssistant):
@@ -396,7 +408,7 @@ async def test_hub_creation_single_phase(hass: HomeAssistant):
             CONF_INVERT_PHASES: False,
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
             CONF_PHASE_VOLTAGE: 230,
-            CONF_EXCESS_EXPORT_THRESHOLD: 5000,
+            CONF_GRID_EXPORT_LIMIT: 5500,
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
         },
     )
@@ -658,7 +670,7 @@ async def test_options_flow_hub_saves_changes(
             CONF_INVERT_PHASES: False,
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
             CONF_PHASE_VOLTAGE: 230,
-            CONF_EXCESS_EXPORT_THRESHOLD: 13000,
+            CONF_GRID_EXPORT_LIMIT: 13500,
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
         },
     )
@@ -751,7 +763,7 @@ async def test_options_flow_does_not_autodetect_inverter_phases(
             CONF_INVERT_PHASES: False,
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
             CONF_PHASE_VOLTAGE: 230,
-            CONF_EXCESS_EXPORT_THRESHOLD: 13000,
+            CONF_GRID_EXPORT_LIMIT: 13500,
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
         },
     )
@@ -873,3 +885,70 @@ async def test_options_flow_charger_validates(
     # Should re-show form with errors
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"base": "min_exceeds_max"}
+
+
+# ── Config entry migration ─────────────────────────────────────────────
+
+
+async def test_migration_seeds_grid_export_limit_in_one_pass(hass: HomeAssistant):
+    """A 2.1 hub reaches 2.4 in ONE async_migrate_entry call (the minor steps
+    used to return early, stranding entries one step per restart), and the
+    grid export limit is seeded as old excess threshold + the default trigger
+    margin, so the effective Excess trigger point does not move."""
+    from custom_components.dynamic_ocpp_evse import async_migrate_entry
+    from custom_components.dynamic_ocpp_evse.const import (
+        DEFAULT_EXCESS_TRIGGER_MARGIN,
+        CONF_EXCESS_TRIGGER_MARGIN,
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=1,
+        title="Old Hub",
+        data={
+            CONF_NAME: "Old Hub",
+            CONF_ENTITY_ID: "old_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_a",
+            "excess_export_threshold": 13000,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry)
+
+    assert entry.minor_version == 4
+    assert entry.options[CONF_GRID_EXPORT_LIMIT] == 13000 + DEFAULT_EXCESS_TRIGGER_MARGIN
+    assert entry.options[CONF_EXCESS_TRIGGER_MARGIN] == DEFAULT_EXCESS_TRIGGER_MARGIN
+
+
+async def test_migration_leaves_offgrid_hub_unlimited(hass: HomeAssistant):
+    """An off-grid hub (no grid CTs) gets no export limit seeded — its Excess
+    is battery-side only, and a seeded limit would wrongly enable the
+    clipping forecast maths."""
+    from custom_components.dynamic_ocpp_evse import async_migrate_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=3,
+        title="Off-grid Hub",
+        data={
+            CONF_NAME: "Off-grid Hub",
+            CONF_ENTITY_ID: "offgrid_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.batt_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.batt_power",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry)
+
+    assert entry.minor_version == 4
+    assert not entry.options.get(CONF_GRID_EXPORT_LIMIT)

@@ -9,7 +9,8 @@ CONF_INVERT_PHASES = "invert_phases"
 CONF_MAX_IMPORT_POWER_ENTITY_ID = "max_import_power_entity_id"
 CONF_ENABLE_MAX_IMPORT_POWER = "enable_max_import_power"  # Checkbox: create slider for max import power
 CONF_PHASE_VOLTAGE = "phase_voltage"
-CONF_EXCESS_EXPORT_THRESHOLD = "excess_export_threshold"  # Maximum allowed export before charging starts in Excess mode
+CONF_EXCESS_EXPORT_THRESHOLD = "excess_export_threshold"  # LEGACY (pre-2.4) — replaced by
+# CONF_GRID_EXPORT_LIMIT − CONF_EXCESS_TRIGGER_MARGIN; read only by the migration.
 CONF_SOLAR_PRODUCTION_ENTITY_ID = "solar_production_entity_id"  # Optional direct solar production sensor (W)
 
 # Inverter configuration (hub-level)
@@ -46,7 +47,7 @@ CONF_SOLAR_GRACE_PERIOD = "solar_grace_period"  # Hub-level: minutes before paus
 DEFAULT_MAIN_BREAKER_RATING = 25
 DEFAULT_SITE_UPDATE_FREQUENCY = 2  # Fast site info refresh (seconds)
 DEFAULT_SOLAR_GRACE_PERIOD = 5  # minutes
-DEFAULT_EXCESS_EXPORT_THRESHOLD = 13000
+DEFAULT_EXCESS_EXPORT_THRESHOLD = 13000  # LEGACY — migration fallback only
 EXCESS_EXPORT_HYSTERESIS = 500  # W — deadband below the threshold; once Excess
 # mode is on it stays on until export drops this far below the threshold,
 # preventing charger on/off chatter when export hovers near the threshold.
@@ -61,14 +62,27 @@ DEFAULT_BATTERY_SOC_HYSTERESIS = 3  # Default hysteresis (3%)
 # the forecast midday peak instead of filling up on morning production that
 # could have been exported. The hub publishes advisory sensors only — a
 # future battery-inverter device type will optionally write them to a device.
-CONF_GRID_EXPORT_LIMIT = "grid_export_limit"  # W — hardware/contract export limit.
-# 0 = feature off. Distinct from CONF_EXCESS_EXPORT_THRESHOLD, which is the
-# *behavioural* trigger for Excess mode; this is the physical ceiling.
-CONF_SOLAR_FORECAST_ENTITY_IDS = "solar_forecast_entity_ids"  # list — one per PV array
+CONF_GRID_EXPORT_LIMIT = "grid_export_limit"  # W — the site's physical/contract
+# export ceiling, and the ONE export number the user enters. Everything else
+# derives from it: the Excess trigger engages at (limit − trigger margin), and
+# the clipping forecast integrates production above (limit + base consumption).
+# 0 = no export limit: the grid absorbs everything, so grid-side Excess never
+# triggers (allowance is infinite) and the forecast is off.
+CONF_EXCESS_TRIGGER_MARGIN = "excess_trigger_margin"  # W — how far below the
+# export limit the Excess trigger sits. An inverter curtails slightly under
+# the limit, so a trigger exactly AT the limit would never fire.
+CONF_SOLAR_FORECAST_DEVICE_IDS = "solar_forecast_device_ids"  # list — one forecast
+# DEVICE per PV array (the Open-Meteo Solar Forecast integration creates one
+# config entry/device per array; several of its sensors carry the same `watts`
+# series, so selecting sensors risks double-counting one array — the reader
+# resolves exactly one watts-bearing sensor per device).
+CONF_SOLAR_FORECAST_ENTITY_IDS = "solar_forecast_entity_ids"  # LEGACY — direct
+# sensor list from the first dev iteration; still honored at runtime.
 CONF_BASE_CONSUMPTION = "base_consumption"  # W — typical daytime minimum house draw
 CONF_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"  # kWh the SOC percentage spans; 0 = off
 CONF_FORECAST_SOC_FLOOR = "forecast_soc_floor"  # % — never recommend a ceiling below this
 DEFAULT_GRID_EXPORT_LIMIT = 0
+DEFAULT_EXCESS_TRIGGER_MARGIN = 500
 DEFAULT_BASE_CONSUMPTION = 300
 DEFAULT_BATTERY_CAPACITY_KWH = 0
 DEFAULT_FORECAST_SOC_FLOOR = 30

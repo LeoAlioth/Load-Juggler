@@ -18,11 +18,62 @@ import logging
 import math
 from datetime import timedelta
 
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from ..calculations import merge_forecast_series
 
 _LOGGER = logging.getLogger(__name__)
+
+# The Open-Meteo device sensor to prefer when several carry a watts series.
+_FORECAST_TODAY_HINT = "energy_production_today"
+
+
+def resolve_forecast_sensor(hass, device_id):
+    """Pick the one ``watts``-bearing sensor of a forecast device, or None.
+
+    A forecast device (one Open-Meteo Solar Forecast config entry per PV
+    array) exposes several sensors carrying the same ``watts`` series — today,
+    tomorrow, current power. Exactly one must be read per device or the array
+    is double-counted. Prefer the "energy production today" sensor; otherwise
+    the first watts-bearing sensor in deterministic order.
+    """
+    registry = er.async_get(hass)
+    candidates = []
+    for entry in er.async_entries_for_device(registry, device_id):
+        if entry.domain != "sensor":
+            continue
+        state = hass.states.get(entry.entity_id)
+        if state is None or not isinstance(state.attributes.get("watts"), dict):
+            continue
+        candidates.append(entry.entity_id)
+    if not candidates:
+        return None
+    candidates.sort()
+    for entity_id in candidates:
+        if _FORECAST_TODAY_HINT in entity_id:
+            return entity_id
+    return candidates[0]
+
+
+def configured_forecast_sensors(hass, device_ids, legacy_entity_ids=None):
+    """The sensor entity_ids to read: one per configured forecast device,
+    plus any directly-configured legacy entities (pre-device-selector
+    installs). A device whose sensors expose no watts data contributes
+    nothing — fail open, visibility via the hub Status sensor."""
+    entity_ids = []
+    for device_id in device_ids or []:
+        entity_id = resolve_forecast_sensor(hass, device_id)
+        if entity_id is not None:
+            entity_ids.append(entity_id)
+        else:
+            _LOGGER.debug(
+                "Forecast device %s has no watts-bearing sensor", device_id
+            )
+    for entity_id in legacy_entity_ids or []:
+        if entity_id not in entity_ids:
+            entity_ids.append(entity_id)
+    return entity_ids
 
 
 def forecast_window(now=None):

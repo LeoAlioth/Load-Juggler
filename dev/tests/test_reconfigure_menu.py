@@ -27,7 +27,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_MAIN_BREAKER_RATING,
     CONF_PHASE_VOLTAGE,
     CONF_INVERT_PHASES,
-    CONF_EXCESS_EXPORT_THRESHOLD,
+    CONF_GRID_EXPORT_LIMIT,
     CONF_SOLAR_GRACE_PERIOD,
     DEFAULT_SOLAR_GRACE_PERIOD,
 )
@@ -102,7 +102,7 @@ async def test_reconfigure_grid_saves_and_returns_to_menu(
             CONF_MAIN_BREAKER_RATING: 40,
             CONF_INVERT_PHASES: False,
             CONF_PHASE_VOLTAGE: 230,
-            CONF_EXCESS_EXPORT_THRESHOLD: 10000,
+            CONF_GRID_EXPORT_LIMIT: 10500,
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
         },
     )

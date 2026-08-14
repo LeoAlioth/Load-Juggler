@@ -23,7 +23,7 @@ INTEGRATION_VERSION = "2.0.0"
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old entry to new version."""
-    _LOGGER.info("Migrating from version %s.%s to version 2.2",
+    _LOGGER.info("Migrating from version %s.%s to version 2.4",
                  entry.version,
                  getattr(entry, 'minor_version', 0))
 
@@ -71,8 +71,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "Migration to version 2.2 successful. Legacy entry converted to hub. "
             "You will need to add chargers separately after migration."
         )
-
-        return True
+        # No return: async_update_entry mutates the entry in place, so the
+        # minor-version steps below see 2.2 and run in this same pass.
 
     # Handle minor version updates if version is already 2
     if entry.version == 2 and getattr(entry, 'minor_version', 0) < 1:
@@ -115,7 +115,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             minor_version=2
         )
         _LOGGER.info("Updated minor version to 2")
-        return True
 
     # Migrate 2.2 → 2.3: the smart-plug "Solar Only" mode was split. Its old
     # behavior (run while battery SOC > minimum) is now "Solar Priority", and
@@ -133,7 +132,46 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry, data=new_data, minor_version=3
         )
         _LOGGER.info("Updated minor version to 3")
-        return True
+
+    # Migrate 2.3 → 2.4: the Excess export threshold and the grid export limit
+    # collapsed into ONE field. `grid_export_limit` is now the physical export
+    # ceiling; the Excess trigger derives from it as limit − trigger margin
+    # (default 500 W). Seed the limit as old threshold + margin so the
+    # effective trigger point does not move. Only grid-tied hubs (≥1 grid CT)
+    # are seeded — off-grid Excess is battery-side only, and a seeded limit
+    # would wrongly enable the clipping forecast maths there.
+    if entry.version == 2 and getattr(entry, 'minor_version', 0) < 4:
+        options = dict(entry.options)
+        is_hub = entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB) == ENTRY_TYPE_HUB
+        has_grid_cts = any(
+            get_entry_value(entry, conf, None)
+            for conf in (
+                CONF_PHASE_A_CURRENT_ENTITY_ID,
+                CONF_PHASE_B_CURRENT_ENTITY_ID,
+                CONF_PHASE_C_CURRENT_ENTITY_ID,
+            )
+        )
+        if is_hub and has_grid_cts and not options.get(CONF_GRID_EXPORT_LIMIT):
+            old_threshold = get_entry_value(
+                entry, CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD
+            )
+            options[CONF_GRID_EXPORT_LIMIT] = (
+                old_threshold + DEFAULT_EXCESS_TRIGGER_MARGIN
+            )
+            options.setdefault(
+                CONF_EXCESS_TRIGGER_MARGIN, DEFAULT_EXCESS_TRIGGER_MARGIN
+            )
+            _LOGGER.info(
+                "Migrated excess_export_threshold %sW to grid_export_limit %sW"
+                " (trigger stays at limit - %sW margin)",
+                old_threshold,
+                options[CONF_GRID_EXPORT_LIMIT],
+                DEFAULT_EXCESS_TRIGGER_MARGIN,
+            )
+        hass.config_entries.async_update_entry(
+            entry, options=options, minor_version=4
+        )
+        _LOGGER.info("Updated minor version to 4")
 
     return True
 

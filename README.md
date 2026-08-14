@@ -134,7 +134,7 @@ Battery entities (SOC Target, SOC Min, Allow Grid Charging) are only shown when 
 
 ### PV Clipping Forecast (export-limited sites)
 
-Sites with more PV than they may export (e.g. 15 kWp behind a 5 kW export limit) curtail the midday peak if the home battery fills up on morning production — energy that could have been exported instead. When a **grid export limit**, a **battery capacity** and one or more **solar forecast sensors** (from the [Open-Meteo Solar Forecast](https://github.com/rany2/ha-open-meteo-solar-forecast) integration, one per PV array) are configured, the hub computes how much of the forecast production cannot be exported or consumed, and publishes **advisory sensors** — Load Juggler never commands the house battery itself:
+Sites with more PV than they may export (e.g. 15 kWp behind a 5 kW export limit) curtail the midday peak if the home battery fills up on morning production — energy that could have been exported instead. When a **grid export limit**, a **battery capacity** and one or more **solar forecast devices** (from the [Open-Meteo Solar Forecast](https://github.com/rany2/ha-open-meteo-solar-forecast) integration, which creates one device per PV array — select each array's device) are configured, the hub computes how much of the forecast production cannot be exported or consumed, and publishes **advisory sensors** — Load Juggler never commands the house battery itself:
 
 | Sensor | Meaning |
 |---|---|
@@ -195,8 +195,8 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
 | Main breaker rating | Maximum current per phase (A) | 25A |
 | Phase voltage | Voltage per phase (V) | 230V |
 | Max import power entity | Template sensor for grid import limit (W) | — |
-| Excess export threshold | Solar export threshold for Excess mode (W) | 13000W |
-| Grid export limit | Hardware/contract export ceiling — enables the PV clipping forecast (0 = off) | 0 |
+| Grid export limit | Physical/contract export ceiling — Excess triggers at limit − margin, and it enables the PV clipping forecast (0 = unlimited, both off) | 0 |
+| Excess trigger margin | How far below the export limit Excess mode engages (W) | 500W |
 | Invert phases | Flip CT polarity if installed backwards | Off |
 | Distribution mode | How to allocate power between loads | Priority |
 | Battery SOC entity | Battery state of charge sensor | — |
@@ -204,7 +204,7 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
 | Battery max charge/discharge power | Battery power limits (W) | 5000W |
 | Battery SOC hysteresis | SOC change before triggering mode switches (%) | 5% |
 | Solar production entity | Dedicated solar power sensor (optional) | — |
-| Solar forecast sensors | Open-Meteo Solar Forecast sensors, one per PV array (PV clipping forecast) | — |
+| Solar forecast | Open-Meteo Solar Forecast devices, one per PV array (PV clipping forecast) | — |
 | Battery capacity | kWh the battery SOC spans (PV clipping forecast, 0 = off) | 0 |
 | Base house consumption | Typical daytime minimum draw (PV clipping forecast) (W) | 300W |
 | Forecast SOC floor | Lowest max-SOC the forecast may recommend (%) | 30% |

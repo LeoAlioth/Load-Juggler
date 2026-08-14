@@ -25,7 +25,12 @@ from ..const import *
 from ..calculations.utils import is_number, compute_household_per_phase
 from ..helpers import get_entry_value
 from .auto_detect import check_inversion, check_phase_mapping
-from .forecast_reader import read_forecast_series, forecast_window
+from .forecast_reader import (
+    read_forecast_series,
+    forecast_window,
+    resolve_forecast_sensor,
+    configured_forecast_sensors,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -207,8 +212,14 @@ def _check_entity_availability(hass, hub_entry) -> list:
         state = hass.states.get(entity_id)
         if state is None or state.state in ("unknown", "unavailable", ""):
             unavailable.append((label, entity_id))
-    # Forecast entities are a list, and the clipping maths fails open when one
-    # drops out — the status sensor is the only place the dropout is visible.
+    # Forecast sources fail open in the clipping maths — the status sensor is
+    # the only place a dropout is visible. A configured forecast DEVICE with
+    # no watts-bearing sensor right now (integration down, states missing)
+    # counts as unavailable; legacy directly-configured sensors are checked
+    # like any other entity.
+    for device_id in get_entry_value(hub_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or []:
+        if resolve_forecast_sensor(hass, device_id) is None:
+            unavailable.append(("Solar forecast device", device_id))
     for entity_id in get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []:
         state = hass.states.get(entity_id)
         if state is None or state.state in ("unknown", "unavailable", ""):
@@ -1218,8 +1229,11 @@ def _compute_forecast_advice(
         )
         or 0
     )
-    entity_ids = get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []
-    if export_limit <= 0 or capacity_kwh <= 0 or not entity_ids:
+    device_ids = get_entry_value(hub_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or []
+    legacy_entity_ids = (
+        get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []
+    )
+    if export_limit <= 0 or capacity_kwh <= 0 or not (device_ids or legacy_entity_ids):
         hub_runtime.pop("_forecast_max_soc", None)
         hub_runtime.pop("_forecast_parse_memo", None)
         return None
@@ -1239,6 +1253,7 @@ def _compute_forecast_advice(
     if inverter_max_power:
         power_cap = inverter_max_power + (battery_max_charge_power or 0)
 
+    entity_ids = configured_forecast_sensors(hass, device_ids, legacy_entity_ids)
     series = read_forecast_series(hass, entity_ids, hub_runtime)
     now, until = forecast_window()
     fc = clipping_forecast(
@@ -1583,9 +1598,23 @@ def run_hub_calculation(sensor):
     main_breaker_rating = get_entry_value(
         hub_entry, CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING
     )
-    excess_threshold = get_entry_value(
-        hub_entry, CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD
+    # Excess trigger, derived from the physical export limit: engage once
+    # export is within the trigger margin of the limit (an inverter curtails
+    # slightly under the limit, so a trigger exactly AT it would never fire).
+    # No limit configured (0) means the grid can absorb everything — the
+    # allowance is infinite, grid-side Excess never triggers, and only the
+    # battery side of excess_margin() remains.
+    grid_export_limit = (
+        get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT)
+        or 0
     )
+    excess_trigger_margin = get_entry_value(
+        hub_entry, CONF_EXCESS_TRIGGER_MARGIN, DEFAULT_EXCESS_TRIGGER_MARGIN
+    )
+    if grid_export_limit > 0:
+        excess_threshold = max(0.0, grid_export_limit - excess_trigger_margin)
+    else:
+        excess_threshold = float("inf")
 
     # --- Read per-phase grid current (raw) ---
     raw_phases, _, _ = _read_grid_phases(hass, hub_entry)

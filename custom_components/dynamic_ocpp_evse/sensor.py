@@ -55,7 +55,12 @@ async def async_setup_entry(
         # matches the gate in _compute_forecast_advice, so a disabled feature
         # creates no sensors rather than five permanently-unknown ones.
         has_forecast = (
-            bool(get_entry_value(config_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None))
+            (
+                bool(get_entry_value(config_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None))
+                or bool(
+                    get_entry_value(config_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None)
+                )
+            )
             and (get_entry_value(config_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
             and (get_entry_value(config_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0) > 0
         )

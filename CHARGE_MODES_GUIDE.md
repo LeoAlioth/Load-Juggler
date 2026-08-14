@@ -400,8 +400,12 @@ A sink contributes its allowance only while it can actually absorb:
 
 | Sink | Allowance | Zeroed when |
 | ---- | --------- | ----------- |
-| Grid export | **Excess Export Threshold** | The site is off-grid — nothing can leave |
+| Grid export | **Grid Export Limit − Excess Trigger Margin** | The site is off-grid — nothing can leave. (No limit configured = infinite allowance: the grid absorbs everything, so grid-side Excess never triggers.) |
 | Battery charging | **Battery Max Charge Power** | No battery is configured, **or** SOC is at/above the **Battery Full SOC** |
+
+The margin (default 500 W) exists because an inverter curtails slightly *under*
+the export limit — a trigger exactly at the limit would never fire. Enter your
+real physical/contract limit; the trigger takes care of itself.
 
 The full-battery rule matters: a full battery draws no charge power, so leaving
 its rating in the allowance would make the trigger unreachable exactly when the
@@ -761,7 +765,8 @@ condition, and lives in Home Assistant's own storage.
 | **Main Breaker Rating** | Maximum current per phase (A) | 25A | All modes |
 | **Phase Voltage** | Voltage per phase (V) | 230V | All modes |
 | **Max Import Power** | Maximum grid import power (W) | - | All modes |
-| **Excess Export Threshold** | Threshold for Excess mode (W) | 13000W | Excess mode |
+| **Grid Export Limit** | The site's physical/contract export ceiling (W); 0 = unlimited | 0 | Excess mode (trigger = limit − margin), PV clipping forecast |
+| **Excess Trigger Margin** | How far below the export limit Excess engages (W) | 500W | Excess mode |
 | **Battery SOC Min** | Minimum battery SOC for charging (%) | 20% | All modes (with battery) |
 | **Battery SOC Target** | Target battery SOC (%) | 80% | Solar Priority, Solar Only |
 | **Battery SOC Hysteresis** | SOC hysteresis to prevent oscillation (%) | 3% | Solar Priority, Solar Only |

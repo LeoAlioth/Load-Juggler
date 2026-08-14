@@ -4,7 +4,10 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers.selector import selector
-from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from homeassistant.helpers.entity_registry import (
+    async_get as async_get_entity_registry,
+    async_entries_for_device as er_async_entries_for_device,
+)
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from typing import Any
 from .const import *
@@ -55,25 +58,36 @@ def _validate_entity_units(
             errors[field_key] = "invalid_unit"
 
 
-def _validate_forecast_entities(hass, user_input: dict, errors: dict) -> str | None:
-    """Every selected solar forecast entity must expose a ``watts`` attribute.
+def _validate_forecast_devices(hass, user_input: dict, errors: dict) -> str | None:
+    """Every selected solar forecast device must offer a ``watts`` sensor.
 
-    That attribute (a mapping of block-start timestamps to average watts, as
-    the Open-Meteo Solar Forecast integration provides) is what the clipping
-    forecast reads — the sensor's own state and unit are irrelevant, which is
-    why this is not part of _validate_entity_units. Mirrors its philosophy
-    otherwise: an entity with missing state never blocks the user.
+    A forecast device (one Open-Meteo Solar Forecast config entry per PV
+    array) exposes several sensors; the clipping forecast reads the ``watts``
+    attribute (a mapping of block-start timestamps to average watts) from one
+    of them. A device with sensor entities but none of their states loaded
+    yet never blocks the user — mirroring _validate_entity_units — but a
+    device whose loaded sensors carry no watts mapping is the wrong device.
 
-    Returns the first offending entity_id so the step can name it in the form
-    error via description_placeholders, or None when the selection is valid.
+    Returns the offending device's display name so the step can name it in
+    the form error via description_placeholders, or None when valid.
     """
-    for entity_id in user_input.get(CONF_SOLAR_FORECAST_ENTITY_IDS) or []:
-        state = hass.states.get(entity_id)
-        if not state or state.state in ("unavailable", "unknown"):
+    entity_registry = async_get_entity_registry(hass)
+    for device_id in user_input.get(CONF_SOLAR_FORECAST_DEVICE_IDS) or []:
+        sensors = [
+            e.entity_id
+            for e in er_async_entries_for_device(entity_registry, device_id)
+            if e.domain == "sensor"
+        ]
+        states = [s for s in (hass.states.get(eid) for eid in sensors) if s is not None]
+        if sensors and not states:
+            continue  # states not loaded yet — never block on missing state
+        if any(isinstance(s.attributes.get("watts"), dict) for s in states):
             continue
-        if not isinstance(state.attributes.get("watts"), dict):
-            errors[CONF_SOLAR_FORECAST_ENTITY_IDS] = "forecast_entity_no_watts"
-            return entity_id
+        errors[CONF_SOLAR_FORECAST_DEVICE_IDS] = "forecast_device_no_watts"
+        device = async_get_device_registry(hass).async_get(device_id)
+        if device:
+            return device.name_by_user or device.name or device_id
+        return device_id
     return None
 
 
@@ -166,7 +180,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Load Juggler."""
 
     VERSION = 2
-    MINOR_VERSION = 3
+    MINOR_VERSION = 4
 
     def __init__(self):
         self._data = {}
@@ -340,10 +354,14 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
             ),
             (
-                vol.Required(
-                    CONF_EXCESS_EXPORT_THRESHOLD,
+                # The ONE export number: the site's physical/contract ceiling.
+                # The Excess trigger derives from it (limit − trigger margin)
+                # and the PV clipping forecast integrates above it. 0 = no
+                # limit: grid-side Excess never triggers, forecast off.
+                vol.Optional(
+                    CONF_GRID_EXPORT_LIMIT,
                     default=defaults.get(
-                        CONF_EXCESS_EXPORT_THRESHOLD, DEFAULT_EXCESS_EXPORT_THRESHOLD
+                        CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT
                     ),
                 ),
                 selector(
@@ -359,20 +377,18 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
             ),
             (
-                # Physical/contract export ceiling — distinct from the Excess
-                # trigger above. 0 = no limit, PV clipping forecast off.
                 vol.Optional(
-                    CONF_GRID_EXPORT_LIMIT,
+                    CONF_EXCESS_TRIGGER_MARGIN,
                     default=defaults.get(
-                        CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT
+                        CONF_EXCESS_TRIGGER_MARGIN, DEFAULT_EXCESS_TRIGGER_MARGIN
                     ),
                 ),
                 selector(
                     {
                         "number": {
                             "min": 0,
-                            "max": 50000,
-                            "step": 100,
+                            "max": 5000,
+                            "step": 50,
                             "mode": "box",
                             "unit_of_measurement": "W",
                         }
@@ -556,11 +572,22 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Active only when the grid export limit (hub grid step), a battery
             # capacity and at least one forecast entity are all set.
             (
+                # One forecast DEVICE per PV array — the Open-Meteo Solar
+                # Forecast integration creates one device per array, and
+                # several of its sensors carry the same watts series, so
+                # letting the user pick sensors risks double-counting.
                 vol.Optional(
-                    CONF_SOLAR_FORECAST_ENTITY_IDS,
-                    default=defaults.get(CONF_SOLAR_FORECAST_ENTITY_IDS) or [],
+                    CONF_SOLAR_FORECAST_DEVICE_IDS,
+                    default=defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS) or [],
                 ),
-                selector({"entity": {"multiple": True, "domain": "sensor"}}),
+                selector(
+                    {
+                        "device": {
+                            "multiple": True,
+                            "filter": {"integration": "open_meteo_solar_forecast"},
+                        }
+                    }
+                ),
             ),
             (
                 vol.Optional(
@@ -1423,16 +1450,18 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return normalized
 
     def _normalize_forecast_list(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Normalize the solar forecast entity list (battery step).
+        """Normalize the solar forecast device list (battery step).
 
         Separate from _normalize_optional_inputs, which is per-key scalar: the
-        multi-entity selector yields a list and omits the key entirely when
+        multi-device selector yields a list and omits the key entirely when
         cleared, so an emptied selection must become [] (feature off), not a
-        stale stored value.
+        stale stored value. Submitting the form also drops any legacy
+        directly-configured sensor list — the device selection replaces it.
         """
-        data[CONF_SOLAR_FORECAST_ENTITY_IDS] = [
-            e for e in (data.get(CONF_SOLAR_FORECAST_ENTITY_IDS) or []) if e
+        data[CONF_SOLAR_FORECAST_DEVICE_IDS] = [
+            d for d in (data.get(CONF_SOLAR_FORECAST_DEVICE_IDS) or []) if d
         ]
+        data[CONF_SOLAR_FORECAST_ENTITY_IDS] = []
         return data
 
     def _normalize_inverter_powers(self):
@@ -1720,7 +1749,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_MAIN_BREAKER_RATING: DEFAULT_MAIN_BREAKER_RATING,
                     CONF_INVERT_PHASES: False,
                     CONF_PHASE_VOLTAGE: DEFAULT_PHASE_VOLTAGE,
-                    CONF_EXCESS_EXPORT_THRESHOLD: DEFAULT_EXCESS_EXPORT_THRESHOLD,
+                    CONF_GRID_EXPORT_LIMIT: DEFAULT_GRID_EXPORT_LIMIT,
+                    CONF_EXCESS_TRIGGER_MARGIN: DEFAULT_EXCESS_TRIGGER_MARGIN,
                     CONF_AUTO_DETECT_PHASE_MAPPING: True,
                 }
             )
@@ -1755,7 +1785,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
                 errors,
             )
-            bad_forecast_entity = _validate_forecast_entities(
+            bad_forecast_entity = _validate_forecast_devices(
                 self.hass, user_input, errors
             )
             validate_offgrid_battery_requirement(self._data, user_input, errors)
@@ -3044,7 +3074,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
                 errors,
             )
-            bad_forecast_entity = _validate_forecast_entities(
+            bad_forecast_entity = _validate_forecast_devices(
                 self.hass, user_input, errors
             )
             validate_offgrid_battery_requirement(defaults, user_input, errors)
@@ -3520,7 +3550,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 },
                 errors,
             )
-            bad_forecast_entity = _validate_forecast_entities(
+            bad_forecast_entity = _validate_forecast_devices(
                 self.hass, user_input, errors
             )
             validate_offgrid_battery_requirement(
