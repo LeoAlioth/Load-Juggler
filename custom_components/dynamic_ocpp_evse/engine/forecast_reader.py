@@ -69,11 +69,13 @@ def _parse_watts(entity_id, watts):
 def read_forecast_series(hass, entity_ids, hub_runtime):
     """Read and sum the configured forecast entities into one site series.
 
-    The parse is memoized per entity on ``state.last_updated`` — the attribute
-    holds 48–200 entries and this runs every site refresh (default 2 s), while
-    the forecast integration updates a few times per hour. A memo, not a
-    fallback cache: a missing or unavailable entity contributes nothing
-    (fail open), it does not serve stale data.
+    The parse is memoized per entity on the State object's identity — HA
+    replaces the immutable State on every update, so an unchanged object means
+    an unchanged attribute (a timestamp key would miss two updates landing on
+    the same clock tick). The attribute holds 48–200 entries and this runs
+    every site refresh (default 2 s), while the forecast integration updates a
+    few times per hour. A memo, not a fallback cache: a missing or unavailable
+    entity contributes nothing (fail open), it does not serve stale data.
     """
     memo = hub_runtime.setdefault("_forecast_parse_memo", {})
     for stale_id in set(memo) - set(entity_ids):
@@ -86,11 +88,11 @@ def read_forecast_series(hass, entity_ids, hub_runtime):
             memo.pop(entity_id, None)
             continue
         cached = memo.get(entity_id)
-        if cached is not None and cached[0] == state.last_updated:
+        if cached is not None and cached[0] is state:
             series_list.append(cached[1])
             continue
         series = _parse_watts(entity_id, state.attributes.get("watts"))
-        memo[entity_id] = (state.last_updated, series)
+        memo[entity_id] = (state, series)
         if series:
             series_list.append(series)
         else:
