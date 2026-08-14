@@ -55,7 +55,7 @@ from .const import (
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
 )
-from .helpers import get_entry_value
+from .helpers import get_entry_value, hub_has_battery
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,10 +69,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     entities = []
 
     if entry_type == ENTRY_TYPE_HUB:
-        # Check if battery is configured
-        battery_soc_entity = get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID)
-        battery_power_entity = get_entry_value(config_entry, CONF_BATTERY_POWER_ENTITY_ID)
-        has_battery = bool(battery_soc_entity or battery_power_entity)
+        # Any battery on the fleet (hub legacy fields or an inverter entry)
+        has_battery = hub_has_battery(hass, config_entry)
 
         # Always create Power Buffer (useful even without battery)
         entities.append(PowerBufferSlider(hass, config_entry, name, entity_id))

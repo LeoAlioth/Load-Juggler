@@ -124,3 +124,22 @@ class GroupEntityMixin:
             "model": "Circuit Group",
             "via_device": (DOMAIN, hub_entry_id) if hub_entry_id else None,
         }
+
+
+class InverterEntityMixin:
+    """Mixin for inverter entities (a power source linked to a hub).
+
+    Provides:
+      - device_info property (Inverter, linked to hub via via_device)
+    """
+
+    @property
+    def device_info(self):
+        hub_entry_id = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME),
+            "manufacturer": "Load Juggler",
+            "model": "Inverter",
+            "via_device": (DOMAIN, hub_entry_id) if hub_entry_id else None,
+        }

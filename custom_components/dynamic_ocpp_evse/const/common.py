@@ -15,6 +15,12 @@ ENTRY_TYPE = "entry_type"
 ENTRY_TYPE_HUB = "hub"
 ENTRY_TYPE_CHARGER = "charger"
 ENTRY_TYPE_GROUP = "group"
+# An inverter (a power SOURCE, optionally carrying its own battery), linked to
+# a hub via CONF_HUB_ENTRY_ID like chargers and groups. Inverter entries reuse
+# the hub-level CONF_INVERTER_* / CONF_BATTERY_* key names (const/hub.py) in
+# their own options: schemas are shared with the legacy hub pages, and the
+# one-time auto-import of a hub's legacy fields is a verbatim key copy.
+ENTRY_TYPE_INVERTER = "inverter"
 
 # configuration keys - common
 CONF_NAME = "name"
@@ -28,6 +34,7 @@ DEVICE_TYPE_PLUG = "plug"
 DEVICE_TYPE_HOT_WATER_TANK = "hot_water_tank"
 DEVICE_TYPE_POWER_STATION = "power_station"
 DEVICE_TYPE_GROUP = "group"
+DEVICE_TYPE_INVERTER = "inverter"
 
 # Charger-specific configuration keys shared by every device type
 CONF_HUB_ENTRY_ID = "hub_entry_id"
@@ -95,6 +102,11 @@ CONF_OPERATING_MODE = "operating_mode"
 # (2.2 → 2.3): the operating-mode select migrates its restored "Solar Only"
 # state to "Solar Priority" once, then clears the marker.
 MIGRATE_PLUG_SOLAR_ONLY_FLAG = "_migrate_plug_solar_only"
+
+# Set in a hub entry's data once its legacy hub-level inverter/battery fields
+# have been imported into a standalone inverter entry (or for new hubs, which
+# never had them) — makes the one-time auto-import idempotent across restarts.
+MIGRATE_HUB_INVERTER_IMPORTED_FLAG = "_hub_inverter_imported"
 
 # Engine behaviors — how a load competes for power. The distribution engine
 # switches on the behavior, never on the device type or the mode label. Which

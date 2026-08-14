@@ -322,16 +322,6 @@ HUB_SENSOR_DEFINITIONS = [
         "requires_forecast": True,
     },
     {
-        "name_suffix": "Recommended Battery Max SOC",
-        "unique_id_suffix": "forecast_battery_max_soc",
-        "hub_data_key": "forecast_battery_max_soc",
-        "unit": "%",
-        "device_class": "battery",
-        "icon": "mdi:battery-lock",
-        "decimals": 0,
-        "requires_forecast": True,
-    },
-    {
         "name_suffix": "Battery Headroom Deficit",
         "unique_id_suffix": "forecast_headroom_deficit",
         "hub_data_key": "forecast_headroom_deficit_kwh",
@@ -341,16 +331,11 @@ HUB_SENSOR_DEFINITIONS = [
         "decimals": 2,
         "requires_forecast": True,
     },
-    {
-        "name_suffix": "Recommended Battery Charge Limit",
-        "unique_id_suffix": "forecast_charge_limit",
-        "hub_data_key": "forecast_charge_limit_w",
-        "unit": "W",
-        "device_class": "power",
-        "icon": "mdi:battery-charging-wireless",
-        "decimals": 0,
-        "requires_forecast": True,
-    },
+    # The recommended max-SOC and charge-limit sensors live on the inverter
+    # entries (entities/inverter.py) — the advice is per battery, and that is
+    # where the future write-control will act. The fleet values remain in
+    # hub_data (forecast_battery_max_soc / forecast_charge_limit_w) for
+    # automations.
 ]
 
 

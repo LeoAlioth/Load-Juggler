@@ -1,5 +1,9 @@
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.config_entries import ConfigEntry, SOURCE_INTEGRATION_DISCOVERY
+from homeassistant.config_entries import (
+    ConfigEntry,
+    SOURCE_IMPORT,
+    SOURCE_INTEGRATION_DISCOVERY,
+)
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
@@ -422,8 +426,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         "hubs": {},
         "chargers": {},
         "groups": {},  # Circuit group entries
+        "inverters": {},  # Inverter entries (power sources, optional battery)
         "charger_allocations": {},  # Stores current allocation for each charger
     })
+    # setdefault only fires once — older buckets may predate "inverters"
+    hass.data[DOMAIN].setdefault("inverters", {})
     
     entry_type = entry.data.get(ENTRY_TYPE)
     
@@ -441,6 +448,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         await _setup_charger_entry(hass, entry)
     elif entry_type == ENTRY_TYPE_GROUP:
         await _setup_group_entry(hass, entry)
+    elif entry_type == ENTRY_TYPE_INVERTER:
+        await _setup_inverter_entry(hass, entry)
 
     # Reload entry when options change (e.g. battery entities added/removed)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
@@ -471,6 +480,7 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
         "entry": entry,
         "chargers": [],  # List of charger entry_ids linked to this hub
         "groups": [],    # List of circuit group entry_ids linked to this hub
+        "inverters": [],  # List of inverter entry_ids linked to this hub
         "distribution_mode": DEFAULT_DISTRIBUTION_MODE,
         "allow_grid_charging": True,
         "power_buffer": 0,
@@ -484,10 +494,36 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     
     # Forward setup to hub platforms (number, switch, sensor, select for hub-level entities)
     await hass.config_entries.async_forward_entry_setups(entry, ["number", "switch", "sensor", "select"])
-    
+
     # Trigger discovery for unconfigured OCPP chargers
     await _discover_and_notify_chargers(hass, entry.entry_id)
-    
+
+    # One-time auto-import: a hub still carrying legacy hub-level inverter/
+    # battery HARDWARE config (entities or inverter capacities — bare
+    # charge/discharge defaults don't count) gets it moved onto a standalone
+    # inverter entry. Idempotent: the flag here plus the import flow's
+    # unique_id make restarts mid-flow safe, and until the import lands the
+    # engine keeps treating the hub fields as one implicit fleet member.
+    if not entry.data.get(MIGRATE_HUB_INVERTER_IMPORTED_FLAG) and any(
+        get_entry_value(entry, key, None)
+        for key in (
+            CONF_BATTERY_SOC_ENTITY_ID,
+            CONF_BATTERY_POWER_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+            CONF_INVERTER_MAX_POWER,
+            CONF_INVERTER_MAX_POWER_PER_PHASE,
+        )
+    ):
+        hass.async_create_task(
+            hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": SOURCE_IMPORT},
+                data={"hub_entry_id": entry.entry_id},
+            )
+        )
+
     return True
 
 
@@ -560,6 +596,36 @@ async def _setup_group_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data[DOMAIN]["hubs"][hub_entry_id]["groups"].append(entry.entry_id)
 
     # Forward setup to sensor platform only (group sensors)
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+
+    return True
+
+
+async def _setup_inverter_entry(hass: HomeAssistant, entry: ConfigEntry):
+    """Set up an inverter config entry (a power source linked to a hub)."""
+    _LOGGER.info("Setting up inverter entry: %s", entry.title)
+
+    hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
+
+    # Verify hub exists — raise ConfigEntryNotReady so HA retries this inverter
+    # once the hub has finished setting up (entry setup order is concurrent).
+    if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
+        raise ConfigEntryNotReady(
+            f"Hub {hub_entry_id} not ready for inverter {entry.title}"
+        )
+
+    # Store inverter data
+    hass.data[DOMAIN]["inverters"][entry.entry_id] = {
+        "entry": entry,
+        "hub_entry_id": hub_entry_id,
+    }
+
+    # Link inverter to hub
+    hass.data[DOMAIN]["hubs"][hub_entry_id].setdefault("inverters", []).append(
+        entry.entry_id
+    )
+
+    # Forward setup to sensor platform only (per-inverter sensors)
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
 
     return True
@@ -731,6 +797,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         if entry.entry_id in hass.data[DOMAIN]["groups"]:
             del hass.data[DOMAIN]["groups"][entry.entry_id]
 
+    elif entry_type == ENTRY_TYPE_INVERTER:
+        # Unload inverter platforms
+        await hass.config_entries.async_forward_entry_unload(entry, "sensor")
+
+        # Remove inverter from hub's list
+        hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
+        if hub_entry_id in hass.data[DOMAIN]["hubs"]:
+            inverters_list = hass.data[DOMAIN]["hubs"][hub_entry_id].get("inverters", [])
+            if entry.entry_id in inverters_list:
+                inverters_list.remove(entry.entry_id)
+
+        # Remove inverter from data
+        if entry.entry_id in hass.data[DOMAIN].get("inverters", {}):
+            del hass.data[DOMAIN]["inverters"][entry.entry_id]
+
     return True
 
 
@@ -761,6 +842,25 @@ def get_chargers_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigE
             chargers.append(charger_data.get("entry"))
 
     return chargers
+
+
+def get_inverters_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigEntry]:
+    """Get all inverter config entries for a hub, in a deterministic order.
+
+    Sorted by entry_id — per-inverter runtime keys (EMA smoothing state,
+    result attribution) rely on a stable iteration order.
+    """
+    hub_data = hass.data[DOMAIN]["hubs"].get(hub_entry_id)
+    if not hub_data:
+        return []
+
+    inverters = []
+    for inverter_entry_id in sorted(hub_data.get("inverters", [])):
+        inverter_data = hass.data[DOMAIN].get("inverters", {}).get(inverter_entry_id)
+        if inverter_data:
+            inverters.append(inverter_data.get("entry"))
+
+    return inverters
 
 
 def get_groups_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigEntry]:

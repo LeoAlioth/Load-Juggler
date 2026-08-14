@@ -25,6 +25,7 @@ from ..const import *
 from ..calculations.utils import is_number, compute_household_per_phase
 from ..helpers import get_entry_value
 from .auto_detect import check_inversion, check_phase_mapping
+from . import fleet
 from .forecast_reader import (
     read_forecast_series,
     forecast_window,
@@ -212,6 +213,28 @@ def _check_entity_availability(hass, hub_entry) -> list:
         state = hass.states.get(entity_id)
         if state is None or state.state in ("unknown", "unavailable", ""):
             unavailable.append((label, entity_id))
+    # Per-inverter entries: their output and battery sensors feed the fleet
+    # aggregation, which fails open member-by-member — the status sensor is
+    # where a dropout becomes visible, named per inverter.
+    from .. import get_inverters_for_hub
+
+    for inv_entry in get_inverters_for_hub(hass, hub_entry.entry_id):
+        inv_name = get_entry_value(inv_entry, CONF_NAME, inv_entry.title)
+        inv_checks = (
+            (f"Inverter {inv_name} output (L1)", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
+            (f"Inverter {inv_name} output (L2)", CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
+            (f"Inverter {inv_name} output (L3)", CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
+            (f"Battery SOC ({inv_name})", CONF_BATTERY_SOC_ENTITY_ID),
+            (f"Battery power ({inv_name})", CONF_BATTERY_POWER_ENTITY_ID),
+        )
+        for label, conf_key in inv_checks:
+            entity_id = get_entry_value(inv_entry, conf_key, None)
+            if not entity_id:
+                continue
+            state = hass.states.get(entity_id)
+            if state is None or state.state in ("unknown", "unavailable", ""):
+                unavailable.append((label, entity_id))
+
     # Forecast sources fail open in the clipping maths — the status sensor is
     # the only place a dropout is visible. A configured forecast DEVICE with
     # no watts-bearing sensor right now (integration down, states missing)
@@ -1196,39 +1219,205 @@ def _build_circuit_groups(hass, hub_entry_id):
     return groups
 
 
+# Legacy hub-level fleet fields: while any of these are configured on the hub
+# entry itself (pre-import installs), the hub acts as one implicit inverter
+# merged into the fleet. The one-time auto-import moves them onto a standalone
+# inverter entry and blanks them here.
+_LEGACY_FLEET_KEYS = (
+    CONF_INVERTER_MAX_POWER,
+    CONF_INVERTER_MAX_POWER_PER_PHASE,
+    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+    CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_POWER_ENTITY_ID,
+    CONF_BATTERY_MAX_CHARGE_POWER,
+    CONF_BATTERY_MAX_DISCHARGE_POWER,
+)
+
+
+def _smooth_member_output(output_pv, hub_runtime, ema_inputs, key_prefix):
+    """Stale-guard + EMA a member's per-phase inverter output.
+
+    The legacy hub member uses the historic ``inv_0..2`` keys, so pre-import
+    behavior (and smoothing state) is bit-identical; inverter entries get
+    keys namespaced by their entry_id.
+    """
+    if output_pv is None:
+        return None
+    smoothed = [
+        _smooth(
+            ema_inputs,
+            f"{key_prefix}{i}",
+            _stale_guard(
+                hub_runtime,
+                ema_inputs,
+                f"{key_prefix}{i}",
+                getattr(output_pv, p),
+                None,
+            ),
+        )
+        for i, p in enumerate(("a", "b", "c"))
+    ]
+    return PhaseValues(*smoothed)
+
+
+def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy):
+    """Read one inverter (an inverter entry, or the hub's legacy fields) into
+    a FleetMember. ``legacy`` selects the historic EMA key namespace."""
+    (
+        max_power,
+        max_power_per_phase,
+        supports_asymmetric,
+        topology,
+        output_pv,
+    ) = _read_inverter_config(hass, entry, voltage)
+    output_prefix = "inv_" if legacy else f"inv_{entry.entry_id}_"
+    output_pv = _smooth_member_output(output_pv, hub_runtime, ema_inputs, output_prefix)
+
+    soc_entity = get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
+    power_entity = get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
+    battery_soc = (
+        _coerce(_read_entity(hass, soc_entity, None), None) if soc_entity else None
+    )
+    power_key = "battery_power" if legacy else f"battery_power_{entry.entry_id}"
+    raw_power = (
+        _read_entity(hass, power_entity, None, unit="W") if power_entity else None
+    )
+    if power_entity:
+        # A dead battery power sensor falls back to None after timeout,
+        # dropping the battery-power-derived terms instead of coasting.
+        raw_power = _stale_guard(hub_runtime, ema_inputs, power_key, raw_power, None)
+    battery_power = (
+        _smooth(ema_inputs, power_key, raw_power) if power_entity else None
+    )
+
+    return fleet.FleetMember(
+        entry_id=entry.entry_id,
+        name=get_entry_value(entry, CONF_NAME, entry.title if not legacy else "Hub"),
+        max_power=max_power,
+        max_power_per_phase=max_power_per_phase,
+        supports_asymmetric=supports_asymmetric,
+        topology=topology,
+        output=output_pv,
+        has_battery=bool(soc_entity or power_entity),
+        has_battery_power_entity=bool(power_entity),
+        battery_soc=float(battery_soc) if battery_soc is not None else None,
+        battery_power=float(battery_power) if battery_power is not None else None,
+        charge_cap=get_entry_value(entry, CONF_BATTERY_MAX_CHARGE_POWER, None),
+        discharge_cap=get_entry_value(entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None),
+        soc_full=get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL),
+        capacity_kwh=get_entry_value(
+            entry, CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH
+        ),
+    )
+
+
+def _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage):
+    """All of the hub's inverters: standalone inverter entries plus, while its
+    legacy hub-level fields remain configured, the hub itself as one implicit
+    member (using the historic EMA keys, so pre-import behavior is
+    bit-identical)."""
+    from .. import get_inverters_for_hub
+
+    members = []
+    if any(get_entry_value(hub_entry, key, None) for key in _LEGACY_FLEET_KEYS):
+        members.append(
+            _read_fleet_member(
+                hass, hub_entry, hub_runtime, ema_inputs, voltage, legacy=True
+            )
+        )
+    hub_entry_id = getattr(hub_entry, "entry_id", None)
+    if hub_entry_id:
+        for entry in get_inverters_for_hub(hass, hub_entry_id):
+            members.append(
+                _read_fleet_member(
+                    hass, entry, hub_runtime, ema_inputs, voltage, legacy=False
+                )
+            )
+    return members
+
+
+def _mixed_household_per_phase(site, members):
+    """Per-phase household for a mixed-topology fleet: the parallel formula on
+    the parallel members' summed outputs plus the series formula on the series
+    members' — grid-bus loads show on the CT + parallel outputs, behind-series
+    loads show in the series outputs. Best-effort superposition; uniform
+    fleets never come here and keep the exact single-formula path."""
+    original = site.inverter_output_per_phase
+    try:
+        site.inverter_output_per_phase = fleet.sum_outputs(
+            members, WIRING_TOPOLOGY_PARALLEL
+        )
+        parallel_hh = (
+            compute_household_per_phase(site, WIRING_TOPOLOGY_PARALLEL)
+            if site.inverter_output_per_phase is not None
+            else None
+        )
+        site.inverter_output_per_phase = fleet.sum_outputs(
+            members, WIRING_TOPOLOGY_SERIES
+        )
+        series_hh = (
+            compute_household_per_phase(site, WIRING_TOPOLOGY_SERIES)
+            if site.inverter_output_per_phase is not None
+            else None
+        )
+    finally:
+        site.inverter_output_per_phase = original
+
+    if parallel_hh is None and series_hh is None:
+        return None
+    values = []
+    for phase in ("a", "b", "c"):
+        parts = [
+            getattr(hh, phase)
+            for hh in (parallel_hh, series_hh)
+            if hh is not None and getattr(hh, phase) is not None
+        ]
+        values.append(max(0.0, sum(parts)) if parts else None)
+    return PhaseValues(*values)
+
+
 def _compute_forecast_advice(
     hass,
     hub_entry,
     hub_runtime,
     site,
     battery_soc,
-    battery_max_charge_power,
-    inverter_max_power,
+    members,
 ):
-    """Advisory battery headroom from the PV clipping forecast, or None.
+    """Advisory battery headroom from the PV clipping forecast.
 
-    Enabled only when an export limit, a battery capacity and at least one
-    forecast entity are configured — the hub publishes advice sensors, it
-    never commands the house battery (a future battery-inverter device type
-    will optionally write these values to a device).
+    Returns ``(hub_advice_or_None, per_inverter_advice)``. Enabled only when
+    an export limit, fleet battery capacity and at least one forecast source
+    are configured — the hub publishes advice sensors, it never commands the
+    house battery (a future write-control on the inverter entries will
+    optionally push these values to a device).
 
-    The published SOC ceiling is ratcheted in hub_runtime, mirroring the
-    Excess latch: it rises freely as the remaining clip shrinks (reaching
-    100 % once the clipping window has passed, so the battery still finishes
-    full), but falls only past FORECAST_SOC_HYSTERESIS, so forecast refreshes
-    don't chatter the advice. Published in whole percent — inverter SOC
-    registers are integers.
+    Fleet semantics: capacity and charge rate are FLEET sums, and the charge
+    sum is UNGATED — the forecast reserves room for the rest of the day, not
+    for the current instant, so a battery that is momentarily full still
+    counts (its ceiling advice is exactly what empties it). Reserving
+    ``absorbable_kwh`` across the fleet at one uniform ceiling ``s`` gives
+    ``Σ cap_i × (100 − s)/100`` — precisely what battery_max_soc computes
+    from the summed capacity — so every battery is advised the same percent,
+    splitting the headroom proportionally to capacity by construction. The
+    recommended charge limit splits proportionally to each member's charge
+    cap, clamped to its own cap.
+
+    ONE fleet-level ratchet (`hub_runtime["_forecast_max_soc"]`), mirroring
+    the Excess latch: the ceiling rises freely, falls only past
+    FORECAST_SOC_HYSTERESIS. Never per-member — the ceiling is uniform by
+    construction and per-member ratchets would diverge. Whole percent —
+    inverter SOC registers are integers.
     """
     export_limit = (
         get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT)
         or 0
     )
-    capacity_kwh = (
-        get_entry_value(
-            hub_entry, CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH
-        )
-        or 0
-    )
+    # Fleet capacity: the hub's legacy capacity field arrives via the implicit
+    # legacy member, entry capacities via theirs.
+    capacity_kwh = fleet.capacity_total(members)
     device_ids = get_entry_value(hub_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or []
     legacy_entity_ids = (
         get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []
@@ -1236,7 +1425,7 @@ def _compute_forecast_advice(
     if export_limit <= 0 or capacity_kwh <= 0 or not (device_ids or legacy_entity_ids):
         hub_runtime.pop("_forecast_max_soc", None)
         hub_runtime.pop("_forecast_parse_memo", None)
-        return None
+        return None, {}
 
     base_consumption = (
         get_entry_value(hub_entry, CONF_BASE_CONSUMPTION, DEFAULT_BASE_CONSUMPTION) or 0
@@ -1246,12 +1435,16 @@ def _compute_forecast_advice(
     )
     threshold = export_limit + base_consumption
 
+    # UNGATED fleet charge rate (see docstring) and total inverter capacity.
+    fleet_charge_cap = sum(m.charge_cap or 0 for m in members) or None
+    fleet_max_power, _, _ = fleet.inverter_limits(members)
+
     # Cap the summed series at what the site can physically produce — an
     # AC-coupled string inverter cannot deliver what Open-Meteo models from
     # kWp, and without the cap an oversized array over-reserves badly.
     power_cap = None
-    if inverter_max_power:
-        power_cap = inverter_max_power + (battery_max_charge_power or 0)
+    if fleet_max_power:
+        power_cap = fleet_max_power + (fleet_charge_cap or 0)
 
     entity_ids = configured_forecast_sensors(hass, device_ids, legacy_entity_ids)
     series = read_forecast_series(hass, entity_ids, hub_runtime)
@@ -1261,7 +1454,7 @@ def _compute_forecast_advice(
         threshold,
         now,
         until,
-        charge_cap_w=battery_max_charge_power or None,
+        charge_cap_w=fleet_charge_cap,
         power_cap_w=power_cap,
     )
 
@@ -1274,16 +1467,34 @@ def _compute_forecast_advice(
 
     deficit = headroom_deficit_kwh(fc.absorbable_kwh, capacity_kwh, battery_soc)
     charge_limit = None
-    if battery_max_charge_power:
+    if fleet_charge_cap:
         charge_limit = recommended_charge_limit(
             fc.absorbable_kwh,
             battery_soc,
             proposed,
-            battery_max_charge_power,
+            fleet_charge_cap,
             site.solar_production_total or 0,
             threshold,
             FORECAST_SOC_HYSTERESIS,
         )
+
+    # Per-inverter advice: the uniform ceiling for every battery member, and
+    # the fleet charge limit split proportionally to each member's charge cap,
+    # clamped to its own cap.
+    per_inverter = {}
+    hub_id = getattr(hub_entry, "entry_id", None)
+    for m in members:
+        if m.entry_id == hub_id or not m.has_battery or not (m.capacity_kwh or 0) > 0:
+            continue
+        member_limit = None
+        if charge_limit is not None and fleet_charge_cap and m.charge_cap:
+            member_limit = round(
+                min(m.charge_cap, charge_limit * m.charge_cap / fleet_charge_cap), 0
+            )
+        per_inverter[m.entry_id] = {
+            "forecast_battery_max_soc": proposed,
+            "forecast_charge_limit_w": member_limit,
+        }
 
     _LOGGER.debug(
         "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW to %s"
@@ -1306,7 +1517,7 @@ def _compute_forecast_advice(
         "forecast_charge_limit_w": (
             round(charge_limit, 0) if charge_limit is not None else None
         ),
-    }
+    }, per_inverter
 
 
 def _build_hub_result(
@@ -1329,6 +1540,7 @@ def _build_hub_result(
     excess_available=False,
     excess_margin_power=0,
     forecast_advice=None,
+    inverters_data=None,
 ):
     """Build the result dict returned by run_hub_calculation."""
     # Grid available power (based on consumption after feedback loop).
@@ -1554,6 +1766,8 @@ def _build_hub_result(
         # Hub status
         "hub_status": hub_status,
         "hub_warnings": hub_warnings or [],
+        # Per-inverter-entry data (for the inverter devices' own sensors)
+        "inverters": inverters_data or {},
         # Advisory battery headroom from the PV clipping forecast. Keys are
         # present only while the feature is configured — the matching sensors
         # are gated the same way.
@@ -1720,42 +1934,21 @@ def run_hub_calculation(sensor):
         raw_solar = None  # derived — calculated after inverter output is read
         solar_production_total = 0  # placeholder
 
-    # --- Battery data ---
-    battery_soc_entity = get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
-    battery_power_entity = get_entry_value(
-        hub_entry, CONF_BATTERY_POWER_ENTITY_ID, None
-    )
-    battery_soc = (
-        _coerce(_read_entity(hass, battery_soc_entity, None), None)
-        if battery_soc_entity
-        else None
-    )
-    raw_battery_power = (
-        _read_entity(hass, battery_power_entity, None, unit="W")
-        if battery_power_entity
-        else None
-    )  # Convert kW→W if needed
-    # A dead battery power sensor falls back to None after timeout, dropping
-    # all battery-power-derived terms (charge-back, spare discharge) from the
-    # pools instead of coasting on the last reading.
-    if battery_power_entity:
-        raw_battery_power = _stale_guard(
-            hub_runtime, ema_inputs, "battery_power", raw_battery_power, None
-        )
-    battery_power = (
-        _smooth(ema_inputs, "battery_power", raw_battery_power)
-        if battery_power_entity
-        else None
-    )
+    # --- Inverter fleet (inverter entries + legacy hub-level fields) ---
+    # Every battery/inverter scalar below is a fleet aggregate. With a single
+    # member (the classic setup) each aggregate reduces to exactly the old
+    # singleton value — see engine/fleet.py for the per-member gating rules.
+    members = _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage)
+
+    # --- Battery data (fleet) ---
+    battery_soc = fleet.weighted_soc(members)
+    battery_power = fleet.battery_power_total(members)
     battery_soc_hysteresis = get_entry_value(
         hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS
     )
-    battery_max_charge_power = get_entry_value(
-        hub_entry, CONF_BATTERY_MAX_CHARGE_POWER, None
-    )
-    battery_max_discharge_power = get_entry_value(
-        hub_entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None
-    )
+    # Charge capacity sums only members whose own battery is below its own
+    # full-SOC; discharge is summed after the SOC-min hysteresis latch below.
+    battery_max_charge_power = fleet.charge_power_total(members)
 
     # --- Max grid import power (entity override → shared hub data → None) ---
     enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
@@ -1772,46 +1965,31 @@ def run_hub_calculation(sensor):
     else:
         max_grid_import_power = None
 
-    # --- Inverter configuration ---
+    # --- Inverter configuration (fleet) ---
+    # Member outputs are already stale-guarded + smoothed at read time (per-
+    # member EMA keys). The topology scalar is 'series' if ANY member is
+    # series: the series solar formula on the summed outputs with the summed
+    # battery power is exact for any mix, because parallel members contribute
+    # no battery term — so the post-feedback re-derivation stays correct.
     (
         inverter_max_power,
         inverter_max_power_per_phase,
         inverter_supports_asymmetric,
-        wiring_topology,
-        inverter_output_per_phase,
-    ) = _read_inverter_config(hass, hub_entry, voltage)
-
-    # Smooth inverter output per-phase (if configured). A phase whose sensor
-    # has been unavailable past the timeout falls back to None (phase output
-    # unknown) instead of coasting on its held EMA value.
-    if inverter_output_per_phase is not None:
-        inv_smoothed = [
-            _smooth(
-                ema_inputs,
-                f"inv_{i}",
-                _stale_guard(
-                    hub_runtime,
-                    ema_inputs,
-                    f"inv_{i}",
-                    getattr(inverter_output_per_phase, p),
-                    None,
-                ),
-            )
-            for i, p in enumerate(("a", "b", "c"))
-        ]
-        inverter_output_per_phase = PhaseValues(*inv_smoothed)
+    ) = fleet.inverter_limits(members)
+    wiring_topology = fleet.fleet_topology(members)
+    inverter_output_per_phase = fleet.sum_outputs(members)
 
     # --- Derive solar production (unified for grid and off-grid) ---
-    # Uses inverter output when available; falls back to grid export + battery.
-    # For off-grid sites (no grid CTs), export is 0 so inverter formula applies.
+    # Per-member: parallel output IS production, series output minus its own
+    # battery power. Falls back to grid export + the fleet's charging draw
+    # when no member has output entities. Off-grid, export is naturally 0.
     if solar_is_derived:
-        solar_production_total = _derive_solar_production(
-            inverter_output_per_phase,
-            wiring_topology,
-            total_export_power,
-            battery_power,
-            voltage,
-        )
+        solar_production_total = fleet.solar_from_outputs(members, voltage)
+        if solar_production_total is None:
+            solar_production_total = max(
+                0.0,
+                (total_export_power or 0) + fleet.charging_power_total(members),
+            )
 
     # --- Runtime state from shared hub data (hub_runtime already fetched above) ---
     distribution_mode = hub_runtime.get("distribution_mode", DEFAULT_DISTRIBUTION_MODE)
@@ -1821,9 +1999,11 @@ def run_hub_calculation(sensor):
         "battery_soc_target", DEFAULT_BATTERY_SOC_TARGET
     )
     battery_soc_min = hub_runtime.get("battery_soc_min", DEFAULT_BATTERY_SOC_MIN)
-    battery_soc_full = get_entry_value(
-        hub_entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL
-    )
+    # With exactly one battery this is its real full-SOC (classic behavior,
+    # including the calculations-level gates that read it); a multi-battery
+    # fleet passes None — its full gating already happened per member in
+    # fleet.charge_power_total(), and a fleet-SOC gate would be wrong.
+    battery_soc_full = fleet.soc_full_scalar(members)
 
     # Apply SOC hysteresis — adjust thresholds so engine stays stateless
     now_above_target = False
@@ -1853,6 +2033,11 @@ def run_hub_calculation(sensor):
         if now_above_min:
             battery_soc_min = battery_soc_min - battery_soc_hysteresis
 
+    # Discharge capacity sums only members whose OWN battery is at/above the
+    # (hysteresis-adjusted) hub minimum — a battery below the floor cannot be
+    # counted dischargeable because a full sibling lifts the fleet SOC.
+    battery_max_discharge_power = fleet.discharge_power_total(members, battery_soc_min)
+
     # Apply power buffer to reduce effective max grid import power
     if max_grid_import_power is not None and power_buffer > 0:
         max_grid_import_power = max(0, max_grid_import_power - power_buffer)
@@ -1877,7 +2062,7 @@ def run_hub_calculation(sensor):
         _fv(total_export_power),
     )
     _extra = []
-    if battery_soc_entity:
+    if any(m.has_battery for m in members):
         _bat_dir = (
             "chg"
             if (battery_power or 0) < 0
@@ -1885,8 +2070,9 @@ def run_hub_calculation(sensor):
         )
         _hyst_min = "*" if now_above_min else ""
         _hyst_tgt = "*" if now_above_target else ""
+        _n_batteries = sum(1 for m in members if m.has_battery)
         _extra.append(
-            f"Bat: {_fv(battery_soc)}%/{_fv2(raw_battery_power, battery_power)}W({_bat_dir}) "
+            f"Bat(x{_n_batteries}): {_fv(battery_soc)}%/{_fv(battery_power)}W({_bat_dir}) "
             f"min={_fv(battery_soc_min)}%{_hyst_min} tgt={_fv(battery_soc_target)}%{_hyst_tgt}"
         )
     if inverter_max_power or inverter_max_power_per_phase:
@@ -2044,7 +2230,10 @@ def run_hub_calculation(sensor):
         )
 
     # Compute per-phase household from inverter output entities (after feedback)
-    household = compute_household_per_phase(site, site.wiring_topology)
+    if fleet.mixed_topologies(members):
+        household = _mixed_household_per_phase(site, members)
+    else:
+        household = compute_household_per_phase(site, site.wiring_topology)
     if household is not None:
         site.household_consumption = household
         _LOGGER.debug(
@@ -2173,18 +2362,21 @@ def run_hub_calculation(sensor):
         )
     elif not has_grid_cts:
         # Off-grid: no grid CTs, so the battery is the primary state source.
+        # Any fleet member's battery satisfies the requirement — the battery
+        # may live on the hub's legacy fields or on an inverter entry.
         hub_warnings.append("Off-grid mode (no grid CTs)")
-        if not battery_soc_entity:
+        if not any(m.battery_soc is not None or m.has_battery for m in members):
             hub_status = "Setup incomplete"
             hub_warnings.append(
                 "Off-grid hub needs a battery SOC sensor — it drives the "
-                "operating-mode logic. Set it in the hub options."
+                "operating-mode logic. Set it on the hub or an inverter entry."
             )
-        if not battery_power_entity:
+        if not any(m.has_battery_power_entity for m in members):
             hub_status = "Setup incomplete"
             hub_warnings.append(
                 "Off-grid hub needs a battery power sensor — it is used to "
-                "detect available solar surplus. Set it in the hub options."
+                "detect available solar surplus. Set it on the hub or an "
+                "inverter entry."
             )
         if not has_inverter_output and not has_solar_entity:
             hub_warnings.append(
@@ -2214,17 +2406,33 @@ def run_hub_calculation(sensor):
                 named += f" +{len(labels) - 2} more"
             hub_status = f"Sensor unavailable: {named}"
 
+    # --- Per-inverter data for the inverter-entry sensors ---
+    # The legacy implicit member (the hub's own fields) has no device of its
+    # own — its values already show on the hub's fleet sensors.
+    inverters_data = {
+        m.entry_id: {
+            "name": m.name,
+            "solar_w": fleet.member_solar(m, voltage),
+            "battery_soc": m.battery_soc,
+            "battery_power": m.battery_power,
+        }
+        for m in members
+        if m.entry_id != hub_entry_id
+    }
+
     # --- PV clipping forecast (advisory battery headroom) ---
     # Computed post-feedback so solar_production_total excludes managed draws.
-    forecast_advice = _compute_forecast_advice(
+    forecast_advice, forecast_per_inverter = _compute_forecast_advice(
         hass,
         hub_entry,
         hub_runtime,
         site,
         battery_soc,
-        battery_max_charge_power,
-        inverter_max_power,
+        members,
     )
+    for inv_id, advice in forecast_per_inverter.items():
+        if inv_id in inverters_data:
+            inverters_data[inv_id].update(advice)
 
     # --- Build result ---
     return _build_hub_result(
@@ -2247,6 +2455,7 @@ def run_hub_calculation(sensor):
         excess_available=excess_on,
         excess_margin_power=margin,
         forecast_advice=forecast_advice,
+        inverters_data=inverters_data,
     )
 
 

@@ -121,6 +121,16 @@ Load Juggler works on off-grid installations. When no grid CT entities are confi
 
 Configure inverter output entities in the hub settings. The hub status sensor shows "Off-grid mode" when no grid CTs are present.
 
+## Multiple Inverters
+
+A site can have several inverters — typically an older AC-coupled string inverter plus a newer hybrid with a battery. Each is added as its own **Inverter** entry linked to the hub (*Add Inverter / Home Battery* in the setup menu), carrying its capacity, per-phase limit, wiring topology, output sensors and optionally its own battery (SOC/power sensors, charge/discharge limits, full-SOC, capacity).
+
+The hub aggregates the whole fleet: capacities and outputs sum, solar production is derived per inverter (a series inverter's output minus its own battery flow), and the hub's battery sensors become fleet aggregates — SOC is capacity-weighted across all batteries. Excess mode counts each battery's charge capacity only while *that* battery is below *its* full SOC, and discharge capacity only for batteries above the site minimum. The SOC Target / SOC Min sliders and Allow Grid Charging switch remain hub-level site policy applied to the fleet.
+
+Each inverter device gets its own sensors: Solar Production, Battery SOC/Power, and — with the PV clipping forecast enabled — the **Recommended Battery Max SOC** and **Recommended Battery Charge Limit** for *its* battery (the fleet reservation split by capacity and charge rate).
+
+**Upgrading:** a hub configured the classic way (inverter/battery fields on the hub itself) is migrated automatically on startup — those fields move onto a new inverter entry, and the hub's sensors keep their entity IDs as fleet aggregates. No manual steps.
+
 ## Battery System Support
 
 - **Battery SOC monitoring** — tracks current battery state of charge

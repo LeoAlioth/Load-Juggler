@@ -412,6 +412,14 @@ its rating in the allowance would make the trigger unreachable exactly when the
 site is dumping the most energy. Zeroing it is the same treatment as a battery
 that isn't there.
 
+**Multiple batteries** (inverter entries): each battery's charge rating counts
+toward the allowance only while *that* battery is below *its own* Full SOC —
+one full battery drops out of the allowance while an empty sibling keeps
+absorbing. The SOC the SOC-gated modes read (Solar Priority bands, plug
+above-min/above-target) is the capacity-weighted fleet SOC, and the discharge
+capacity offered to loads excludes any battery below the site minimum SOC,
+however high the fleet average sits.
+
 Zero counts as on, because it is the saturated case — export sitting at the
 allowance *and* the battery pulling its maximum charge rate is precisely "nothing
 more can be absorbed".

@@ -11,7 +11,7 @@ from .const import (
     CONF_HUB_ENTRY_ID, CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID,
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION,
 )
-from .helpers import get_entry_value
+from .helpers import get_entry_value, hub_has_battery
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,10 +40,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         _LOGGER.debug("Skipping switch setup for unknown entry type: %s", config_entry.title)
         return
 
-    # Hub-level switches — only if battery is configured
-    battery_soc_entity = get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID)
-    battery_power_entity = get_entry_value(config_entry, CONF_BATTERY_POWER_ENTITY_ID)
-    has_battery = bool(battery_soc_entity or battery_power_entity)
+    # Hub-level switches — only if any fleet battery is configured
+    # (the hub's legacy fields or an inverter entry)
+    has_battery = hub_has_battery(hass, config_entry)
 
     if not has_battery:
         _LOGGER.info("No battery configured - skipping 'Allow Grid Charging' switch")

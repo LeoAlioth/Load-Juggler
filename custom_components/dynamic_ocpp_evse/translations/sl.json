@@ -123,6 +123,44 @@
                     "forecast_soc_floor": "Priporočeni največji SOC baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
                 }
             },
+            "inverter_config": {
+                "title": "Razsmernik",
+                "description": "Dodajte razsmernik kot vir energije na tem vozlišču. Lokacija jih ima lahko več (npr. starejši AC-sklopljeni razsmernik in nov hibridni) — vozlišče sešteje celotno floto.",
+                "data": {
+                    "name": "Ime tega razsmernika",
+                    "entity_id": "Predpona ID entitete",
+                    "inverter_max_power": "Skupna moč razsmernika",
+                    "inverter_max_power_per_phase": "Največja moč razsmernika na fazo",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrični izhod po fazah",
+                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
+                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
+                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
+                    "wiring_topology": "Topologija ožičenja"
+                },
+                "data_description": {
+                    "inverter_max_power": "Nazivna moč s podatkovnega lista tega razsmernika. 0 = brez omejitve.",
+                    "inverter_max_power_per_phase": "Običajno skupna moč, deljena s številom faz. 0 = brez omejitve na fazo.",
+                    "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
+                    "wiring_topology": "Vzporedno: ta razsmernik napaja omrežno zbiralko neposredno (AC-sklopljena sončna, brez baterije). Zaporedno: moč teče skozi ta razsmernik (hibrid z DC-sklopljeno baterijo)."
+                }
+            },
+            "inverter_battery": {
+                "title": "Baterija razsmernika",
+                "description": "Baterija, ki je fizično za tem razsmernikom — pustite prazno, če je nima.",
+                "data": {
+                    "battery_soc_entity_id": "Senzor napolnjenosti baterije (SOC)",
+                    "battery_power_entity_id": "Senzor moči baterije",
+                    "battery_max_charge_power": "Največja moč polnjenja baterije",
+                    "battery_max_discharge_power": "Največja moč praznjenja baterije",
+                    "battery_soc_full": "SOC polne baterije",
+                    "battery_capacity_kwh": "Kapaciteta baterije"
+                },
+                "data_description": {
+                    "battery_power_entity_id": "Mora kazati POZITIVNO vrednost, ko se baterija prazni (oddaja moč), in negativno med polnjenjem. Če je senzor obrnjen, ga ovijte v template senzor.",
+                    "battery_soc_full": "SOC, pri katerem ali nad katerim TA baterija šteje za polno in ne vpija več presežka sonca.",
+                    "battery_capacity_kwh": "kWh, ki jih pokriva odstotek SOC te baterije (uporabna kapaciteta). Uporabljeno za uteženi SOC flote in napoved rezanja PV."
+                }
+            },
             "select_hub": {
                 "title": "Izberi hub",
                 "description": "Izberite, kateremu električnemu hubu dodate ta polnilnik",
@@ -417,6 +455,31 @@
                     "forecast_soc_floor": "Priporočeni največji SOC baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
                 }
             },
+            "reconfigure_inverter": {
+                "title": "Ponastavi razsmernik",
+                "description": "Posodobite ta razsmernik in njegovo baterijo",
+                "data": {
+                    "inverter_max_power": "Skupna moč razsmernika",
+                    "inverter_max_power_per_phase": "Največja moč razsmernika na fazo",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrični izhod po fazah",
+                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
+                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
+                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
+                    "wiring_topology": "Topologija ožičenja",
+                    "battery_soc_entity_id": "Senzor napolnjenosti baterije (SOC)",
+                    "battery_power_entity_id": "Senzor moči baterije",
+                    "battery_max_charge_power": "Največja moč polnjenja baterije",
+                    "battery_max_discharge_power": "Največja moč praznjenja baterije",
+                    "battery_soc_full": "SOC polne baterije",
+                    "battery_capacity_kwh": "Kapaciteta baterije"
+                },
+                "data_description": {
+                    "wiring_topology": "Vzporedno: ta razsmernik napaja omrežno zbiralko neposredno. Zaporedno: moč teče skozi ta razsmernik (hibrid z baterijo).",
+                    "battery_power_entity_id": "Pozitivno med praznjenjem, negativno med polnjenjem.",
+                    "battery_soc_full": "SOC, pri katerem TA baterija šteje za polno.",
+                    "battery_capacity_kwh": "kWh, ki jih pokriva odstotek SOC te baterije."
+                }
+            },
             "reconfigure_plug": {
                 "title": "Ponovno konfiguriraj pametno obremenitev",
                 "description": "Posodobite nastavitve pametne obremenitve",
@@ -635,6 +698,31 @@
                     "battery_capacity_kwh": "kWh, ki jih pokriva odstotek SOC baterije (uporabna kapaciteta). 0 izklopi napoved rezanja PV proizvodnje.",
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva — vnos vršne porabe funkcijo v praksi izklopi.",
                     "forecast_soc_floor": "Priporočeni največji SOC baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
+                }
+            },
+            "inverter": {
+                "title": "Posodobi nastavitve razsmernika",
+                "description": "Posodobite ta razsmernik in njegovo baterijo",
+                "data": {
+                    "inverter_max_power": "Skupna moč razsmernika",
+                    "inverter_max_power_per_phase": "Največja moč razsmernika na fazo",
+                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrični izhod po fazah",
+                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
+                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
+                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
+                    "wiring_topology": "Topologija ožičenja",
+                    "battery_soc_entity_id": "Senzor napolnjenosti baterije (SOC)",
+                    "battery_power_entity_id": "Senzor moči baterije",
+                    "battery_max_charge_power": "Največja moč polnjenja baterije",
+                    "battery_max_discharge_power": "Največja moč praznjenja baterije",
+                    "battery_soc_full": "SOC polne baterije",
+                    "battery_capacity_kwh": "Kapaciteta baterije"
+                },
+                "data_description": {
+                    "wiring_topology": "Vzporedno: ta razsmernik napaja omrežno zbiralko neposredno. Zaporedno: moč teče skozi ta razsmernik (hibrid z baterijo).",
+                    "battery_power_entity_id": "Pozitivno med praznjenjem, negativno med polnjenjem.",
+                    "battery_soc_full": "SOC, pri katerem TA baterija šteje za polno.",
+                    "battery_capacity_kwh": "kWh, ki jih pokriva odstotek SOC te baterije."
                 }
             },
             "plug": {

@@ -740,6 +740,133 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         ]
 
+    def _build_inverter_battery_schema(self, defaults: dict | None = None) -> list[tuple]:
+        """Battery fields for an INVERTER entry — the battery physically behind
+        this inverter. Reuses the hub-level key names (see ENTRY_TYPE_INVERTER
+        in const/common.py), but deliberately excludes the hub-policy fields
+        (SOC target/min sliders, hysteresis) and the hub-scoped solar
+        production / forecast inputs."""
+        defaults = defaults or {}
+        entity_sel_power = selector(
+            {
+                "entity": {
+                    "include_entities": self._entity_ids_for(
+                        {None, "power"}, valid_units=_POWER_UNITS
+                    ),
+                }
+            }
+        )
+        return [
+            (
+                self._optional_entity_field(
+                    CONF_BATTERY_SOC_ENTITY_ID,
+                    defaults.get(CONF_BATTERY_SOC_ENTITY_ID),
+                ),
+                selector(
+                    {
+                        "entity": {
+                            "include_entities": self._entity_ids_for(
+                                {None, "battery"}, valid_units=_SOC_UNITS
+                            ),
+                        }
+                    }
+                ),
+            ),
+            (
+                self._optional_entity_field(
+                    CONF_BATTERY_POWER_ENTITY_ID,
+                    defaults.get(CONF_BATTERY_POWER_ENTITY_ID),
+                ),
+                entity_sel_power,
+            ),
+            (
+                vol.Optional(
+                    CONF_BATTERY_MAX_CHARGE_POWER,
+                    default=defaults.get(
+                        CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 50000,
+                            "step": 100,
+                            "mode": "box",
+                            "unit_of_measurement": "W",
+                        }
+                    }
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_BATTERY_MAX_DISCHARGE_POWER,
+                    default=defaults.get(
+                        CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 50000,
+                            "step": 100,
+                            "mode": "box",
+                            "unit_of_measurement": "W",
+                        }
+                    }
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_BATTERY_SOC_FULL,
+                    default=defaults.get(
+                        CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 50,
+                            "max": 100,
+                            "step": 1,
+                            "mode": "slider",
+                            "unit_of_measurement": "%",
+                        }
+                    }
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_BATTERY_CAPACITY_KWH,
+                    default=defaults.get(
+                        CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 1000,
+                            "step": 0.1,
+                            "mode": "box",
+                            "unit_of_measurement": "kWh",
+                        }
+                    }
+                ),
+            ),
+        ]
+
+    def _inverter_battery_schema(self, defaults: dict | None = None) -> vol.Schema:
+        """Schema for the inverter-entry battery step."""
+        return vol.Schema(dict(self._build_inverter_battery_schema(defaults)))
+
+    def _inverter_combined_schema(self, defaults: dict | None = None) -> vol.Schema:
+        """Inverter + battery fields on one page (reconfigure/options flows)."""
+        fields = self._build_hub_inverter_schema(defaults)
+        fields.extend(self._build_inverter_battery_schema(defaults))
+        return vol.Schema(dict(fields))
+
     def _hub_schema(
         self,
         defaults: dict | None = None,
@@ -1575,6 +1702,12 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     self._data[CONF_DEVICE_TYPE] = DEVICE_TYPE_GROUP
                     return await self.async_step_select_hub()
+            elif setup_type == "inverter":
+                if not hubs:
+                    errors["base"] = "no_hub_configured"
+                else:
+                    self._data[CONF_DEVICE_TYPE] = DEVICE_TYPE_INVERTER
+                    return await self.async_step_select_hub()
 
         # Build options based on existing hubs
         options = [
@@ -1586,6 +1719,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             options.append({"value": "tank", "label": "Add Hot Water Tank"})
             options.append(
                 {"value": "station", "label": "Add Portable Power Station"}
+            )
+            options.append(
+                {"value": "inverter", "label": "Add Inverter / Home Battery"}
             )
             options.append(
                 {"value": "group", "label": "Add Circuit Group (Shared Breaker)"}
@@ -1975,6 +2111,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return await self.async_step_power_station_config()
         if device_type == DEVICE_TYPE_GROUP:
             return await self.async_step_group_config()
+        if device_type == DEVICE_TYPE_INVERTER:
+            return await self.async_step_inverter_config()
         return await self.async_step_discover_chargers()
 
     async def async_step_select_hub(
@@ -2370,6 +2508,222 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
             errors=errors,
             last_step=True,
+        )
+
+    # ==================== INVERTER CONFIGURATION STEPS ====================
+
+    async def async_step_inverter_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Inverter step 1: name + capacity, topology and output sensors."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            user_input = self._normalize_optional_inputs(
+                user_input, self._INVERTER_ENTITY_KEYS
+            )
+            _validate_entity_units(
+                self.hass,
+                user_input,
+                {
+                    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS
+                    | _POWER_UNITS,
+                    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS
+                    | _POWER_UNITS,
+                    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
+                    | _POWER_UNITS,
+                },
+                errors,
+            )
+            entity_id = user_input.get(CONF_ENTITY_ID)
+            if entity_id and self._entity_id_in_use(entity_id):
+                errors[CONF_ENTITY_ID] = "entity_id_in_use"
+            if not errors:
+                self._data.update(user_input)
+                return await self.async_step_inverter_battery()
+
+        defaults = {**self._data, **(user_input or {})}
+        data_schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_NAME, default=defaults.get(CONF_NAME, "Inverter")
+                ): str,
+                vol.Required(
+                    CONF_ENTITY_ID,
+                    default=defaults.get(CONF_ENTITY_ID, "lj_inverter"),
+                ): str,
+                **dict(self._build_hub_inverter_schema(defaults)),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="inverter_config",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=False,
+        )
+
+    async def async_step_inverter_battery(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Inverter step 2: the battery behind this inverter (all optional) —
+        creates the entry."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            user_input = self._normalize_optional_inputs(
+                user_input,
+                [CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
+            )
+            _validate_entity_units(
+                self.hass,
+                user_input,
+                {
+                    CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
+                    CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
+                },
+                errors,
+            )
+            if not errors:
+                self._data.update(user_input)
+                # 0 means "not configured" for the power caps, as on the hub
+                for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
+                    if self._data.get(key) == 0:
+                        self._data[key] = None
+
+                name = self._data.get(CONF_NAME, "Inverter")
+                static_data = {
+                    CONF_NAME: name,
+                    CONF_ENTITY_ID: self._data.get(CONF_ENTITY_ID),
+                    ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+                    CONF_DEVICE_TYPE: DEVICE_TYPE_INVERTER,
+                    CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
+                }
+                options_data = {
+                    k: v for k, v in self._data.items() if k not in static_data
+                }
+                options_data.pop(CONF_DEVICE_TYPE, None)
+
+                # The hub's entity gating (battery sliders/switch, forecast
+                # sensors) depends on which inverter entries exist — nothing
+                # reloads a hub when a child appears, so schedule it here.
+                # Only when the hub is actually loaded: reloading a not-yet-
+                # loaded entry raises, and during startup it reloads anyway.
+                hub_entry_id = self._data.get(CONF_HUB_ENTRY_ID)
+                hub_entry = (
+                    self.hass.config_entries.async_get_entry(hub_entry_id)
+                    if hub_entry_id
+                    else None
+                )
+                if (
+                    hub_entry is not None
+                    and hub_entry.state is config_entries.ConfigEntryState.LOADED
+                ):
+                    self.hass.async_create_task(
+                        self.hass.config_entries.async_reload(hub_entry_id)
+                    )
+
+                return self._create_entry_and_seed_options(
+                    _compose_entry_title(name, "Inverter"), static_data, options_data
+                )
+
+        data_schema = self._inverter_battery_schema({**self._data, **(user_input or {})})
+        return self.async_show_form(
+            step_id="inverter_battery",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=True,
+        )
+
+    # The legacy hub-level fields the auto-import moves onto an inverter entry.
+    # Hub-scoped settings stay behind: SOC hysteresis, the SOC target/min
+    # sliders, solar production entity, forecast sources, base consumption,
+    # forecast SOC floor and the grid export limit.
+    _HUB_INVERTER_IMPORT_FIELDS = (
+        CONF_INVERTER_MAX_POWER,
+        CONF_INVERTER_MAX_POWER_PER_PHASE,
+        CONF_INVERTER_SUPPORTS_ASYMMETRIC,
+        CONF_WIRING_TOPOLOGY,
+        CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+        CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+        CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+        CONF_BATTERY_SOC_ENTITY_ID,
+        CONF_BATTERY_POWER_ENTITY_ID,
+        CONF_BATTERY_MAX_CHARGE_POWER,
+        CONF_BATTERY_MAX_DISCHARGE_POWER,
+        CONF_BATTERY_SOC_FULL,
+        CONF_BATTERY_CAPACITY_KWH,
+    )
+
+    def _blank_hub_legacy_inverter_fields(self, hub_entry) -> None:
+        """Strip the imported fields from the hub entry and set the imported
+        flag — the hub must stop acting as the implicit legacy fleet member
+        the moment the standalone inverter entry represents the hardware."""
+        new_data = dict(hub_entry.data)
+        new_data[MIGRATE_HUB_INVERTER_IMPORTED_FLAG] = True
+        for key in self._HUB_INVERTER_IMPORT_FIELDS:
+            new_data.pop(key, None)
+        new_options = {
+            k: v
+            for k, v in hub_entry.options.items()
+            if k not in self._HUB_INVERTER_IMPORT_FIELDS
+        }
+        self.hass.config_entries.async_update_entry(
+            hub_entry, data=new_data, options=new_options
+        )
+
+    async def async_step_import(
+        self, import_data: dict[str, Any]
+    ) -> config_entries.FlowResult:
+        """One-time auto-import of a hub's legacy inverter/battery fields into
+        a standalone inverter entry (spawned from _setup_hub_entry).
+
+        Idempotency: the unique_id makes a duplicate entry impossible, and the
+        hub is blanked-and-flagged BEFORE the already-configured abort — so a
+        restart between entry creation and blanking still converges instead of
+        double-counting the battery (the engine's implicit legacy member and
+        the entry would otherwise both exist).
+        """
+        hub_entry_id = import_data.get("hub_entry_id")
+        hub_entry = (
+            self.hass.config_entries.async_get_entry(hub_entry_id)
+            if hub_entry_id
+            else None
+        )
+        if hub_entry is None:
+            return self.async_abort(reason="entry_not_found")
+
+        await self.async_set_unique_id(f"{hub_entry_id}_inverter_import")
+
+        # Snapshot the legacy fields, then blank the hub — in this order, and
+        # before the duplicate check, so every path leaves the hub clean.
+        imported = {
+            key: get_entry_value(hub_entry, key, None)
+            for key in self._HUB_INVERTER_IMPORT_FIELDS
+        }
+        imported = {k: v for k, v in imported.items() if v is not None}
+        self._blank_hub_legacy_inverter_fields(hub_entry)
+        self._abort_if_unique_id_configured()
+
+        hub_name = hub_entry.data.get(CONF_NAME, hub_entry.title)
+        hub_prefix = hub_entry.data.get(CONF_ENTITY_ID, "lj_hub")
+        name = f"{hub_name} Inverter"
+        static_data = {
+            CONF_NAME: name,
+            CONF_ENTITY_ID: f"{hub_prefix}_inverter",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub_entry_id,
+            "imported_from_hub": True,
+        }
+        _LOGGER.info(
+            "Imported legacy hub inverter/battery config of %s into a new "
+            "inverter entry (%s)",
+            hub_name,
+            ", ".join(sorted(imported)) or "no fields",
+        )
+        return self.async_create_entry(
+            title=name, data=static_data, options=imported
         )
 
     # ==================== EVSE CHARGER CONFIGURATION STEPS ====================
@@ -2971,7 +3325,60 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "reconfigure_finish",
                 ],
             )
+        if entry_type == ENTRY_TYPE_INVERTER:
+            return await self.async_step_reconfigure_inverter()
         return await self.async_step_reconfigure_charger()
+
+    async def async_step_reconfigure_inverter(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Reconfigure an inverter entry — one page, inverter + battery fields."""
+        errors: dict[str, str] = {}
+        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
+        defaults = {**entry.data, **entry.options}
+
+        if user_input is not None:
+            user_input = self._normalize_optional_inputs(
+                user_input,
+                self._INVERTER_ENTITY_KEYS
+                + [CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
+            )
+            _validate_entity_units(
+                self.hass,
+                user_input,
+                {
+                    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS
+                    | _POWER_UNITS,
+                    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS
+                    | _POWER_UNITS,
+                    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
+                    | _POWER_UNITS,
+                    CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
+                    CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
+                },
+                errors,
+            )
+            if not errors:
+                for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
+                    if user_input.get(key) == 0:
+                        user_input[key] = None
+                self.hass.config_entries.async_update_entry(
+                    entry, options={**entry.options, **user_input}
+                )
+                return self.async_abort(reason="reconfigure_successful")
+            return self.async_show_form(
+                step_id="reconfigure_inverter",
+                data_schema=self._inverter_combined_schema(user_input),
+                errors=errors,
+                last_step=True,
+            )
+
+        return self.async_show_form(
+            step_id="reconfigure_inverter",
+            data_schema=self._inverter_combined_schema(defaults),
+            errors=errors,
+            last_step=True,
+        )
 
     async def async_step_reconfigure_finish(
         self, user_input: dict[str, Any] | None = None
@@ -3077,7 +3484,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             bad_forecast_entity = _validate_forecast_devices(
                 self.hass, user_input, errors
             )
-            validate_offgrid_battery_requirement(defaults, user_input, errors)
+            validate_offgrid_battery_requirement(
+                defaults, user_input, errors,
+                hass=self.hass, hub_entry_id=entry.entry_id,
+            )
             if not errors:
                 self.hass.config_entries.async_update_entry(
                     entry,
@@ -3416,7 +3826,53 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             return await self.async_step_charger()
         if entry_type == ENTRY_TYPE_GROUP:
             return await self.async_step_group()
+        if entry_type == ENTRY_TYPE_INVERTER:
+            return await self.async_step_inverter()
         return self.async_abort(reason="entry_not_found")
+
+    async def async_step_inverter(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Options for an inverter entry — one page, inverter + battery fields."""
+        errors: dict[str, str] = {}
+        defaults = {**self.config_entry.data, **self.config_entry.options}
+        f = self._schema_helper
+
+        if user_input is not None:
+            user_input = f._normalize_optional_inputs(
+                user_input,
+                f._INVERTER_ENTITY_KEYS
+                + [CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
+            )
+            _validate_entity_units(
+                self.hass,
+                user_input,
+                {
+                    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS
+                    | _POWER_UNITS,
+                    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS
+                    | _POWER_UNITS,
+                    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
+                    | _POWER_UNITS,
+                    CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
+                    CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
+                },
+                errors,
+            )
+            if not errors:
+                for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
+                    if user_input.get(key) == 0:
+                        user_input[key] = None
+                return self.async_create_entry(
+                    title="",
+                    data={**self.config_entry.options, **user_input},
+                )
+
+        return self.async_show_form(
+            step_id="inverter",
+            data_schema=f._inverter_combined_schema(defaults),
+            errors=errors,
+        )
 
     async def async_step_hub_grid(
         self, user_input: dict[str, Any] | None = None
@@ -3554,7 +4010,8 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 self.hass, user_input, errors
             )
             validate_offgrid_battery_requirement(
-                {**defaults, **self._data}, user_input, errors
+                {**defaults, **self._data}, user_input, errors,
+                hass=self.hass, hub_entry_id=self.config_entry.entry_id,
             )
             if not errors:
                 self._data.update(user_input)

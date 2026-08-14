@@ -4,7 +4,7 @@ from homeassistant.core import HomeAssistant
 from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import *
-from .helpers import get_entry_value
+from .helpers import get_entry_value, hub_has_battery
 from .entities.load import LoadJugglerDeviceSensor
 from .entities.load_sensors import (
     LoadJugglerAllocatedCurrentSensor,
@@ -22,6 +22,10 @@ from .entities.hub import (
     HUB_SENSOR_DEFINITIONS,
 )
 from .entities.circuit_group import LoadJugglerCircuitGroupSensor
+from .entities.inverter import (
+    LoadJugglerInverterDataSensor,
+    INVERTER_SENSOR_DEFINITIONS,
+)
 from . import get_hub_for_charger
 
 DynamicOcppEvseChargerSensor = LoadJugglerDeviceSensor
@@ -42,9 +46,9 @@ async def async_setup_entry(
         name = config_entry.data.get(CONF_NAME, "Site Load Management")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "site_load_management")
 
-        has_battery = bool(
-            get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
-        )
+        # Any battery on the fleet — the hub's legacy fields or an inverter
+        # entry — enables the hub's (fleet-aggregate) battery sensors.
+        has_battery = hub_has_battery(hass, config_entry)
         has_phase_b = bool(
             get_entry_value(config_entry, CONF_PHASE_B_CURRENT_ENTITY_ID, None)
         )
@@ -54,6 +58,15 @@ async def async_setup_entry(
         # PV clipping forecast needs all three of its inputs configured —
         # matches the gate in _compute_forecast_advice, so a disabled feature
         # creates no sensors rather than five permanently-unknown ones.
+        # Fleet capacity: the hub's own (legacy) capacity plus every linked
+        # inverter entry's — matches the engine's forecast gate.
+        fleet_capacity = get_entry_value(config_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0
+        for child in hass.config_entries.async_entries(DOMAIN):
+            if (
+                child.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+                and child.data.get(CONF_HUB_ENTRY_ID) == config_entry.entry_id
+            ):
+                fleet_capacity += get_entry_value(child, CONF_BATTERY_CAPACITY_KWH, 0) or 0
         has_forecast = (
             (
                 bool(get_entry_value(config_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None))
@@ -62,7 +75,7 @@ async def async_setup_entry(
                 )
             )
             and (get_entry_value(config_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
-            and (get_entry_value(config_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0) > 0
+            and fleet_capacity > 0
         )
 
         entities = [
@@ -98,6 +111,46 @@ async def async_setup_entry(
         )
         async_add_entities([sensor])
         _LOGGER.info("Setting up circuit group sensor for %s", name)
+        return
+
+    if entry_type == ENTRY_TYPE_INVERTER:
+        name = config_entry.data.get(CONF_NAME, "Inverter")
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "inverter")
+        inv_has_battery = bool(
+            get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
+        )
+        # Forecast advice sensors need this battery to have a capacity AND
+        # the hub's forecast to be enabled (export limit + forecast sources) —
+        # matching the engine's per-inverter advice gate.
+        hub_entry = hass.config_entries.async_get_entry(
+            config_entry.data.get(CONF_HUB_ENTRY_ID)
+        )
+        inv_has_forecast = (
+            inv_has_battery
+            and (get_entry_value(config_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0) > 0
+            and hub_entry is not None
+            and (get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
+            and bool(
+                get_entry_value(hub_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None)
+                or get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None)
+            )
+        )
+        entities = []
+        for defn in INVERTER_SENSOR_DEFINITIONS:
+            if defn.get("requires_battery") and not inv_has_battery:
+                continue
+            if defn.get("requires_forecast") and not inv_has_forecast:
+                continue
+            entities.append(
+                LoadJugglerInverterDataSensor(hass, config_entry, name, entity_id, defn)
+            )
+        async_add_entities(entities)
+        _LOGGER.info(
+            "Setting up inverter sensors for %s (battery=%s, forecast=%s)",
+            name,
+            "yes" if inv_has_battery else "no",
+            "yes" if inv_has_forecast else "no",
+        )
         return
 
     if entry_type != ENTRY_TYPE_CHARGER:

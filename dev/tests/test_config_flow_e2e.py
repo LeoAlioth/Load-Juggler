@@ -952,3 +952,211 @@ async def test_migration_leaves_offgrid_hub_unlimited(hass: HomeAssistant):
 
     assert entry.minor_version == 4
     assert not entry.options.get(CONF_GRID_EXPORT_LIMIT)
+
+
+# ── Inverter entry creation ────────────────────────────────────────────
+
+
+async def test_inverter_creation_flow(hass: HomeAssistant):
+    """user → inverter → (auto-selected hub) → inverter_config →
+    inverter_battery creates an ENTRY_TYPE_INVERTER entry linked to the hub."""
+    from custom_components.dynamic_ocpp_evse.const import (
+        ENTRY_TYPE_INVERTER,
+        DEVICE_TYPE_INVERTER,
+        CONF_DEVICE_TYPE,
+        CONF_BATTERY_SOC_FULL,
+        CONF_WIRING_TOPOLOGY,
+        WIRING_TOPOLOGY_SERIES,
+    )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="Test Hub",
+        data={
+            CONF_NAME: "Test Hub",
+            CONF_ENTITY_ID: "test_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+    )
+    hub.add_to_hass(hass)
+
+    hass.states.async_set(
+        "sensor.deye_output_l1", "1500",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.states.async_set(
+        "sensor.deye_battery_soc", "72",
+        {"device_class": "battery", "unit_of_measurement": "%"},
+    )
+    hass.states.async_set(
+        "sensor.deye_battery_power", "-800",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "inverter"}
+    )
+    # Single hub → select_hub auto-skips straight to the inverter form
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "inverter_config"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_NAME: "Deye Hybrid",
+            CONF_ENTITY_ID: "lj_deye",
+            CONF_INVERTER_MAX_POWER: 12000,
+            CONF_INVERTER_MAX_POWER_PER_PHASE: 4000,
+            CONF_INVERTER_SUPPORTS_ASYMMETRIC: True,
+            CONF_WIRING_TOPOLOGY: WIRING_TOPOLOGY_SERIES,
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.deye_output_l1",
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "inverter_battery"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.deye_battery_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.deye_battery_power",
+            CONF_BATTERY_MAX_CHARGE_POWER: 6000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 8000,
+            CONF_BATTERY_SOC_FULL: 97,
+            CONF_BATTERY_CAPACITY_KWH: 15,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    entry = result["result"]
+    assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_INVERTER
+    assert entry.data[CONF_DEVICE_TYPE] == DEVICE_TYPE_INVERTER
+    assert entry.data[CONF_HUB_ENTRY_ID] == hub.entry_id
+    stored = {**entry.data, **entry.options}
+    assert stored[CONF_INVERTER_MAX_POWER] == 12000
+    assert stored[CONF_WIRING_TOPOLOGY] == WIRING_TOPOLOGY_SERIES
+    assert stored[CONF_BATTERY_SOC_ENTITY_ID] == "sensor.deye_battery_soc"
+    assert stored[CONF_BATTERY_CAPACITY_KWH] == 15
+    # The transient flow key must not leak into the stored options
+    assert CONF_DEVICE_TYPE not in entry.options
+
+
+# ── Auto-import of legacy hub inverter/battery fields ─────────────────
+
+
+async def test_hub_inverter_auto_import(hass: HomeAssistant):
+    """The import flow moves the hub's legacy inverter/battery fields onto a
+    new inverter entry, blanks them from the hub and sets the imported flag."""
+    from custom_components.dynamic_ocpp_evse.const import (
+        ENTRY_TYPE_INVERTER,
+        MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
+        CONF_BATTERY_CAPACITY_KWH,
+        CONF_WIRING_TOPOLOGY,
+        CONF_BATTERY_SOC_HYSTERESIS,
+    )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="Legacy Hub",
+        data={
+            CONF_NAME: "Legacy Hub",
+            CONF_ENTITY_ID: "legacy_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_a",
+            CONF_INVERTER_MAX_POWER: 17000,
+            CONF_WIRING_TOPOLOGY: "series",
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.batt_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.batt_power",
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_BATTERY_CAPACITY_KWH: 10,
+            CONF_BATTERY_SOC_HYSTERESIS: 3,
+            CONF_GRID_EXPORT_LIMIT: 13500,
+        },
+    )
+    hub.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "import"},
+        data={"hub_entry_id": hub.entry_id},
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    inverter = result["result"]
+    assert inverter.data[ENTRY_TYPE] == ENTRY_TYPE_INVERTER
+    assert inverter.data[CONF_HUB_ENTRY_ID] == hub.entry_id
+    assert inverter.data["imported_from_hub"] is True
+    assert inverter.options[CONF_INVERTER_MAX_POWER] == 17000
+    assert inverter.options[CONF_BATTERY_SOC_ENTITY_ID] == "sensor.batt_soc"
+    assert inverter.options[CONF_BATTERY_CAPACITY_KWH] == 10
+
+    # The hub is blanked and flagged; hub-scoped settings stay behind.
+    assert hub.data[MIGRATE_HUB_INVERTER_IMPORTED_FLAG] is True
+    assert CONF_INVERTER_MAX_POWER not in hub.options
+    assert CONF_BATTERY_SOC_ENTITY_ID not in hub.options
+    assert hub.options[CONF_GRID_EXPORT_LIMIT] == 13500
+    assert hub.options[CONF_BATTERY_SOC_HYSTERESIS] == 3
+
+
+async def test_hub_inverter_auto_import_is_idempotent(hass: HomeAssistant):
+    """A second import run (restart between entry creation and blanking)
+    aborts on the unique_id but STILL blanks the re-appeared hub fields —
+    the double-count window must close on every path."""
+    from custom_components.dynamic_ocpp_evse.const import (
+        MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
+    )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="Legacy Hub",
+        data={
+            CONF_NAME: "Legacy Hub",
+            CONF_ENTITY_ID: "legacy_hub2",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.batt_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.batt_power",
+        },
+    )
+    hub.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "import"}, data={"hub_entry_id": hub.entry_id}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    # Simulate the interrupted-run state: fields back on the hub, entry exists
+    hass.config_entries.async_update_entry(
+        hub,
+        options={**hub.options, CONF_BATTERY_SOC_ENTITY_ID: "sensor.batt_soc"},
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "import"}, data={"hub_entry_id": hub.entry_id}
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    # Blanked again despite the abort
+    assert CONF_BATTERY_SOC_ENTITY_ID not in hub.options
+    assert hub.data[MIGRATE_HUB_INVERTER_IMPORTED_FLAG] is True
+
+    # Only one inverter entry exists
+    inverters = [
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == "inverter"
+        and e.data.get(CONF_HUB_ENTRY_ID) == hub.entry_id
+    ]
+    assert len(inverters) == 1

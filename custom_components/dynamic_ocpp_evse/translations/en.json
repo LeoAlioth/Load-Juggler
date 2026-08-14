@@ -123,6 +123,44 @@
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
                 }
             },
+            "inverter_config": {
+                "title": "Inverter",
+                "description": "Add an inverter as a power source on this hub. A site can have several (e.g. an older AC-coupled string inverter plus a new hybrid) — the hub aggregates the whole fleet.",
+                "data": {
+                    "name": "Name for this inverter",
+                    "entity_id": "Entity ID prefix",
+                    "inverter_max_power": "Total inverter power capacity",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase output",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology"
+                },
+                "data_description": {
+                    "inverter_max_power": "Nameplate rated power from this inverter's datasheet. Set to 0 to leave unconstrained.",
+                    "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase limits.",
+                    "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
+                    "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery)."
+                }
+            },
+            "inverter_battery": {
+                "title": "Inverter Battery",
+                "description": "The battery physically behind this inverter — leave everything empty if it has none.",
+                "data": {
+                    "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
+                    "battery_power_entity_id": "Battery power sensor",
+                    "battery_max_charge_power": "Maximum battery charge power",
+                    "battery_max_discharge_power": "Maximum battery discharge power",
+                    "battery_soc_full": "Battery full SOC",
+                    "battery_capacity_kwh": "Battery capacity"
+                },
+                "data_description": {
+                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign.",
+                    "battery_soc_full": "SOC at or above which THIS battery counts as full and stops absorbing excess solar.",
+                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity). Used for the fleet SOC weighting and the PV clipping forecast."
+                }
+            },
             "select_hub": {
                 "title": "Select Hub",
                 "description": "Select which electrical hub to add this charger to",
@@ -419,6 +457,31 @@
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
                 }
             },
+            "reconfigure_inverter": {
+                "title": "Reconfigure Inverter",
+                "description": "Update this inverter and its battery",
+                "data": {
+                    "inverter_max_power": "Total inverter power capacity",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase output",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology",
+                    "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
+                    "battery_power_entity_id": "Battery power sensor",
+                    "battery_max_charge_power": "Maximum battery charge power",
+                    "battery_max_discharge_power": "Maximum battery discharge power",
+                    "battery_soc_full": "Battery full SOC",
+                    "battery_capacity_kwh": "Battery capacity"
+                },
+                "data_description": {
+                    "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
+                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging and negative while charging.",
+                    "battery_soc_full": "SOC at or above which THIS battery counts as full and stops absorbing excess solar.",
+                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity)."
+                }
+            },
             "reconfigure_plug": {
                 "title": "Reconfigure Smart Load",
                 "description": "Update smart load settings",
@@ -639,6 +702,31 @@
                     "battery_capacity_kwh": "The kWh your battery's SOC percentage spans (usable capacity). 0 disables the PV clipping forecast.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
+                }
+            },
+            "inverter": {
+                "title": "Update Inverter Settings",
+                "description": "Update this inverter and its battery",
+                "data": {
+                    "inverter_max_power": "Total inverter power capacity",
+                    "inverter_max_power_per_phase": "Maximum inverter power per phase",
+                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase output",
+                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
+                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
+                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
+                    "wiring_topology": "Wiring topology",
+                    "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
+                    "battery_power_entity_id": "Battery power sensor",
+                    "battery_max_charge_power": "Maximum battery charge power",
+                    "battery_max_discharge_power": "Maximum battery discharge power",
+                    "battery_soc_full": "Battery full SOC",
+                    "battery_capacity_kwh": "Battery capacity"
+                },
+                "data_description": {
+                    "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
+                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging and negative while charging.",
+                    "battery_soc_full": "SOC at or above which THIS battery counts as full and stops absorbing excess solar.",
+                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity)."
                 }
             },
             "plug": {
