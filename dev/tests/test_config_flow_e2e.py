@@ -153,30 +153,15 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
         },
     )
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_inverter"
-
-    # Step 4: hub_inverter → provide inverter settings (no inverter output entities)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_INVERTER_MAX_POWER: 10000,
-            CONF_INVERTER_MAX_POWER_PER_PHASE: 4000,
-            CONF_INVERTER_SUPPORTS_ASYMMETRIC: True,
-            CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
-        },
-    )
+    # New hubs skip the legacy inverter page entirely — battery/inverter
+    # hardware is added afterwards as Inverter entries.
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_battery"
 
-    # Step 5: hub_battery → provide battery settings → creates entry
+    # Step 4: hub_battery → hub-scoped solar/site settings → creates entry
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
-            CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
-            CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
-            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
         },
     )
@@ -188,6 +173,11 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
     assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_HUB
     assert entry.data[CONF_NAME] == "My Solar Hub"
     assert entry.data[CONF_ENTITY_ID] == "my_solar_hub"
+    # Born imported: the legacy hub inverter/battery pages never show
+    from custom_components.dynamic_ocpp_evse.const import (
+        MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
+    )
+    assert entry.data[MIGRATE_HUB_INVERTER_IMPORTED_FLAG] is True
 
     # Verify options were seeded (background task runs immediately in tests)
     await hass.async_block_till_done()
@@ -268,26 +258,14 @@ async def test_hub_battery_forecast_devices_validated(hass: HomeAssistant):
             CONF_GRID_EXPORT_LIMIT: 5000,
         },
     )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_INVERTER_MAX_POWER: 0,
-            CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
-            CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
-            CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
-        },
-    )
     assert result["step_id"] == "hub_battery"
 
     # A device without any watts-bearing sensor is rejected, named in the error
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
-            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
             CONF_SOLAR_FORECAST_DEVICE_IDS: [wrong],
-            CONF_BATTERY_CAPACITY_KWH: 10,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -296,15 +274,13 @@ async def test_hub_battery_forecast_devices_validated(hass: HomeAssistant):
     }
     assert result["description_placeholders"] == {"entity": "Weather Station"}
 
-    # A valid multi-device selection is accepted and stored
+    # A valid multi-device selection is accepted and stored (battery capacity
+    # now lives on the inverter entries, not the hub)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
-            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
             CONF_SOLAR_FORECAST_DEVICE_IDS: [east, west],
-            CONF_BATTERY_CAPACITY_KWH: 10,
             CONF_BASE_CONSUMPTION: 300,
             CONF_FORECAST_SOC_FLOOR: 30,
         },
@@ -317,7 +293,6 @@ async def test_hub_battery_forecast_devices_validated(hass: HomeAssistant):
     stored = {**hub_entry.data, **hub_entry.options}
     assert stored[CONF_SOLAR_FORECAST_DEVICE_IDS] == [east, west]
     assert stored[CONF_GRID_EXPORT_LIMIT] == 5000
-    assert stored[CONF_BATTERY_CAPACITY_KWH] == 10
 
 
 async def test_hub_battery_empty_forecast_selection_accepted(hass: HomeAssistant):
@@ -348,21 +323,10 @@ async def test_hub_battery_empty_forecast_selection_accepted(hass: HomeAssistant
             CONF_GRID_EXPORT_LIMIT: 10500,
         },
     )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_INVERTER_MAX_POWER: 0,
-            CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
-            CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
-            CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
-        },
-    )
     # The multi-device selector omits its key entirely when left empty
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
-            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
         },
     )
@@ -412,27 +376,13 @@ async def test_hub_creation_single_phase(hass: HomeAssistant):
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
         },
     )
-    assert result["step_id"] == "hub_inverter"
-
-    # No inverter limits (omit optional entity fields)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_INVERTER_MAX_POWER: 0,
-            CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
-            CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
-            CONF_WIRING_TOPOLOGY: DEFAULT_WIRING_TOPOLOGY,
-        },
-    )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_battery"
 
-    # No battery (omit optional entity fields)
+    # Hub-scoped site settings only (battery hardware lives on inverter entries)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
-            CONF_BATTERY_MAX_CHARGE_POWER: 0,
-            CONF_BATTERY_MAX_DISCHARGE_POWER: 0,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
         },
     )

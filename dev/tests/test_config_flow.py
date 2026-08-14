@@ -354,9 +354,10 @@ async def test_hub_grid_with_entities_without_device_class(
         },
     )
 
-    # Should advance to hub_inverter
+    # New hubs go straight to the site/solar page — inverter hardware is
+    # configured on separate Inverter entries.
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_inverter"
+    assert result["step_id"] == "hub_battery"
 
 
 async def test_hub_battery_with_soc_sensor_without_device_class(
@@ -432,30 +433,16 @@ async def test_hub_battery_with_soc_sensor_without_device_class(
         },
     )
 
-    # hub_inverter step - just proceed, optional entity fields omitted
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            "inverter_max_power": 0,
-            "inverter_max_power_per_phase": 0,
-            "inverter_supports_asymmetric": False,
-            "wiring_topology": "parallel",
-        },
-    )
-
-    # Should show hub_battery step
+    # Should show hub_battery step (site/solar settings)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_battery"
 
-    # Submit battery config with SOC sensor that doesn't have device_class
+    # Submit the hub-scoped solar settings (battery hardware moved to the
+    # Inverter entries, which have their own SOC-sensor selector)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             "solar_production_entity_id": "sensor.solar_power",
-            "battery_soc_entity_id": "sensor.battery_soc",
-            "battery_power_entity_id": "sensor.battery_power",
-            "battery_max_charge_power": 5000,
-            "battery_max_discharge_power": 5000,
             "battery_soc_hysteresis": 3,
         },
     )
@@ -524,24 +511,11 @@ async def test_power_sensors_with_watts_unit_without_device_class(
             "solar_grace_period": 5,
         },
     )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            "inverter_max_power": 0,
-            "inverter_max_power_per_phase": 0,
-            "inverter_supports_asymmetric": False,
-            "wiring_topology": "parallel",
-        },
-    )
-
-    # hub_battery step - use sensors without device_class, battery_soc_entity_id omitted (optional)
+    # hub_battery step - solar sensor without device_class (W unit only)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             "solar_production_entity_id": "sensor.solar_production",
-            "battery_power_entity_id": "sensor.battery_power",
-            "battery_max_charge_power": 5000,
-            "battery_max_discharge_power": 5000,
             "battery_soc_hysteresis": 3,
         },
     )

@@ -72,6 +72,31 @@ async def test_reconfigure_hub_shows_menu(hass: HomeAssistant, mock_hub_entry):
         assert option in result["menu_options"]
 
 
+async def test_reconfigure_hub_hides_inverter_page_once_imported(
+    hass: HomeAssistant, mock_hub_entry
+):
+    """Once the hub's legacy inverter/battery fields have been imported onto an
+    Inverter entry, the hub's own inverter page disappears — that hardware is
+    edited on the inverter entry from then on."""
+    from custom_components.dynamic_ocpp_evse.const import (
+        MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
+    )
+
+    mock_hub_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_hub_entry,
+        data={**mock_hub_entry.data, MIGRATE_HUB_INVERTER_IMPORTED_FLAG: True},
+    )
+
+    result = await _start(hass, mock_hub_entry)
+
+    assert result["type"] == FlowResultType.MENU
+    assert "reconfigure_hub_inverter" not in result["menu_options"]
+    # The hub's own pages remain for grid and the hub-scoped battery settings
+    assert "reconfigure_hub_grid" in result["menu_options"]
+    assert "reconfigure_hub_battery" in result["menu_options"]
+
+
 async def test_reconfigure_finish_closes(hass: HomeAssistant, mock_hub_entry):
     mock_hub_entry.add_to_hass(hass)
 

@@ -273,15 +273,79 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 self._available_current = apply_smoothing(
                     self, raw_permit, mode_changed, hub_entry
                 )
+            elif device_type == DEVICE_TYPE_POWER_STATION:
+                # The station's charge speed is rate-limited like an EVSE's
+                # current — a saturated Excess pool would otherwise command
+                # 0 → max in a single cycle. One divergence: the pipeline
+                # resumes from 0 at the full permit (right for an EVSE coming
+                # back from a pause); the station instead resumes at its
+                # MINIMUM charge power and ramps up from there.
+                if (
+                    self._rate_limited_current == 0
+                    and raw_permit > 0
+                    and not mode_changed
+                ):
+                    charger_rt = (
+                        self.hass.data.get(DOMAIN, {})
+                        .get("chargers", {})
+                        .get(self.config_entry.entry_id, {})
+                    )
+                    min_power = charger_rt.get(
+                        "station_min_charge_power"
+                    ) or get_entry_value(
+                        self.config_entry,
+                        CONF_STATION_MIN_CHARGE_POWER,
+                        DEFAULT_STATION_MIN_CHARGE_POWER,
+                    )
+                    voltage = get_entry_value(
+                        hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE
+                    )
+                    phases_count = len(
+                        get_entry_value(self.config_entry, CONF_CONNECTED_TO_PHASE, "A")
+                        or "A"
+                    )
+                    resume_current = min(
+                        raw_permit, min_power / (voltage * phases_count)
+                    )
+                    self._ema_current = resume_current
+                    self._schmitt_current = resume_current
+                    self._rate_limited_current = resume_current
+                self._available_current = apply_smoothing(
+                    self, raw_permit, mode_changed, hub_entry
+                )
             else:
                 self._available_current = raw_permit
             self._state = self._available_current
 
-            min_charge_current = get_entry_value(
-                self.config_entry,
-                CONF_EVSE_MINIMUM_CHARGE_CURRENT,
-                DEFAULT_MIN_CHARGE_CURRENT,
-            )
+            if device_type == DEVICE_TYPE_POWER_STATION:
+                # The station's floor is its minimum charge power, not the
+                # EVSE minimum-current constant.
+                station_rt = (
+                    self.hass.data.get(DOMAIN, {})
+                    .get("chargers", {})
+                    .get(self.config_entry.entry_id, {})
+                )
+                _min_power = station_rt.get(
+                    "station_min_charge_power"
+                ) or get_entry_value(
+                    self.config_entry,
+                    CONF_STATION_MIN_CHARGE_POWER,
+                    DEFAULT_STATION_MIN_CHARGE_POWER,
+                )
+                _voltage = get_entry_value(
+                    hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE
+                )
+                _phases = len(
+                    get_entry_value(self.config_entry, CONF_CONNECTED_TO_PHASE, "A")
+                    or "A"
+                )
+                min_charge_current = _min_power / (_voltage * _phases)
+            else:
+                min_charge_current = get_entry_value(
+                    self.config_entry,
+                    CONF_EVSE_MINIMUM_CHARGE_CURRENT,
+                    DEFAULT_MIN_CHARGE_CURRENT,
+                )
             grace_period_minutes = get_entry_value(
                 self.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
             )
@@ -297,7 +361,23 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                     physical_available = charger_avail.get(
                         self.config_entry.entry_id, 0
                     )
-                    if physical_available >= min_charge_current:
+                    # For an EVSE, grace holds only while the engine still
+                    # physically offers the minimum — a vanished permit means a
+                    # site limit, and 6 A of grid draw is real money. A power
+                    # station's permit IS the excess pool, which collapses in
+                    # every brief export dip — exactly what grace exists to
+                    # bridge — and its floor is a ~200 W trickle, so it rides
+                    # the grace window whenever it was actually charging (the
+                    # was-charging gate stops an idle station from cycling
+                    # 200 W on/off through the night). This is what stops the
+                    # reserve flapping over BLE on marginal days.
+                    if (
+                        device_type == DEVICE_TYPE_POWER_STATION
+                        and station_rt.get("station_charging")
+                    ) or (
+                        device_type != DEVICE_TYPE_POWER_STATION
+                        and physical_available >= min_charge_current
+                    ):
                         if self._grace_started_at is None:
                             self._grace_started_at = time.monotonic()
                             _LOGGER.debug(

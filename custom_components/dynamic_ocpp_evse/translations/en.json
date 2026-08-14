@@ -95,8 +95,8 @@
                 }
             },
             "hub_battery": {
-                "title": "Battery & Solar Configuration",
-                "description": "Configure home battery and solar production settings (optional)",
+                "title": "Solar & Site Settings",
+                "description": "Solar production, battery policy and the PV clipping forecast. Battery and inverter HARDWARE is configured separately — add an Inverter / Home Battery after the hub is created.",
                 "data": {
                     "solar_production_entity_id": "Solar power production sensor",
                     "battery_soc_entity_id": "Battery state of charge (SOC) sensor",

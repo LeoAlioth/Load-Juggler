@@ -129,6 +129,43 @@ async def send_hot_water_tank_command(
     setpoint, label = resolve_tank_setpoint(
         mode, away, normal, boost, element_power, hub_data
     )
+
+    # Clamp to the climate entity's own limits. HA hard-rejects an
+    # out-of-range set_temperature, and with blocking=False that rejection is
+    # invisible here — the thermostat would silently keep its previous target
+    # (e.g. a 90 °C boost against a 75 °C max_temp leaves it at the away
+    # setpoint and the tank never heats). Warn once per offending setpoint.
+    climate_state = sensor.hass.states.get(climate_entity)
+    if climate_state is not None:
+        clamped = setpoint
+        max_temp = climate_state.attributes.get("max_temp")
+        min_temp = climate_state.attributes.get("min_temp")
+        try:
+            if max_temp is not None:
+                clamped = min(clamped, float(max_temp))
+            if min_temp is not None:
+                clamped = max(clamped, float(min_temp))
+        except (TypeError, ValueError):
+            clamped = setpoint
+        if clamped != setpoint:
+            if charger_rt.get("_tank_clamp_warned_for") != setpoint:
+                charger_rt["_tank_clamp_warned_for"] = setpoint
+                _LOGGER.warning(
+                    "Hot water tank %s: %s setpoint %.0f°C is outside %s's "
+                    "supported range (%s–%s°C) — clamped to %.0f°C. Adjust the "
+                    "setpoint slider or the thermostat's limits.",
+                    sensor._attr_name,
+                    label,
+                    setpoint,
+                    climate_entity,
+                    min_temp,
+                    max_temp,
+                    clamped,
+                )
+            setpoint = clamped
+        else:
+            charger_rt.pop("_tank_clamp_warned_for", None)
+
     heating_permitted = limit > 0
 
     # Publish state for the tank status sensor.

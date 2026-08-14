@@ -95,8 +95,8 @@
                 }
             },
             "hub_battery": {
-                "title": "Konfiguracija baterije in sončne elektrarne",
-                "description": "Nastavite nastavitve domače baterije in sončne proizvodnje (neobvezno)",
+                "title": "Sonce in nastavitve lokacije",
+                "description": "Proizvodnja sonca, politika baterije in napoved rezanja PV. STROJNA oprema baterije in razsmernika se nastavi ločeno — po ustvaritvi vozlišča dodajte Razsmernik / Domačo baterijo.",
                 "data": {
                     "solar_production_entity_id": "Senzor proizvodnje solarne energije",
                     "battery_soc_entity_id": "Senzor stanja napolnjenosti baterije (SOC)",
