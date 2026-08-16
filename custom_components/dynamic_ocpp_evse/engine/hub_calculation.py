@@ -2051,7 +2051,7 @@ def run_hub_calculation(sensor):
         consumption_pv.active_count,
         "on" if invert_phases else "off",
         _fv2(raw_solar, solar_production_total),
-        solar_production_entity or "derived",
+        "measured" if not solar_is_derived else "derived",
         _fv(total_export_current),
         _fv(total_export_power),
     )
@@ -2345,7 +2345,9 @@ def run_hub_calculation(sensor):
     hub_warnings = []
 
     has_inverter_output = inverter_output_per_phase is not None
-    has_solar_entity = bool(solar_production_entity)
+    # Any fleet member with its own production sensor counts as a
+    # power-measurement input for the setup-completeness check.
+    has_solar_entity = any(m.has_solar_entity for m in members)
 
     if not has_grid_cts and not has_inverter_output and not has_solar_entity:
         hub_status = "Setup incomplete"
