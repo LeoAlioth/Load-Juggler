@@ -10,6 +10,8 @@ from .const import (
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_POWER_ENTITY_ID,
+    CONF_SOLAR_FORECAST_DEVICE_IDS,
+    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_HUB_ENTRY_ID,
     DOMAIN,
     ENTRY_TYPE,
@@ -71,6 +73,27 @@ def hub_has_battery(hass, hub_entry: ConfigEntry) -> bool:
         ):
             return True
     return False
+
+
+def fleet_has_forecast_sources(hass, hub_entry: ConfigEntry) -> bool:
+    """True when any PV forecast source is configured on this hub's fleet.
+
+    Forecast devices belong to the inverter whose array they model, but
+    clipping is a site-level question, so the hub's forecast sensors light up
+    as soon as ANY member has one. The hub's own (legacy) fields count until
+    the auto-import moves them onto an inverter entry.
+    """
+    entries = [hub_entry] + [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+        and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry.entry_id
+    ]
+    return any(
+        get_entry_value(entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None)
+        or get_entry_value(entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None)
+        for entry in entries
+    )
 
 
 def validate_charger_settings(data: dict[str, any], errors: dict[str, str]) -> None:

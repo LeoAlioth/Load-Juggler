@@ -20,11 +20,12 @@ express:
 - **Fleet SOC** is capacity-weighted (Σ soc×kWh / Σ kWh); plain mean when no
   member has a known capacity. Hub-level policy (SOC target/min sliders,
   their hysteresis latches) applies to this one number.
-- **Solar** sums per member: a parallel member's output is production; a
-  series member's output carries its battery flow, so its production is
-  ``output − its battery power``. Applied to the summed outputs with the
-  summed battery power, the series formula is algebraically exact for ANY
-  mix, because parallel members contribute no battery term.
+- **Solar** sums per member: its own production sensor when configured,
+  otherwise derived from its inverter output — a parallel member's output is
+  production; a series member's output carries its battery flow, so its
+  production is ``output − its battery power``. Applied to the summed outputs
+  with the summed battery power, the series formula is algebraically exact
+  for ANY mix, because parallel members contribute no battery term.
 - **Inverter capacity**: total = Σ; the single per-phase scalar collapses
   conservatively to the minimum over phases of the per-phase sums of the
   members feeding that phase.
@@ -56,6 +57,9 @@ class FleetMember:
     supports_asymmetric: bool = False
     topology: str = WIRING_TOPOLOGY_PARALLEL
     output: Optional[PhaseValues] = None  # smoothed amps per phase
+    has_solar_entity: bool = False  # a solar production sensor is configured
+    solar_measured: Optional[float] = None  # W, smoothed, when measured
+    forecast_device_ids: tuple = ()  # this inverter's PV forecast sources
     has_battery: bool = False  # a battery SOC or power entity is configured
     has_battery_power_entity: bool = False
     battery_soc: Optional[float] = None
@@ -235,12 +239,49 @@ def member_solar(member, voltage: float) -> Optional[float]:
     return max(0.0, out_watts)
 
 
-def solar_from_outputs(members, voltage: float) -> Optional[float]:
-    """Fleet solar production from inverter outputs, in watts. None when no
-    member has output entities (caller falls back to export + charging)."""
-    per_member = [member_solar(m, voltage) for m in members]
-    readings = [s for s in per_member if s is not None]
+def member_solar_production(member, voltage: float) -> Optional[float]:
+    """One member's solar production: its own production sensor when it has
+    one, else derived from its inverter output (None without either)."""
+    if member.has_solar_entity:
+        return member.solar_measured
+    return member_solar(member, voltage)
+
+
+def solar_total(members, voltage: float) -> Optional[float]:
+    """Fleet solar production in watts — each member measured or derived,
+    summed. None when no member knows its production at all, which is the
+    caller's cue to fall back to grid export + the fleet's charging draw.
+
+    A mixed fleet (one inverter with a production sensor, one without) sums
+    the measured and the output-derived halves; that is why the derivation is
+    per member rather than one formula over the fleet scalars.
+    """
+    readings = [
+        s
+        for s in (member_solar_production(m, voltage) for m in members)
+        if s is not None
+    ]
     return sum(readings) if readings else None
+
+
+def solar_is_measured(members) -> bool:
+    """True only when EVERY member reports production from its own sensor —
+    the one case with nothing left to re-derive after the feedback loop."""
+    return bool(members) and all(m.has_solar_entity for m in members)
+
+
+def forecast_device_ids(members) -> list:
+    """Every PV forecast device configured across the fleet, de-duplicated.
+
+    Clipping is a site-level question — all arrays compete for the same export
+    headroom — so the per-inverter sources are merged into one site forecast.
+    """
+    seen = []
+    for m in members:
+        for device_id in m.forecast_device_ids or ():
+            if device_id not in seen:
+                seen.append(device_id)
+    return seen
 
 
 def charging_power_total(members) -> float:

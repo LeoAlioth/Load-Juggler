@@ -5,13 +5,20 @@ carrying its own battery. The engine aggregates the hub's inverter fleet each
 cycle and publishes a per-inverter section into hub_data
 (``hub_data["inverters"][entry_id]``); these sensors read their own entry's
 section, mirroring how circuit-group sensors read ``group_data``.
+
+The charge-control status sensor is also where the write-control loop ticks:
+it already runs every scan cycle with the entry in hand, so the writes ride
+the same clock as the readings that justify them.
 """
 
 import logging
+import time
 
 from homeassistant.components.sensor import SensorEntity
 
 from ..const import *
+from ..control.inverter import send_inverter_charge_limit
+from ..helpers import get_entry_value
 from .mixins import InverterEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,3 +113,73 @@ class LoadJugglerInverterDataSensor(InverterEntityMixin, SensorEntity):
                 self._state = round(float(value), self._defn["decimals"])
         except Exception as e:
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+
+
+class LoadJugglerInverterChargeControlSensor(InverterEntityMixin, SensorEntity):
+    """Charge write-control status — and the loop that performs the writes.
+
+    States: ``Off`` (switch not armed), ``Not limiting`` (armed, but nothing
+    to hold back right now) and ``Limiting to <value>`` while a limit is
+    applied. Releasing a limit is a log line rather than a state, since a
+    one-cycle status nobody sees is not worth the extra state.
+
+    Driving the writes from a sensor update keeps them on the same cadence as
+    the forecast that produces them, and means there is exactly one place that
+    talks to the inverter's register.
+    """
+
+    _attr_icon = "mdi:battery-clock"
+
+    def __init__(self, hass, config_entry, name, entity_id):
+        self.hass = hass
+        self.config_entry = config_entry
+        self._attr_name = f"{name} Charge Control"
+        self._attr_unique_id = f"{entity_id}_charge_control_status"
+        self._state = "Off"
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def extra_state_attributes(self):
+        inverter_rt = (
+            self.hass.data.get(DOMAIN, {})
+            .get("inverters", {})
+            .get(self.config_entry.entry_id, {})
+        )
+        return {
+            "target_entity": get_entry_value(
+                self.config_entry, CONF_CHARGE_LIMIT_ENTITY_ID, None
+            ),
+            "applied_value": inverter_rt.get(INVERTER_RT_APPLIED),
+            "unit": get_entry_value(
+                self.config_entry, CONF_CHARGE_LIMIT_UNIT, DEFAULT_CHARGE_LIMIT_UNIT
+            ),
+        }
+
+    async def async_update(self):
+        try:
+            hub_entry_id = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
+            hub_data = (
+                self.hass.data.get(DOMAIN, {})
+                .get("hub_data", {})
+                .get(hub_entry_id, {})
+            )
+            my_data = hub_data.get("inverters", {}).get(self.config_entry.entry_id, {})
+            # None both when the forecast is off and when it has released the
+            # limit — the control treats them the same way, as "restore".
+            advice_w = my_data.get("forecast_charge_limit_w")
+            await send_inverter_charge_limit(
+                self.hass, self.config_entry, advice_w, time.monotonic()
+            )
+            inverter_rt = (
+                self.hass.data.get(DOMAIN, {})
+                .get("inverters", {})
+                .get(self.config_entry.entry_id, {})
+            )
+            self._state = inverter_rt.get(INVERTER_RT_STATUS, "Off")
+        except Exception as e:
+            _LOGGER.error(
+                "Error updating %s: %s", self._attr_name, e, exc_info=True
+            )

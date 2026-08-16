@@ -119,17 +119,19 @@ Load Juggler works on off-grid installations. When no grid CT entities are confi
 - Grid current is treated as 0A (same calculation engine, no separate code paths)
 - Solar production is derived from inverter output (series: `solar = inverter - battery`, parallel: `solar = inverter`)
 
-Configure inverter output entities in the hub settings. The hub status sensor shows "Off-grid mode" when no grid CTs are present.
+Configure inverter output entities on the inverter entry. The hub status sensor shows "Off-grid mode" when no grid CTs are present.
 
 ## Multiple Inverters
 
-A site can have several inverters — typically an older AC-coupled string inverter plus a newer hybrid with a battery. Each is added as its own **Inverter** entry linked to the hub (*Add Inverter / Home Battery* in the setup menu), carrying its capacity, per-phase limit, wiring topology, output sensors and optionally its own battery (SOC/power sensors, charge/discharge limits, full-SOC, capacity).
+A site can have several inverters — typically an older AC-coupled string inverter plus a newer hybrid with a battery. Each is added as its own **Inverter** entry linked to the hub (*Add Inverter / Home Battery* in the setup menu), carrying everything physically attached to it: capacity, per-phase limit, wiring topology, output sensors, its PV array (production sensor and solar forecast device) and optionally its battery (SOC/power sensors, charge/discharge limits, full-SOC, capacity).
 
-The hub aggregates the whole fleet: capacities and outputs sum, solar production is derived per inverter (a series inverter's output minus its own battery flow), and the hub's battery sensors become fleet aggregates — SOC is capacity-weighted across all batteries. Excess mode counts each battery's charge capacity only while *that* battery is below *its* full SOC, and discharge capacity only for batteries above the site minimum. The SOC Target / SOC Min sliders and Allow Grid Charging switch remain hub-level site policy applied to the fleet.
+The hub keeps only what is site-wide — the grid connection, export limit, base consumption, SOC hysteresis and forecast SOC floor — on a single **Hub Settings** page.
+
+The hub aggregates the whole fleet: capacities and outputs sum, solar production is each inverter's own sensor when it has one and derived from its output otherwise (a series inverter's output minus its own battery flow), and the hub's battery sensors are fleet aggregates — SOC is capacity-weighted across all batteries. Forecast devices from every inverter merge into one site forecast, because clipping is decided by the site-wide export limit that all arrays share. Excess mode counts each battery's charge capacity only while *that* battery is below *its* full SOC, and discharge capacity only for batteries above the site minimum. The SOC Target / SOC Min sliders and Allow Grid Charging switch remain hub-level site policy applied to the fleet.
 
 Each inverter device gets its own sensors: Solar Production, Battery SOC/Power, and — with the PV clipping forecast enabled — the **Recommended Battery Max SOC** and **Recommended Battery Charge Limit** for *its* battery (the fleet reservation split by capacity and charge rate).
 
-**Upgrading:** a hub configured the classic way (inverter/battery fields on the hub itself) is migrated automatically on startup — those fields move onto a new inverter entry, and the hub's sensors keep their entity IDs as fleet aggregates. No manual steps.
+**Upgrading:** a hub configured the classic way (inverter/battery/solar fields on the hub itself) is migrated automatically on startup — those fields move onto an inverter entry, and the hub's sensors keep their entity IDs as fleet aggregates. No manual steps.
 
 ## Battery System Support
 
@@ -154,7 +156,13 @@ Sites with more PV than they may export (e.g. 15 kWp behind a 5 kW export limit)
 | Battery Headroom Deficit (kWh) | Non-zero when the battery already holds more than the recommendation allows |
 | Recommended Battery Charge Limit (W) | Charge-rate cap protecting the reserved headroom; released (full rate) whenever there is nothing left to clip or SOC is comfortably below the ceiling |
 
-Feed these to your inverter with an automation, or wait for the upcoming battery-inverter device type that writes them directly.
+#### Writing the limit to the inverter
+
+By default this is advice only — feed it to your inverter with an automation if you like. An inverter entry can also apply it itself: on its **Battery Charge Control** page, point *Battery charge limit entity* at the inverter's own maximum-charge-current number (Deye: `Battery Max Charge Current`), pick whether that register takes DC amps or watts, and give it a battery voltage source for the conversion. That adds a **Battery Charge Control** switch to the inverter device.
+
+Nothing is written until you turn that switch on. While it is on, the recommended charge limit is written to the register and the normal value (a value you configure, or the register's own maximum) is restored as soon as the advice releases. Writes are paced — at most one per *Minimum time between writes* (default 5 min) and only when the value moves further than the *Write deadband* (default 5% of the normal limit) — because these registers go over Modbus and some firmwares commit them to EEPROM. A **Charge Control** sensor on the inverter shows `Off`, `Not limiting` or `Limiting to <value>`, with the applied value as an attribute.
+
+Charge *rate* only, deliberately: it is the register every hybrid exposes, and slowing the fill leaves the battery charging all day rather than stopping it dead at a SOC ceiling.
 
 ## Installation
 
@@ -209,19 +217,35 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
 | Excess trigger margin | How far below the export limit Excess mode engages (W) | 500W |
 | Invert phases | Flip CT polarity if installed backwards | Off |
 | Distribution mode | How to allocate power between loads | Priority |
-| Battery SOC entity | Battery state of charge sensor | — |
-| Battery power entity | Battery charge/discharge power sensor (W) | — |
-| Battery max charge/discharge power | Battery power limits (W) | 5000W |
-| Battery SOC hysteresis | SOC change before triggering mode switches (%) | 5% |
-| Solar production entity | Dedicated solar power sensor (optional) | — |
-| Solar forecast | Open-Meteo Solar Forecast devices, one per PV array (PV clipping forecast) | — |
-| Battery capacity | kWh the battery SOC spans (PV clipping forecast, 0 = off) | 0 |
+| Solar/Excess grace period | How long Solar/Excess loads keep running at minimum when conditions lapse (min) | 5 |
+| Battery SOC hysteresis | SOC change before triggering mode switches (%) | 3% |
 | Base house consumption | Typical daytime minimum draw (PV clipping forecast) (W) | 300W |
 | Forecast SOC floor | Lowest max-SOC the forecast may recommend (%) | 30% |
+
+#### Inverter Settings
+
+One entry per inverter — everything physically attached to it, including its PV array and battery.
+
+| Field | Description | Default |
+|---|---|---|
 | Inverter max power | Total inverter capacity (W) | — |
 | Inverter max power per phase | Per-phase inverter limit (W) | — |
 | Inverter supports asymmetric | Can inverter balance power across phases | Off |
 | Inverter output phase A/B/C entity | Per-phase inverter output sensors (optional) | — |
+| Wiring topology | Parallel (AC-coupled) or Series (hybrid with DC battery) | Parallel |
+| Solar production entity | This inverter's PV power sensor (optional — derived from its output otherwise) | — |
+| Solar forecast | Open-Meteo Solar Forecast device(s) for this inverter's array(s) | — |
+| Battery SOC entity | Battery state of charge sensor | — |
+| Battery power entity | Battery charge/discharge power sensor (W) | — |
+| Battery max charge/discharge power | Battery power limits (W) | 5000W |
+| Battery full SOC | SOC at/above which this battery counts as full (%) | 97% |
+| Battery capacity | kWh this battery's SOC spans (PV clipping forecast, 0 = off) | 0 |
+| Battery charge limit entity | Inverter register to write the forecast's charge limit to (optional) | — |
+| Charge limit unit | What that register expects — DC amps or watts | A |
+| Battery voltage entity / nominal voltage | Source for the watts↔amps conversion | — / 51.2V |
+| Normal charge limit | Value restored when the limit releases (0 = the register's own max) | 0 |
+| Minimum time between writes | Write pacing for Modbus/EEPROM registers (s) | 300 |
+| Write deadband | Minimum change worth a write, as % of the normal limit | 5% |
 
 #### EVSE Load Settings
 

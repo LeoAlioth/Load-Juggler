@@ -440,17 +440,121 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     }
                 ),
             ),
+            # --- Site policy ---
+            # Hardware (inverters, batteries, PV arrays and their forecasts)
+            # lives on the inverter entries; what stays here is site-wide
+            # policy applied to whatever fleet those entries form.
+            (
+                vol.Optional(
+                    CONF_BATTERY_SOC_HYSTERESIS,
+                    default=defaults.get(
+                        CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 1,
+                            "max": 10,
+                            "step": 1,
+                            "mode": "slider",
+                            "unit_of_measurement": "%",
+                        }
+                    }
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_BASE_CONSUMPTION,
+                    default=defaults.get(
+                        CONF_BASE_CONSUMPTION, DEFAULT_BASE_CONSUMPTION
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 10000,
+                            "step": 50,
+                            "mode": "box",
+                            "unit_of_measurement": "W",
+                        }
+                    }
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_FORECAST_SOC_FLOOR,
+                    default=defaults.get(
+                        CONF_FORECAST_SOC_FLOOR, DEFAULT_FORECAST_SOC_FLOOR
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 90,
+                            "step": 1,
+                            "mode": "slider",
+                            "unit_of_measurement": "%",
+                        }
+                    }
+                ),
+            ),
         ]
 
-    def _build_hub_battery_schema(
-        self, defaults: dict | None = None, include_battery_hardware: bool = True
-    ) -> list[tuple]:
-        """Build battery fields as a reusable list (includes solar entity selector).
+    def _build_inverter_solar_schema(self, defaults: dict | None = None) -> list[tuple]:
+        """PV fields for an INVERTER entry — the array behind this inverter.
 
-        ``include_battery_hardware=False`` keeps only the hub-scoped fields
-        (solar production entity, SOC hysteresis, forecast inputs) — used once
-        a hub's legacy battery hardware has been auto-imported onto an
-        inverter entry, where it is edited from then on.
+        Its production sensor and its Open-Meteo forecast device(s) belong to
+        the inverter, not the site: a hybrid and an AC-coupled string inverter
+        each have their own array. The engine sums the fleet's production and
+        merges the fleet's forecast devices into ONE site forecast, because
+        clipping is decided by the site-wide export limit.
+        """
+        defaults = defaults or {}
+        return [
+            (
+                self._optional_entity_field(
+                    CONF_SOLAR_PRODUCTION_ENTITY_ID,
+                    defaults.get(CONF_SOLAR_PRODUCTION_ENTITY_ID),
+                ),
+                selector(
+                    {
+                        "entity": {
+                            "include_entities": self._entity_ids_for(
+                                {None, "power"}, valid_units=_POWER_UNITS
+                            ),
+                        }
+                    }
+                ),
+            ),
+            (
+                # One forecast DEVICE per PV array — the Open-Meteo Solar
+                # Forecast integration creates one device per array, and
+                # several of its sensors carry the same watts series, so
+                # letting the user pick sensors risks double-counting.
+                vol.Optional(
+                    CONF_SOLAR_FORECAST_DEVICE_IDS,
+                    default=defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS) or [],
+                ),
+                selector(
+                    {
+                        "device": {
+                            "multiple": True,
+                            "filter": {"integration": "open_meteo_solar_forecast"},
+                        }
+                    }
+                ),
+            ),
+        ]
+
+    def _build_hub_battery_schema(self, defaults: dict | None = None) -> list[tuple]:
+        """LEGACY hub solar/battery fields — shown only while a hub still
+        carries them, i.e. before the one-time auto-import moves them onto an
+        inverter entry. New hubs never see this page: their solar sensor,
+        forecast devices and battery hardware are configured per inverter, and
+        the site policy that stays behind lives on the hub settings page.
         """
         defaults = defaults or {}
 
@@ -540,25 +644,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
             (
                 vol.Optional(
-                    CONF_BATTERY_SOC_HYSTERESIS,
-                    default=defaults.get(
-                        CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS
-                    ),
-                ),
-                selector(
-                    {
-                        "number": {
-                            "min": 1,
-                            "max": 10,
-                            "step": 1,
-                            "mode": "slider",
-                            "unit_of_measurement": "%",
-                        }
-                    }
-                ),
-            ),
-            (
-                vol.Optional(
                     CONF_BATTERY_SOC_FULL,
                     default=defaults.get(
                         CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL
@@ -616,56 +701,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     }
                 ),
             ),
-            (
-                vol.Optional(
-                    CONF_BASE_CONSUMPTION,
-                    default=defaults.get(
-                        CONF_BASE_CONSUMPTION, DEFAULT_BASE_CONSUMPTION
-                    ),
-                ),
-                selector(
-                    {
-                        "number": {
-                            "min": 0,
-                            "max": 10000,
-                            "step": 50,
-                            "mode": "box",
-                            "unit_of_measurement": "W",
-                        }
-                    }
-                ),
-            ),
-            (
-                vol.Optional(
-                    CONF_FORECAST_SOC_FLOOR,
-                    default=defaults.get(
-                        CONF_FORECAST_SOC_FLOOR, DEFAULT_FORECAST_SOC_FLOOR
-                    ),
-                ),
-                selector(
-                    {
-                        "number": {
-                            "min": 0,
-                            "max": 90,
-                            "step": 1,
-                            "mode": "slider",
-                            "unit_of_measurement": "%",
-                        }
-                    }
-                ),
-            ),
         ]
-        if include_battery_hardware:
-            return fields
-        battery_hardware = {
-            CONF_BATTERY_SOC_ENTITY_ID,
-            CONF_BATTERY_POWER_ENTITY_ID,
-            CONF_BATTERY_MAX_CHARGE_POWER,
-            CONF_BATTERY_MAX_DISCHARGE_POWER,
-            CONF_BATTERY_SOC_FULL,
-            CONF_BATTERY_CAPACITY_KWH,
-        }
-        return [(marker, sel) for marker, sel in fields if marker.schema not in battery_hardware]
+        return fields
 
     def _build_hub_inverter_schema(self, defaults: dict | None = None) -> list[tuple]:
         """Build inverter configuration fields as a reusable list."""
@@ -876,14 +913,144 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         ]
 
+    def _build_inverter_control_schema(self, defaults: dict | None = None) -> list[tuple]:
+        """Write-control fields for an INVERTER entry — optional throughout.
+
+        With no target entity the inverter stays advisory: the forecast's
+        recommended charge limit is published as a sensor and nothing is
+        written. Naming a register adds the opt-in switch that starts writes.
+        """
+        defaults = defaults or {}
+        return [
+            (
+                self._optional_entity_field(
+                    CONF_CHARGE_LIMIT_ENTITY_ID,
+                    defaults.get(CONF_CHARGE_LIMIT_ENTITY_ID),
+                ),
+                selector({"entity": {"domain": "number"}}),
+            ),
+            (
+                vol.Optional(
+                    CONF_CHARGE_LIMIT_UNIT,
+                    default=defaults.get(
+                        CONF_CHARGE_LIMIT_UNIT, DEFAULT_CHARGE_LIMIT_UNIT
+                    ),
+                ),
+                selector(
+                    {
+                        "select": {
+                            "options": [
+                                {
+                                    "value": CHARGE_LIMIT_UNIT_AMPS,
+                                    "label": "Amps (DC, at battery voltage)",
+                                },
+                                {"value": CHARGE_LIMIT_UNIT_WATTS, "label": "Watts"},
+                            ],
+                            "mode": "dropdown",
+                        }
+                    }
+                ),
+            ),
+            (
+                self._optional_entity_field(
+                    CONF_BATTERY_VOLTAGE_ENTITY_ID,
+                    defaults.get(CONF_BATTERY_VOLTAGE_ENTITY_ID),
+                ),
+                selector(
+                    {
+                        "entity": {
+                            "include_entities": self._entity_ids_for(
+                                {None, "voltage"}, valid_units={"V", "mV"}
+                            ),
+                        }
+                    }
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_BATTERY_NOMINAL_VOLTAGE,
+                    default=defaults.get(
+                        CONF_BATTERY_NOMINAL_VOLTAGE, DEFAULT_BATTERY_NOMINAL_VOLTAGE
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 12,
+                            "max": 1000,
+                            "step": 0.1,
+                            "mode": "box",
+                            "unit_of_measurement": "V",
+                        }
+                    }
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_CHARGE_LIMIT_NORMAL,
+                    default=defaults.get(
+                        CONF_CHARGE_LIMIT_NORMAL, DEFAULT_CHARGE_LIMIT_NORMAL
+                    ),
+                ),
+                selector(
+                    {"number": {"min": 0, "max": 1000, "step": 1, "mode": "box"}}
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_CHARGE_CONTROL_INTERVAL,
+                    default=defaults.get(
+                        CONF_CHARGE_CONTROL_INTERVAL, DEFAULT_CHARGE_CONTROL_INTERVAL
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 30,
+                            "max": 3600,
+                            "step": 30,
+                            "mode": "box",
+                            "unit_of_measurement": "s",
+                        }
+                    }
+                ),
+            ),
+            (
+                vol.Optional(
+                    CONF_CHARGE_CONTROL_DEADBAND,
+                    default=defaults.get(
+                        CONF_CHARGE_CONTROL_DEADBAND, DEFAULT_CHARGE_CONTROL_DEADBAND
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 50,
+                            "step": 1,
+                            "mode": "slider",
+                            "unit_of_measurement": "%",
+                        }
+                    }
+                ),
+            ),
+        ]
+
     def _inverter_battery_schema(self, defaults: dict | None = None) -> vol.Schema:
         """Schema for the inverter-entry battery step."""
         return vol.Schema(dict(self._build_inverter_battery_schema(defaults)))
 
+    def _inverter_control_schema(self, defaults: dict | None = None) -> vol.Schema:
+        """Schema for the inverter-entry charge write-control step."""
+        return vol.Schema(dict(self._build_inverter_control_schema(defaults)))
+
     def _inverter_combined_schema(self, defaults: dict | None = None) -> vol.Schema:
-        """Inverter + battery fields on one page (reconfigure/options flows)."""
+        """Inverter + solar + battery + write-control on one page
+        (reconfigure/options)."""
         fields = self._build_hub_inverter_schema(defaults)
+        fields.extend(self._build_inverter_solar_schema(defaults))
         fields.extend(self._build_inverter_battery_schema(defaults))
+        fields.extend(self._build_inverter_control_schema(defaults))
         return vol.Schema(dict(fields))
 
     def _hub_schema(
@@ -892,7 +1059,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         include_grid: bool = True,
         include_battery: bool = True,
         include_inverter: bool = False,
-        include_battery_hardware: bool = True,
     ) -> vol.Schema:
         """
         Build a combined hub schema from reusable field lists.
@@ -904,9 +1070,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if include_grid:
             fields_list.extend(self._build_hub_grid_schema(defaults))
         if include_battery:
-            fields_list.extend(
-                self._build_hub_battery_schema(defaults, include_battery_hardware)
-            )
+            fields_list.extend(self._build_hub_battery_schema(defaults))
         if include_inverter:
             fields_list.extend(self._build_hub_inverter_schema(defaults))
 
@@ -916,16 +1080,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Build schema with only grid/electrical fields."""
         return self._hub_schema(defaults, include_grid=True, include_battery=False)
 
-    def _hub_battery_schema(
-        self, defaults: dict | None = None, include_battery_hardware: bool = True
-    ) -> vol.Schema:
-        """Build schema with only battery fields."""
-        return self._hub_schema(
-            defaults,
-            include_grid=False,
-            include_battery=True,
-            include_battery_hardware=include_battery_hardware,
-        )
+    def _hub_battery_schema(self, defaults: dict | None = None) -> vol.Schema:
+        """Build schema with only the legacy hub solar/battery fields."""
+        return self._hub_schema(defaults, include_grid=False, include_battery=True)
 
     def _hub_inverter_schema(self, defaults: dict | None = None) -> vol.Schema:
         """Build schema with only inverter fields."""
@@ -1839,7 +1996,14 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_hub_grid(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Hub step 2: Grid/electrical configuration."""
+        """Hub step 2: grid, electrical and site policy — creates the entry.
+
+        A NEW hub carries no hardware of its own: inverters, batteries, PV
+        production sensors and PV forecast sources all live on Inverter
+        entries added afterwards ("Add Inverter / Home Battery"). What stays
+        here is the grid connection plus the site-wide policy applied to
+        whatever fleet those entries form.
+        """
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -1859,14 +2023,40 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             if not errors:
                 self._data.update(user_input)
-                # New hubs carry no inverter hardware — inverters are added
-                # as their own entries after the hub exists.
-                return await self.async_step_hub_battery()
+
+                # Generate entity IDs for hub-created entities
+                entity_id = self._data.get(CONF_ENTITY_ID)
+                self._data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = (
+                    f"number.{entity_id}_home_battery_soc_target"
+                )
+                self._data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = (
+                    f"switch.{entity_id}_allow_grid_charging"
+                )
+                self._data[CONF_POWER_BUFFER_ENTITY_ID] = (
+                    f"number.{entity_id}_power_buffer"
+                )
+
+                # Split static vs mutable fields:
+                static_data = {
+                    CONF_NAME: self._data.get(CONF_NAME),
+                    CONF_ENTITY_ID: self._data.get(CONF_ENTITY_ID),
+                    ENTRY_TYPE: ENTRY_TYPE_HUB,
+                    # Born without legacy inverter/battery fields — nothing to
+                    # auto-import, and the legacy hub pages stay hidden.
+                    MIGRATE_HUB_INVERTER_IMPORTED_FLAG: True,
+                }
+                options_data = {
+                    k: v for k, v in self._data.items() if k not in static_data
+                }
+
+                return self._create_entry_and_seed_options(
+                    static_data[CONF_NAME], static_data, options_data
+                )
             return self.async_show_form(
                 step_id="hub_grid",
                 data_schema=self._hub_grid_schema(user_input),
                 errors=errors,
-                last_step=False,
+                last_step=True,
             )
 
         try:
@@ -1919,6 +2109,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_GRID_EXPORT_LIMIT: DEFAULT_GRID_EXPORT_LIMIT,
                     CONF_EXCESS_TRIGGER_MARGIN: DEFAULT_EXCESS_TRIGGER_MARGIN,
                     CONF_AUTO_DETECT_PHASE_MAPPING: True,
+                    CONF_BATTERY_SOC_HYSTERESIS: DEFAULT_BATTERY_SOC_HYSTERESIS,
                 }
             )
 
@@ -1928,174 +2119,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema = vol.Schema({})
 
         return self.async_show_form(
-            step_id="hub_grid", data_schema=data_schema, errors=errors, last_step=False
-        )
-
-    async def async_step_hub_battery(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Hub step 3: Solar & site settings (final step — creates entry).
-
-        A NEW hub carries no battery/inverter hardware of its own — that lives
-        on Inverter entries added afterwards ("Add Inverter / Home Battery").
-        This page keeps only the hub-scoped fields (solar production sensor,
-        SOC hysteresis, forecast inputs), and the entry is flagged as
-        imported from birth so the legacy pages never appear for it.
-        """
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input, [CONF_SOLAR_PRODUCTION_ENTITY_ID]
-            )
-            user_input = self._normalize_forecast_list(user_input)
-            _validate_entity_units(
-                self.hass,
-                user_input,
-                {
-                    CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
-                },
-                errors,
-            )
-            bad_forecast_entity = _validate_forecast_devices(
-                self.hass, user_input, errors
-            )
-            if not errors:
-                self._data.update(user_input)
-
-                # Generate entity IDs for hub-created entities
-                entity_id = self._data.get(CONF_ENTITY_ID)
-                self._data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = (
-                    f"number.{entity_id}_home_battery_soc_target"
-                )
-                self._data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = (
-                    f"switch.{entity_id}_allow_grid_charging"
-                )
-                self._data[CONF_POWER_BUFFER_ENTITY_ID] = (
-                    f"number.{entity_id}_power_buffer"
-                )
-
-                # Split static vs mutable fields:
-                static_data = {
-                    CONF_NAME: self._data.get(CONF_NAME),
-                    CONF_ENTITY_ID: self._data.get(CONF_ENTITY_ID),
-                    ENTRY_TYPE: ENTRY_TYPE_HUB,
-                    # Born without legacy inverter/battery fields — nothing to
-                    # auto-import, and the legacy hub pages stay hidden.
-                    MIGRATE_HUB_INVERTER_IMPORTED_FLAG: True,
-                }
-                options_data = {
-                    k: v for k, v in self._data.items() if k not in static_data
-                }
-
-                return self._create_entry_and_seed_options(
-                    static_data[CONF_NAME], static_data, options_data
-                )
-            return self.async_show_form(
-                step_id="hub_battery",
-                data_schema=self._hub_battery_schema(
-                    user_input, include_battery_hardware=False
-                ),
-                errors=errors,
-                description_placeholders=(
-                    {"entity": bad_forecast_entity} if bad_forecast_entity else None
-                ),
-                last_step=True,
-            )
-
-        # Auto-detect the solar production entity only — battery hardware is
-        # configured on Inverter entries, which have their own detection.
-        data_schema = self._hub_battery_schema(
-            {
-                CONF_SOLAR_PRODUCTION_ENTITY_ID: self._auto_detect_entity(
-                    SOLAR_PRODUCTION_PATTERNS
-                ),
-                CONF_BATTERY_SOC_HYSTERESIS: DEFAULT_BATTERY_SOC_HYSTERESIS,
-            },
-            include_battery_hardware=False,
-        )
-
-        return self.async_show_form(
-            step_id="hub_battery",
-            data_schema=data_schema,
-            errors=errors,
-            last_step=True,
-        )
-
-    async def async_step_hub_inverter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Hub step 3: Inverter configuration."""
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input, self._INVERTER_ENTITY_KEYS
-            )
-            _validate_entity_units(
-                self.hass,
-                user_input,
-                {
-                    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                },
-                errors,
-            )
-            if not errors:
-                self._data.update(user_input)
-                self._normalize_inverter_powers()
-                return await self.async_step_hub_battery()
-            battery_hint = self._auto_detect_entity_value(
-                BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR
-            )
-            hint_text = f"{battery_hint}W detected" if battery_hint else "not detected"
-            return self.async_show_form(
-                step_id="hub_inverter",
-                data_schema=self._hub_inverter_schema(user_input),
-                errors=errors,
-                last_step=False,
-                description_placeholders={"battery_power_hint": hint_text},
-            )
-
-        # Auto-detect per-phase inverter output entities
-        inv_detected = self._auto_detect_phase_entities(INVERTER_OUTPUT_PATTERNS)
-        default_inv_a = inv_detected["phase_a"]
-        default_inv_b = inv_detected["phase_b"]
-        default_inv_c = inv_detected["phase_c"]
-
-        # Auto-detect wiring topology: series if battery entities are detected
-        default_topology = DEFAULT_WIRING_TOPOLOGY
-        if self._auto_detect_entity(BATTERY_SOC_PATTERNS):
-            default_topology = WIRING_TOPOLOGY_SERIES
-
-        data_schema = self._hub_inverter_schema(
-            {
-                CONF_INVERTER_MAX_POWER: 0,
-                CONF_INVERTER_MAX_POWER_PER_PHASE: 0,
-                CONF_INVERTER_SUPPORTS_ASYMMETRIC: False,
-                CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: default_inv_a,
-                CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: default_inv_b,
-                CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: default_inv_c,
-                CONF_WIRING_TOPOLOGY: default_topology,
-            }
-        )
-
-        # Auto-detect battery discharge power for description hint
-        battery_hint = self._auto_detect_entity_value(
-            BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR
-        )
-        hint_text = f"{battery_hint}W detected" if battery_hint else "not detected"
-
-        return self.async_show_form(
-            step_id="hub_inverter",
-            data_schema=data_schema,
-            errors=errors,
-            last_step=False,
-            description_placeholders={"battery_power_hint": hint_text},
+            step_id="hub_grid", data_schema=data_schema, errors=errors, last_step=True
         )
 
     # ==================== CHARGER CONFIGURATION STEPS ====================
@@ -2539,13 +2563,16 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_inverter_config(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Inverter step 1: name + capacity, topology and output sensors."""
+        """Inverter step 1: name, capacity, topology, output and PV sensors."""
         errors: dict[str, str] = {}
+        bad_forecast_entity = None
 
         if user_input is not None:
             user_input = self._normalize_optional_inputs(
-                user_input, self._INVERTER_ENTITY_KEYS
+                user_input,
+                self._INVERTER_ENTITY_KEYS + [CONF_SOLAR_PRODUCTION_ENTITY_ID],
             )
+            user_input = self._normalize_forecast_list(user_input)
             _validate_entity_units(
                 self.hass,
                 user_input,
@@ -2556,8 +2583,12 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     | _POWER_UNITS,
                     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
                     | _POWER_UNITS,
+                    CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
                 },
                 errors,
+            )
+            bad_forecast_entity = _validate_forecast_devices(
+                self.hass, user_input, errors
             )
             entity_id = user_input.get(CONF_ENTITY_ID)
             if entity_id and self._entity_id_in_use(entity_id):
@@ -2577,6 +2608,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     default=defaults.get(CONF_ENTITY_ID, "lj_inverter"),
                 ): str,
                 **dict(self._build_hub_inverter_schema(defaults)),
+                **dict(self._build_inverter_solar_schema(defaults)),
             }
         )
 
@@ -2584,6 +2616,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="inverter_config",
             data_schema=data_schema,
             errors=errors,
+            description_placeholders=(
+                {"entity": bad_forecast_entity} if bad_forecast_entity else None
+            ),
             last_step=False,
         )
 
@@ -2607,6 +2642,35 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
                 },
                 errors,
+            )
+            if not errors:
+                self._data.update(user_input)
+                return await self.async_step_inverter_control()
+
+        data_schema = self._inverter_battery_schema({**self._data, **(user_input or {})})
+        return self.async_show_form(
+            step_id="inverter_battery",
+            data_schema=data_schema,
+            errors=errors,
+            last_step=False,
+        )
+
+    async def async_step_inverter_control(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Inverter step 3: optional battery charge write-control — creates
+        the entry.
+
+        Skip it (submit empty) to keep the inverter advisory: the clipping
+        forecast still publishes its recommended charge limit as a sensor,
+        Load Juggler just doesn't write it anywhere.
+        """
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            user_input = self._normalize_optional_inputs(
+                user_input,
+                [CONF_CHARGE_LIMIT_ENTITY_ID, CONF_BATTERY_VOLTAGE_ENTITY_ID],
             )
             if not errors:
                 self._data.update(user_input)
@@ -2651,19 +2715,22 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _compose_entry_title(name, "Inverter"), static_data, options_data
                 )
 
-        data_schema = self._inverter_battery_schema({**self._data, **(user_input or {})})
+        data_schema = self._inverter_control_schema({**self._data, **(user_input or {})})
         return self.async_show_form(
-            step_id="inverter_battery",
+            step_id="inverter_control",
             data_schema=data_schema,
             errors=errors,
             last_step=True,
         )
 
-    # The legacy hub-level fields the auto-import moves onto an inverter entry.
-    # Hub-scoped settings stay behind: SOC hysteresis, the SOC target/min
-    # sliders, solar production entity, forecast sources, base consumption,
-    # forecast SOC floor and the grid export limit.
+    # The legacy hub-level fields the auto-import moves onto an inverter entry:
+    # everything physically attached to the inverter, its PV array included.
+    # Site policy stays behind on the hub: SOC hysteresis, the SOC target/min
+    # sliders, base consumption, forecast SOC floor and the grid export limit.
     _HUB_INVERTER_IMPORT_FIELDS = (
+        CONF_SOLAR_PRODUCTION_ENTITY_ID,
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+        CONF_SOLAR_FORECAST_ENTITY_IDS,
         CONF_INVERTER_MAX_POWER,
         CONF_INVERTER_MAX_POWER_PER_PHASE,
         CONF_INVERTER_SUPPORTS_ASYMMETRIC,
@@ -2699,8 +2766,14 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_import(
         self, import_data: dict[str, Any]
     ) -> config_entries.FlowResult:
-        """One-time auto-import of a hub's legacy inverter/battery fields into
-        a standalone inverter entry (spawned from _setup_hub_entry).
+        """Auto-import of a hub's legacy inverter/battery/PV fields onto a
+        standalone inverter entry (spawned from _setup_hub_entry).
+
+        Runs whenever such a field is still on the hub, so a later release
+        that moves one more field (the solar sensor and forecast devices, say)
+        converges on the next restart without a second migration path. When
+        the hub's inverter entry already exists, the newly-found fields are
+        merged into it rather than creating a second one.
 
         Idempotency: the unique_id makes a duplicate entry impossible, and the
         hub is blanked-and-flagged BEFORE the already-configured abort — so a
@@ -2717,7 +2790,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if hub_entry is None:
             return self.async_abort(reason="entry_not_found")
 
-        await self.async_set_unique_id(f"{hub_entry_id}_inverter_import")
+        unique_id = f"{hub_entry_id}_inverter_import"
+        await self.async_set_unique_id(unique_id)
 
         # Snapshot the legacy fields, then blank the hub — in this order, and
         # before the duplicate check, so every path leaves the hub clean.
@@ -2727,7 +2801,29 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
         imported = {k: v for k, v in imported.items() if v is not None}
         self._blank_hub_legacy_inverter_fields(hub_entry)
-        self._abort_if_unique_id_configured()
+
+        # An entry from an earlier import round already represents this
+        # hardware — merge the fields this round found onto it. Existing
+        # values win: the user may have edited them on the inverter since.
+        existing = next(
+            (
+                entry
+                for entry in self.hass.config_entries.async_entries(DOMAIN)
+                if entry.unique_id == unique_id
+            ),
+            None,
+        )
+        if existing is not None:
+            merged = {**imported, **existing.options}
+            if merged != dict(existing.options):
+                _LOGGER.info(
+                    "Moved leftover hub fields (%s) onto the existing inverter "
+                    "entry %s",
+                    ", ".join(sorted(imported)) or "none",
+                    existing.title,
+                )
+                self.hass.config_entries.async_update_entry(existing, options=merged)
+            return self.async_abort(reason="already_configured")
 
         hub_name = hub_entry.data.get(CONF_NAME, hub_entry.title)
         hub_prefix = hub_entry.data.get(CONF_ENTITY_ID, "lj_hub")
@@ -3322,16 +3418,14 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Legacy entries without entry_type are hubs
         if not entry_type or entry_type == ENTRY_TYPE_HUB:
-            # Once the legacy inverter/battery fields have been auto-imported
-            # onto an inverter entry, that hardware is edited on the inverter
-            # entry — the hub's inverter page disappears and its battery page
-            # keeps only the hub-scoped fields (solar entity, hysteresis,
-            # forecast inputs).
+            # Once the legacy inverter/battery/solar fields have been
+            # auto-imported onto an inverter entry, that hardware is edited
+            # there — both legacy hub pages disappear and the hub is left with
+            # its grid connection and site policy on one page.
             menu_options = ["reconfigure_hub_grid"]
             if not entry.data.get(MIGRATE_HUB_INVERTER_IMPORTED_FLAG):
-                menu_options.append("reconfigure_hub_inverter")
+                menu_options += ["reconfigure_hub_inverter", "reconfigure_hub_battery"]
             menu_options += [
-                "reconfigure_hub_battery",
                 "reconfigure_priority",
                 "reconfigure_finish",
             ]
@@ -3363,8 +3457,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure_inverter(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Reconfigure an inverter entry — one page, inverter + battery fields."""
+        """Reconfigure an inverter entry — one page: inverter, PV and battery."""
         errors: dict[str, str] = {}
+        bad_forecast_entity = None
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         defaults = {**entry.data, **entry.options}
 
@@ -3372,8 +3467,15 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input = self._normalize_optional_inputs(
                 user_input,
                 self._INVERTER_ENTITY_KEYS
-                + [CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
+                + [
+                    CONF_SOLAR_PRODUCTION_ENTITY_ID,
+                    CONF_BATTERY_SOC_ENTITY_ID,
+                    CONF_BATTERY_POWER_ENTITY_ID,
+                    CONF_CHARGE_LIMIT_ENTITY_ID,
+                    CONF_BATTERY_VOLTAGE_ENTITY_ID,
+                ],
             )
+            user_input = self._normalize_forecast_list(user_input)
             _validate_entity_units(
                 self.hass,
                 user_input,
@@ -3384,10 +3486,14 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     | _POWER_UNITS,
                     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
                     | _POWER_UNITS,
+                    CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
                     CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
                     CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
                 },
                 errors,
+            )
+            bad_forecast_entity = _validate_forecast_devices(
+                self.hass, user_input, errors
             )
             if not errors:
                 for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
@@ -3401,6 +3507,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="reconfigure_inverter",
                 data_schema=self._inverter_combined_schema(user_input),
                 errors=errors,
+                description_placeholders=(
+                    {"entity": bad_forecast_entity} if bad_forecast_entity else None
+                ),
                 last_step=True,
             )
 
@@ -3463,6 +3572,13 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
                 errors,
             )
+            # Dropping the grid CTs here is what makes a hub off-grid, so this
+            # is where the battery requirement belongs now that the battery
+            # itself lives on an inverter entry.
+            validate_offgrid_battery_requirement(
+                user_input, defaults, errors,
+                hass=self.hass, hub_entry_id=entry.entry_id,
+            )
             if not errors:
                 self.hass.config_entries.async_update_entry(
                     entry, options={**entry.options, **user_input}
@@ -3492,22 +3608,16 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure_hub_battery(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Reconfigure hub battery settings (final step — saves)."""
+        """LEGACY hub solar/battery page — offered only while the hub still
+        carries those fields, i.e. before the one-time auto-import moves them
+        onto an inverter entry."""
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         defaults = {**entry.data, **entry.options}
-        # Post-import, battery hardware lives on the inverter entry — this
-        # page keeps only the hub-scoped fields.
-        battery_hw = not entry.data.get(MIGRATE_HUB_INVERTER_IMPORTED_FLAG)
-        step_keys = (
-            self._BATTERY_ENTITY_KEYS
-            if battery_hw
-            else [CONF_SOLAR_PRODUCTION_ENTITY_ID]
-        )
 
         if user_input is not None:
             user_input = self._normalize_optional_inputs(
-                user_input, step_keys
+                user_input, self._BATTERY_ENTITY_KEYS
             )
             user_input = self._normalize_forecast_list(user_input)
             _validate_entity_units(
@@ -3535,9 +3645,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_reconfigure()
             return self.async_show_form(
                 step_id="reconfigure_hub_battery",
-                data_schema=self._hub_battery_schema(
-                    user_input, include_battery_hardware=battery_hw
-                ),
+                data_schema=self._hub_battery_schema(user_input),
                 errors=errors,
                 description_placeholders=(
                     {"entity": bad_forecast_entity} if bad_forecast_entity else None
@@ -3545,9 +3653,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 last_step=False,
             )
 
-        data_schema = self._hub_battery_schema(
-            defaults, include_battery_hardware=battery_hw
-        )
+        data_schema = self._hub_battery_schema(defaults)
 
         return self.async_show_form(
             step_id="reconfigure_hub_battery",
@@ -3876,8 +3982,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_inverter(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Options for an inverter entry — one page, inverter + battery fields."""
+        """Options for an inverter entry — one page: inverter, PV and battery."""
         errors: dict[str, str] = {}
+        bad_forecast_entity = None
         defaults = {**self.config_entry.data, **self.config_entry.options}
         f = self._schema_helper
 
@@ -3885,8 +3992,15 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             user_input = f._normalize_optional_inputs(
                 user_input,
                 f._INVERTER_ENTITY_KEYS
-                + [CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
+                + [
+                    CONF_SOLAR_PRODUCTION_ENTITY_ID,
+                    CONF_BATTERY_SOC_ENTITY_ID,
+                    CONF_BATTERY_POWER_ENTITY_ID,
+                    CONF_CHARGE_LIMIT_ENTITY_ID,
+                    CONF_BATTERY_VOLTAGE_ENTITY_ID,
+                ],
             )
+            user_input = f._normalize_forecast_list(user_input)
             _validate_entity_units(
                 self.hass,
                 user_input,
@@ -3897,10 +4011,14 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                     | _POWER_UNITS,
                     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
                     | _POWER_UNITS,
+                    CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
                     CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
                     CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
                 },
                 errors,
+            )
+            bad_forecast_entity = _validate_forecast_devices(
+                self.hass, user_input, errors
             )
             if not errors:
                 for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
@@ -3910,11 +4028,15 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                     title="",
                     data={**self.config_entry.options, **user_input},
                 )
+            defaults = {**defaults, **user_input}
 
         return self.async_show_form(
             step_id="inverter",
             data_schema=f._inverter_combined_schema(defaults),
             errors=errors,
+            description_placeholders=(
+                {"entity": bad_forecast_entity} if bad_forecast_entity else None
+            ),
         )
 
     async def async_step_hub_grid(
@@ -3937,12 +4059,20 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 },
                 errors,
             )
+            # Dropping the grid CTs here is what makes a hub off-grid, so this
+            # is where the battery requirement belongs now that the battery
+            # itself lives on an inverter entry.
+            validate_offgrid_battery_requirement(
+                user_input, defaults, errors,
+                hass=self.hass, hub_entry_id=self.config_entry.entry_id,
+            )
             if not errors:
                 self._data.update(user_input)
-                # Post-import the inverter hardware is edited on its own
-                # entry — skip the legacy hub inverter page.
+                # Post-import the hardware (inverters, batteries, PV sensors
+                # and forecast sources) is edited on the inverter entries —
+                # the legacy hub pages are skipped entirely.
                 if self.config_entry.data.get(MIGRATE_HUB_INVERTER_IMPORTED_FLAG):
-                    return await self.async_step_hub()
+                    return await self.async_step_priority()
                 return await self.async_step_hub_inverter()
             return self.async_show_form(
                 step_id="hub_grid",
@@ -4034,21 +4164,15 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_hub(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
+        """LEGACY hub solar/battery page — reachable only while the hub still
+        carries those fields (i.e. before the one-time auto-import)."""
         errors: dict[str, str] = {}
         defaults = {**self.config_entry.data, **self.config_entry.options}
         f = self._schema_helper
-        # Post-import, battery hardware lives on the inverter entry — this
-        # page keeps only the hub-scoped fields.
-        battery_hw = not self.config_entry.data.get(
-            MIGRATE_HUB_INVERTER_IMPORTED_FLAG
-        )
-        step_keys = (
-            f._BATTERY_ENTITY_KEYS if battery_hw else [CONF_SOLAR_PRODUCTION_ENTITY_ID]
-        )
 
         if user_input is not None:
             user_input = f._normalize_optional_inputs(
-                user_input, step_keys
+                user_input, f._BATTERY_ENTITY_KEYS
             )
             user_input = f._normalize_forecast_list(user_input)
             _validate_entity_units(
@@ -4073,9 +4197,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_priority()
             return self.async_show_form(
                 step_id="hub",
-                data_schema=f._hub_battery_schema(
-                    user_input, include_battery_hardware=battery_hw
-                ),
+                data_schema=f._hub_battery_schema(user_input),
                 errors=errors,
                 description_placeholders=(
                     {"entity": bad_forecast_entity} if bad_forecast_entity else None
@@ -4088,9 +4210,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         # entities from an unrelated system. Show the existing values as-is.
         return self.async_show_form(
             step_id="hub",
-            data_schema=f._hub_battery_schema(
-                defaults, include_battery_hardware=battery_hw
-            ),
+            data_schema=f._hub_battery_schema(defaults),
             errors=errors,
             last_step=False,
         )

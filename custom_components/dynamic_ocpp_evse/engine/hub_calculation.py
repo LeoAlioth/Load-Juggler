@@ -218,9 +218,11 @@ def _check_entity_availability(hass, hub_entry) -> list:
     # where a dropout becomes visible, named per inverter.
     from .. import get_inverters_for_hub
 
-    for inv_entry in get_inverters_for_hub(hass, hub_entry.entry_id):
+    inverter_entries = get_inverters_for_hub(hass, hub_entry.entry_id)
+    for inv_entry in inverter_entries:
         inv_name = get_entry_value(inv_entry, CONF_NAME, inv_entry.title)
         inv_checks = (
+            (f"Solar production ({inv_name})", CONF_SOLAR_PRODUCTION_ENTITY_ID),
             (f"Inverter {inv_name} output (L1)", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
             (f"Inverter {inv_name} output (L2)", CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
             (f"Inverter {inv_name} output (L3)", CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
@@ -240,7 +242,16 @@ def _check_entity_availability(hass, hub_entry) -> list:
     # no watts-bearing sensor right now (integration down, states missing)
     # counts as unavailable; legacy directly-configured sensors are checked
     # like any other entity.
-    for device_id in get_entry_value(hub_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or []:
+    forecast_devices = list(
+        get_entry_value(hub_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or []
+    )
+    for inv_entry in inverter_entries:
+        for device_id in (
+            get_entry_value(inv_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or []
+        ):
+            if device_id not in forecast_devices:
+                forecast_devices.append(device_id)
+    for device_id in forecast_devices:
         if resolve_forecast_sensor(hass, device_id) is None:
             unavailable.append(("Solar forecast device", device_id))
     for entity_id in get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []:
@@ -264,36 +275,6 @@ def _fv2(raw, smoothed):
     if raw is None:
         return _fv(smoothed)
     return f"{_fv(smoothed)}({_fv(raw)})"
-
-
-def _derive_solar_production(
-    inverter_output_per_phase, wiring_topology, export_power, battery_power, voltage
-):
-    """Derive solar production from available sensor data.
-
-    Unified formula for grid and off-grid sites:
-    - With inverter output: series → solar = inverter_output - battery_power
-                            parallel → solar = inverter_output
-    - Without inverter output: fallback → solar = export + battery_charging
-    For off-grid, export is naturally 0 (no grid CTs), so the inverter-based
-    formula is used.
-    """
-    if inverter_output_per_phase is not None:
-        inv_watts = inverter_output_per_phase.total * voltage
-        if wiring_topology == WIRING_TOPOLOGY_SERIES:
-            # Battery is behind inverter: inverter_output = solar + battery_power
-            # (battery_power > 0 = discharging, < 0 = charging)
-            bp = battery_power if battery_power is not None else 0
-            return max(0, inv_watts - bp)
-        else:
-            # Parallel: inverter output IS solar
-            return max(0, inv_watts)
-    else:
-        # Fallback: derive from grid export + battery charge absorption
-        solar = export_power or 0
-        if battery_power is not None and battery_power < 0:
-            solar += abs(battery_power)
-        return max(0, solar)
 
 
 # ---------------------------------------------------------------------------
@@ -1085,7 +1066,7 @@ def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
         site.chargers.append(charger)
 
 
-def _apply_feedback_loop(site, solar_is_derived, voltage):
+def _apply_feedback_loop(site, solar_is_derived, voltage, members):
     """Subtract charger draws from grid readings to prevent double-counting.
 
     Grid CTs measure total site current INCLUDING charger draws. Without this
@@ -1146,17 +1127,18 @@ def _apply_feedback_loop(site, solar_is_derived, voltage):
     site.consumption = PhaseValues(*adj_consumption)
     site.export_current = PhaseValues(*adj_export)
 
-    # Update derived solar after feedback (unified formula for grid and off-grid)
+    # Update derived solar after feedback. Same per-member derivation as the
+    # first pass — only the export term changes, so a fleet where every member
+    # measures its own production has nothing to redo (solar_is_derived False).
     solar_note = ""
     if solar_is_derived:
         export_after = site.export_current.total * site.voltage
-        site.solar_production_total = _derive_solar_production(
-            site.inverter_output_per_phase,
-            site.wiring_topology,
-            export_after,
-            site.battery_power,
-            site.voltage,
-        )
+        total = fleet.solar_total(members, site.voltage)
+        if total is None:
+            total = max(
+                0.0, export_after + fleet.charging_power_total(members)
+            )
+        site.solar_production_total = total
         solar_note = f" | Solar(derived)={site.solar_production_total:.0f}W"
 
     _LOGGER.debug(
@@ -1224,6 +1206,8 @@ def _build_circuit_groups(hass, hub_entry_id):
 # merged into the fleet. The one-time auto-import moves them onto a standalone
 # inverter entry and blanks them here.
 _LEGACY_FLEET_KEYS = (
+    CONF_SOLAR_PRODUCTION_ENTITY_ID,
+    CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
@@ -1275,6 +1259,24 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     output_prefix = "inv_" if legacy else f"inv_{entry.entry_id}_"
     output_pv = _smooth_member_output(output_pv, hub_runtime, ema_inputs, output_prefix)
 
+    # Solar production sensor: this inverter's own PV output. The legacy hub
+    # member keeps the historic "solar" EMA key so pre-import smoothing (and
+    # its stale guard) is bit-identical.
+    solar_entity = get_entry_value(entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
+    solar_key = "solar" if legacy else f"solar_{entry.entry_id}"
+    solar_measured = None
+    if solar_entity:
+        raw_solar = _read_entity(hass, solar_entity, 0, unit="W")  # kW→W if needed
+        # A dead solar sensor must not keep feeding its last reading forever
+        # (e.g. 8 kW held into the night) — fall back to 0 W after timeout.
+        raw_solar = _stale_guard(hub_runtime, ema_inputs, solar_key, raw_solar, 0.0)
+        solar_measured = _smooth(ema_inputs, solar_key, raw_solar)
+        # _smooth returns None when the entity is unavailable and there is no
+        # EMA history yet (a fresh start at night) — 0 W, not None, since the
+        # household maths downstream cannot take None.
+        if solar_measured is None:
+            solar_measured = 0.0
+
     soc_entity = get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
     power_entity = get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
     battery_soc = (
@@ -1300,6 +1302,11 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         supports_asymmetric=supports_asymmetric,
         topology=topology,
         output=output_pv,
+        has_solar_entity=bool(solar_entity),
+        solar_measured=solar_measured,
+        forecast_device_ids=tuple(
+            get_entry_value(entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or ()
+        ),
         has_battery=bool(soc_entity or power_entity),
         has_battery_power_entity=bool(power_entity),
         battery_soc=float(battery_soc) if battery_soc is not None else None,
@@ -1418,7 +1425,11 @@ def _compute_forecast_advice(
     # Fleet capacity: the hub's legacy capacity field arrives via the implicit
     # legacy member, entry capacities via theirs.
     capacity_kwh = fleet.capacity_total(members)
-    device_ids = get_entry_value(hub_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or []
+    # Forecast sources are per inverter (each PV array belongs to one), but
+    # clipping is a site question — every array competes for the same export
+    # headroom — so the fleet's devices merge into one site forecast. The
+    # hub's legacy fields arrive via the implicit legacy member.
+    device_ids = fleet.forecast_device_ids(members)
     legacy_entity_ids = (
         get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []
     )
@@ -1912,33 +1923,28 @@ def run_hub_calculation(sensor):
     total_export_current = export_pv.total
     total_export_power = total_export_current * voltage if voltage > 0 else 0
 
-    # --- Solar production (direct entity, or derived after inverter output below) ---
-    solar_production_entity = get_entry_value(
-        hub_entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None
-    )
-    solar_is_derived = not solar_production_entity
-    if solar_production_entity:
-        raw_solar = _read_entity(
-            hass, solar_production_entity, 0, unit="W"
-        )  # Convert kW→W if needed
-        # A dead solar sensor must not keep feeding its last reading forever
-        # (e.g. 8 kW held into the night) — fall back to 0 W after timeout.
-        raw_solar = _stale_guard(hub_runtime, ema_inputs, "solar", raw_solar, 0.0)
-        solar_production_total = _smooth(ema_inputs, "solar", raw_solar)
-        # _smooth returns None when the solar entity is unavailable and there
-        # is no EMA history yet (e.g. a fresh start at night). Treat that as
-        # 0 W — None would crash the household-consumption math further down.
-        if solar_production_total is None:
-            solar_production_total = 0
-    else:
-        raw_solar = None  # derived — calculated after inverter output is read
-        solar_production_total = 0  # placeholder
-
     # --- Inverter fleet (inverter entries + legacy hub-level fields) ---
     # Every battery/inverter scalar below is a fleet aggregate. With a single
     # member (the classic setup) each aggregate reduces to exactly the old
     # singleton value — see engine/fleet.py for the per-member gating rules.
     members = _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage)
+
+    # --- Solar production (unified for grid and off-grid) ---
+    # Per member: its own production sensor when configured, else derived from
+    # its inverter output (parallel output IS production, series output minus
+    # its own battery power). Falls back to grid export + the fleet's charging
+    # draw when no member knows either. Off-grid, export is naturally 0.
+    # Solar counts as derived unless EVERY member measures its own production;
+    # a partly-measured fleet still needs the post-feedback re-derivation for
+    # the members that only have inverter outputs (or none at all).
+    raw_solar = None
+    solar_is_derived = not fleet.solar_is_measured(members)
+    solar_production_total = fleet.solar_total(members, voltage)
+    if solar_production_total is None:
+        solar_production_total = max(
+            0.0,
+            (total_export_power or 0) + fleet.charging_power_total(members),
+        )
 
     # --- Battery data (fleet) ---
     battery_soc = fleet.weighted_soc(members)
@@ -1978,18 +1984,6 @@ def run_hub_calculation(sensor):
     ) = fleet.inverter_limits(members)
     wiring_topology = fleet.fleet_topology(members)
     inverter_output_per_phase = fleet.sum_outputs(members)
-
-    # --- Derive solar production (unified for grid and off-grid) ---
-    # Per-member: parallel output IS production, series output minus its own
-    # battery power. Falls back to grid export + the fleet's charging draw
-    # when no member has output entities. Off-grid, export is naturally 0.
-    if solar_is_derived:
-        solar_production_total = fleet.solar_from_outputs(members, voltage)
-        if solar_production_total is None:
-            solar_production_total = max(
-                0.0,
-                (total_export_power or 0) + fleet.charging_power_total(members),
-            )
 
     # --- Runtime state from shared hub data (hub_runtime already fetched above) ---
     distribution_mode = hub_runtime.get("distribution_mode", DEFAULT_DISTRIBUTION_MODE)
@@ -2189,7 +2183,7 @@ def run_hub_calculation(sensor):
             )
 
     # --- Feedback loop ---
-    _apply_feedback_loop(site, solar_is_derived, voltage)
+    _apply_feedback_loop(site, solar_is_derived, voltage, members)
 
     # Excess trigger + hysteresis latch. excess_margin() returns the watts by
     # which everything the site is absorbing (grid export + battery charging)
@@ -2412,7 +2406,7 @@ def run_hub_calculation(sensor):
     inverters_data = {
         m.entry_id: {
             "name": m.name,
-            "solar_w": fleet.member_solar(m, voltage),
+            "solar_w": fleet.member_solar_production(m, voltage),
             "battery_soc": m.battery_soc,
             "battery_power": m.battery_power,
         }

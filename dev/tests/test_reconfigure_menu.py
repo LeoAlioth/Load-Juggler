@@ -72,12 +72,12 @@ async def test_reconfigure_hub_shows_menu(hass: HomeAssistant, mock_hub_entry):
         assert option in result["menu_options"]
 
 
-async def test_reconfigure_hub_hides_inverter_page_once_imported(
+async def test_reconfigure_hub_hides_hardware_pages_once_imported(
     hass: HomeAssistant, mock_hub_entry
 ):
-    """Once the hub's legacy inverter/battery fields have been imported onto an
-    Inverter entry, the hub's own inverter page disappears — that hardware is
-    edited on the inverter entry from then on."""
+    """Once the hub's legacy inverter/battery/solar fields have been imported
+    onto an Inverter entry, BOTH legacy hub pages disappear — that hardware is
+    edited on the inverter entry, and the hub is left with one settings page."""
     from custom_components.dynamic_ocpp_evse.const import (
         MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
     )
@@ -92,9 +92,13 @@ async def test_reconfigure_hub_hides_inverter_page_once_imported(
 
     assert result["type"] == FlowResultType.MENU
     assert "reconfigure_hub_inverter" not in result["menu_options"]
-    # The hub's own pages remain for grid and the hub-scoped battery settings
-    assert "reconfigure_hub_grid" in result["menu_options"]
-    assert "reconfigure_hub_battery" in result["menu_options"]
+    assert "reconfigure_hub_battery" not in result["menu_options"]
+    # Grid + site policy is all that is left on the hub itself.
+    assert result["menu_options"] == [
+        "reconfigure_hub_grid",
+        "reconfigure_priority",
+        "reconfigure_finish",
+    ]
 
 
 async def test_reconfigure_finish_closes(hass: HomeAssistant, mock_hub_entry):

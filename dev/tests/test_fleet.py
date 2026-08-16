@@ -21,10 +21,13 @@ from custom_components.dynamic_ocpp_evse.engine.fleet import (
     discharge_power_total,
     fleet_topology,
     inverter_limits,
+    forecast_device_ids,
     member_solar,
+    member_solar_production,
     mixed_topologies,
     soc_full_scalar,
-    solar_from_outputs,
+    solar_is_measured,
+    solar_total,
     sum_outputs,
     weighted_soc,
 )
@@ -176,11 +179,49 @@ def test_solar_mixed_fleet_sums_per_member():
         output=PhaseValues(a=5.0, b=None, c=None), topology="series",
     )
     # parallel 2300 + series (1150 − (−1000)) = 2300 + 2150
-    assert solar_from_outputs([par, ser], V) == 2300 + 5.0 * V + 1000
+    assert solar_total([par, ser], V) == 2300 + 5.0 * V + 1000
 
 
 def test_solar_none_without_outputs():
-    assert solar_from_outputs([_battery(soc=50)], V) is None
+    assert solar_total([_battery(soc=50)], V) is None
+
+
+def test_solar_production_sensor_wins_over_output():
+    """A member with its own production sensor reports it, output ignored."""
+    m = _member(
+        output=PhaseValues(a=10.0, b=None, c=None),
+        topology="parallel",
+        has_solar_entity=True,
+        solar_measured=1800.0,
+    )
+    assert member_solar_production(m, V) == 1800.0
+    assert solar_total([m], V) == 1800.0
+
+
+def test_solar_mixed_measured_and_derived_are_summed():
+    """One inverter with a production sensor, one with only outputs — the
+    fleet total is the sum, which is why derivation is per member."""
+    measured = _member("m", has_solar_entity=True, solar_measured=3000.0)
+    derived = _member("d", output=PhaseValues(a=10.0, b=None, c=None))
+    assert solar_total([measured, derived], V) == 3000.0 + 10.0 * V
+
+
+def test_solar_is_measured_only_when_every_member_measures():
+    measured = _member("m", has_solar_entity=True, solar_measured=3000.0)
+    derived = _member("d", output=PhaseValues(a=10.0, b=None, c=None))
+    assert solar_is_measured([measured]) is True
+    assert solar_is_measured([measured, derived]) is False
+    # No members at all: nothing is measured, so solar stays derived.
+    assert solar_is_measured([]) is False
+
+
+def test_forecast_device_ids_merge_and_dedupe():
+    """Each PV array belongs to an inverter, but clipping is site-wide — the
+    fleet's devices merge into one list, with shared devices counted once."""
+    a = _member("a", forecast_device_ids=("east", "west"))
+    b = _member("b", forecast_device_ids=("west", "north"))
+    assert forecast_device_ids([a, b]) == ["east", "west", "north"]
+    assert forecast_device_ids([_member("c")]) == []
 
 
 def test_charging_power_total_for_fallback():

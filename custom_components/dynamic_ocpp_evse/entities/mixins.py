@@ -131,7 +131,10 @@ class InverterEntityMixin:
 
     Provides:
       - device_info property (Inverter, linked to hub via via_device)
+      - _write_to_inverter_data(value) using class attribute _inverter_data_key
     """
+
+    _inverter_data_key = None
 
     @property
     def device_info(self):
@@ -143,3 +146,14 @@ class InverterEntityMixin:
             "model": "Inverter",
             "via_device": (DOMAIN, hub_entry_id) if hub_entry_id else None,
         }
+
+    def _write_to_inverter_data(self, value):
+        """Write to hass.data[DOMAIN]['inverters'][entry_id][_inverter_data_key].
+
+        setdefault rather than a lookup: the switch can restore its state
+        before the inverter entry's own setup has populated the bucket.
+        """
+        inverters = self.hass.data.setdefault(DOMAIN, {}).setdefault("inverters", {})
+        inverters.setdefault(self.config_entry.entry_id, {})[
+            self._inverter_data_key
+        ] = value

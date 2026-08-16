@@ -498,15 +498,19 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Trigger discovery for unconfigured OCPP chargers
     await _discover_and_notify_chargers(hass, entry.entry_id)
 
-    # One-time auto-import: a hub still carrying legacy hub-level inverter/
-    # battery HARDWARE config (entities or inverter capacities — bare
-    # charge/discharge defaults don't count) gets it moved onto a standalone
-    # inverter entry. Idempotent: the flag here plus the import flow's
-    # unique_id make restarts mid-flow safe, and until the import lands the
-    # engine keeps treating the hub fields as one implicit fleet member.
-    if not entry.data.get(MIGRATE_HUB_INVERTER_IMPORTED_FLAG) and any(
+    # Auto-import: a hub still carrying legacy hub-level HARDWARE config
+    # (inverter, battery or PV entities and capacities — bare charge/discharge
+    # defaults don't count) gets it moved onto a standalone inverter entry.
+    # The trigger is the presence of a field, not the imported flag, so a
+    # release that moves one more field onto the inverter converges on the
+    # next restart; blanking removes the trigger, making it self-terminating.
+    # Until the import lands the engine keeps treating the hub's fields as one
+    # implicit fleet member, so nothing is lost or double-counted in between.
+    if any(
         get_entry_value(entry, key, None)
         for key in (
+            CONF_SOLAR_PRODUCTION_ENTITY_ID,
+            CONF_SOLAR_FORECAST_DEVICE_IDS,
             CONF_BATTERY_SOC_ENTITY_ID,
             CONF_BATTERY_POWER_ENTITY_ID,
             CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
@@ -625,8 +629,8 @@ async def _setup_inverter_entry(hass: HomeAssistant, entry: ConfigEntry):
         entry.entry_id
     )
 
-    # Forward setup to sensor platform only (per-inverter sensors)
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+    # Sensors plus the Battery Charge Control switch (write-control opt-in)
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "switch"])
 
     return True
 
@@ -800,6 +804,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     elif entry_type == ENTRY_TYPE_INVERTER:
         # Unload inverter platforms
         await hass.config_entries.async_forward_entry_unload(entry, "sensor")
+        await hass.config_entries.async_forward_entry_unload(entry, "switch")
 
         # Remove inverter from hub's list
         hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)

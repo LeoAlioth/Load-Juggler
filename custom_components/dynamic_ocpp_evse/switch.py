@@ -5,11 +5,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from .entities.mixins import HubEntityMixin, ChargerEntityMixin
+from .entities.mixins import HubEntityMixin, ChargerEntityMixin, InverterEntityMixin
 from .const import (
-    ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID,
+    ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, ENTRY_TYPE_INVERTER,
+    CONF_NAME, CONF_ENTITY_ID,
     CONF_HUB_ENTRY_ID, CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID,
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION,
+    CONF_CHARGE_LIMIT_ENTITY_ID, INVERTER_RT_CONTROL_ENABLED,
 )
 from .helpers import get_entry_value, hub_has_battery
 
@@ -34,6 +36,22 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
                 )
             )
         async_add_entities(entities)
+        return
+
+    if entry_type == ENTRY_TYPE_INVERTER:
+        # Write-control opt-in. Only offered once a target register is
+        # configured — with nothing to write to, the switch would be a lie.
+        if not get_entry_value(config_entry, CONF_CHARGE_LIMIT_ENTITY_ID, None):
+            _LOGGER.debug(
+                "No charge-limit entity on %s - skipping charge control switch",
+                config_entry.title,
+            )
+            return
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "inverter")
+        name = config_entry.data.get(CONF_NAME, "Inverter")
+        async_add_entities(
+            [BatteryChargeControlSwitch(hass, config_entry, entity_id, name)]
+        )
         return
 
     if entry_type != ENTRY_TYPE_HUB:
@@ -194,3 +212,64 @@ class StationStormReserveSwitch(ChargerEntityMixin, SwitchEntity, RestoreEntity)
         self._state = last_state is not None and last_state.state == "on"
         self.async_write_ha_state()
         self._write_to_charger_data(self._state)
+
+
+class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
+    """Per-inverter opt-in for writing the forecast's charge limit.
+
+    OFF (the default): the clipping forecast stays advisory — the sensors show
+    what it recommends and nothing is written to the inverter. ON: the
+    recommended charge limit is written to the configured register, and the
+    normal value is restored once the advice releases.
+
+    Default off on purpose. This is the only entity in the integration whose
+    'on' state makes Load Juggler write to a third-party device's Modbus
+    registers, so arming it should be a deliberate act — including after a
+    restore with no previous state.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _inverter_data_key = INVERTER_RT_CONTROL_ENABLED
+
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, entity_id: str, name: str):
+        self.hass = hass
+        self.config_entry = config_entry
+        self._attr_name = f"{name} Battery Charge Control"
+        self._attr_unique_id = f"{entity_id}_battery_charge_control"
+        self._state = False
+        self._attr_icon = "mdi:battery-clock"
+
+    @property
+    def is_on(self):
+        return self._state
+
+    async def async_turn_on(self, **kwargs):
+        self._state = True
+        self.async_write_ha_state()
+        self._write_to_inverter_data(True)
+        _LOGGER.info(
+            "Battery charge control enabled for %s — the PV clipping forecast "
+            "will now write %s",
+            self.config_entry.title,
+            get_entry_value(self.config_entry, CONF_CHARGE_LIMIT_ENTITY_ID, None),
+        )
+
+    async def async_turn_off(self, **kwargs):
+        self._state = False
+        self.async_write_ha_state()
+        self._write_to_inverter_data(False)
+        # The control loop sees the disabled flag on its next tick and puts
+        # the normal value back — no write from here, so the pacing and the
+        # write-once-on-release logic stay in one place.
+        _LOGGER.info(
+            "Battery charge control disabled for %s — restoring its normal "
+            "charge limit",
+            self.config_entry.title,
+        )
+
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        self._state = last_state is not None and last_state.state == "on"
+        self.async_write_ha_state()
+        self._write_to_inverter_data(self._state)

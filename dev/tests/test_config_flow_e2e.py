@@ -85,10 +85,11 @@ from custom_components.dynamic_ocpp_evse.const import (
 
 
 async def test_hub_creation_full_flow(hass: HomeAssistant):
-    """Walk through user → hub_info → hub_grid → hub_battery and verify the created entry.
+    """Walk through user → hub_info → hub_grid and verify the created entry.
 
-    Inverter/battery hardware is no longer part of hub creation — it is added
-    afterwards as its own inverter entry.
+    Hardware is no longer part of hub creation: inverters, batteries, PV
+    production sensors and forecast sources are all added afterwards as
+    Inverter entries. The hub is grid connection + site policy, one page.
     """
 
     # Provide mock sensor entities so the entity selector can find them
@@ -155,20 +156,10 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
             CONF_PHASE_VOLTAGE: 230,
             CONF_GRID_EXPORT_LIMIT: 10500,
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
-        },
-    )
-    # New hubs skip the legacy inverter page entirely — battery/inverter
-    # hardware is added afterwards as Inverter entries.
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_battery"
-
-    # Step 4: hub_battery → hub-scoped solar/site settings → creates entry
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
             CONF_BATTERY_SOC_HYSTERESIS: 3,
         },
     )
+    # Grid + site policy is the whole hub — no hardware pages at all.
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["title"] == "My Solar Hub"
 
@@ -228,14 +219,35 @@ def _make_forecast_device(hass, slug, watts=True, name=None):
     return device.id
 
 
-async def test_hub_battery_forecast_devices_validated(hass: HomeAssistant):
-    """The battery step rejects a device without any ``watts`` sensor,
-    accepts a valid multi-device selection, and stores the device list."""
-
-    hass.states.async_set(
-        "sensor.inverter_phase_a", "5.0",
-        {"device_class": "current", "unit_of_measurement": "A"},
+def _bare_hub(hass, name="Forecast Hub", slug="forecast_hub", **options):
+    """A hub with no hardware of its own — the post-slimming shape."""
+    from custom_components.dynamic_ocpp_evse.const import (
+        MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
     )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title=name,
+        data={
+            CONF_NAME: name,
+            CONF_ENTITY_ID: slug,
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+            MIGRATE_HUB_INVERTER_IMPORTED_FLAG: True,
+        },
+        options={CONF_GRID_EXPORT_LIMIT: 5000, **options},
+    )
+    hub.add_to_hass(hass)
+    return hub
+
+
+async def test_inverter_forecast_devices_validated(hass: HomeAssistant):
+    """The PV array belongs to the inverter, so its forecast devices are
+    selected there: a device without any ``watts`` sensor is rejected and
+    named, a valid multi-device selection is stored on the inverter entry."""
+
+    _bare_hub(hass)
     east = _make_forecast_device(hass, "array_east")
     west = _make_forecast_device(hass, "array_west")
     wrong = _make_forecast_device(
@@ -246,29 +258,16 @@ async def test_hub_battery_forecast_devices_validated(hass: HomeAssistant):
         DOMAIN, context={"source": "user"}
     )
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={"setup_type": "hub"}
+        result["flow_id"], user_input={"setup_type": "inverter"}
     )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={CONF_NAME: "Forecast Hub", CONF_ENTITY_ID: "forecast_hub"},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
-            CONF_MAIN_BREAKER_RATING: 32,
-            CONF_INVERT_PHASES: False,
-            CONF_PHASE_VOLTAGE: 230,
-            CONF_GRID_EXPORT_LIMIT: 5000,
-        },
-    )
-    assert result["step_id"] == "hub_battery"
+    assert result["step_id"] == "inverter_config"
 
     # A device without any watts-bearing sensor is rejected, named in the error
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
-            CONF_BATTERY_SOC_HYSTERESIS: 3,
+            CONF_NAME: "Roof Array",
+            CONF_ENTITY_ID: "lj_roof",
             CONF_SOLAR_FORECAST_DEVICE_IDS: [wrong],
         },
     )
@@ -278,68 +277,75 @@ async def test_hub_battery_forecast_devices_validated(hass: HomeAssistant):
     }
     assert result["description_placeholders"] == {"entity": "Weather Station"}
 
-    # A valid multi-device selection is accepted and stored (battery capacity
-    # now lives on the inverter entries, not the hub)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
-            CONF_BATTERY_SOC_HYSTERESIS: 3,
+            CONF_NAME: "Roof Array",
+            CONF_ENTITY_ID: "lj_roof",
             CONF_SOLAR_FORECAST_DEVICE_IDS: [east, west],
-            CONF_BASE_CONSUMPTION: 300,
-            CONF_FORECAST_SOC_FLOOR: 30,
         },
+    )
+    assert result["step_id"] == "inverter_battery"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={}
+    )
+    # Write-control is the optional last page — submitting it empty keeps the
+    # inverter advisory.
+    assert result["step_id"] == "inverter_control"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={}
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
 
-    entries = hass.config_entries.async_entries(DOMAIN)
-    hub_entry = next(e for e in entries if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_HUB)
-    stored = {**hub_entry.data, **hub_entry.options}
+    from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
+
+    inverter = next(
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+    )
+    stored = {**inverter.data, **inverter.options}
     assert stored[CONF_SOLAR_FORECAST_DEVICE_IDS] == [east, west]
-    assert stored[CONF_GRID_EXPORT_LIMIT] == 5000
 
 
-async def test_hub_battery_empty_forecast_selection_accepted(hass: HomeAssistant):
+async def test_inverter_empty_forecast_selection_accepted(hass: HomeAssistant):
     """Leaving the forecast selector empty is valid — the feature is simply off."""
 
-    hass.states.async_set(
-        "sensor.inverter_phase_a", "5.0",
-        {"device_class": "current", "unit_of_measurement": "A"},
-    )
+    _bare_hub(hass, name="Plain Hub", slug="plain_hub")
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={"setup_type": "hub"}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={CONF_NAME: "Plain Hub", CONF_ENTITY_ID: "plain_hub"},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
-            CONF_MAIN_BREAKER_RATING: 32,
-            CONF_INVERT_PHASES: False,
-            CONF_PHASE_VOLTAGE: 230,
-            CONF_GRID_EXPORT_LIMIT: 10500,
-        },
+        result["flow_id"], user_input={"setup_type": "inverter"}
     )
     # The multi-device selector omits its key entirely when left empty
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        user_input={
-            CONF_BATTERY_SOC_HYSTERESIS: 3,
-        },
+        user_input={CONF_NAME: "Plain Inverter", CONF_ENTITY_ID: "lj_plain_inv"},
+    )
+    assert result["step_id"] == "inverter_battery"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={}
+    )
+    # Write-control is the optional last page — submitting it empty keeps the
+    # inverter advisory.
+    assert result["step_id"] == "inverter_control"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={}
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
 
-    entries = hass.config_entries.async_entries(DOMAIN)
-    hub_entry = next(e for e in entries if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_HUB)
-    stored = {**hub_entry.data, **hub_entry.options}
+    from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
+
+    inverter = next(
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+    )
+    stored = {**inverter.data, **inverter.options}
     assert stored.get(CONF_SOLAR_FORECAST_DEVICE_IDS) == []
 
 
@@ -378,15 +384,6 @@ async def test_hub_creation_single_phase(hass: HomeAssistant):
             CONF_PHASE_VOLTAGE: 230,
             CONF_GRID_EXPORT_LIMIT: 5500,
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
-        },
-    )
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_battery"
-
-    # Hub-scoped site settings only (battery hardware lives on inverter entries)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
             CONF_BATTERY_SOC_HYSTERESIS: 3,
         },
     )
@@ -579,10 +576,10 @@ async def test_options_flow_hub_saves_changes(
 ):
     """Test that submitting hub options actually updates the config entry.
 
-    Setting the hub up auto-imports its legacy inverter/battery hardware onto a
-    standalone inverter entry, so the options flow is two steps from then on:
-    hub_grid → hub (hub-scoped solar/forecast settings). The inverter page is
-    gone — that hardware is edited on the inverter entry.
+    Setting the hub up auto-imports its legacy hardware (inverter, battery,
+    solar sensor, forecast devices) onto a standalone inverter entry, so the
+    options flow is a single page from then on: grid connection plus site
+    policy, then straight to save.
     """
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
@@ -618,10 +615,13 @@ async def test_options_flow_hub_saves_changes(
         {"device_class": "power", "unit_of_measurement": "W"},
     )
 
-    # Step 1: hub_grid (electrical settings)
+    # One page: grid + site policy. No hardware fields — those moved to the
+    # inverter entry the setup above auto-created.
     result = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_grid"
+    assert not _schema_has(result["data_schema"], CONF_BATTERY_MAX_CHARGE_POWER)
+    assert not _schema_has(result["data_schema"], CONF_SOLAR_PRODUCTION_ENTITY_ID)
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -633,34 +633,17 @@ async def test_options_flow_hub_saves_changes(
             CONF_PHASE_VOLTAGE: 230,
             CONF_GRID_EXPORT_LIMIT: 13500,
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
-        },
-    )
-
-    # Step 2: hub (hub-scoped solar/forecast settings) — saves and closes,
-    # since this hub has no loads to prioritise.
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub"
-    # Battery hardware is no longer offered here — it lives on the inverter entry.
-    assert not _schema_has(result["data_schema"], CONF_BATTERY_MAX_CHARGE_POWER)
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.solar_production",
             CONF_BATTERY_SOC_HYSTERESIS: 5,
-            CONF_SOLAR_FORECAST_DEVICE_IDS: [],
             CONF_BASE_CONSUMPTION: 400,
             CONF_FORECAST_SOC_FLOOR: 35,
         },
     )
+    # Saves and closes — this hub has no loads to prioritise.
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     # Options should now contain the submitted values
     assert mock_hub_entry.options.get(CONF_MAIN_BREAKER_RATING) == 25
     assert mock_hub_entry.options.get(CONF_GRID_EXPORT_LIMIT) == 13500
-    assert mock_hub_entry.options.get(CONF_SOLAR_PRODUCTION_ENTITY_ID) == (
-        "sensor.solar_production"
-    )
     assert mock_hub_entry.options.get(CONF_BATTERY_SOC_HYSTERESIS) == 5
     assert mock_hub_entry.options.get(CONF_BASE_CONSUMPTION) == 400
     assert mock_hub_entry.options.get(CONF_FORECAST_SOC_FLOOR) == 35
@@ -929,6 +912,9 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
         CONF_BATTERY_SOC_FULL,
         CONF_WIRING_TOPOLOGY,
         WIRING_TOPOLOGY_SERIES,
+        CONF_CHARGE_LIMIT_ENTITY_ID,
+        CONF_CHARGE_LIMIT_UNIT,
+        CONF_BATTERY_NOMINAL_VOLTAGE,
     )
 
     hub = MockConfigEntry(
@@ -993,6 +979,17 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
             CONF_BATTERY_CAPACITY_KWH: 15,
         },
     )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "inverter_control"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_CHARGE_LIMIT_ENTITY_ID: "number.deye_max_charge_current",
+            CONF_CHARGE_LIMIT_UNIT: "A",
+            CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        },
+    )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
 
@@ -1005,6 +1002,7 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
     assert stored[CONF_WIRING_TOPOLOGY] == WIRING_TOPOLOGY_SERIES
     assert stored[CONF_BATTERY_SOC_ENTITY_ID] == "sensor.deye_battery_soc"
     assert stored[CONF_BATTERY_CAPACITY_KWH] == 15
+    assert stored[CONF_CHARGE_LIMIT_ENTITY_ID] == "number.deye_max_charge_current"
     # The transient flow key must not leak into the stored options
     assert CONF_DEVICE_TYPE not in entry.options
 
@@ -1037,6 +1035,8 @@ async def test_hub_inverter_auto_import(hass: HomeAssistant):
             CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_a",
             CONF_INVERTER_MAX_POWER: 17000,
             CONF_WIRING_TOPOLOGY: "series",
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.pv_power",
+            CONF_SOLAR_FORECAST_DEVICE_IDS: ["dev_east"],
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.batt_soc",
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.batt_power",
             CONF_BATTERY_MAX_CHARGE_POWER: 5000,
@@ -1061,11 +1061,16 @@ async def test_hub_inverter_auto_import(hass: HomeAssistant):
     assert inverter.options[CONF_INVERTER_MAX_POWER] == 17000
     assert inverter.options[CONF_BATTERY_SOC_ENTITY_ID] == "sensor.batt_soc"
     assert inverter.options[CONF_BATTERY_CAPACITY_KWH] == 10
+    # The PV array belongs to the inverter too — sensor and forecast device.
+    assert inverter.options[CONF_SOLAR_PRODUCTION_ENTITY_ID] == "sensor.pv_power"
+    assert inverter.options[CONF_SOLAR_FORECAST_DEVICE_IDS] == ["dev_east"]
 
-    # The hub is blanked and flagged; hub-scoped settings stay behind.
+    # The hub is blanked and flagged; site policy stays behind.
     assert hub.data[MIGRATE_HUB_INVERTER_IMPORTED_FLAG] is True
     assert CONF_INVERTER_MAX_POWER not in hub.options
     assert CONF_BATTERY_SOC_ENTITY_ID not in hub.options
+    assert CONF_SOLAR_PRODUCTION_ENTITY_ID not in hub.options
+    assert CONF_SOLAR_FORECAST_DEVICE_IDS not in hub.options
     assert hub.options[CONF_GRID_EXPORT_LIMIT] == 13500
     assert hub.options[CONF_BATTERY_SOC_HYSTERESIS] == 3
 
@@ -1120,5 +1125,82 @@ async def test_hub_inverter_auto_import_is_idempotent(hass: HomeAssistant):
         for e in hass.config_entries.async_entries(DOMAIN)
         if e.data.get(ENTRY_TYPE) == "inverter"
         and e.data.get(CONF_HUB_ENTRY_ID) == hub.entry_id
+    ]
+    assert len(inverters) == 1
+
+
+async def test_hub_inverter_import_merges_later_fields(hass: HomeAssistant):
+    """A hub migrated by an earlier release still holds the fields that later
+    releases move (here the solar sensor and forecast devices). The next
+    import round merges them onto the SAME inverter entry — no second entry,
+    and values already edited on the inverter are not overwritten."""
+    from custom_components.dynamic_ocpp_evse.const import (
+        ENTRY_TYPE_INVERTER,
+        DEVICE_TYPE_INVERTER,
+        CONF_DEVICE_TYPE,
+        MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
+    )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="Migrated Hub",
+        data={
+            CONF_NAME: "Migrated Hub",
+            CONF_ENTITY_ID: "migrated_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+            MIGRATE_HUB_INVERTER_IMPORTED_FLAG: True,
+        },
+        options={
+            CONF_GRID_EXPORT_LIMIT: 13500,
+            # Left behind by the earlier round, which did not move these yet
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.pv_power",
+            CONF_SOLAR_FORECAST_DEVICE_IDS: ["dev_east"],
+        },
+    )
+    hub.add_to_hass(hass)
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="Migrated Hub Inverter",
+        unique_id=f"{hub.entry_id}_inverter_import",
+        data={
+            CONF_NAME: "Migrated Hub Inverter",
+            CONF_ENTITY_ID: "migrated_hub_inverter",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+            "imported_from_hub": True,
+        },
+        options={
+            CONF_INVERTER_MAX_POWER: 17000,
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.batt_soc",
+        },
+    )
+    existing.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "import"}, data={"hub_entry_id": hub.entry_id}
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+    # Merged onto the existing entry, existing values untouched
+    assert existing.options[CONF_SOLAR_PRODUCTION_ENTITY_ID] == "sensor.pv_power"
+    assert existing.options[CONF_SOLAR_FORECAST_DEVICE_IDS] == ["dev_east"]
+    assert existing.options[CONF_INVERTER_MAX_POWER] == 17000
+    assert existing.options[CONF_BATTERY_SOC_ENTITY_ID] == "sensor.batt_soc"
+
+    # Gone from the hub, so the trigger does not fire again next restart
+    assert CONF_SOLAR_PRODUCTION_ENTITY_ID not in hub.options
+    assert CONF_SOLAR_FORECAST_DEVICE_IDS not in hub.options
+    assert hub.options[CONF_GRID_EXPORT_LIMIT] == 13500
+
+    inverters = [
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
     ]
     assert len(inverters) == 1

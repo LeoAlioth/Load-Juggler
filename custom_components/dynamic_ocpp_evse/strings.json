@@ -33,8 +33,8 @@
                 }
             },
             "hub_grid": {
-                "title": "Grid Configuration",
-                "description": "Configure your grid and electrical settings",
+                "title": "Hub Settings",
+                "description": "Your grid connection and the site-wide policy applied to whatever inverters and batteries you add. Inverters, batteries and their PV arrays are configured separately — add an Inverter / Home Battery once the hub exists.",
                 "data": {
                     "phase_a_current_entity_id": "Sensor that measures grid current for phase A (optional - set to 'None' for off-grid setups)",
                     "phase_b_current_entity_id": "Sensor for phase B current (optional - set to 'None' for single-phase)",
@@ -46,7 +46,10 @@
                     "phase_voltage": "Phase voltage",
                     "grid_export_limit": "Grid export limit",
                     "excess_trigger_margin": "Excess trigger margin",
-                    "site_update_frequency": "Site sensor refresh rate"
+                    "site_update_frequency": "Site sensor refresh rate",
+                    "battery_soc_hysteresis": "Battery SOC hysteresis",
+                    "base_consumption": "Base house consumption",
+                    "forecast_soc_floor": "Forecast SOC floor"
                 },
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
@@ -56,7 +59,10 @@
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
                     "excess_trigger_margin": "How far below the export limit Excess mode engages. Inverters curtail slightly under the limit, so a trigger exactly at the limit would never fire.",
-                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers."
+                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
+                    "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
+                    "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
                 }
             },
             "hub_inverter": {
@@ -78,35 +84,6 @@
                     "wiring_topology": "Parallel: inverter and grid feed independently (AC-coupled solar, no battery). Series: all power flows through the inverter (hybrid inverter with DC-coupled battery)."
                 }
             },
-            "hub_battery": {
-                "title": "Solar & Site Settings",
-                "description": "Solar production, battery policy and the PV clipping forecast. Battery and inverter HARDWARE is configured separately — add an Inverter / Home Battery after the hub is created.",
-                "data": {
-                    "solar_production_entity_id": "Solar power production sensor",
-                    "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
-                    "battery_power_entity_id": "Battery power sensor",
-                    "battery_max_charge_power": "Maximum battery charge power",
-                    "battery_max_discharge_power": "Maximum battery discharge power",
-                    "battery_soc_hysteresis": "Battery SOC hysteresis",
-                    "battery_soc_full": "Battery full SOC",
-                    "solar_forecast_device_ids": "Solar forecast (one device per PV array)",
-                    "battery_capacity_kwh": "Battery capacity",
-                    "base_consumption": "Base house consumption",
-                    "forecast_soc_floor": "Forecast SOC floor"
-                },
-                "data_description": {
-                    "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
-                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign \u2014 otherwise battery power will never be offered to loads.",
-                    "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
-                    "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
-                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
-                    "battery_soc_full": "SOC at or above which the battery counts as full. A smart plug in Excess mode runs once the battery reaches this level (or whenever the site is exporting).",
-                    "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak.",
-                    "battery_capacity_kwh": "The kWh your battery's SOC percentage spans (usable capacity). 0 disables the PV clipping forecast.",
-                    "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
-                    "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
-                }
-            },
             "inverter_config": {
                 "title": "Inverter",
                 "description": "Add an inverter as a power source on this hub. A site can have several (e.g. an older AC-coupled string inverter plus a new hybrid) — the hub aggregates the whole fleet.",
@@ -119,13 +96,17 @@
                     "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
                     "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
                     "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
-                    "wiring_topology": "Wiring topology"
+                    "wiring_topology": "Wiring topology",
+                    "solar_production_entity_id": "Solar power production sensor",
+                    "solar_forecast_device_ids": "Solar forecast (one device per PV array)"
                 },
                 "data_description": {
                     "inverter_max_power": "Nameplate rated power from this inverter's datasheet. Set to 0 to leave unconstrained.",
                     "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase limits.",
                     "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
-                    "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery)."
+                    "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
+                    "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
+                    "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak."
                 }
             },
             "inverter_battery": {
@@ -143,6 +124,28 @@
                     "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign.",
                     "battery_soc_full": "SOC at or above which THIS battery counts as full and stops absorbing excess solar.",
                     "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity). Used for the fleet SOC weighting and the PV clipping forecast."
+                }
+            },
+            "inverter_control": {
+                "title": "Battery Charge Control",
+                "description": "Optional. Lets the PV clipping forecast slow this battery's charging on days when the midday peak would otherwise be clipped at the export limit — the battery stays lower in the morning so there is somewhere to put the surplus. Leave empty to skip; nothing is ever written to your inverter until you also turn on the Battery Charge Control switch.",
+                "data": {
+                    "inverter_charge_limit_entity_id": "Battery charge limit entity to control (optional)",
+                    "inverter_charge_limit_unit": "What that entity expects",
+                    "battery_voltage_entity_id": "Battery voltage sensor (optional)",
+                    "battery_nominal_voltage": "Battery nominal voltage",
+                    "inverter_charge_limit_normal": "Normal charge limit",
+                    "inverter_charge_control_interval": "Minimum time between writes",
+                    "inverter_charge_control_deadband": "Write deadband"
+                },
+                "data_description": {
+                    "inverter_charge_limit_entity_id": "The inverter's own maximum battery charge current/power number entity (Deye: 'Battery Max Charge Current'). Leave empty to keep this inverter advisory — the forecast still publishes its recommendation as a sensor, nothing is written. Setting it adds a Battery Charge Control switch, which must be turned on before anything is written.",
+                    "inverter_charge_limit_unit": "Deye and most hybrids take DC amps at battery voltage; some inverters take watts. The recommendation is computed in watts and converted.",
+                    "battery_voltage_entity_id": "Used for the watts-to-amps conversion. More accurate than the nominal value across the charge curve; the nominal is used when it is missing.",
+                    "battery_nominal_voltage": "Fallback for the conversion — 51.2 V for a 16S LFP pack, 25.6 V for 8S.",
+                    "inverter_charge_limit_normal": "Written back when the forecast releases the limit, in the same unit as the target entity. 0 restores the entity's own maximum, which is where an unmanaged inverter sits.",
+                    "inverter_charge_control_interval": "These registers go over Modbus and some firmwares write them to EEPROM, so writes are paced rather than sent every cycle.",
+                    "inverter_charge_control_deadband": "As a percentage of the normal charge limit. A new recommendation closer than this to what the register already holds is not written."
                 }
             },
             "select_hub": {
@@ -370,8 +373,8 @@
                 }
             },
             "reconfigure_hub_grid": {
-                "title": "Reconfigure Grid Settings",
-                "description": "Update your grid configuration",
+                "title": "Reconfigure Hub Settings",
+                "description": "Update the grid connection and site policy",
                 "data": {
                     "phase_a_current_entity_id": "Sensor that measures grid current for phase A (optional - set to 'None' for off-grid setups)",
                     "phase_b_current_entity_id": "Sensor for phase B current (optional)",
@@ -383,7 +386,10 @@
                     "phase_voltage": "Phase voltage",
                     "grid_export_limit": "Grid export limit",
                     "excess_trigger_margin": "Excess trigger margin",
-                    "site_update_frequency": "Site sensor refresh rate"
+                    "site_update_frequency": "Site sensor refresh rate",
+                    "battery_soc_hysteresis": "Battery SOC hysteresis",
+                    "base_consumption": "Base house consumption",
+                    "forecast_soc_floor": "Forecast SOC floor"
                 },
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
@@ -393,7 +399,10 @@
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
                     "excess_trigger_margin": "How far below the export limit Excess mode engages. Inverters curtail slightly under the limit, so a trigger exactly at the limit would never fire.",
-                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers."
+                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
+                    "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
+                    "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
                 }
             },
             "reconfigure_hub_inverter": {
@@ -424,24 +433,18 @@
                     "battery_power_entity_id": "Battery power sensor",
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
-                    "battery_soc_hysteresis": "Battery SOC hysteresis",
                     "battery_soc_full": "Battery full SOC",
                     "solar_forecast_device_ids": "Solar forecast (one device per PV array)",
-                    "battery_capacity_kwh": "Battery capacity",
-                    "base_consumption": "Base house consumption",
-                    "forecast_soc_floor": "Forecast SOC floor"
+                    "battery_capacity_kwh": "Battery capacity"
                 },
                 "data_description": {
                     "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
-                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign \u2014 otherwise battery power will never be offered to loads.",
+                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign — otherwise battery power will never be offered to loads.",
                     "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
                     "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
-                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
                     "battery_soc_full": "SOC at or above which the battery counts as full. A smart plug in Excess mode runs once the battery reaches this level (or whenever the site is exporting).",
                     "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak.",
-                    "battery_capacity_kwh": "The kWh your battery's SOC percentage spans (usable capacity). 0 disables the PV clipping forecast.",
-                    "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
-                    "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
+                    "battery_capacity_kwh": "The kWh your battery's SOC percentage spans (usable capacity). 0 disables the PV clipping forecast."
                 }
             },
             "reconfigure_inverter": {
@@ -460,13 +463,31 @@
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
                     "battery_soc_full": "Battery full SOC",
-                    "battery_capacity_kwh": "Battery capacity"
+                    "battery_capacity_kwh": "Battery capacity",
+                    "solar_production_entity_id": "Solar power production sensor",
+                    "solar_forecast_device_ids": "Solar forecast (one device per PV array)",
+                    "inverter_charge_limit_entity_id": "Battery charge limit entity to control (optional)",
+                    "inverter_charge_limit_unit": "What that entity expects",
+                    "battery_voltage_entity_id": "Battery voltage sensor (optional)",
+                    "battery_nominal_voltage": "Battery nominal voltage",
+                    "inverter_charge_limit_normal": "Normal charge limit",
+                    "inverter_charge_control_interval": "Minimum time between writes",
+                    "inverter_charge_control_deadband": "Write deadband"
                 },
                 "data_description": {
                     "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
                     "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging and negative while charging.",
                     "battery_soc_full": "SOC at or above which THIS battery counts as full and stops absorbing excess solar.",
-                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity)."
+                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity).",
+                    "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
+                    "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak.",
+                    "inverter_charge_limit_entity_id": "The inverter's own maximum battery charge current/power number entity (Deye: 'Battery Max Charge Current'). Leave empty to keep this inverter advisory — the forecast still publishes its recommendation as a sensor, nothing is written. Setting it adds a Battery Charge Control switch, which must be turned on before anything is written.",
+                    "inverter_charge_limit_unit": "Deye and most hybrids take DC amps at battery voltage; some inverters take watts. The recommendation is computed in watts and converted.",
+                    "battery_voltage_entity_id": "Used for the watts-to-amps conversion. More accurate than the nominal value across the charge curve; the nominal is used when it is missing.",
+                    "battery_nominal_voltage": "Fallback for the conversion — 51.2 V for a 16S LFP pack, 25.6 V for 8S.",
+                    "inverter_charge_limit_normal": "Written back when the forecast releases the limit, in the same unit as the target entity. 0 restores the entity's own maximum, which is where an unmanaged inverter sits.",
+                    "inverter_charge_control_interval": "These registers go over Modbus and some firmwares write them to EEPROM, so writes are paced rather than sent every cycle.",
+                    "inverter_charge_control_deadband": "As a percentage of the normal charge limit. A new recommendation closer than this to what the register already holds is not written."
                 }
             },
             "reconfigure_plug": {
@@ -589,8 +610,8 @@
                 }
             },
             "hub_grid": {
-                "title": "Update Grid Settings",
-                "description": "Update your grid and electrical configuration",
+                "title": "Update Hub Settings",
+                "description": "Update the grid connection and site policy",
                 "data": {
                     "phase_a_current_entity_id": "Sensor that measures grid current for phase A (optional - set to 'None' for off-grid setups)",
                     "phase_b_current_entity_id": "Sensor for phase B current (optional)",
@@ -602,7 +623,10 @@
                     "phase_voltage": "Phase voltage",
                     "grid_export_limit": "Grid export limit",
                     "excess_trigger_margin": "Excess trigger margin",
-                    "site_update_frequency": "Site sensor refresh rate"
+                    "site_update_frequency": "Site sensor refresh rate",
+                    "battery_soc_hysteresis": "Battery SOC hysteresis",
+                    "base_consumption": "Base house consumption",
+                    "forecast_soc_floor": "Forecast SOC floor"
                 },
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
@@ -612,7 +636,10 @@
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
                     "excess_trigger_margin": "How far below the export limit Excess mode engages. Inverters curtail slightly under the limit, so a trigger exactly at the limit would never fire.",
-                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers."
+                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
+                    "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
+                    "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
                 }
             },
             "hub_inverter": {
@@ -643,24 +670,18 @@
                     "battery_power_entity_id": "Battery power sensor",
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
-                    "battery_soc_hysteresis": "Battery SOC hysteresis",
                     "battery_soc_full": "Battery full SOC",
                     "solar_forecast_device_ids": "Solar forecast (one device per PV array)",
-                    "battery_capacity_kwh": "Battery capacity",
-                    "base_consumption": "Base house consumption",
-                    "forecast_soc_floor": "Forecast SOC floor"
+                    "battery_capacity_kwh": "Battery capacity"
                 },
                 "data_description": {
                     "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
-                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign \u2014 otherwise battery power will never be offered to loads.",
+                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign — otherwise battery power will never be offered to loads.",
                     "battery_max_charge_power": "Maximum power the inverter uses to charge the battery. Check your inverter specs or battery app.",
                     "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
-                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
                     "battery_soc_full": "SOC at or above which the battery counts as full. A smart plug in Excess mode runs once the battery reaches this level (or whenever the site is exporting).",
                     "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak.",
-                    "battery_capacity_kwh": "The kWh your battery's SOC percentage spans (usable capacity). 0 disables the PV clipping forecast.",
-                    "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
-                    "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
+                    "battery_capacity_kwh": "The kWh your battery's SOC percentage spans (usable capacity). 0 disables the PV clipping forecast."
                 }
             },
             "inverter": {
@@ -679,13 +700,31 @@
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
                     "battery_soc_full": "Battery full SOC",
-                    "battery_capacity_kwh": "Battery capacity"
+                    "battery_capacity_kwh": "Battery capacity",
+                    "solar_production_entity_id": "Solar power production sensor",
+                    "solar_forecast_device_ids": "Solar forecast (one device per PV array)",
+                    "inverter_charge_limit_entity_id": "Battery charge limit entity to control (optional)",
+                    "inverter_charge_limit_unit": "What that entity expects",
+                    "battery_voltage_entity_id": "Battery voltage sensor (optional)",
+                    "battery_nominal_voltage": "Battery nominal voltage",
+                    "inverter_charge_limit_normal": "Normal charge limit",
+                    "inverter_charge_control_interval": "Minimum time between writes",
+                    "inverter_charge_control_deadband": "Write deadband"
                 },
                 "data_description": {
                     "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
                     "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging and negative while charging.",
                     "battery_soc_full": "SOC at or above which THIS battery counts as full and stops absorbing excess solar.",
-                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity)."
+                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity).",
+                    "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
+                    "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak.",
+                    "inverter_charge_limit_entity_id": "The inverter's own maximum battery charge current/power number entity (Deye: 'Battery Max Charge Current'). Leave empty to keep this inverter advisory — the forecast still publishes its recommendation as a sensor, nothing is written. Setting it adds a Battery Charge Control switch, which must be turned on before anything is written.",
+                    "inverter_charge_limit_unit": "Deye and most hybrids take DC amps at battery voltage; some inverters take watts. The recommendation is computed in watts and converted.",
+                    "battery_voltage_entity_id": "Used for the watts-to-amps conversion. More accurate than the nominal value across the charge curve; the nominal is used when it is missing.",
+                    "battery_nominal_voltage": "Fallback for the conversion — 51.2 V for a 16S LFP pack, 25.6 V for 8S.",
+                    "inverter_charge_limit_normal": "Written back when the forecast releases the limit, in the same unit as the target entity. 0 restores the entity's own maximum, which is where an unmanaged inverter sits.",
+                    "inverter_charge_control_interval": "These registers go over Modbus and some firmwares write them to EEPROM, so writes are paced rather than sent every cycle.",
+                    "inverter_charge_control_deadband": "As a percentage of the normal charge limit. A new recommendation closer than this to what the register already holds is not written."
                 }
             },
             "plug": {

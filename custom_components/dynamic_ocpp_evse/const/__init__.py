@@ -10,6 +10,7 @@ aggregates the per-device mode catalogs.
 
 from .common import *          # noqa: F401,F403
 from .hub import *             # noqa: F401,F403
+from .inverter import *        # noqa: F401,F403
 from .group import *           # noqa: F401,F403
 from .evse import *            # noqa: F401,F403
 from .plug import *            # noqa: F401,F403

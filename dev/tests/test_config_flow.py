@@ -354,17 +354,18 @@ async def test_hub_grid_with_entities_without_device_class(
         },
     )
 
-    # New hubs go straight to the site/solar page — inverter hardware is
-    # configured on separate Inverter entries.
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_battery"
+    # Grid + site policy is the whole hub — all hardware lives on separate
+    # Inverter entries, so the flow finishes here.
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Test Hub"
 
 
-async def test_hub_battery_with_soc_sensor_without_device_class(
+async def test_inverter_battery_with_soc_sensor_without_device_class(
     hass: HomeAssistant,
     mock_setup,
 ):
-    """Test hub_battery step with SOC sensor that has unit % but no device_class.
+    """Test the inverter battery step with a SOC sensor that has unit % but no
+    device_class.
 
     This tests that battery SOC sensors without device_class='battery' work
     correctly using unit_of_measurement='%' for filtering.
@@ -430,26 +431,44 @@ async def test_hub_battery_with_soc_sensor_without_device_class(
             "grid_export_limit": 13500,
             "auto_detect_phase_mapping": True,
             "solar_grace_period": 5,
+            "battery_soc_hysteresis": 3,
         },
     )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
 
-    # Should show hub_battery step (site/solar settings)
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_battery"
-
-    # Submit the hub-scoped solar settings (battery hardware moved to the
-    # Inverter entries, which have their own SOC-sensor selector)
+    # Now add the inverter that owns the battery — the SOC sensor is offered
+    # there, and a % unit alone is enough to qualify it.
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "inverter"}
+    )
+    assert result["step_id"] == "inverter_config"
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
+            CONF_NAME: "Hybrid",
+            CONF_ENTITY_ID: "lj_hybrid",
             "solar_production_entity_id": "sensor.solar_power",
-            "battery_soc_hysteresis": 3,
         },
+    )
+    assert result["step_id"] == "inverter_battery"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            "battery_soc_entity_id": "sensor.battery_soc",
+            "battery_power_entity_id": "sensor.battery_power",
+        },
+    )
+    # Write-control page skipped (empty = advisory only)
+    assert result["step_id"] == "inverter_control"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={}
     )
 
     # Should create entry
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Test Hub"
 
 
 async def test_power_sensors_with_watts_unit_without_device_class(
@@ -511,13 +530,32 @@ async def test_power_sensors_with_watts_unit_without_device_class(
             "solar_grace_period": 5,
         },
     )
-    # hub_battery step - solar sensor without device_class (W unit only)
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    # The solar production sensor is picked on the inverter that owns the
+    # array — a W unit without device_class must still qualify it.
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "inverter"}
+    )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
+            CONF_NAME: "String Inverter",
+            CONF_ENTITY_ID: "lj_string_inv",
             "solar_production_entity_id": "sensor.solar_production",
-            "battery_soc_hysteresis": 3,
         },
+    )
+    assert result["step_id"] == "inverter_battery"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={"battery_power_entity_id": "sensor.battery_power"},
+    )
+    assert result["step_id"] == "inverter_control"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={}
     )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY

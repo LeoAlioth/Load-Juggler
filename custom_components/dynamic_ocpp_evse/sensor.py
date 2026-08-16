@@ -4,7 +4,7 @@ from homeassistant.core import HomeAssistant
 from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import *
-from .helpers import get_entry_value, hub_has_battery
+from .helpers import get_entry_value, hub_has_battery, fleet_has_forecast_sources
 from .entities.load import LoadJugglerDeviceSensor
 from .entities.load_sensors import (
     LoadJugglerAllocatedCurrentSensor,
@@ -24,6 +24,7 @@ from .entities.hub import (
 from .entities.circuit_group import LoadJugglerCircuitGroupSensor
 from .entities.inverter import (
     LoadJugglerInverterDataSensor,
+    LoadJugglerInverterChargeControlSensor,
     INVERTER_SENSOR_DEFINITIONS,
 )
 from . import get_hub_for_charger
@@ -68,12 +69,7 @@ async def async_setup_entry(
             ):
                 fleet_capacity += get_entry_value(child, CONF_BATTERY_CAPACITY_KWH, 0) or 0
         has_forecast = (
-            (
-                bool(get_entry_value(config_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None))
-                or bool(
-                    get_entry_value(config_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None)
-                )
-            )
+            fleet_has_forecast_sources(hass, config_entry)
             and (get_entry_value(config_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
             and fleet_capacity > 0
         )
@@ -130,10 +126,10 @@ async def async_setup_entry(
             and (get_entry_value(config_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0) > 0
             and hub_entry is not None
             and (get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
-            and bool(
-                get_entry_value(hub_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None)
-                or get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None)
-            )
+            # Any array on the fleet feeds the site forecast — the advice for
+            # THIS battery does not require THIS inverter to own a forecast
+            # device (an AC-coupled array's clipping is absorbed here too).
+            and fleet_has_forecast_sources(hass, hub_entry)
         )
         entities = []
         for defn in INVERTER_SENSOR_DEFINITIONS:
@@ -144,12 +140,25 @@ async def async_setup_entry(
             entities.append(
                 LoadJugglerInverterDataSensor(hass, config_entry, name, entity_id, defn)
             )
+        # Write-control status — created only with a target register, since
+        # that sensor is also what drives the writes.
+        writes_charge_limit = bool(
+            get_entry_value(config_entry, CONF_CHARGE_LIMIT_ENTITY_ID, None)
+        )
+        if writes_charge_limit:
+            entities.append(
+                LoadJugglerInverterChargeControlSensor(
+                    hass, config_entry, name, entity_id
+                )
+            )
         async_add_entities(entities)
         _LOGGER.info(
-            "Setting up inverter sensors for %s (battery=%s, forecast=%s)",
+            "Setting up inverter sensors for %s (battery=%s, forecast=%s, "
+            "charge control=%s)",
             name,
             "yes" if inv_has_battery else "no",
             "yes" if inv_has_forecast else "no",
+            "yes" if writes_charge_limit else "no",
         )
         return
 
