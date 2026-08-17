@@ -5,6 +5,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from .entities.mixins import HubEntityMixin, ChargerEntityMixin
+from . import consume_plug_mode_migration
 from .const import (
     DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID,
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK,
@@ -16,7 +17,6 @@ from .const import (
     OPERATING_MODES_POWER_STATION,
     DEFAULT_OPERATING_MODE_EVSE, DEFAULT_OPERATING_MODE_PLUG,
     DEFAULT_OPERATING_MODE_HOT_WATER_TANK, DEFAULT_OPERATING_MODE_POWER_STATION,
-    MIGRATE_PLUG_SOLAR_ONLY_FLAG,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -92,17 +92,21 @@ class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        # One-time plug migration (2.2 → 2.3): the old "Solar Only" plug mode
+        # was renamed to "Solar Priority"; the key "Solar Only" now denotes a
+        # different, target-gated mode. async_migrate_entry flags the entry and
+        # async_setup_entry turns that into a one-shot runtime marker, claimed
+        # here. The claim MUST NOT write to the config entry — that fires the
+        # update listener and reloads an entry that may still be
+        # SETUP_IN_PROGRESS (issue #34); async_setup_entry clears the persisted
+        # flag itself, at a point where no update listener is registered.
+        migrate_plug_solar_only = consume_plug_mode_migration(
+            self.hass, self.config_entry.entry_id
+        )
         last_state = await self.async_get_last_state()
         if last_state is not None:
             restored = last_state.state
-            # One-time plug migration (2.2 → 2.3): the old "Solar Only" plug
-            # mode was renamed to "Solar Priority"; the key "Solar Only" now
-            # denotes a different, target-gated mode. async_migrate_entry sets
-            # the flag on the entry; it is consumed and cleared once below.
-            if (
-                self.config_entry.data.get(MIGRATE_PLUG_SOLAR_ONLY_FLAG)
-                and restored == "Solar Only"
-            ):
+            if migrate_plug_solar_only and restored == "Solar Only":
                 restored = "Solar Priority"
             # Tank: "Solar Only" was renamed to "Solar Priority" (no key reuse,
             # so this remap is unconditional and safe).
@@ -111,16 +115,6 @@ class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
             )
             if restored in self._attr_options:
                 self._attr_current_option = restored
-        # Consume the one-time plug migration flag so it never re-applies.
-        if self.config_entry.data.get(MIGRATE_PLUG_SOLAR_ONLY_FLAG):
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data={
-                    k: v
-                    for k, v in self.config_entry.data.items()
-                    if k != MIGRATE_PLUG_SOLAR_ONLY_FLAG
-                },
-            )
         self.async_write_ha_state()
         self._write_to_charger_data(self._attr_current_option)
 

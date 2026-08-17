@@ -2697,14 +2697,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except (ValueError, TypeError):
             return None
 
-    def _create_entry_and_seed_options(
-        self, title: str, static_data: dict, options_data: dict
-    ) -> config_entries.FlowResult:
-        """Create a config entry with options set directly."""
-        return self.async_create_entry(
-            title=title, data=static_data, options=options_data
-        )
-
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
@@ -2896,8 +2888,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     k: v for k, v in self._data.items() if k not in static_data
                 }
 
-                return self._create_entry_and_seed_options(
-                    static_data[CONF_NAME], static_data, options_data
+                return self.async_create_entry(
+                    title=static_data[CONF_NAME],
+                    data=static_data,
+                    options=options_data,
                 )
             return self.async_show_form(
                 step_id="hub_grid",
@@ -3086,9 +3080,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     k: v for k, v in self._data.items() if k not in static_data
                 }
 
-                return self._create_entry_and_seed_options(
-                    _compose_entry_title(plug_name, "Smart Load"),
-                    static_data, options_data
+                return self.async_create_entry(
+                    title=_compose_entry_title(plug_name, "Smart Load"),
+                    data=static_data,
+                    options=options_data,
                 )
 
         existing_chargers = self._get_charger_entries()
@@ -3166,9 +3161,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 options_data = {
                     k: v for k, v in self._data.items() if k not in static_data
                 }
-                return self._create_entry_and_seed_options(
-                    _compose_entry_title(tank_name, "Hot Water Tank"),
-                    static_data, options_data
+                return self.async_create_entry(
+                    title=_compose_entry_title(tank_name, "Hot Water Tank"),
+                    data=static_data,
+                    options=options_data,
                 )
 
         # Defaults; self._data is merged last so a validation-error re-show
@@ -3248,9 +3244,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 options_data = {
                     k: v for k, v in self._data.items() if k not in static_data
                 }
-                return self._create_entry_and_seed_options(
-                    _compose_entry_title(station_name, "Power Station"),
-                    static_data, options_data
+                return self.async_create_entry(
+                    title=_compose_entry_title(station_name, "Power Station"),
+                    data=static_data,
+                    options=options_data,
                 )
 
         # Defaults; self._data is merged last so a validation-error re-show
@@ -3371,8 +3368,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_CIRCUIT_GROUP_MEMBERS: selected,
                 }
 
-                return self._create_entry_and_seed_options(
-                    f"{group_name}", static_data, options_data
+                return self.async_create_entry(
+                    title=group_name,
+                    data=static_data,
+                    options=options_data,
                 )
 
         # Build list of loads on this hub for multi-select
@@ -3567,8 +3566,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         self.hass.config_entries.async_reload(hub_entry_id)
                     )
 
-                return self._create_entry_and_seed_options(
-                    _compose_entry_title(name, "Inverter"), static_data, options_data
+                return self.async_create_entry(
+                    title=_compose_entry_title(name, "Inverter"),
+                    data=static_data,
+                    options=options_data,
                 )
 
         data_schema = self._inverter_control_schema({**self._data, **(user_input or {})})
@@ -4157,9 +4158,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
             options_data = {k: v for k, v in self._data.items() if k not in static_data}
 
-            return self._create_entry_and_seed_options(
-                _compose_entry_title(charger_name, "Charger"),
-                static_data, options_data
+            return self.async_create_entry(
+                title=_compose_entry_title(charger_name, "Charger"),
+                data=static_data,
+                options=options_data,
             )
 
         data_schema = self._charger_timing_schema(

@@ -400,6 +400,18 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     )
     min_current = charger_rt.get("min_current") or config_min
     max_current = charger_rt.get("max_current") or config_max
+    # The sliders refuse to cross each other (number.py), but a state restored
+    # from an install that predates that guard still can. An inverted interval
+    # makes every permit nonsensical, so collapse it — downwards, so a bad pair
+    # can never authorise MORE current than the configured maximum. (The power
+    # station builder below resolves its own inverted pair the other way; its
+    # min is a trickle floor, not a hardware limit.)
+    if min_current > max_current:
+        _LOGGER.warning(
+            "%s: min_current %.1fA is above max_current %.1fA — using %.1fA for both",
+            charger_entity_id, min_current, max_current, max_current,
+        )
+        min_current = max_current
 
     phases = int(get_entry_value(entry, CONF_PHASES, 3) or 3)
 

@@ -3,7 +3,7 @@ import math
 import time
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import callback
-from datetime import datetime
+from datetime import datetime, timezone
 from ..const import *
 from ..helpers import get_entry_value
 from .mixins import ChargerEntityMixin
@@ -44,13 +44,18 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         self._charge_control_entity = f"switch.{ocpp_device_id}_charge_control"
         self._state = None
         self._phases = None
+        # Phase count actually seen drawing, from the engine's live per-charger
+        # measurement — surfaced as the "detected_phases" attribute and used to
+        # encode Watts-mode OCPP limits (control/ocpp.py, control/compliance.py).
         self._car_active_phases = None
-        self._detected_phases = None
         self._operating_mode = None
         self._calc_used = None
         self._allocated_current = None
         self._available_current = None
-        self._last_update = datetime.min
+        # UTC timestamp of the last cycle this load was processed without error.
+        # None (not datetime.min) until the first one — a naive sentinel next to
+        # the tz-aware values written later is a comparison landmine.
+        self._last_update = None
         self._pause_started_at = None
         self._grace_started_at = None
         self._prev_operating_mode = None
@@ -127,7 +132,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         attrs = {
             "state_class": "measurement",
             CONF_PHASES: self._phases,
-            "detected_phases": self._detected_phases,
+            "detected_phases": self._car_active_phases,
             "allocated_current": self._allocated_current,
             "last_update": self._last_update,
             "pause_active": self._pause_started_at is not None,
@@ -172,6 +177,12 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         """
         try:
             await self._async_apply(hub_data)
+            # Advance on every clean cycle, not only on the cycles that actually
+            # dispatch a command (the control/ modules also stamp this): the
+            # per-load update_frequency gate returns from _async_apply without
+            # sending, and "last_update" is meant to say when this load was last
+            # processed.
+            self._last_update = datetime.now(timezone.utc)
         except Exception as e:
             _LOGGER.error(
                 f"Error updating Load Juggler Charger Sensor {self._attr_name}: {e}",
@@ -321,15 +332,21 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             self._available_current = raw_permit
         self._state = self._available_current
 
+        # The pause/grace floor MUST be the same number the engine floored this
+        # load's permit with, or allocation and pause decisions disagree: the
+        # engine would keep granting the runtime minimum while this processor
+        # measured it against the static one and paused anyway (issue #37).
+        # Both branches therefore read the live runtime slider first and fall
+        # back to the config value exactly as engine/hub_calculation.py does.
+        load_rt = (
+            self.hass.data.get(DOMAIN, {})
+            .get("chargers", {})
+            .get(self.config_entry.entry_id, {})
+        )
         if device_type == DEVICE_TYPE_POWER_STATION:
-            # The station's floor is its minimum charge power, not the
-            # EVSE minimum-current constant.
-            station_rt = (
-                self.hass.data.get(DOMAIN, {})
-                .get("chargers", {})
-                .get(self.config_entry.entry_id, {})
-            )
-            _min_power = station_rt.get(
+            # The station's floor is its minimum charge POWER, not a current —
+            # see _build_power_station_charger().
+            _min_power = load_rt.get(
                 "station_min_charge_power"
             ) or get_entry_value(
                 self.config_entry,
@@ -345,7 +362,11 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             )
             min_charge_current = _min_power / (_voltage * _phases)
         else:
-            min_charge_current = get_entry_value(
+            # Mirrors _build_evse_charger(): runtime "Min Current" slider, then
+            # the configured minimum. Plugs and tanks never publish
+            # "min_current" (they are power-rated), so they keep resolving to
+            # the config value.
+            min_charge_current = load_rt.get("min_current") or get_entry_value(
                 self.config_entry,
                 CONF_EVSE_MINIMUM_CHARGE_CURRENT,
                 DEFAULT_MIN_CHARGE_CURRENT,
@@ -377,7 +398,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 # reserve flapping over BLE on marginal days.
                 if (
                     device_type == DEVICE_TYPE_POWER_STATION
-                    and station_rt.get("station_charging")
+                    and load_rt.get("station_charging")
                 ) or (
                     device_type != DEVICE_TYPE_POWER_STATION
                     and physical_available >= min_charge_current

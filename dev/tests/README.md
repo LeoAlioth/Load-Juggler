@@ -74,6 +74,15 @@ run, but have no Home Assistant dependency of their own:
 | `test_hot_water_tank.py` | Tank setpoint resolution and urgency-tier promotion/demotion |
 | `test_excess_margin.py` | The Excess trigger — `excess_margin()` across grid/battery/off-grid states |
 | `test_power_station.py` | Power station charge-speed quantisation and reserve resolution |
+| `test_auto_detect.py` | Grid CT inversion + phase-mapping auto-detection (26 tests) |
+
+`test_auto_detect.py` also runs standalone on **Python 3.9+** with nothing but
+`pytest` installed — it stubs out the HA package tree itself and skips the
+HA-dependent `conftest.py`:
+
+```bash
+python3 dev/tests/test_auto_detect.py
+```
 
 ## Debug Runner
 

@@ -11,6 +11,7 @@ from ..const import (
     CONF_STATION_BATTERY_LEVEL_ENTITY_ID,
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGER_PRIORITY,
+    CONF_HUB_ENTRY_ID,
     DEFAULT_CHARGER_PRIORITY,
 )
 from ..helpers import get_entry_value
@@ -104,12 +105,33 @@ class LoadJugglerEffectivePrioritySensor(ChargerEntityMixin, SensorEntity):
                     CONF_CHARGER_PRIORITY,
                     DEFAULT_CHARGER_PRIORITY,
                 ),
-                "total_devices": len(
-                    [r for r in ranks.values() if r is not None]
-                ),
+                "total_devices": self._ranked_siblings(ranks),
             }
         except Exception as e:
             _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+
+    def _ranked_siblings(self, ranks: dict) -> int:
+        """Count the ranked loads that share this load's hub.
+
+        "charger_ranks" is a flat, domain-wide bucket: it holds every load of
+        every hub, and nothing removes a load's key when its config entry is
+        deleted. A rank of "2 of N" is only meaningful against the loads the
+        engine actually ranked together, so filter at read time rather than
+        trusting the bucket's size (issue #40) — stale keys are dropped by the
+        config-entry lookup, foreign hubs by the hub id comparison.
+        """
+        my_hub = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
+        total = 0
+        for entry_id, rank in ranks.items():
+            if rank is None:
+                continue
+            load_entry = self.hass.config_entries.async_get_entry(entry_id)
+            if load_entry is None:
+                continue
+            if load_entry.data.get(CONF_HUB_ENTRY_ID) != my_hub:
+                continue
+            total += 1
+        return total
 
 
 class LoadJugglerDeviceStatusSensor(ChargerEntityMixin, SensorEntity):

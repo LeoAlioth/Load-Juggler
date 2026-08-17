@@ -51,7 +51,10 @@ def _load_module_as(fqn, path):
 # const is a package — load sub-modules first (common is the leaf), then the
 # aggregator __init__ which re-exports every name.
 _const_dir = _comp_dir / "const"
-for _const_sub in ("common", "hub", "group", "evse", "plug", "hot_water_tank", "modes"):
+for _const_sub in (
+    "common", "hub", "group", "evse", "plug", "hot_water_tank", "power_station",
+    "modes",
+):
     _load_module_as(f"{_PKG_COMP}.const.{_const_sub}", _const_dir / f"{_const_sub}.py")
 _load_module_as(f"{_PKG_COMP}.const", _const_dir / "__init__.py")
 _load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
@@ -588,4 +591,10 @@ class TestTwoPhaseDetection:
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import pytest
-    sys.exit(pytest.main([__file__, "-v"]))
+    # --noconftest: this module is pure Python (the loader above stubs out the
+    # HA package tree), but dev/tests/conftest.py imports homeassistant. Without
+    # this flag a direct `python3 dev/tests/test_auto_detect.py` dies in conftest
+    # collection on any interpreter that has no HA installed. Under the Docker /
+    # WSL pytest tier the file is collected normally and this branch never runs;
+    # no test here uses a conftest fixture.
+    sys.exit(pytest.main([__file__, "-v", "--noconftest"]))

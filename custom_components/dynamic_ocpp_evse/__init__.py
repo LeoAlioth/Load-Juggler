@@ -460,6 +460,32 @@ async def async_setup(hass: HomeAssistant, config: dict):
     return True
 
 
+# Runtime-only bucket in hass.data[DOMAIN]: config entry ids whose
+# operating-mode select still owes the one-time 2.2 → 2.3 plug remap.
+PENDING_PLUG_MODE_MIGRATION = "pending_plug_mode_migration"
+
+
+def consume_plug_mode_migration(hass: HomeAssistant, entry_id: str) -> bool:
+    """Claim the one-time plug operating-mode migration for ``entry_id``.
+
+    Returns True at most once per entry, for the operating-mode select that
+    restores a stale "Solar Only" plug state (see select.py).
+
+    Why a runtime marker instead of reading the persisted flag directly: the
+    select used to clear MIGRATE_PLUG_SOLAR_ONLY_FLAG from entry.data inside
+    async_added_to_hass, and async_update_entry fires the entry's update
+    listener → a reload of an entry that may still be SETUP_IN_PROGRESS
+    (OperationNotAllowed). async_setup_entry now does the persisted-flag
+    bookkeeping at a point where no update listener is registered yet, and
+    hands the one-shot to the select through this in-memory marker.
+    """
+    pending = hass.data.get(DOMAIN, {}).get(PENDING_PLUG_MODE_MIGRATION)
+    if not pending or entry_id not in pending:
+        return False
+    pending.discard(entry_id)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Load Juggler from a config entry."""
     hass.data.setdefault(DOMAIN, {
@@ -481,7 +507,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         new_data[ENTRY_TYPE] = ENTRY_TYPE_HUB
         hass.config_entries.async_update_entry(entry, data=new_data)
         entry_type = ENTRY_TYPE_HUB
-    
+
+    # Hand the pending one-time plug operating-mode remap (2.2 → 2.3) to the
+    # select as an in-memory marker BEFORE platforms are set up. Idempotent, so
+    # a ConfigEntryNotReady retry below simply re-arms it.
+    pending_plug_migration = MIGRATE_PLUG_SOLAR_ONLY_FLAG in entry.data
+    if pending_plug_migration:
+        hass.data[DOMAIN].setdefault(PENDING_PLUG_MODE_MIGRATION, set()).add(
+            entry.entry_id
+        )
+
     if entry_type == ENTRY_TYPE_HUB:
         await _setup_hub_entry(hass, entry)
     elif entry_type == ENTRY_TYPE_CHARGER:
@@ -490,6 +525,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         await _setup_group_entry(hass, entry)
     elif entry_type == ENTRY_TYPE_INVERTER:
         await _setup_inverter_entry(hass, entry)
+
+    # Strip the persisted flag now that the select has had its chance: platform
+    # setup above is awaited, so the select already ran async_added_to_hass.
+    # This is deliberately AFTER the platform forward (a setup that raises
+    # ConfigEntryNotReady leaves the flag in place for the retry) and BEFORE the
+    # update listener is registered below — async_update_entry fires update
+    # listeners, and doing this from inside entity setup reloaded an entry that
+    # could still be SETUP_IN_PROGRESS (issue #34).
+    if pending_plug_migration:
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                k: v
+                for k, v in entry.data.items()
+                if k != MIGRATE_PLUG_SOLAR_ONLY_FLAG
+            },
+        )
 
     # Reload entry when options change (e.g. battery entities added/removed)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))

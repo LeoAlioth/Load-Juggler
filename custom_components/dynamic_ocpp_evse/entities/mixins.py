@@ -5,7 +5,37 @@ device_info, _write_to_*_data, and state-restore boilerplate across
 number.py, select.py, switch.py, sensor.py, and button.py.
 """
 
+import logging
+
 from ..const import DOMAIN, CONF_NAME, CONF_HUB_ENTRY_ID, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK, DEVICE_TYPE_POWER_STATION
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _apply_restored_number(entity, last_state):
+    """Set ``entity._attr_native_value`` from ``last_state``, clamped to range.
+
+    A restored state is just the last value HA saw — it predates any change to
+    the entity's bounds. Reconfiguring a charger's min/max, or shipping a new
+    default range, otherwise brings the slider back outside its own
+    native_min/native_max: HA renders it out of range and every consumer
+    downstream inherits an impossible number (issue #38). Anything unparseable
+    or missing leaves the constructor's default in place.
+    """
+    if last_state is None or last_state.state in ("unknown", "unavailable"):
+        return
+    try:
+        value = float(last_state.state)
+    except (ValueError, TypeError):
+        return
+    low, high = entity._attr_native_min_value, entity._attr_native_max_value
+    clamped = min(max(value, low), high)
+    if clamped != value:
+        _LOGGER.info(
+            "%s: restored value %s is outside the current %s–%s range — clamped to %s",
+            entity._attr_name, value, low, high, clamped,
+        )
+    entity._attr_native_value = clamped
 
 
 class HubEntityMixin:
@@ -38,12 +68,7 @@ class HubEntityMixin:
 
     async def _restore_and_publish_number(self):
         """Restore a NumberEntity's last state and publish to shared hub data."""
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
-            try:
-                self._attr_native_value = float(last_state.state)
-            except (ValueError, TypeError):
-                pass
+        _apply_restored_number(self, await self.async_get_last_state())
         self.async_write_ha_state()
         self._write_to_hub_data(self._attr_native_value)
 
@@ -97,12 +122,7 @@ class ChargerEntityMixin:
 
     async def _restore_and_publish_number(self):
         """Restore a NumberEntity's last state and publish to shared charger data."""
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state not in ('unknown', 'unavailable'):
-            try:
-                self._attr_native_value = float(last_state.state)
-            except (ValueError, TypeError):
-                pass
+        _apply_restored_number(self, await self.async_get_last_state())
         self.async_write_ha_state()
         self._write_to_charger_data(self._attr_native_value)
 

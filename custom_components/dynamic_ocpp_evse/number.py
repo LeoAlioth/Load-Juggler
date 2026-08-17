@@ -165,11 +165,82 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
 # ==================== CHARGER NUMBER ENTITIES ====================
 
-class EVSEMinCurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
-    """Slider for minimum current (charger-level)."""
+
+class _EVSECurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+    """Shared base for the paired EVSE Min/Max Current sliders.
+
+    The two sliders bound the same interval from opposite ends, and the engine
+    trusts that interval: ``min_current > max_current`` makes every permit
+    nonsensical (allocation floors above its own ceiling). Neither slider can
+    see the other's HA state cheaply, but both publish into the same
+    hass.data[DOMAIN]["chargers"][entry_id] bucket the engine reads, so that
+    bucket is the cross-check (issue #38).
+
+    Behavior on a crossing set: the value being SET is clamped to the sibling's
+    current value; the sibling is never moved. Rationale — the alternative
+    (pushing the sibling along) silently rewrites a second entity the user did
+    not touch, and would let one drag reconfigure the whole range. Clamping is
+    also what the widget already does at the native_min/native_max ends, so the
+    slider simply refuses to travel past its partner.
+    """
 
     _attr_entity_category = EntityCategory.CONFIG
+
+    # Subclasses set the sibling's bucket key and which side it bounds.
+    _sibling_data_key: str = None
+    _sibling_is_upper_bound: bool = True
+
+    def _sibling_value(self):
+        """The sibling slider's last published value, or None if not yet set."""
+        charger_data = (
+            self.hass.data.get(DOMAIN, {})
+            .get("chargers", {})
+            .get(self.config_entry.entry_id)
+        )
+        if not charger_data:
+            return None
+        value = charger_data.get(self._sibling_data_key)
+        return value if isinstance(value, (int, float)) else None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._restore_and_publish_number()
+
+    async def async_set_native_value(self, value: float) -> None:
+        value = max(
+            self._attr_native_min_value,
+            min(
+                self._attr_native_max_value,
+                round(value / self._attr_native_step) * self._attr_native_step,
+            ),
+        )
+        sibling = self._sibling_value()
+        if sibling is not None:
+            crossed = (
+                value > sibling if self._sibling_is_upper_bound else value < sibling
+            )
+            if crossed:
+                _LOGGER.info(
+                    "%s: %.1fA would %s %s (%.1fA) — clamped to %.1fA",
+                    self._attr_name,
+                    value,
+                    "exceed" if self._sibling_is_upper_bound else "fall below",
+                    self._sibling_data_key,
+                    sibling,
+                    sibling,
+                )
+                value = sibling
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        self._write_to_charger_data(value)
+
+
+class EVSEMinCurrentSlider(_EVSECurrentSlider):
+    """Slider for minimum current (charger-level)."""
+
     _charger_data_key = "min_current"
+    _sibling_data_key = "max_current"
+    _sibling_is_upper_bound = True
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -183,22 +254,13 @@ class EVSEMinCurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
 
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        await self._restore_and_publish_number()
 
-    async def async_set_native_value(self, value: float) -> None:
-        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
-        self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_charger_data(value)
-
-
-class EVSEMaxCurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+class EVSEMaxCurrentSlider(_EVSECurrentSlider):
     """Slider for maximum current (charger-level)."""
 
-    _attr_entity_category = EntityCategory.CONFIG
     _charger_data_key = "max_current"
+    _sibling_data_key = "min_current"
+    _sibling_is_upper_bound = False
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -211,16 +273,6 @@ class EVSEMaxCurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         self._attr_native_value = get_entry_value(config_entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        await self._restore_and_publish_number()
-
-    async def async_set_native_value(self, value: float) -> None:
-        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
-        self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_charger_data(value)
 
 
 class LoadPowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
