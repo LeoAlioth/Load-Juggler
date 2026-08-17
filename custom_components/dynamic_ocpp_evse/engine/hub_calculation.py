@@ -282,11 +282,42 @@ def _fv2(raw, smoothed):
 # ---------------------------------------------------------------------------
 
 
-def _read_grid_phases(hass, hub_entry):
+def _read_grid_phase(hass, entity_id, voltage):
+    """One grid phase in amps, SIGNED, auto-converting from W or kW.
+
+    Sign is the whole point of this reading — negative means export — so
+    unlike the inverter-output reader this one must not take an absolute
+    value. A meter's power entity is usually the only signed option it
+    publishes (its current entity is often magnitude-only), which is why
+    watts are accepted here at all.
+
+    Returns _UNAVAILABLE for a configured-but-unreadable sensor; the caller's
+    stale guard decides what to hold.
+    """
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if not state or state.state in ("unknown", "unavailable", None, ""):
+        return _UNAVAILABLE
+    try:
+        value = float(state.state)
+    except (ValueError, TypeError):
+        return _UNAVAILABLE
+    unit = (state.attributes.get("unit_of_measurement") or "").upper()
+    if voltage > 0:
+        if unit == "KW":
+            value = value * 1000 / voltage
+        elif unit == "W":
+            value = value / voltage
+    # Unit A (or unspecified) is already amps.
+    return value
+
+
+def _read_grid_phases(hass, hub_entry, voltage=DEFAULT_PHASE_VOLTAGE):
     """Read per-phase grid current, apply inversion, split into consumption/export.
 
     Returns (raw_phases, consumption_pv, export_pv) where raw_phases is a 3-list
-    of raw current values (None for unconfigured phases).
+    of signed amps (None for unconfigured phases).
     """
     phase_entities = [
         get_entry_value(hub_entry, conf, None)
@@ -300,7 +331,7 @@ def _read_grid_phases(hass, hub_entry):
 
     raw_phases = []
     for entity in phase_entities:
-        raw = _coerce(_read_entity(hass, entity, 0)) if entity else None
+        raw = _coerce(_read_grid_phase(hass, entity, voltage)) if entity else None
         if raw is not None and invert_phases:
             raw = -raw
         raw_phases.append(raw)
@@ -1841,8 +1872,8 @@ def run_hub_calculation(sensor):
     else:
         excess_threshold = float("inf")
 
-    # --- Read per-phase grid current (raw) ---
-    raw_phases, _, _ = _read_grid_phases(hass, hub_entry)
+    # --- Read per-phase grid current (raw, signed; W/kW converted to A) ---
+    raw_phases, _, _ = _read_grid_phases(hass, hub_entry, voltage)
     has_grid_cts = any(r is not None for r in raw_phases)
 
     # A site phase exists if it has EITHER a grid CT or an inverter output

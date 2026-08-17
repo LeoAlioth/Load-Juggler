@@ -1891,3 +1891,73 @@ async def test_forecast_max_soc_ratchet(hass):
         set_forecast([9300, 0])
         result = run_hub_calculation(sensor)
         assert result["forecast_battery_max_soc"] == 60
+
+
+async def test_grid_phases_in_watts_are_converted_to_amps(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """A grid CT configured as a POWER sensor must be converted to amps.
+
+    Meters commonly publish an unsigned current entity and a signed power
+    entity, and only the signed one can show export — so watts are a valid
+    choice for these fields. Without conversion the watt value was read as
+    amps and then multiplied by voltage again: 1.3 kW of import surfaced as
+    ~300 kW of grid power.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    # 1150 W per phase at 230 V = 5 A per phase — the same site state the
+    # amps-based fixture sets up, expressed the other way.
+    for entity in (
+        "sensor.inverter_phase_a",
+        "sensor.inverter_phase_b",
+        "sensor.inverter_phase_c",
+    ):
+        hass.states.async_set(
+            entity, "1150", {"device_class": "power", "unit_of_measurement": "W"}
+        )
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    result = run_hub_calculation(sensor)
+
+    # 3 × 1150 W = 3450 W, not 3 × 1150 A × 230 V
+    assert result["grid_power"] == pytest.approx(3450, abs=50)
+
+
+async def test_grid_phase_export_keeps_its_sign(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """A negative (exporting) power reading must stay negative through the
+    conversion — the sign is the only thing that distinguishes export."""
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    for entity in (
+        "sensor.inverter_phase_a",
+        "sensor.inverter_phase_b",
+        "sensor.inverter_phase_c",
+    ):
+        hass.states.async_set(
+            entity, "-2300", {"device_class": "power", "unit_of_measurement": "W"}
+        )
+
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+    )
+    result = run_hub_calculation(sensor)
+
+    # 3 × −2300 W of export, so the published grid power is negative
+    assert result["grid_power"] == pytest.approx(-6900, abs=50)

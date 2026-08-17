@@ -5,23 +5,28 @@ Entity names depend on the YAML definition file used in the Solarman integration
 """
 
 GRID_CT = [
+    # The CT POWER entities are signed (negative while exporting); the CT
+    # CURRENT entities of the same name are magnitude-only, so picking those
+    # makes export invisible — no Excess mode, and exported power counted as
+    # household consumption. Power first, current only as a fallback for
+    # YAML definitions that don't publish it.
     {
-        "name": "Solarman/Deye - external CTs",
+        "name": "Solarman/Deye - external CTs (power)",
         "patterns": {
-            "phase_a": r'sensor\..*_external_ct1_current.*',
-            "phase_b": r'sensor\..*_external_ct2_current.*',
-            "phase_c": r'sensor\..*_external_ct3_current.*',
+            "phase_a": r'sensor\..*_external_ct1_power.*',
+            "phase_b": r'sensor\..*_external_ct2_power.*',
+            "phase_c": r'sensor\..*_external_ct3_power.*',
         },
-        "unit": "A",
+        "unit": "W",
     },
     {
-        "name": "Solarman/Deye - internal CTs",
+        "name": "Solarman/Deye - internal CTs (power)",
         "patterns": {
-            "phase_a": r'sensor\..*_internal_ct1_current.*',
-            "phase_b": r'sensor\..*_internal_ct2_current.*',
-            "phase_c": r'sensor\..*_internal_ct3_current.*',
+            "phase_a": r'sensor\..*_internal_ct1_power.*',
+            "phase_b": r'sensor\..*_internal_ct2_power.*',
+            "phase_c": r'sensor\..*_internal_ct3_power.*',
         },
-        "unit": "A",
+        "unit": "W",
     },
     {
         "name": "Solarman/Deye - grid power (individual phases)",
@@ -31,6 +36,24 @@ GRID_CT = [
             "phase_c": r'sensor\..*grid_(?:3|l3|power_3|power_l3).*',
         },
         "unit": "W",
+    },
+    {
+        "name": "Solarman/Deye - external CTs (current)",
+        "patterns": {
+            "phase_a": r'sensor\..*_external_ct1_current.*',
+            "phase_b": r'sensor\..*_external_ct2_current.*',
+            "phase_c": r'sensor\..*_external_ct3_current.*',
+        },
+        "unit": "A",
+    },
+    {
+        "name": "Solarman/Deye - internal CTs (current)",
+        "patterns": {
+            "phase_a": r'sensor\..*_internal_ct1_current.*',
+            "phase_b": r'sensor\..*_internal_ct2_current.*',
+            "phase_c": r'sensor\..*_internal_ct3_current.*',
+        },
+        "unit": "A",
     },
 ]
 
