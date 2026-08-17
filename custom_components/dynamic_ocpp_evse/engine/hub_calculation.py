@@ -1657,18 +1657,28 @@ def _build_hub_result(
     # Net site consumption
     net_consumption = sum(r for r in raw_phases if r is not None) * voltage
 
-    # Unmanaged (household) draw, W — the engine's best estimate, preferring
-    # ground truth over derivations:
-    #  1. household_consumption_total (dedicated solar sensor: solar + battery
-    #     - export, post-feedback, so it already excludes charger draws),
-    #  2. per-phase household derived from inverter output entities,
-    #  3. the site supply identity: net grid + solar + battery discharge -
-    #     managed draw (battery power is positive when discharging, so the
-    #     signed value also handles charging).
-    hh_total = getattr(site, "household_consumption_total", None)
+    # Unmanaged (household) draw, W. NOT household_consumption_total — that is
+    # only the inverter-served share (solar + battery − export), which omits
+    # everything the grid is serving and understated household by the full
+    # grid import. The site-bus identity counts both supply paths:
+    #   net grid + solar + battery discharge − managed draw
+    # (battery power is positive when discharging, so the signed value also
+    # handles charging; export shows up as negative net grid).
+    #  1. Measured solar: the identity is exact.
+    #  2. Derived solar with inverter output entities: use the engine's
+    #     per-phase household (grid + inverter output − export per phase),
+    #     since derived solar is itself built from these terms.
+    #  3. Last resort: the identity with derived solar — best effort.
     hh_phases = getattr(site, "household_consumption", None)
-    if hh_total is not None:
-        household_power = round(hh_total, 0)
+    _identity_household = max(
+        0,
+        net_consumption
+        + (site.solar_production_total or 0)
+        + (battery_power or 0)
+        - total_evse_power,
+    )
+    if not site.solar_is_derived and site.solar_production_total:
+        household_power = round(_identity_household, 0)
     elif hh_phases is not None:
         household_power = round(
             sum(v for v in (hh_phases.a, hh_phases.b, hh_phases.c) if v is not None)
@@ -1676,16 +1686,7 @@ def _build_hub_result(
             0,
         )
     else:
-        household_power = round(
-            max(
-                0,
-                net_consumption
-                + (site.solar_production_total or 0)
-                + (battery_power or 0)
-                - total_evse_power,
-            ),
-            0,
-        )
+        household_power = round(_identity_household, 0)
 
     # Cap grid headroom by max grid import power limit (if configured)
     if site.max_grid_import_power is not None:
