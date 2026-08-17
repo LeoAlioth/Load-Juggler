@@ -2763,6 +2763,37 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             hub_entry, data=new_data, options=new_options
         )
 
+    def _imported_inverter_name(self, imported: dict) -> str:
+        """Name the auto-created entry after the hardware it represents.
+
+        The hub's own name makes a poor inverter name ("Site Load Management
+        Inverter"), so look at the device behind the first hardware entity
+        being imported — usually the inverter's integration device, which is
+        already called something like "Deye Hybrid" or "SolarEdge SE17K".
+        Falls back to plain "Inverter", the same default the manual flow uses.
+        """
+        entity_registry = async_get_entity_registry(self.hass)
+        device_registry = async_get_device_registry(self.hass)
+        for key in (
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+            CONF_BATTERY_SOC_ENTITY_ID,
+            CONF_BATTERY_POWER_ENTITY_ID,
+            CONF_SOLAR_PRODUCTION_ENTITY_ID,
+        ):
+            entity_id = imported.get(key)
+            if not entity_id:
+                continue
+            registry_entry = entity_registry.async_get(entity_id)
+            if registry_entry is None or not registry_entry.device_id:
+                continue
+            device = device_registry.async_get(registry_entry.device_id)
+            if device is None:
+                continue
+            device_name = device.name_by_user or device.name
+            if device_name:
+                return prettify_name(device_name)
+        return "Inverter"
+
     async def async_step_import(
         self, import_data: dict[str, Any]
     ) -> config_entries.FlowResult:
@@ -2827,7 +2858,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         hub_name = hub_entry.data.get(CONF_NAME, hub_entry.title)
         hub_prefix = hub_entry.data.get(CONF_ENTITY_ID, "lj_hub")
-        name = f"{hub_name} Inverter"
+        name = self._imported_inverter_name(imported)
         static_data = {
             CONF_NAME: name,
             CONF_ENTITY_ID: f"{hub_prefix}_inverter",
@@ -2838,12 +2869,15 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
         _LOGGER.info(
             "Imported legacy hub inverter/battery config of %s into a new "
-            "inverter entry (%s)",
+            "inverter entry '%s' (%s)",
             hub_name,
+            name,
             ", ".join(sorted(imported)) or "no fields",
         )
         return self.async_create_entry(
-            title=name, data=static_data, options=imported
+            title=_compose_entry_title(name, "Inverter"),
+            data=static_data,
+            options=imported,
         )
 
     # ==================== EVSE CHARGER CONFIGURATION STEPS ====================

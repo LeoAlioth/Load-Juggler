@@ -488,7 +488,18 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
         "battery_soc_target": DEFAULT_BATTERY_SOC_TARGET,
         "battery_soc_min": DEFAULT_BATTERY_SOC_MIN,
     }
-    
+
+    # A hub RELOAD rebuilds the dict above, but children that are already
+    # loaded never re-register — re-adopt them from their own runtime data so
+    # a reload doesn't strand every charger until the next restart. (Inverters
+    # and groups are resolved from the config entries instead; chargers keep a
+    # runtime list because their allocation state lives alongside it.)
+    hass.data[DOMAIN]["hubs"][entry.entry_id]["chargers"] = [
+        charger_entry_id
+        for charger_entry_id, charger_data in hass.data[DOMAIN]["chargers"].items()
+        if charger_data.get("hub_entry_id") == entry.entry_id
+    ]
+
     # Check if entities need migration
     await _migrate_hub_entities_if_needed(hass, entry)
     
@@ -849,35 +860,39 @@ def get_chargers_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigE
     return chargers
 
 
+def _children_of_hub(hass: HomeAssistant, hub_entry_id: str, entry_type: str) -> list[ConfigEntry]:
+    """Config entries of one type linked to a hub, ordered by entry_id.
+
+    Resolved from the config-entry registry rather than the hub's runtime
+    child lists. Those lists are rebuilt empty every time the hub reloads and
+    are only refilled by children that set up afterwards, so a hub reload
+    (adding an inverter schedules one) would silently drop already-loaded
+    children from the site until the next restart — an inverter vanishing
+    from the fleet takes its capacity with it. Config is config: read it from
+    the entries themselves. Disabled entries are excluded, since HA never
+    sets them up and they represent hardware the user switched off.
+    """
+    return sorted(
+        (
+            entry
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            if entry.data.get(ENTRY_TYPE) == entry_type
+            and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry_id
+            and entry.disabled_by is None
+        ),
+        key=lambda entry: entry.entry_id,
+    )
+
+
 def get_inverters_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigEntry]:
     """Get all inverter config entries for a hub, in a deterministic order.
 
     Sorted by entry_id — per-inverter runtime keys (EMA smoothing state,
     result attribution) rely on a stable iteration order.
     """
-    hub_data = hass.data[DOMAIN]["hubs"].get(hub_entry_id)
-    if not hub_data:
-        return []
-
-    inverters = []
-    for inverter_entry_id in sorted(hub_data.get("inverters", [])):
-        inverter_data = hass.data[DOMAIN].get("inverters", {}).get(inverter_entry_id)
-        if inverter_data:
-            inverters.append(inverter_data.get("entry"))
-
-    return inverters
+    return _children_of_hub(hass, hub_entry_id, ENTRY_TYPE_INVERTER)
 
 
 def get_groups_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigEntry]:
     """Get all circuit group config entries for a hub."""
-    hub_data = hass.data[DOMAIN]["hubs"].get(hub_entry_id)
-    if not hub_data:
-        return []
-
-    groups = []
-    for group_entry_id in hub_data.get("groups", []):
-        group_data = hass.data[DOMAIN]["groups"].get(group_entry_id)
-        if group_data:
-            groups.append(group_data.get("entry"))
-
-    return groups
+    return _children_of_hub(hass, hub_entry_id, ENTRY_TYPE_GROUP)

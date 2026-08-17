@@ -307,7 +307,7 @@
             },
             "charger_info": {
                 "title": "Podatki o polnilniku",
-                "description": "Nastavite identiteto polnilnika za {charger_name}\n\nZaznane OCPP entitete:\n- Uvoz toka: {current_import}\n- Ponujeni tok: {current_offered}",
+                "description": "Nastavite identiteto polnilnika za {charger_name}\n\nZaznane OCPP entitete:\n- {detected_entities}",
                 "data": {
                     "name": "Ime polnilnika",
                     "entity_id": "Predpona ID entitete",

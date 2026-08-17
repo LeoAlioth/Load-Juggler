@@ -230,11 +230,13 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
 
     _attr_entity_category = EntityCategory.CONFIG
     _inverter_data_key = INVERTER_RT_CONTROL_ENABLED
+    # Named off the device, so renaming the inverter renames this too.
+    _attr_has_entity_name = True
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, entity_id: str, name: str):
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = f"{name} Battery Charge Control"
+        self._attr_name = "Battery Charge Control"
         self._attr_unique_id = f"{entity_id}_battery_charge_control"
         self._state = False
         self._attr_icon = "mdi:battery-clock"

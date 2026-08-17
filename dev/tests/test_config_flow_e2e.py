@@ -1058,6 +1058,10 @@ async def test_hub_inverter_auto_import(hass: HomeAssistant):
     assert inverter.data[ENTRY_TYPE] == ENTRY_TYPE_INVERTER
     assert inverter.data[CONF_HUB_ENTRY_ID] == hub.entry_id
     assert inverter.data["imported_from_hub"] is True
+    # Named for the hardware, not the hub — none of the imported entities
+    # belongs to a device here, so it falls back to the plain default.
+    assert inverter.data[CONF_NAME] == "Inverter"
+    assert inverter.title == "Inverter"
     assert inverter.options[CONF_INVERTER_MAX_POWER] == 17000
     assert inverter.options[CONF_BATTERY_SOC_ENTITY_ID] == "sensor.batt_soc"
     assert inverter.options[CONF_BATTERY_CAPACITY_KWH] == 10
@@ -1073,6 +1077,48 @@ async def test_hub_inverter_auto_import(hass: HomeAssistant):
     assert CONF_SOLAR_FORECAST_DEVICE_IDS not in hub.options
     assert hub.options[CONF_GRID_EXPORT_LIMIT] == 13500
     assert hub.options[CONF_BATTERY_SOC_HYSTERESIS] == 3
+
+
+async def test_hub_inverter_auto_import_names_after_the_device(hass: HomeAssistant):
+    """The auto-created entry takes its name from the device behind the
+    imported entities — "Site Load Management Inverter" is the hub wearing a
+    hat, while the integration already calls the hardware something useful."""
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+
+    source = MockConfigEntry(domain="solarman", title="Deye")
+    source.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=source.entry_id,
+        identifiers={("solarman", "deye_hybrid")},
+        name="Deye Hybrid",
+    )
+    soc = er.async_get(hass).async_get_or_create(
+        "sensor", "solarman", "deye_soc",
+        device_id=device.id, config_entry=source,
+        suggested_object_id="deye_battery_soc",
+    )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="Site Load Management",
+        data={
+            CONF_NAME: "Site Load Management",
+            CONF_ENTITY_ID: "site_load_management",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={CONF_BATTERY_SOC_ENTITY_ID: soc.entity_id},
+    )
+    hub.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "import"}, data={"hub_entry_id": hub.entry_id}
+    )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["result"].data[CONF_NAME] == "Deye Hybrid"
+    assert result["result"].title == "Deye Hybrid Inverter"
 
 
 async def test_hub_inverter_auto_import_is_idempotent(hass: HomeAssistant):

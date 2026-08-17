@@ -82,11 +82,16 @@ INVERTER_SENSOR_DEFINITIONS = [
 class LoadJugglerInverterDataSensor(InverterEntityMixin, SensorEntity):
     """Generic per-inverter data sensor driven by a definition dict."""
 
+    # HA composes the friendly name as "<device name> <entity name>", so
+    # renaming the inverter device renames every sensor on it. The unique_id
+    # (and therefore the entity_id) is unaffected by a rename.
+    _attr_has_entity_name = True
+
     def __init__(self, hass, config_entry, name, entity_id, defn):
         self.hass = hass
         self.config_entry = config_entry
         self._defn = defn
-        self._attr_name = f"{name} {defn['name_suffix']}"
+        self._attr_name = defn["name_suffix"]
         self._attr_unique_id = f"{entity_id}_{defn['unique_id_suffix']}"
         self._attr_native_unit_of_measurement = defn["unit"]
         self._attr_device_class = defn["device_class"]
@@ -129,11 +134,12 @@ class LoadJugglerInverterChargeControlSensor(InverterEntityMixin, SensorEntity):
     """
 
     _attr_icon = "mdi:battery-clock"
+    _attr_has_entity_name = True
 
     def __init__(self, hass, config_entry, name, entity_id):
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = f"{name} Charge Control"
+        self._attr_name = "Charge Control"
         self._attr_unique_id = f"{entity_id}_charge_control_status"
         self._state = "Off"
 

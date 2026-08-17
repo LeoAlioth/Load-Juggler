@@ -229,3 +229,91 @@ async def test_legacy_entry_without_type(
     # Should be treated as hub and entry_type should be added
     assert no_type_entry.data[ENTRY_TYPE] == ENTRY_TYPE_HUB
     assert no_type_entry.entry_id in hass.data[DOMAIN]["hubs"]
+
+
+async def test_fleet_survives_a_hub_reload(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """Reloading a hub must not drop its inverters (or chargers) from the site.
+
+    Regression: the hub's runtime child lists are rebuilt empty on every hub
+    setup, and children that are already loaded never re-register themselves.
+    Adding an inverter schedules a hub reload, so the fleet could come back
+    missing inverters — silently taking their capacity out of the site limit —
+    until the next Home Assistant restart.
+    """
+    from custom_components.dynamic_ocpp_evse import (
+        get_inverters_for_hub,
+        get_chargers_for_hub,
+    )
+    from custom_components.dynamic_ocpp_evse.const import (
+        ENTRY_TYPE_INVERTER,
+        DEVICE_TYPE_INVERTER,
+        CONF_DEVICE_TYPE,
+        CONF_NAME,
+        CONF_INVERTER_MAX_POWER,
+    )
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    inverter = MockConfigEntry(
+        domain=DOMAIN,
+        title="SolarEdge",
+        data={
+            CONF_NAME: "SolarEdge",
+            CONF_ENTITY_ID: "lj_solaredge",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: mock_hub_entry.entry_id,
+        },
+        options={CONF_INVERTER_MAX_POWER: 10000},
+    )
+    inverter.add_to_hass(hass)
+    await hass.config_entries.async_setup(inverter.entry_id)
+    await hass.async_block_till_done()
+
+    assert [e.entry_id for e in get_inverters_for_hub(hass, mock_hub_entry.entry_id)] == [
+        inverter.entry_id
+    ]
+
+    # The inverter stays loaded; only the hub reloads (what adding a second
+    # inverter does).
+    await hass.config_entries.async_reload(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert [e.entry_id for e in get_inverters_for_hub(hass, mock_hub_entry.entry_id)] == [
+        inverter.entry_id
+    ]
+
+
+async def test_chargers_are_readopted_after_a_hub_reload(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_charger_entry: MockConfigEntry,
+    mock_setup,
+):
+    """Same regression for chargers, which keep a runtime list because their
+    allocation state lives beside it — the hub re-adopts them on setup."""
+    from custom_components.dynamic_ocpp_evse import get_chargers_for_hub
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    mock_charger_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_charger_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert [e.entry_id for e in get_chargers_for_hub(hass, mock_hub_entry.entry_id)] == [
+        mock_charger_entry.entry_id
+    ]
+
+    await hass.config_entries.async_reload(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert [e.entry_id for e in get_chargers_for_hub(hass, mock_hub_entry.entry_id)] == [
+        mock_charger_entry.entry_id
+    ]
