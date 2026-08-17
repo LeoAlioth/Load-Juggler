@@ -392,11 +392,18 @@
             },
             "overview": {
                 "title": "Overview",
-                "description": "What the engine sees right now. Submit to go back — reopen this page to refresh.\n\n{overview}"
+                "description": "What the engine sees right now.\n\n{overview}",
+                "menu_options": {
+                    "overview": "🔄 Refresh",
+                    "init": "← Back to menu"
+                }
             },
             "summary": {
                 "title": "How it decides",
-                "description": "Everything that is configured, in the order the engine evaluates it. Unconfigured features are left out.\n\n{summary}"
+                "description": "Everything that is configured, in the order the engine evaluates it. Unconfigured features are left out.\n\n{summary}",
+                "menu_options": {
+                    "init": "← Back to menu"
+                }
             },
             "priority": {
                 "title": "Device Priority Order",

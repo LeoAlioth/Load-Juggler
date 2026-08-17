@@ -1017,14 +1017,24 @@ async def test_overview_page_survives_no_live_data(
     assert "Grid" in text
     assert "Loads" in text
 
-    # And the step wires that text into the form, with submit going back.
+    # The step renders as a MENU (real "Refresh"/"Back" buttons instead of a
+    # form's fixed "Next" submit) with the text in its description.
     result = await _open_options(hass, mock_hub_entry.entry_id, step="overview")
-    assert result["type"] == FlowResultType.FORM
+    assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "overview"
+    assert result["menu_options"] == ["overview", "init"]
     assert "No live data yet" in result["description_placeholders"]["overview"]
 
+    # "Refresh" re-enters the same step with freshly built text…
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input={}
+        result["flow_id"], user_input={"next_step_id": "overview"}
+    )
+    assert result["type"] == FlowResultType.MENU
+    assert result["step_id"] == "overview"
+
+    # …and "Back" returns to the entry menu.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={"next_step_id": "init"}
     )
     assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "init"
@@ -1134,11 +1144,13 @@ async def test_summary_page_describes_the_configuration(
     assert "Smart plug" in text
 
     result = await _open_options(hass, mock_hub_entry.entry_id, step="summary")
+    assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "summary"
+    assert result["menu_options"] == ["init"]
     assert "Distribution mode" in result["description_placeholders"]["summary"]
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input={}
+        result["flow_id"], user_input={"next_step_id": "init"}
     )
     assert result["type"] == FlowResultType.MENU
 

@@ -4220,37 +4220,41 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_overview(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Read-only live overview, scoped to this entry. Submit = back."""
-        if user_input is not None:
-            return await self.async_step_init()
+        """Read-only live overview, scoped to this entry.
+
+        Rendered as a MENU, not a form: a form's submit button is fixed to
+        "Next"/"Submit" by HA, which reads as if something gets saved. Menu
+        options give real, labeled buttons instead — "Refresh" re-enters this
+        step (rebuilding the text from live data), "Back" returns to init.
+        """
         try:
             text = _overview_text(self.hass, self.config_entry.entry_id)
         except Exception:  # pragma: no cover — a display page must not break
             _LOGGER.exception("Could not build the overview page")
             text = "⚠️ Could not read the live data — see the Home Assistant log."
-        return self.async_show_form(
+        return self.async_show_menu(
             step_id="overview",
-            data_schema=vol.Schema({}),
+            menu_options=["overview", "init"],
             description_placeholders={"overview": text},
-            last_step=False,
         )
 
     async def async_step_summary(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Read-only "how it decides" page (hub only). Submit = back."""
-        if user_input is not None:
-            return await self.async_step_init()
+        """Read-only "how it decides" page (hub only).
+
+        A menu for the same reason as async_step_overview — the only action
+        here is going back, and a form's "Next" button would misname it.
+        """
         try:
             text = _summary_text(self.hass, self.config_entry.entry_id)
         except Exception:  # pragma: no cover — a display page must not break
             _LOGGER.exception("Could not build the summary page")
             text = "⚠️ Could not read the configuration — see the Home Assistant log."
-        return self.async_show_form(
+        return self.async_show_menu(
             step_id="summary",
-            data_schema=vol.Schema({}),
+            menu_options=["init"],
             description_placeholders={"summary": text},
-            last_step=False,
         )
 
     async def async_step_settings(

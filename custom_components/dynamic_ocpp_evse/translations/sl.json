@@ -392,11 +392,18 @@
             },
             "overview": {
                 "title": "Pregled",
-                "description": "Trenutno stanje, kot ga vidi izračun. S potrditvijo se vrnete nazaj — za osvežitev znova odprite to stran.\n\n{overview}"
+                "description": "Trenutno stanje, kot ga vidi izračun.\n\n{overview}",
+                "menu_options": {
+                    "overview": "🔄 Osveži",
+                    "init": "← Nazaj na meni"
+                }
             },
             "summary": {
                 "title": "Kako odloča",
-                "description": "Vse, kar je nastavljeno, v vrstnem redu, po katerem izračun to upošteva. Nenastavljene funkcije so izpuščene.\n\n{summary}"
+                "description": "Vse, kar je nastavljeno, v vrstnem redu, po katerem izračun to upošteva. Nenastavljene funkcije so izpuščene.\n\n{summary}",
+                "menu_options": {
+                    "init": "← Nazaj na meni"
+                }
             },
             "priority": {
                 "title": "Vrstni red prioritet naprav",
