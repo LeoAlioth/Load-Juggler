@@ -250,18 +250,26 @@ async def test_charger_config_creates_entry(
     assert result["data"][ENTRY_TYPE] == ENTRY_TYPE_CHARGER
 
 
-async def test_options_flow_hub_shows_form(
+async def test_options_flow_hub_shows_menu(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test that options flow for a hub entry shows the hub form."""
+    """A hub's options open on the menu: settings, overview, how it decides."""
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
     result = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
 
+    assert result["type"] == FlowResultType.MENU
+    assert result["step_id"] == "init"
+    assert result["menu_options"] == ["settings", "overview", "summary"]
+
+    # "Edit settings" leads to the first editable hub page.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "settings"}
+    )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_grid"
 
@@ -272,7 +280,7 @@ async def test_options_flow_charger_shows_form(
     mock_charger_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test that options flow for a charger entry shows the charger form."""
+    """A load's options menu has settings + overview, and no "how it decides"."""
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
@@ -283,6 +291,12 @@ async def test_options_flow_charger_shows_form(
 
     result = await hass.config_entries.options.async_init(mock_charger_entry.entry_id)
 
+    assert result["type"] == FlowResultType.MENU
+    assert result["menu_options"] == ["settings", "overview"]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "settings"}
+    )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger"
 
@@ -563,7 +577,7 @@ async def test_power_sensors_with_watts_unit_without_device_class(
 
 # ---------------------------------------------------------------------------
 # Off-grid battery requirement — a hub with no grid CTs must configure a
-# battery (SOC + power). Hard block in the hub config / reconfigure / options
+# battery (SOC + power). Hard block in the hub config and options
 # flows. Machine-authored tests — not yet human-reviewed.
 # ---------------------------------------------------------------------------
 

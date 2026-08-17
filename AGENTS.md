@@ -39,7 +39,8 @@ Each In Progress and Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bug
 custom_components/dynamic_ocpp_evse/
 ├── __init__.py                    # HA setup/unload, services, entry-registry helpers (get_hub_for_charger, …)
 ├── manifest.json                  # Component metadata
-├── config_flow.py                 # HA configuration flow (initial setup, reconfigure, options)
+├── config_flow.py                 # HA configuration flow (initial setup + options "Configure" flow — the single
+│                                  #   edit path; no reconfigure flow. Options menu: settings / overview / summary)
 ├── const/                         # Constants per area: common, hub, evse, plug, hot_water_tank, group,
 │                                  #   inverter, modes, power_station
 ├── engine/                        # HA → SiteContext bridge (reads HA states, drives the calculation)

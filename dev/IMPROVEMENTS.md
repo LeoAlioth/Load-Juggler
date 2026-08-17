@@ -243,4 +243,16 @@ Extended failure handling beyond grid CT to all sensor types:
 - Voltage validation: `<= 0` falls back to `DEFAULT_PHASE_VOLTAGE` (230V)
 - Circuit group stale member filtering: deleted charger entry_ids silently dropped with warning log
 
-## Fallback to Power Offered if Current offered (total or per phase) is not available
+## Dry-run mode + Debug options page
+**Status:** Not yet implemented — idea from the Adaptive Cover Pro discussion (2026-08-17). The companion Overview and "How it decides" summary pages are NOT part of this item; they are being built directly into the options flow alongside the reconfigure→options collapse.
+**Complexity:** Medium
+
+### Idea
+A third read-only page in the hub's options ("Configure") menu — **Debug** — next to Overview and Summary, mirroring Adaptive Cover Pro's Debug & Diagnostics screen:
+
+- **Dry Run switch (hub-level)** — the engine runs its full cycle every interval, but ALL actuation is suppressed: OCPP profiles (`control/ocpp.py`), plug switches (`control/plug.py`), inverter register writes (`control/inverter.py`), tank climate calls (`control/hot_water_tank.py`), power-station writes (`control/power_station.py`). Instead, log at INFO and publish a per-load "last decision" attribute — what *would* have been sent and why (AC Pro's "Decision Trace" / "Last Skipped Action" pattern). Gate it at the single dispatch choke point in `entities/load.py`, not per control module, so future device types inherit it automatically.
+- **Debug log promotion** — multi-select of log areas (engine, distribution, OCPP, compliance, auto-detect) promoted from DEBUG to INFO without touching YAML/logger config.
+- **`diagnostics.py` platform** — standard HA diagnostics: downloadable JSON of entry config (redacted entity IDs optional) + the latest `hub_data` snapshot, for attaching to bug reports. ~50 lines, independent of the rest — could land first.
+
+### Why
+Config validation without moving real loads (new installs, phase-mapping experiments); dramatically better support/bug-report loops.

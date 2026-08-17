@@ -21,6 +21,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_HUB_ENTRY_ID,
     CONF_CHARGER_ID,
     CONF_OCPP_DEVICE_ID,
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_PLUG,
+    CONF_PRIORITY_ORDER,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
@@ -79,6 +82,23 @@ from custom_components.dynamic_ocpp_evse.const import (
     DEFAULT_CHARGE_RATE_UNIT,
     DEFAULT_PROFILE_VALIDITY_MODE,
 )
+from custom_components.dynamic_ocpp_evse.helpers import get_entry_value
+
+
+def _plug_entry(hub, name, priority=1):
+    """A smart-plug entry linked to a hub (a load, for priority ordering)."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        title=name,
+        data={
+            CONF_NAME: name,
+            CONF_ENTITY_ID: name.lower().replace(" ", "_"),
+            ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_PLUG,
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options={CONF_CHARGER_PRIORITY: priority},
+    )
 
 
 # ── Hub creation end-to-end ────────────────────────────────────────────
@@ -617,7 +637,7 @@ async def test_options_flow_hub_saves_changes(
 
     # One page: grid + site policy. No hardware fields — those moved to the
     # inverter entry the setup above auto-created.
-    result = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
+    result = await _open_options(hass, mock_hub_entry.entry_id)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_grid"
     assert not _schema_has(result["data_schema"], CONF_BATTERY_MAX_CHARGE_POWER)
@@ -665,7 +685,20 @@ def _schema_has(data_schema, key) -> bool:
     )
 
 
-async def test_reconfigure_inverter_does_not_autodetect_phases(
+async def _open_options(hass, entry_id, step="settings"):
+    """Open an entry's options menu and pick one of its entries.
+
+    Every entry type opens on the same menu (settings / overview, plus "how it
+    decides" for a hub), so the editable pages are one hop in.
+    """
+    result = await hass.config_entries.options.async_init(entry_id)
+    assert result["type"] == FlowResultType.MENU
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": step}
+    )
+
+
+async def test_inverter_options_does_not_autodetect_phases(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
     mock_setup,
@@ -677,9 +710,8 @@ async def test_reconfigure_inverter_does_not_autodetect_phases(
     phantom L2/L3 phases that split available power across phases the site does
     not have. The hub here has no inverter-output phases, so neither does the
     inverter entry auto-imported from it; even with SolarEdge-matching entities
-    present in HA, its reconfigure page must leave those fields empty.
+    present in HA, its options page must leave those fields empty.
     """
-    from homeassistant.config_entries import SOURCE_RECONFIGURE
     from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
 
     mock_hub_entry.add_to_hass(hass)
@@ -707,14 +739,11 @@ async def test_reconfigure_inverter_does_not_autodetect_phases(
             {"device_class": "current", "unit_of_measurement": "A"},
         )
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": SOURCE_RECONFIGURE, "entry_id": inverter.entry_id},
-    )
+    result = await _open_options(hass, inverter.entry_id)
 
     # None of the three phase fields may be pre-filled.
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "reconfigure_inverter"
+    assert result["step_id"] == "inverter"
     schema = result["data_schema"]
     assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID) is None
     assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID) is None
@@ -737,7 +766,7 @@ async def test_options_flow_charger_saves_changes(
     await hass.async_block_till_done()
 
     # Step 1: charger (priority only)
-    result = await hass.config_entries.options.async_init(mock_charger_entry.entry_id)
+    result = await _open_options(hass, mock_charger_entry.entry_id)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger"
 
@@ -802,7 +831,7 @@ async def test_options_flow_charger_validates(
     await hass.async_block_till_done()
 
     # Step 1: charger (priority)
-    result = await hass.config_entries.options.async_init(mock_charger_entry.entry_id)
+    result = await _open_options(hass, mock_charger_entry.entry_id)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger"
 
@@ -830,6 +859,321 @@ async def test_options_flow_charger_validates(
     # Should re-show form with errors
     assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"base": "min_exceeds_max"}
+
+
+async def test_options_flow_charger_edits_ocpp_device_id(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_charger_entry: MockConfigEntry,
+    mock_setup,
+):
+    """The charger's OCPP device ID is editable on the first options page.
+
+    This is the only edit path for it (the charger is created from a discovered
+    OCPP device, so a renamed or replaced charger has to be re-pointed here).
+    The edited value lands in options, which is what get_entry_value reads.
+    """
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    mock_charger_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_charger_entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await _open_options(hass, mock_charger_entry.entry_id)
+    assert result["step_id"] == "charger"
+    # The field is offered, pre-filled with the stored device ID.
+    assert _schema_has(result["data_schema"], CONF_OCPP_DEVICE_ID)
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_CHARGER_PRIORITY: 1,
+            CONF_OCPP_DEVICE_ID: "device_wallbox_renamed",
+        },
+    )
+    assert result["step_id"] == "charger_current"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+            CONF_CHARGER_L1_PHASE: "A",
+            CONF_CHARGER_L2_PHASE: "B",
+            CONF_CHARGER_L3_PHASE: "C",
+        },
+    )
+    assert result["step_id"] == "charger_timing"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_CHARGE_RATE_UNIT: "A",
+            CONF_PROFILE_VALIDITY_MODE: "relative",
+            CONF_UPDATE_FREQUENCY: 15,
+            CONF_OCPP_PROFILE_TIMEOUT: 120,
+            CONF_CHARGE_PAUSE_DURATION: 3,
+            CONF_STACK_LEVEL: 3,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    assert (
+        mock_charger_entry.options.get(CONF_OCPP_DEVICE_ID)
+        == "device_wallbox_renamed"
+    )
+    # The data side is untouched — options shadow it (options-first reads).
+    assert mock_charger_entry.data.get(CONF_OCPP_DEVICE_ID) == "device_wallbox_1"
+    assert (
+        get_entry_value(mock_charger_entry, CONF_OCPP_DEVICE_ID, None)
+        == "device_wallbox_renamed"
+    )
+
+
+async def test_options_flow_priority_reorders_devices(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """The hub options flow ends on the priority page, which re-ranks loads.
+
+    Selection order becomes the served-first order: first chip = priority 1.
+    """
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    first = _plug_entry(mock_hub_entry, "Pond Pump", priority=1)
+    second = _plug_entry(mock_hub_entry, "Power Strip", priority=2)
+    first.add_to_hass(hass)
+    second.add_to_hass(hass)
+
+    hass.states.async_set(
+        "sensor.inverter_phase_a", "5.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.grid_power_limit", "8050",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    # Page 1: grid + site policy. The hub's hardware was auto-imported onto an
+    # inverter entry during setup, so the next page is the priority order.
+    result = await _open_options(hass, mock_hub_entry.entry_id)
+    assert result["step_id"] == "hub_grid"
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_INVERT_PHASES: False,
+            CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_GRID_EXPORT_LIMIT: 13500,
+            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
+            CONF_BATTERY_SOC_HYSTERESIS: 5,
+            CONF_BASE_CONSUMPTION: 400,
+            CONF_FORECAST_SOC_FLOOR: 35,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "priority"
+
+    # Reverse the order: the second device is served first.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_PRIORITY_ORDER: [second.entry_id, first.entry_id]},
+    )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert get_entry_value(second, CONF_CHARGER_PRIORITY, None) == 1
+    assert get_entry_value(first, CONF_CHARGER_PRIORITY, None) == 2
+
+
+# ── Read-only pages: Overview + "How it decides" ───────────────────────
+#
+# Machine-authored tests — not yet human-reviewed.
+
+
+async def test_overview_page_survives_no_live_data(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """The Overview must render (and say so) before the engine has ever run."""
+    from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.data[DOMAIN].pop("hub_data", None)
+
+    text = _overview_text(hass, mock_hub_entry.entry_id)
+    assert "No live data yet" in text
+    # The static sections still render — the page is never empty.
+    assert "Grid" in text
+    assert "Loads" in text
+
+    # And the step wires that text into the form, with submit going back.
+    result = await _open_options(hass, mock_hub_entry.entry_id, step="overview")
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "overview"
+    assert "No live data yet" in result["description_placeholders"]["overview"]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={}
+    )
+    assert result["type"] == FlowResultType.MENU
+    assert result["step_id"] == "init"
+
+
+async def test_overview_page_reports_live_values(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """With hub_data present, the Overview reports the pools and each load."""
+    from datetime import datetime, timezone
+    from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    plug = _plug_entry(mock_hub_entry, "Pond Pump", priority=1)
+    plug.add_to_hass(hass)
+
+    hass.data[DOMAIN]["hub_data"] = {
+        mock_hub_entry.entry_id: {
+            "last_update": datetime.now(timezone.utc),
+            "grid_power": 1200,
+            "solar_power": 3400,
+            "total_export_power": 0,
+            "battery_soc": 64,
+            "battery_soc_min": 20,
+            "battery_soc_target": 80,
+            "battery_power": 500,
+            "total_site_available_power": 7000,
+            "available_solar_power": 2200,
+            "available_grid_power": 4800,
+            "available_battery_power": 1500,
+            "available_current_a": 12.0,
+            "available_current_b": 10.0,
+            "available_current_c": 9.0,
+            "total_evse_power": 2300,
+            "excess_available": True,
+            "excess_margin_power": 350,
+        }
+    }
+    hass.data[DOMAIN]["charger_allocations"] = {plug.entry_id: 4.3}
+    hass.data[DOMAIN]["charger_status"] = {plug.entry_id: "Charging"}
+
+    text = _overview_text(hass, mock_hub_entry.entry_id)
+    assert "3400 W" in text  # solar production
+    assert "64 %" in text  # battery SOC
+    assert "Pond Pump" in text
+    assert "drawing 4.3 A" in text
+    assert "Charging" in text
+    assert "Excess trigger: on" in text
+
+
+async def test_overview_page_for_a_load_entry(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_charger_entry: MockConfigEntry,
+    mock_setup,
+):
+    """A load's Overview is scoped to that load, not the whole site."""
+    from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    mock_charger_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_charger_entry.entry_id)
+    await hass.async_block_till_done()
+
+    text = _overview_text(hass, mock_charger_entry.entry_id)
+    assert "This load" in text
+    assert "EVSE" in text
+    assert "Priority: 1" in text
+    assert "6 A–16 A" in text
+    assert "Not in a circuit group" in text
+
+    # The same single step serves it — no per-device-type duplicate.
+    result = await _open_options(hass, mock_charger_entry.entry_id, step="overview")
+    assert result["step_id"] == "overview"
+    assert "This load" in result["description_placeholders"]["overview"]
+
+
+async def test_summary_page_describes_the_configuration(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """"How it decides" lists site, sources, sharing and the load order."""
+    from custom_components.dynamic_ocpp_evse.config_flow import _summary_text
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    plug = _plug_entry(mock_hub_entry, "Pond Pump", priority=2)
+    plug.add_to_hass(hass)
+
+    text = _summary_text(hass, mock_hub_entry.entry_id)
+    assert "3-phase site at 230 V" in text
+    assert "main breaker 25 A per phase" in text
+    # The hub's legacy battery was auto-imported onto an inverter entry.
+    assert "Power sources" in text
+    assert "Distribution mode" in text
+    assert "Pond Pump" in text
+    assert "Smart plug" in text
+
+    result = await _open_options(hass, mock_hub_entry.entry_id, step="summary")
+    assert result["step_id"] == "summary"
+    assert "Distribution mode" in result["description_placeholders"]["summary"]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={}
+    )
+    assert result["type"] == FlowResultType.MENU
+
+
+async def test_summary_omits_unconfigured_features(
+    hass: HomeAssistant,
+    mock_setup,
+):
+    """An off-grid hub with no export limit shows neither of those lines."""
+    from custom_components.dynamic_ocpp_evse.config_flow import _summary_text
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Cabin",
+        data={
+            CONF_NAME: "Cabin",
+            CONF_ENTITY_ID: "cabin",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.inverter_phase_a",
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
+        },
+    )
+    hub.add_to_hass(hass)
+
+    text = _summary_text(hass, hub.entry_id)
+    assert "Off-grid" in text
+    assert "Export limited" not in text
+    assert "max-import limit" not in text
+    assert "1-phase site" in text
 
 
 # ── Config entry migration ─────────────────────────────────────────────

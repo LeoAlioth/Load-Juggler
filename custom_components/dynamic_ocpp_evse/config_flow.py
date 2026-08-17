@@ -1,5 +1,6 @@
 import re
 import logging
+from datetime import datetime, timezone
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
@@ -7,6 +8,7 @@ from homeassistant.helpers.selector import selector
 from homeassistant.helpers.entity_registry import (
     async_get as async_get_entity_registry,
     async_entries_for_device as er_async_entries_for_device,
+    async_entries_for_config_entry as er_async_entries_for_config_entry,
 )
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from typing import Any
@@ -111,7 +113,7 @@ def _compose_entry_title(name: str, type_label: str) -> str:
     return f"{name} {type_label}"
 
 
-# --- Device-priority reordering (shared by the options and reconfigure flows) ---
+# --- Device-priority reordering (used by the hub options flow) ---
 
 def _controlled_devices(hass, hub_entry_id: str) -> list:
     """All controllable load entries (EVSE, plug, tank) linked to a hub."""
@@ -275,6 +277,732 @@ def scan_ocpp_chargers(hass) -> list[dict]:
         )
 
     return chargers
+
+
+def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
+    """Number of phases this site has, as the engine sees it.
+
+    A site phase exists when it has a grid CT or an inverter output sensor
+    (mirrors ``run_hub_calculation``'s phase derivation). The inverter output
+    entities may live on the hub's own legacy fields OR — after the one-time
+    auto-import — on any of its inverter child entries, so the whole fleet is
+    consulted. Without that, an off-grid 3-phase site collapses to 1 phase
+    post-import, hiding the L2/L3 mapping fields and force-mapping every
+    charger leg onto L1's phase.
+    """
+    if not hub_entry_id:
+        return 3  # Default to 3 if unknown
+    hub_entry = hass.config_entries.async_get_entry(hub_entry_id)
+    if not hub_entry:
+        return 3
+    opts = {**hub_entry.data, **hub_entry.options}
+    # Count from grid CT entities first
+    count = sum(
+        1
+        for key in (
+            CONF_PHASE_A_CURRENT_ENTITY_ID,
+            CONF_PHASE_B_CURRENT_ENTITY_ID,
+            CONF_PHASE_C_CURRENT_ENTITY_ID,
+        )
+        if opts.get(key)
+    )
+    if count > 0:
+        return count
+    # Off-grid fallback: infer from the inverter output entities of the whole
+    # fleet — the hub's own (pre-import) fields plus every inverter child
+    # entry. A phase counts once, no matter how many members feed it.
+    from . import get_inverters_for_hub  # local: avoids a circular import
+
+    sources = [opts] + [
+        {**inverter.data, **inverter.options}
+        for inverter in get_inverters_for_hub(hass, hub_entry_id)
+    ]
+    count = sum(
+        1
+        for key in (
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+        )
+        if any(source.get(key) for source in sources)
+    )
+    return max(count, 1)
+
+
+# ---------------------------------------------------------------------------
+# Read-only pages: "Overview" (live) and "How it decides" (configuration)
+# ---------------------------------------------------------------------------
+#
+# Both are one options step whose form carries an EMPTY schema — the whole body
+# arrives through description_placeholders. HA renders markdown in flow
+# descriptions, so these builders emit short lines, bold labels and hyphen
+# lists; markdown TABLES are not rendered, so there are none.
+#
+# Everything below is a module-level pure function of (hass, entry_id) so it
+# can be unit-tested without a flow instance, and reused later (e.g. for a
+# setup-confirmation page).
+
+_STALE_AFTER_SECONDS = 90  # hub_data older than this is called out as stale
+_DASH = "—"
+
+_DEVICE_TYPE_LABELS = {
+    DEVICE_TYPE_EVSE: "EVSE",
+    DEVICE_TYPE_PLUG: "Smart plug",
+    DEVICE_TYPE_HOT_WATER_TANK: "Hot water tank",
+    DEVICE_TYPE_POWER_STATION: "Power station",
+}
+
+
+def _fmt(value, unit: str = "", decimals: int = 1) -> str:
+    """A number with its unit, or an em dash when there is nothing to show."""
+    if value is None:
+        return _DASH
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    text = f"{number:.0f}" if decimals == 0 else f"{number:.{decimals}f}"
+    return f"{text} {unit}".strip()
+
+
+def _fmt_age(seconds: float) -> str:
+    """A rough age: seconds, minutes or hours — whichever reads best."""
+    if seconds < 90:
+        return f"{seconds:.0f} s ago"
+    if seconds < 5400:
+        return f"{seconds / 60:.0f} min ago"
+    return f"{seconds / 3600:.0f} h ago"
+
+
+def _runtime(hass) -> dict:
+    """The integration's runtime bucket (empty dict before setup)."""
+    return hass.data.get(DOMAIN) or {}
+
+
+def _live_hub_data(hass, hub_entry_id: str | None) -> tuple[dict, str]:
+    """Live hub_data plus a one-line freshness note.
+
+    hub_data is written every cycle by whichever entity ran the calculation
+    (the loads, or the hub sensor itself when a hub has no loads). Missing or
+    old data is reported in the text rather than raised — these pages must
+    never fail just because the engine has not run yet.
+    """
+    data = (_runtime(hass).get("hub_data") or {}).get(hub_entry_id) or {}
+    if not data:
+        return {}, (
+            "⏳ **No live data yet** — the engine has not completed a "
+            "calculation cycle for this site. Try again in a minute."
+        )
+    last_update = data.get("last_update")
+    age = None
+    if isinstance(last_update, datetime):
+        try:
+            age = (datetime.now(timezone.utc) - last_update).total_seconds()
+        except (TypeError, ValueError):
+            age = None
+    if age is None:
+        return data, "Live values (age unknown)."
+    if age > _STALE_AFTER_SECONDS:
+        return data, f"⚠️ **Stale** — last calculated {_fmt_age(age)}."
+    return data, f"Live values, calculated {_fmt_age(age)}."
+
+
+def _load_permit(hass, load_entry, hub_data: dict):
+    """The current the engine last permitted this load, in amps.
+
+    First choice is the engine's own record (``_last_permit``, written every
+    cycle onto the load's runtime dict); then the load's "Available Current"
+    sensor; then the full hub_data, which only carries per-load permits when
+    the hub sensor itself ran the calculation.
+    """
+    runtime = (_runtime(hass).get("chargers") or {}).get(load_entry.entry_id) or {}
+    permit = runtime.get("_last_permit")
+    if permit is None:
+        permit = _entry_sensor_value(hass, load_entry, "_available_current")
+    if permit is None:
+        permit = (hub_data.get("charger_available") or {}).get(load_entry.entry_id)
+    return permit
+
+
+def _entry_sensor_value(hass, entry, unique_id_suffix: str):
+    """Numeric state of one of this entry's own sensors, via the registry.
+
+    Some engine outputs (a load's permitted current, for instance) only live on
+    the entity that publishes them, so the pages read them back from HA state
+    instead of re-running the engine.
+    """
+    try:
+        registry = async_get_entity_registry(hass)
+        for ent in er_async_entries_for_config_entry(registry, entry.entry_id):
+            if not (ent.unique_id or "").endswith(unique_id_suffix):
+                continue
+            state = hass.states.get(ent.entity_id)
+            if state is None or state.state in ("unknown", "unavailable", "", None):
+                return None
+            try:
+                return float(state.state)
+            except (TypeError, ValueError):
+                return state.state
+    except Exception:  # pragma: no cover — a display path must never raise
+        _LOGGER.debug("Could not read %s for %s", unique_id_suffix, entry.entry_id)
+    return None
+
+
+def _groups_for_hub(hass, hub_entry_id: str) -> list:
+    """Circuit group entries linked to a hub (one implementation, in __init__)."""
+    from . import get_groups_for_hub  # local: avoids a circular import
+
+    return get_groups_for_hub(hass, hub_entry_id)
+
+
+def _group_cap_for(hass, hub_entry_id: str, load_entry_id: str) -> str | None:
+    """"20 A shared with 2 loads" for a load in a circuit group, else None."""
+    for group in _groups_for_hub(hass, hub_entry_id):
+        members = get_entry_value(group, CONF_CIRCUIT_GROUP_MEMBERS, []) or []
+        if load_entry_id not in members:
+            continue
+        limit = get_entry_value(
+            group, CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT
+        )
+        name = get_entry_value(group, CONF_NAME, None) or group.title
+        return f"{name} capped at {_fmt(limit, 'A', 0)} across {len(members)} loads"
+    return None
+
+
+def _load_mode(hass, load_entry) -> str:
+    """The load's current operating mode (live if set, else its default)."""
+    device_type = load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    runtime = (_runtime(hass).get("chargers") or {}).get(load_entry.entry_id) or {}
+    key = runtime.get("operating_mode") or get_entry_value(
+        load_entry, CONF_OPERATING_MODE, None
+    )
+    return resolve_operating_mode(device_type, key).label
+
+
+def _load_limits_text(hass, load_entry) -> str:
+    """The load's configured envelope, in the units that device type uses."""
+    device_type = load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    if device_type == DEVICE_TYPE_PLUG:
+        rating = get_entry_value(
+            load_entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING
+        )
+        max_current = get_entry_value(
+            load_entry, CONF_PLUG_MAX_CURRENT, DEFAULT_PLUG_MAX_CURRENT
+        )
+        return f"{_fmt(rating, 'W', 0)} rated, plug max {_fmt(max_current, 'A', 0)}"
+    if device_type == DEVICE_TYPE_HOT_WATER_TANK:
+        element = get_entry_value(
+            load_entry, CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER
+        )
+        return f"{_fmt(element, 'W', 0)} element"
+    if device_type == DEVICE_TYPE_POWER_STATION:
+        low = get_entry_value(
+            load_entry, CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
+        )
+        high = get_entry_value(
+            load_entry, CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
+        )
+        return f"{_fmt(low, 'W', 0)}–{_fmt(high, 'W', 0)}"
+    low = get_entry_value(
+        load_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT
+    )
+    high = get_entry_value(
+        load_entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT
+    )
+    return f"{_fmt(low, 'A', 0)}–{_fmt(high, 'A', 0)}"
+
+
+def _phase_mapping_text(hass, load_entry) -> str:
+    """Which site phases this load's legs are wired to."""
+    hub_entry_id = load_entry.data.get(CONF_HUB_ENTRY_ID)
+    phases = _hub_phase_count(hass, hub_entry_id)
+    legs = [
+        get_entry_value(load_entry, key, None)
+        for key in (
+            CONF_CHARGER_L1_PHASE,
+            CONF_CHARGER_L2_PHASE,
+            CONF_CHARGER_L3_PHASE,
+        )
+    ][:phases]
+    mapped = [leg for leg in legs if leg]
+    if not mapped:
+        return "not mapped"
+    return "→".join(mapped)
+
+
+def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
+    """One "name · mode · priority · permit · draw · status" line."""
+    runtime = _runtime(hass)
+    device_type = load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    parts = [f"**{load_entry.title}**", _DEVICE_TYPE_LABELS.get(device_type, "Load")]
+    parts.append(_load_mode(hass, load_entry))
+
+    priority = get_entry_value(load_entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
+    rank = (runtime.get("charger_ranks") or {}).get(load_entry.entry_id)
+    if rank is not None and rank != priority:
+        parts.append(f"priority {priority} (served {rank}.)")
+    else:
+        parts.append(f"priority {priority}")
+
+    parts.append(f"permitted {_fmt(_load_permit(hass, load_entry, hub_data), 'A')}")
+
+    draw = (runtime.get("charger_allocations") or {}).get(load_entry.entry_id)
+    if draw is None:
+        draw = (hub_data.get("charger_targets") or {}).get(load_entry.entry_id)
+    parts.append(f"drawing {_fmt(draw, 'A')}")
+
+    status = (runtime.get("charger_status") or {}).get(load_entry.entry_id)
+    parts.append(status or "status unknown")
+
+    mask = (runtime.get("charger_phase_masks") or {}).get(load_entry.entry_id)
+    if mask:
+        parts.append(f"on {mask}")
+
+    cap = _group_cap_for(hass, hub_entry_id, load_entry.entry_id)
+    if cap:
+        parts.append(f"⛓ {cap}")
+    return " · ".join(parts)
+
+
+def _hub_overview_lines(hass, entry) -> list[str]:
+    """Site-wide live overview for a hub entry."""
+    hub_data, note = _live_hub_data(hass, entry.entry_id)
+    voltage = get_entry_value(entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+    lines = [note, ""]
+
+    if hub_data.get("hub_status") and hub_data.get("hub_status") != "OK":
+        lines.append(f"⚠️ **{hub_data['hub_status']}**")
+    for warning in hub_data.get("hub_warnings") or []:
+        lines.append(f"- {warning}")
+    if hub_data.get("hub_warnings"):
+        lines.append("")
+
+    lines.append("**⚡ Grid**")
+    # Whether the site is off-grid is a matter of CONFIG (no CTs), not of what
+    # the sensors happen to report this second.
+    configured_cts = [
+        get_entry_value(entry, key, None)
+        for key in (
+            CONF_PHASE_A_CURRENT_ENTITY_ID,
+            CONF_PHASE_B_CURRENT_ENTITY_ID,
+            CONF_PHASE_C_CURRENT_ENTITY_ID,
+        )
+    ]
+    if any(configured_cts):
+        grid_phases = [None, None, None]
+        try:
+            from .engine.hub_calculation import _read_grid_phases
+
+            grid_phases = _read_grid_phases(hass, entry, voltage)
+        except Exception:  # pragma: no cover — display path
+            _LOGGER.debug("Could not read grid phases for the overview", exc_info=True)
+        for label, entity_id, value in zip(("A", "B", "C"), configured_cts, grid_phases):
+            if not entity_id:
+                continue
+            if not isinstance(value, (int, float)):
+                lines.append(f"- Phase {label}: {_DASH} (sensor unreadable)")
+                continue
+            flow = "export" if value < 0 else "import"
+            lines.append(f"- Phase {label}: {_fmt(abs(value), 'A')} {flow}")
+    else:
+        lines.append("- No grid CTs configured — off-grid site")
+    lines.append(f"- Net grid power: {_fmt(hub_data.get('grid_power'), 'W', 0)}")
+    lines.append(f"- Exported now: {_fmt(hub_data.get('total_export_power'), 'W', 0)}")
+    if hub_data.get("grid_stale"):
+        lines.append("- ⚠️ Grid readings are stale — holding the last known values")
+
+    lines += ["", "**☀️ Solar & battery**"]
+    lines.append(f"- Solar production: {_fmt(hub_data.get('solar_power'), 'W', 0)}")
+    if hub_data.get("battery_soc") is not None:
+        lines.append(
+            f"- Battery SOC: {_fmt(hub_data.get('battery_soc'), '%', 0)}"
+            f" (min {_fmt(hub_data.get('battery_soc_min'), '%', 0)},"
+            f" target {_fmt(hub_data.get('battery_soc_target'), '%', 0)})"
+        )
+        lines.append(
+            f"- Battery power: {_fmt(hub_data.get('battery_power'), 'W', 0)}"
+            " (positive = charging)"
+        )
+    else:
+        lines.append("- No battery configured")
+
+    lines += ["", "**🧮 Power pools**"]
+    lines.append(
+        "- Site available: "
+        f"{_fmt(hub_data.get('total_site_available_power'), 'W', 0)}"
+    )
+    lines.append(
+        f"- Solar surplus: {_fmt(hub_data.get('available_solar_power'), 'W', 0)}"
+    )
+    lines.append(f"- Grid headroom: {_fmt(hub_data.get('available_grid_power'), 'W', 0)}")
+    lines.append(
+        f"- Battery headroom: {_fmt(hub_data.get('available_battery_power'), 'W', 0)}"
+    )
+    excess = hub_data.get("excess_available")
+    if excess is not None:
+        lines.append(
+            f"- Excess trigger: {'on' if excess else 'off'}"
+            f" (margin {_fmt(hub_data.get('excess_margin_power'), 'W', 0)})"
+        )
+    lines.append(
+        "- Per-phase headroom: "
+        f"A {_fmt(hub_data.get('available_current_a'), 'A')}"
+        f" · B {_fmt(hub_data.get('available_current_b'), 'A')}"
+        f" · C {_fmt(hub_data.get('available_current_c'), 'A')}"
+    )
+    lines.append(
+        f"- Managed loads drawing: {_fmt(hub_data.get('total_evse_power'), 'W', 0)}"
+    )
+
+    hub_runtime = (_runtime(hass).get("hubs") or {}).get(entry.entry_id) or {}
+    distribution = hub_runtime.get("distribution_mode") or get_entry_value(
+        entry, CONF_DISTRIBUTION_MODE, DEFAULT_DISTRIBUTION_MODE
+    )
+    loads = _devices_by_priority(_controlled_devices(hass, entry.entry_id))
+    lines += ["", f"**🔌 Loads** — distribution: {distribution}"]
+    if not loads:
+        lines.append("- No loads configured yet")
+    for load in loads:
+        lines.append(f"- {_load_line(hass, entry.entry_id, load, hub_data)}")
+
+    group_data = hub_data.get("group_data") or {}
+    groups = _groups_for_hub(hass, entry.entry_id)
+    if groups:
+        lines += ["", "**⛓ Circuit groups**"]
+        for group in groups:
+            live = group_data.get(group.entry_id) or {}
+            limit = get_entry_value(
+                group,
+                CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
+                DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
+            )
+            members = get_entry_value(group, CONF_CIRCUIT_GROUP_MEMBERS, []) or []
+            detail = (
+                f"worst phase {_fmt(live.get('max_phase_draw'), 'A')}, "
+                f"headroom {_fmt(live.get('headroom'), 'A')}"
+                if live
+                else "no live data yet"
+            )
+            lines.append(
+                f"- **{group.title}**: limit {_fmt(limit, 'A', 0)} · "
+                f"{len(members)} loads · {detail}"
+            )
+    return lines
+
+
+def _load_overview_lines(hass, entry) -> list[str]:
+    """Live detail for one managed load (EVSE, plug, tank, power station)."""
+    hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
+    hub_data, note = _live_hub_data(hass, hub_entry_id)
+    runtime = _runtime(hass)
+    device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    lines = [note, ""]
+
+    lines.append("**🔌 This load**")
+    lines.append(f"- Type: {_DEVICE_TYPE_LABELS.get(device_type, 'Load')}")
+    lines.append(f"- Operating mode: {_load_mode(hass, entry)}")
+    priority = get_entry_value(entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
+    rank = (runtime.get("charger_ranks") or {}).get(entry.entry_id)
+    lines.append(
+        f"- Priority: {priority}"
+        + (f" · served {rank}. this cycle" if rank is not None else "")
+    )
+    lines.append(f"- Configured envelope: {_load_limits_text(hass, entry)}")
+    if device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION, DEVICE_TYPE_PLUG):
+        lines.append(f"- Phase mapping (L1→L3): {_phase_mapping_text(hass, entry)}")
+
+    lines += ["", "**📊 Right now**"]
+    lines.append(f"- Permitted: {_fmt(_load_permit(hass, entry, hub_data), 'A')}")
+    draw = (runtime.get("charger_allocations") or {}).get(entry.entry_id)
+    lines.append(f"- Actual draw: {_fmt(draw, 'A')}")
+    status = (runtime.get("charger_status") or {}).get(entry.entry_id)
+    lines.append(f"- Status: {status or 'unknown'}")
+    mask = (runtime.get("charger_phase_masks") or {}).get(entry.entry_id)
+    if mask:
+        lines.append(f"- Drawing on phases: {mask}")
+    charger_runtime = (runtime.get("chargers") or {}).get(entry.entry_id) or {}
+    if charger_runtime.get("dynamic_control") is False:
+        lines.append("- ⚠️ Dynamic control is OFF — Load Juggler is not limiting this load")
+
+    cap = _group_cap_for(hass, hub_entry_id, entry.entry_id)
+    lines += ["", "**⛓ Circuit group**"]
+    lines.append(f"- {cap}" if cap else "- Not in a circuit group")
+
+    lines += ["", "**🏠 Site**"]
+    lines.append(
+        "- Site available: "
+        f"{_fmt(hub_data.get('total_site_available_power'), 'W', 0)}"
+    )
+    lines.append(f"- Solar production: {_fmt(hub_data.get('solar_power'), 'W', 0)}")
+    if hub_data.get("battery_soc") is not None:
+        lines.append(f"- Battery SOC: {_fmt(hub_data.get('battery_soc'), '%', 0)}")
+    return lines
+
+
+def _inverter_overview_lines(hass, entry) -> list[str]:
+    """Live detail for one inverter entry (output, battery, forecast advice)."""
+    hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
+    hub_data, note = _live_hub_data(hass, hub_entry_id)
+    own = (hub_data.get("inverters") or {}).get(entry.entry_id) or {}
+    voltage = get_entry_value(
+        hass.config_entries.async_get_entry(hub_entry_id) or entry,
+        CONF_PHASE_VOLTAGE,
+        DEFAULT_PHASE_VOLTAGE,
+    )
+    lines = [note, ""]
+
+    lines.append("**🔆 Output**")
+    phase_lines: list[str] = []
+    try:
+        from .engine.hub_calculation import _read_inverter_output
+
+        for label, key in (
+            ("A", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
+            ("B", CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
+            ("C", CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
+        ):
+            entity_id = get_entry_value(entry, key, None)
+            if not entity_id:
+                continue
+            value = _read_inverter_output(hass, entity_id, voltage)
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                value = None
+            phase_lines.append(f"- Phase {label}: {_fmt(value, 'A')}")
+    except Exception:  # pragma: no cover — display path
+        _LOGGER.debug("Could not read inverter output for the overview", exc_info=True)
+    lines += phase_lines or ["- No per-phase output sensors configured"]
+    lines.append(f"- Solar production: {_fmt(own.get('solar_w'), 'W', 0)}")
+    max_power = get_entry_value(entry, CONF_INVERTER_MAX_POWER, None)
+    per_phase = get_entry_value(entry, CONF_INVERTER_MAX_POWER_PER_PHASE, None)
+    if max_power or per_phase:
+        lines.append(
+            f"- Rated: {_fmt(max_power, 'W', 0)} total"
+            f" · {_fmt(per_phase, 'W', 0)} per phase"
+        )
+
+    if get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None):
+        lines += ["", "**🔋 Battery**"]
+        lines.append(f"- SOC: {_fmt(own.get('battery_soc'), '%', 0)}")
+        lines.append(
+            f"- Power: {_fmt(own.get('battery_power'), 'W', 0)} (positive = charging)"
+        )
+        lines.append(
+            f"- Reserve floor: {_fmt(get_entry_value(entry, CONF_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_MIN), '%', 0)}"
+            f" · full at {_fmt(get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL), '%', 0)}"
+        )
+        lines.append(
+            "- Charge/discharge limits: "
+            f"{_fmt(get_entry_value(entry, CONF_BATTERY_MAX_CHARGE_POWER, None), 'W', 0)}"
+            f" / {_fmt(get_entry_value(entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None), 'W', 0)}"
+        )
+        if own.get("forecast_battery_max_soc") is not None:
+            lines += ["", "**📈 Forecast advice**"]
+            lines.append(
+                f"- Hold SOC below: {_fmt(own.get('forecast_battery_max_soc'), '%', 0)}"
+            )
+            lines.append(
+                f"- Recommended charge limit: {_fmt(own.get('forecast_charge_limit_w'), 'W', 0)}"
+            )
+    else:
+        lines += ["", "- No battery configured on this inverter"]
+    return lines
+
+
+def _group_overview_lines(hass, entry) -> list[str]:
+    """Live detail for one circuit group: limit, members, headroom."""
+    hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
+    hub_data, note = _live_hub_data(hass, hub_entry_id)
+    live = (hub_data.get("group_data") or {}).get(entry.entry_id) or {}
+    runtime = _runtime(hass)
+    limit = get_entry_value(
+        entry, CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT
+    )
+    members = get_entry_value(entry, CONF_CIRCUIT_GROUP_MEMBERS, []) or []
+    lines = [note, ""]
+
+    lines.append("**⛓ Shared breaker**")
+    lines.append(f"- Limit: {_fmt(limit, 'A', 0)} per phase")
+    if live:
+        per_phase = live.get("per_phase_draw") or {}
+        if isinstance(per_phase, dict) and per_phase:
+            lines.append(
+                "- Draw per phase: "
+                + " · ".join(
+                    f"{phase} {_fmt(value, 'A')}" for phase, value in per_phase.items()
+                )
+            )
+        lines.append(f"- Worst phase: {_fmt(live.get('max_phase_draw'), 'A')}")
+        lines.append(f"- Headroom: {_fmt(live.get('headroom'), 'A')}")
+
+    lines += ["", "**🔌 Members**"]
+    if not members:
+        lines.append("- No loads selected")
+    for member_id in members:
+        member = hass.config_entries.async_get_entry(member_id)
+        if member is None:
+            lines.append(f"- (removed entry {member_id[-8:]})")
+            continue
+        draw = (runtime.get("charger_allocations") or {}).get(member_id)
+        status = (runtime.get("charger_status") or {}).get(member_id)
+        lines.append(
+            f"- **{member.title}**: drawing {_fmt(draw, 'A')}"
+            f" · {status or 'status unknown'}"
+        )
+    return lines
+
+
+def _overview_text(hass, entry_id: str) -> str:
+    """The Overview page body for any entry type, scoped to that entry."""
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None:
+        return "The configuration entry no longer exists."
+    entry_type = entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
+    if entry_type == ENTRY_TYPE_HUB:
+        body = _hub_overview_lines(hass, entry)
+    elif entry_type == ENTRY_TYPE_INVERTER:
+        body = _inverter_overview_lines(hass, entry)
+    elif entry_type == ENTRY_TYPE_GROUP:
+        body = _group_overview_lines(hass, entry)
+    else:
+        body = _load_overview_lines(hass, entry)
+    return "\n".join([f"### {entry.title}", ""] + body)
+
+
+def _summary_text(hass, hub_entry_id: str) -> str:
+    """"How it decides": what is configured, in engine evaluation order."""
+    entry = hass.config_entries.async_get_entry(hub_entry_id)
+    if entry is None:
+        return "The configuration entry no longer exists."
+
+    from . import get_inverters_for_hub  # local: avoids a circular import
+
+    phases = _hub_phase_count(hass, hub_entry_id)
+    voltage = get_entry_value(entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+    lines = [f"### {entry.title}", ""]
+
+    # 1 — site basics
+    lines.append("**🏠 Site**")
+    lines.append(f"- ✓ {phases}-phase site at {_fmt(voltage, 'V', 0)}")
+    grid_cts = [
+        label
+        for label, key in (
+            ("A", CONF_PHASE_A_CURRENT_ENTITY_ID),
+            ("B", CONF_PHASE_B_CURRENT_ENTITY_ID),
+            ("C", CONF_PHASE_C_CURRENT_ENTITY_ID),
+        )
+        if get_entry_value(entry, key, None)
+    ]
+    if grid_cts:
+        lines.append(
+            f"- ✓ Grid CTs on phase {', '.join(grid_cts)}, main breaker "
+            f"{_fmt(get_entry_value(entry, CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING), 'A', 0)} per phase"
+        )
+        if get_entry_value(entry, CONF_INVERT_PHASES, False):
+            lines.append("- ✓ Grid readings are inverted before use")
+    else:
+        lines.append("- ✓ Off-grid — phases are inferred from inverter output")
+    if get_entry_value(entry, CONF_ENABLE_MAX_IMPORT_POWER, False) or get_entry_value(
+        entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None
+    ):
+        lines.append("- ✓ Import power is capped by the max-import limit")
+    export_limit = get_entry_value(entry, CONF_GRID_EXPORT_LIMIT, None)
+    if export_limit:
+        lines.append(f"- ✓ Export limited to {_fmt(export_limit, 'W', 0)}")
+
+    # 2 — inverter fleet and batteries
+    inverters = get_inverters_for_hub(hass, hub_entry_id)
+    lines += ["", "**🔆 Power sources**"]
+    if inverters:
+        lines.append(f"- ✓ {len(inverters)} inverter(s) in the fleet")
+        for inverter in inverters:
+            bits = [f"**{inverter.title}**"]
+            max_power = get_entry_value(inverter, CONF_INVERTER_MAX_POWER, None)
+            if max_power:
+                bits.append(_fmt(max_power, "W", 0))
+            bits.append(
+                "asymmetric"
+                if get_entry_value(inverter, CONF_INVERTER_SUPPORTS_ASYMMETRIC, False)
+                else "symmetric"
+            )
+            topology = get_entry_value(
+                inverter, CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY
+            )
+            if topology:
+                bits.append(str(topology))
+            if get_entry_value(inverter, CONF_BATTERY_SOC_ENTITY_ID, None):
+                bits.append(
+                    "battery "
+                    f"{_fmt(get_entry_value(inverter, CONF_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_MIN), '%', 0)}"
+                    "–"
+                    f"{_fmt(get_entry_value(inverter, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL), '%', 0)}"
+                )
+            if get_entry_value(inverter, CONF_SOLAR_FORECAST_DEVICE_IDS, None):
+                bits.append("PV forecast active")
+            lines.append(f"- {' · '.join(bits)}")
+    else:
+        lines.append("- No inverter configured — grid capacity only")
+
+    # 3 — distribution
+    hub_runtime = (_runtime(hass).get("hubs") or {}).get(hub_entry_id) or {}
+    distribution = hub_runtime.get("distribution_mode") or get_entry_value(
+        entry, CONF_DISTRIBUTION_MODE, DEFAULT_DISTRIBUTION_MODE
+    )
+    lines += ["", "**⚖️ Sharing**"]
+    lines.append(f"- ✓ Distribution mode: {distribution}")
+    lines.append("- ✓ Served by mode urgency first, then by priority number")
+
+    # 4 — loads, in the order the engine serves them
+    loads = _controlled_devices(hass, hub_entry_id)
+    ordered = sorted(
+        loads,
+        key=lambda e: (
+            resolve_operating_mode(
+                e.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE),
+                ((_runtime(hass).get("chargers") or {}).get(e.entry_id) or {}).get(
+                    "operating_mode"
+                )
+                or get_entry_value(e, CONF_OPERATING_MODE, None),
+            ).priority,
+            get_entry_value(e, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
+            e.title,
+        ),
+    )
+    lines += ["", "**🔌 Loads, in serving order**"]
+    if not ordered:
+        lines.append("- No loads configured yet")
+    for position, load in enumerate(ordered, start=1):
+        device_type = load.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        bits = [
+            f"**{position}. {load.title}**",
+            _DEVICE_TYPE_LABELS.get(device_type, "Load"),
+            _load_mode(hass, load),
+            _load_limits_text(hass, load),
+        ]
+        if device_type in (
+            DEVICE_TYPE_EVSE,
+            DEVICE_TYPE_POWER_STATION,
+            DEVICE_TYPE_PLUG,
+        ):
+            bits.append(f"phases {_phase_mapping_text(hass, load)}")
+        cap = _group_cap_for(hass, hub_entry_id, load.entry_id)
+        if cap:
+            bits.append(f"⛓ {cap}")
+        lines.append(f"- {' · '.join(bits)}")
+
+    # 5 — post-distribution capping
+    groups = _groups_for_hub(hass, hub_entry_id)
+    if groups:
+        lines += ["", "**⛓ Circuit groups (applied last)**"]
+        for group in groups:
+            members = get_entry_value(group, CONF_CIRCUIT_GROUP_MEMBERS, []) or []
+            lines.append(
+                f"- ✓ **{group.title}**: "
+                f"{_fmt(get_entry_value(group, CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT), 'A', 0)}"
+                f" shared by {len(members)} load(s)"
+            )
+    return "\n".join(lines)
 
 
 class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -1147,7 +1875,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _inverter_combined_schema(self, defaults: dict | None = None) -> vol.Schema:
         """Inverter + solar + battery + write-control on one page
-        (reconfigure/options)."""
+        (inverter options flow)."""
         fields = self._build_hub_inverter_schema(defaults)
         fields.extend(self._build_inverter_solar_schema(defaults))
         fields.extend(self._build_inverter_battery_schema(defaults))
@@ -1225,52 +1953,12 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _get_hub_phase_count(self, hub_entry_id: str | None = None) -> int:
         """Number of phases this site has, as the engine sees it.
 
-        A site phase exists when it has a grid CT or an inverter output sensor
-        (mirrors ``run_hub_calculation``'s phase derivation). The inverter
-        output entities may live on the hub's own legacy fields OR — after the
-        one-time auto-import — on any of its inverter child entries, so the
-        whole fleet is consulted. Without that, an off-grid 3-phase site
-        collapses to 1 phase post-import, hiding the L2/L3 mapping fields and
-        force-mapping every charger leg onto L1's phase.
+        Thin wrapper around the module-level ``_hub_phase_count`` so the flow
+        and the read-only pages share one derivation.
         """
-        entry_id = hub_entry_id or self._data.get(CONF_HUB_ENTRY_ID)
-        if not entry_id:
-            return 3  # Default to 3 if unknown
-        hub_entry = self.hass.config_entries.async_get_entry(entry_id)
-        if not hub_entry:
-            return 3
-        opts = {**hub_entry.data, **hub_entry.options}
-        # Count from grid CT entities first
-        count = sum(
-            1
-            for key in (
-                CONF_PHASE_A_CURRENT_ENTITY_ID,
-                CONF_PHASE_B_CURRENT_ENTITY_ID,
-                CONF_PHASE_C_CURRENT_ENTITY_ID,
-            )
-            if opts.get(key)
+        return _hub_phase_count(
+            self.hass, hub_entry_id or self._data.get(CONF_HUB_ENTRY_ID)
         )
-        if count > 0:
-            return count
-        # Off-grid fallback: infer from the inverter output entities of the
-        # whole fleet — the hub's own (pre-import) fields plus every inverter
-        # child entry. A phase counts once, no matter how many members feed it.
-        from . import get_inverters_for_hub  # local: avoids a circular import
-
-        sources = [opts] + [
-            {**inverter.data, **inverter.options}
-            for inverter in get_inverters_for_hub(self.hass, entry_id)
-        ]
-        count = sum(
-            1
-            for key in (
-                CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-                CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-                CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-            )
-            if any(source.get(key) for source in sources)
-        )
-        return max(count, 1)
 
     def _charger_current_schema(
         self, defaults: dict | None = None, hub_phases: int = 3
@@ -3451,562 +4139,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=True,
         )
 
-    # ==================== RECONFIGURE STEPS ====================
-
-    async def async_step_reconfigure(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Reconfigure entry point — a menu that routes to focused setup pages.
-
-        Multi-section devices (hub, EVSE) show a menu; each page saves on submit
-        and returns here so several sections can be edited in one sitting, then
-        "Done" closes. Single-page devices (plug, tank) go straight to their
-        form.
-        """
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        if not entry:
-            return self.async_abort(reason="entry_not_found")
-
-        self._data = dict(entry.data)
-        entry_type = entry.data.get(ENTRY_TYPE)
-
-        # Legacy entries without entry_type are hubs
-        if not entry_type or entry_type == ENTRY_TYPE_HUB:
-            # Once the legacy inverter/battery/solar fields have been
-            # auto-imported onto an inverter entry, that hardware is edited
-            # there — both legacy hub pages disappear and the hub is left with
-            # its grid connection and site policy on one page.
-            menu_options = ["reconfigure_hub_grid"]
-            if not entry.data.get(MIGRATE_HUB_INVERTER_IMPORTED_FLAG):
-                menu_options += ["reconfigure_hub_inverter", "reconfigure_hub_battery"]
-            menu_options += [
-                "reconfigure_priority",
-                "reconfigure_finish",
-            ]
-            return self.async_show_menu(
-                step_id="reconfigure",
-                menu_options=menu_options,
-            )
-        if entry_type == ENTRY_TYPE_CHARGER:
-            device_type = entry.data.get(CONF_DEVICE_TYPE)
-            if device_type == DEVICE_TYPE_PLUG:
-                return await self.async_step_reconfigure_plug()
-            if device_type == DEVICE_TYPE_HOT_WATER_TANK:
-                return await self.async_step_reconfigure_hot_water_tank()
-            if device_type == DEVICE_TYPE_POWER_STATION:
-                return await self.async_step_reconfigure_power_station()
-            return self.async_show_menu(
-                step_id="reconfigure",
-                menu_options=[
-                    "reconfigure_charger",
-                    "reconfigure_charger_current",
-                    "reconfigure_charger_timing",
-                    "reconfigure_finish",
-                ],
-            )
-        if entry_type == ENTRY_TYPE_INVERTER:
-            return await self.async_step_reconfigure_inverter()
-        return await self.async_step_reconfigure_charger()
-
-    async def async_step_reconfigure_inverter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Reconfigure an inverter entry — one page: inverter, PV and battery."""
-        errors: dict[str, str] = {}
-        bad_forecast_entity = None
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        defaults = {**entry.data, **entry.options}
-
-        if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input,
-                self._INVERTER_ENTITY_KEYS
-                + [
-                    CONF_SOLAR_PRODUCTION_ENTITY_ID,
-                    CONF_BATTERY_SOC_ENTITY_ID,
-                    CONF_BATTERY_POWER_ENTITY_ID,
-                    CONF_CHARGE_LIMIT_ENTITY_ID,
-                    CONF_BATTERY_VOLTAGE_ENTITY_ID,
-                ],
-            )
-            user_input = self._normalize_forecast_list(user_input)
-            _validate_entity_units(
-                self.hass,
-                user_input,
-                {
-                    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
-                    CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
-                    CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
-                },
-                errors,
-            )
-            bad_forecast_entity = _validate_forecast_devices(
-                self.hass, user_input, errors
-            )
-            if not errors:
-                for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
-                    if user_input.get(key) == 0:
-                        user_input[key] = None
-                self.hass.config_entries.async_update_entry(
-                    entry, options={**entry.options, **user_input}
-                )
-                return self.async_abort(reason="reconfigure_successful")
-            return self.async_show_form(
-                step_id="reconfigure_inverter",
-                data_schema=self._inverter_combined_schema(user_input),
-                errors=errors,
-                description_placeholders=(
-                    {"entity": bad_forecast_entity} if bad_forecast_entity else None
-                ),
-                last_step=True,
-            )
-
-        return self.async_show_form(
-            step_id="reconfigure_inverter",
-            data_schema=self._inverter_combined_schema(defaults),
-            errors=errors,
-            last_step=True,
-        )
-
-    async def async_step_reconfigure_finish(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Close the reconfigure menu — each section was saved when submitted."""
-        return self.async_abort(reason="reconfigure_successful")
-
-    async def async_step_reconfigure_priority(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Reorder all controlled devices by priority, then return to the menu."""
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        devices = _controlled_devices(self.hass, entry.entry_id)
-
-        # Nothing to order yet — drop straight back to the menu.
-        if not devices:
-            return await self.async_step_reconfigure()
-
-        if user_input is not None:
-            _apply_priority_order(
-                self.hass, devices, list(user_input.get(CONF_PRIORITY_ORDER, []))
-            )
-            return await self.async_step_reconfigure()
-
-        return self.async_show_form(
-            step_id="reconfigure_priority",
-            data_schema=_priority_order_schema(devices),
-            last_step=False,
-        )
-
-    async def async_step_reconfigure_hub_grid(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Reconfigure hub grid settings."""
-        errors: dict[str, str] = {}
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        defaults = {**entry.data, **entry.options}
-
-        if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input, self._GRID_ENTITY_KEYS
-            )
-            _validate_entity_units(
-                self.hass,
-                user_input,
-                {
-                    CONF_PHASE_A_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
-                    CONF_PHASE_B_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
-                    CONF_PHASE_C_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
-                    CONF_MAX_IMPORT_POWER_ENTITY_ID: _POWER_UNITS,
-                },
-                errors,
-            )
-            # Dropping the grid CTs here is what makes a hub off-grid, so this
-            # is where the battery requirement belongs now that the battery
-            # itself lives on an inverter entry.
-            validate_offgrid_battery_requirement(
-                user_input, defaults, errors,
-                hass=self.hass, hub_entry_id=entry.entry_id,
-            )
-            if not errors:
-                self.hass.config_entries.async_update_entry(
-                    entry, options={**entry.options, **user_input}
-                )
-                return await self.async_step_reconfigure()
-            return self.async_show_form(
-                step_id="reconfigure_hub_grid",
-                data_schema=self._hub_grid_schema(user_input),
-                errors=errors,
-                last_step=False,
-            )
-
-        try:
-            data_schema = self._hub_grid_schema(defaults)
-        except Exception as e:
-            _LOGGER.error("Error in reconfigure_hub_grid: %s", e, exc_info=True)
-            errors["base"] = "unknown"
-            data_schema = vol.Schema({})
-
-        return self.async_show_form(
-            step_id="reconfigure_hub_grid",
-            data_schema=data_schema,
-            errors=errors,
-            last_step=False,
-        )
-
-    async def async_step_reconfigure_hub_battery(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """LEGACY hub solar/battery page — offered only while the hub still
-        carries those fields, i.e. before the one-time auto-import moves them
-        onto an inverter entry."""
-        errors: dict[str, str] = {}
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        defaults = {**entry.data, **entry.options}
-
-        if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input, self._BATTERY_ENTITY_KEYS
-            )
-            user_input = self._normalize_forecast_list(user_input)
-            _validate_entity_units(
-                self.hass,
-                user_input,
-                {
-                    CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
-                    CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
-                    CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
-                },
-                errors,
-            )
-            bad_forecast_entity = _validate_forecast_devices(
-                self.hass, user_input, errors
-            )
-            validate_offgrid_battery_requirement(
-                defaults, user_input, errors,
-                hass=self.hass, hub_entry_id=entry.entry_id,
-            )
-            if not errors:
-                self.hass.config_entries.async_update_entry(
-                    entry,
-                    options={**entry.options, **user_input},
-                )
-                return await self.async_step_reconfigure()
-            return self.async_show_form(
-                step_id="reconfigure_hub_battery",
-                data_schema=self._hub_battery_schema(user_input),
-                errors=errors,
-                description_placeholders=(
-                    {"entity": bad_forecast_entity} if bad_forecast_entity else None
-                ),
-                last_step=False,
-            )
-
-        data_schema = self._hub_battery_schema(defaults)
-
-        return self.async_show_form(
-            step_id="reconfigure_hub_battery",
-            data_schema=data_schema,
-            errors=errors,
-            last_step=False,
-        )
-
-    async def async_step_reconfigure_hub_inverter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Reconfigure hub inverter settings."""
-        errors: dict[str, str] = {}
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        defaults = {**entry.data, **entry.options}
-
-        if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input, self._INVERTER_ENTITY_KEYS
-            )
-            _validate_entity_units(
-                self.hass,
-                user_input,
-                {
-                    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                },
-                errors,
-            )
-            if not errors:
-                self._data = dict(user_input)
-                self._normalize_inverter_powers()
-                self.hass.config_entries.async_update_entry(
-                    entry, options={**entry.options, **self._data}
-                )
-                return await self.async_step_reconfigure()
-            battery_hint = self._auto_detect_entity_value(
-                BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR
-            )
-            hint_text = f"{battery_hint}W detected" if battery_hint else "not detected"
-            return self.async_show_form(
-                step_id="reconfigure_hub_inverter",
-                data_schema=self._hub_inverter_schema(user_input),
-                errors=errors,
-                last_step=False,
-                description_placeholders={"battery_power_hint": hint_text},
-            )
-
-        # Show existing values, defaulting 0 for None (user sees 0 = "not set")
-        inverter_defaults = dict(defaults)
-        for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
-            if inverter_defaults.get(key) is None:
-                inverter_defaults[key] = 0
-
-        data_schema = self._hub_inverter_schema(inverter_defaults)
-
-        # Auto-detect battery discharge power for description hint
-        battery_hint = self._auto_detect_entity_value(
-            BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR
-        )
-        hint_text = f"{battery_hint}W detected" if battery_hint else "not detected"
-
-        return self.async_show_form(
-            step_id="reconfigure_hub_inverter",
-            data_schema=data_schema,
-            errors=errors,
-            last_step=False,
-            description_placeholders={"battery_power_hint": hint_text},
-        )
-
-    async def async_step_reconfigure_charger(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Reconfigure charger: priority and OCPP device ID."""
-        errors: dict[str, str] = {}
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        defaults = {**entry.data, **entry.options}
-
-        if user_input is not None:
-            self.hass.config_entries.async_update_entry(
-                entry, options={**entry.options, **user_input}
-            )
-            return await self.async_step_reconfigure()
-
-        # Build schema with priority and OCPP Device ID
-        fields = {
-            vol.Required(
-                CONF_CHARGER_PRIORITY,
-                default=defaults.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
-            ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
-        }
-
-        # Add OCPP Device ID as editable field if it exists
-        ocpp_device_id = defaults.get(CONF_OCPP_DEVICE_ID)
-        if ocpp_device_id:
-            fields[
-                vol.Optional(
-                    CONF_OCPP_DEVICE_ID,
-                    default=ocpp_device_id,
-                )
-            ] = str
-
-        data_schema = vol.Schema(fields)
-
-        return self.async_show_form(
-            step_id="reconfigure_charger",
-            data_schema=data_schema,
-            errors=errors,
-            last_step=False,
-        )
-
-    async def async_step_reconfigure_charger_current(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Reconfigure charger step 2: Current limits and phase mapping."""
-        errors: dict[str, str] = {}
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        defaults = {**entry.data, **entry.options}
-        hub_entry_id = defaults.get(CONF_HUB_ENTRY_ID)
-        hub_phases = self._get_hub_phase_count(hub_entry_id)
-
-        if user_input is not None:
-            data = dict(user_input)
-            # Auto-fill hidden phase mappings to match L1
-            l1 = data.get(CONF_CHARGER_L1_PHASE, "A")
-            if hub_phases < 2:
-                data[CONF_CHARGER_L2_PHASE] = l1
-            if hub_phases < 3:
-                data[CONF_CHARGER_L3_PHASE] = l1
-
-            validate_charger_settings(data, errors)
-            if errors:
-                return self.async_show_form(
-                    step_id="reconfigure_charger_current",
-                    data_schema=self._charger_current_schema(
-                        data, hub_phases=hub_phases
-                    ),
-                    errors=errors,
-                    last_step=False,
-                )
-            self.hass.config_entries.async_update_entry(
-                entry, options={**entry.options, **data}
-            )
-            return await self.async_step_reconfigure()
-
-        data_schema = self._charger_current_schema(defaults, hub_phases=hub_phases)
-
-        return self.async_show_form(
-            step_id="reconfigure_charger_current",
-            data_schema=data_schema,
-            errors=errors,
-            last_step=False,
-        )
-
-    async def async_step_reconfigure_charger_timing(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Reconfigure charger: units and timing."""
-        errors: dict[str, str] = {}
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        defaults = {**entry.data, **entry.options}
-
-        # Options-first: an edited device ID lives in entry.options.
-        ocpp_device_id = get_entry_value(entry, CONF_OCPP_DEVICE_ID, None)
-        detected_unit = await self._detect_charge_rate_unit(ocpp_device_id)
-
-        if user_input is not None:
-            self.hass.config_entries.async_update_entry(
-                entry,
-                options={**entry.options, **user_input},
-            )
-            return await self.async_step_reconfigure()
-
-        data_schema = self._charger_timing_schema(defaults, detected_unit=detected_unit)
-
-        return self.async_show_form(
-            step_id="reconfigure_charger_timing",
-            data_schema=data_schema,
-            errors=errors,
-            last_step=False,
-        )
-
-    async def async_step_reconfigure_plug(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Reconfigure smart load settings."""
-        errors: dict[str, str] = {}
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        defaults = {**entry.data, **entry.options}
-
-        if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input, self._PLUG_ENTITY_KEYS
-            )
-            # Only what this form edited goes into options. Merging the whole
-            # self._data (seeded from entry.data in async_step_reconfigure)
-            # would copy static keys — entry_type, hub_entry_id, name, the
-            # migration flags — onto the options side, where they would then
-            # permanently shadow any future data-side change (options first).
-            self.hass.config_entries.async_update_entry(
-                entry,
-                options={**entry.options, **user_input},
-            )
-            return self.async_abort(reason="reconfigure_successful")
-
-        data_schema = self._plug_schema(defaults)
-
-        return self.async_show_form(
-            step_id="reconfigure_plug",
-            data_schema=data_schema,
-            errors=errors,
-            last_step=True,
-        )
-
-    async def async_step_reconfigure_hot_water_tank(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Reconfigure hot water tank settings."""
-        errors: dict[str, str] = {}
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        defaults = {**entry.data, **entry.options}
-
-        if user_input is not None:
-            data = self._normalize_optional_inputs(
-                user_input, self._TANK_ENTITY_KEYS
-            )
-
-            # A picked power device is resolved to its power-sensor entity now,
-            # so runtime only ever deals with CONF_TANK_POWER_ENTITY_ID.
-            device_id = data.pop(CONF_TANK_POWER_DEVICE_ID, None)
-            if device_id and not data.get(CONF_TANK_POWER_ENTITY_ID):
-                resolved = self._resolve_device_power_entity(device_id)
-                if resolved:
-                    data[CONF_TANK_POWER_ENTITY_ID] = resolved
-
-            # Only the edited fields go into options — see reconfigure_plug for
-            # why merging the full self._data (static keys included) is wrong.
-            self.hass.config_entries.async_update_entry(
-                entry,
-                options={**entry.options, **data},
-            )
-            return self.async_abort(reason="reconfigure_successful")
-
-        data_schema = self._hot_water_tank_schema(defaults)
-
-        return self.async_show_form(
-            step_id="reconfigure_hot_water_tank",
-            data_schema=data_schema,
-            errors=errors,
-            last_step=True,
-        )
-
-    async def async_step_reconfigure_power_station(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Reconfigure portable power station settings."""
-        errors: dict[str, str] = {}
-        entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
-        defaults = {**entry.data, **entry.options}
-
-        if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input, self._STATION_ENTITY_KEYS
-            )
-            # Validate against the effective config (stored values under this
-            # submission), but persist only the edited fields — see
-            # reconfigure_plug for why the full self._data must not be merged.
-            effective = {**defaults, **user_input}
-            if effective.get(
-                CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
-            ) < effective.get(
-                CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
-            ):
-                errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
-            else:
-                self.hass.config_entries.async_update_entry(
-                    entry,
-                    options={**entry.options, **user_input},
-                )
-                return self.async_abort(reason="reconfigure_successful")
-
-            return self.async_show_form(
-                step_id="reconfigure_power_station",
-                data_schema=self._power_station_schema(effective),
-                errors=errors,
-                last_step=True,
-            )
-
-        return self.async_show_form(
-            step_id="reconfigure_power_station",
-            data_schema=self._power_station_schema(defaults),
-            errors=errors,
-            last_step=True,
-        )
-
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
@@ -4032,7 +4164,61 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        entry_type = self.config_entry.data.get(ENTRY_TYPE)
+        """The one entry point for editing an entry — a small menu.
+
+        "Configure" is the single edit path (there is no reconfigure flow), so
+        this menu also hosts the two read-only pages: a live Overview for every
+        entry type, and "How it decides" for the hub.
+        """
+        entry_type = self.config_entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
+        menu_options = ["settings", "overview"]
+        if entry_type == ENTRY_TYPE_HUB:
+            menu_options.append("summary")
+        return self.async_show_menu(step_id="init", menu_options=menu_options)
+
+    async def async_step_overview(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Read-only live overview, scoped to this entry. Submit = back."""
+        if user_input is not None:
+            return await self.async_step_init()
+        try:
+            text = _overview_text(self.hass, self.config_entry.entry_id)
+        except Exception:  # pragma: no cover — a display page must not break
+            _LOGGER.exception("Could not build the overview page")
+            text = "⚠️ Could not read the live data — see the Home Assistant log."
+        return self.async_show_form(
+            step_id="overview",
+            data_schema=vol.Schema({}),
+            description_placeholders={"overview": text},
+            last_step=False,
+        )
+
+    async def async_step_summary(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Read-only "how it decides" page (hub only). Submit = back."""
+        if user_input is not None:
+            return await self.async_step_init()
+        try:
+            text = _summary_text(self.hass, self.config_entry.entry_id)
+        except Exception:  # pragma: no cover — a display page must not break
+            _LOGGER.exception("Could not build the summary page")
+            text = "⚠️ Could not read the configuration — see the Home Assistant log."
+        return self.async_show_form(
+            step_id="summary",
+            data_schema=vol.Schema({}),
+            description_placeholders={"summary": text},
+            last_step=False,
+        )
+
+    async def async_step_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Route to the editable pages for this entry type."""
+        # A pre-2.0 entry carries no entry_type — those are hubs (async_setup
+        # stamps the type on load, so this only matters before the first load).
+        entry_type = self.config_entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
 
         if entry_type == ENTRY_TYPE_HUB:
             return await self.async_step_hub_grid()
