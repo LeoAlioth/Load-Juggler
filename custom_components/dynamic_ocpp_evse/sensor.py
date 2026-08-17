@@ -1,10 +1,12 @@
 import logging
+from functools import partial
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import *
 from .helpers import get_entry_value, hub_has_battery, fleet_has_forecast_sources
+from .engine.hub_calculation import run_hub_calculation
 from .entities.load import LoadJugglerDeviceSensor
 from .entities.load_sensors import (
     LoadJugglerAllocatedCurrentSensor,
@@ -20,6 +22,7 @@ from .entities.hub import (
     LoadJugglerHubStatusSensor,
     LoadJugglerHubDataSensor,
     HUB_SENSOR_DEFINITIONS,
+    publish_hub_data,
 )
 from .entities.circuit_group import LoadJugglerCircuitGroupSensor
 from .entities.inverter import (
@@ -35,6 +38,82 @@ DynamicOcppEvseHubDataSensor = LoadJugglerHubDataSensor
 
 _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=10)
+
+
+async def async_run_hub_cycle(hass: HomeAssistant, hub_entry: ConfigEntry) -> dict:
+    """Run ONE site cycle for a hub: calculate once, then serve every load.
+
+    This is the hub coordinator's update method and the only thing that drives
+    the engine. Running it per load (as the per-charger coordinators used to)
+    advanced every cycle-counted mechanism in the engine — settle counters,
+    input EMAs, power-stable counts — N times per interval on an N-load site.
+
+    Load processors are awaited sequentially, in entry_id order: two loads must
+    never dispatch OCPP commands concurrently.
+    """
+    hub_entry_id = hub_entry.entry_id
+    hub_data = run_hub_calculation(hass, hub_entry)
+
+    for notif in hub_data.get("auto_detect_notifications", []):
+        await hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": notif["title"],
+                "message": notif["message"],
+                "notification_id": notif["notification_id"],
+            },
+        )
+        _LOGGER.warning("AutoDetect notification: %s", notif["notification_id"])
+
+    published = publish_hub_data(hass, hub_entry_id, hub_data)
+
+    processors = (
+        hass.data.get(DOMAIN, {}).get("load_processors", {}).get(hub_entry_id, {})
+    )
+    for _entry_id, processor in sorted(processors.items()):
+        await processor.async_process(hub_data)
+
+    return published
+
+
+def _create_hub_coordinator(
+    hass: HomeAssistant, config_entry: ConfigEntry, name: str
+) -> DataUpdateCoordinator:
+    """Build and register the hub's site-cycle coordinator."""
+    site_update_frequency = get_entry_value(
+        config_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
+    )
+    coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        config_entry=config_entry,
+        name=f"Load Juggler Site Cycle - {name}",
+        update_method=partial(async_run_hub_cycle, hass, config_entry),
+        update_interval=timedelta(seconds=site_update_frequency),
+    )
+    hass.data.setdefault(DOMAIN, {}).setdefault("hub_coordinators", {})[
+        config_entry.entry_id
+    ] = coordinator
+
+    # A DataUpdateCoordinator only arms its timer while it has at least one
+    # listener, and nothing subscribes to this one: the loads publish their own
+    # state at the end of async_process and the hub sensors are still polled.
+    # This keepalive listener is what keeps the site cycle running; it is
+    # released when the hub entry unloads (as is the timer itself, via
+    # config_entry above and the explicit shutdown in __init__.py's unload).
+    @callback
+    def _keepalive() -> None:
+        """No state of its own — the cycle's effects are published elsewhere."""
+
+    config_entry.async_on_unload(coordinator.async_add_listener(_keepalive))
+    _LOGGER.info(
+        "Site cycle for %s runs every %ss (one calculation per site, "
+        "regardless of load count)",
+        name,
+        site_update_frequency,
+    )
+    return coordinator
 
 
 async def async_setup_entry(
@@ -91,11 +170,15 @@ async def async_setup_entry(
                 LoadJugglerHubDataSensor(hass, config_entry, name, entity_id, defn)
             )
 
+        coordinator = _create_hub_coordinator(hass, config_entry, name)
+
         async_add_entities(entities)
         phases = "A" + ("B" if has_phase_b else "") + ("C" if has_phase_c else "")
         _LOGGER.info(
             f"Setting up hub sensors for {name} (battery={'yes' if has_battery else 'no'}, phases={phases})"
         )
+
+        await coordinator.async_config_entry_first_refresh()
         return
 
     if entry_type == ENTRY_TYPE_GROUP:
@@ -177,35 +260,18 @@ async def async_setup_entry(
         _LOGGER.error("No hub found for charger: %s", name)
         return
 
-    site_update_frequency = get_entry_value(
-        hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
-    )
+    # No coordinator here: the load is driven by its hub's site cycle, which it
+    # joins by registering itself as a load processor when HA adds it (see
+    # LoadJugglerDeviceSensor.async_added_to_hass). Its own update_frequency
+    # still gates command dispatch inside async_process.
     _LOGGER.info(
-        f"Initial site update frequency for {name}: {site_update_frequency}s (charger command rate: {get_entry_value(config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)}s)"
+        f"Setting up load {name} (site cycle: "
+        f"{get_entry_value(hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY)}s, "
+        f"command rate: {get_entry_value(config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)}s)"
     )
 
-    sensor = LoadJugglerDeviceSensor(
-        hass, config_entry, hub_entry, name, entity_id, None
-    )
+    sensor = LoadJugglerDeviceSensor(hass, config_entry, hub_entry, name, entity_id)
 
-    async def async_update_data():
-        """Fetch data for the coordinator using the persistent sensor instance."""
-        await sensor.async_update()
-        return {
-            CONF_TOTAL_ALLOCATED_CURRENT: sensor._state,
-            CONF_PHASES: sensor._phases,
-            "calc_used": sensor._calc_used,
-            "allocated_current": sensor._allocated_current,
-        }
-
-    coordinator = DataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name=f"Load Juggler Coordinator - {name}",
-        update_method=async_update_data,
-        update_interval=timedelta(seconds=site_update_frequency),
-    )
-    sensor.coordinator = coordinator
     allocated_sensor = LoadJugglerAllocatedCurrentSensor(
         hass, config_entry, hub_entry, name, entity_id
     )
@@ -244,11 +310,9 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-    await coordinator.async_config_entry_first_refresh()
-
     # No per-charger options-update listener is registered here. Option changes
     # are handled centrally by _async_options_updated (in __init__.py), which
     # does a clean full reload of the entry — and, for a hub, of its chargers —
-    # so site_update_frequency changes are picked up by rebuilding the
+    # so a changed site_update_frequency is picked up by rebuilding the hub's
     # coordinator from scratch. A second listener that swapped the coordinator
     # in place raced with that reload and leaked the old coordinator's timer.

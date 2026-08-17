@@ -243,6 +243,24 @@ Extended failure handling beyond grid CT to all sensor types:
 - Voltage validation: `<= 0` falls back to `DEFAULT_PHASE_VOLTAGE` (230V)
 - Circuit group stale member filtering: deleted charger entry_ids silently dropped with warning log
 
+## Cascaded inverters — child on the parent's load/backup port
+**Status:** Not yet implemented (requested 2026-08-17; real site: SolarEdge AC-coupled on the Deye's load port)
+**Complexity:** Medium-high (fleet maths)
+
+### Problem
+The fleet model treats all inverters as parallel peers on the site bus. A cascaded setup — an AC-coupled inverter wired to a hybrid's load/backup port — breaks that: the child's output flows THROUGH the parent, so the fleet currently over-counts capacity and may double-count production.
+
+### Idea
+Optional field on the inverter entry: **"Output feeds"** — a selector of the other inverters on the same hub (default: the grid/site bus, today's behavior). Validation: same hub only, no cycles.
+
+Engine implications to work through:
+1. **Throughput capping** — the parent's `inverter_max_power`(/per-phase) must cap its own output PLUS the child's passthrough; `fleet.inverter_limits` / `sum_outputs` need a nested (tree) model instead of a flat sum.
+2. **Double counting** — establish whether the parent's output sensors already include the child's passthrough power (measurement point question — on a Deye the load-port input likely does NOT appear on its grid-side output sensors, but must be verified on the real site). `solar_total` must count the child's production exactly once.
+3. **Behavioral gains** — child production can charge the parent's battery (the point of this wiring); off-grid, the child is only alive while the parent is up; the child is effectively "series behind the parent" regardless of its own topology field.
+4. **Display** — Overview/Summary pages render the relationship, e.g. "Solaredge Inverter · 10000 W · symmetric · behind DEYE Inverter (load port)".
+
+First step when picked up: measure on the real site (child exporting hard, parent idle/charging/discharging) to pin down what each Deye sensor actually includes before touching the fleet maths.
+
 ## Dry-run mode + Debug options page
 **Status:** Not yet implemented — idea from the Adaptive Cover Pro discussion (2026-08-17). The companion Overview and "How it decides" summary pages are NOT part of this item; they are being built directly into the options flow alongside the reconfigure→options collapse.
 **Complexity:** Medium

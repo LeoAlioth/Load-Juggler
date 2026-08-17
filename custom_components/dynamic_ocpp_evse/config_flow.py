@@ -566,6 +566,45 @@ def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
     return " · ".join(parts)
 
 
+def _battery_power_line(value) -> str:
+    """"749 W discharging" from a signed battery power reading.
+
+    The battery power convention everywhere in this integration (entity docs,
+    fleet maths) is positive = discharging, negative = charging. Rendering the
+    direction as a word instead of a sign also makes a miswired (inverted)
+    sensor visible at a glance: a battery "discharging" in full sun below its
+    target SOC is the classic symptom.
+    """
+    if not isinstance(value, (int, float)):
+        return _fmt(value, "W", 0)
+    if value == 0:
+        return f"{_fmt(0, 'W', 0)} idle"
+    direction = "discharging" if value > 0 else "charging"
+    return f"{_fmt(abs(value), 'W', 0)} {direction}"
+
+
+def _unmanaged_household_w(hub_data):
+    """Household draw excluding managed loads.
+
+    The engine publishes its own estimate as ``household_power`` (ground
+    truth from a dedicated solar sensor, else derived from inverter output,
+    else the supply identity). The identity below is only the fallback for
+    hub_data written before that key existed.
+    """
+    household = hub_data.get("household_power")
+    if isinstance(household, (int, float)):
+        return household
+    grid = hub_data.get("grid_power")
+    solar = hub_data.get("solar_power")
+    if not isinstance(grid, (int, float)) or not isinstance(solar, (int, float)):
+        return None
+    battery = hub_data.get("battery_power")
+    managed = hub_data.get("total_evse_power")
+    battery = battery if isinstance(battery, (int, float)) else 0
+    managed = managed if isinstance(managed, (int, float)) else 0
+    return max(0, round(grid + solar + battery - managed, 0))
+
+
 def _hub_overview_lines(hass, entry) -> list[str]:
     """Site-wide live overview for a hub entry."""
     hub_data, note = _live_hub_data(hass, entry.entry_id)
@@ -621,10 +660,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             f" (min {_fmt(hub_data.get('battery_soc_min'), '%', 0)},"
             f" target {_fmt(hub_data.get('battery_soc_target'), '%', 0)})"
         )
-        lines.append(
-            f"- Battery power: {_fmt(hub_data.get('battery_power'), 'W', 0)}"
-            " (positive = charging)"
-        )
+        lines.append(f"- Battery power: {_battery_power_line(hub_data.get('battery_power'))}")
     else:
         lines.append("- No battery configured")
 
@@ -642,10 +678,12 @@ def _hub_overview_lines(hass, entry) -> list[str]:
     )
     excess = hub_data.get("excess_available")
     if excess is not None:
-        lines.append(
-            f"- Excess trigger: {'on' if excess else 'off'}"
-            f" (margin {_fmt(hub_data.get('excess_margin_power'), 'W', 0)})"
-        )
+        margin = hub_data.get("excess_margin_power")
+        if isinstance(margin, (int, float)):
+            detail = f"{_fmt(abs(margin), 'W', 0)} {'above' if margin >= 0 else 'below'} trigger"
+        else:
+            detail = f"margin {_fmt(margin, 'W', 0)}"
+        lines.append(f"- Excess trigger: {'on' if excess else 'off'} ({detail})")
     lines.append(
         "- Per-phase headroom: "
         f"A {_fmt(hub_data.get('available_current_a'), 'A')}"
@@ -655,6 +693,11 @@ def _hub_overview_lines(hass, entry) -> list[str]:
     lines.append(
         f"- Managed loads drawing: {_fmt(hub_data.get('total_evse_power'), 'W', 0)}"
     )
+    unmanaged = _unmanaged_household_w(hub_data)
+    if unmanaged is not None:
+        lines.append(
+            f"- Unmanaged loads (household): {_fmt(unmanaged, 'W', 0)}"
+        )
 
     hub_runtime = (_runtime(hass).get("hubs") or {}).get(entry.entry_id) or {}
     distribution = hub_runtime.get("distribution_mode") or get_entry_value(
@@ -785,9 +828,7 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
     if get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None):
         lines += ["", "**🔋 Battery**"]
         lines.append(f"- SOC: {_fmt(own.get('battery_soc'), '%', 0)}")
-        lines.append(
-            f"- Power: {_fmt(own.get('battery_power'), 'W', 0)} (positive = charging)"
-        )
+        lines.append(f"- Power: {_battery_power_line(own.get('battery_power'))}")
         lines.append(
             f"- Reserve floor: {_fmt(get_entry_value(entry, CONF_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_MIN), '%', 0)}"
             f" · full at {_fmt(get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL), '%', 0)}"

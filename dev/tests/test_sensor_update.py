@@ -1,8 +1,9 @@
-"""Tests for the sensor entity update cycle.
+"""Tests for the site update cycle.
 
-These tests create actual sensor entity instances with mocked HA states
-and call async_update() to verify the data flow from HA entities through
-the calculation engine to the sensor state.
+These tests create actual sensor entity instances with mocked HA states and
+drive one hub site cycle (`_run_site_cycle`, the hub coordinator's own update
+function) to verify the data flow from HA entities through the calculation
+engine to the sensor state and the device commands.
 """
 
 from unittest.mock import patch, AsyncMock, MagicMock
@@ -237,13 +238,35 @@ def _set_ha_states(hass, hub_entry):
     hub_data["battery_soc_min"] = 20
 
 
+async def _run_site_cycle(hass, hub_entry, *load_sensors):
+    """Drive one hub site cycle exactly as the hub's coordinator does.
+
+    Registers the given load sensors as this hub's load processors (production
+    does it from LoadJugglerDeviceSensor.async_added_to_hass), then runs the
+    coordinator's update function: ONE site calculation, the auto-detect
+    notifications, the hub_data republish, then each load processor in turn.
+    Returns the published hub_data.
+    """
+    from custom_components.dynamic_ocpp_evse.sensor import async_run_hub_cycle
+
+    processors = (
+        hass.data.setdefault(DOMAIN, {})
+        .setdefault("load_processors", {})
+        .setdefault(hub_entry.entry_id, {})
+    )
+    for load_sensor in load_sensors:
+        processors[load_sensor.config_entry.entry_id] = load_sensor
+
+    return await async_run_hub_cycle(hass, hub_entry)
+
+
 # ── Sensor creation tests ─────────────────────────────────────────────
 
 
 async def test_charger_sensor_initializes(hass, hub_entry, charger_entry):
     """Test that the charger sensor initializes with correct attributes."""
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     assert sensor.state is None
     assert sensor.unit_of_measurement == "A"
@@ -302,11 +325,7 @@ async def test_calculate_available_current_reads_ha_entities(
 
     _set_ha_states(hass, hub_entry)
 
-    sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-
-    result = run_hub_calculation(sensor)
+    result = run_hub_calculation(hass, hub_entry)
 
     # With the fix, HA entity states are actually read — Standard mode with
     # 25A breaker and grid importing ~5A/phase leaves ~20A headroom per phase,
@@ -350,16 +369,16 @@ async def test_charger_sensor_update_calls_ocpp(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that async_update sends an OCPP set_charge_rate service call."""
+    """Test that a site cycle sends an OCPP set_charge_rate service call."""
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
 
     # Mock the OCPP service call — we don't have a real OCPP integration
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         # The sensor should have called ocpp.set_charge_rate
         ocpp_calls = [
@@ -381,15 +400,15 @@ async def test_charger_sensor_update_writes_hub_data(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that async_update populates hass.data hub_data for hub sensor to read."""
+    """Test that a site cycle populates hass.data hub_data for the hub sensors."""
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
     # Hub data should now be populated
     hub_data = hass.data[DOMAIN].get("hub_data", {}).get(hub_entry.entry_id, {})
@@ -404,20 +423,19 @@ async def test_charger_update_republishes_every_hub_sensor_key(
     charger_entry,
     setup_domain_data,
 ):
-    """Every HUB_SENSOR_DEFINITIONS key must survive a load's async_update.
+    """Every HUB_SENSOR_DEFINITIONS key must survive the site cycle's republish.
 
     Regression test: the republish used to be a hand-written key list that
     silently dropped sensor keys (available_grid_current & co.), leaving
-    those hub sensors permanently unknown on any site with a load — the hub
-    sensor's own self-calculating path never fires while loads refresh it.
+    those hub sensors permanently unknown.
     """
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
     hub_data = hass.data[DOMAIN].get("hub_data", {}).get(hub_entry.entry_id, {})
     missing = [
@@ -426,21 +444,205 @@ async def test_charger_update_republishes_every_hub_sensor_key(
     assert not missing, f"hub sensor keys dropped by the load republish: {missing}"
 
 
+# ── Site cycle: one calculation per hub, whatever the load count ──────
+
+
+def _extra_charger_entry(hub_entry, suffix):
+    """Another EVSE on the same hub, identical apart from its identity."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title=f"Charger {suffix}",
+        data={
+            CONF_ENTITY_ID: f"charger_{suffix}",
+            CONF_NAME: f"Charger {suffix}",
+            ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+            CONF_CHARGER_ID: f"charger_{suffix}",
+            CONF_OCPP_DEVICE_ID: f"ocpp_device_{suffix}",
+            CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.test_charger_current_import",
+            CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: "sensor.test_charger_current_offered",
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={
+            CONF_CHARGER_PRIORITY: 2,
+            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+            CONF_CHARGE_RATE_UNIT: "A",
+            CONF_PROFILE_VALIDITY_MODE: "relative",
+            CONF_UPDATE_FREQUENCY: 15,
+            CONF_OCPP_PROFILE_TIMEOUT: 120,
+            CONF_CHARGE_PAUSE_DURATION: 3,
+            CONF_STACK_LEVEL: 3,
+        },
+    )
+
+
+async def test_one_calculation_per_cycle_with_three_loads(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """One site cycle = ONE engine run + each load processed exactly once.
+
+    Regression for ISSUES.md #8: with a DataUpdateCoordinator per load, every
+    load ran the whole site calculation, so all cycle-counted engine state
+    (SETTLE_DRAW_CYCLES, the input EMAs, power_stable_count) advanced N times
+    per real interval on an N-load site. This test fails on that architecture:
+    three loads produced three engine runs per interval.
+    """
+    from custom_components.dynamic_ocpp_evse import sensor as sensor_module
+
+    _set_ha_states(hass, hub_entry)
+
+    load_sensors = [
+        DynamicOcppEvseChargerSensor(
+            hass, charger_entry, hub_entry, "Test Charger", "test_charger"
+        )
+    ]
+    for suffix in ("b", "c"):
+        extra = _extra_charger_entry(hub_entry, suffix)
+        hass.data[DOMAIN]["chargers"][extra.entry_id] = {
+            "entry": extra,
+            "hub_entry_id": hub_entry.entry_id,
+            "min_current": None,
+            "max_current": None,
+            "device_power": None,
+            "dynamic_control": True,
+        }
+        hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["chargers"].append(extra.entry_id)
+        hass.data[DOMAIN]["charger_allocations"][extra.entry_id] = 0
+        load_sensors.append(
+            DynamicOcppEvseChargerSensor(
+                hass, extra, hub_entry, f"Charger {suffix}", f"charger_{suffix}"
+            )
+        )
+
+    # Count processor runs without replacing the real behavior.
+    process_counts = {}
+    for load_sensor in load_sensors:
+        real_process = load_sensor.async_process
+
+        async def counted(hub_data, s=load_sensor, real_process=real_process):
+            process_counts[s.config_entry.entry_id] = (
+                process_counts.get(s.config_entry.entry_id, 0) + 1
+            )
+            await real_process(hub_data)
+
+        load_sensor.async_process = counted
+
+    engine_runs = []
+    real_engine = sensor_module.run_hub_calculation
+
+    def counted_engine(*args, **kwargs):
+        engine_runs.append(args)
+        return real_engine(*args, **kwargs)
+
+    with patch.object(sensor_module, "run_hub_calculation", counted_engine), patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ):
+        await _run_site_cycle(hass, hub_entry, *load_sensors)
+
+    assert len(engine_runs) == 1, (
+        f"one site cycle must run the calculation once, ran it {len(engine_runs)}x"
+    )
+    assert engine_runs[0] == (hass, hub_entry)
+    assert process_counts == {
+        load_sensor.config_entry.entry_id: 1 for load_sensor in load_sensors
+    }, f"each load must be processed exactly once, got {process_counts}"
+    # Really processed, not just called: every load carries a permit now.
+    assert all(load_sensor._state is not None for load_sensor in load_sensors)
+
+
+async def test_cycle_counted_engine_state_advances_once_per_cycle(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """The symptom behind ISSUES.md #8, asserted directly.
+
+    `_settle_count` (the SETTLE_DRAW_CYCLES counter) advances once per ENGINE
+    run. With a coordinator per load it advanced once per load per interval, so
+    three loads reached the settle threshold three times too early and the
+    engine freed a still-ramping car's gap to other loads. Two site cycles must
+    leave the counter at 1, not 3.
+    """
+    _set_ha_states(hass, hub_entry)
+
+    for suffix in ("b", "c"):
+        extra = _extra_charger_entry(hub_entry, suffix)
+        hass.data[DOMAIN]["chargers"][extra.entry_id] = {
+            "entry": extra,
+            "hub_entry_id": hub_entry.entry_id,
+            "dynamic_control": True,
+        }
+        hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["chargers"].append(extra.entry_id)
+        hass.data[DOMAIN]["charger_allocations"][extra.entry_id] = 0
+
+    # Two cycles with an unchanged measured draw: the first seeds the counter,
+    # the second is the first one that can increment it.
+    await _run_site_cycle(hass, hub_entry)
+    await _run_site_cycle(hass, hub_entry)
+
+    counts = {
+        entry_id: runtime.get("_settle_count")
+        for entry_id, runtime in hass.data[DOMAIN]["chargers"].items()
+    }
+    assert set(counts.values()) == {1}, (
+        f"cycle-counted engine state must advance once per site cycle, got {counts}"
+    )
+
+
+async def test_site_cycle_publishes_hub_data_with_no_loads(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """A hub with zero loads still gets fresh hub_data every site cycle.
+
+    This is what the hub sensor's own (deleted) self-calculating fallback
+    existed for — a second engine writer with a different hub_data shape.
+    The hub coordinator now covers it, with the published shape unchanged.
+    """
+    _set_ha_states(hass, hub_entry)
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["chargers"] = []
+    hass.data[DOMAIN]["chargers"] = {}
+
+    published = await _run_site_cycle(hass, hub_entry)
+
+    assert published is hass.data[DOMAIN]["hub_data"][hub_entry.entry_id]
+    missing = [
+        d["hub_data_key"]
+        for d in HUB_SENSOR_DEFINITIONS
+        if d["hub_data_key"] not in published
+    ]
+    assert not missing, f"hub sensor keys missing from the republish: {missing}"
+    assert published["last_update"] is not None
+
+    # And the hub sensor reads it without running anything itself.
+    hub_sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
+    await hub_sensor.async_update()
+    assert hub_sensor._total_site_available_power is not None
+
+
 async def test_hub_sensor_reads_hub_data(
     hass,
     hub_entry,
     charger_entry,
     setup_domain_data,
 ):
-    """Test that hub sensor reads values written by charger sensor."""
+    """Test that hub sensor reads the values the site cycle published."""
     _set_ha_states(hass, hub_entry)
 
-    # First: run charger sensor to populate hub_data
+    # First: run a site cycle to populate hub_data
     charger_sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        await charger_sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, charger_sensor)
 
     # Then: run hub sensor update
     hub_sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
@@ -459,12 +661,12 @@ async def test_hub_data_sensor_reads_values(
     """Test that individual hub data sensors read their specific values."""
     _set_ha_states(hass, hub_entry)
 
-    # Populate hub_data via charger sensor
+    # Populate hub_data via a site cycle
     charger_sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        await charger_sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, charger_sensor)
 
     # Create a hub data sensor for "grid_power"
     defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
@@ -495,11 +697,11 @@ async def test_charge_pause_starts_when_below_minimum(
     hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
     # In Solar Only mode with no export, charger gets 0A which is < min (6A)
     assert sensor._pause_started_at is not None, (
@@ -523,11 +725,11 @@ async def test_charge_pause_holds_at_zero(
     hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         # Find the OCPP call and check the limit
         ocpp_calls = [
@@ -592,11 +794,11 @@ async def test_no_ocpp_call_without_device_id(
     hass.data[DOMAIN]["charger_allocations"][charger_entry_no_device.entry_id] = 0
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry_no_device, hub_entry, "No Device", "no_device_charger", None
+        hass, charger_entry_no_device, hub_entry, "No Device", "no_device_charger"
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         # Should NOT have called any OCPP service
         ocpp_calls = [
@@ -619,11 +821,11 @@ async def test_relative_profile_format(
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         ocpp_calls = [
             c for c in mock_call.call_args_list
@@ -690,11 +892,11 @@ async def test_absolute_profile_format(
     hass.data[DOMAIN]["charger_allocations"][charger_absolute.entry_id] = 0
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_absolute, hub_entry, "Abs Charger", "abs_charger", None
+        hass, charger_absolute, hub_entry, "Abs Charger", "abs_charger"
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         ocpp_calls = [
             c for c in mock_call.call_args_list
@@ -762,11 +964,11 @@ async def test_watts_charge_rate_conversion(
     hass.data[DOMAIN]["charger_allocations"][charger_watts.entry_id] = 0
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_watts, hub_entry, "Watts Charger", "watts_charger", None
+        hass, charger_watts, hub_entry, "Watts Charger", "watts_charger"
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         ocpp_calls = [
             c for c in mock_call.call_args_list
@@ -798,10 +1000,7 @@ async def test_hub_status_names_unavailable_sensor(
         {"device_class": "power", "unit_of_measurement": "W"},
     )
 
-    sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-    result = run_hub_calculation(sensor)
+    result = run_hub_calculation(hass, hub_entry)
 
     # The status line names the sensor; the warning carries the entity_id.
     assert result["hub_status"].startswith("Sensor unavailable:")
@@ -833,11 +1032,7 @@ async def test_result_dict_all_keys_populated(
 
     _set_ha_states(hass, hub_entry)
 
-    sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-
-    result = run_hub_calculation(sensor)
+    result = run_hub_calculation(hass, hub_entry)
 
     # Every key that hub_data storage (sensor.py) reads must be present
     # in the result dict AND must not be None when entities are configured.
@@ -894,11 +1089,7 @@ async def test_result_dict_values_are_reasonable(
 
     _set_ha_states(hass, hub_entry)
 
-    sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-
-    result = run_hub_calculation(sensor)
+    result = run_hub_calculation(hass, hub_entry)
 
     # --- Grid / phase values ---
     assert result[CONF_PHASES] == 3
@@ -962,18 +1153,12 @@ async def test_allow_grid_charging_off_reduces_available(
 
     # First: run with grid charging ON
     _set_ha_states(hass, hub_entry)
-    sensor_on = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-    result_on = run_hub_calculation(sensor_on)
+    result_on = run_hub_calculation(hass, hub_entry)
     target_on = result_on["charger_targets"].get(charger_entry.entry_id, 0)
 
     # Then: run with grid charging OFF
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["allow_grid_charging"] = False
-    sensor_off = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-    result_off = run_hub_calculation(sensor_off)
+    result_off = run_hub_calculation(hass, hub_entry)
     target_off = result_off["charger_targets"].get(charger_entry.entry_id, 0)
 
     # Grid charging OFF should yield less power than ON
@@ -1006,18 +1191,12 @@ async def test_power_buffer_reduces_grid_available(
 
     # Run with power buffer = 0
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["power_buffer"] = 0
-    sensor_no_buf = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-    result_no_buf = run_hub_calculation(sensor_no_buf)
+    result_no_buf = run_hub_calculation(hass, hub_entry)
     target_no_buf = result_no_buf["charger_targets"].get(charger_entry.entry_id, 0)
 
     # Run with 2000W buffer → effective grid limit drops significantly
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["power_buffer"] = 2000
-    sensor_buf = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-    result_buf = run_hub_calculation(sensor_buf)
+    result_buf = run_hub_calculation(hass, hub_entry)
     target_buf = result_buf["charger_targets"].get(charger_entry.entry_id, 0)
 
     # With the buffer reducing effective grid import, charger gets less power
@@ -1049,7 +1228,7 @@ async def test_rate_limit_ramp_up_capped(
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     # Simulate previous cycle had output at 6A
     sensor._ema_current = 6.0
@@ -1058,7 +1237,7 @@ async def test_rate_limit_ramp_up_capped(
     sensor._prev_distribution_mode = "Priority"
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         ocpp_calls = [
             c for c in mock_call.call_args_list
@@ -1091,7 +1270,7 @@ async def test_rate_limit_ramp_down_capped(
 
     _set_ha_states(hass, hub_entry)
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     # Simulate previous cycle had output at 16A
     sensor._ema_current = 16.0
@@ -1105,7 +1284,7 @@ async def test_rate_limit_ramp_down_capped(
     hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["battery_soc_target"] = 90
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         ocpp_calls = [
             c for c in mock_call.call_args_list
@@ -1137,14 +1316,14 @@ async def test_rate_limit_not_applied_on_resume_from_pause(
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     # Simulate coming out of pause — both EMA and rate_limited are 0
     sensor._ema_current = 0.0
     sensor._rate_limited_current = 0.0
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         ocpp_calls = [
             c for c in mock_call.call_args_list
@@ -1173,7 +1352,7 @@ async def test_auto_reset_mismatch_counter_increments(
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     # Simulate: last cycle we sent 16A
     sensor._last_commanded_limit = 16.0
@@ -1185,7 +1364,7 @@ async def test_auto_reset_mismatch_counter_increments(
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
     assert sensor._mismatch_count >= 1, (
         f"Mismatch count should be >= 1, got {sensor._mismatch_count}"
@@ -1202,7 +1381,7 @@ async def test_auto_reset_counter_resets_on_compliance(
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     sensor._mismatch_count = 3  # Simulate prior mismatches
     sensor._last_commanded_limit = 16.0
@@ -1214,7 +1393,7 @@ async def test_auto_reset_counter_resets_on_compliance(
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
     assert sensor._mismatch_count == 0, (
         f"Mismatch count should reset to 0 when compliant, got {sensor._mismatch_count}"
@@ -1233,7 +1412,7 @@ async def test_auto_reset_triggers_after_threshold(
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     # Pre-set mismatch count to one below threshold
     sensor._mismatch_count = AUTO_RESET_MISMATCH_THRESHOLD - 1
@@ -1246,7 +1425,7 @@ async def test_auto_reset_triggers_after_threshold(
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         # Check that reset_ocpp_evse was called
         reset_calls = [
@@ -1271,7 +1450,7 @@ async def test_auto_reset_cooldown_prevents_retrigger(
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     # Simulate: just reset recently
     sensor._last_auto_reset_at = datetime.now()
@@ -1285,7 +1464,7 @@ async def test_auto_reset_cooldown_prevents_retrigger(
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         # Should NOT trigger reset during cooldown
         reset_calls = [
@@ -1319,11 +1498,7 @@ async def test_feedback_loop_subtracts_charger_draw_from_consumption(
 
     _set_ha_states(hass, hub_entry)
 
-    sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-
-    result = run_hub_calculation(sensor)
+    result = run_hub_calculation(hass, hub_entry)
 
     # The charger draws 10A on L1 (from entity attributes).
     # Phase A grid reading is 5.0A import.
@@ -1377,11 +1552,7 @@ async def test_feedback_loop_with_constrained_breaker(
         },
     )
 
-    sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-
-    result = run_hub_calculation(sensor)
+    result = run_hub_calculation(hass, hub_entry)
 
     # Phase A: consumption=5.0A, charger_l1=4.0A → adjusted=1.0A → headroom=24.0A
     # Phase B: consumption=4.5A, charger_l2=4.0A → adjusted=0.5A → headroom=24.5A
@@ -1421,12 +1592,12 @@ async def test_charge_pause_cancelled_on_charging_mode_change(
     hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         # First update: Solar Only mode, no surplus → pause starts
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
         assert sensor._pause_started_at is not None, "Pause should have started in Solar Only mode"
         assert sensor._prev_operating_mode == "Solar Only"
 
@@ -1434,7 +1605,7 @@ async def test_charge_pause_cancelled_on_charging_mode_change(
         hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Standard"
 
         # Second update: mode changed → pause should be cancelled
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
         assert sensor._pause_started_at is None, (
             "Pause should be cancelled when operating mode changes from Solar Only to Standard"
         )
@@ -1458,12 +1629,12 @@ async def test_charge_pause_cancelled_on_distribution_mode_change(
     hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         # First update: Solar Only mode → pause starts
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
         assert sensor._pause_started_at is not None, "Pause should have started"
         assert sensor._prev_distribution_mode == "Priority"
 
@@ -1473,7 +1644,7 @@ async def test_charge_pause_cancelled_on_distribution_mode_change(
 
         # Second update: distribution mode changed → pause cancelled,
         # Standard mode gives current → no new pause
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
         assert sensor._pause_started_at is None, (
             "Pause should be cancelled when distribution mode changes"
         )
@@ -1491,11 +1662,11 @@ async def test_charge_pause_remaining_seconds_attribute(
     hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
     # Pause should be active with remaining seconds
     attrs = sensor.extra_state_attributes
@@ -1517,13 +1688,13 @@ async def test_auto_reset_skips_when_car_not_plugged_in(
     hass.states.async_set("sensor.test_charger_status_connector", "Available")
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
     sensor._mismatch_count = 10  # Would normally trigger
     sensor._last_commanded_limit = 16.0
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         # Counter should be reset (car not plugged in)
         assert sensor._mismatch_count == 0, (
@@ -1591,11 +1762,7 @@ async def test_eco_mode_night_with_feedback_loop(
     # Solar Priority mode (was "Eco")
     hass.data[DOMAIN]["chargers"][charger_entry.entry_id]["operating_mode"] = "Solar Priority"
 
-    sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-
-    result = run_hub_calculation(sensor)
+    result = run_hub_calculation(hass, hub_entry)
 
     charger_targets = result.get("charger_targets", {})
     target = charger_targets.get(charger_entry.entry_id, 0)
@@ -1617,19 +1784,19 @@ async def test_dual_frequency_throttles_ocpp_commands(
 ):
     """Test that site info refreshes on every cycle but OCPP commands are throttled.
 
-    The sensor update loop runs at the fast site_update_frequency (default 5s),
+    The hub site cycle runs at the fast site_update_frequency (default 2s),
     but OCPP set_charge_rate commands are only sent when the charger's
     update_frequency (default 15s) has elapsed.
     """
     _set_ha_states(hass, hub_entry)
 
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
         # First update: _last_command_time is 0, so command should fire
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         ocpp_calls = [
             c for c in mock_call.call_args_list
@@ -1649,7 +1816,7 @@ async def test_dual_frequency_throttles_ocpp_commands(
 
         # Second update immediately after: should be throttled (no OCPP command)
         # _last_command_time was just set, and update_frequency is 15s
-        await sensor.async_update()
+        await _run_site_cycle(hass, hub_entry, sensor)
 
         ocpp_calls_2 = [
             c for c in mock_call.call_args_list
@@ -1726,7 +1893,7 @@ async def test_compliance_watts_decode_uses_car_active_phases(
 
     charger = _watts_power_offered_charger(hub_entry)
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger, hub_entry, "Test Charger", "test_charger", None
+        hass, charger, hub_entry, "Test Charger", "test_charger"
     )
     # 3-phase EVSE hardware, 1-phase car connected.
     sensor._phases = 3
@@ -1768,7 +1935,7 @@ async def test_compliance_watts_decode_detects_real_mismatch(
 
     charger = _watts_power_offered_charger(hub_entry)
     sensor = DynamicOcppEvseChargerSensor(
-        hass, charger, hub_entry, "Test Charger", "test_charger", None
+        hass, charger, hub_entry, "Test Charger", "test_charger"
     )
     sensor._phases = 3
     sensor._car_active_phases = 1
@@ -1801,7 +1968,6 @@ async def test_forecast_max_soc_ratchet(hass):
     today" regardless of when the test runs. Threshold = 5000 W export limit
     + 300 W base consumption = 5300 W; capacity 10 kWh, floor 30 %.
     """
-    from types import SimpleNamespace
     from freezegun import freeze_time
     from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
@@ -1855,8 +2021,6 @@ async def test_forecast_max_soc_ratchet(hass):
         {"device_class": "power", "unit_of_measurement": "W"},
     )
 
-    sensor = SimpleNamespace(hass=hass, hub_entry=hub)
-
     def set_forecast(watts_by_hour):
         hass.states.async_set(
             "sensor.fc_forecast",
@@ -1873,23 +2037,23 @@ async def test_forecast_max_soc_ratchet(hass):
         # 2 h at 10300 W = 5000 W over the threshold → 10 kWh, the whole pack:
         # raw ceiling 0 %, clamped to the 30 % floor.
         set_forecast([10300, 10300, 0])
-        result = run_hub_calculation(sensor)
+        result = run_hub_calculation(hass, hub)
         assert result["forecast_clipped_kwh"] == 10.0
         assert result["forecast_battery_max_soc"] == 30
 
         # Forecast improves to 2.5 kWh → ceiling 75 %: rises immediately.
         set_forecast([7800, 0])
-        result = run_hub_calculation(sensor)
+        result = run_hub_calculation(hass, hub)
         assert result["forecast_battery_max_soc"] == 75
 
         # Slightly worse (raw 74 %) — within the 2 % band, holds at 75.
         set_forecast([7900, 0])
-        result = run_hub_calculation(sensor)
+        result = run_hub_calculation(hass, hub)
         assert result["forecast_battery_max_soc"] == 75
 
         # Clearly worse (raw 60 %) — beyond the band, falls.
         set_forecast([9300, 0])
-        result = run_hub_calculation(sensor)
+        result = run_hub_calculation(hass, hub)
         assert result["forecast_battery_max_soc"] == 60
 
 
@@ -1923,10 +2087,7 @@ async def test_grid_phases_in_watts_are_converted_to_amps(
             entity, "1150", {"device_class": "power", "unit_of_measurement": "W"}
         )
 
-    sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-    result = run_hub_calculation(sensor)
+    result = run_hub_calculation(hass, hub_entry)
 
     # 3 × 1150 W = 3450 W, not 3 × 1150 A × 230 V
     assert result["grid_power"] == pytest.approx(3450, abs=50)
@@ -1954,10 +2115,7 @@ async def test_grid_phase_export_keeps_its_sign(
             entity, "-2300", {"device_class": "power", "unit_of_measurement": "W"}
         )
 
-    sensor = DynamicOcppEvseChargerSensor(
-        hass, charger_entry, hub_entry, "Test Charger", "test_charger", None
-    )
-    result = run_hub_calculation(sensor)
+    result = run_hub_calculation(hass, hub_entry)
 
     # 3 × −2300 W of export, so the published grid power is negative
     assert result["grid_power"] == pytest.approx(-6900, abs=50)

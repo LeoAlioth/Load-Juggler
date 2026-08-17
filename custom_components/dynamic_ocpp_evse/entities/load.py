@@ -3,8 +3,7 @@ import math
 import time
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import callback
-from datetime import datetime, timezone
-from ..engine.hub_calculation import run_hub_calculation
+from datetime import datetime
 from ..const import *
 from ..helpers import get_entry_value
 from .mixins import ChargerEntityMixin
@@ -16,41 +15,23 @@ from ..control.ocpp import send_ocpp_command
 from ..control.plug import send_plug_command
 from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
-from .hub import HUB_SENSOR_DEFINITIONS
 
 _LOGGER = logging.getLogger(__name__)
 
-# Every hub_data key the load sensors republish into hass.data for the hub
-# entities to read. Projected from HUB_SENSOR_DEFINITIONS so a new hub sensor
-# republishes automatically, plus keys read by non-sensor consumers.
-_HUB_REPUBLISH_KEYS = frozenset(
-    d["hub_data_key"] for d in HUB_SENSOR_DEFINITIONS
-) | {
-    "battery_soc_min",
-    "battery_soc_target",
-    "total_site_available_power",
-    "total_export_power",
-    "excess_available",
-    "excess_margin_power",
-    "inverters",
-    # Fleet forecast advice — no hub sensor anymore (the per-battery sensors
-    # live on the inverter entries) but kept in hub_data for automations.
-    "forecast_battery_max_soc",
-    "forecast_charge_limit_w",
-}
-
 
 class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
-    """Representation of a managed device (EVSE, smart plug, etc.)."""
+    """Representation of a managed device (EVSE, smart plug, etc.).
 
-    # This entity is driven solely by the per-load DataUpdateCoordinator built
-    # in sensor.py, which calls async_update() every site_update_frequency and
-    # notifies listeners (see async_added_to_hass below). HA platform polling
-    # would run the whole engine and command dispatch a second time on the
-    # platform's own SCAN_INTERVAL, so it is disabled here.
+    This entity does NOT run the site calculation. Its hub's coordinator
+    (sensor.py) runs it once per site cycle and then calls async_process()
+    on every load registered under that hub, handing it the shared result.
+    Platform polling stays off: a poll would dispatch commands a second time
+    on the platform's own SCAN_INTERVAL.
+    """
+
     _attr_should_poll = False
 
-    def __init__(self, hass, config_entry, hub_entry, name, entity_id, coordinator):
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id):
         """Initialize the sensor."""
         self.hass = hass
         self.config_entry = config_entry
@@ -93,25 +74,29 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         self._target_evse_solar = None
         self._target_evse_excess = None
         self._charging_status = "Unknown"
-        self.coordinator = coordinator
 
     async def async_added_to_hass(self):
-        """Subscribe to the coordinator that runs this entity's update.
+        """Register as this hub's load processor.
 
-        With polling disabled, the coordinator is the only thing that refreshes
-        this entity, so its listener is what pushes the new state to HA. The
-        subscription is released with the entity (async_on_remove).
+        The hub coordinator drives every registered processor once per site
+        cycle. Registration (not a coordinator reference) is the whole link:
+        a load can be set up before its hub's coordinator exists — the next
+        hub tick simply picks it up. The entry is released with the entity.
         """
         await super().async_added_to_hass()
-        if self.coordinator is not None:
-            self.async_on_remove(
-                self.coordinator.async_add_listener(self._handle_coordinator_update)
-            )
+        hub_entry_id = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
+        processors = (
+            self.hass.data.setdefault(DOMAIN, {})
+            .setdefault("load_processors", {})
+            .setdefault(hub_entry_id, {})
+        )
+        processors[self.config_entry.entry_id] = self
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Publish the state produced by the coordinator's async_update() run."""
-        self.async_write_ha_state()
+        @callback
+        def _unregister() -> None:
+            processors.pop(self.config_entry.entry_id, None)
+
+        self.async_on_remove(_unregister)
 
     @property
     def state(self):
@@ -177,427 +162,415 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         """Return the device class."""
         return "current"
 
-    async def async_update(self):
-        """Fetch new state data for the sensor asynchronously."""
+    async def async_process(self, hub_data):
+        """Apply one site result to this load: state, timers and commands.
+
+        Called by the hub coordinator once per site cycle, after the single
+        site calculation. Everything here is per-load — the site result is
+        read-only input. Errors are contained so one misbehaving load cannot
+        stop its siblings from being served.
+        """
         try:
-            hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
-            if not hub_entry:
-                _LOGGER.error("Hub not found for charger: %s", self._attr_name)
-                return
-
-            self.hub_entry = hub_entry
-            hub_data = run_hub_calculation(self)
-
-            for notif in hub_data.get("auto_detect_notifications", []):
-                await self.hass.services.async_call(
-                    "persistent_notification",
-                    "create",
-                    {
-                        "title": notif["title"],
-                        "message": notif["message"],
-                        "notification_id": notif["notification_id"],
-                    },
-                )
-                _LOGGER.warning("AutoDetect notification: %s", notif["notification_id"])
-
-            self._phases = hub_data.get(CONF_PHASES)
-            charger_active_phases = hub_data.get("charger_active_phases", {})
-            self._car_active_phases = charger_active_phases.get(
-                self.config_entry.entry_id,
-                self._phases or 1,
+            await self._async_apply(hub_data)
+        except Exception as e:
+            _LOGGER.error(
+                f"Error updating Load Juggler Charger Sensor {self._attr_name}: {e}",
+                exc_info=True,
             )
-            charger_phase_masks = hub_data.get("charger_phase_masks", {})
-            current_distribution_mode = hub_data.get("distribution_mode")
+        # Polling is off and there is no coordinator listener, so this is the
+        # one place the entity's state reaches HA. Skipped before the entity is
+        # registered (a hub tick can precede HA adding the entity).
+        if self.hass is not None and self.entity_id:
+            self.async_write_ha_state()
 
+    async def _async_apply(self, hub_data):
+        """The body of async_process — see its docstring."""
+        hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
+        if not hub_entry:
+            _LOGGER.error("Hub not found for charger: %s", self._attr_name)
+            return
+
+        self.hub_entry = hub_entry
+
+        self._phases = hub_data.get(CONF_PHASES)
+        charger_active_phases = hub_data.get("charger_active_phases", {})
+        self._car_active_phases = charger_active_phases.get(
+            self.config_entry.entry_id,
+            self._phases or 1,
+        )
+        charger_phase_masks = hub_data.get("charger_phase_masks", {})
+        current_distribution_mode = hub_data.get("distribution_mode")
+
+        charger_modes = hub_data.get("charger_modes", {})
+        self._operating_mode = charger_modes.get(self.config_entry.entry_id)
+
+        mode_changed = (
+            self._prev_operating_mode is not None
+            and self._operating_mode != self._prev_operating_mode
+        ) or (
+            self._prev_distribution_mode is not None
+            and current_distribution_mode != self._prev_distribution_mode
+        )
+
+        if mode_changed:
+            if self._pause_started_at is not None:
+                _LOGGER.info(
+                    "Mode changed for %s (operating: %s→%s, distribution: %s→%s) — cancelling charge pause",
+                    self._attr_name,
+                    self._prev_operating_mode,
+                    self._operating_mode,
+                    self._prev_distribution_mode,
+                    current_distribution_mode,
+                )
+                self._pause_started_at = None
+            if self._grace_started_at is not None:
+                _LOGGER.info(
+                    "Mode changed for %s — cancelling grace timer", self._attr_name
+                )
+                self._grace_started_at = None
+
+        self._prev_operating_mode = self._operating_mode
+        self._prev_distribution_mode = current_distribution_mode
+
+        self._calc_used = hub_data.get("calc_used")
+
+        # The site-level republish into hass.data is the hub coordinator's job
+        # (one writer per cycle) — see publish_hub_data in entities/hub.py.
+
+        charger_targets = hub_data.get("charger_targets", {})
+
+        if charger_targets:
+            charger_names = hub_data.get("charger_names", {})
             charger_modes = hub_data.get("charger_modes", {})
-            self._operating_mode = charger_modes.get(self.config_entry.entry_id)
-
-            mode_changed = (
-                self._prev_operating_mode is not None
-                and self._operating_mode != self._prev_operating_mode
-            ) or (
-                self._prev_distribution_mode is not None
-                and current_distribution_mode != self._prev_distribution_mode
+            charger_avail = hub_data.get("charger_available", {})
+            _LOGGER.debug(
+                "Charger targets: %s",
+                ", ".join(
+                    [
+                        f"{charger_names.get(k, k[-8:])}({charger_modes.get(k, '?')}): "
+                        f"alloc={v:.1f}A avail={charger_avail.get(k, 0):.1f}A"
+                        for k, v in charger_targets.items()
+                    ]
+                ),
             )
 
-            if mode_changed:
-                if self._pause_started_at is not None:
-                    _LOGGER.info(
-                        "Mode changed for %s (operating: %s→%s, distribution: %s→%s) — cancelling charge pause",
-                        self._attr_name,
-                        self._prev_operating_mode,
-                        self._operating_mode,
-                        self._prev_distribution_mode,
-                        current_distribution_mode,
-                    )
-                    self._pause_started_at = None
-                if self._grace_started_at is not None:
-                    _LOGGER.info(
-                        "Mode changed for %s — cancelling grace timer", self._attr_name
-                    )
-                    self._grace_started_at = None
+        # allocated_current = the load's real footprint (measured draw).
+        # It is what the "Allocated Current" sensor shows, for every
+        # device type — no smoothing, it is a measurement.
+        self._allocated_current = round(
+            charger_targets.get(self.config_entry.entry_id, 0), 1
+        )
 
-            self._prev_operating_mode = self._operating_mode
-            self._prev_distribution_mode = current_distribution_mode
+        # available_current = the permit the engine grants this device,
+        # up to its rated/max. It drives the device command. For an EVSE
+        # the OCPP charge limit is the permit, smoothed to avoid
+        # oscillation; binary loads (plug, tank) use it directly.
+        charger_avail_data = hub_data.get("charger_available", {})
+        raw_permit = round(
+            charger_avail_data.get(self.config_entry.entry_id, 0), 1
+        )
 
-            self._calc_used = hub_data.get("calc_used")
-
-            hub_entry_id = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
-            if DOMAIN not in self.hass.data:
-                self.hass.data[DOMAIN] = {}
-            if "hub_data" not in self.hass.data[DOMAIN]:
-                self.hass.data[DOMAIN]["hub_data"] = {}
-            republished = {key: hub_data.get(key) for key in _HUB_REPUBLISH_KEYS}
-            republished.update(
-                {
-                    "last_update": datetime.now(timezone.utc),
-                    "grid_stale": hub_data.get("grid_stale", False),
-                    "group_data": hub_data.get("group_data", {}),
-                    "hub_status": hub_data.get("hub_status", "OK"),
-                    "hub_warnings": hub_data.get("hub_warnings", []),
-                }
+        device_type = self.config_entry.data.get(
+            CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE
+        )
+        if device_type == DEVICE_TYPE_EVSE:
+            self._available_current = apply_smoothing(
+                self, raw_permit, mode_changed, hub_entry
             )
-            self.hass.data[DOMAIN]["hub_data"][hub_entry_id] = republished
-
-            charger_targets = hub_data.get("charger_targets", {})
-
-            if charger_targets:
-                charger_names = hub_data.get("charger_names", {})
-                charger_modes = hub_data.get("charger_modes", {})
-                charger_avail = hub_data.get("charger_available", {})
-                _LOGGER.debug(
-                    "Charger targets: %s",
-                    ", ".join(
-                        [
-                            f"{charger_names.get(k, k[-8:])}({charger_modes.get(k, '?')}): "
-                            f"alloc={v:.1f}A avail={charger_avail.get(k, 0):.1f}A"
-                            for k, v in charger_targets.items()
-                        ]
-                    ),
-                )
-
-            # allocated_current = the load's real footprint (measured draw).
-            # It is what the "Allocated Current" sensor shows, for every
-            # device type — no smoothing, it is a measurement.
-            self._allocated_current = round(
-                charger_targets.get(self.config_entry.entry_id, 0), 1
-            )
-
-            # available_current = the permit the engine grants this device,
-            # up to its rated/max. It drives the device command. For an EVSE
-            # the OCPP charge limit is the permit, smoothed to avoid
-            # oscillation; binary loads (plug, tank) use it directly.
-            charger_avail_data = hub_data.get("charger_available", {})
-            raw_permit = round(
-                charger_avail_data.get(self.config_entry.entry_id, 0), 1
-            )
-
-            device_type = self.config_entry.data.get(
-                CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE
-            )
-            if device_type == DEVICE_TYPE_EVSE:
-                self._available_current = apply_smoothing(
-                    self, raw_permit, mode_changed, hub_entry
-                )
-            elif device_type == DEVICE_TYPE_POWER_STATION:
-                # The station's charge speed is rate-limited like an EVSE's
-                # current — a saturated Excess pool would otherwise command
-                # 0 → max in a single cycle. One divergence: the pipeline
-                # resumes from 0 at the full permit (right for an EVSE coming
-                # back from a pause); the station instead resumes at its
-                # MINIMUM charge power and ramps up from there.
-                if (
-                    self._rate_limited_current == 0
-                    and raw_permit > 0
-                    and not mode_changed
-                ):
-                    charger_rt = (
-                        self.hass.data.get(DOMAIN, {})
-                        .get("chargers", {})
-                        .get(self.config_entry.entry_id, {})
-                    )
-                    min_power = charger_rt.get(
-                        "station_min_charge_power"
-                    ) or get_entry_value(
-                        self.config_entry,
-                        CONF_STATION_MIN_CHARGE_POWER,
-                        DEFAULT_STATION_MIN_CHARGE_POWER,
-                    )
-                    voltage = get_entry_value(
-                        hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE
-                    )
-                    phases_count = len(
-                        get_entry_value(self.config_entry, CONF_CONNECTED_TO_PHASE, "A")
-                        or "A"
-                    )
-                    resume_current = min(
-                        raw_permit, min_power / (voltage * phases_count)
-                    )
-                    self._ema_current = resume_current
-                    self._schmitt_current = resume_current
-                    self._rate_limited_current = resume_current
-                self._available_current = apply_smoothing(
-                    self, raw_permit, mode_changed, hub_entry
-                )
-            else:
-                self._available_current = raw_permit
-            self._state = self._available_current
-
-            if device_type == DEVICE_TYPE_POWER_STATION:
-                # The station's floor is its minimum charge power, not the
-                # EVSE minimum-current constant.
-                station_rt = (
+        elif device_type == DEVICE_TYPE_POWER_STATION:
+            # The station's charge speed is rate-limited like an EVSE's
+            # current — a saturated Excess pool would otherwise command
+            # 0 → max in a single cycle. One divergence: the pipeline
+            # resumes from 0 at the full permit (right for an EVSE coming
+            # back from a pause); the station instead resumes at its
+            # MINIMUM charge power and ramps up from there.
+            if (
+                self._rate_limited_current == 0
+                and raw_permit > 0
+                and not mode_changed
+            ):
+                charger_rt = (
                     self.hass.data.get(DOMAIN, {})
                     .get("chargers", {})
                     .get(self.config_entry.entry_id, {})
                 )
-                _min_power = station_rt.get(
+                min_power = charger_rt.get(
                     "station_min_charge_power"
                 ) or get_entry_value(
                     self.config_entry,
                     CONF_STATION_MIN_CHARGE_POWER,
                     DEFAULT_STATION_MIN_CHARGE_POWER,
                 )
-                _voltage = get_entry_value(
+                voltage = get_entry_value(
                     hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE
                 )
-                _phases = len(
+                phases_count = len(
                     get_entry_value(self.config_entry, CONF_CONNECTED_TO_PHASE, "A")
                     or "A"
                 )
-                min_charge_current = _min_power / (_voltage * _phases)
-            else:
-                min_charge_current = get_entry_value(
-                    self.config_entry,
-                    CONF_EVSE_MINIMUM_CHARGE_CURRENT,
-                    DEFAULT_MIN_CHARGE_CURRENT,
+                resume_current = min(
+                    raw_permit, min_power / (voltage * phases_count)
                 )
-            grace_period_minutes = get_entry_value(
-                self.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
+                self._ema_current = resume_current
+                self._schmitt_current = resume_current
+                self._rate_limited_current = resume_current
+            self._available_current = apply_smoothing(
+                self, raw_permit, mode_changed, hub_entry
             )
-            grace_period_seconds = grace_period_minutes * 60
+        else:
+            self._available_current = raw_permit
+        self._state = self._available_current
 
-            if (
-                self._operating_mode
-                in (EVSE_MODE_SOLAR_ONLY.key, EVSE_MODE_EXCESS.key)
-                and grace_period_seconds > 0
-            ):
-                if self._available_current < min_charge_current:
-                    charger_avail = hub_data.get("charger_available", {})
-                    physical_available = charger_avail.get(
-                        self.config_entry.entry_id, 0
-                    )
-                    # For an EVSE, grace holds only while the engine still
-                    # physically offers the minimum — a vanished permit means a
-                    # site limit, and 6 A of grid draw is real money. A power
-                    # station's permit IS the excess pool, which collapses in
-                    # every brief export dip — exactly what grace exists to
-                    # bridge — and its floor is a ~200 W trickle, so it rides
-                    # the grace window whenever it was actually charging (the
-                    # was-charging gate stops an idle station from cycling
-                    # 200 W on/off through the night). This is what stops the
-                    # reserve flapping over BLE on marginal days.
-                    if (
-                        device_type == DEVICE_TYPE_POWER_STATION
-                        and station_rt.get("station_charging")
-                    ) or (
-                        device_type != DEVICE_TYPE_POWER_STATION
-                        and physical_available >= min_charge_current
-                    ):
-                        if self._grace_started_at is None:
-                            self._grace_started_at = time.monotonic()
-                            _LOGGER.debug(
-                                "Grace timer started for %s (mode=%s, grace=%dm)",
-                                self._attr_name,
-                                self._operating_mode,
-                                grace_period_minutes,
-                            )
-                        elapsed = time.monotonic() - self._grace_started_at
-                        if elapsed < grace_period_seconds:
-                            self._available_current = float(min_charge_current)
-                        else:
-                            _LOGGER.info(
-                                "Grace timer expired for %s after %dm — allowing pause",
-                                self._attr_name,
-                                grace_period_minutes,
-                            )
-                            self._grace_started_at = None
+        if device_type == DEVICE_TYPE_POWER_STATION:
+            # The station's floor is its minimum charge power, not the
+            # EVSE minimum-current constant.
+            station_rt = (
+                self.hass.data.get(DOMAIN, {})
+                .get("chargers", {})
+                .get(self.config_entry.entry_id, {})
+            )
+            _min_power = station_rt.get(
+                "station_min_charge_power"
+            ) or get_entry_value(
+                self.config_entry,
+                CONF_STATION_MIN_CHARGE_POWER,
+                DEFAULT_STATION_MIN_CHARGE_POWER,
+            )
+            _voltage = get_entry_value(
+                hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE
+            )
+            _phases = len(
+                get_entry_value(self.config_entry, CONF_CONNECTED_TO_PHASE, "A")
+                or "A"
+            )
+            min_charge_current = _min_power / (_voltage * _phases)
+        else:
+            min_charge_current = get_entry_value(
+                self.config_entry,
+                CONF_EVSE_MINIMUM_CHARGE_CURRENT,
+                DEFAULT_MIN_CHARGE_CURRENT,
+            )
+        grace_period_minutes = get_entry_value(
+            self.config_entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
+        )
+        grace_period_seconds = grace_period_minutes * 60
+
+        if (
+            self._operating_mode
+            in (EVSE_MODE_SOLAR_ONLY.key, EVSE_MODE_EXCESS.key)
+            and grace_period_seconds > 0
+        ):
+            if self._available_current < min_charge_current:
+                charger_avail = hub_data.get("charger_available", {})
+                physical_available = charger_avail.get(
+                    self.config_entry.entry_id, 0
+                )
+                # For an EVSE, grace holds only while the engine still
+                # physically offers the minimum — a vanished permit means a
+                # site limit, and 6 A of grid draw is real money. A power
+                # station's permit IS the excess pool, which collapses in
+                # every brief export dip — exactly what grace exists to
+                # bridge — and its floor is a ~200 W trickle, so it rides
+                # the grace window whenever it was actually charging (the
+                # was-charging gate stops an idle station from cycling
+                # 200 W on/off through the night). This is what stops the
+                # reserve flapping over BLE on marginal days.
+                if (
+                    device_type == DEVICE_TYPE_POWER_STATION
+                    and station_rt.get("station_charging")
+                ) or (
+                    device_type != DEVICE_TYPE_POWER_STATION
+                    and physical_available >= min_charge_current
+                ):
+                    if self._grace_started_at is None:
+                        self._grace_started_at = time.monotonic()
+                        _LOGGER.debug(
+                            "Grace timer started for %s (mode=%s, grace=%dm)",
+                            self._attr_name,
+                            self._operating_mode,
+                            grace_period_minutes,
+                        )
+                    elapsed = time.monotonic() - self._grace_started_at
+                    if elapsed < grace_period_seconds:
+                        self._available_current = float(min_charge_current)
                     else:
-                        if self._grace_started_at is not None:
-                            _LOGGER.info(
-                                "Site limit violation for %s — cancelling grace timer",
-                                self._attr_name,
-                            )
-                            self._grace_started_at = None
+                        _LOGGER.info(
+                            "Grace timer expired for %s after %dm — allowing pause",
+                            self._attr_name,
+                            grace_period_minutes,
+                        )
+                        self._grace_started_at = None
                 else:
                     if self._grace_started_at is not None:
-                        _LOGGER.debug(
-                            "Grace timer reset for %s — conditions recovered",
+                        _LOGGER.info(
+                            "Site limit violation for %s — cancelling grace timer",
                             self._attr_name,
                         )
                         self._grace_started_at = None
             else:
                 if self._grace_started_at is not None:
+                    _LOGGER.debug(
+                        "Grace timer reset for %s — conditions recovered",
+                        self._attr_name,
+                    )
                     self._grace_started_at = None
+        else:
+            if self._grace_started_at is not None:
+                self._grace_started_at = None
 
-            if DOMAIN not in self.hass.data:
-                self.hass.data[DOMAIN] = {}
-            if "charger_allocations" not in self.hass.data[DOMAIN]:
-                self.hass.data[DOMAIN]["charger_allocations"] = {}
-            # "Allocated Current" reflects the real footprint for every device
-            # type — _allocated_current is the engine's measured draw.
-            self.hass.data[DOMAIN]["charger_allocations"][
-                self.config_entry.entry_id
-            ] = self._allocated_current
+        if DOMAIN not in self.hass.data:
+            self.hass.data[DOMAIN] = {}
+        if "charger_allocations" not in self.hass.data[DOMAIN]:
+            self.hass.data[DOMAIN]["charger_allocations"] = {}
+        # "Allocated Current" reflects the real footprint for every device
+        # type — _allocated_current is the engine's measured draw.
+        self.hass.data[DOMAIN]["charger_allocations"][
+            self.config_entry.entry_id
+        ] = self._allocated_current
 
-            # Effective priority rank from the engine — the order this device
-            # is served when power is contended (mode urgency, then priority).
-            if "charger_ranks" not in self.hass.data[DOMAIN]:
-                self.hass.data[DOMAIN]["charger_ranks"] = {}
-            self.hass.data[DOMAIN]["charger_ranks"][
-                self.config_entry.entry_id
-            ] = hub_data.get("charger_rank", {}).get(self.config_entry.entry_id)
+        # Effective priority rank from the engine — the order this device
+        # is served when power is contended (mode urgency, then priority).
+        if "charger_ranks" not in self.hass.data[DOMAIN]:
+            self.hass.data[DOMAIN]["charger_ranks"] = {}
+        self.hass.data[DOMAIN]["charger_ranks"][
+            self.config_entry.entry_id
+        ] = hub_data.get("charger_rank", {}).get(self.config_entry.entry_id)
 
-            if "charger_phase_masks" not in self.hass.data[DOMAIN]:
-                self.hass.data[DOMAIN]["charger_phase_masks"] = {}
-            self.hass.data[DOMAIN]["charger_phase_masks"][
-                self.config_entry.entry_id
-            ] = charger_phase_masks.get(self.config_entry.entry_id, "")
+        if "charger_phase_masks" not in self.hass.data[DOMAIN]:
+            self.hass.data[DOMAIN]["charger_phase_masks"] = {}
+        self.hass.data[DOMAIN]["charger_phase_masks"][
+            self.config_entry.entry_id
+        ] = charger_phase_masks.get(self.config_entry.entry_id, "")
 
-            command_interval = get_entry_value(
-                self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
+        command_interval = get_entry_value(
+            self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
+        )
+        now_mono = time.monotonic()
+        if now_mono - self._last_command_time < command_interval:
+            _LOGGER.debug(
+                "Site refresh for %s (command send in %.0fs)",
+                self._attr_name,
+                command_interval - (now_mono - self._last_command_time),
             )
-            now_mono = time.monotonic()
-            if now_mono - self._last_command_time < command_interval:
-                _LOGGER.debug(
-                    "Site refresh for %s (command send in %.0fs)",
-                    self._attr_name,
-                    command_interval - (now_mono - self._last_command_time),
-                )
-                return
+            return
 
-            # min_charge_current is the device-type-aware floor computed above
-            # (a power station's is min_power / (V × phases), an EVSE's is its
-            # configured minimum) — deliberately not re-read here, since a
-            # re-read would resolve to the EVSE default 6 A for a station and
-            # falsely trip the pause branch below.
-            max_charge_current = get_entry_value(
-                self.config_entry,
-                CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
-                DEFAULT_MAX_CHARGE_CURRENT,
-            )
+        # min_charge_current is the device-type-aware floor computed above
+        # (a power station's is min_power / (V × phases), an EVSE's is its
+        # configured minimum) — deliberately not re-read here, since a
+        # re-read would resolve to the EVSE default 6 A for a station and
+        # falsely trip the pause branch below.
+        max_charge_current = get_entry_value(
+            self.config_entry,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
+            DEFAULT_MAX_CHARGE_CURRENT,
+        )
 
-            charger_rt = (
-                self.hass.data.get(DOMAIN, {})
-                .get("chargers", {})
-                .get(self.config_entry.entry_id, {})
-            )
-            dynamic_control_on = charger_rt.get("dynamic_control", True)
+        charger_rt = (
+            self.hass.data.get(DOMAIN, {})
+            .get("chargers", {})
+            .get(self.config_entry.entry_id, {})
+        )
+        dynamic_control_on = charger_rt.get("dynamic_control", True)
 
-            if device_type == DEVICE_TYPE_HOT_WATER_TANK:
-                # The tank is a binary load whose thermostat — not the engine —
-                # decides moment-to-moment draw. While the thermostat is
-                # satisfied the engine classes the tank inactive and allocates
-                # it 0, so the heating-permitted gate follows the *available*
-                # current instead: heating stays permitted whenever the site
-                # has room for the tank, and is only forbidden when it does
-                # not. The EVSE min-current pause threshold does not apply.
-                limit = round(self._available_current, 1)
-                self._pause_started_at = None
-            elif device_type == DEVICE_TYPE_PLUG:
-                # A plug is a binary load — the permit is the on/off answer
-                # (its rated current when granted, 0 when denied). The EVSE
-                # min-current pause threshold does not apply.
-                # Round the permit UP to the next 0.1 A instead of nearest, so
-                # plugs with a very low power rating (e.g. 10 W → 0.04 A) still
-                # come out > 0 and send the turn-on command.
-                limit = math.ceil(self._available_current * 10) / 10 if self._available_current > 0 else 0.0
-                self._pause_started_at = None
-            elif not dynamic_control_on:
-                limit = round(float(max_charge_current), 1)
-                self._pause_started_at = None
-                _LOGGER.debug(
-                    "Dynamic control OFF for %s — using max current %sA",
-                    self._attr_name,
-                    limit,
-                )
-            elif self._available_current < min_charge_current:
-                pause_duration_s = (
-                    get_entry_value(
-                        self.config_entry,
-                        CONF_CHARGE_PAUSE_DURATION,
-                        DEFAULT_CHARGE_PAUSE_DURATION,
-                    )
-                    * 60
-                )
-                if self._pause_started_at is None:
-                    self._pause_started_at = time.monotonic()
-                    _LOGGER.debug("Charge pause started for %s", self._attr_name)
-                limit = 0
-            else:
-                pause_duration_s = (
-                    get_entry_value(
-                        self.config_entry,
-                        CONF_CHARGE_PAUSE_DURATION,
-                        DEFAULT_CHARGE_PAUSE_DURATION,
-                    )
-                    * 60
-                )
-                if self._pause_started_at is not None:
-                    elapsed = time.monotonic() - self._pause_started_at
-                    if elapsed < pause_duration_s:
-                        limit = 0
-                    else:
-                        self._pause_started_at = None
-                        limit = round(self._available_current, 1)
-                else:
-                    limit = round(self._available_current, 1)
-
-            connector_state = self.hass.states.get(self._connector_status_entity)
-            connector_status = connector_state.state if connector_state else "unknown"
-
-            self._charging_status = determine_charging_status(
-                self,
-                hub_data,
+        if device_type == DEVICE_TYPE_HOT_WATER_TANK:
+            # The tank is a binary load whose thermostat — not the engine —
+            # decides moment-to-moment draw. While the thermostat is
+            # satisfied the engine classes the tank inactive and allocates
+            # it 0, so the heating-permitted gate follows the *available*
+            # current instead: heating stays permitted whenever the site
+            # has room for the tank, and is only forbidden when it does
+            # not. The EVSE min-current pause threshold does not apply.
+            limit = round(self._available_current, 1)
+            self._pause_started_at = None
+        elif device_type == DEVICE_TYPE_PLUG:
+            # A plug is a binary load — the permit is the on/off answer
+            # (its rated current when granted, 0 when denied). The EVSE
+            # min-current pause threshold does not apply.
+            # Round the permit UP to the next 0.1 A instead of nearest, so
+            # plugs with a very low power rating (e.g. 10 W → 0.04 A) still
+            # come out > 0 and send the turn-on command.
+            limit = math.ceil(self._available_current * 10) / 10 if self._available_current > 0 else 0.0
+            self._pause_started_at = None
+        elif not dynamic_control_on:
+            limit = round(float(max_charge_current), 1)
+            self._pause_started_at = None
+            _LOGGER.debug(
+                "Dynamic control OFF for %s — using max current %sA",
+                self._attr_name,
                 limit,
-                connector_status,
-                dynamic_control_on,
-                min_charge_current,
             )
-
-            if "charger_status" not in self.hass.data.get(DOMAIN, {}):
-                self.hass.data.setdefault(DOMAIN, {})["charger_status"] = {}
-            self.hass.data[DOMAIN]["charger_status"][self.config_entry.entry_id] = (
-                self._charging_status
-            )
-
-            if device_type == DEVICE_TYPE_PLUG:
-                # Dynamic Control off → hands off: leave the plug in whatever
-                # state the user set, like an un-managed switch.
-                if dynamic_control_on:
-                    await send_plug_command(self, limit, hub_data, now_mono)
-            elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
-                # Dynamic Control off → Load Juggler does not touch the climate
-                # entity at all. The tank then behaves as a normal, un-managed
-                # thermostat fully under the user's control.
-                if dynamic_control_on:
-                    await send_hot_water_tank_command(
-                        self, limit, hub_data, now_mono
-                    )
-            elif device_type == DEVICE_TYPE_POWER_STATION:
-                # Dynamic Control off → leave the station's own charge speed and
-                # reserve exactly as the user set them.
-                if dynamic_control_on:
-                    await send_power_station_command(
-                        self, limit, hub_entry, now_mono
-                    )
-            else:
-                await check_profile_compliance(self, limit, dynamic_control_on)
-                await send_ocpp_command(
-                    self, limit, hub_entry, dynamic_control_on, now_mono
+        elif self._available_current < min_charge_current:
+            pause_duration_s = (
+                get_entry_value(
+                    self.config_entry,
+                    CONF_CHARGE_PAUSE_DURATION,
+                    DEFAULT_CHARGE_PAUSE_DURATION,
                 )
-        except Exception as e:
-            _LOGGER.error(
-                f"Error updating Load Juggler Charger Sensor {self._attr_name}: {e}",
-                exc_info=True,
+                * 60
+            )
+            if self._pause_started_at is None:
+                self._pause_started_at = time.monotonic()
+                _LOGGER.debug("Charge pause started for %s", self._attr_name)
+            limit = 0
+        else:
+            pause_duration_s = (
+                get_entry_value(
+                    self.config_entry,
+                    CONF_CHARGE_PAUSE_DURATION,
+                    DEFAULT_CHARGE_PAUSE_DURATION,
+                )
+                * 60
+            )
+            if self._pause_started_at is not None:
+                elapsed = time.monotonic() - self._pause_started_at
+                if elapsed < pause_duration_s:
+                    limit = 0
+                else:
+                    self._pause_started_at = None
+                    limit = round(self._available_current, 1)
+            else:
+                limit = round(self._available_current, 1)
+
+        connector_state = self.hass.states.get(self._connector_status_entity)
+        connector_status = connector_state.state if connector_state else "unknown"
+
+        self._charging_status = determine_charging_status(
+            self,
+            hub_data,
+            limit,
+            connector_status,
+            dynamic_control_on,
+            min_charge_current,
+        )
+
+        if "charger_status" not in self.hass.data.get(DOMAIN, {}):
+            self.hass.data.setdefault(DOMAIN, {})["charger_status"] = {}
+        self.hass.data[DOMAIN]["charger_status"][self.config_entry.entry_id] = (
+            self._charging_status
+        )
+
+        if device_type == DEVICE_TYPE_PLUG:
+            # Dynamic Control off → hands off: leave the plug in whatever
+            # state the user set, like an un-managed switch.
+            if dynamic_control_on:
+                await send_plug_command(self, limit, hub_data, now_mono)
+        elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
+            # Dynamic Control off → Load Juggler does not touch the climate
+            # entity at all. The tank then behaves as a normal, un-managed
+            # thermostat fully under the user's control.
+            if dynamic_control_on:
+                await send_hot_water_tank_command(
+                    self, limit, hub_data, now_mono
+                )
+        elif device_type == DEVICE_TYPE_POWER_STATION:
+            # Dynamic Control off → leave the station's own charge speed and
+            # reserve exactly as the user set them.
+            if dynamic_control_on:
+                await send_power_station_command(
+                    self, limit, hub_entry, now_mono
+                )
+        else:
+            await check_profile_compliance(self, limit, dynamic_control_on)
+            await send_ocpp_command(
+                self, limit, hub_entry, dynamic_control_on, now_mono
             )

@@ -779,13 +779,25 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     entry_type = entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
     
     if entry_type == ENTRY_TYPE_HUB:
+        # Stop the site cycle FIRST — a tick landing mid-unload would drive
+        # loads that are being torn down. async_shutdown cancels the timer and
+        # drops the keepalive listener, so nothing survives the entry.
+        coordinator = hass.data[DOMAIN].get("hub_coordinators", {}).pop(
+            entry.entry_id, None
+        )
+        if coordinator is not None:
+            await coordinator.async_shutdown()
+
         # Unload hub platforms (includes select for distribution mode)
         for domain in ["number", "switch", "sensor", "select"]:
             await hass.config_entries.async_forward_entry_unload(entry, domain)
-        
+
         # Remove hub from data
         if entry.entry_id in hass.data[DOMAIN]["hubs"]:
             del hass.data[DOMAIN]["hubs"][entry.entry_id]
+        # The hub's load_processors bucket is deliberately left in place: its
+        # entries belong to the LOADS' entity lifecycles (they unregister
+        # themselves), and a hub reload must not strand loads that stay loaded.
     
     elif entry_type == ENTRY_TYPE_CHARGER:
         # Unload charger platforms

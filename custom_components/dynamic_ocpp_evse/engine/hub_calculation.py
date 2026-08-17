@@ -1048,14 +1048,18 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     return charger
 
 
-def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
-    """Build LoadContext objects for all chargers and add them to the site."""
+def _add_chargers_to_site(hass, site, hub_entry_id, charger_entries=None):
+    """Build LoadContext objects for all chargers and add them to the site.
+
+    ``charger_entries`` overrides the hub's registered loads (used by tests and
+    by any caller that already knows the entries); None reads the registry.
+    """
     from .. import get_chargers_for_hub
 
-    if hasattr(sensor, "_charger_entries"):
-        chargers = sensor._charger_entries
-    else:
+    if charger_entries is None:
         chargers = get_chargers_for_hub(hass, hub_entry_id)
+    else:
+        chargers = charger_entries
 
     for entry in chargers:
         device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
@@ -1641,6 +1645,36 @@ def _build_hub_result(
     # Net site consumption
     net_consumption = sum(r for r in raw_phases if r is not None) * voltage
 
+    # Unmanaged (household) draw, W — the engine's best estimate, preferring
+    # ground truth over derivations:
+    #  1. household_consumption_total (dedicated solar sensor: solar + battery
+    #     - export, post-feedback, so it already excludes charger draws),
+    #  2. per-phase household derived from inverter output entities,
+    #  3. the site supply identity: net grid + solar + battery discharge -
+    #     managed draw (battery power is positive when discharging, so the
+    #     signed value also handles charging).
+    hh_total = getattr(site, "household_consumption_total", None)
+    hh_phases = getattr(site, "household_consumption", None)
+    if hh_total is not None:
+        household_power = round(hh_total, 0)
+    elif hh_phases is not None:
+        household_power = round(
+            sum(v for v in (hh_phases.a, hh_phases.b, hh_phases.c) if v is not None)
+            * voltage,
+            0,
+        )
+    else:
+        household_power = round(
+            max(
+                0,
+                net_consumption
+                + (site.solar_production_total or 0)
+                + (battery_power or 0)
+                - total_evse_power,
+            ),
+            0,
+        )
+
     # Cap grid headroom by max grid import power limit (if configured)
     if site.max_grid_import_power is not None:
         post_feedback_import = sum(
@@ -1796,6 +1830,7 @@ def _build_hub_result(
         "available_grid_power": round(grid_headroom, 0),
         "available_battery_power": battery_remaining,
         "total_evse_power": total_evse_power,
+        "household_power": household_power,
         "solar_power": round(site.solar_production_total or 0, 0),
         "available_solar_power": round(solar_available, 0),
         "total_export_power": round(site.total_export_power, 0),
@@ -1839,16 +1874,21 @@ def _build_hub_result(
 # ---------------------------------------------------------------------------
 
 
-def run_hub_calculation(sensor):
+def run_hub_calculation(hass, hub_entry, charger_entries=None):
     """
     Run the hub calculation: read HA states, build SiteContext, calculate targets.
 
-    This is the main entry point for Home Assistant sensor updates.
-    Reads HA entity states from hub config, builds a SiteContext, runs the
-    calculation engine, and returns results for all chargers.
+    This is the ONE site calculation for a hub, run once per site cycle by the
+    hub's DataUpdateCoordinator (see sensor.py). It takes no entity — every
+    cycle-counted mechanism inside (settle counters, input EMAs, power-stable
+    counts) advances exactly once per call, so a site with N loads no longer
+    advances them N times per interval.
 
     Args:
-        sensor: The HA sensor object containing config, hub_entry, and hass
+        hass: Home Assistant instance
+        hub_entry: the hub's ConfigEntry
+        charger_entries: optional explicit list of load config entries; None
+            reads the hub's registered loads
 
     Returns:
         dict with calculated values including:
@@ -1858,9 +1898,6 @@ def run_hub_calculation(sensor):
             - charger_targets: per-charger target currents
             - Other site/charger data
     """
-    hass = sensor.hass
-    hub_entry = sensor.hub_entry
-
     # --- Read hub config values ---
     voltage = (
         get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
@@ -2191,7 +2228,7 @@ def run_hub_calculation(sensor):
         if hasattr(hub_entry, "entry_id")
         else hub_entry.data.get("hub_entry_id")
     )
-    _add_chargers_to_site(hass, site, hub_entry_id, sensor)
+    _add_chargers_to_site(hass, site, hub_entry_id, charger_entries)
 
     # --- Build circuit groups ---
     site.circuit_groups = _build_circuit_groups(hass, hub_entry_id)

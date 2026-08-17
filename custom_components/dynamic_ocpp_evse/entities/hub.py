@@ -1,18 +1,11 @@
 import logging
 from homeassistant.components.sensor import SensorEntity
 from datetime import datetime, timezone
-from ..engine.hub_calculation import run_hub_calculation
 from ..const import *
 from ..helpers import get_entry_value
 from .mixins import HubEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
-
-# Charger/load sensors refresh hub_data every scan cycle (SCAN_INTERVAL = 10s).
-# If hub_data has not been refreshed within this window, no load is driving the
-# calculation (e.g. a hub with no loads configured), so the hub sensor must run
-# the calculation itself instead of reading stale data.
-_HUB_DATA_STALE_SECONDS = 30
 
 
 class LoadJugglerHubSensor(HubEntityMixin, SensorEntity):
@@ -57,53 +50,29 @@ class LoadJugglerHubSensor(HubEntityMixin, SensorEntity):
         return "power"
 
     async def async_update(self):
-        """Update hub sensor with site-wide data from hass.data or by running calculation."""
+        """Read site-wide data from hass.data.
+
+        The hub's own coordinator (sensor.py) runs the site calculation once
+        per site_update_frequency and republishes hub_data — with no loads
+        configured too — so this is a pure read. It never runs the engine
+        itself: a second writer produced a differently-shaped hub_data and
+        double-advanced the engine's cycle-counted state.
+        """
         try:
             hub_entry_id = self.config_entry.entry_id
             hub_data = (
                 self.hass.data.get(DOMAIN, {}).get("hub_data", {}).get(hub_entry_id, {})
             )
+            if not hub_data:
+                return
 
-            # hub_data is kept fresh by load sensors, which recalculate every
-            # scan cycle. When it is missing or stale, no load is driving the
-            # calculation (e.g. a hub with no loads), so run it here ourselves.
-            now = datetime.now(timezone.utc)
-            last_update = hub_data.get("last_update") if hub_data else None
-            is_stale = (
-                last_update is None
-                or (now - last_update).total_seconds() > _HUB_DATA_STALE_SECONDS
+            self._total_site_available_power = hub_data.get(
+                "total_site_available_power"
             )
-
-            if hub_data and not is_stale:
-                self._total_site_available_power = hub_data.get(
-                    "total_site_available_power"
-                )
-                self._grid_stale = hub_data.get("grid_stale", False)
-                self._last_update = last_update or now
-            else:
-                _LOGGER.debug(
-                    "No fresh load data for hub %s, running calculation directly",
-                    self._attr_name,
-                )
-
-                class MockSensor:
-                    def __init__(self, hass, hub_entry):
-                        self.hass = hass
-                        self.hub_entry = hub_entry
-
-                mock_sensor = MockSensor(self.hass, self.config_entry)
-                hub_data = run_hub_calculation(mock_sensor)
-                hub_data["last_update"] = now
-                self._total_site_available_power = hub_data.get(
-                    "total_site_available_power"
-                )
-                self._grid_stale = hub_data.get("grid_stale", False)
-                self._last_update = now
-                if DOMAIN not in self.hass.data:
-                    self.hass.data[DOMAIN] = {}
-                if "hub_data" not in self.hass.data[DOMAIN]:
-                    self.hass.data[DOMAIN]["hub_data"] = {}
-                self.hass.data[DOMAIN]["hub_data"][hub_entry_id] = hub_data
+            self._grid_stale = hub_data.get("grid_stale", False)
+            self._last_update = hub_data.get("last_update") or datetime.now(
+                timezone.utc
+            )
         except Exception as e:
             _LOGGER.error(
                 f"Error updating hub sensor {self._attr_name}: {e}", exc_info=True
@@ -337,6 +306,51 @@ HUB_SENSOR_DEFINITIONS = [
     # hub_data (forecast_battery_max_soc / forecast_charge_limit_w) for
     # automations.
 ]
+
+
+# Every hub_data key republished into hass.data for the hub entities (and the
+# config-flow Overview page) to read. Projected from HUB_SENSOR_DEFINITIONS so
+# a new hub sensor republishes automatically, plus keys read by non-sensor
+# consumers.
+_HUB_REPUBLISH_KEYS = frozenset(
+    d["hub_data_key"] for d in HUB_SENSOR_DEFINITIONS
+) | {
+    "battery_soc_min",
+    "battery_soc_target",
+    "total_site_available_power",
+    "total_export_power",
+    "excess_available",
+    "excess_margin_power",
+    "inverters",
+    # Unmanaged (household) draw — no hub sensor (yet); read by the Overview
+    # options page and available to automations.
+    "household_power",
+    # Fleet forecast advice — no hub sensor anymore (the per-battery sensors
+    # live on the inverter entries) but kept in hub_data for automations.
+    "forecast_battery_max_soc",
+    "forecast_charge_limit_w",
+}
+
+
+def publish_hub_data(hass, hub_entry_id, hub_data):
+    """Store the trimmed site result in hass.data for the hub's consumers.
+
+    The single writer is the hub coordinator (sensor.py), once per site cycle.
+    Returns the published dict.
+    """
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    published = {key: hub_data.get(key) for key in _HUB_REPUBLISH_KEYS}
+    published.update(
+        {
+            "last_update": datetime.now(timezone.utc),
+            "grid_stale": hub_data.get("grid_stale", False),
+            "group_data": hub_data.get("group_data", {}),
+            "hub_status": hub_data.get("hub_status", "OK"),
+            "hub_warnings": hub_data.get("hub_warnings", []),
+        }
+    )
+    domain_data.setdefault("hub_data", {})[hub_entry_id] = published
+    return published
 
 
 class LoadJugglerHubDataSensor(HubEntityMixin, SensorEntity):

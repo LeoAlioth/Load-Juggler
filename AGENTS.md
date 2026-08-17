@@ -67,7 +67,7 @@ custom_components/dynamic_ocpp_evse/
 │   ├── smoothing.py               # Output smoothing (EMA / Schmitt trigger / ramp limits)
 │   └── status.py                  # Charging status determination
 ├── entities/                      # Entity classes shared by the platform files
-│   ├── load.py                    # LoadJugglerDeviceSensor — drives the calculation + command dispatch per load
+│   ├── load.py                    # LoadJugglerDeviceSensor — per-load processing + dispatch, driven by the hub coordinator
 │   ├── load_sensors.py            # Per-load diagnostic sensors
 │   ├── hub.py / inverter.py / circuit_group.py  # Hub, inverter, and group sensors
 │   └── mixins.py                  # Hub/Charger/Group/InverterEntityMixin (device_info, data write helpers)
@@ -173,7 +173,7 @@ The `calculations/` directory is pure Python and can be imported/tested independ
    - `_coerce()`: converts `_UNAVAILABLE` back to safe defaults for non-smoothed values
    - Solar derivation: `engine/fleet.py` (`solar_total()` / `member_solar()`) — uses inverter output when available, falls back to grid export + battery
    - Off-grid: when no grid CTs are configured, phases with inverter output entities are zeroed (not None), making the site behave like a grid site with 0A grid current
-2. **entities/load.py + control/**: `LoadJugglerDeviceSensor.async_update` runs the engine and dispatches commands — OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules, output shaping via `control/smoothing.py`. Hub sensors (`entities/hub.py`): Site Available Power, Hub Status, per-metric data sensors. Charger sensors: allocated current, available current, charging status.
+2. **Hub coordinator (sensor.py) + entities/load.py + control/**: ONE `DataUpdateCoordinator` per hub entry (`hass.data[DOMAIN]["hub_coordinators"]`) runs the engine once per `site_update_frequency`, publishes the trimmed result via `entities/hub.py:publish_hub_data`, then awaits each registered load processor sequentially (`hass.data[DOMAIN]["load_processors"]`, entry_id order). `LoadJugglerDeviceSensor.async_process(hub_data)` does the per-load work — smoothing (`control/smoothing.py`), grace/pause state machines, then dispatch: OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules. Per-load `update_frequency` gates command sends inside the processor. Hub sensors (`entities/hub.py`) are pure readers of hub_data: Site Available Power, Hub Status, per-metric data sensors. Charger sensors: allocated current, available current, charging status.
 3. **Platform files** (button.py, number.py, select.py, etc.): Thin wiring that exposes the `entities/` classes and controls to the HA UI
 
 ### Asymmetric vs Symmetric Inverters
