@@ -244,10 +244,7 @@ async def test_fleet_survives_a_hub_reload(
     missing inverters — silently taking their capacity out of the site limit —
     until the next Home Assistant restart.
     """
-    from custom_components.dynamic_ocpp_evse import (
-        get_inverters_for_hub,
-        get_chargers_for_hub,
-    )
+    from custom_components.dynamic_ocpp_evse import get_inverters_for_hub
     from custom_components.dynamic_ocpp_evse.const import (
         ENTRY_TYPE_INVERTER,
         DEVICE_TYPE_INVERTER,
@@ -262,6 +259,10 @@ async def test_fleet_survives_a_hub_reload(
 
     inverter = MockConfigEntry(
         domain=DOMAIN,
+        # Current version: a v1 entry would be migrated into a hub on setup
+        # ("legacy entries become hubs"), which is not what this tests.
+        version=2,
+        minor_version=4,
         title="SolarEdge",
         data={
             CONF_NAME: "SolarEdge",
@@ -276,18 +277,18 @@ async def test_fleet_survives_a_hub_reload(
     await hass.config_entries.async_setup(inverter.entry_id)
     await hass.async_block_till_done()
 
-    assert [e.entry_id for e in get_inverters_for_hub(hass, mock_hub_entry.entry_id)] == [
-        inverter.entry_id
-    ]
+    # The hub fixture's legacy battery fields auto-import into an inverter
+    # entry of their own, so compare sets rather than assuming a lone member.
+    before = {e.entry_id for e in get_inverters_for_hub(hass, mock_hub_entry.entry_id)}
+    assert inverter.entry_id in before
 
     # The inverter stays loaded; only the hub reloads (what adding a second
     # inverter does).
     await hass.config_entries.async_reload(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert [e.entry_id for e in get_inverters_for_hub(hass, mock_hub_entry.entry_id)] == [
-        inverter.entry_id
-    ]
+    after = {e.entry_id for e in get_inverters_for_hub(hass, mock_hub_entry.entry_id)}
+    assert after == before, "a hub reload must not drop inverters from the fleet"
 
 
 async def test_chargers_are_readopted_after_a_hub_reload(
