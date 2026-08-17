@@ -24,6 +24,7 @@ from ..calculations import (
 from ..const import *
 from ..calculations.utils import is_number, compute_household_per_phase
 from ..helpers import get_entry_value
+from .. import units
 from .auto_detect import check_inversion, check_phase_mapping
 from . import fleet
 from .forecast_reader import (
@@ -111,21 +112,24 @@ def _read_phase_attr(attrs: dict, keys: tuple) -> float | None:
     return None
 
 
-def _read_entity(hass, entity_id: str, default=0, unit: str = None):
-    """Read a numeric value from an HA entity with optional unit conversion.
+def _read_entity(hass, entity_id: str, default=0, unit: str = None, voltage: float = 0.0):
+    """Read a numeric value from an HA entity, converted to ``unit``.
 
     Args:
         hass: Home Assistant instance
         entity_id: The entity ID to read
         default: Default value if entity not configured
-        unit: Target unit for conversion. Supported: "A", "W"
-              - "A": Converts W→A (divides by voltage), kW→W→A
-              - "W": Converts kW→W (multiplies by 1000)
+        unit: Canonical unit wanted — "A", "W" or "V". None reads the raw
+              number (percentages, and entities we ourselves wrote).
+        voltage: Site phase voltage, required for A↔W conversions.
 
     Returns:
-        float: The entity's numeric value (converted if unit specified).
+        float: The entity's numeric value, converted.
         _UNAVAILABLE: The entity is configured but currently unavailable/unknown.
         default: The entity_id is not provided (not configured).
+
+    Conversion lives in units.py — every accepted unit is handled there, in
+    one place, so no caller has to remember a half-done conversion.
     """
     if not entity_id:
         return default
@@ -137,27 +141,22 @@ def _read_entity(hass, entity_id: str, default=0, unit: str = None):
     except (ValueError, TypeError):
         return _UNAVAILABLE
 
-    # Apply unit conversion if requested
-    if unit and value != 0:
-        entity_unit = state.attributes.get("unit_of_measurement", "")
-        if entity_unit:
-            entity_unit = entity_unit.upper()
-
-            # Convert kW → W
-            if unit == "W" and entity_unit == "KW":
-                value = value * 1000
-            elif unit == "A" and entity_unit == "KW":
-                # kW → W → A (need voltage context, handled by caller)
-                value = value * 1000  # Just do kW → W, caller handles W → A
-            elif unit == "A" and entity_unit == "W":
-                # W → A conversion requires voltage - caller must handle this
-                pass  # Return W value, caller handles conversion
-
+    entity_unit = state.attributes.get("unit_of_measurement")
+    if unit == units.DOMAIN_AMPS:
+        return units.to_amps(value, entity_unit, voltage)
+    if unit == units.DOMAIN_WATTS:
+        return units.to_watts(value, entity_unit, voltage)
+    if unit == units.DOMAIN_VOLTS:
+        return units.to_volts(value, entity_unit)
     return value
 
 
 def _read_inverter_output(hass, entity_id, voltage):
-    """Read inverter output, auto-detecting A vs W vs kW and converting to A.
+    """Read one inverter output phase in amps (A/mA/W/kW all accepted).
+
+    Magnitude, deliberately: an inverter's output is production regardless of
+    which way round its sensor is wired. The grid reader is the opposite case
+    — see _read_grid_phase, where the sign carries the import/export meaning.
 
     Returns None for an unconfigured phase, _UNAVAILABLE for a configured
     sensor that is temporarily unreadable (the EMA smoother holds the last
@@ -165,21 +164,10 @@ def _read_inverter_output(hass, entity_id, voltage):
     """
     if not entity_id:
         return None
-    st = hass.states.get(entity_id)
-    if not st or st.state in ("unknown", "unavailable", None, ""):
+    value = _read_entity(hass, entity_id, None, unit=units.DOMAIN_AMPS, voltage=voltage)
+    if value is _UNAVAILABLE or value is None:
         return _UNAVAILABLE
-    try:
-        value = abs(float(st.state))
-    except (ValueError, TypeError):
-        return _UNAVAILABLE
-    # Auto-detect unit from entity attributes
-    unit = st.attributes.get("unit_of_measurement", "").upper()
-    if unit == "KW" and voltage > 0:
-        value = (value * 1000) / voltage  # Convert kW → W → A
-    elif unit == "W" and voltage > 0:
-        value = value / voltage  # Convert W → A
-    # If unit is A or unknown, assume already in Amperes
-    return value
+    return abs(value)
 
 
 def _coerce(v, default=0):
@@ -283,7 +271,7 @@ def _fv2(raw, smoothed):
 
 
 def _read_grid_phase(hass, entity_id, voltage):
-    """One grid phase in amps, SIGNED, auto-converting from W or kW.
+    """One grid phase in amps, SIGNED (A/mA/W/kW all accepted).
 
     Sign is the whole point of this reading — negative means export — so
     unlike the inverter-output reader this one must not take an absolute
@@ -296,21 +284,7 @@ def _read_grid_phase(hass, entity_id, voltage):
     """
     if not entity_id:
         return None
-    state = hass.states.get(entity_id)
-    if not state or state.state in ("unknown", "unavailable", None, ""):
-        return _UNAVAILABLE
-    try:
-        value = float(state.state)
-    except (ValueError, TypeError):
-        return _UNAVAILABLE
-    unit = (state.attributes.get("unit_of_measurement") or "").upper()
-    if voltage > 0:
-        if unit == "KW":
-            value = value * 1000 / voltage
-        elif unit == "W":
-            value = value / voltage
-    # Unit A (or unspecified) is already amps.
-    return value
+    return _read_entity(hass, entity_id, None, unit=units.DOMAIN_AMPS, voltage=voltage)
 
 
 def _read_grid_phases(hass, hub_entry, voltage=DEFAULT_PHASE_VOLTAGE):
@@ -540,7 +514,14 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
         power_state = hass.states.get(evse_power_import)
         if power_state and power_state.state not in ["unknown", "unavailable", None]:
             try:
-                power_w = float(power_state.state)
+                # kW-aware: an OCPP integration reporting kW would otherwise
+                # make a charging car look like it draws ~nothing, and the
+                # engine would hand its allocation to something else too.
+                power_w = units.to_watts(
+                    float(power_state.state),
+                    power_state.attributes.get("unit_of_measurement"),
+                    voltage,
+                )
                 if power_w > 0 and voltage > 0:
                     # Convert W → A (total power across all phases)
                     power_per_phase = power_w / phases

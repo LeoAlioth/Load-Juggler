@@ -18,6 +18,7 @@ from ..const import (
     DEFAULT_PHASE_VOLTAGE,
 )
 from ..helpers import get_entry_value
+from .. import units
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,7 +75,13 @@ async def check_profile_compliance(
         state = sensor.hass.states.get(power_offered_entity_id)
         if state and state.state not in ("unknown", "unavailable", None, ""):
             try:
-                power_w = float(state.state)
+                # kW-aware (units.py): decoding a kW reading as W would put the
+                # offered current a thousandfold below what we commanded, and
+                # every cycle would then look like a compliance failure.
+                power_w = units.to_watts(
+                    float(state.state),
+                    state.attributes.get("unit_of_measurement"),
+                )
                 # Must mirror the command-side encoding in control/ocpp.py: the
                 # W limit is sent as A × V × _car_active_phases. Decoding with the
                 # hardware _phases instead would understate the offered current for

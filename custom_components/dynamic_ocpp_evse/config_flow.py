@@ -28,13 +28,17 @@ from .helpers import (
     validate_charger_settings,
     validate_offgrid_battery_requirement,
 )
+from . import units
 
 _LOGGER = logging.getLogger(__name__)
 _POWER_FACTOR = 0.9  # 90% of detected limit for safe headroom
 
-_CURRENT_UNITS = frozenset({"A", "mA"})
-_POWER_UNITS = frozenset({"W", "kW"})
-_SOC_UNITS = frozenset({"%"})
+# One declaration, shared with the readers: a unit offered here must be one
+# units.py can convert (see ENTITY_UNIT_CONTRACTS and test_unit_contracts.py).
+_CURRENT_UNITS = units.CURRENT_UNITS
+_POWER_UNITS = units.POWER_UNITS
+_SOC_UNITS = units.SOC_UNITS
+_VOLTAGE_UNITS = units.VOLTAGE_UNITS
 
 
 def _validate_entity_units(
@@ -960,7 +964,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     {
                         "entity": {
                             "include_entities": self._entity_ids_for(
-                                {None, "voltage"}, valid_units={"V", "mV"}
+                                {None, "voltage"}, valid_units=_VOLTAGE_UNITS
                             ),
                         }
                     }

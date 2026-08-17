@@ -41,21 +41,31 @@ from ..const import (
     INVERTER_RT_STATUS,
 )
 from ..helpers import get_entry_value
+from .. import units
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _read_number(hass, entity_id):
-    """Current numeric state of ``entity_id``, or None if unusable."""
+def _read_number(hass, entity_id, unit=None):
+    """Current numeric state of ``entity_id``, or None if unusable.
+
+    ``unit`` converts through units.py — needed for the battery voltage, whose
+    sensor may publish millivolts. Left None for the target register itself:
+    we read it back only to compare against the value we are about to write,
+    in whatever unit that register uses.
+    """
     if not entity_id:
         return None
     state = hass.states.get(entity_id)
     if state is None or state.state in ("unknown", "unavailable", ""):
         return None
     try:
-        return float(state.state)
+        value = float(state.state)
     except (TypeError, ValueError):
         return None
+    if unit == units.DOMAIN_VOLTS:
+        return units.to_volts(value, state.attributes.get("unit_of_measurement"))
+    return value
 
 
 def _entity_max(hass, entity_id):
@@ -77,7 +87,9 @@ def battery_voltage(hass, entry) -> float:
         or DEFAULT_BATTERY_NOMINAL_VOLTAGE
     )
     live = _read_number(
-        hass, get_entry_value(entry, CONF_BATTERY_VOLTAGE_ENTITY_ID, None)
+        hass,
+        get_entry_value(entry, CONF_BATTERY_VOLTAGE_ENTITY_ID, None),
+        unit=units.DOMAIN_VOLTS,
     )
     if live and live > 0:
         return live
