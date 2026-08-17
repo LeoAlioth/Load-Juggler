@@ -111,26 +111,34 @@ def test_config_flow_unit_validation_matches_the_declared_contracts():
 # hub_calculation.py, which is exactly where the forgotten conversion lived.
 # Counts may only go DOWN without editing this table.
 _RAW_PARSE_BUDGET = {
-    # 1: our own min/max-current number entities, in our own amps.
+    # Our own min/max-current number entities, in our own amps.
     "__init__.py": 1,
-    # 1: auto-detection hint for the battery power default — never an engine input.
-    "config_flow.py": 1,
-    # 2: the offered-current read (amps by OCPP definition) and the
-    #    offered-power read, which converts through units.to_watts.
+    # The battery discharge power hint in the hub_inverter form description —
+    # only this detected preview text is unit-naive and never stored; the value
+    # the user then types into the field is a real engine input, user-vetted.
+    # And _entry_sensor_value on the Overview page, which reads back this
+    # integration's OWN sensors (our units by construction) for display only
+    # and is unit-agnostic on purpose (also passes through status strings).
+    "config_flow.py": 2,
+    # The offered-current read (amps by OCPP definition) and the
+    # offered-power read, which converts through units.to_watts.
     "control/compliance.py": 2,
-    # 1: the target register, read back only to compare with what we are about
-    #    to write to it — same entity, same unit, by construction.
+    # A shared reader: the charge-limit register read-back (same entity, same
+    # unit as what we write, by construction) and the battery-voltage read,
+    # which converts through units.to_volts right below the parse.
     "control/inverter.py": 1,
-    # 1: same pattern for the station's charge-speed/reserve numbers.
+    # Same pattern for the station's charge-speed/reserve numbers.
     "control/power_station.py": 1,
-    # 4: _read_entity (the one converting reader), the EVSE current-import
-    #    total and power fallbacks (the latter via units.to_watts), and the
-    #    grid staleness check, which inspects the raw string before any unit
-    #    matters.
+    # _read_entity (the one converting reader), the EVSE current-import
+    # total and power fallbacks (the latter via units.to_watts), and the
+    # grid staleness check, which inspects the raw string before any unit
+    # matters.
     "engine/hub_calculation.py": 4,
-    # 1: a status-attribute helper on our own sensors.
+    # The station status sensor reading the power station's external battery
+    # SOC and charge-limit entities — both percentages, so no unit conversion
+    # applies.
     "entities/load_sensors.py": 1,
-    # 2: RestoreEntity state restoration of values we published ourselves.
+    # RestoreEntity state restoration of values we published ourselves.
     "entities/mixins.py": 2,
 }
 
