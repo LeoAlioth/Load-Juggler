@@ -1,6 +1,6 @@
 # Load Juggler — Open Issues
 
-1. **Icon not shown in HA/HACS** — HA does not load a custom component's own icon file. The icon must be submitted as a PR to the [Home Assistant brands repo](https://github.com/home-assistant/brands). The `icon.png` file lives at the repo root and is ready to submit (the duplicate copy inside `custom_components/` was removed 2026-08-17 — it shipped 1.45 MB in every HACS zip for nothing).
+1. **Icon not shown in HA/HACS** — HA does not load a custom component's own icon file. The icon must be submitted as a PR to the [Home Assistant brands repo](https://github.com/home-assistant/brands). Repo root now has brands-ready files: `icon.png` (256×256, 26 KB) and `icon@2x.png` (512×512, 81 KB) — resized 2026-08-17 from the original 1.45 MB 1024×1024 (the duplicate copy inside `custom_components/` that shipped in every HACS zip was removed the same day).
 
 ## Candidate bugs from code review (2026-06-11)
 
@@ -36,4 +36,4 @@ Full-codebase review (four parallel reviewers: engine/calculations, config flow/
 
 43. **Dead code, remainder** — `run_tests.py` default `yaml_file` points at a nonexistent file (harmless; the CLI always passes the scenarios dir).
 
-44. **Repo hygiene, remainder** — `manifest.json` `documentation`/`issue_tracker` still point at `github.com/LeoAlioth/dynamic_ocpp_evse` and `codeowners` at `@LeoAlioth` while the project lives on Gitea — needs the developer's target URLs. The repo-root `icon.png` is 1.45 MB — worth compressing before the brands-repo submission (see issue #1).
+(#44 closed 2026-08-17: the `manifest.json` GitHub URLs are **intentional** — the Gitea is private and the GitHub-synced mirror is the public face; the icon was resized for the brands submission, see issue #1.)
