@@ -2,23 +2,23 @@
     "entity": {
         "select": {
             "distribution_mode": {
-                "name": "Način Porazdelitve",
+                "name": "Način porazdelitve",
                 "state": {
                     "shared": "Deljeno",
                     "priority": "Prioriteta",
-                    "sequential___optimized": "Zaporedno - Optimizirano",
-                    "sequential___strict": "Zaporedno - Strogo"
+                    "sequential___optimized": "Zaporedno - optimizirano",
+                    "sequential___strict": "Zaporedno - strogo"
                 }
             },
             "operating_mode": {
-                "name": "Način Delovanja",
+                "name": "Način delovanja",
                 "state": {
                     "standard": "Standardni",
                     "continuous": "Neprekinjeni",
-                    "solar_priority": "Prednost Sončne",
-                    "solar_only": "Samo Sončna",
+                    "solar_priority": "Prednost sonca",
+                    "solar_only": "Samo sonce",
                     "excess": "Presežek",
-                    "freeze_protection": "Zaščita Pred Zmrzaljo",
+                    "freeze_protection": "Zaščita pred zmrzaljo",
                     "normal": "Normalni"
                 }
             }
@@ -27,7 +27,7 @@
     "config": {
         "step": {
             "user": {
-                "title": "Load Juggler Nastavitve",
+                "title": "Nastavitve Load Juggler",
                 "description": "Izberite, kaj želite nastaviti",
                 "data": {
                     "setup_type": "Kaj želite nastaviti?"
@@ -51,24 +51,24 @@
                     "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (neobvezno - nastavite na 'None' za izvenomrežne nastavitve)",
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno - nastavite na 'None' za enofazno)",
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno - nastavite na 'None' za eno/dvofazno)",
-                    "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
+                    "main_breaker_rating": "Nazivni tok glavnega odklopnika (na fazo)",
                     "invert_phases": "Obrni odčitke toka",
                     "enable_max_import_power": "Omogoči omejitev maksimalne uvozne moči",
-                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
+                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno — nadomesti drsnik)",
                     "phase_voltage": "Napetost na fazo",
                     "grid_export_limit": "Omejitev izvoza v omrežje",
                     "excess_trigger_margin": "Odmik sprožilca Excess",
-                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije",
+                    "site_update_frequency": "Pogostost osveževanja senzorjev lokacije",
                     "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
-                    "solar_grace_period": "Odlog za Solar/Excess način",
+                    "solar_grace_period": "Odlog za način Solar/Excess",
                     "battery_soc_hysteresis": "Histereza SOC baterije",
                     "base_consumption": "Osnovna poraba hiše",
                     "forecast_soc_floor": "Spodnja meja priporočenega SOC"
                 },
                 "data_description": {
-                    "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
+                    "main_breaker_rating": "Nazivni tok (v amperih), natisnjen na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
                     "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
-                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odkljukajte za popolno onemogočitev omejitve.",
+                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odstranite kljukico, da omejitev povsem izklopite.",
                     "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje. Način Excess se sproži, ko se izvoz približa tej meji na manj kot odmik sprožilca; skupaj s kapaciteto baterije in sončno napovedjo (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve: Excess se na izvoz nikoli ne sproži, napoved je izklopljena.",
@@ -172,23 +172,25 @@
                 }
             },
             "plug_config": {
-                "title": "Konfiguracija pametne obremenitve",
-                "description": "Nastavite nastavitve za vašo pametno obremenitev",
+                "title": "Konfiguracija pametnega porabnika",
+                "description": "Nastavite svojega pametnega porabnika",
                 "data": {
                     "name": "Ime za to napravo",
                     "entity_id": "Predpona ID entitete",
                     "plug_switch_entity_id": "Entiteta stikala, ki upravlja napravo",
                     "plug_power_rating": "Nazivna moč",
+                    "plug_max_current": "Nazivni maksimalni tok",
                     "connected_to_phase": "Priključena na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
                     "update_frequency": "Frekvenca posodabljanja",
-                    "solar_grace_period": "Odlog za Solar/Excess način"
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power).",
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
-                    "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
+                    "plug_max_current": "Nazivni tok vtičnice — zgornja omejitev toka, ki ga vtičnica/rele prenese. Ločeno od zgoraj nastavljene moči.",
+                    "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, zmogljivost katere faze se uporabi v izračunih.",
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
@@ -197,7 +199,7 @@
             },
             "power_station_config": {
                 "title": "Nastavitev prenosne elektrarne",
-                "description": "Nastavite prenosno elektrarno (EcoFlow Delta in podobne) kot regulirano breme. Load Juggler nastavlja njeno moč polnjenja glede na razpoložljivo moč, raven rezerve pa uporablja kot stikalo za vklop/izklop.",
+                "description": "Nastavite prenosno elektrarno (EcoFlow Delta in podobne) kot reguliranega porabnika. Load Juggler nastavlja njeno moč polnjenja glede na razpoložljivo moč, raven rezerve pa uporablja kot stikalo za vklop/izklop.",
                 "data": {
                     "name": "Ime te naprave",
                     "entity_id": "Predpona ID entitete",
@@ -214,19 +216,19 @@
                     "connected_to_phase": "Priklopljeno na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "update_frequency": "Pogostost osveževanja",
-                    "solar_grace_period": "Odlog za Solar/Excess način"
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "entity_id": "Uporabljeno kot predpona za entitete, ki jih ustvari ta integracija.",
                     "station_charge_speed_entity_id": "Nastavitev hitrosti AC polnjenja postaje. Load Juggler sem zapiše dodeljeno moč polnjenja.",
-                    "station_reserve_entity_id": "Raven rezerve postaje. To je stikalo za vklop/izklop: pod trenutno napolnjenostjo baterije postaja preneha jemati moč iz omrežja in svoja bremena napaja iz baterije.",
-                    "station_battery_level_entity_id": "Stanje napolnjenosti. Ko je postaja polna, se njena dodeljena moč sprosti drugim bremenom.",
+                    "station_reserve_entity_id": "Raven rezerve postaje. To je stikalo za vklop/izklop: pod trenutno napolnjenostjo baterije postaja preneha jemati moč iz omrežja in svoje porabnike napaja iz baterije.",
+                    "station_battery_level_entity_id": "Stanje napolnjenosti. Ko je postaja polna, se njena dodeljena moč sprosti drugim porabnikom.",
                     "station_charge_limit_entity_id": "Lastna zgornja meja polnjenja postaje. Rezerva se nikoli ne dvigne nad njo, zato je vaša omejitev za zdravje baterije upoštevana. Privzeto 90 %.",
-                    "station_ac_input_entity_id": "Skupna moč, vzeta iz omrežja. Skupaj s senzorjem izhodne moči izlušči le del za polnjenje — kar je priklopljeno na postajo, je poraba gospodinjstva, ne tega bremena.",
+                    "station_ac_input_entity_id": "Skupna moč, vzeta iz omrežja. Skupaj s senzorjem izhodne moči izlušči le del za polnjenje — kar je priklopljeno na postajo, je poraba gospodinjstva, ne tega porabnika.",
                     "station_ac_output_entity_id": "Moč, ki jo postaja oddaja na svoje izhode. Odšteta od vhodne AC moči da moč polnjenja.",
                     "station_min_charge_power": "Najnižja hitrost, ki jo postaja sprejme (200 W pri modelih EcoFlow Delta). Pod tem se ne more polniti, zato se namesto tega spusti rezerva.",
                     "station_max_charge_power": "Največ, kar sme postaja vzeti. Nastavite pod strojno mejo za dodatno omejitev.",
-                    "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoja bremena in se iz omrežja ne polni višje.",
+                    "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoje porabnike in se iz omrežja ne polni višje.",
                     "station_storm_reserve": "Vzdrževana, ko je stikalo Rezerva za nevihto vklopljeno — polni se iz katerega koli vira in se ne prazni pod to raven.",
                     "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji solar/excess niso več izpolnjeni."
                 }
@@ -248,18 +250,18 @@
                     "connected_to_phase": "Priklopljeno na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "update_frequency": "Pogostost osveževanja",
-                    "solar_grace_period": "Odlog za Solar/Excess način"
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "station_charge_speed_entity_id": "Nastavitev hitrosti AC polnjenja postaje. Load Juggler sem zapiše dodeljeno moč polnjenja.",
-                    "station_reserve_entity_id": "Raven rezerve postaje. To je stikalo za vklop/izklop: pod trenutno napolnjenostjo baterije postaja preneha jemati moč iz omrežja in svoja bremena napaja iz baterije.",
-                    "station_battery_level_entity_id": "Stanje napolnjenosti. Ko je postaja polna, se njena dodeljena moč sprosti drugim bremenom.",
+                    "station_reserve_entity_id": "Raven rezerve postaje. To je stikalo za vklop/izklop: pod trenutno napolnjenostjo baterije postaja preneha jemati moč iz omrežja in svoje porabnike napaja iz baterije.",
+                    "station_battery_level_entity_id": "Stanje napolnjenosti. Ko je postaja polna, se njena dodeljena moč sprosti drugim porabnikom.",
                     "station_charge_limit_entity_id": "Lastna zgornja meja polnjenja postaje. Rezerva se nikoli ne dvigne nad njo, zato je vaša omejitev za zdravje baterije upoštevana. Privzeto 90 %.",
-                    "station_ac_input_entity_id": "Skupna moč, vzeta iz omrežja. Skupaj s senzorjem izhodne moči izlušči le del za polnjenje — kar je priklopljeno na postajo, je poraba gospodinjstva, ne tega bremena.",
+                    "station_ac_input_entity_id": "Skupna moč, vzeta iz omrežja. Skupaj s senzorjem izhodne moči izlušči le del za polnjenje — kar je priklopljeno na postajo, je poraba gospodinjstva, ne tega porabnika.",
                     "station_ac_output_entity_id": "Moč, ki jo postaja oddaja na svoje izhode. Odšteta od vhodne AC moči da moč polnjenja.",
                     "station_min_charge_power": "Najnižja hitrost, ki jo postaja sprejme (200 W pri modelih EcoFlow Delta). Pod tem se ne more polniti, zato se namesto tega spusti rezerva.",
                     "station_max_charge_power": "Največ, kar sme postaja vzeti. Nastavite pod strojno mejo za dodatno omejitev.",
-                    "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoja bremena in se iz omrežja ne polni višje.",
+                    "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoje porabnike in se iz omrežja ne polni višje.",
                     "station_storm_reserve": "Vzdrževana, ko je stikalo Rezerva za nevihto vklopljeno — polni se iz katerega koli vira in se ne prazni pod to raven.",
                     "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji solar/excess niso več izpolnjeni."
                 }
@@ -281,13 +283,13 @@
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
                     "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
-                    "solar_grace_period": "Obdobje strpnosti za način Sonce/Presežek"
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "entity_id": "Uporabljeno kot predpona za entitete, ki jih ustvari ta integracija.",
                     "climate_entity_id": "Entiteta climate, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo.",
                     "heating_element_power": "Nazivna moč grelnega elementa — uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen.",
-                    "tank_away_temperature": "Minimalna / protizmrzovalna ciljna temperatura. Uporablja jo način Zaščita pred zmrzovanjem in kot spodnja meja načina Prednost Sončne.",
+                    "tank_away_temperature": "Minimalna / protizmrzovalna ciljna temperatura. Uporablja jo način Zaščita pred zmrzaljo in kot spodnja meja načina Prednost sonca.",
                     "tank_normal_temperature": "Osnovna ciljna temperatura.",
                     "tank_boost_temperature": "Višja ciljna temperatura ob presežku energije ali ko je baterija nad ciljnim SOC.",
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
@@ -295,7 +297,7 @@
                     "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa — uporabljen namesto fiksne moči, kadar je prisoten.",
                     "tank_power_device_id": "Lahko izberete pametni rele/vtičnico, ki napaja grelnik; njen senzor moči se poišče samodejno.",
                     "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
-                    "solar_grace_period": "V načinu Prednost Sončne, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi."
+                    "solar_grace_period": "V načinu Prednost sonca, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi."
                 }
             },
             "discover_chargers": {
@@ -345,8 +347,8 @@
                     "update_frequency": "Frekvenca posodabljanja",
                     "ocpp_profile_timeout": "Časovna omejitev profila",
                     "charge_pause_duration": "Trajanje premora polnjenja",
-                    "stack_level": "OCPP nivo sklada",
-                    "solar_grace_period": "Odlog za Solar/Excess način"
+                    "stack_level": "OCPP stack level",
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "charge_rate_unit": "Večina OCPP polnilnikov uporablja ampere. Nekateri (npr. nekateri modeli Wallbox) zahtevajo vate.",
@@ -380,30 +382,30 @@
                 }
             },
             "reconfigure_hub_grid": {
-                "title": "Ponastavi nastavitve vozlišča",
+                "title": "Ponovna nastavitev vozlišča",
                 "description": "Posodobite priključek na omrežje in politiko lokacije",
                 "data": {
                     "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (neobvezno - nastavite na 'None' za izvenomrežne nastavitve)",
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno)",
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
-                    "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
+                    "main_breaker_rating": "Nazivni tok glavnega odklopnika (na fazo)",
                     "invert_phases": "Obrni odčitke toka",
                     "enable_max_import_power": "Omogoči omejitev maksimalne uvozne moči",
-                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
+                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno — nadomesti drsnik)",
                     "phase_voltage": "Napetost na fazo",
                     "grid_export_limit": "Omejitev izvoza v omrežje",
                     "excess_trigger_margin": "Odmik sprožilca Excess",
-                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije",
+                    "site_update_frequency": "Pogostost osveževanja senzorjev lokacije",
                     "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
-                    "solar_grace_period": "Odlog za Solar/Excess način",
+                    "solar_grace_period": "Odlog za način Solar/Excess",
                     "battery_soc_hysteresis": "Histereza SOC baterije",
                     "base_consumption": "Osnovna poraba hiše",
                     "forecast_soc_floor": "Spodnja meja priporočenega SOC"
                 },
                 "data_description": {
-                    "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
+                    "main_breaker_rating": "Nazivni tok (v amperih), natisnjen na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
                     "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
-                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odkljukajte za popolno onemogočitev omejitve.",
+                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odstranite kljukico, da omejitev povsem izklopite.",
                     "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje. Način Excess se sproži, ko se izvoz približa tej meji na manj kot odmik sprožilca; skupaj s kapaciteto baterije in sončno napovedjo (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve: Excess se na izvoz nikoli ne sproži, napoved je izklopljena.",
@@ -459,7 +461,7 @@
                 }
             },
             "reconfigure_inverter": {
-                "title": "Ponastavi razsmernik",
+                "title": "Ponovna nastavitev razsmernika",
                 "description": "Posodobite ta razsmernik in njegovo baterijo",
                 "data": {
                     "inverter_max_power": "Skupna moč razsmernika",
@@ -502,20 +504,22 @@
                 }
             },
             "reconfigure_plug": {
-                "title": "Ponovno konfiguriraj pametno obremenitev",
-                "description": "Posodobite nastavitve pametne obremenitve",
+                "title": "Ponovna nastavitev pametnega porabnika",
+                "description": "Posodobite nastavitve pametnega porabnika",
                 "data": {
                     "plug_switch_entity_id": "Entiteta stikala, ki upravlja napravo",
                     "plug_power_rating": "Nazivna moč",
+                    "plug_max_current": "Nazivni maksimalni tok",
                     "connected_to_phase": "Priključena na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
                     "update_frequency": "Frekvenca posodabljanja",
-                    "solar_grace_period": "Odlog za Solar/Excess način"
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
-                    "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
+                    "plug_max_current": "Nazivni tok vtičnice — zgornja omejitev toka, ki ga vtičnica/rele prenese. Ločeno od zgoraj nastavljene moči.",
+                    "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, zmogljivost katere faze se uporabi v izračunih.",
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
@@ -537,7 +541,7 @@
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
                     "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
-                    "solar_grace_period": "Obdobje strpnosti za način Sonce/Presežek"
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 }
             },
             "reconfigure_charger": {
@@ -577,8 +581,8 @@
                     "update_frequency": "Frekvenca posodabljanja",
                     "ocpp_profile_timeout": "Časovna omejitev profila",
                     "charge_pause_duration": "Trajanje premora polnjenja",
-                    "stack_level": "OCPP nivo sklada",
-                    "solar_grace_period": "Odlog za Solar/Excess način"
+                    "stack_level": "OCPP stack level",
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "charge_rate_unit": "Večina OCPP polnilnikov uporablja ampere. Nekateri (npr. nekateri modeli Wallbox) zahtevajo vate.",
@@ -591,22 +595,22 @@
                 }
             },
             "group_config": {
-                "title": "Skupina Tokokroga",
-                "description": "Ustvarite skupino tokokroga za skupno omejitev varovalke med več bremeni",
+                "title": "Deljena varovalka",
+                "description": "Ustvarite deljeno varovalko — skupno tokovno omejitev za več porabnikov",
                 "data": {
                     "name": "Ime skupine",
                     "entity_id": "Predpona ID entitete",
                     "circuit_group_current_limit": "Nazivni tok varovalke (na fazo)"
                 },
                 "data_description": {
-                    "circuit_group_current_limit": "Nazivni tok varovalke, ki si jo delijo bremena v tej skupini. Dodelitve bodo omejene, da skupna poraba nikoli ne preseže te omejitve na nobeni fazi."
+                    "circuit_group_current_limit": "Nazivni tok varovalke, ki si jo delijo porabniki. Dodelitve bodo omejene, da skupna poraba nikoli ne preseže te omejitve na nobeni fazi."
                 }
             },
             "group_members": {
-                "title": "Izberi Člane",
-                "description": "Izberite bremena, ki si delijo to varovalko",
+                "title": "Izberi člane",
+                "description": "Izberite porabnike, ki si delijo to varovalko",
                 "data": {
-                    "circuit_group_members": "Članská bremena"
+                    "circuit_group_members": "Porabniki na tej varovalki"
                 }
             }
         },
@@ -616,23 +620,33 @@
             "no_hub_configured": "Hub ni konfiguriran. Najprej nastavite domači električni hub.",
             "no_ocpp_chargers_found": "OCPP polnilniki niso najdeni. Prepričajte se, da imate nameščeno in konfigurirano integracijo OCPP z vsaj enim polnilnikom.",
             "charger_not_found": "Izbrani polnilnik ni več na voljo. Morda je bil odstranjen iz integracije OCPP. Poskusite znova.",
-            "no_members_selected": "Izberite vsaj eno breme za to skupino tokokroga.",
-            "no_loads_available": "Na tem hubu ni na voljo nobenih bremen. Najprej dodajte polnilnike ali pametna bremena.",
+            "no_members_selected": "Izberite vsaj enega porabnika za to deljeno varovalko.",
+            "no_loads_available": "Na tem hubu ni na voljo nobenih porabnikov. Najprej dodajte polnilnike ali pametne porabnike.",
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
             "entity_id_in_use": "Ta ID entitete že uporablja druga naprava Load Juggler — izberite enoličnega.",
             "battery_required_no_cts": "Ta hub nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta SOC baterije in entiteta moči baterije.",
+            "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, SOC baterije: %).",
             "unknown": "Prišlo je do neznane napake"
         },
         "abort": {
             "reconfigure_successful": "Konfiguracija uspešno posodobljena",
-            "entry_not_found": "Konfiguracijski vnos ni najden"
+            "entry_not_found": "Konfiguracijski vnos ni najden",
+            "already_configured": "Ta naprava je že konfigurirana"
         }
     },
     "options": {
         "error": {
             "station_max_below_min": "Minimalna moč polnjenja ne more presegati maksimalne.",
-            "forecast_device_no_watts": "{entity} ne ponuja podatkov napovedi 'watts' — izberite naprave posameznih polj, ki jih ustvari integracija Open-Meteo Solar Forecast."
+            "forecast_device_no_watts": "{entity} ne ponuja podatkov napovedi 'watts' — izberite naprave posameznih polj, ki jih ustvari integracija Open-Meteo Solar Forecast.",
+            "no_members_selected": "Izberite vsaj enega porabnika za to deljeno varovalko.",
+            "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
+            "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
+            "battery_required_no_cts": "Ta hub nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta SOC baterije in entiteta moči baterije.",
+            "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, SOC baterije: %)."
+        },
+        "abort": {
+            "entry_not_found": "Konfiguracijski vnos ni najden"
         },
         "step": {
             "priority": {
@@ -649,24 +663,24 @@
                     "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (neobvezno - nastavite na 'None' za izvenomrežne nastavitve)",
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno)",
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
-                    "main_breaker_rating": "Ocena glavnega odklopnika (na fazo)",
+                    "main_breaker_rating": "Nazivni tok glavnega odklopnika (na fazo)",
                     "invert_phases": "Obrni odčitke toka",
                     "enable_max_import_power": "Omogoči omejitev maksimalne uvozne moči",
-                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno nadomestilo)",
+                    "max_import_power_entity_id": "Senzor za maksimalno uvozno moč (neobvezno — nadomesti drsnik)",
                     "phase_voltage": "Napetost na fazo",
                     "grid_export_limit": "Omejitev izvoza v omrežje",
                     "excess_trigger_margin": "Odmik sprožilca Excess",
-                    "site_update_frequency": "Hitrost osveževanja senzorjev lokacije",
+                    "site_update_frequency": "Pogostost osveževanja senzorjev lokacije",
                     "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
-                    "solar_grace_period": "Odlog za Solar/Excess način",
+                    "solar_grace_period": "Odlog za način Solar/Excess",
                     "battery_soc_hysteresis": "Histereza SOC baterije",
                     "base_consumption": "Osnovna poraba hiše",
                     "forecast_soc_floor": "Spodnja meja priporočenega SOC"
                 },
                 "data_description": {
-                    "main_breaker_rating": "Amperska ocena na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
+                    "main_breaker_rating": "Nazivni tok (v amperih), natisnjen na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
                     "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
-                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odkljukajte za popolno onemogočitev omejitve.",
+                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = odklopnik x faze x napetost). Odstranite kljukico, da omejitev povsem izklopite.",
                     "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
                     "phase_voltage": "Običajno 230V v Evropi, 120V v Severni Ameriki.",
                     "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje. Način Excess se sproži, ko se izvoz približa tej meji na manj kot odmik sprožilca; skupaj s kapaciteto baterije in sončno napovedjo (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve: Excess se na izvoz nikoli ne sproži, napoved je izklopljena.",
@@ -765,20 +779,22 @@
                 }
             },
             "plug": {
-                "title": "Posodobi nastavitve pametne obremenitve",
-                "description": "Posodobite nastavitve pametne obremenitve",
+                "title": "Posodobi nastavitve pametnega porabnika",
+                "description": "Posodobite nastavitve pametnega porabnika",
                 "data": {
                     "plug_switch_entity_id": "Entiteta stikala, ki upravlja napravo",
                     "plug_power_rating": "Nazivna moč",
+                    "plug_max_current": "Nazivni maksimalni tok",
                     "connected_to_phase": "Priključena na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
                     "update_frequency": "Frekvenca posodabljanja",
-                    "solar_grace_period": "Odlog za Solar/Excess način"
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
-                    "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, katera fazna kapaciteta se uporabi v izračunih.",
+                    "plug_max_current": "Nazivni tok vtičnice — zgornja omejitev toka, ki ga vtičnica/rele prenese. Ločeno od zgoraj nastavljene moči.",
+                    "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, zmogljivost katere faze se uporabi v izračunih.",
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
@@ -802,18 +818,18 @@
                     "connected_to_phase": "Priklopljeno na fazo",
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "update_frequency": "Pogostost osveževanja",
-                    "solar_grace_period": "Odlog za Solar/Excess način"
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "station_charge_speed_entity_id": "Nastavitev hitrosti AC polnjenja postaje. Load Juggler sem zapiše dodeljeno moč polnjenja.",
-                    "station_reserve_entity_id": "Raven rezerve postaje. To je stikalo za vklop/izklop: pod trenutno napolnjenostjo baterije postaja preneha jemati moč iz omrežja in svoja bremena napaja iz baterije.",
-                    "station_battery_level_entity_id": "Stanje napolnjenosti. Ko je postaja polna, se njena dodeljena moč sprosti drugim bremenom.",
+                    "station_reserve_entity_id": "Raven rezerve postaje. To je stikalo za vklop/izklop: pod trenutno napolnjenostjo baterije postaja preneha jemati moč iz omrežja in svoje porabnike napaja iz baterije.",
+                    "station_battery_level_entity_id": "Stanje napolnjenosti. Ko je postaja polna, se njena dodeljena moč sprosti drugim porabnikom.",
                     "station_charge_limit_entity_id": "Lastna zgornja meja polnjenja postaje. Rezerva se nikoli ne dvigne nad njo, zato je vaša omejitev za zdravje baterije upoštevana. Privzeto 90 %.",
-                    "station_ac_input_entity_id": "Skupna moč, vzeta iz omrežja. Skupaj s senzorjem izhodne moči izlušči le del za polnjenje — kar je priklopljeno na postajo, je poraba gospodinjstva, ne tega bremena.",
+                    "station_ac_input_entity_id": "Skupna moč, vzeta iz omrežja. Skupaj s senzorjem izhodne moči izlušči le del za polnjenje — kar je priklopljeno na postajo, je poraba gospodinjstva, ne tega porabnika.",
                     "station_ac_output_entity_id": "Moč, ki jo postaja oddaja na svoje izhode. Odšteta od vhodne AC moči da moč polnjenja.",
                     "station_min_charge_power": "Najnižja hitrost, ki jo postaja sprejme (200 W pri modelih EcoFlow Delta). Pod tem se ne more polniti, zato se namesto tega spusti rezerva.",
                     "station_max_charge_power": "Največ, kar sme postaja vzeti. Nastavite pod strojno mejo za dodatno omejitev.",
-                    "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoja bremena in se iz omrežja ne polni višje.",
+                    "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoje porabnike in se iz omrežja ne polni višje.",
                     "station_storm_reserve": "Vzdrževana, ko je stikalo Rezerva za nevihto vklopljeno — polni se iz katerega koli vira in se ne prazni pod to raven.",
                     "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji solar/excess niso več izpolnjeni."
                 }
@@ -833,7 +849,7 @@
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
                     "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
-                    "solar_grace_period": "Obdobje strpnosti za način Sonce/Presežek"
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 }
             },
             "charger": {
@@ -873,8 +889,8 @@
                     "update_frequency": "Frekvenca posodabljanja",
                     "ocpp_profile_timeout": "Časovna omejitev profila",
                     "charge_pause_duration": "Trajanje premora polnjenja",
-                    "stack_level": "OCPP nivo sklada",
-                    "solar_grace_period": "Odlog za Solar/Excess način"
+                    "stack_level": "OCPP stack level",
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "charge_rate_unit": "Večina OCPP polnilnikov uporablja ampere. Nekateri (npr. nekateri modeli Wallbox) zahtevajo vate.",
@@ -887,14 +903,14 @@
                 }
             },
             "group": {
-                "title": "Posodobi Skupino Tokokroga",
-                "description": "Posodobite nastavitve skupine tokokroga",
+                "title": "Posodobi deljeno varovalko",
+                "description": "Posodobite nastavitve deljene varovalke",
                 "data": {
                     "circuit_group_current_limit": "Nazivni tok varovalke (na fazo)",
-                    "circuit_group_members": "Članská bremena"
+                    "circuit_group_members": "Porabniki na tej varovalki"
                 },
                 "data_description": {
-                    "circuit_group_current_limit": "Nazivni tok varovalke, ki si jo delijo bremena v tej skupini."
+                    "circuit_group_current_limit": "Nazivni tok varovalke, ki si jo delijo porabniki."
                 }
             }
         }
@@ -912,15 +928,15 @@
         },
         "set_operating_mode": {
             "name": "Nastavi način delovanja",
-            "description": "Spremeni način delovanja za polnilnik ali pametno obremenitev.",
+            "description": "Spremeni način delovanja za polnilnik ali pametnega porabnika.",
             "fields": {
                 "entry_id": {
                     "name": "ID konfiguracije polnilnika",
-                    "description": "ID konfiguracijske enote polnilnika ali pametne obremenitve."
+                    "description": "ID konfiguracijske enote polnilnika ali pametnega porabnika."
                 },
                 "mode": {
                     "name": "Način delovanja",
-                    "description": "Način delovanja za nastavitev (Standard, Neprekinjeni, Prednost Sončne, Samo Sončna, Presežek)."
+                    "description": "Način delovanja za nastavitev (Standard, Continuous, Solar Priority, Solar Only, Excess, Freeze Protection, Normal). Sprejeti so samo načini, ki jih ponuja izbrana vrsta naprave."
                 }
             }
         },

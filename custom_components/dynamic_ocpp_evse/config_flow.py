@@ -180,6 +180,103 @@ def _apply_priority_order(hass, devices: list, chosen: list) -> None:
         )
 
 
+def scan_ocpp_chargers(hass) -> list[dict]:
+    """Every OCPP charger in the entity registry that is not configured yet.
+
+    The ONE scanner behind both entry points — the manual "Add OCPP Charger"
+    flow and the automatic discovery spawned from ``_setup_hub_entry`` — so a
+    discovered charger and a manually-added one always carry the same complete
+    key set. Two things this settles for both paths:
+
+    - ``device_id`` is the OCPP charge point id, i.e. the entity base name
+      ("evbox_elvi"), never the internal HA device-registry UUID. The UUID is
+      meaningless to the ocpp integration's services.
+    - a charger is usable when it reports EITHER current_offered OR
+      power_offered, so watts-only chargers are discovered too.
+
+    Returns one dict per charger with keys: id, name, device_id,
+    current_import_entity, current_import_l1/l2/l3_entity,
+    current_offered_entity, power_offered_entity, power_import_entity
+    (entity values are None when that entity does not exist).
+    """
+    chargers: list[dict] = []
+
+    entity_registry = async_get_entity_registry(hass)
+    device_registry = async_get_device_registry(hass)
+
+    # Already-configured chargers are identified by their current_import entity
+    configured_charger_imports = {
+        entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+    }
+
+    def _existing(entity_id: str) -> str | None:
+        return entity_id if entity_id in entity_registry.entities else None
+
+    for entity_id, entity in entity_registry.entities.items():
+        if not (
+            entity_id.startswith("sensor.")
+            and entity_id.endswith(OCPP_ENTITY_SUFFIX_CURRENT_IMPORT)
+        ):
+            continue
+        if entity_id in configured_charger_imports:
+            continue
+
+        # Extract charger base name
+        base_name = entity_id.replace("sensor.", "").replace(
+            OCPP_ENTITY_SUFFIX_CURRENT_IMPORT, ""
+        )
+
+        current_offered_entity = _existing(
+            f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_OFFERED}"
+        )
+        # Fallback for watts-only chargers, which offer power instead of current
+        power_offered_entity = _existing(
+            f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_POWER_OFFERED}"
+        )
+        if not current_offered_entity and not power_offered_entity:
+            continue
+
+        # Per-phase current import (fallback 1) and power import (fallback 2)
+        current_import_l1_entity = _existing(
+            f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L1}"
+        )
+        current_import_l2_entity = _existing(
+            f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L2}"
+        )
+        current_import_l3_entity = _existing(
+            f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L3}"
+        )
+        power_import_entity = _existing(
+            f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_POWER_IMPORT}"
+        )
+
+        # Prefer the device's friendly name for display purposes only
+        device_name = prettify_name(base_name)
+        if entity.device_id:
+            device = device_registry.async_get(entity.device_id)
+            if device and device.name:
+                device_name = prettify_name(device.name)
+
+        chargers.append(
+            {
+                "id": base_name,
+                "name": device_name,
+                "device_id": base_name,
+                "current_import_entity": entity_id,
+                "current_import_l1_entity": current_import_l1_entity,
+                "current_import_l2_entity": current_import_l2_entity,
+                "current_import_l3_entity": current_import_l3_entity,
+                "current_offered_entity": current_offered_entity,
+                "power_offered_entity": power_offered_entity,
+                "power_import_entity": power_import_entity,
+            }
+        )
+
+    return chargers
+
+
 class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Load Juggler."""
 
@@ -1115,18 +1212,27 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
 
         # Add OCPP Device ID as optional editable field (shown when detected)
-        if defaults.get("ocpp_device_id"):
+        if defaults.get(CONF_OCPP_DEVICE_ID):
             fields[
                 vol.Optional(
-                    "ocpp_device_id",
-                    default=defaults.get("ocpp_device_id", ""),
+                    CONF_OCPP_DEVICE_ID,
+                    default=defaults.get(CONF_OCPP_DEVICE_ID, ""),
                 )
             ] = str
 
         return vol.Schema(fields)
 
     def _get_hub_phase_count(self, hub_entry_id: str | None = None) -> int:
-        """Get the number of phases configured on the hub."""
+        """Number of phases this site has, as the engine sees it.
+
+        A site phase exists when it has a grid CT or an inverter output sensor
+        (mirrors ``run_hub_calculation``'s phase derivation). The inverter
+        output entities may live on the hub's own legacy fields OR — after the
+        one-time auto-import — on any of its inverter child entries, so the
+        whole fleet is consulted. Without that, an off-grid 3-phase site
+        collapses to 1 phase post-import, hiding the L2/L3 mapping fields and
+        force-mapping every charger leg onto L1's phase.
+        """
         entry_id = hub_entry_id or self._data.get(CONF_HUB_ENTRY_ID)
         if not entry_id:
             return 3  # Default to 3 if unknown
@@ -1146,7 +1252,15 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         if count > 0:
             return count
-        # Off-grid fallback: infer from inverter output entities
+        # Off-grid fallback: infer from the inverter output entities of the
+        # whole fleet — the hub's own (pre-import) fields plus every inverter
+        # child entry. A phase counts once, no matter how many members feed it.
+        from . import get_inverters_for_hub  # local: avoids a circular import
+
+        sources = [opts] + [
+            {**inverter.data, **inverter.options}
+            for inverter in get_inverters_for_hub(self.hass, entry_id)
+        ]
         count = sum(
             1
             for key in (
@@ -1154,7 +1268,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
                 CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
             )
-            if opts.get(key)
+            if any(source.get(key) for source in sources)
         )
         return max(count, 1)
 
@@ -2132,14 +2246,23 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, discovery_info: dict[str, Any]
     ) -> config_entries.FlowResult:
         """Handle integration discovery of OCPP chargers."""
-        # Store discovery info
+        # Store discovery info. The payload is a scan_ocpp_chargers() dict (see
+        # __init__._discover_and_notify_chargers), so every entity key the
+        # manual flow stores is carried through to the created entry — a
+        # discovered charger must not end up with None for its per-phase
+        # current/power entities just because it came in through discovery.
         self._data[CONF_HUB_ENTRY_ID] = discovery_info["hub_entry_id"]
         self._selected_charger = {
             "id": discovery_info["charger_id"],
             "name": discovery_info["charger_name"],
             "device_id": discovery_info.get("device_id"),
             "current_import_entity": discovery_info["current_import_entity"],
-            "current_offered_entity": discovery_info["current_offered_entity"],
+            "current_import_l1_entity": discovery_info.get("current_import_l1_entity"),
+            "current_import_l2_entity": discovery_info.get("current_import_l2_entity"),
+            "current_import_l3_entity": discovery_info.get("current_import_l3_entity"),
+            "current_offered_entity": discovery_info.get("current_offered_entity"),
+            "power_offered_entity": discovery_info.get("power_offered_entity"),
+            "power_import_entity": discovery_info.get("power_import_entity"),
         }
 
         # Set unique ID to prevent duplicate discoveries
@@ -2940,119 +3063,12 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def _discover_ocpp_chargers(self) -> list:
-        """Discover OCPP chargers from the OCPP integration."""
-        chargers = []
+        """Discover OCPP chargers from the OCPP integration.
 
-        entity_registry = async_get_entity_registry(self.hass)
-        device_registry = async_get_device_registry(self.hass)
-
-        # Get already configured charger entity IDs to exclude them
-        configured_charger_imports = set()
-        for entry in self._get_charger_entries():
-            configured_charger_imports.add(
-                entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
-            )
-
-        # Find entities with current_import suffix (OCPP chargers)
-        for entity_id, entity in entity_registry.entities.items():
-            if entity_id.endswith(
-                OCPP_ENTITY_SUFFIX_CURRENT_IMPORT
-            ) and entity_id.startswith("sensor."):
-                # Skip already configured chargers
-                if entity_id in configured_charger_imports:
-                    continue
-
-                # Extract charger base name
-                base_name = entity_id.replace("sensor.", "").replace(
-                    OCPP_ENTITY_SUFFIX_CURRENT_IMPORT, ""
-                )
-
-                # Check if corresponding current_offered entity exists
-                current_offered_id = (
-                    f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_OFFERED}"
-                )
-                current_offered_entity = (
-                    current_offered_id
-                    if current_offered_id in entity_registry.entities
-                    else None
-                )
-
-                # Fallback: check for power_offered entity if current_offered not available
-                power_offered_id = (
-                    f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_POWER_OFFERED}"
-                )
-                power_offered_entity = (
-                    power_offered_id
-                    if power_offered_id in entity_registry.entities
-                    else None
-                )
-
-                # Skip chargers without current_offered OR power_offered
-                if not current_offered_entity and not power_offered_entity:
-                    continue
-
-                # Check for per-phase current import entities (fallback 1)
-                current_import_l1_id = (
-                    f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L1}"
-                )
-                current_import_l1_entity = (
-                    current_import_l1_id
-                    if current_import_l1_id in entity_registry.entities
-                    else None
-                )
-                current_import_l2_id = (
-                    f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L2}"
-                )
-                current_import_l2_entity = (
-                    current_import_l2_id
-                    if current_import_l2_id in entity_registry.entities
-                    else None
-                )
-                current_import_l3_id = (
-                    f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L3}"
-                )
-                current_import_l3_entity = (
-                    current_import_l3_id
-                    if current_import_l3_id in entity_registry.entities
-                    else None
-                )
-
-                # Check for power_import entity (fallback 2)
-                power_import_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_POWER_IMPORT}"
-                power_import_entity = (
-                    power_import_id
-                    if power_import_id in entity_registry.entities
-                    else None
-                )
-
-                # Get device info if available
-                device_name = prettify_name(base_name)
-                # Use the entity base_name as OCPP device ID (e.g., "evbox_elvy"), not the internal HA UUID
-                ocpp_device_id = base_name
-
-                if entity.device_id:
-                    device = device_registry.async_get(entity.device_id)
-                    if device:
-                        # Use device name if available, otherwise fall back to base_name
-                        if device.name:
-                            device_name = prettify_name(device.name)
-
-                chargers.append(
-                    {
-                        "id": base_name,
-                        "name": device_name,
-                        "device_id": ocpp_device_id,
-                        "current_import_entity": entity_id,
-                        "current_import_l1_entity": current_import_l1_entity,
-                        "current_import_l2_entity": current_import_l2_entity,
-                        "current_import_l3_entity": current_import_l3_entity,
-                        "current_offered_entity": current_offered_entity,
-                        "power_offered_entity": power_offered_entity,
-                        "power_import_entity": power_import_entity,
-                    }
-                )
-
-        return chargers
+        Thin wrapper around the module-level ``scan_ocpp_chargers``, which the
+        automatic discovery in ``__init__.py`` uses too.
+        """
+        return scan_ocpp_chargers(self.hass)
 
     async def _detect_charge_rate_unit(self, ocpp_device_id: str) -> str | None:
         """
@@ -3218,8 +3234,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_CHARGER_PRIORITY: self._data.get(
                     CONF_CHARGER_PRIORITY, next_priority
                 ),
-                "ocpp_device_id": self._data.get(
-                    "ocpp_device_id", self._selected_charger.get("device_id")
+                CONF_OCPP_DEVICE_ID: self._data.get(
+                    CONF_OCPP_DEVICE_ID, self._selected_charger.get("device_id")
                 ),
             }
         )
@@ -3858,7 +3874,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         entry = self.hass.config_entries.async_get_entry(self.context.get("entry_id"))
         defaults = {**entry.data, **entry.options}
 
-        ocpp_device_id = entry.data.get(CONF_OCPP_DEVICE_ID)
+        # Options-first: an edited device ID lives in entry.options.
+        ocpp_device_id = get_entry_value(entry, CONF_OCPP_DEVICE_ID, None)
         detected_unit = await self._detect_charge_rate_unit(ocpp_device_id)
 
         if user_input is not None:
@@ -3889,10 +3906,14 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input = self._normalize_optional_inputs(
                 user_input, self._PLUG_ENTITY_KEYS
             )
-            self._data.update(user_input)
+            # Only what this form edited goes into options. Merging the whole
+            # self._data (seeded from entry.data in async_step_reconfigure)
+            # would copy static keys — entry_type, hub_entry_id, name, the
+            # migration flags — onto the options side, where they would then
+            # permanently shadow any future data-side change (options first).
             self.hass.config_entries.async_update_entry(
                 entry,
-                options={**entry.options, **self._data},
+                options={**entry.options, **user_input},
             )
             return self.async_abort(reason="reconfigure_successful")
 
@@ -3914,20 +3935,23 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         defaults = {**entry.data, **entry.options}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(
+            data = self._normalize_optional_inputs(
                 user_input, self._TANK_ENTITY_KEYS
             )
-            self._data.update(user_input)
 
-            device_id = self._data.pop(CONF_TANK_POWER_DEVICE_ID, None)
-            if device_id and not self._data.get(CONF_TANK_POWER_ENTITY_ID):
+            # A picked power device is resolved to its power-sensor entity now,
+            # so runtime only ever deals with CONF_TANK_POWER_ENTITY_ID.
+            device_id = data.pop(CONF_TANK_POWER_DEVICE_ID, None)
+            if device_id and not data.get(CONF_TANK_POWER_ENTITY_ID):
                 resolved = self._resolve_device_power_entity(device_id)
                 if resolved:
-                    self._data[CONF_TANK_POWER_ENTITY_ID] = resolved
+                    data[CONF_TANK_POWER_ENTITY_ID] = resolved
 
+            # Only the edited fields go into options — see reconfigure_plug for
+            # why merging the full self._data (static keys included) is wrong.
             self.hass.config_entries.async_update_entry(
                 entry,
-                options={**entry.options, **self._data},
+                options={**entry.options, **data},
             )
             return self.async_abort(reason="reconfigure_successful")
 
@@ -3952,23 +3976,33 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input = self._normalize_optional_inputs(
                 user_input, self._STATION_ENTITY_KEYS
             )
-            self._data.update(user_input)
-            if self._data.get(
+            # Validate against the effective config (stored values under this
+            # submission), but persist only the edited fields — see
+            # reconfigure_plug for why the full self._data must not be merged.
+            effective = {**defaults, **user_input}
+            if effective.get(
                 CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
-            ) < self._data.get(
+            ) < effective.get(
                 CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
             ):
                 errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
             else:
                 self.hass.config_entries.async_update_entry(
                     entry,
-                    options={**entry.options, **self._data},
+                    options={**entry.options, **user_input},
                 )
                 return self.async_abort(reason="reconfigure_successful")
 
+            return self.async_show_form(
+                step_id="reconfigure_power_station",
+                data_schema=self._power_station_schema(effective),
+                errors=errors,
+                last_step=True,
+            )
+
         return self.async_show_form(
             step_id="reconfigure_power_station",
-            data_schema=self._power_station_schema({**defaults, **self._data}),
+            data_schema=self._power_station_schema(defaults),
             errors=errors,
             last_step=True,
         )
@@ -4370,7 +4404,8 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         defaults = {**self.config_entry.data, **self.config_entry.options}
         f = self._schema_helper
 
-        ocpp_device_id = self.config_entry.data.get(CONF_OCPP_DEVICE_ID)
+        # Options-first: an edited device ID lives in entry.options.
+        ocpp_device_id = get_entry_value(self.config_entry, CONF_OCPP_DEVICE_ID, None)
         detected_unit = await f._detect_charge_rate_unit(ocpp_device_id)
 
         if user_input is not None:

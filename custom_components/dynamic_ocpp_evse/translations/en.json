@@ -626,17 +626,27 @@
             "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
             "entity_id_in_use": "This entity ID is already used by another Load Juggler device — choose a unique one.",
             "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. A battery SOC entity and a battery power entity are both required.",
+            "invalid_unit": "Sensor unit mismatch — check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %).",
             "unknown": "An unknown error occurred"
         },
         "abort": {
             "reconfigure_successful": "Configuration updated successfully",
-            "entry_not_found": "Configuration entry not found"
+            "entry_not_found": "Configuration entry not found",
+            "already_configured": "This device is already configured"
         }
     },
     "options": {
         "error": {
             "station_max_below_min": "Minimum charge power cannot exceed maximum charge power.",
-            "forecast_device_no_watts": "{entity} provides no 'watts' forecast data — pick the per-array devices created by the Open-Meteo Solar Forecast integration."
+            "forecast_device_no_watts": "{entity} provides no 'watts' forecast data — pick the per-array devices created by the Open-Meteo Solar Forecast integration.",
+            "no_members_selected": "Please select at least one load for this circuit group.",
+            "invalid_current": "Charge current values must be greater than zero.",
+            "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
+            "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. A battery SOC entity and a battery power entity are both required.",
+            "invalid_unit": "Sensor unit mismatch — check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %)."
+        },
+        "abort": {
+            "entry_not_found": "Configuration entry not found"
         },
         "step": {
             "priority": {
@@ -926,7 +936,7 @@
                 },
                 "mode": {
                     "name": "Operating Mode",
-                    "description": "The operating mode to set (Standard, Continuous, Solar Priority, Solar Only, Excess)."
+                    "description": "The operating mode to set (Standard, Continuous, Solar Priority, Solar Only, Excess, Freeze Protection, Normal). Only the modes offered by the target device type are accepted."
                 }
             }
         },

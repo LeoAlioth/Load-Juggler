@@ -9,6 +9,18 @@
                     "sequential___optimized": "Sequential - Optimized",
                     "sequential___strict": "Sequential - Strict"
                 }
+            },
+            "operating_mode": {
+                "name": "Operating Mode",
+                "state": {
+                    "standard": "Standard",
+                    "continuous": "Continuous",
+                    "solar_priority": "Solar Priority",
+                    "solar_only": "Solar Only",
+                    "excess": "Excess",
+                    "freeze_protection": "Freeze Protection",
+                    "normal": "Normal"
+                }
             }
         }
     },
@@ -47,6 +59,8 @@
                     "grid_export_limit": "Grid export limit",
                     "excess_trigger_margin": "Excess trigger margin",
                     "site_update_frequency": "Site sensor refresh rate",
+                    "auto_detect_phase_mapping": "Detect phase mapping mismatches",
+                    "solar_grace_period": "Solar/Excess grace period",
                     "battery_soc_hysteresis": "Battery SOC hysteresis",
                     "base_consumption": "Base house consumption",
                     "forecast_soc_floor": "Forecast SOC floor"
@@ -60,6 +74,8 @@
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
                     "excess_trigger_margin": "How far below the export limit Excess mode engages. Inverters curtail slightly under the limit, so a trigger exactly at the limit would never fire.",
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
+                    "auto_detect_phase_mapping": "Monitors charger current draws to detect incorrect phase wiring. Works for all charger types on multi-phase sites. Disable if false alerts occur.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
@@ -153,13 +169,6 @@
                 "description": "Select which electrical hub to add this charger to",
                 "data": {
                     "hub_entry_id": "Home Electrical Hub"
-                }
-            },
-            "device_type": {
-                "title": "Device Type",
-                "description": "Select the type of device you want to add",
-                "data": {
-                    "device_type": "Device type"
                 }
             },
             "plug_config": {
@@ -307,7 +316,7 @@
                     "charger_priority": "Priority (1 = highest)"
                 },
                 "data_description": {
-                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power).",
+                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.[prefix]_power).",
                     "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes."
                 }
             },
@@ -387,6 +396,8 @@
                     "grid_export_limit": "Grid export limit",
                     "excess_trigger_margin": "Excess trigger margin",
                     "site_update_frequency": "Site sensor refresh rate",
+                    "auto_detect_phase_mapping": "Detect phase mapping mismatches",
+                    "solar_grace_period": "Solar/Excess grace period",
                     "battery_soc_hysteresis": "Battery SOC hysteresis",
                     "base_consumption": "Base house consumption",
                     "forecast_soc_floor": "Forecast SOC floor"
@@ -400,6 +411,8 @@
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
                     "excess_trigger_margin": "How far below the export limit Excess mode engages. Inverters curtail slightly under the limit, so a trigger exactly at the limit would never fire.",
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
+                    "auto_detect_phase_mapping": "Monitors charger current draws to detect incorrect phase wiring. Works for all charger types on multi-phase sites. Disable if false alerts occur.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
@@ -580,6 +593,25 @@
                     "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
                 }
+            },
+            "group_config": {
+                "title": "Circuit Group",
+                "description": "Create a circuit group to enforce a shared breaker limit across multiple loads",
+                "data": {
+                    "name": "Group name",
+                    "entity_id": "Entity ID prefix",
+                    "circuit_group_current_limit": "Circuit breaker rating (per phase)"
+                },
+                "data_description": {
+                    "circuit_group_current_limit": "The amperage rating of the circuit breaker shared by the loads in this group. Allocations will be capped so the combined draw never exceeds this limit on any phase."
+                }
+            },
+            "group_members": {
+                "title": "Select Members",
+                "description": "Select the loads that share this circuit breaker",
+                "data": {
+                    "circuit_group_members": "Member loads"
+                }
             }
         },
         "error": {
@@ -588,6 +620,8 @@
             "no_hub_configured": "No hub configured. Please set up a Home Electrical Hub first.",
             "no_ocpp_chargers_found": "No OCPP chargers found. Make sure you have the OCPP integration installed and configured with at least one charger.",
             "charger_not_found": "The selected charger is no longer available. It may have been removed from the OCPP integration. Please try again.",
+            "no_members_selected": "Please select at least one load for this circuit group.",
+            "no_loads_available": "No loads available on this hub. Add chargers or smart loads first.",
             "invalid_current": "Charge current values must be greater than zero.",
             "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
             "entity_id_in_use": "This entity ID is already used by another Load Juggler device — choose a unique one.",
@@ -597,10 +631,23 @@
         },
         "abort": {
             "reconfigure_successful": "Configuration updated successfully",
-            "entry_not_found": "Configuration entry not found"
+            "entry_not_found": "Configuration entry not found",
+            "already_configured": "This device is already configured"
         }
     },
     "options": {
+        "error": {
+            "station_max_below_min": "Minimum charge power cannot exceed maximum charge power.",
+            "forecast_device_no_watts": "{entity} provides no 'watts' forecast data — pick the per-array devices created by the Open-Meteo Solar Forecast integration.",
+            "no_members_selected": "Please select at least one load for this circuit group.",
+            "invalid_current": "Charge current values must be greater than zero.",
+            "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
+            "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. A battery SOC entity and a battery power entity are both required.",
+            "invalid_unit": "Sensor unit mismatch — check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %)."
+        },
+        "abort": {
+            "entry_not_found": "Configuration entry not found"
+        },
         "step": {
             "priority": {
                 "title": "Device Priority Order",
@@ -624,6 +671,8 @@
                     "grid_export_limit": "Grid export limit",
                     "excess_trigger_margin": "Excess trigger margin",
                     "site_update_frequency": "Site sensor refresh rate",
+                    "auto_detect_phase_mapping": "Detect phase mapping mismatches",
+                    "solar_grace_period": "Solar/Excess grace period",
                     "battery_soc_hysteresis": "Battery SOC hysteresis",
                     "base_consumption": "Base house consumption",
                     "forecast_soc_floor": "Forecast SOC floor"
@@ -637,6 +686,8 @@
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
                     "excess_trigger_margin": "How far below the export limit Excess mode engages. Inverters curtail slightly under the limit, so a trigger exactly at the limit would never fire.",
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
+                    "auto_detect_phase_mapping": "Monitors charger current draws to detect incorrect phase wiring. Works for all charger types on multi-phase sites. Disable if false alerts occur.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
@@ -850,13 +901,18 @@
                     "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
                 }
+            },
+            "group": {
+                "title": "Update Circuit Group",
+                "description": "Update circuit group settings",
+                "data": {
+                    "circuit_group_current_limit": "Circuit breaker rating (per phase)",
+                    "circuit_group_members": "Member loads"
+                },
+                "data_description": {
+                    "circuit_group_current_limit": "The amperage rating of the circuit breaker shared by the loads in this group."
+                }
             }
-        },
-        "error": {
-            "station_max_below_min": "Minimum charge power cannot exceed maximum charge power.",
-            "forecast_device_no_watts": "{entity} provides no 'watts' forecast data — pick the per-array devices created by the Open-Meteo Solar Forecast integration.",
-            "invalid_unit": "Sensor unit mismatch — check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %).",
-            "unknown": "An unknown error occurred"
         }
     },
     "services": {
@@ -870,17 +926,17 @@
                 }
             }
         },
-        "set_charging_mode": {
-            "name": "Set Charging Mode",
-            "description": "Change the charging mode for a hub (site).",
+        "set_operating_mode": {
+            "name": "Set Operating Mode",
+            "description": "Change the operating mode for a charger or smart load.",
             "fields": {
                 "entry_id": {
-                    "name": "Hub Config Entry ID",
-                    "description": "The config entry ID of the hub."
+                    "name": "Charger Config Entry ID",
+                    "description": "The config entry ID of the charger or smart load."
                 },
                 "mode": {
-                    "name": "Charging Mode",
-                    "description": "The charging mode to set (Standard, Eco, Solar, Excess)."
+                    "name": "Operating Mode",
+                    "description": "The operating mode to set (Standard, Continuous, Solar Priority, Solar Only, Excess, Freeze Protection, Normal). Only the modes offered by the target device type are accepted."
                 }
             }
         },

@@ -10,7 +10,8 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 # --- Inversion detection parameters ---
-_INV_MIN_DELTA_A = 1.0     # Minimum charger draw change (A) to count as significant
+_INV_MIN_DELTA_A = 1.0      # Minimum charger draw change (A) to count as significant
+_INV_MIN_GRID_DELTA_A = 0.5  # Minimum grid change (A) for its sign to be meaningful
 _INV_WINDOW_SIZE = 15       # Rolling window length (samples with significant delta)
 _INV_THRESHOLD = 10         # Inversion signals needed in a full window to fire
 
@@ -64,7 +65,12 @@ def check_inversion(state: dict, smoothed_phases: list, chargers: list,
             delta_grid = grid_total - prev_grid
             delta_draw = charger_total - prev_draw
 
-            if abs(delta_draw) >= _INV_MIN_DELTA_A:
+            # Both sides need a floor. A significant draw change paired with a
+            # near-zero grid change (solar or another load absorbed it) carries
+            # no directional information — its sign is noise, and counting it
+            # would let arbitrarily small grid wobble fill the window.
+            if (abs(delta_draw) >= _INV_MIN_DELTA_A
+                    and abs(delta_grid) >= _INV_MIN_GRID_DELTA_A):
                 if delta_draw * delta_grid < 0:
                     inv["window"].append(1)   # inversion signal
                 else:

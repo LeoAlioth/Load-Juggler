@@ -104,7 +104,9 @@ async def send_ocpp_command(
         if cached:
             charge_rate_unit = cached
         else:
-            ocpp_device_id = sensor.config_entry.data.get(CONF_OCPP_DEVICE_ID)
+            ocpp_device_id = get_entry_value(
+                sensor.config_entry, CONF_OCPP_DEVICE_ID, None
+            )
             detected = await detect_charge_rate_unit(sensor, ocpp_device_id)
             if detected:
                 charge_rate_unit = detected
@@ -122,7 +124,13 @@ async def send_ocpp_command(
                 )
 
     if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
-        voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+        # Options-first (get_entry_value): the hub reconfigure/options flow
+        # writes the edited voltage to entry.options, so reading entry.data
+        # would keep encoding W limits with the original install value.
+        voltage = (
+            get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+            or DEFAULT_PHASE_VOLTAGE
+        )
         phases_for_profile = sensor._car_active_phases or sensor._phases or 1
         limit_for_charger = round(limit * voltage * phases_for_profile, 0)
         rate_unit = "W"
@@ -176,11 +184,15 @@ async def send_ocpp_command(
             f"Using relative profile validity mode: duration={profile_timeout}s"
         )
 
-    ocpp_device_id = sensor.config_entry.data.get(CONF_OCPP_DEVICE_ID)
+    ocpp_device_id = get_entry_value(sensor.config_entry, CONF_OCPP_DEVICE_ID, None)
     if not ocpp_device_id:
         _LOGGER.error(
             f"No OCPP device ID configured for {sensor._attr_name} - cannot send charging profile"
         )
+        # Treat the failed dispatch as a spent command slot: without this the
+        # site cycle (every couple of seconds) re-enters here and logs the same
+        # error, instead of once per command interval.
+        sensor._last_command_time = now_mono
         return
 
     _LOGGER.debug(

@@ -112,6 +112,36 @@ def _read_phase_attr(attrs: dict, keys: tuple) -> float | None:
     return None
 
 
+def _clamp_reported_phase_draw(charger, entry, charger_entity_id, max_current):
+    """Clamp a charger's reported per-phase draws at its max_current.
+
+    Some OCPP integrations put the *total* current where a per-phase figure is
+    expected — 24 A total on a 3-phase charger booked as 24 A on each line adds
+    up to 72 A. The feedback loop then subtracts three times the real draw from
+    grid consumption, fabricates export, and the engine hands out phantom
+    surplus. Applies to every path that derives all phases from one number.
+
+    Allows 10 % tolerance when using W-based charging profiles (voltage and
+    rounding variance make a legitimate draw sit just above max_current).
+    """
+    cru = get_entry_value(entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
+    clamp_threshold = (
+        max_current * 1.1 if cru == CHARGE_RATE_UNIT_WATTS else max_current
+    )
+    for attr in ("l1_current", "l2_current", "l3_current"):
+        val = getattr(charger, attr)
+        if val > clamp_threshold:
+            _LOGGER.warning(
+                "EVSE %s: %s=%.1fA exceeds max_current=%.1fA — "
+                "clamping (charger may be reporting total instead of per-phase)",
+                charger_entity_id,
+                attr,
+                val,
+                max_current,
+            )
+            setattr(charger, attr, max_current)
+
+
 def _read_entity(hass, entity_id: str, default=0, unit: str = None, voltage: float = 0.0):
     """Read a numeric value from an HA entity, converted to ``unit``.
 
@@ -288,10 +318,12 @@ def _read_grid_phase(hass, entity_id, voltage):
 
 
 def _read_grid_phases(hass, hub_entry, voltage=DEFAULT_PHASE_VOLTAGE):
-    """Read per-phase grid current, apply inversion, split into consumption/export.
+    """Read per-phase grid current and apply inversion.
 
-    Returns (raw_phases, consumption_pv, export_pv) where raw_phases is a 3-list
-    of signed amps (None for unconfigured phases).
+    Returns a 3-list of signed amps (None for unconfigured phases). The
+    consumption/export split is deliberately not done here: the caller only
+    has a meaningful split after EMA smoothing and the stale-sensor holdover,
+    so it splits the smoothed phases itself.
     """
     phase_entities = [
         get_entry_value(hub_entry, conf, None)
@@ -310,10 +342,7 @@ def _read_grid_phases(hass, hub_entry, voltage=DEFAULT_PHASE_VOLTAGE):
             raw = -raw
         raw_phases.append(raw)
 
-    consumption = [max(0, r) if r is not None else None for r in raw_phases]
-    export = [max(0, -r) if r is not None else None for r in raw_phases]
-
-    return raw_phases, PhaseValues(*consumption), PhaseValues(*export)
+    return raw_phases
 
 
 def _read_inverter_config(hass, hub_entry, voltage):
@@ -474,37 +503,23 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
                     charger.l1_current = l1 or 0
                     charger.l2_current = l2 or 0
                     charger.l3_current = l3 or 0
-
-                    # Clamp per-phase draws at max_current (some chargers report total in per-phase)
-                    # Allow 10% tolerance when using W-based profiles (voltage/rounding variance)
-                    cru = get_entry_value(
-                        entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT
+                    _clamp_reported_phase_draw(
+                        charger, entry, charger_entity_id, max_current
                     )
-                    clamp_threshold = (
-                        max_current * 1.1
-                        if cru == CHARGE_RATE_UNIT_WATTS
-                        else max_current
-                    )
-                    for attr in ("l1_current", "l2_current", "l3_current"):
-                        val = getattr(charger, attr)
-                        if val > clamp_threshold:
-                            _LOGGER.warning(
-                                "EVSE %s: %s=%.1fA exceeds max_current=%.1fA — "
-                                "clamping (charger may be reporting total instead of per-phase)",
-                                charger_entity_id,
-                                attr,
-                                val,
-                                max_current,
-                            )
-                            setattr(charger, attr, max_current)
                     current_draw = "current_import_attr"
                 else:
+                    # A single total-ish reading copied onto every active phase
+                    # needs the same clamp: if the entity really carries the
+                    # site total, replicating it would triple-book the draw.
                     current_import = float(evse_state.state)
                     charger.l1_current = current_import
                     if phases >= 2:
                         charger.l2_current = current_import
                     if phases >= 3:
                         charger.l3_current = current_import
+                    _clamp_reported_phase_draw(
+                        charger, entry, charger_entity_id, max_current
+                    )
                     current_draw = "current_import_total"
             except (ValueError, TypeError):
                 pass
@@ -682,24 +697,33 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     connector_status = "Charging" if on else "Available"
 
     # Learn the device's real power from the monitor — but only while the plug
-    # is on AND the reading is steady. A transient low reading during switch-off
-    # must not overwrite the configured rating, so we require N consecutive
-    # readings within ±20 % of each other before committing the value.
+    # is on AND the reading is steady. A transient reading (a switch-off dip, a
+    # compressor inrush spike) must not overwrite the configured rating, so we
+    # require N consecutive readings within ±20 % of the *first* one before
+    # committing the value. The candidate and its run length live in charger_rt
+    # so they survive across calculation cycles.
     _POWER_STABLE_CYCLES = 3
     _POWER_STABLE_TOLERANCE = 0.20
     if power_monitor_entity and on and power_draw and power_draw > 10:
-        candidate = charger_rt.get("power_candidate", power_draw)
-        stable_count = charger_rt.get("power_stable_count", 0)
-        if abs(power_draw - candidate) <= candidate * _POWER_STABLE_TOLERANCE:
-            stable_count += 1
+        candidate = charger_rt.get("power_candidate")
+        if candidate is None or candidate <= 0:
+            # First reading of a run — remember it as the yardstick to compare
+            # the next cycles against.
+            charger_rt["power_candidate"] = power_draw
+            charger_rt["power_stable_count"] = 1
+        elif abs(power_draw - candidate) <= candidate * _POWER_STABLE_TOLERANCE:
+            stable_count = charger_rt.get("power_stable_count", 0) + 1
             charger_rt["power_stable_count"] = stable_count
             if stable_count >= _POWER_STABLE_CYCLES:
                 power_rating = power_draw
                 charger_rt["device_power"] = math.ceil(power_draw / 10) * 10
         else:
+            # The reading moved off the candidate — the run is broken, restart
+            # counting against the new value.
             charger_rt["power_candidate"] = power_draw
             charger_rt["power_stable_count"] = 1
     else:
+        charger_rt["power_candidate"] = None
         charger_rt["power_stable_count"] = 0
 
     # Clamp to 0.1 A so the value survives the calculator's round(x, 1) and the
@@ -896,25 +920,6 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     """
     charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
 
-    # Set power: the runtime slider if set, else the configured element
-    # power. A configured tank power sensor overrides it with the live draw
-    # while the element is heating, and is written back so the slider learns.
-    element_power = get_entry_value(
-        entry, CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER
-    )
-    slider_power = charger_rt.get("device_power")
-    power_rating = slider_power if slider_power else element_power
-    power_entity = get_entry_value(entry, CONF_TANK_POWER_ENTITY_ID, None)
-    live = None
-    if power_entity:
-        live = _coerce(_read_entity(hass, power_entity, 0, unit="W"))
-        if live and live > 10:
-            power_rating = live
-            charger_rt["device_power"] = round(live, 0)
-
-    connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
-    phases = len(connected_to_phase)
-
     # Connector status from the climate entity's hvac_action: a thermostat
     # reporting "idle" means the tank is satisfied — mark it inactive so the
     # engine reallocates that power. Anything else is treated as an active load.
@@ -926,6 +931,31 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     )
     if hvac_action == "idle":
         connector_status = "Available"
+
+    # Set power: the runtime slider if set, else the configured element
+    # power. A configured tank power sensor overrides it with the live draw
+    # while the element is heating, and is written back so the slider learns.
+    #
+    # The heating gate is essential: standby electronics or a circulation pump
+    # keep the sensor at a few watts with the element off, and learning from
+    # that would shrink the tank's equivalent_current to the 0.1 A floor —
+    # a 2 kW load booked as free. With no hvac_action to confirm heating we
+    # keep the configured rating rather than learn from an unknown state.
+    element_power = get_entry_value(
+        entry, CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER
+    )
+    slider_power = charger_rt.get("device_power")
+    power_rating = slider_power if slider_power else element_power
+    power_entity = get_entry_value(entry, CONF_TANK_POWER_ENTITY_ID, None)
+    live = None
+    if power_entity:
+        live = _coerce(_read_entity(hass, power_entity, 0, unit="W"))
+        if live and live > 10 and hvac_action == "heating":
+            power_rating = live
+            charger_rt["device_power"] = round(live, 0)
+
+    connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
+    phases = len(connected_to_phase)
 
     equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
 
@@ -1078,7 +1108,7 @@ def _add_chargers_to_site(hass, site, hub_entry_id, sensor):
         site.chargers.append(charger)
 
 
-def _apply_feedback_loop(site, solar_is_derived, voltage, members):
+def _apply_feedback_loop(site, solar_is_derived, members):
     """Subtract charger draws from grid readings to prevent double-counting.
 
     Grid CTs measure total site current INCLUDING charger draws. Without this
@@ -1665,20 +1695,26 @@ def _build_hub_result(
     # (proportional to its raw breaker headroom, preserving asymmetric
     # loading) plus an equal share of inverter-sourced power. Summed across
     # the active phases this matches Site Remaining Power / voltage.
-    num_phases = site.num_phases or 1
+    #
+    # A phase is gated on whether IT exists (consumption is not None), never on
+    # its index versus the phase count: the site's phases need not be a prefix
+    # of A/B/C — a B+C-only installation is explicitly supported. Indexing by
+    # count would zero phase C and hand phase A (which does not exist) the
+    # inverter share.
     phase_cons = (site.consumption.a, site.consumption.b, site.consumption.c)
+    num_phases = site.num_phases or 1
     raw_phase_headroom = [
         max(0, main_breaker_rating - c) if c is not None else 0.0
         for c in phase_cons
     ]
-    total_raw_headroom = sum(raw_phase_headroom[:num_phases])
+    total_raw_headroom = sum(raw_phase_headroom)
     grid_current = grid_headroom / voltage if voltage else 0
     inverter_current_share = (
         inverter_sourced / voltage / num_phases if voltage else 0
     )
     available_per_phase = []
     for i, raw_hr in enumerate(raw_phase_headroom):
-        if i >= num_phases:
+        if phase_cons[i] is None:
             available_per_phase.append(0)
             continue
         if total_raw_headroom > 0:
@@ -1854,7 +1890,7 @@ def run_hub_calculation(sensor):
         excess_threshold = float("inf")
 
     # --- Read per-phase grid current (raw, signed; W/kW converted to A) ---
-    raw_phases, _, _ = _read_grid_phases(hass, hub_entry, voltage)
+    raw_phases = _read_grid_phases(hass, hub_entry, voltage)
     has_grid_cts = any(r is not None for r in raw_phases)
 
     # A site phase exists if it has EITHER a grid CT or an inverter output
@@ -1949,7 +1985,6 @@ def run_hub_calculation(sensor):
     # Solar counts as derived unless EVERY member measures its own production;
     # a partly-measured fleet still needs the post-feedback re-derivation for
     # the members that only have inverter outputs (or none at all).
-    raw_solar = None
     solar_is_derived = not fleet.solar_is_measured(members)
     solar_production_total = fleet.solar_total(members, voltage)
     if solar_production_total is None:
@@ -2062,7 +2097,7 @@ def run_hub_calculation(sensor):
         _fv2(raw_phases[2], smoothed_phases[2]),
         consumption_pv.active_count,
         "on" if invert_phases else "off",
-        _fv2(raw_solar, solar_production_total),
+        _fv(solar_production_total),
         "measured" if not solar_is_derived else "derived",
         _fv(total_export_current),
         _fv(total_export_power),
@@ -2195,7 +2230,7 @@ def run_hub_calculation(sensor):
             )
 
     # --- Feedback loop ---
-    _apply_feedback_loop(site, solar_is_derived, voltage, members)
+    _apply_feedback_loop(site, solar_is_derived, members)
 
     # Excess trigger + hysteresis latch. excess_margin() returns the watts by
     # which everything the site is absorbing (grid export + battery charging)

@@ -37,22 +37,44 @@ Each In Progress and Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bug
 
 ```text
 custom_components/dynamic_ocpp_evse/
-├── __init__.py                    # HA component initialization
+├── __init__.py                    # HA setup/unload, services, entry-registry helpers (get_hub_for_charger, …)
 ├── manifest.json                  # Component metadata
-├── const/                         # Constants, split per area: common, hub, evse, plug, hot_water_tank, group
-├── config_flow.py                 # HA configuration flow
-├── dynamic_ocpp_evse.py          # Main entry point — reads HA states, builds SiteContext, calls engine
-│                                  #   Key helpers: _derive_solar_production(), _smooth(), _coerce(),
-│                                  #   _read_entity() (returns _UNAVAILABLE sentinel), _apply_feedback_loop()
-├── entity_mixins.py              # HubEntityMixin, ChargerEntityMixin (device_info, data write helpers)
-├── auto_detect.py                # Grid CT inversion + phase mapping auto-detection
-├── [button|number|select|sensor|switch].py  # HA entities
+├── config_flow.py                 # HA configuration flow (initial setup, reconfigure, options)
+├── const/                         # Constants per area: common, hub, evse, plug, hot_water_tank, group,
+│                                  #   inverter, modes, power_station
+├── engine/                        # HA → SiteContext bridge (reads HA states, drives the calculation)
+│   ├── hub_calculation.py         # Main entry point — run_hub_calculation() builds SiteContext, calls engine
+│   │                              #   Key helpers: _read_entity() (returns _UNAVAILABLE sentinel),
+│   │                              #   _smooth() (EMA) + _stale_guard() (holdover), _coerce(),
+│   │                              #   _apply_feedback_loop(), _build_[evse|plug|power_station|hot_water_tank]_charger()
+│   ├── fleet.py                   # Multi-inverter fleet aggregation (solar_total, weighted_soc, inverter_limits)
+│   ├── auto_detect.py             # Grid CT inversion + phase mapping auto-detection
+│   └── forecast_reader.py         # Solar forecast sensor reading
 ├── calculations/                  # Core calculation logic (PURE PYTHON - no HA dependencies)
-│   ├── models.py                  # Data models (SiteContext, LoadContext, CircuitGroup, PhaseConstraints)
-│   ├── context.py                 # Context builder (HA → models)
+│   ├── models.py                  # Data models (SiteContext, LoadContext, CircuitGroup, PhaseConstraints, PhaseValues)
 │   ├── target_calculator.py       # Main calculation engine
+│   ├── forecast.py                # Forecast-based charging advice
+│   ├── context.py                 # Unused (no callers) — candidate for deletion
 │   └── utils.py                   # Utility functions (is_number, compute_household_per_phase)
-└── translations/                  # Localization files
+├── control/                       # Actuation layer (imports only const/helpers/units — never entities or engine)
+│   ├── ocpp.py                    # OCPP charging-profile service calls
+│   ├── compliance.py              # Charger compliance checks, escalating resets
+│   ├── inverter.py                # Inverter register writes (deadband-guarded)
+│   ├── plug.py                    # Smart plug switching
+│   ├── power_station.py           # Power station control
+│   ├── hot_water_tank.py          # Tank climate control
+│   ├── smoothing.py               # Output smoothing (EMA / Schmitt trigger / ramp limits)
+│   └── status.py                  # Charging status determination
+├── entities/                      # Entity classes shared by the platform files
+│   ├── load.py                    # LoadJugglerDeviceSensor — drives the calculation + command dispatch per load
+│   ├── load_sensors.py            # Per-load diagnostic sensors
+│   ├── hub.py / inverter.py / circuit_group.py  # Hub, inverter, and group sensors
+│   └── mixins.py                  # Hub/Charger/Group/InverterEntityMixin (device_info, data write helpers)
+├── detection_patterns/            # Per-brand entity-naming patterns for auto-detection (fronius, sma, victron, …)
+├── [button|number|select|sensor|switch].py  # HA platform files (thin wiring around entities/)
+├── units.py                       # Unit conversion helpers
+├── helpers.py                     # get_entry_value() and misc helpers
+└── translations/                  # Localization files (en, sl)
 ```
 
 ### Core Design Principle: Generality Over Special Cases
@@ -121,7 +143,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 - Electrical: voltage, num_phases, main_breaker_rating
 - Per-phase: consumption (PhaseValues), export_current (PhaseValues), grid_current (PhaseValues)
-- Solar: solar_production_total (derived via `_derive_solar_production()`, or from dedicated entity), solar_is_derived, household_consumption_total
+- Solar: solar_production_total (derived via `engine/fleet.py` `solar_total()`, or from dedicated entity), solar_is_derived, household_consumption_total
 - Derived: total_export_current, total_export_power (computed properties)
 - Battery: battery_soc, battery_soc_min, battery_soc_target, battery_max_charge/discharge_power
 - Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, wiring_topology, inverter_output_per_phase
@@ -144,14 +166,14 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 The `calculations/` directory is pure Python and can be imported/tested independently. The HA integration layer:
 
-1. **dynamic_ocpp_evse.py**: Reads HA entity states, builds SiteContext/LoadContext, calls calculation engine. Key patterns:
+1. **engine/hub_calculation.py**: Reads HA entity states, builds SiteContext/LoadContext, calls calculation engine. Key patterns:
    - `_UNAVAILABLE` sentinel: returned by `_read_entity()` when a configured sensor is unavailable/unknown
-   - `_smooth()`: EMA smoothing with `_UNAVAILABLE` holdover (holds last value instead of decaying to 0), NaN/Inf rejection
+   - `_smooth()` + `_stale_guard()`: EMA smoothing with `_UNAVAILABLE` holdover (holds last value instead of decaying to 0), NaN/Inf rejection
    - `_coerce()`: converts `_UNAVAILABLE` back to safe defaults for non-smoothed values
-   - `_derive_solar_production()`: unified formula for grid and off-grid — uses inverter output when available, falls back to grid export + battery
+   - Solar derivation: `engine/fleet.py` (`solar_total()` / `member_solar()`) — uses inverter output when available, falls back to grid export + battery
    - Off-grid: when no grid CTs are configured, phases with inverter output entities are zeroed (not None), making the site behave like a grid site with 0A grid current
-2. **sensor.py**: Uses engine output (charger_targets) to set OCPP charging profiles via service calls. Hub sensors: Site Available Power, Hub Status, per-metric data sensors. Charger sensors: allocated current, available current, charging status.
-3. **Entities** (button.py, number.py, select.py, etc.): Expose controls and sensors to HA UI
+2. **entities/load.py + control/**: `LoadJugglerDeviceSensor.async_update` runs the engine and dispatches commands — OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules, output shaping via `control/smoothing.py`. Hub sensors (`entities/hub.py`): Site Available Power, Hub Status, per-metric data sensors. Charger sensors: allocated current, available current, charging status.
+3. **Platform files** (button.py, number.py, select.py, etc.): Thin wiring that exposes the `entities/` classes and controls to the HA UI
 
 ### Asymmetric vs Symmetric Inverters
 
@@ -210,7 +232,7 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 4. **Minimum current**: Chargers need >= min_current or get 0 (can't charge below minimum)
 5. **Phase assignment defaults**: Don't default to "A" — only set when explicitly specified
 6. **Legacy code**: This is version 2.0.0 — legacy compatibility should be removed as users are expected to reconfigure the integration
-7. **Grid CT consumption includes charger draws**: Grid current sensors measure TOTAL site import, which includes charger power. `dynamic_ocpp_evse.py` subtracts each charger's l1/l2/l3_current from `site.consumption` before calling the engine (step 0). Without this, the engine double-counts charger power as both "consumption" and "charger demand", leading to under-allocation or false pauses. Hub sensor display values intentionally show the raw (unadjusted) grid readings.
+7. **Grid CT consumption includes charger draws**: Grid current sensors measure TOTAL site import, which includes charger power. `engine/hub_calculation.py` (`_apply_feedback_loop()`) subtracts each charger's l1/l2/l3_current from `site.consumption` before calling the engine (step 0). Without this, the engine double-counts charger power as both "consumption" and "charger demand", leading to under-allocation or false pauses. Hub sensor display values intentionally show the raw (unadjusted) grid readings.
 
 ## Testing and Debugging
 

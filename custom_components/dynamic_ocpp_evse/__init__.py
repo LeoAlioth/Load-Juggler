@@ -9,12 +9,11 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.script import Script
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
-from homeassistant.helpers.device_registry import async_get as async_get_device_registry
 from datetime import datetime, timedelta
 import logging
 import voluptuous as vol
 from .const import *
-from .helpers import get_entry_value, prettify_name
+from .helpers import get_entry_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -180,6 +179,40 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
+def _charger_phase_count(entry: ConfigEntry) -> int:
+    """How many site phases a charger draws on, from its own config.
+
+    Used to encode a Watts-mode limit (A × V × phases), so guessing high
+    overshoots the charger by that factor — a 1-phase charger asked to reset to
+    a 3-phase minimum gets three times the current it should.
+
+    No flow ever writes CONF_PHASES, so it is honored only when actually
+    present (a service/YAML override) and the count otherwise comes from what
+    the charger entry does store: its L1/L2/L3 → site phase mapping. The setup
+    and reconfigure steps collapse the hidden mappings onto L1's phase on a
+    1-/2-phase site, so the number of DISTINCT mapped phases is the charger's
+    phase count as the site sees it. Nothing mapped at all falls back to 1 —
+    under-encoding a limit is the safe direction.
+    """
+    configured = get_entry_value(entry, CONF_PHASES, None)
+    if configured:
+        try:
+            return max(1, int(configured))
+        except (TypeError, ValueError):
+            _LOGGER.debug("Ignoring non-numeric %s: %r", CONF_PHASES, configured)
+
+    mapped = {
+        get_entry_value(entry, key, None)
+        for key in (
+            CONF_CHARGER_L1_PHASE,
+            CONF_CHARGER_L2_PHASE,
+            CONF_CHARGER_L3_PHASE,
+        )
+    }
+    mapped.discard(None)
+    return max(1, len(mapped))
+
+
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Load Juggler component."""
     
@@ -190,8 +223,10 @@ async def async_setup(hass: HomeAssistant, config: dict):
         if entry is None:
             return
 
-        # Get the OCPP device ID
-        ocpp_device_id = entry.data.get(CONF_OCPP_DEVICE_ID)
+        # Get the OCPP device ID (options first — the reconfigure/options flow
+        # writes an edited device ID to entry.options, so reading entry.data
+        # would keep resetting the charger the user renamed away from)
+        ocpp_device_id = get_entry_value(entry, CONF_OCPP_DEVICE_ID, None)
         if not ocpp_device_id:
             _LOGGER.error(f"No OCPP device ID configured for entry {entry.title} - cannot reset")
             return
@@ -203,7 +238,9 @@ async def async_setup(hass: HomeAssistant, config: dict):
         
         # If set to auto, detect from sensor
         if charge_rate_unit == CHARGE_RATE_UNIT_AUTO:
-            current_offered_entity = entry.data.get(CONF_EVSE_CURRENT_OFFERED_ENTITY_ID)
+            current_offered_entity = get_entry_value(
+                entry, CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, None
+            )
             if current_offered_entity:
                 sensor_state = hass.states.get(current_offered_entity)
                 if sensor_state:
@@ -221,8 +258,11 @@ async def async_setup(hass: HomeAssistant, config: dict):
             if hub_entry_id:
                 hub_entry = hass.config_entries.async_get_entry(hub_entry_id)
                 if hub_entry:
-                    voltage = hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
-                    charger_phases = int(entry.data.get(CONF_PHASES, 3) or 3)
+                    voltage = (
+                        get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+                        or DEFAULT_PHASE_VOLTAGE
+                    )
+                    charger_phases = _charger_phase_count(entry)
                     limit_for_charger = round(evse_minimum_charge_current * voltage * charger_phases, 1)
                     rate_unit = "W"
                 else:
@@ -647,63 +687,31 @@ async def _setup_inverter_entry(hass: HomeAssistant, entry: ConfigEntry):
 
 
 async def _discover_and_notify_chargers(hass: HomeAssistant, hub_entry_id: str):
-    """Discover unconfigured OCPP chargers and create discovery flows."""
-    entity_registry = async_get_entity_registry(hass)
-    device_registry = async_get_device_registry(hass)
-    
-    # Get already configured charger entity IDs
-    configured_charger_imports = set()
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER:
-            configured_charger_imports.add(entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID))
-    
-    # Find unconfigured OCPP chargers
-    discovered_chargers = []
-    for entity_id, entity in entity_registry.entities.items():
-        if entity_id.endswith(OCPP_ENTITY_SUFFIX_CURRENT_IMPORT) and entity_id.startswith("sensor."):
-            # Skip already configured chargers
-            if entity_id in configured_charger_imports:
-                continue
-            
-            # Extract charger base name
-            base_name = entity_id.replace("sensor.", "").replace(OCPP_ENTITY_SUFFIX_CURRENT_IMPORT, "")
-            
-            # Check if corresponding current_offered entity exists
-            current_offered_id = f"sensor.{base_name}{OCPP_ENTITY_SUFFIX_CURRENT_OFFERED}"
-            if current_offered_id in entity_registry.entities:
-                # Get device info if available
-                device_name = prettify_name(base_name)
-                device_id = None
+    """Discover unconfigured OCPP chargers and create discovery flows.
 
-                if entity.device_id:
-                    device = device_registry.async_get(entity.device_id)
-                    if device:
-                        device_name = prettify_name(device.name) if device.name else device_name
-                        device_id = device.id
-                
-                discovered_chargers.append({
-                    "id": base_name,
-                    "name": device_name,
-                    "device_id": device_id,
-                    "current_import_entity": entity_id,
-                    "current_offered_entity": current_offered_id,
-                })
-    
-    # Create discovery flows for each unconfigured charger
-    for charger in discovered_chargers:
+    The scan itself is the config flow's own scanner, so an auto-discovered
+    charger is described exactly like a manually added one: the OCPP charge
+    point id (the entity base name, NOT the HA device-registry UUID, which the
+    ocpp services cannot address), plus the full set of per-phase current and
+    power entities, and watts-only chargers (power_offered, no current_offered)
+    included. The whole dict is handed to the discovery flow, which stores
+    every key on the created entry.
+    """
+    # Imported here rather than at module scope: config_flow imports from this
+    # package, and the flow module is only needed once a hub is set up.
+    from .config_flow import scan_ocpp_chargers
+
+    for charger in scan_ocpp_chargers(hass):
         _LOGGER.info("Discovered OCPP charger: %s (%s)", charger["name"], charger["id"])
-        
-        # Create a discovery flow
+
         await hass.config_entries.flow.async_init(
             DOMAIN,
             context={"source": SOURCE_INTEGRATION_DISCOVERY},
             data={
+                "hub_entry_id": hub_entry_id,
                 "charger_id": charger["id"],
                 "charger_name": charger["name"],
-                "device_id": charger["device_id"],
-                "current_import_entity": charger["current_import_entity"],
-                "current_offered_entity": charger["current_offered_entity"],
-                "hub_entry_id": hub_entry_id,
+                **{k: v for k, v in charger.items() if k not in ("id", "name")},
             },
         )
 

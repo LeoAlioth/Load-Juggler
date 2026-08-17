@@ -2,6 +2,7 @@ import logging
 import math
 import time
 from homeassistant.components.sensor import SensorEntity
+from homeassistant.core import callback
 from datetime import datetime, timezone
 from ..engine.hub_calculation import run_hub_calculation
 from ..const import *
@@ -41,6 +42,13 @@ _HUB_REPUBLISH_KEYS = frozenset(
 
 class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
     """Representation of a managed device (EVSE, smart plug, etc.)."""
+
+    # This entity is driven solely by the per-load DataUpdateCoordinator built
+    # in sensor.py, which calls async_update() every site_update_frequency and
+    # notifies listeners (see async_added_to_hass below). HA platform polling
+    # would run the whole engine and command dispatch a second time on the
+    # platform's own SCAN_INTERVAL, so it is disabled here.
+    _attr_should_poll = False
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id, coordinator):
         """Initialize the sensor."""
@@ -86,6 +94,24 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         self._target_evse_excess = None
         self._charging_status = "Unknown"
         self.coordinator = coordinator
+
+    async def async_added_to_hass(self):
+        """Subscribe to the coordinator that runs this entity's update.
+
+        With polling disabled, the coordinator is the only thing that refreshes
+        this entity, so its listener is what pushes the new state to HA. The
+        subscription is released with the entity (async_on_remove).
+        """
+        await super().async_added_to_hass()
+        if self.coordinator is not None:
+            self.async_on_remove(
+                self.coordinator.async_add_listener(self._handle_coordinator_update)
+            )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Publish the state produced by the coordinator's async_update() run."""
+        self.async_write_ha_state()
 
     @property
     def state(self):
@@ -450,11 +476,11 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 )
                 return
 
-            min_charge_current = get_entry_value(
-                self.config_entry,
-                CONF_EVSE_MINIMUM_CHARGE_CURRENT,
-                DEFAULT_MIN_CHARGE_CURRENT,
-            )
+            # min_charge_current is the device-type-aware floor computed above
+            # (a power station's is min_power / (V × phases), an EVSE's is its
+            # configured minimum) — deliberately not re-read here, since a
+            # re-read would resolve to the EVSE default 6 A for a station and
+            # falsely trip the pause branch below.
             max_charge_current = get_entry_value(
                 self.config_entry,
                 CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
@@ -482,9 +508,9 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 # A plug is a binary load — the permit is the on/off answer
                 # (its rated current when granted, 0 when denied). The EVSE
                 # min-current pause threshold does not apply.
-                # Use a fixed 1.0 A sentinel rather than the tiny equivalent
-                # current, so plugs with a very low power rating (e.g. 10 W →
-                # 0.04 A) still round to > 0 and send the turn-on command.
+                # Round the permit UP to the next 0.1 A instead of nearest, so
+                # plugs with a very low power rating (e.g. 10 W → 0.04 A) still
+                # come out > 0 and send the turn-on command.
                 limit = math.ceil(self._available_current * 10) / 10 if self._available_current > 0 else 0.0
                 self._pause_started_at = None
             elif not dynamic_control_on:

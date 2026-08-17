@@ -88,11 +88,18 @@ async def check_profile_compliance(
                 # a 1-phase car on a multi-phase EVSE (e.g. 3680W/3φ = 5.3A vs the
                 # 16A commanded), producing a perpetual compliance mismatch.
                 phases = sensor._car_active_phases or sensor._phases or 1
-                voltage = (
-                    sensor.hub_entry.data.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
-                    if sensor.hub_entry
-                    else DEFAULT_PHASE_VOLTAGE
-                )
+                # Options-first (get_entry_value), exactly like the command side
+                # in control/ocpp.py: the hub reconfigure flow writes the edited
+                # voltage to entry.options, and decoding with a stale data-side
+                # voltage would fake a permanent compliance mismatch.
+                voltage = DEFAULT_PHASE_VOLTAGE
+                if sensor.hub_entry:
+                    voltage = (
+                        get_entry_value(
+                            sensor.hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE
+                        )
+                        or DEFAULT_PHASE_VOLTAGE
+                    )
                 if voltage > 0 and phases > 0:
                     current_offered = power_w / (voltage * phases)
                     _LOGGER.debug(
