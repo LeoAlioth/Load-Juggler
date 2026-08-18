@@ -2,17 +2,40 @@
 
 Machine-authored tests — not yet human-reviewed.
 
-The forecast's recommended charge limit only reaches the inverter when the
-user armed the control switch, the value moved by more than the deadband, and
-the write interval has elapsed. Releasing puts the normal value back exactly
-once. These use a hand-rolled fake hass rather than the HA fixtures so they
-also run in the pure-python runner.
+The forecast's recommended charge limit only reaches the inverter when the user
+armed the control switch, the value moved by more than the deadband, and the
+write interval has elapsed. Releasing puts the normal value back exactly once.
+
+**Who calls this** changed and these tests did not have to: the control used to
+be ticked by the charge-control sensor's 10 s platform poll, and is now awaited
+once per site cycle (default 2 s) as a site-cycle worker — see
+``entities/mixins.SiteCycleWorkerMixin``. The pacing is wall-clock, so the two
+cadences are the same contract; the section at the bottom drives the control at
+both of them and pins that. The entity-level half of the change (registration
+with the hub's worker bucket, the write happening through the real coordinator
+cycle, and ``async_update`` no longer writing) lives in ``test_sensor_update.py``
+where the HA fixtures are, with source-level guards for it here.
+
+These use a hand-rolled fake hass rather than the HA fixtures, so the file runs
+in the pure tier too. Runnable two ways:
+  python3 dev/tests/test_inverter_control.py   (standalone, no pytest needed)
+  pytest dev/tests/test_inverter_control.py    (Docker / CI tier)
 """
 
+import ast
 import asyncio
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
-from custom_components.dynamic_ocpp_evse.const import (
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from standalone_loader import load_pure_modules  # noqa: E402
+
+# control/inverter.py imports nothing but const/helpers/units — the actuation
+# layer's own rule — so it loads without Home Assistant installed.
+load_pure_modules(calc_modules=(), control_modules=("inverter",))
+
+from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     DOMAIN,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
@@ -25,13 +48,15 @@ from custom_components.dynamic_ocpp_evse.const import (
     INVERTER_RT_CONTROL_ENABLED,
     INVERTER_RT_STATUS,
 )
-from custom_components.dynamic_ocpp_evse.control.inverter import (
+from custom_components.dynamic_ocpp_evse.control.inverter import (  # noqa: E402
     battery_voltage,
     resolve_normal_value,
     send_inverter_charge_limit,
     should_write,
     to_target_units,
 )
+
+COMPONENT = Path(__file__).resolve().parents[2] / "custom_components" / "dynamic_ocpp_evse"
 
 TARGET = "number.deye_max_charge_current"
 
@@ -283,3 +308,240 @@ def test_deadband_is_a_percentage_of_the_normal_value():
     # 4608 W = 90 A, a 10 A move
     asyncio.run(send_inverter_charge_limit(hass, entry, 4608.0, 10.0))
     assert len(hass.services.calls) == 1
+
+
+# --- Cadence independence -----------------------------------------------------
+#
+# The check moved from a 10 s platform poll to the site cycle, whose default is
+# 2 s — five times as many checks. What must NOT change is how often the
+# register is actually written, because that is what wears EEPROM. The pacing is
+# measured in wall-clock seconds (``now_mono``), never in cycles, and these
+# drive the same hour at several cadences to hold it to that.
+
+WRITE_INTERVAL = 300.0
+HOUR = 3600.0
+
+
+def _write_times(cadence_s, duration_s, interval=WRITE_INTERVAL, advice_w=2560.0,
+                 enabled=True):
+    """Drive the control every ``cadence_s`` for ``duration_s`` of wall clock.
+
+    Returns the times at which a register write actually happened. The fake
+    register never moves (nothing applies the write), so the deadband always
+    passes and the interval is the only thing pacing the writes — exactly the
+    worst case for a fast cadence.
+    """
+    hass = _hass_with_target(current=100.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: interval,
+    })
+    _arm(hass, entry, enabled=enabled)
+
+    times = []
+    seen = 0
+    now = 0.0
+    while now <= duration_s:
+        asyncio.run(send_inverter_charge_limit(hass, entry, advice_w, now))
+        if len(hass.services.calls) > seen:
+            seen = len(hass.services.calls)
+            times.append(now)
+        now += cadence_s
+    return times
+
+
+def test_a_five_times_faster_cadence_writes_exactly_as_often():
+    """The whole cadence question in one assertion: 1800 checks an hour and 360
+    checks an hour produce the same writes, at the same times."""
+    assert _write_times(2.0, HOUR) == _write_times(10.0, HOUR)
+
+
+def test_no_two_writes_are_ever_closer_than_the_interval():
+    """For any cadence, including ones that do not divide the interval."""
+    for cadence in (0.5, 2.0, 7.0, 10.0, 30.0):
+        times = _write_times(cadence, HOUR)
+        gaps = [b - a for a, b in zip(times, times[1:])]
+        assert gaps, cadence
+        assert min(gaps) >= WRITE_INTERVAL, (cadence, gaps)
+        # An hour at one write per 300 s: 13 with the first at t=0, one fewer
+        # when the cadence's phase pushes the last one past the hour.
+        assert 12 <= len(times) <= 13, (cadence, times)
+
+
+def test_a_whole_interval_of_checks_produces_one_write():
+    # 150 cycles at the 2 s default, all inside the first 300 s window.
+    assert _write_times(2.0, WRITE_INTERVAL - 2) == [0.0]
+
+
+def test_the_switch_gate_holds_for_every_cycle_of_an_hour():
+    """The opt-in is checked per call, so a faster cadence cannot leak a write."""
+    assert _write_times(2.0, HOUR, enabled=False) == []
+
+
+# --- Source-level guards on the drive mechanism -------------------------------
+#
+# The entity half of this lives in test_sensor_update.py (it needs a real HA
+# entity). These pin the three structural decisions in a tier that runs
+# anywhere: nothing polls, only the cycle worker writes, and the worker runs
+# after the result it consumes has been published.
+
+
+def _parse(*parts):
+    return ast.parse((COMPONENT.joinpath(*parts)).read_text())
+
+
+def _assigned_names(tree):
+    names = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            names += [t.id for t in node.targets if isinstance(t, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.append(node.target.id)
+    return names
+
+
+def _callee_name(node):
+    """The bare name of a call's callee: ``f()`` and ``obj.f()`` both give "f"."""
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return func.id if isinstance(func, ast.Name) else None
+
+
+def _functions_calling(tree, callee):
+    """Names of the functions in ``tree`` that call ``callee``."""
+    hits = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if any(
+            isinstance(inner, ast.Call) and _callee_name(inner) == callee
+            for inner in ast.walk(node)
+        ):
+            hits.append(node.name)
+    return hits
+
+
+def _method(tree, class_name, method_name):
+    cls = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == class_name
+    )
+    return next(
+        node
+        for node in cls.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == method_name
+    )
+
+
+def test_the_sensor_platform_declares_no_scan_interval():
+    """SCAN_INTERVAL existed for exactly one polling sensor. Re-adding it would
+    put every sensor on this platform back on a second, unrelated clock."""
+    assert "SCAN_INTERVAL" not in _assigned_names(_parse("sensor.py"))
+
+
+def test_the_charge_control_sensor_is_a_site_cycle_worker():
+    """And the mixin comes before SensorEntity, so its ``_attr_should_poll =
+    False`` wins the MRO over the entity base's default of True."""
+    tree = _parse("entities", "inverter.py")
+    cls = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef)
+        and node.name == "LoadJugglerInverterChargeControlSensor"
+    )
+    bases = [b.id for b in cls.bases if isinstance(b, ast.Name)]
+    assert "SiteCycleWorkerMixin" in bases, bases
+    assert bases.index("SiteCycleWorkerMixin") < bases.index("SensorEntity"), bases
+
+
+def test_the_worker_mixin_turns_polling_off():
+    tree = _parse("entities", "mixins.py")
+    cls = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "SiteCycleWorkerMixin"
+    )
+    polls = [
+        node.value.value
+        for node in cls.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(t, ast.Name) and t.id == "_attr_should_poll"
+            for t in node.targets
+        )
+    ]
+    assert polls == [False], polls
+
+
+def test_async_update_refreshes_the_state_and_awaits_nothing():
+    """``homeassistant.update_entity`` is a service any automation can call at
+    any rate. If it wrote, it would be a second writer on the register — able to
+    overlap the cycle's own write and to spend the min-interval budget outside
+    the one place that owns it. So it awaits nothing at all."""
+    method = _method(
+        _parse("entities", "inverter.py"),
+        "LoadJugglerInverterChargeControlSensor",
+        "async_update",
+    )
+    awaits = [node for node in ast.walk(method) if isinstance(node, ast.Await)]
+    assert awaits == [], [node.lineno for node in awaits]
+    assert _callee_name(
+        next(node for node in ast.walk(method) if isinstance(node, ast.Call))
+    ) == "_read_control_status"
+
+
+def test_only_the_site_cycle_worker_writes_the_register():
+    """One writer, and it is the one the coordinator serializes."""
+    callers = {}
+    for path in sorted(COMPONENT.rglob("*.py")):
+        if "__pycache__" in str(path):
+            continue
+        names = _functions_calling(ast.parse(path.read_text()),
+                                   "send_inverter_charge_limit")
+        if names:
+            callers[str(path.relative_to(COMPONENT))] = names
+    assert callers == {"entities/inverter.py": ["_async_site_cycle_work"]}, callers
+
+
+def test_workers_are_awaited_after_the_result_is_published():
+    """The ordering the write depends on: it consumes
+    ``published["inverters"][…]["forecast_charge_limit_w"]``, which does not
+    exist until publish_hub_data has stored it."""
+    fn = next(
+        node
+        for node in ast.walk(_parse("sensor.py"))
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "async_run_hub_cycle"
+    )
+    lines = {
+        callee: [
+            node.lineno
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and _callee_name(node) == callee
+        ]
+        for callee in ("publish_hub_data", "async_run_site_cycle")
+    }
+    assert len(lines["publish_hub_data"]) == 1, lines
+    assert len(lines["async_run_site_cycle"]) == 1, lines
+    assert lines["publish_hub_data"][0] < lines["async_run_site_cycle"][0], lines
+
+
+# --- Runner -------------------------------------------------------------------
+if __name__ == "__main__":
+    # Deliberately pytest-free: the pure tier has to run on the developer's
+    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
+    failed = []
+    for _name, _fn in sorted(list(globals().items())):
+        if not _name.startswith("test_") or not callable(_fn):
+            continue
+        try:
+            _fn()
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            failed.append((_name, exc))
+            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
+        else:
+            print(f"PASS {_name}")
+    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    sys.exit(1 if failed else 0)

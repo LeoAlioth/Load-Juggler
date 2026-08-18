@@ -7,9 +7,10 @@ engine to the sensor state and the device commands.
 """
 
 from unittest.mock import patch, AsyncMock, MagicMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
+from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -65,6 +66,12 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BASE_CONSUMPTION,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_FORECAST_SOC_FLOOR,
+    ENTRY_TYPE_INVERTER,
+    CONF_CHARGE_LIMIT_ENTITY_ID,
+    CONF_CHARGE_CONTROL_INTERVAL,
+    CONF_BATTERY_NOMINAL_VOLTAGE,
+    INVERTER_RT_APPLIED,
+    INVERTER_RT_CONTROL_ENABLED,
 )
 from custom_components.dynamic_ocpp_evse.sensor import (
     DynamicOcppEvseChargerSensor,
@@ -72,6 +79,10 @@ from custom_components.dynamic_ocpp_evse.sensor import (
     DynamicOcppEvseHubDataSensor,
     HUB_SENSOR_DEFINITIONS,
 )
+from custom_components.dynamic_ocpp_evse.entities.inverter import (
+    LoadJugglerInverterChargeControlSensor,
+)
+from custom_components.dynamic_ocpp_evse.entities.mixins import SITE_CYCLE_WORKERS
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────
@@ -268,13 +279,22 @@ async def test_charger_sensor_initializes(hass, hub_entry, charger_entry):
     sensor = DynamicOcppEvseChargerSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
-    assert sensor.state is None
-    assert sensor.unit_of_measurement == "A"
-    assert sensor.device_class == "current"
+    # Modern sensor API: the value is native_value, and unit/class/state_class
+    # are declared as _attr_* rather than overridden properties.
+    assert sensor.native_value is None
+    assert sensor.native_unit_of_measurement == "A"
+    assert sensor.device_class == SensorDeviceClass.CURRENT
+    assert sensor.state_class == SensorStateClass.MEASUREMENT
     assert sensor.icon == "mdi:ev-station"
     assert sensor._pause_started_at is None
+    # No cycle has processed this load, so it has no permit to report.
+    assert sensor.available is False
 
     attrs = sensor.extra_state_attributes
+    assert "state_class" not in attrs, (
+        "state_class belongs on the entity, not in extra_state_attributes — "
+        "HA reads it from the sensor's own property"
+    )
     assert attrs["pause_active"] is False
     assert attrs["allocated_current"] is None
     assert attrs[CONF_HUB_ENTRY_ID] == hub_entry.entry_id
@@ -283,9 +303,15 @@ async def test_charger_sensor_initializes(hass, hub_entry, charger_entry):
 async def test_hub_sensor_initializes(hass, hub_entry):
     """Test that the hub sensor initializes with correct attributes."""
     sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
-    assert sensor.state == 0.0  # Returns 0 when no data, not None
-    assert sensor.unit_of_measurement == "W"
-    assert sensor.device_class == "power"
+    # Unknown, NOT 0.0: 0 W of remaining site power is a real reading (the site
+    # is at its limit) and must not stand in for "nothing calculated yet".
+    assert sensor.native_value is None
+    assert sensor.native_unit_of_measurement == "W"
+    assert sensor.device_class == SensorDeviceClass.POWER
+    assert sensor.state_class == SensorStateClass.MEASUREMENT
+    # No hub_data published yet — the producer has never run.
+    assert sensor.available is False
+    assert "state_class" not in sensor.extra_state_attributes
 
 
 async def test_hub_data_sensors_initialize(hass, hub_entry):
@@ -302,7 +328,12 @@ async def test_hub_data_sensors_initialize(hass, hub_entry):
     for sensor, defn in zip(sensors, HUB_SENSOR_DEFINITIONS):
         assert sensor._attr_name == f"Test Hub {defn['name_suffix']}"
         assert sensor._attr_unique_id == f"test_hub_{defn['unique_id_suffix']}"
-        assert sensor.state is None  # No data yet
+        assert sensor.native_value is None  # No data yet
+        assert sensor.native_unit_of_measurement == defn["unit"]
+        assert sensor.device_class == defn["device_class"]
+        # Every hub data sensor is a numeric instantaneous reading.
+        assert sensor.state_class == SensorStateClass.MEASUREMENT
+        assert sensor.available is False  # nothing published yet
 
 
 # ── Calculation engine reads HA entity states ─────────────────────────
@@ -626,6 +657,9 @@ async def test_site_cycle_publishes_hub_data_with_no_loads(
     hub_sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
     await hub_sensor.async_update()
     assert hub_sensor._total_site_available_power is not None
+    assert hub_sensor.native_value is not None
+    # A cycle just published, so the producer is fresh.
+    assert hub_sensor.available is True
 
 
 async def test_hub_sensor_reads_hub_data(
@@ -648,8 +682,12 @@ async def test_hub_sensor_reads_hub_data(
     hub_sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
     await hub_sensor.async_update()
 
-    # Hub sensor should have read the data
-    assert hub_sensor._total_site_available_power is not None or hub_sensor.state == 0.0
+    # Hub sensor should have read the data — and publish it as its own value.
+    assert hub_sensor._total_site_available_power is not None
+    assert hub_sensor.native_value == round(
+        hub_sensor._total_site_available_power, 0
+    )
+    assert hub_sensor.available is True
 
 
 async def test_hub_data_sensor_reads_values(
@@ -674,7 +712,162 @@ async def test_hub_data_sensor_reads_values(
     await data_sensor.async_update()
 
     # The sensor should have read from hub_data
-    assert data_sensor.state is not None or data_sensor.state == 0
+    assert data_sensor.native_value is not None
+    assert data_sensor.available is True
+
+
+# ── Producer freshness: availability tracks the site cycle ────────────
+
+
+async def test_site_remaining_power_is_unknown_not_zero_without_hub_data(
+    hass, hub_entry
+):
+    """With no site cycle behind it, the hub sensor must not read 0 W.
+
+    0 W of remaining power says "the site is at its limit" — an automation that
+    sheds load on that number would act on a value nobody calculated. The
+    sensor reports unknown, and unavailable on top, because its producer has
+    never run.
+    """
+    hub_sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
+    await hub_sensor.async_update()
+
+    assert hub_sensor.native_value is None
+    assert hub_sensor.native_value != 0.0
+    assert hub_sensor.available is False
+
+
+async def test_hub_sensors_go_unavailable_when_the_producer_goes_stale(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """A hub whose site cycle stopped takes its readers down with it.
+
+    The values in hass.data are still there and still perfectly readable — that
+    is exactly the trap. A sensor that keeps publishing the last engine result
+    looks live, so the freshness gate is what turns "the engine died 10 minutes
+    ago" into something a dashboard and an automation can both see.
+    """
+    _set_ha_states(hass, hub_entry)
+    charger_sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
+    )
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await _run_site_cycle(hass, hub_entry, charger_sensor)
+
+    hub_sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
+    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
+    data_sensor = DynamicOcppEvseHubDataSensor(
+        hass, hub_entry, "Test Hub", "test_hub", defn
+    )
+    await hub_sensor.async_update()
+    await data_sensor.async_update()
+
+    assert hub_sensor.available is True
+    assert data_sensor.available is True
+    last_reading = data_sensor.native_value
+
+    # Age the publication past max(30 s, 3 x site_update_frequency) without
+    # touching anything else — the producer stopped, the data did not move.
+    hub_data = hass.data[DOMAIN]["hub_data"][hub_entry.entry_id]
+    hub_data["last_update"] = datetime.now(timezone.utc) - timedelta(minutes=10)
+
+    assert hub_sensor.available is False
+    assert data_sensor.available is False
+    # The last value is retained (it is what returns the moment a cycle runs
+    # again) — availability, not the value, is what carries the staleness.
+    assert data_sensor.native_value == last_reading
+
+
+async def test_load_sensor_availability_follows_its_own_processing(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """The load's permit sensor is keyed on ITS last processed cycle.
+
+    hub_data being fresh is not enough: a load the cycle never reached has no
+    permit, and reporting the previous one would be a licence to draw power
+    that was not granted this cycle.
+    """
+    _set_ha_states(hass, hub_entry)
+    sensor = DynamicOcppEvseChargerSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
+    )
+    assert sensor.available is False  # never processed
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await _run_site_cycle(hass, hub_entry, sensor)
+
+    assert sensor._last_update is not None
+    assert sensor.available is True
+
+    # hub_data stays fresh; only this load's own processing goes stale.
+    sensor._last_update = datetime.now(timezone.utc) - timedelta(minutes=10)
+    assert sensor.available is False
+
+
+async def test_site_cycle_adopts_readers_registered_before_the_hub(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """A reader that registered before its hub's coordinator existed gets bound.
+
+    Child entries (groups, inverters, loads) can have their sensor platform set
+    up before the hub's, so `hub_coordinators[hub_entry_id]` may be missing at
+    the moment the entity is added. It registers in the site-cycle bucket
+    anyway and the hub's next tick adopts it. The same pass re-binds readers
+    left on a coordinator a hub reload replaced.
+    """
+    from custom_components.dynamic_ocpp_evse.entities.mixins import (
+        SITE_CYCLE_LISTENERS,
+        attach_site_cycle_listeners,
+    )
+
+    class _FakeCoordinator:
+        def __init__(self):
+            self.listeners = []
+
+        def async_add_listener(self, cb):
+            self.listeners.append(cb)
+            return lambda: self.listeners.remove(cb)
+
+    reader = DynamicOcppEvseHubDataSensor(
+        hass,
+        hub_entry,
+        "Test Hub",
+        "test_hub",
+        next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power"),
+    )
+    hass.data[DOMAIN].setdefault(SITE_CYCLE_LISTENERS, {})[hub_entry.entry_id] = {
+        id(reader): reader
+    }
+
+    first = _FakeCoordinator()
+    attach_site_cycle_listeners(hass, hub_entry.entry_id, first)
+    assert len(first.listeners) == 1
+    assert reader._site_cycle_coordinator is first
+
+    # Idempotent: the per-tick pass must not stack a listener every cycle.
+    attach_site_cycle_listeners(hass, hub_entry.entry_id, first)
+    assert len(first.listeners) == 1
+
+    # A hub reload swaps the coordinator — the reader moves across, and does
+    # not leave a subscription behind on the dead one.
+    second = _FakeCoordinator()
+    attach_site_cycle_listeners(hass, hub_entry.entry_id, second)
+    assert first.listeners == []
+    assert len(second.listeners) == 1
+    assert reader._site_cycle_coordinator is second
+
+    # No coordinator yet is a no-op, not a crash.
+    attach_site_cycle_listeners(hass, hub_entry.entry_id, None)
+    assert reader._site_cycle_coordinator is second
 
 
 # ── Charge pause logic ────────────────────────────────────────────────
@@ -2119,3 +2312,239 @@ async def test_grid_phase_export_keeps_its_sign(
 
     # 3 × −2300 W of export, so the published grid power is negative
     assert result["grid_power"] == pytest.approx(-6900, abs=50)
+
+
+# ── Inverter charge control: driven by the site cycle, not by a poll ───
+#
+# This sensor was the last platform-polled entity in the integration: its update
+# AWAITS a Modbus register write, which a coordinator listener (a synchronous
+# callback) cannot do. It now joins the cycle as a site-cycle *worker* — awaited
+# by the coordinator after the result is published — and the platform's
+# SCAN_INTERVAL is gone. What these pin is the drive mechanism: registration,
+# the write happening through the real cycle, the opt-in gate, the pacing across
+# cycles, and async_update no longer writing anything.
+#
+# The pacing/deadband/release contract itself is tested in
+# dev/tests/test_inverter_control.py, which also runs in the pure tier.
+
+CHARGE_TARGET = "number.deye_max_charge_current"
+
+
+@pytest.fixture
+def inverter_entry(hub_entry: MockConfigEntry) -> MockConfigEntry:
+    """An inverter entry on the test hub that writes a charge-limit register."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Deye Hybrid",
+        data={
+            CONF_NAME: "Deye Hybrid",
+            CONF_ENTITY_ID: "deye_hybrid",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={
+            CONF_CHARGE_LIMIT_ENTITY_ID: CHARGE_TARGET,
+            CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+            CONF_CHARGE_CONTROL_INTERVAL: 300,
+        },
+    )
+
+
+async def _add_charge_control(hass, inverter_entry, *, armed=True):
+    """Create the charge-control sensor and let it join its hub's site cycle.
+
+    Registration goes through async_added_to_hass — the production path, which
+    HA calls when it adds the entity — rather than by poking the bucket, so the
+    registration itself is under test. Note there is no hub coordinator in these
+    tests at all: registration, not a coordinator reference, is the whole link.
+
+    The register starts at its 100 A maximum, which is also the value a release
+    restores (no configured normal), making the deadband 5 % of 100 A.
+    """
+    hass.states.async_set(CHARGE_TARGET, "100", {"max": 100})
+    hass.data.setdefault(DOMAIN, {}).setdefault("inverters", {})[
+        inverter_entry.entry_id
+    ] = {INVERTER_RT_CONTROL_ENABLED: armed}
+    sensor = LoadJugglerInverterChargeControlSensor(
+        hass, inverter_entry, "Deye Hybrid", "deye_hybrid"
+    )
+    await sensor.async_added_to_hass()
+    return sensor
+
+
+def _advice_cycle(inverter_entry, advice_w):
+    """Run the cycle with one crafted piece of forecast advice.
+
+    The engine is patched out on purpose: producing this number for real needs a
+    whole configured clipping forecast, and these tests are about who performs
+    the write and when, not about how the advice is computed. ``None`` is the
+    release signal — the forecast having nothing to say.
+    """
+    return patch(
+        "custom_components.dynamic_ocpp_evse.sensor.run_hub_calculation",
+        return_value={
+            "inverters": {
+                inverter_entry.entry_id: {"forecast_charge_limit_w": advice_w}
+            },
+        },
+    )
+
+
+def _register_writes(mock_call):
+    """The number.set_value calls among everything the cycle called."""
+    return [
+        c for c in mock_call.call_args_list
+        if c[0][0] == "number" and c[0][1] == "set_value"
+    ]
+
+
+async def test_charge_control_registers_as_a_site_cycle_worker(
+    hass, hub_entry, inverter_entry
+):
+    sensor = await _add_charge_control(hass, inverter_entry)
+
+    workers = hass.data[DOMAIN][SITE_CYCLE_WORKERS][hub_entry.entry_id]
+    assert list(workers.values()) == [sensor]
+    # A poll would be a second caller of the write that nothing serializes.
+    assert sensor.should_poll is False
+    # Unconditionally available, and "Off" before any cycle has run. Unlike the
+    # readers on this device it mirrors no measurement — it states the standing
+    # of our own control, and "the switch is not armed" is true whether or not
+    # the engine has ever produced a result.
+    assert sensor.available is True
+    assert sensor.native_value == "Off"
+
+
+async def test_the_site_cycle_performs_the_charge_limit_write(
+    hass, hub_entry, inverter_entry
+):
+    """The write rides the coordinator's cycle — no poll involved."""
+    sensor = await _add_charge_control(hass, inverter_entry)
+
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ) as mock_call, _advice_cycle(inverter_entry, 2560.0):
+        await _run_site_cycle(hass, hub_entry)
+
+    writes = _register_writes(mock_call)
+    assert len(writes) == 1, writes
+    # 2560 W at 51.2 V = 50 A, half the register's 100 A
+    assert writes[0][0][2] == {"entity_id": CHARGE_TARGET, "value": 50.0}
+    assert sensor.native_value == "Limiting to 50.0A"
+    inverter_rt = hass.data[DOMAIN]["inverters"][inverter_entry.entry_id]
+    assert inverter_rt[INVERTER_RT_APPLIED] == 50.0
+
+
+async def test_nothing_is_written_while_the_switch_is_off(
+    hass, hub_entry, inverter_entry
+):
+    """The opt-in gate is per call, so a faster cadence cannot leak a write."""
+    sensor = await _add_charge_control(hass, inverter_entry, armed=False)
+
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ) as mock_call, _advice_cycle(inverter_entry, 2560.0):
+        for _ in range(5):
+            await _run_site_cycle(hass, hub_entry)
+
+    assert _register_writes(mock_call) == []
+    assert sensor.native_value == "Off"
+
+
+async def test_repeated_cycles_write_once_inside_the_interval(
+    hass, hub_entry, inverter_entry
+):
+    """The cadence change's whole risk, at the entity level.
+
+    The check now runs every site cycle (2 s by default) instead of every 10 s
+    platform poll. The min-interval is wall-clock, so five cycles back to back
+    are still one write.
+    """
+    await _add_charge_control(hass, inverter_entry)
+
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ) as mock_call, _advice_cycle(inverter_entry, 2560.0):
+        for _ in range(5):
+            await _run_site_cycle(hass, hub_entry)
+
+    assert len(_register_writes(mock_call)) == 1
+
+
+async def test_the_cycle_releases_the_limit_exactly_once(
+    hass, hub_entry, inverter_entry
+):
+    """Advice stopping restores the normal value, and only on the first cycle
+    that sees it — a release must not be rewritten every 2 s all night."""
+    sensor = await _add_charge_control(hass, inverter_entry)
+
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ), _advice_cycle(inverter_entry, 2560.0):
+        await _run_site_cycle(hass, hub_entry)
+
+    # The inverter took the 50 A we wrote; now the forecast releases.
+    hass.states.async_set(CHARGE_TARGET, "50", {"max": 100})
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ) as mock_call, _advice_cycle(inverter_entry, None):
+        for _ in range(4):
+            await _run_site_cycle(hass, hub_entry)
+
+    writes = _register_writes(mock_call)
+    assert len(writes) == 1, writes
+    assert writes[0][0][2]["value"] == 100.0
+    assert sensor.native_value == "Not limiting"
+    inverter_rt = hass.data[DOMAIN]["inverters"][inverter_entry.entry_id]
+    assert inverter_rt[INVERTER_RT_APPLIED] is None
+
+
+async def test_update_entity_refreshes_the_status_without_writing(
+    hass, hub_entry, inverter_entry
+):
+    """``homeassistant.update_entity`` is a service any automation can call at
+    any rate. It must only re-read the status the last cycle recorded: writing
+    here would be a second writer nothing serializes, able to overlap the
+    cycle's own write and to spend the min-interval budget outside it."""
+    sensor = await _add_charge_control(hass, inverter_entry)
+
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ), _advice_cycle(inverter_entry, 2560.0):
+        await _run_site_cycle(hass, hub_entry)
+
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ) as mock_call:
+        for _ in range(10):
+            await sensor.async_update()
+
+    assert _register_writes(mock_call) == []
+    assert sensor.native_value == "Limiting to 50.0A"
+
+
+async def test_removing_the_entity_releases_its_worker_slot(
+    hass, hub_entry, inverter_entry
+):
+    """An unloaded inverter entry must stop being driven — otherwise a removed
+    entity keeps writing to a register nobody is watching."""
+    sensor = await _add_charge_control(hass, inverter_entry)
+    workers = hass.data[DOMAIN][SITE_CYCLE_WORKERS][hub_entry.entry_id]
+    assert list(workers.values()) == [sensor]
+
+    # What HA's Entity.async_remove() does with the callbacks async_on_remove
+    # collected. Reproduced here because this entity was never added to an
+    # entity platform, so the real removal path has no platform state to unwind.
+    assert sensor._on_remove, "the worker registered no removal callback"
+    while sensor._on_remove:
+        sensor._on_remove.pop()()
+
+    assert workers == {}
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ) as mock_call, _advice_cycle(inverter_entry, 2560.0):
+        await _run_site_cycle(hass, hub_entry)
+
+    assert _register_writes(mock_call) == []

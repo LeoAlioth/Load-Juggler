@@ -1,33 +1,40 @@
 import logging
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from ..const import *
 from ..helpers import get_entry_value
-from .mixins import GroupEntityMixin
+from .mixins import GroupEntityMixin, SiteCycleConsumerMixin
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class LoadJugglerCircuitGroupSensor(GroupEntityMixin, SensorEntity):
+class LoadJugglerCircuitGroupSensor(
+    SiteCycleConsumerMixin, GroupEntityMixin, SensorEntity
+):
     """Sensor showing circuit group allocation and headroom."""
 
-    def __init__(self, hass, config_entry, name, entity_id, hub_entry_id):
-        self.hass = hass
-        self.config_entry = config_entry
-        self._hub_entry_id = hub_entry_id
-        self._attr_name = f"{name} Circuit Allocation"
-        self._attr_unique_id = f"{entity_id}_circuit_allocation"
-        self._attr_native_unit_of_measurement = "A"
-        self._attr_device_class = "current"
-        self._attr_icon = "mdi:current-ac"
-        self._state = None
+    _attr_native_unit_of_measurement = "A"
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:current-ac"
+
+    def __init__(self, hass, config_entry, name, entity_id):
+        self._init_entity(
+            hass,
+            config_entry,
+            f"{name} Circuit Allocation",
+            f"{entity_id}_circuit_allocation",
+        )
+        # The hub is read from the group entry's own data (GroupEntityMixin),
+        # not passed in: it was the same value, from the same place, twice.
+        self._attr_native_value = None
         self._headroom = None
         self._per_phase_draw = None
         self._current_limit = None
         self._member_ids = None
-
-    @property
-    def state(self):
-        return self._state
 
     @property
     def extra_state_attributes(self):
@@ -44,20 +51,12 @@ class LoadJugglerCircuitGroupSensor(GroupEntityMixin, SensorEntity):
             attrs["member_count"] = len(self._member_ids)
         return attrs
 
-    async def async_update(self):
-        try:
-            hub_data = (
-                self.hass.data.get(DOMAIN, {})
-                .get("hub_data", {})
-                .get(self._hub_entry_id, {})
-            )
-            all_group_data = hub_data.get("group_data", {})
-            my_data = all_group_data.get(self.config_entry.entry_id)
-            if my_data:
-                self._state = my_data.get("max_phase_draw", 0)
-                self._headroom = my_data.get("headroom", 0)
-                self._per_phase_draw = my_data.get("per_phase_draw")
-                self._current_limit = my_data.get("current_limit")
-                self._member_ids = my_data.get("member_ids")
-        except Exception as e:
-            _LOGGER.error(f"Error updating {self._attr_name}: {e}", exc_info=True)
+    def _read_site_data(self):
+        all_group_data = self._hub_data().get("group_data", {})
+        my_data = all_group_data.get(self.config_entry.entry_id)
+        if my_data:
+            self._attr_native_value = my_data.get("max_phase_draw", 0)
+            self._headroom = my_data.get("headroom", 0)
+            self._per_phase_draw = my_data.get("per_phase_draw")
+            self._current_limit = my_data.get("current_limit")
+            self._member_ids = my_data.get("member_ids")

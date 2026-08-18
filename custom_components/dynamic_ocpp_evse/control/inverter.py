@@ -16,6 +16,14 @@ register rather than a software knob:
    expected, control switched off — the normal value goes back and the
    applied-state marker clears, so a released limit is not rewritten every
    cycle for the rest of the night.
+
+Single writer: the one caller is the inverter's charge-control sensor, which the
+hub coordinator awaits once per site cycle as a site-cycle worker (see
+``entities/inverter.py``). Nothing else — no poll, no service call — may write
+this register, which is what makes "one write in flight at a time" true. The
+pacing above is measured in wall-clock seconds (``now_mono``), never in cycles,
+so the site's cadence changes how often the *check* runs and not how often the
+register is actually written.
 """
 
 import logging

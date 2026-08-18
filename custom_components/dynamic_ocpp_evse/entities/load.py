@@ -1,13 +1,17 @@
 import logging
 import math
 import time
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.core import callback
 from datetime import datetime, timezone
 from ..const import *
 from ..helpers import get_entry_value
 from .. import units
-from .mixins import ChargerEntityMixin
+from .mixins import ChargerEntityMixin, SiteFreshnessMixin
 from .. import get_hub_for_charger
 from ..control.smoothing import apply_smoothing
 from ..control.status import determine_charging_status
@@ -20,25 +24,36 @@ from ..control.power_station import send_power_station_command
 _LOGGER = logging.getLogger(__name__)
 
 
-class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
+class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEntity):
     """Representation of a managed device (EVSE, smart plug, etc.).
 
     This entity does NOT run the site calculation. Its hub's coordinator
     (sensor.py) runs it once per site cycle and then calls async_process()
     on every load registered under that hub, handing it the shared result.
     Platform polling stays off: a poll would dispatch commands a second time
-    on the platform's own SCAN_INTERVAL.
+    on the platform's own scan interval. (Nothing in this integration polls
+    anymore — every entity is pushed by the site cycle.)
+
+    Unlike the read-only sensors it does not subscribe to the coordinator
+    either — being CALLED by the site cycle is its subscription, and it writes
+    its own state at the end of every processed cycle.
     """
 
     _attr_should_poll = False
+    _attr_native_unit_of_measurement = "A"
+    _attr_device_class = SensorDeviceClass.CURRENT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:ev-station"
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id):
         """Initialize the sensor."""
-        self.hass = hass
-        self.config_entry = config_entry
+        self._init_entity(
+            hass,
+            config_entry,
+            f"{name} Available Current",
+            f"{entity_id}_available_current",
+        )
         self.hub_entry = hub_entry
-        self._attr_name = f"{name} Available Current"
-        self._attr_unique_id = f"{entity_id}_available_current"
         charger_entity_id = config_entry.data.get(CONF_ENTITY_ID)
         ocpp_device_id = config_entry.data.get(CONF_CHARGER_ID, charger_entity_id)
         self._connector_status_entity = f"sensor.{ocpp_device_id}_status_connector"
@@ -110,9 +125,21 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         self.async_on_remove(_unregister)
 
     @property
-    def state(self):
-        """Return the state of the sensor."""
+    def native_value(self):
+        """The current this load is permitted to draw, in A."""
         return self._state
+
+    @property
+    def available(self) -> bool:
+        """Available while this load's OWN last processed cycle is recent.
+
+        Keyed on `_last_update` rather than on the hub's publication: this
+        entity is served by the site cycle one load at a time, and a load whose
+        processing raised (or which was never reached) has a stale permit even
+        though hub_data is fresh. None until the first clean cycle, so the
+        sensor starts unavailable instead of reporting a permit nobody granted.
+        """
+        return self._is_fresh(self._last_update)
 
     @property
     def extra_state_attributes(self):
@@ -136,7 +163,6 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             grace_remaining = max(0, round(grace_period_min * 60 - elapsed))
 
         attrs = {
-            "state_class": "measurement",
             CONF_PHASES: self._phases,
             "detected_phases": self._car_active_phases,
             "allocated_current": self._allocated_current,
@@ -157,21 +183,6 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             "last_hard_reset": self._last_hard_reset_at,
         }
         return attrs
-
-    @property
-    def icon(self):
-        """Return the icon to use in the frontend."""
-        return "mdi:ev-station"
-
-    @property
-    def unit_of_measurement(self):
-        """Return the unit of measurement."""
-        return "A"
-
-    @property
-    def device_class(self):
-        """Return the device class."""
-        return "current"
 
     async def async_process(self, hub_data):
         """Apply one site result to this load: state, timers and commands.
@@ -308,11 +319,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 and raw_permit > 0
                 and not mode_changed
             ):
-                charger_rt = (
-                    self.hass.data.get(DOMAIN, {})
-                    .get("chargers", {})
-                    .get(self.config_entry.entry_id, {})
-                )
+                charger_rt = self._charger_runtime()
                 min_power = charger_rt.get(
                     "station_min_charge_power"
                 ) or get_entry_value(
@@ -346,11 +353,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         # measured it against the static one and paused anyway (issue #37).
         # Both branches therefore read the live runtime slider first and fall
         # back to the config value exactly as engine/hub_calculation.py does.
-        load_rt = (
-            self.hass.data.get(DOMAIN, {})
-            .get("chargers", {})
-            .get(self.config_entry.entry_id, {})
-        )
+        load_rt = self._charger_runtime()
         if device_type == DEVICE_TYPE_POWER_STATION:
             # The station's floor is its minimum charge POWER, not a current —
             # see _build_power_station_charger().
@@ -542,11 +545,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
             DEFAULT_MAX_CHARGE_CURRENT,
         )
 
-        charger_rt = (
-            self.hass.data.get(DOMAIN, {})
-            .get("chargers", {})
-            .get(self.config_entry.entry_id, {})
-        )
+        charger_rt = self._charger_runtime()
         dynamic_control_on = charger_rt.get("dynamic_control", True)
 
         if device_type == DEVICE_TYPE_HOT_WATER_TANK:

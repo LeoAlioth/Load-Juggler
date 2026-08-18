@@ -45,6 +45,7 @@ PKG_COMP = f"{PKG_ROOT}.dynamic_ocpp_evse"
 PKG_CONST = f"{PKG_COMP}.const"
 PKG_CALC = f"{PKG_COMP}.calculations"
 PKG_ENGINE = f"{PKG_COMP}.engine"
+PKG_CONTROL = f"{PKG_COMP}.control"
 
 # Dependency order — common is the leaf every other const module may import;
 # the aggregator __init__ loads last and re-exports every name.
@@ -166,6 +167,7 @@ def _ensure_ha_stubs():
 def load_pure_modules(
     calc_modules=DEFAULT_CALC_MODULES,
     engine_modules=(),
+    control_modules=(),
     load_calc_init=False,
 ):
     """Make the requested component modules importable without Home Assistant.
@@ -177,6 +179,10 @@ def load_pure_modules(
             "forecast_reader", "hub_calculation"). Requesting
             "hub_calculation" pulls in its whole import chain (the other three
             plus helpers.py/units.py and the calc __init__) automatically.
+        control_modules: control/ modules to load. Only the ones that import
+            nothing but const/helpers/units qualify — which is the actuation
+            layer's own rule (see AGENTS.md), so "inverter" loads while the
+            ones reaching for HA service helpers do not.
         load_calc_init: also execute calculations/__init__.py so the package
             itself re-exports the public names (needed by callers that do
             ``from ..calculations import X`` beyond PhaseValues).
@@ -185,8 +191,9 @@ def load_pure_modules(
     caller needs at least part of it and it is pure and cheap.
     """
     engine_modules = tuple(engine_modules)
-    if engine_modules:
-        # helpers.py (preloaded below for every engine request) imports
+    control_modules = tuple(control_modules)
+    if engine_modules or control_modules:
+        # helpers.py (preloaded below for every engine/control request) imports
         # homeassistant at module level, so the stubs go in first.
         _ensure_ha_stubs()
     if "hub_calculation" in engine_modules:
@@ -207,6 +214,8 @@ def load_pure_modules(
         # a pytest process import real engine submodules (e.g.
         # engine.hub_calculation), and an empty stub path would break them.
         _ensure_stub_package(PKG_ENGINE, COMPONENT_DIR / "engine")
+    if control_modules:
+        _ensure_stub_package(PKG_CONTROL, COMPONENT_DIR / "control")
 
     const_dir = COMPONENT_DIR / "const"
     for sub in CONST_SUBMODULES:
@@ -227,14 +236,19 @@ def load_pure_modules(
     if load_calc_init:
         _load_calc_init()
 
-    if engine_modules:
+    if engine_modules or control_modules:
         # Preloaded for ANY engine request, not just hub_calculation: the engine
         # modules reach for `from .. import units` (the unit converters and the
         # availability predicates), and resolving that through the stub parent
-        # package would fail. helpers.py rides along for the same reason.
+        # package would fail. helpers.py rides along for the same reason. The
+        # control modules need exactly the same two.
         _load_module_once(f"{PKG_COMP}.helpers", COMPONENT_DIR / "helpers.py")
         _load_module_once(f"{PKG_COMP}.units", COMPONENT_DIR / "units.py")
 
     engine_dir = COMPONENT_DIR / "engine"
     for mod in engine_modules:
         _load_module_once(f"{PKG_ENGINE}.{mod}", engine_dir / f"{mod}.py")
+
+    control_dir = COMPONENT_DIR / "control"
+    for mod in control_modules:
+        _load_module_once(f"{PKG_CONTROL}.{mod}", control_dir / f"{mod}.py")

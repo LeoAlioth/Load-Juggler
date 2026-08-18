@@ -24,6 +24,7 @@ from .entities.hub import (
     HUB_SENSOR_DEFINITIONS,
     publish_hub_data,
 )
+from .entities.mixins import SITE_CYCLE_WORKERS, attach_site_cycle_listeners
 from .entities.circuit_group import LoadJugglerCircuitGroupSensor
 from .entities.inverter import (
     LoadJugglerInverterDataSensor,
@@ -37,21 +38,42 @@ DynamicOcppEvseHubSensor = LoadJugglerHubSensor
 DynamicOcppEvseHubDataSensor = LoadJugglerHubDataSensor
 
 _LOGGER = logging.getLogger(__name__)
-SCAN_INTERVAL = timedelta(seconds=10)
+
+# No SCAN_INTERVAL: nothing on this platform polls. Every sensor here is either
+# pushed by its hub's site cycle (entities/mixins.SiteCycleConsumerMixin), driven
+# by it directly (a load's LoadJugglerDeviceSensor), or awaited by it as a
+# site-cycle worker (entities/mixins.SiteCycleWorkerMixin).
 
 
 async def async_run_hub_cycle(hass: HomeAssistant, hub_entry: ConfigEntry) -> dict:
-    """Run ONE site cycle for a hub: calculate once, then serve every load.
+    """Run ONE site cycle for a hub: calculate once, then serve every consumer.
 
     This is the hub coordinator's update method and the only thing that drives
     the engine. Running it per load (as the per-charger coordinators used to)
     advanced every cycle-counted mechanism in the engine — settle counters,
     input EMAs, power-stable counts — N times per interval on an N-load site.
 
-    Load processors are awaited sequentially, in entry_id order: two loads must
-    never dispatch OCPP commands concurrently.
+    The order of the second half of the cycle is the contract:
+
+    1. publish the result, which is what every reader on this hub then shows;
+    2. load processors, awaited sequentially in entry_id order — two loads must
+       never dispatch OCPP commands concurrently;
+    3. site-cycle workers, awaited sequentially — entities whose per-cycle work
+       is an await rather than a read.
     """
     hub_entry_id = hub_entry.entry_id
+
+    # Adopt (or re-adopt) this hub's read-only sensors before the cycle runs, so
+    # the state they publish at the end of it is this cycle's. Covers both a
+    # child entry set up before its hub and a hub reload that replaced the
+    # coordinator underneath already-loaded children — see
+    # entities/mixins.attach_site_cycle_listeners.
+    attach_site_cycle_listeners(
+        hass,
+        hub_entry_id,
+        hass.data.get(DOMAIN, {}).get("hub_coordinators", {}).get(hub_entry_id),
+    )
+
     hub_data = run_hub_calculation(hass, hub_entry)
 
     for notif in hub_data.get("auto_detect_notifications", []):
@@ -73,6 +95,20 @@ async def async_run_hub_cycle(hass: HomeAssistant, hub_entry: ConfigEntry) -> di
     )
     for _entry_id, processor in sorted(processors.items()):
         await processor.async_process(hub_data)
+
+    # Workers last, and on the PUBLISHED result rather than the raw one. The
+    # inverter charge-limit write is the first of these, and it consumes
+    # published["inverters"][…]["forecast_charge_limit_w"] — advice that only
+    # exists once the cycle has produced it, which is why workers cannot run
+    # before publish_hub_data. Handing over the same dict the readers see also
+    # means the register write and the sensor reporting it are always from one
+    # cycle. Awaiting them one at a time is what keeps a single writer per
+    # register now that no platform poll serializes them.
+    workers = (
+        hass.data.get(DOMAIN, {}).get(SITE_CYCLE_WORKERS, {}).get(hub_entry_id, {})
+    )
+    for worker in list(workers.values()):
+        await worker.async_run_site_cycle(published)
 
     return published
 
@@ -97,11 +133,13 @@ def _create_hub_coordinator(
     ] = coordinator
 
     # A DataUpdateCoordinator only arms its timer while it has at least one
-    # listener, and nothing subscribes to this one: the loads publish their own
-    # state at the end of async_process and the hub sensors are still polled.
-    # This keepalive listener is what keeps the site cycle running; it is
-    # released when the hub entry unloads (as is the timer itself, via
-    # config_entry above and the explicit shutdown in __init__.py's unload).
+    # listener. The read-only sensors do subscribe now, but the site cycle must
+    # run regardless of how many of them exist — the loads are driven from it
+    # and they publish their own state at the end of async_process, never as
+    # coordinator listeners. This keepalive is what makes the cycle independent
+    # of its audience; it is released when the hub entry unloads (as is the
+    # timer itself, via config_entry above and the explicit shutdown in
+    # __init__.py's unload).
     @callback
     def _keepalive() -> None:
         """No state of its own — the cycle's effects are published elsewhere."""
@@ -184,10 +222,7 @@ async def async_setup_entry(
     if entry_type == ENTRY_TYPE_GROUP:
         name = config_entry.data.get(CONF_NAME, "Circuit Group")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "circuit_group")
-        hub_entry_id = config_entry.data.get(CONF_HUB_ENTRY_ID)
-        sensor = LoadJugglerCircuitGroupSensor(
-            hass, config_entry, name, entity_id, hub_entry_id
-        )
+        sensor = LoadJugglerCircuitGroupSensor(hass, config_entry, name, entity_id)
         async_add_entities([sensor])
         _LOGGER.info("Setting up circuit group sensor for %s", name)
         return
