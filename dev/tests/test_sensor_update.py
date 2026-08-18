@@ -331,8 +331,12 @@ async def test_hub_data_sensors_initialize(hass, hub_entry):
         assert sensor.native_value is None  # No data yet
         assert sensor.native_unit_of_measurement == defn["unit"]
         assert sensor.device_class == defn["device_class"]
-        # Every hub data sensor is a numeric instantaneous reading.
-        assert sensor.state_class == SensorStateClass.MEASUREMENT
+        # W/A/% sensors are instantaneous readings (MEASUREMENT); the advisory
+        # kWh forecast sensors override to ENERGY + TOTAL per their definitions
+        # (HA rejects ENERGY + MEASUREMENT; TOTAL fits a rises-and-falls amount).
+        assert sensor.state_class == defn.get(
+            "state_class", SensorStateClass.MEASUREMENT
+        )
         assert sensor.available is False  # nothing published yet
 
 

@@ -119,23 +119,14 @@ Replaced flat counts with weighted scoring:
 
 ---
 
-## GitHub issue triage (reviewed 2026-02-17)
+## GitHub issue triage (re-checked 2026-08-17)
 
-### Can be closed (fixed in v2.0.0)
-- **#3** — `UnboundLocalError: target_evse` + deprecated methods → v1.1.1 code, fully rewritten in v2.0.0
-- **#7** — Single phase installation validation error → fixed since v1.2.1 (phases 2/3 optional)
-- **#12** — Multi-charger support → implemented in v2.0.0
-- **#14** — Huawei charger rejecting Amps profiles → charge rate unit auto-detection added (TODO #7)
-- **#13** — Conditional entity visibility → implemented (TODO #29, Phase B/C hiding + battery entities)
-- **#11** — User guide / documentation → README.md rewritten (TODO #31)
-- **#9** — "Allow grid charging" documentation → covered in README.md
-- **#8** — Time-of-day charging → HA service actions implemented (TODO #30)
-- **#4** — Helper setting clarification → old v1.x question, resolved
+Only two issues remain open on the mirror (the rest of the February list was
+closed in the meantime). Closing comments are drafted; needs Anže's GitHub
+hands (no `gh`/credentials on this machine):
 
-### Need follow-up testing on v2.0.0
-- **#18** — Charge Offered instability (clock drift) → relative time profile mode implemented (CONF_PROFILE_VALIDITY_MODE)
-- **#19** — Solar mode not working → likely fixed by v2.0.0 solar refactoring; user testing v2.0.0-pre release
-- **#5** — HomeWizard P1 + WallBox setup → user testing v2.0.0
+- **#7** — Single phase installation → fixed since v1.2.1 (phases B/C optional), scenario-tested throughout 2.x. Close as fixed.
+- **#19** — Solar mode not working in 1.2.1 → solar logic fully rewritten in 2.0.x; close as fixed with an invitation to reopen on 2.0.5+.
 
 ## Circuit Groups — shared breaker limit for co-located loads
 **Status:** Implemented (TODO #96)

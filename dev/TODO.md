@@ -7,7 +7,7 @@ _Nothing in progress._
 > **Recently completed (2026-08-17)**
 >
 > - **Full-codebase review round** — 4 parallel reviewers, 29 findings; 24 fixed
->   same-day (details: `RELEASE_NOTES.md` 2.0.6 + git log; leftovers: ISSUES.md).
+>   same-day (details: `RELEASE_NOTES.md` 2.1.0 + git log; leftovers: ISSUES.md).
 > - **Single hub-owned calculation cycle** — one coordinator per hub, engine runs
 >   once per cycle, serialized load dispatch (ISSUES #8/#18/#33).
 > - **Reconfigure flow removed** — the options flow ("Configure") is the single
