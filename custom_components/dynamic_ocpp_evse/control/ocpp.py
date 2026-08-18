@@ -19,6 +19,7 @@ from ..const import (
     DEFAULT_UPDATE_FREQUENCY,
 )
 from ..helpers import get_entry_value
+from .. import units
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ async def send_ocpp_command(
 ) -> None:
     """Send OCPP charging profile to an EVSE charger."""
     connector_state = sensor.hass.states.get(sensor._connector_status_entity)
-    connector_status = connector_state.state if connector_state else "unknown"
+    connector_status = units.state_or_unknown(connector_state)
     if connector_status in ("Finishing", "Faulted"):
         _LOGGER.debug(
             "Skipping OCPP command for %s — connector is %s",
@@ -202,10 +203,12 @@ async def send_ocpp_command(
 
     charge_control_state = sensor.hass.states.get(sensor._charge_control_entity)
     connector_status_state = sensor.hass.states.get(sensor._connector_status_entity)
-    connector_status = (
-        connector_status_state.state if connector_status_state else "unknown"
+    connector_status = units.state_or_unknown(connector_status_state)
+    # A car is present only on a status that says so: "Available" is OCPP for an
+    # empty connector, and a status we cannot read is not evidence of a car.
+    car_plugged_in = not (
+        connector_status == "Available" or units.is_unavailable_state(connector_status)
     )
-    car_plugged_in = connector_status not in ["Available", "unknown", "unavailable"]
 
     _LOGGER.debug(
         f"Charge control check: entity={sensor._connector_status_entity}, "

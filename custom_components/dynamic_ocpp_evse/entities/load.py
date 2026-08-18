@@ -6,6 +6,7 @@ from homeassistant.core import callback
 from datetime import datetime, timezone
 from ..const import *
 from ..helpers import get_entry_value
+from .. import units
 from .mixins import ChargerEntityMixin
 from .. import get_hub_for_charger
 from ..control.smoothing import apply_smoothing
@@ -608,7 +609,7 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                 limit = round(self._available_current, 1)
 
         connector_state = self.hass.states.get(self._connector_status_entity)
-        connector_status = connector_state.state if connector_state else "unknown"
+        connector_status = units.state_or_unknown(connector_state)
 
         self._charging_status = determine_charging_status(
             self,

@@ -14,6 +14,7 @@ import logging
 import voluptuous as vol
 from .const import *
 from .helpers import get_entry_value
+from . import units
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -328,12 +329,13 @@ async def async_setup(hass: HomeAssistant, config: dict):
         if not eid:
             return None
         state = hass.states.get(eid)
-        if not state or state.state in ("unknown", "unavailable"):
+        if units.is_unavailable(state):
             return None
         try:
-            return float(state.state)
+            value = float(state.state)
         except (ValueError, TypeError):
             return None
+        return None if units.is_unusable_number(value) else value
 
     # --- set_operating_mode service ---
     async def handle_set_operating_mode(call: ServiceCall):

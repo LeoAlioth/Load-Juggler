@@ -57,7 +57,7 @@ def _validate_entity_units(
         if not entity_id:
             continue
         state = hass.states.get(entity_id)
-        if not state or state.state in ("unavailable", "unknown"):
+        if units.is_unavailable(state):
             continue
         unit = state.attributes.get("unit_of_measurement")
         if unit and unit not in valid_units:
@@ -439,12 +439,13 @@ def _entry_sensor_value(hass, entry, unique_id_suffix: str):
             if not (ent.unique_id or "").endswith(unique_id_suffix):
                 continue
             state = hass.states.get(ent.entity_id)
-            if state is None or state.state in ("unknown", "unavailable", "", None):
+            if units.is_unavailable(state):
                 return None
             try:
-                return float(state.state)
+                value = float(state.state)
             except (TypeError, ValueError):
-                return state.state
+                return state.state  # a status string is a legitimate answer here
+            return None if units.is_unusable_number(value) else value
     except Exception:  # pragma: no cover — a display path must never raise
         _LOGGER.debug("Could not read %s for %s", unique_id_suffix, entry.entry_id)
     return None
@@ -640,7 +641,10 @@ def _hub_overview_lines(hass, entry) -> list[str]:
         for label, entity_id, value in zip(("A", "B", "C"), configured_cts, grid_phases):
             if not entity_id:
                 continue
-            if not isinstance(value, (int, float)):
+            # _read_grid_phases hands back its unavailable sentinel for a
+            # configured-but-unreadable CT (it deliberately does not invent 0 A),
+            # so the overview can say so instead of showing a confident "0.0 A".
+            if units.is_unusable_number(value):
                 lines.append(f"- Phase {label}: {_DASH} (sensor unreadable)")
                 continue
             flow = "export" if value < 0 else "import"

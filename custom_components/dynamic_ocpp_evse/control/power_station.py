@@ -34,6 +34,7 @@ from ..const import (
     resolve_station_reserve,
 )
 from ..helpers import get_entry_value
+from .. import units
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -158,9 +159,10 @@ def _read_number(hass, entity_id):
     if not entity_id:
         return None
     state = hass.states.get(entity_id)
-    if state is None or state.state in ("unknown", "unavailable"):
+    if units.is_unavailable(state):
         return None
     try:
-        return float(state.state)
+        value = float(state.state)
     except (TypeError, ValueError):
         return None
+    return None if units.is_unusable_number(value) else value

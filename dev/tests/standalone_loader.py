@@ -185,8 +185,11 @@ def load_pure_modules(
     caller needs at least part of it and it is pure and cheap.
     """
     engine_modules = tuple(engine_modules)
-    if "hub_calculation" in engine_modules:
+    if engine_modules:
+        # helpers.py (preloaded below for every engine request) imports
+        # homeassistant at module level, so the stubs go in first.
         _ensure_ha_stubs()
+    if "hub_calculation" in engine_modules:
         load_calc_init = True
         # Full calc tier + the ordered engine chain.
         calc_modules = tuple(
@@ -224,7 +227,11 @@ def load_pure_modules(
     if load_calc_init:
         _load_calc_init()
 
-    if "hub_calculation" in engine_modules:
+    if engine_modules:
+        # Preloaded for ANY engine request, not just hub_calculation: the engine
+        # modules reach for `from .. import units` (the unit converters and the
+        # availability predicates), and resolving that through the stub parent
+        # package would fail. helpers.py rides along for the same reason.
         _load_module_once(f"{PKG_COMP}.helpers", COMPONENT_DIR / "helpers.py")
         _load_module_once(f"{PKG_COMP}.units", COMPONENT_DIR / "units.py")
 

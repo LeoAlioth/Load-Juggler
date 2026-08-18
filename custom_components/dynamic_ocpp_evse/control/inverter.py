@@ -57,15 +57,15 @@ def _read_number(hass, entity_id, unit=None):
     if not entity_id:
         return None
     state = hass.states.get(entity_id)
-    if state is None or state.state in ("unknown", "unavailable", ""):
+    if units.is_unavailable(state):
         return None
     try:
         value = float(state.state)
     except (TypeError, ValueError):
         return None
     if unit == units.DOMAIN_VOLTS:
-        return units.to_volts(value, state.attributes.get("unit_of_measurement"))
-    return value
+        value = units.to_volts(value, state.attributes.get("unit_of_measurement"))
+    return None if units.is_unusable_number(value) else value
 
 
 def _entity_max(hass, entity_id):

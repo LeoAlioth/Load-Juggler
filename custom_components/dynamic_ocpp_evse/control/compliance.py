@@ -47,10 +47,9 @@ async def check_profile_compliance(
             return
 
     connector_status_state = sensor.hass.states.get(sensor._connector_status_entity)
-    connector_status = (
-        connector_status_state.state if connector_status_state else "unknown"
-    )
-    if connector_status in ("Available", "unknown", "unavailable"):
+    connector_status = units.state_or_unknown(connector_status_state)
+    # No car, or a status we cannot read — nothing to be compliant about.
+    if connector_status == "Available" or units.is_unavailable_state(connector_status):
         sensor._mismatch_count = 0
         return
 
@@ -65,15 +64,17 @@ async def check_profile_compliance(
 
     if current_offered_entity_id:
         state = sensor.hass.states.get(current_offered_entity_id)
-        if state and state.state not in ("unknown", "unavailable", None, ""):
+        if not units.is_unavailable(state):
             try:
                 current_offered = float(state.state)
             except (ValueError, TypeError):
                 current_offered = None
+            if units.is_unusable_number(current_offered):
+                current_offered = None
 
     if current_offered is None and power_offered_entity_id:
         state = sensor.hass.states.get(power_offered_entity_id)
-        if state and state.state not in ("unknown", "unavailable", None, ""):
+        if not units.is_unavailable(state):
             try:
                 # kW-aware (units.py): decoding a kW reading as W would put the
                 # offered current a thousandfold below what we commanded, and
@@ -120,7 +121,9 @@ async def check_profile_compliance(
             except (ValueError, TypeError):
                 pass
 
-    if current_offered is None:
+    # A NaN offered current would make every comparison below False and hide a
+    # real mismatch forever — treat it as no reading at all.
+    if units.is_unusable_number(current_offered):
         return
 
     update_freq = get_entry_value(

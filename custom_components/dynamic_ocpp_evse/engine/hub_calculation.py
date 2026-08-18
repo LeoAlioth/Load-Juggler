@@ -171,12 +171,18 @@ def _read_entity(hass, entity_id: str, default=0, unit: str = None, voltage: flo
         default: The entity_id is not provided (not configured).
 
     Conversion lives in units.py — every accepted unit is handled there, in
-    one place, so no caller has to remember a half-done conversion.
+    one place, so no caller has to remember a half-done conversion. So does the
+    availability predicate: ``units.is_unavailable`` is the one definition of
+    an unusable state, and ``units.is_unusable_number`` catches the readings
+    that parse but cannot be used (a "nan" state, or an Inf manufactured by the
+    conversion itself). Both resolve to the same sentinel, so a NaN sensor now
+    engages the caller's holdover and stale timeout exactly like a dead one
+    instead of feeding NaN into the arithmetic.
     """
     if not entity_id:
         return default
     state = hass.states.get(entity_id)
-    if not state or state.state in ("unknown", "unavailable", None, ""):
+    if units.is_unavailable(state):
         return _UNAVAILABLE
     try:
         value = float(state.state)
@@ -185,11 +191,13 @@ def _read_entity(hass, entity_id: str, default=0, unit: str = None, voltage: flo
 
     entity_unit = state.attributes.get("unit_of_measurement")
     if unit == units.DOMAIN_AMPS:
-        return units.to_amps(value, entity_unit, voltage)
-    if unit == units.DOMAIN_WATTS:
-        return units.to_watts(value, entity_unit, voltage)
-    if unit == units.DOMAIN_VOLTS:
-        return units.to_volts(value, entity_unit)
+        value = units.to_amps(value, entity_unit, voltage)
+    elif unit == units.DOMAIN_WATTS:
+        value = units.to_watts(value, entity_unit, voltage)
+    elif unit == units.DOMAIN_VOLTS:
+        value = units.to_volts(value, entity_unit)
+    if units.is_unusable_number(value):
+        return _UNAVAILABLE
     return value
 
 
@@ -248,8 +256,7 @@ def _check_entity_availability(hass, hub_entry) -> list:
         entity_id = get_entry_value(hub_entry, conf_key, None)
         if not entity_id:
             continue
-        state = hass.states.get(entity_id)
-        if state is None or state.state in ("unknown", "unavailable", ""):
+        if units.is_unavailable(hass.states.get(entity_id)):
             unavailable.append((label, entity_id))
     # Per-inverter entries: their output and battery sensors feed the fleet
     # aggregation, which fails open member-by-member — the status sensor is
@@ -271,8 +278,7 @@ def _check_entity_availability(hass, hub_entry) -> list:
             entity_id = get_entry_value(inv_entry, conf_key, None)
             if not entity_id:
                 continue
-            state = hass.states.get(entity_id)
-            if state is None or state.state in ("unknown", "unavailable", ""):
+            if units.is_unavailable(hass.states.get(entity_id)):
                 unavailable.append((label, entity_id))
 
     # Forecast sources fail open in the clipping maths — the status sensor is
@@ -293,8 +299,7 @@ def _check_entity_availability(hass, hub_entry) -> list:
         if resolve_forecast_sensor(hass, device_id) is None:
             unavailable.append(("Solar forecast device", device_id))
     for entity_id in get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []:
-        state = hass.states.get(entity_id)
-        if state is None or state.state in ("unknown", "unavailable", ""):
+        if units.is_unavailable(hass.states.get(entity_id)):
             unavailable.append(("Solar forecast sensor", entity_id))
     return unavailable
 
@@ -340,10 +345,23 @@ def _read_grid_phase(hass, entity_id, voltage):
 def _read_grid_phases(hass, hub_entry, voltage=DEFAULT_PHASE_VOLTAGE):
     """Read per-phase grid current and apply inversion.
 
-    Returns a 3-list of signed amps (None for unconfigured phases). The
-    consumption/export split is deliberately not done here: the caller only
-    has a meaningful split after EMA smoothing and the stale-sensor holdover,
-    so it splits the smoothed phases itself.
+    Returns a 3-list, one entry per phase:
+      * ``None``          — no CT configured on this phase
+      * ``_UNAVAILABLE``  — CT configured but its reading is not usable
+      * ``float``         — signed amps (negative means export)
+
+    The sentinel is NOT coerced to 0 A here, and that is the whole point. 0 A on
+    a grid phase means "the house is importing nothing", which grants the entire
+    main breaker as headroom — the single most dangerous value this function
+    could invent. It used to return exactly that and rely on a separate stale
+    block downstream to overwrite it, i.e. on two independently hand-rolled
+    "is this usable?" tests agreeing forever. Propagating the sentinel instead
+    forces the holdover to be what decides the substitute value; the caller has
+    the EMA history and the stale timer, this reader has neither.
+
+    The consumption/export split is deliberately not done here either: the
+    caller only has a meaningful split after smoothing and the holdover, so it
+    splits the smoothed phases itself.
     """
     phase_entities = [
         get_entry_value(hub_entry, conf, None)
@@ -357,12 +375,83 @@ def _read_grid_phases(hass, hub_entry, voltage=DEFAULT_PHASE_VOLTAGE):
 
     raw_phases = []
     for entity in phase_entities:
-        raw = _coerce(_read_grid_phase(hass, entity, voltage)) if entity else None
-        if raw is not None and invert_phases:
-            raw = -raw
-        raw_phases.append(raw)
+        if not entity:
+            raw_phases.append(None)
+            continue
+        raw = _read_grid_phase(hass, entity, voltage)
+        if units.is_unusable_number(raw):
+            # Sentinel (or anything else non-numeric) passes straight through —
+            # inverting or defaulting it here would destroy the information the
+            # caller's holdover needs.
+            raw_phases.append(_UNAVAILABLE)
+            continue
+        raw_phases.append(-raw if invert_phases else raw)
 
     return raw_phases
+
+
+def _resolve_grid_phases(raw_phases, ema_inputs, main_breaker_rating):
+    """Substitute a safe value for every unreadable grid phase.
+
+    The counterpart to _read_grid_phases' refusal to invent a number, and the
+    ONLY place allowed to decide what an unreadable grid CT stands in for.
+    Returns ``(resolved_phases, any_stale)``; ``resolved_phases`` holds only
+    floats and Nones, so nothing unusable can reach the EMA smoothing, the
+    engine, or the published grid figures.
+
+    Documented failure-mode behaviour, unchanged:
+      * a reading we have history for → hold the last known EMA value, which a
+        brief dropout then coasts on with no visible effect;
+      * no history at all (cold start) → assume the phase is loaded right up to
+        the main breaker. Worst case on purpose: it hands out no headroom, where
+        the 0 A this used to fall back to handed out all of it.
+    The >GRID_STALE_TIMEOUT escalation is the caller's, driven by the
+    ``any_stale`` flag through _track_grid_stale.
+
+    Driven by the READINGS, not by a second walk over the config keys. The
+    sentinel is the single source of truth for "this CT is unreadable", so there
+    is no membership list here that can drift away from the reader's — which is
+    what made the old coerce-to-0 arrangement a landmine rather than merely a
+    duplication.
+
+    Pure: a list, the EMA dict, a number. No hass, no config entry.
+    """
+    resolved = list(raw_phases)
+    any_stale = False
+    for i, raw in enumerate(resolved):
+        if raw is None:
+            continue  # No CT and no inverter sensor on this phase
+        if not units.is_unusable_number(raw):
+            continue  # Usable signed reading
+        held = ema_inputs.get(f"grid_{i}")
+        resolved[i] = main_breaker_rating if held is None else held
+        any_stale = True
+    return resolved, any_stale
+
+
+def _track_grid_stale(hub_runtime, any_stale, now):
+    """Seconds of CONTINUOUS grid-CT unavailability, 0 while the CTs are healthy.
+
+    State lives in ``hub_runtime['grid_stale_since']``; a single healthy cycle
+    clears it, so the duration only ever measures an unbroken outage. The caller
+    compares it against GRID_STALE_TIMEOUT to force charging EVSEs down to
+    minimum current and shed binary loads.
+
+    Pure apart from the log lines: the clock is passed in, which is what lets
+    the timeout path be tested without waiting a minute.
+    """
+    if any_stale:
+        if "grid_stale_since" not in hub_runtime:
+            hub_runtime["grid_stale_since"] = now
+            _LOGGER.warning("Grid CT sensor(s) unavailable — holding last known values")
+        return now - hub_runtime["grid_stale_since"]
+    if "grid_stale_since" in hub_runtime:
+        _LOGGER.info(
+            "Grid CT sensors recovered after %.0fs",
+            now - hub_runtime["grid_stale_since"],
+        )
+    hub_runtime.pop("grid_stale_since", None)
+    return 0
 
 
 def _read_inverter_config(hass, hub_entry, voltage):
@@ -518,7 +607,7 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     # Try Current Import entity with per-phase attributes or total
     if current_draw is None and evse_import:
         evse_state = hass.states.get(evse_import)
-        if evse_state and evse_state.state not in ["unknown", "unavailable", None]:
+        if not units.is_unavailable(evse_state):
             try:
                 attrs = evse_state.attributes
                 l1 = _read_phase_attr(
@@ -559,7 +648,7 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     # Fallback to Power Active Import if no current import data available
     if current_draw is None and evse_power_import:
         power_state = hass.states.get(evse_power_import)
-        if power_state and power_state.state not in ["unknown", "unavailable", None]:
+        if not units.is_unavailable(power_state):
             try:
                 # kW-aware: an OCPP integration reporting kW would otherwise
                 # make a charging car look like it draws ~nothing, and the
@@ -862,7 +951,7 @@ def _build_power_station_charger(hass, entry, voltage, charger_entity_id, priori
     # away from Home Assistant. Continuing to allocate power to a station we
     # cannot command would strand that power.
     speed_state = hass.states.get(speed_entity) if speed_entity else None
-    if speed_state is None or speed_state.state in ("unknown", "unavailable"):
+    if units.is_unavailable(speed_state):
         connector_status = "Unavailable"
     elif soc is not None and soc >= charge_limit:
         connector_status = "Available"
@@ -2007,6 +2096,10 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
         excess_threshold = float("inf")
 
     # --- Read per-phase grid current (raw, signed; W/kW converted to A) ---
+    # Entries are floats, None (no CT on that phase) or the _UNAVAILABLE
+    # sentinel (CT configured but unreadable) — _resolve_grid_phases below is
+    # the only thing allowed to substitute a number for the sentinel. Until
+    # then, every test here has to be on None, never on truthiness or 0.
     raw_phases = _read_grid_phases(hass, hub_entry, voltage)
     has_grid_cts = any(r is not None for r in raw_phases)
 
@@ -2015,7 +2108,9 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     # phase with an inverter sensor but no grid CT (an off-grid site, or a
     # partially grid-metered one), grid current is taken as 0 A so the phase
     # still counts. Without this a 1-phase off-grid site would look 3-phase
-    # and per-phase figures would be split across phantom phases.
+    # and per-phase figures would be split across phantom phases. A phase whose
+    # CT is merely unreadable is NOT 0 A — the sentinel is not None, so it falls
+    # through to the holdover instead.
     inv_phase_confs = (
         CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
         CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
@@ -2032,50 +2127,13 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
     ema_inputs = hub_runtime.setdefault("_ema_inputs", {})
 
-    # --- Detect stale grid CT readings (configured but unavailable) ---
-    phase_confs = (
-        CONF_PHASE_A_CURRENT_ENTITY_ID,
-        CONF_PHASE_B_CURRENT_ENTITY_ID,
-        CONF_PHASE_C_CURRENT_ENTITY_ID,
+    # --- Resolve unreadable grid CTs (the only place allowed to substitute) ---
+    raw_phases, any_grid_stale = _resolve_grid_phases(
+        raw_phases, ema_inputs, main_breaker_rating
     )
-    any_grid_stale = False
-    for i, conf in enumerate(phase_confs):
-        entity_id = get_entry_value(hub_entry, conf, None)
-        if not entity_id:
-            continue  # Phase not configured
-        state = hass.states.get(entity_id)
-        stale = state is None or state.state in ("unknown", "unavailable", None, "")
-        if not stale:
-            # A non-numeric state (e.g. "--", an error string) is just as
-            # stale as "unavailable" — without this it silently reads 0 A
-            # and grants full breaker headroom on the phase.
-            try:
-                stale = not math.isfinite(float(state.state))
-            except (ValueError, TypeError):
-                stale = True
-        if stale:
-            # Sensor is unavailable — hold last EMA value instead of using 0
-            held = ema_inputs.get(f"grid_{i}")
-            if held is not None:
-                raw_phases[i] = held
-            else:
-                # No previous reading — assume breaker load for safety
-                raw_phases[i] = main_breaker_rating
-            any_grid_stale = True
-
-    if any_grid_stale:
-        if "grid_stale_since" not in hub_runtime:
-            hub_runtime["grid_stale_since"] = time.monotonic()
-            _LOGGER.warning("Grid CT sensor(s) unavailable — holding last known values")
-        grid_stale_duration = time.monotonic() - hub_runtime["grid_stale_since"]
-    else:
-        if "grid_stale_since" in hub_runtime:
-            _LOGGER.info(
-                "Grid CT sensors recovered after %.0fs",
-                time.monotonic() - hub_runtime["grid_stale_since"],
-            )
-        hub_runtime.pop("grid_stale_since", None)
-        grid_stale_duration = 0
+    grid_stale_duration = _track_grid_stale(
+        hub_runtime, any_grid_stale, time.monotonic()
+    )
 
     smoothed_phases = [
         _smooth(ema_inputs, f"grid_{i}", r) for i, r in enumerate(raw_phases)

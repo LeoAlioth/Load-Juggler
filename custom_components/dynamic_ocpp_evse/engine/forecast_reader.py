@@ -22,6 +22,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from ..calculations import merge_forecast_series
+from .. import units
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -135,7 +136,7 @@ def read_forecast_series(hass, entity_ids, hub_runtime):
     series_list = []
     for entity_id in entity_ids:
         state = hass.states.get(entity_id)
-        if state is None or state.state in ("unknown", "unavailable", ""):
+        if units.is_unavailable(state):
             memo.pop(entity_id, None)
             continue
         cached = memo.get(entity_id)

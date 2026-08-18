@@ -10,6 +10,7 @@ from ..const import (
     DEFAULT_CHARGE_PAUSE_DURATION,
 )
 from ..helpers import get_entry_value
+from .. import units
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,7 +27,9 @@ def determine_charging_status(
 
     Returns a status string like "Charging", "Paused: 30s", "Insufficient Solar", etc.
     """
-    if connector_status in ("Available", "unknown", "unavailable"):
+    # "Available" is OCPP for "no car"; an unreadable status is treated the same
+    # way — we cannot claim a car is plugged in on a status we cannot read.
+    if connector_status == "Available" or units.is_unavailable_state(connector_status):
         return "Unplugged"
     if not dynamic_control_on:
         return "Dynamic Control Off"

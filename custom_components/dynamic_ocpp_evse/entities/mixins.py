@@ -8,6 +8,7 @@ number.py, select.py, switch.py, sensor.py, and button.py.
 import logging
 
 from ..const import DOMAIN, CONF_NAME, CONF_HUB_ENTRY_ID, CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK, DEVICE_TYPE_POWER_STATION
+from .. import units
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,11 +23,15 @@ def _apply_restored_number(entity, last_state):
     downstream inherits an impossible number (issue #38). Anything unparseable
     or missing leaves the constructor's default in place.
     """
-    if last_state is None or last_state.state in ("unknown", "unavailable"):
+    if units.is_unavailable(last_state):
         return
     try:
         value = float(last_state.state)
     except (ValueError, TypeError):
+        return
+    # A NaN would survive the clamp below (min/max propagate it) and land on the
+    # slider as a permanently broken value.
+    if units.is_unusable_number(value):
         return
     low, high = entity._attr_native_min_value, entity._attr_native_max_value
     clamped = min(max(value, low), high)

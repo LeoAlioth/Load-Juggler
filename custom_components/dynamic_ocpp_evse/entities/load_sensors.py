@@ -15,6 +15,7 @@ from ..const import (
     DEFAULT_CHARGER_PRIORITY,
 )
 from ..helpers import get_entry_value
+from .. import units
 from .mixins import ChargerEntityMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -202,10 +203,7 @@ class LoadJugglerPlugStatusSensor(ChargerEntityMixin, SensorEntity):
                 self._state = "Not Configured"
                 return
             switch_state = self.hass.states.get(self._switch_entity)
-            if switch_state is None or switch_state.state in (
-                "unknown",
-                "unavailable",
-            ):
+            if units.is_unavailable(switch_state):
                 self._state = "Unavailable"
             elif switch_state.state == "on":
                 self._state = "On"
@@ -282,10 +280,7 @@ class LoadJugglerStationStatusSensor(ChargerEntityMixin, SensorEntity):
 
             if not speed_entity:
                 self._state = "Not Configured"
-            elif speed_state is None or speed_state.state in (
-                "unknown",
-                "unavailable",
-            ):
+            elif units.is_unavailable(speed_state):
                 # These integrations talk BLE, one connection at a time — the
                 # vendor app taking over looks exactly like this.
                 self._state = "Unavailable"
@@ -321,12 +316,13 @@ def _read_float(hass, entity_id):
     if not entity_id:
         return None
     state = hass.states.get(entity_id)
-    if state is None or state.state in ("unknown", "unavailable"):
+    if units.is_unavailable(state):
         return None
     try:
-        return float(state.state)
+        value = float(state.state)
     except (TypeError, ValueError):
         return None
+    return None if units.is_unusable_number(value) else value
 
 
 class LoadJugglerPhaseMaskSensor(ChargerEntityMixin, SensorEntity):
@@ -421,10 +417,7 @@ class LoadJugglerTankStatusSensor(ChargerEntityMixin, SensorEntity):
                 else None
             )
 
-            if climate_state is None or climate_state.state in (
-                "unknown",
-                "unavailable",
-            ):
+            if units.is_unavailable(climate_state):
                 self._state = "Unavailable"
             elif not charger_rt.get("dynamic_control", True):
                 # Dynamic Control off — Load Juggler is not managing the tank;
