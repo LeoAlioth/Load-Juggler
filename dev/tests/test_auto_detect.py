@@ -4,64 +4,15 @@ Pure Python, no Home Assistant dependencies.
 """
 
 import sys
-import types
-import importlib.util
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Module loading (same pattern as run_tests.py to avoid HA imports)
+# Module loading — shared stub loader (avoids the HA-importing package root)
 # ---------------------------------------------------------------------------
-repo_root = Path(__file__).parents[2]
-_comp_dir = repo_root / "custom_components" / "dynamic_ocpp_evse"
-_calc_dir = _comp_dir / "calculations"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from standalone_loader import load_pure_modules
 
-_PKG_ROOT = "custom_components"
-_PKG_COMP = "custom_components.dynamic_ocpp_evse"
-_PKG_CALC = "custom_components.dynamic_ocpp_evse.calculations"
-_PKG_ENGINE = "custom_components.dynamic_ocpp_evse.engine"
-
-for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC, _PKG_ENGINE):
-    if _pkg_name not in sys.modules:
-        _pkg = types.ModuleType(_pkg_name)
-        _pkg.__path__ = []
-        _pkg.__package__ = _pkg_name
-        sys.modules[_pkg_name] = _pkg
-
-# Other test files share this pytest process and import real engine submodules
-# (e.g. engine.hub_calculation). Give the engine package its real search path
-# so those imports resolve instead of hitting the empty stub created above.
-sys.modules[_PKG_ENGINE].__path__ = [str(_comp_dir / "engine")]
-
-
-def _load_module_as(fqn, path):
-    spec = importlib.util.spec_from_file_location(fqn, str(path))
-    module = importlib.util.module_from_spec(spec)
-    # For package __init__.py files, __package__ is the package itself;
-    # for regular modules it's the parent package.
-    if Path(path).name == "__init__.py":
-        module.__package__ = fqn
-        module.__path__ = [str(Path(path).parent)]
-    else:
-        module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
-    sys.modules[fqn] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-# const is a package — load sub-modules first (common is the leaf), then the
-# aggregator __init__ which re-exports every name.
-_const_dir = _comp_dir / "const"
-for _const_sub in (
-    "common", "hub", "group", "evse", "plug", "hot_water_tank", "power_station",
-    "modes",
-):
-    _load_module_as(f"{_PKG_COMP}.const.{_const_sub}", _const_dir / f"{_const_sub}.py")
-_load_module_as(f"{_PKG_COMP}.const", _const_dir / "__init__.py")
-_load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
-_load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
-_load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
-_load_module_as(_PKG_CALC, _calc_dir / "__init__.py")
-_load_module_as(f"{_PKG_ENGINE}.auto_detect", _comp_dir / "engine" / "auto_detect.py")
+load_pure_modules(engine_modules=("auto_detect",), load_calc_init=True)
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext, SiteContext, PhaseValues,

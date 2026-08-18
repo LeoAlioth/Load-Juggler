@@ -28,69 +28,29 @@ Pure Python, no Home Assistant dependencies. Runnable two ways:
 """
 
 import sys
-import types
-import importlib.util
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Module loading (same pattern as run_tests.py / test_household_hold.py: the
-# package root imports homeassistant, so load the pure modules directly).
-# engine/fleet.py itself is HA-free — it needs only calculations.PhaseValues
-# and the const package.
+# Module loading — shared stub loader (avoids the HA-importing package root).
+# hub_calculation is needed for the display-headroom test (#48); requesting it
+# pulls in fleet and the rest of its import chain, with the few homeassistant
+# modules its siblings import at module level stubbed when HA is absent.
 # ---------------------------------------------------------------------------
-repo_root = Path(__file__).parents[2]
-_comp_dir = repo_root / "custom_components" / "dynamic_ocpp_evse"
-_calc_dir = _comp_dir / "calculations"
-_const_dir = _comp_dir / "const"
-_engine_dir = _comp_dir / "engine"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from standalone_loader import load_pure_modules
 
-_PKG_ROOT = "custom_components"
-_PKG_COMP = "custom_components.dynamic_ocpp_evse"
-_PKG_CALC = "custom_components.dynamic_ocpp_evse.calculations"
-_PKG_ENGINE = "custom_components.dynamic_ocpp_evse.engine"
+load_pure_modules(engine_modules=("fleet", "hub_calculation"))
 
-for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC, _PKG_ENGINE):
-    if _pkg_name not in sys.modules:
-        _pkg = types.ModuleType(_pkg_name)
-        _pkg.__path__ = []
-        _pkg.__package__ = _pkg_name
-        sys.modules[_pkg_name] = _pkg
-
-
-def _load_module_as(fqn, path):
-    spec = importlib.util.spec_from_file_location(fqn, str(path))
-    module = importlib.util.module_from_spec(spec)
-    if Path(path).name == "__init__.py":
-        module.__package__ = fqn
-        module.__path__ = [str(Path(path).parent)]
-    else:
-        module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
-    sys.modules[fqn] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-if f"{_PKG_COMP}.const" not in sys.modules:
-    for _sub in (
-        "common", "hub", "inverter", "group", "evse", "plug",
-        "hot_water_tank", "power_station", "modes",
-    ):
-        _load_module_as(f"{_PKG_COMP}.const.{_sub}", _const_dir / f"{_sub}.py")
-    _load_module_as(f"{_PKG_COMP}.const", _const_dir / "__init__.py")
-
-if f"{_PKG_CALC}.models" not in sys.modules:
-    _load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
-# fleet.py does `from ..calculations import PhaseValues`; the stub calculations
-# package re-exports it without pulling in the whole engine.
-sys.modules[_PKG_CALC].PhaseValues = sys.modules[f"{_PKG_CALC}.models"].PhaseValues
-
-if f"{_PKG_ENGINE}.fleet" not in sys.modules:
-    _load_module_as(f"{_PKG_ENGINE}.fleet", _engine_dir / "fleet.py")
-
-from custom_components.dynamic_ocpp_evse.calculations.models import PhaseValues
+from custom_components.dynamic_ocpp_evse.calculations.models import (
+    PhaseValues,
+    SiteContext,
+)
 from custom_components.dynamic_ocpp_evse.const import (
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
+)
+from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+    _build_hub_result,
 )
 from custom_components.dynamic_ocpp_evse.engine.fleet import (
     FleetMember,
@@ -365,6 +325,82 @@ def test_solar_total_unaffected_for_ordinary_positive_readings():
     a = _inverter("a", has_solar_entity=True, solar_measured=3000.0)
     b = _inverter("b", output=_pv_watts(2000.0, None, None))
     assert _close(solar_total([a, b], V), 5000.0)
+
+
+# ---------------------------------------------------------------------------
+# (e) Display headroom consumes the PRE-feedback captured output (#48)
+# ---------------------------------------------------------------------------
+#
+# _build_hub_result used to recompute the fleet's current output from
+# site.solar_production_total — but by then the feedback loop has folded the
+# managed draws back into the derived solar, inflating the estimate by exactly
+# the running loads' draw and understating Site Remaining Power. The fix: the
+# display consumes site.inverter_output_total, the figure captured at READ
+# time for the #17 coverage gate.
+
+def _derived_solar_site(**overrides):
+    """An off-grid, derived-solar, 1-phase site (grid_headroom = 0, so
+    total_site_available isolates the inverter-sourced term)."""
+    defaults = dict(
+        voltage=V,
+        main_breaker_rating=63,
+        consumption=PhaseValues(0.0, None, None),
+        export_current=PhaseValues(0.0, None, None),
+        solar_is_derived=True,
+        is_off_grid=True,
+        inverter_max_power=6000.0,
+    )
+    defaults.update(overrides)
+    return SiteContext(**defaults)
+
+
+def _display_result(site):
+    return _build_hub_result(
+        site,
+        raw_phases=(0.0, None, None),
+        voltage=V,
+        main_breaker_rating=63,
+        battery_soc=site.battery_soc,
+        battery_soc_min=site.battery_soc_min,
+        battery_max_discharge_power=site.battery_max_discharge_power,
+        battery_power=site.battery_power,
+        charger_targets={},
+        charger_available={},
+        charger_names={},
+    )
+
+
+def test_display_headroom_uses_prefeedback_output():
+    """The #48 numbers: the fleet really outputs 3000 W (captured pre-feedback),
+    a managed load draws 2000 W, so post-feedback derived solar reads 5000 W.
+    Recomputing the output from that inflated figure gave 6000 − 5000 = 1000 W
+    of headroom; the real inverter headroom is 6000 − 3000 = 3000 W."""
+    site = _derived_solar_site(
+        solar_production_total=5000.0,   # post-feedback, draw folded back in
+        inverter_output_total=3000.0,    # captured pre-feedback
+    )
+    result = _display_result(site)
+    assert _close(result["total_site_available_power"], 3000.0)  # not 1000
+    assert _close(result["available_inverter_current"], round(3000.0 / V, 1))
+
+
+def test_display_headroom_rating_clamp_still_applies():
+    """The clamp on the captured figure is unchanged: a negative output (site
+    absorbing through the inverters) cannot buy headroom above the nameplate,
+    and an output above the rating gives zero."""
+    absorbing = _derived_solar_site(
+        solar_production_total=7000.0,
+        inverter_output_total=-1000.0,
+    )
+    result = _display_result(absorbing)
+    # headroom capped at the 6000 W rating (not 7000), solar pool 7000 → 6000.
+    assert _close(result["total_site_available_power"], 6000.0)
+
+    overloaded = _derived_solar_site(
+        solar_production_total=7000.0,
+        inverter_output_total=6500.0,
+    )
+    assert _close(_display_result(overloaded)["total_site_available_power"], 0.0)
 
 
 # ---------------------------------------------------------------------------

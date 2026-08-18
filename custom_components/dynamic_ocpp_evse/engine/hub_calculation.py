@@ -5,6 +5,13 @@ This file provides a unified interface for EVSE calculations.
 All core calculation logic has been refactored into the calculations/ directory.
 """
 
+# PEP 604 unions (``float | None``) appear in this module's signatures. Nothing
+# here evaluates annotations at runtime (no dataclasses, NamedTuple/TypedDict or
+# get_type_hints calls), so deferring them keeps the module importable on the
+# Python 3.9 interpreters the standalone test runners use (same arrangement as
+# engine/auto_detect.py).
+from __future__ import annotations
+
 import logging
 import math
 import time
@@ -1641,14 +1648,8 @@ def _build_hub_result(
     excess_margin_power=0,
     forecast_advice=None,
     inverters_data=None,
-    members=(),
 ):
-    """Build the result dict returned by run_hub_calculation.
-
-    ``members`` is the inverter fleet (engine/fleet.py) — the display headroom
-    needs the per-member outputs and topologies, which the SiteContext scalars
-    cannot express.
-    """
+    """Build the result dict returned by run_hub_calculation."""
     # Grid available power (based on consumption after feedback loop).
     # Off-grid there is no grid feed at all — headroom is 0 by definition.
     if site.is_off_grid:
@@ -1766,13 +1767,19 @@ def _build_hub_result(
     #    solar + battery_power form was the series (DC-coupled) model only, and
     #    on a parallel (AC-coupled) site it understated the output by the whole
     #    battery charge power, advertising headroom the site does not have.
+    #
+    #    The figure is site.inverter_output_total — captured at READ time,
+    #    before the feedback loop, the same one the calculator's coverage gate
+    #    consumes (#17). Recomputing it here from the post-feedback scalars
+    #    inflated the estimate on a derived-solar site by the managed draws the
+    #    feedback loop folds back into solar, understating Site Remaining Power
+    #    by exactly the running loads' draw (issue #48).
     inverter_sourced = solar_available + battery_remaining
     if site.inverter_max_power:
-        current_inverter_output = fleet.output_power_total(
-            members or (),
-            voltage,
-            solar_w=site.solar_production_total,
-            battery_power_w=battery_power,
+        current_inverter_output = (
+            site.inverter_output_total
+            if site.inverter_output_total is not None
+            else 0.0
         )
         # Headroom is clamped to the inverter's own rating: a negative measured
         # output (a cascaded inverter feeding power IN through the load port)
@@ -2650,7 +2657,6 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
         excess_margin_power=margin,
         forecast_advice=forecast_advice,
         inverters_data=inverters_data,
-        members=members,
     )
 
 

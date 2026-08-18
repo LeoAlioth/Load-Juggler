@@ -87,6 +87,12 @@ async def check_profile_compliance(
                 # hardware _phases instead would understate the offered current for
                 # a 1-phase car on a multi-phase EVSE (e.g. 3680W/3φ = 5.3A vs the
                 # 16A commanded), producing a perpetual compliance mismatch.
+                #
+                # Field-unvalidated firmware assumption: power_offered echoes the
+                # commanded TOTAL power. If a watts-mode charger reports per-phase
+                # or measured power instead, this comparison misfires (symptom:
+                # false mismatches → escalating resets on a compliant charger) —
+                # adjust only this decode to what that firmware actually echoes.
                 phases = sensor._car_active_phases or sensor._phases or 1
                 # Options-first (get_entry_value), exactly like the command side
                 # in control/ocpp.py: the hub reconfigure flow writes the edited

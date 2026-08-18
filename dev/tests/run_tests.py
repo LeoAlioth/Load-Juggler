@@ -14,60 +14,12 @@ import yaml
 from pathlib import Path
 from datetime import datetime
 
-# Load calculation modules directly from files to avoid importing Home Assistant-dependent
-# package __init__.py which imports 'homeassistant'.
-import importlib.util
-import types
-import sys
+# Load the pure calculation modules directly from their files (the component's
+# package __init__.py imports 'homeassistant') via the shared stub loader.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from standalone_loader import load_pure_modules
 
-repo_root = Path(__file__).parents[2]
-_comp_dir = repo_root / "custom_components" / "dynamic_ocpp_evse"
-_calc_dir = _comp_dir / "calculations"
-
-# Build proper package hierarchy so relative imports in target_calculator.py work.
-_PKG_ROOT = "custom_components"
-_PKG_COMP = "custom_components.dynamic_ocpp_evse"
-_PKG_CALC = "custom_components.dynamic_ocpp_evse.calculations"
-
-# Create stub namespace packages
-for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC):
-    if _pkg_name not in sys.modules:
-        _pkg = types.ModuleType(_pkg_name)
-        _pkg.__path__ = []  # make it a package
-        _pkg.__package__ = _pkg_name
-        sys.modules[_pkg_name] = _pkg
-
-
-def _load_module_as(fqn, path):
-    """Load a module with its fully-qualified name so relative imports resolve."""
-    spec = importlib.util.spec_from_file_location(fqn, str(path))
-    module = importlib.util.module_from_spec(spec)
-    if Path(path).name == "__init__.py":
-        # Package: __package__ is the package itself; expose __path__.
-        module.__package__ = fqn
-        module.__path__ = [str(Path(path).parent)]
-    else:
-        # Module: __package__ is the parent package so `from .x`/`from ..x` work.
-        module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
-    sys.modules[fqn] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-# 1) Load the const package (needed by target_calculator's `from ..const ...`).
-#    Sub-modules load first in dependency order (common is the leaf); the
-#    aggregator __init__ loads last and re-exports every name.
-_const_dir = _comp_dir / "const"
-for _const_sub in ("common", "hub", "group", "evse", "plug", "hot_water_tank", "power_station", "modes"):
-    _load_module_as(f"{_PKG_COMP}.const.{_const_sub}", _const_dir / f"{_const_sub}.py")
-_load_module_as(f"{_PKG_COMP}.const", _const_dir / "__init__.py")
-
-# 2) Load models and utils (no relative imports of their own)
-_load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
-_load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
-
-# 3) Load target_calculator (has relative imports: .models, .utils, ..const)
-_load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
+load_pure_modules()
 
 # Convenience aliases for the rest of this file
 from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues, CircuitGroup
@@ -924,7 +876,7 @@ def validate_results(scenario, site):
 # Test runner
 # ---------------------------------------------------------------------------
 
-def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, trace=False, filter_verified=None):
+def run_tests(yaml_file, verbose=False, trace=False, filter_verified=None):
     """Run all test scenarios with 30-cycle simulation."""
     all_scenarios = load_scenarios(yaml_file)
 
@@ -1030,7 +982,7 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, trace=Fa
     return failed_count == 0
 
 
-def run_single_scenario(scenario_name, yaml_file='dev/tests/test_scenarios.yaml', trace=False, source_file=''):
+def run_single_scenario(scenario_name, yaml_file, trace=False, source_file=''):
     """Run a single scenario by name with verbose simulation output."""
     scenarios = load_scenarios(yaml_file)
 
@@ -1158,12 +1110,10 @@ if __name__ == "__main__":
             search_paths = []
             if scenarios_dir.exists():
                 search_paths = list(sorted(scenarios_dir.rglob("*.yaml"))) + list(sorted(scenarios_dir.rglob("*.yml")))
-            else:
-                search_paths = [Path(__file__).parent / "test_scenarios.yaml"]
 
             found = False
             for f in search_paths:
-                rel = f.relative_to(scenarios_dir) if scenarios_dir.exists() else f.name
+                rel = f.relative_to(scenarios_dir)
                 with open(f, "r", encoding="utf-8") as fh:
                     data = yaml.safe_load(fh) or {}
                 for sc in data.get("scenarios", []):
@@ -1177,6 +1127,8 @@ if __name__ == "__main__":
                 print(f"Scenario '{arg}' not found in scenarios directory or files")
                 success = False
     else:
+        # No path/name argument: default to the scenarios directory next to
+        # this file (same as `python3 dev/tests/run_tests.py dev/tests/scenarios`).
         scenarios_dir = Path(__file__).parent / "scenarios"
         if scenarios_dir.exists():
             combined = _merge_scenarios_from_dir(scenarios_dir)
@@ -1189,7 +1141,8 @@ if __name__ == "__main__":
             except Exception:
                 pass
         else:
-            success = run_tests(verbose=True, trace=trace, filter_verified=filter_verified)
+            print(f"Scenarios directory '{scenarios_dir}' not found")
+            success = False
 
     # Print end timestamp and duration
     end_time = datetime.now()

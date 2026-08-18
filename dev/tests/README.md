@@ -10,6 +10,8 @@ YAML-driven tests that validate the calculation engine directly. Run on any plat
 
 ```bash
 python3 dev/tests/run_tests.py dev/tests/scenarios
+# equivalent — the scenarios directory is the default:
+python3 dev/tests/run_tests.py
 ```
 
 ### Run only verified or unverified scenarios
@@ -76,11 +78,16 @@ run, but have no Home Assistant dependency of their own:
 | `test_power_station.py` | Power station charge-speed quantisation and reserve resolution |
 | `test_auto_detect.py` | Grid CT inversion + phase-mapping auto-detection (26 tests) |
 
-`test_auto_detect.py` also runs standalone on **Python 3.9+** with nothing but
-`pytest` installed — it stubs out the HA package tree itself and skips the
-HA-dependent `conftest.py`:
+These files (and `run_tests.py`) share `dev/tests/standalone_loader.py`, which
+stubs out the HA-importing package root and loads the pure modules directly, so
+they also run standalone on **Python 3.9+** without Home Assistant:
 
 ```bash
+python3 dev/tests/test_household_hold.py
+python3 dev/tests/test_excess_stayon.py
+python3 dev/tests/test_inverter_gate.py
+python3 dev/tests/test_inverter_output.py
+# needs pytest installed (its __main__ delegates to pytest with --noconftest):
 python3 dev/tests/test_auto_detect.py
 ```
 

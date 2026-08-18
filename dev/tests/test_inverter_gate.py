@@ -23,53 +23,15 @@ Pure Python, no Home Assistant dependencies. Runnable two ways:
 """
 
 import sys
-import types
-import importlib.util
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Module loading (same pattern as run_tests.py: the package root imports
-# homeassistant, so the pure modules load directly from their files)
+# Module loading — shared stub loader (avoids the HA-importing package root)
 # ---------------------------------------------------------------------------
-repo_root = Path(__file__).parents[2]
-_comp_dir = repo_root / "custom_components" / "dynamic_ocpp_evse"
-_calc_dir = _comp_dir / "calculations"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from standalone_loader import load_pure_modules
 
-_PKG_ROOT = "custom_components"
-_PKG_COMP = "custom_components.dynamic_ocpp_evse"
-_PKG_CALC = "custom_components.dynamic_ocpp_evse.calculations"
-
-for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC):
-    if _pkg_name not in sys.modules:
-        _pkg = types.ModuleType(_pkg_name)
-        _pkg.__path__ = []
-        _pkg.__package__ = _pkg_name
-        sys.modules[_pkg_name] = _pkg
-
-
-def _load_module_as(fqn, path):
-    spec = importlib.util.spec_from_file_location(fqn, str(path))
-    module = importlib.util.module_from_spec(spec)
-    if Path(path).name == "__init__.py":
-        module.__package__ = fqn
-        module.__path__ = [str(Path(path).parent)]
-    else:
-        module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
-    sys.modules[fqn] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-_const_dir = _comp_dir / "const"
-for _sub in ("common", "hub", "group", "evse", "plug", "hot_water_tank",
-             "power_station", "modes"):
-    if f"{_PKG_COMP}.const.{_sub}" not in sys.modules:
-        _load_module_as(f"{_PKG_COMP}.const.{_sub}", _const_dir / f"{_sub}.py")
-if f"{_PKG_COMP}.const" not in sys.modules:
-    _load_module_as(f"{_PKG_COMP}.const", _const_dir / "__init__.py")
-for _mod in ("models", "utils", "target_calculator"):
-    if f"{_PKG_CALC}.{_mod}" not in sys.modules:
-        _load_module_as(f"{_PKG_CALC}.{_mod}", _calc_dir / f"{_mod}.py")
+load_pure_modules()
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E402
     LoadContext,
