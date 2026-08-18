@@ -48,9 +48,7 @@ DEFAULT_MAIN_BREAKER_RATING = 25
 DEFAULT_SITE_UPDATE_FREQUENCY = 2  # Fast site info refresh (seconds)
 DEFAULT_SOLAR_GRACE_PERIOD = 5  # minutes
 DEFAULT_EXCESS_EXPORT_THRESHOLD = 13000  # LEGACY — migration fallback only
-EXCESS_EXPORT_HYSTERESIS = 500  # W — deadband below the threshold; once Excess
-# mode is on it stays on until export drops this far below the threshold,
-# preventing charger on/off chatter when export hovers near the threshold.
+DEFAULT_EXCESS_HYSTERESIS = 500  # W — see CONF_EXCESS_HYSTERESIS
 DEFAULT_BATTERY_MAX_POWER = 5000
 DEFAULT_BATTERY_SOC_MIN = 20  # Default minimum SOC (20%)
 DEFAULT_BATTERY_SOC_TARGET = 80  # Default SOC target (80%)
@@ -71,6 +69,10 @@ CONF_GRID_EXPORT_LIMIT = "grid_export_limit"  # W — the site's physical/contra
 CONF_EXCESS_TRIGGER_MARGIN = "excess_trigger_margin"  # W — how far below the
 # export limit the Excess trigger sits. An inverter curtails slightly under
 # the limit, so a trigger exactly AT the limit would never fire.
+CONF_EXCESS_HYSTERESIS = "excess_hysteresis"  # W — release band once Excess is
+# engaged: an engaged load stays on until the surplus the site cannot place
+# falls this far below the trigger, so a load doesn't chatter at the trigger
+# point. Distinct from the trigger margin, which sets WHERE Excess engages.
 CONF_SOLAR_FORECAST_DEVICE_IDS = "solar_forecast_device_ids"  # list — one forecast
 # DEVICE per PV array (the Open-Meteo Solar Forecast integration creates one
 # config entry/device per array; several of its sensors carry the same `watts`

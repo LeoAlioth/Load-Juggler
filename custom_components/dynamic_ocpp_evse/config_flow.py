@@ -812,7 +812,15 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
             value = _read_inverter_output(hass, entity_id, voltage)
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 value = None
-            phase_lines.append(f"- Phase {label}: {_fmt(value, 'A')}")
+            if isinstance(value, (int, float)) and value < 0:
+                # Signed readings are real (#15): negative = power flowing INTO
+                # this inverter, e.g. an AC-coupled inverter on its load port.
+                phase_lines.append(
+                    f"- Phase {label}: {_fmt(abs(value), 'A')} absorbing"
+                    " (flowing in, e.g. via the load port)"
+                )
+            else:
+                phase_lines.append(f"- Phase {label}: {_fmt(value, 'A')}")
     except Exception:  # pragma: no cover — display path
         _LOGGER.debug("Could not read inverter output for the overview", exc_info=True)
     lines += phase_lines or ["- No per-phase output sensors configured"]
@@ -1251,6 +1259,28 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_EXCESS_TRIGGER_MARGIN,
                     default=defaults.get(
                         CONF_EXCESS_TRIGGER_MARGIN, DEFAULT_EXCESS_TRIGGER_MARGIN
+                    ),
+                ),
+                selector(
+                    {
+                        "number": {
+                            "min": 0,
+                            "max": 5000,
+                            "step": 50,
+                            "mode": "box",
+                            "unit_of_measurement": "W",
+                        }
+                    }
+                ),
+            ),
+            (
+                # The release band, not the trigger point: once Excess is
+                # engaged the surplus may fall this far below the trigger
+                # before an engaged load lets go.
+                vol.Optional(
+                    CONF_EXCESS_HYSTERESIS,
+                    default=defaults.get(
+                        CONF_EXCESS_HYSTERESIS, DEFAULT_EXCESS_HYSTERESIS
                     ),
                 ),
                 selector(
@@ -2949,6 +2979,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_PHASE_VOLTAGE: DEFAULT_PHASE_VOLTAGE,
                     CONF_GRID_EXPORT_LIMIT: DEFAULT_GRID_EXPORT_LIMIT,
                     CONF_EXCESS_TRIGGER_MARGIN: DEFAULT_EXCESS_TRIGGER_MARGIN,
+                    CONF_EXCESS_HYSTERESIS: DEFAULT_EXCESS_HYSTERESIS,
                     CONF_AUTO_DETECT_PHASE_MAPPING: True,
                     CONF_BATTERY_SOC_HYSTERESIS: DEFAULT_BATTERY_SOC_HYSTERESIS,
                 }

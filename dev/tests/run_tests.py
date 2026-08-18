@@ -71,8 +71,14 @@ _load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator
 
 # Convenience aliases for the rest of this file
 from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues, CircuitGroup
-from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
-from custom_components.dynamic_ocpp_evse.calculations.utils import compute_household_per_phase
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
+    calculate_all_charger_targets,
+    excess_margin,
+)
+from custom_components.dynamic_ocpp_evse.calculations.utils import (
+    compute_household_per_phase,
+    grid_without_managed_draws,
+)
 from custom_components.dynamic_ocpp_evse.const.modes import resolve_operating_mode, behavior_for
 from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
     resolve_tank_mode_priority,
@@ -281,6 +287,24 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
     return ct_a_net, ct_b_net, ct_c_net, solar_per_phase, battery_per_phase
 
 
+def simulate_inverter_output(site):
+    """Fleet AC output in watts — the sim's stand-in for output_power_total().
+
+    Mirrors engine/fleet.py's two tiers: the measured per-phase output when the
+    scenario models output sensors, else the topology-aware estimate (solar plus
+    the battery term — signed in series, discharge-only in parallel).
+
+    Called BEFORE apply_feedback_adjustment() for the same reason production
+    reads it before its feedback loop: afterwards the derived solar contains the
+    managed draws and the estimate is inflated by them.
+    """
+    if site.inverter_output_per_phase is not None:
+        return site.inverter_output_per_phase.total * site.voltage
+    bp = site.battery_power or 0.0
+    battery_term = bp if site.wiring_topology == 'series' else max(0.0, bp)
+    return (site.solar_production_total or 0.0) + battery_term
+
+
 def apply_feedback_adjustment(site):
     """Replicate dynamic_ocpp_evse.py feedback loop.
 
@@ -306,19 +330,12 @@ def apply_feedback_adjustment(site):
     # charger draws — production's _apply_feedback_loop returns early without
     # adjusting them (subtracting would fabricate export).
     if not site.is_off_grid and (total_l1 > 0 or total_l2 > 0 or total_l3 > 0):
-        def _adjust(cons, exp, draw):
-            if cons is None:
-                return None, None
-            raw_grid = cons - (exp or 0)
-            true_grid = raw_grid - draw
-            return max(0.0, true_grid), max(0.0, -true_grid)
-
-        adj_a_cons, adj_a_exp = _adjust(site.consumption.a, site.export_current.a, total_l1)
-        adj_b_cons, adj_b_exp = _adjust(site.consumption.b, site.export_current.b, total_l2)
-        adj_c_cons, adj_c_exp = _adjust(site.consumption.c, site.export_current.c, total_l3)
-
-        site.consumption = PhaseValues(adj_a_cons, adj_b_cons, adj_c_cons)
-        site.export_current = PhaseValues(adj_a_exp, adj_b_exp, adj_c_exp)
+        # Same pure helper production's _apply_feedback_loop calls.
+        site.consumption, site.export_current = grid_without_managed_draws(
+            site.consumption,
+            site.export_current,
+            (total_l1, total_l2, total_l3),
+        )
 
     # Derived mode: recalculate solar_production_total from adjusted export.
     # Battery charging absorbs solar power invisible to grid CT — add it back.
@@ -690,6 +707,10 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
     commanded_limits = {}  # entity_id -> current commanded limit
     history = []
 
+    # Excess latch state, the hub_runtime["_excess_on"] equivalent: the widened
+    # release band only applies while Excess was already engaged last cycle.
+    excess_on = False
+
     # Per-charger draw-settle tracking: last measured draw and the count of
     # consecutive cycles it has held steady. Mirrors the HA layer's per-charger
     # runtime state so the engine sees the same draw_settled flag.
@@ -762,8 +783,27 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         ct_a_net, ct_b_net, ct_c_net, solar_pp, bat_pp = simulate_grid_ct(
             site, household, charger_phase_a, charger_phase_b, charger_phase_c)
 
+        # 4b. Read-time figures the engine captures before its feedback loop and
+        #     the calculator's inverter coverage gate reads: the raw meter and
+        #     the fleet's AC output. Off grid there are no CTs at all, so
+        #     grid_current stays unset (all-None → 0 W net), exactly as
+        #     production leaves it when no phase entity is configured.
+        if not site.is_off_grid:
+            site.grid_current = PhaseValues(ct_a_net, ct_b_net, ct_c_net)
+        site.net_grid_power = site.grid_current.total * site.voltage
+        site.inverter_output_total = simulate_inverter_output(site)
+
         # 5. Apply feedback: subtract charger draws (replicates dynamic_ocpp_evse.py)
         apply_feedback_adjustment(site)
+
+        # 6. Excess trigger + hysteresis latch (replicates the same block in
+        #    engine/hub_calculation.py — the calculator itself is stateless and
+        #    just reads site.excess_hysteresis). Scenarios that leave
+        #    `excess_hysteresis` unset get 0 and the latch is a no-op.
+        hysteresis = scenario['site'].get('excess_hysteresis', 0)
+        margin = excess_margin(site, hysteresis if excess_on else 0)
+        excess_on = margin >= 0
+        site.excess_hysteresis = hysteresis if excess_on else 0
 
         # 7. Run calculation engine
         calculate_all_charger_targets(site)

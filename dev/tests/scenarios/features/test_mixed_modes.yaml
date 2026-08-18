@@ -85,7 +85,20 @@ scenarios:
                          # max once the Solar-Only charger caps at its solar
                          # share — equal-split among unconstrained.
       charger_2:
-        allocated: 6.3   # Shared: Solar Only capped by solar pool
+        allocated: 7.8   # Shared: Solar Only capped by the solar pool left
+                         # after both minimums. Solar pool 41.4 A total
+                         # (13.8 A per phase for a 3-phase load); pass 1
+                         # reserves 6 A per phase for each load, i.e. 36 A,
+                         # leaving 5.4 A total = 1.8 A per phase, so
+                         # 6 + 1.8 = 7.8 A. At that point the Solar Only load
+                         # draws 3 x 7.8 = 23.4 A = 5382 W against the site's
+                         # real surplus of 6900 W solar - 1380 W household =
+                         # 5520 W — inside it.
+                         # Was 6.3 A: the old batch check scaled EVERY
+                         # increment by min_solar/total, so the grid-backed
+                         # load's fill-up crawled in solar-sized steps and
+                         # dragged the Solar Only load's own increments down
+                         # with it, leaving ~1.1 kW of surplus solar unused.
 
   # ===== SOLAR PRIORITY + SOLAR ONLY =====
 

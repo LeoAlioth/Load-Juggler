@@ -42,7 +42,7 @@ Within the same mode, the load's priority number decides who gets power first.
 A smart plug is a binary on/off load, so its modes resolve to a simple on/off
 decision. It has **four** modes that form a ladder — each one drains the home
 **battery** to a progressively higher SOC floor, and none of them (bar
-Continuous) ever use the grid:
+Continuous, and bar the grace window noted below) ever use the grid:
 
 | Mode | Battery floor | With battery (hybrid or off-grid) | Without battery |
 |------|---------------|-----------------------------------|-----------------|
@@ -58,12 +58,38 @@ the plug may dig:
 - **Continuous** — a must-run load: drains the battery to its minimum SOC,
   then pulls from the grid, and stops only if neither can supply it.
 - **Solar Priority** — drains the battery to its minimum SOC, then stops.
-  Never uses the grid.
+  Never uses the grid: this mode has **no grace ride-through** (by design —
+  a grace hold would also bridge minimum-SOC sheds, and the minimum SOC is a
+  protective floor that must act immediately), so it sheds at once on
+  inverter saturation.
 - **Solar Only** — drains only the band *above the target* SOC (genuine stored
-  surplus), then stops. Never uses the grid.
+  surplus), then stops. Doesn't use the grid beyond the grace window described
+  below.
+
+> **Both halves must agree:** these modes are gated on SOC **and** on the
+> inverter being able to deliver it. SOC only says the energy is *stored*; if
+> the inverter is already putting out its rated power (other loads saturate it),
+> that stored energy has no path to the plug and the shortfall would come from
+> the grid. So the plug additionally needs the inverter's rating to cover its
+> own draw, judged as if the plug were off — a plug whose own draw is what fills
+> the inverter keeps running, it is never asked to shed itself.
+>
+> **Saturation shorter than the Solar grace period rides through.** While the
+> grace window runs the plug stays on, and on a grid-tied site that means it is
+> briefly grid-assisted — the honest price of not flapping the relay on every
+> passing peak. Saturation that outlasts the window sheds the plug. Set the
+> grace period to how long you are willing to import for: 0 sheds immediately.
+> Off grid there is nothing to import from, and the same shed protects the
+> inverter from running past its rating.
+>
+> Sites with no inverter capacity configured cannot be checked and behave as
+> before: SOC alone decides.
 - **Excess** — runs only when the battery is essentially full (the configurable
-  "full" SOC, default 97%), or the site can no longer absorb its production —
-  export at its allowance *and* the battery already charging as fast as it can.
+  "full" SOC, default 97%) *and* the inverter can pass the plug's draw, or the
+  site can no longer absorb its production — export at its allowance *and* the
+  battery already charging as fast as it can. The absorption verdict needs no
+  inverter check of its own: power the site is exporting is already on the AC
+  bus, and the plug only redirects it.
   See [Excess Mode](#excess-mode) for the single comparison behind that.
 
 This is the same on a hybrid grid-tied site and an off-grid site — only the

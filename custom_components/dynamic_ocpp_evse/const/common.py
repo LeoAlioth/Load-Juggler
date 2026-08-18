@@ -73,6 +73,20 @@ GRID_STALE_TIMEOUT = 60  # Seconds of grid CT unavailability before falling to m
 INPUT_STALE_TIMEOUT = 60  # Seconds of solar/battery/inverter sensor unavailability before falling back to a safe value
 SUSPENDED_EV_IDLE_TIMEOUT = 60  # Seconds of SuspendedEV + near-zero draw before treating as inactive
 
+# Household hold — per-phase household is derived from the inverter output minus
+# the managed draws. The draw side (OCPP, sub-second) rises the moment a car
+# ramps, while the inverter output side lags 10-30 s (Modbus polling + input
+# EMA), so the subtraction transiently clamps household to 0 and the engine
+# would hand the real household's power out as phantom headroom. An asymmetric
+# wall-clock hold bridges that window: household rises instantly, but can only
+# fall to HOUSEHOLD_HOLD_RESIDUAL of the held value over
+# HOUSEHOLD_HOLD_BRIDGE_SECONDS. Per-cycle factor:
+#     decay = HOUSEHOLD_HOLD_RESIDUAL ** (cycle_seconds / HOUSEHOLD_HOLD_BRIDGE_SECONDS)
+# (The reverse direction — an overstated household — is the safe direction and
+# needs no hold, hence the asymmetry.)
+HOUSEHOLD_HOLD_BRIDGE_SECONDS = 15.0  # Wall-clock length of the bridge window
+HOUSEHOLD_HOLD_RESIDUAL = 0.1         # Fraction of the held value left after the window
+
 # EVSE draw-settle detection — the measured draw is trusted as the EVSE's real
 # footprint (freeing the unused gap to lower-priority loads) only once it has
 # held steady for SETTLE_DRAW_CYCLES consecutive cycles within SETTLE_DRAW_TOLERANCE.

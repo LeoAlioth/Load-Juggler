@@ -28,6 +28,13 @@ from ..const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Behaviors whose fill-up is bounded by a surplus pool, grouped by the pool that
+# bounds them. Used by the shared-mode round to cap each source's group against
+# its own pool. Binary behaviors are deliberately absent — see
+# _scale_source_increments.
+_SOLAR_BOUND_BEHAVIORS = frozenset({BEHAVIOR_SOLAR_PRIORITY, BEHAVIOR_SOLAR_ONLY})
+_EXCESS_BOUND_BEHAVIORS = frozenset({BEHAVIOR_EXCESS})
+
 
 def _measured_draw(charger: LoadContext) -> float:
     """The charger's real per-phase draw — the max across its occupied phases."""
@@ -607,8 +614,18 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
         margin = (grid export + battery charge power + our own managed draws)
                - (export allowance + battery charge allowance - hysteresis)
 
-    The managed-draw term is explicit only off-grid; grid-tied the feedback loop
-    has already folded it into ``export``.
+    The export term is GROSS and clamped per phase: an export limit is physical
+    and contractual per exported flow, so a site pushing 30 A out on two phases
+    while pulling 10 A in on the third is exporting 30 A, not 20 A. Import on one
+    phase never buys export headroom on another.
+
+    Every figure is read as the site would read it *with our own loads off* —
+    that is what makes the number stable enough to decide with: a load that is
+    running must not suppress the verdict that engaged it. Grid-tied, the
+    feedback loop has already taken the draws off the grid readings, and the
+    managed-draw term finishes the job by handing the freed power back to the
+    battery's charge headroom (see the term itself); off-grid, where there are
+    no readings at all, it is added wholesale.
 
     — where ``margin >= 0`` means Excess is on, and the value *is* the excess
     pool in watts. Callers need nothing else; the breakdown goes to the debug log.
@@ -641,25 +658,11 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
 
     Pure function — unit-testable.
     """
-    export = max(0.0, site.total_export_power)
     # battery_power is positive discharging, negative charging.
     charge_power = max(0.0, -(site.battery_power or 0))
-
-    # Off-grid, add our managed loads' draws back. _apply_feedback_loop returns
-    # early there (the grid readings are synthetic zeros that never contained the
-    # draws), so without this a load's own consumption comes straight out of the
-    # battery's charge rate and suppresses the very margin that engaged it — the
-    # verdict would chatter every cycle. Adding it back makes each load a probe:
-    # drawing power makes a curtailing inverter ramp up, and the margin settles at
-    # the site's *true* surplus, which is otherwise invisible off-grid. This is
-    # the same quantity the feedback loop reconstructs grid-tied — what the site
-    # would be putting elsewhere if we ran nothing — so `export` already carries
-    # it there and this must not double-count.
-    managed_draw = 0.0
-    if site.is_off_grid:
-        managed_draw = (
-            sum(sum(c.get_site_phase_draw()) for c in site.chargers) * site.voltage
-        )
+    managed_draw = (
+        sum(sum(c.get_site_phase_draw()) for c in site.chargers) * site.voltage
+    )
 
     export_allowance = 0.0 if site.is_off_grid else (site.excess_export_threshold or 0)
 
@@ -674,18 +677,72 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     else:
         charge_allowance = site.battery_max_charge_power or 0
 
+    if site.is_off_grid:
+        # Off-grid, add our managed loads' draws back wholesale.
+        # _apply_feedback_loop returns early there (the grid readings are
+        # synthetic zeros that never contained the draws), so without this a
+        # load's own consumption comes straight out of the battery's charge rate
+        # and suppresses the very margin that engaged it — the verdict would
+        # chatter every cycle. Adding it back makes each load a probe: drawing
+        # power makes a curtailing inverter ramp up, and the margin settles at
+        # the site's *true* surplus, which is otherwise invisible off-grid.
+        export = 0.0
+        battery_restored = managed_draw
+    else:
+        # Grid-tied the feedback loop has already taken the draws off the grid
+        # readings, which is the load-off state for every watt the inverter
+        # served by exporting less. What it cannot see is the watt served by
+        # CHARGING THE BATTERY LESS on a site whose phases are unbalanced: the
+        # battery's rate falls site-wide while the draw is subtracted from one
+        # phase, and on a phase that still reads net import the subtraction is
+        # clamped at zero instead of showing up as export. The margin then
+        # dropped the moment the load engaged — the on/off cycling of #41.
+        #
+        # So finish the reconstruction the same way the site would: give the
+        # freed power back to the battery, up to the headroom it actually has,
+        # and restore the per-phase demand that charging represents. Whatever
+        # the battery cannot take stays where the feedback loop put it, on the
+        # export side. A saturated (or full, or absent) battery has no headroom,
+        # so nothing moves and this is exactly the plain gross reading.
+        headroom = (
+            max(0.0, charge_allowance - charge_power)
+            if (site.battery_power or 0) <= 0
+            else 0.0  # discharging: the freed power stops the discharge first
+        )
+        battery_restored = min(managed_draw, headroom)
+        # Charging is symmetric across the phases that exist, so the restored
+        # demand lands per phase — which is why it can cancel export on one
+        # phase without touching the import on another. Gross, clamped per
+        # phase, then summed: the export semantics never change.
+        per_phase = (
+            battery_restored / site.export_current.active_count / site.voltage
+            if battery_restored and site.export_current.active_count
+            else 0.0
+        )
+        export = 0.0
+        for exp, cons in (
+            (site.export_current.a, site.consumption.a),
+            (site.export_current.b, site.consumption.b),
+            (site.export_current.c, site.consumption.c),
+        ):
+            if exp is None:
+                continue
+            export += max(0.0, exp - (cons or 0) - per_phase)
+        export *= site.voltage
+
     allowance = max(0.0, export_allowance + charge_allowance - hysteresis)
-    absorbed = export + charge_power + managed_draw
+    absorbed = export + charge_power + battery_restored
     margin = absorbed - allowance
 
     _LOGGER.debug(
         "Excess margin %+.0fW: placing %.0fW (export %.0fW + battery charge %.0fW"
-        " + managed loads %.0fW) vs allowance %.0fW (export %.0fW + battery %.0fW"
-        " - hysteresis %.0fW)",
+        " + freed to battery %.0fW of %.0fW managed draw) vs allowance %.0fW"
+        " (export %.0fW + battery %.0fW - hysteresis %.0fW)",
         margin,
         absorbed,
         export,
         charge_power,
+        battery_restored,
         managed_draw,
         allowance,
         export_allowance,
@@ -725,6 +782,92 @@ def _below_soc_target(site: SiteContext) -> bool:
             and site.battery_soc < site.battery_soc_target)
 
 
+def _rank(load: LoadContext) -> tuple[int, int]:
+    """Distribution rank — the same key _sort_chargers() serves loads in."""
+    return (load.mode_priority, load.priority)
+
+
+def _load_power(load: LoadContext, site: SiteContext) -> float:
+    """Watts this load draws while running: its permit on every phase it spans.
+
+    ``max_current`` is per-phase, and for a binary load it IS the load's rating
+    (min == max == rating / (voltage × phases)), so this recovers the plate
+    rating exactly whatever the phase count.
+    """
+    phases = len(load.active_phases_mask or "A")
+    return load.max_current * phases * site.voltage
+
+
+def _inverter_covers_load(load: LoadContext, site: SiteContext) -> bool:
+    """Is there room under the inverter's RATING to source this load's draw?
+
+    The SOC-gated binary modes hand out a permit on the strength of stored
+    energy alone. That says nothing about the path: while the inverters are
+    already putting out everything they are rated for, one more binary load
+    cannot be served from the battery at all — its power comes from the grid
+    (or, off-grid, pushes the inverters past their plate rating). This gate is
+    the second half of the dual gate: SOC says there IS energy, this says the
+    inverter can still deliver it. No rating configured (None/0) or no output
+    reading → unlimited, the pre-gate behavior.
+
+    **Evaluated with the load off** (issue #41's discipline — a gate a load's
+    own draw can flip is a gate that suppresses itself). The load-off output is
+    the current output minus the draws that would go away if this load, and
+    everything it outranks, were shed:
+
+        freed   = max(0, shed_draw − net_grid)      (net_grid: + import, − export)
+        covered = rating − (output − freed) >= load's own rated power
+
+    Two subtleties are why ``freed`` is not simply the shed draw:
+
+    * **Grid import caps the add-back.** A draw the site is IMPORTING for is
+      not part of what the inverters are delivering, so shedding it frees no
+      inverter capacity. Without this cap, a load whose power comes from the
+      grid while the inverters sit at their rating would credit itself with its
+      own draw, the gate could never fail once the load was on, and issue #17
+      would survive for every load that was already running when saturation
+      arrived. When the site is EXPORTING the same term goes the other way and
+      credits the export: that output is already on the AC bus and the load can
+      have it by displacing it, no extra inverter capacity needed.
+    * **Only outranked draws count.** Loads served BEFORE this one keep their
+      share of the output (the distributor will not take it back), while loads
+      this one outranks would be shed in its favour — so their draw is capacity
+      this load may claim. Without this a running low-priority load would lock
+      a higher-priority one out of a saturated inverter, undoing preemption.
+
+    This gate is about the inverter's RATING only. Whether the energy exists at
+    all stays the SOC gate's and the source pools' business.
+    """
+    rating = site.inverter_max_power
+    output = site.inverter_output_total
+    if not rating or output is None:
+        return True
+
+    shed_current = sum(
+        sum(c.get_site_phase_draw())
+        for c in site.chargers
+        if c is load or _rank(c) > _rank(load)
+    )
+    # Signed on purpose: importing eats into the add-back, exporting adds to it.
+    net_grid = site.net_grid_power or 0.0
+    freed = max(0.0, shed_current * site.voltage - net_grid)
+    headroom = rating - (output - freed)
+    needed = _load_power(load, site)
+    covered = headroom >= needed
+    if not covered:
+        _LOGGER.debug(
+            "Inverter coverage denied for %s: needs %.0fW, load-off headroom "
+            "%.0fW (rating %.0fW − output %.0fW + freed %.0fW)",
+            load.entity_id,
+            needed,
+            headroom,
+            rating,
+            output,
+            freed,
+        )
+    return covered
+
+
 def _source_limit(
     charger: LoadContext,
     site: SiteContext,
@@ -750,12 +893,20 @@ def _source_limit(
     # battery is the stored-solar buffer, and each mode drains it only to a
     # progressively higher SOC floor; with no battery they fall back to a
     # live-surplus rule.
+    #
+    # Every SOC-derived permit below is a DUAL gate: stored energy (SOC) AND a
+    # path for it (_inverter_covers_load). SOC alone would hand out a permit the
+    # inverter has to fill from the grid whenever it is already saturated
+    # (ISSUES #17). The flow-derived permits need no such gate — an export-driven
+    # verdict is already proof the power is on the AC bus.
 
     # Solar Priority: run while the battery is above its minimum SOC.
     if behavior == BEHAVIOR_BINARY_ABOVE_MIN:
         if site.battery_soc is not None:
             soc_min = site.battery_soc_min or 0
-            return charger.max_current if site.battery_soc > soc_min else 0
+            if site.battery_soc > soc_min and _inverter_covers_load(charger, site):
+                return charger.max_current
+            return 0
         behavior = BEHAVIOR_SOLAR_ONLY
 
     # Solar Only: run while the battery is above its target SOC (only the
@@ -764,22 +915,32 @@ def _source_limit(
         if site.battery_soc is not None:
             if site.battery_soc_target is None:
                 return 0
-            return (
-                charger.max_current
-                if site.battery_soc > site.battery_soc_target
-                else 0
-            )
+            if (
+                site.battery_soc > site.battery_soc_target
+                and _inverter_covers_load(charger, site)
+            ):
+                return charger.max_current
+            return 0
         behavior = BEHAVIOR_SOLAR_ONLY
 
     # Excess: run while the battery is near-full, OR whenever the site is
     # exporting — export can reach the threshold before the battery fills
     # (battery charge-rate limited). With no battery it is purely
     # export-driven.
+    #
+    # Only the near-full shortcut is SOC-derived, so only it takes the inverter
+    # gate: "the battery cannot absorb any more" is not evidence that the
+    # inverter can pass this load's draw, and a full battery next to a saturated
+    # inverter is exactly the grid-draw case. A saturated inverter then falls
+    # THROUGH to the export rule rather than answering 0 — a clipping inverter
+    # can still be exporting, and a load that displaces export costs the
+    # inverter no extra output.
     if behavior == BEHAVIOR_BINARY_EXCESS:
         if (
             site.battery_soc is not None
             and site.battery_soc_full is not None
             and site.battery_soc >= site.battery_soc_full
+            and _inverter_covers_load(charger, site)
         ):
             return charger.max_current
         return charger.max_current if excess.get_available(mask) > 0 else 0
@@ -998,6 +1159,50 @@ def _distribute_per_phase_priority(
             )
 
 
+def _scale_source_increments(
+    batch: list[tuple[LoadContext, str, float]],
+    behaviors: frozenset[str],
+    pool: PhaseConstraints,
+) -> list[tuple[LoadContext, str, float]]:
+    """Cap one source's group of increments against that source's pool.
+
+    Every increment in a shared-mode round is sized against the same pool
+    snapshot, so each one fits on its own while their sum need not — two loads
+    on one phase can each be offered the whole surplus. The binding limit is the
+    pool on the most constrained mask among the group's loads; scale the group's
+    increments down to it proportionally (to zero when nothing is left).
+
+    Only the named behaviors are scaled. Grid-backed loads are untouched — their
+    ceiling is the physical pool, not a surplus pool, and their draw still
+    drains the surplus afterwards via _deduct_from_sources. Binary behaviors are
+    excluded too: they are on/off loads whose whole permit is gated by SOC or
+    the excess verdict in _source_limit, so a fractionally scaled increment
+    would describe a state they cannot occupy.
+    """
+    members = [
+        (mask, incr)
+        for charger, mask, incr in batch
+        if charger.mode_behavior in behaviors and incr > 0
+    ]
+    if not members:
+        return batch
+
+    total = sum(incr for _, incr in members)
+    available = min(pool.get_available(mask) for mask, _ in members)
+    if total <= available:
+        return batch
+
+    scale = max(0.0, available) / total
+    return [
+        (
+            charger,
+            mask,
+            incr * scale if charger.mode_behavior in behaviors and incr > 0 else incr,
+        )
+        for charger, mask, incr in batch
+    ]
+
+
 def _distribute_per_phase_shared(
     site: SiteContext,
     physical_pool: PhaseConstraints,
@@ -1043,8 +1248,15 @@ def _distribute_per_phase_shared(
         for c in charging_chargers:
             src_max = _source_limit(c, site, solar_rem, excess_rem, base=allocated[c.entity_id])
             effective_max = min(c.max_current, src_max)
-            if allocated[c.entity_id] < effective_max:
-                chargers_wanting_more.append(c)
+            if allocated[c.entity_id] >= effective_max:
+                continue
+            # A load whose own phases are physically exhausted cannot receive
+            # anything, so it is not "wanting more" in any actionable sense.
+            # Leaving it in would pin the equal-split share at 0 and freeze
+            # every other load — including ones with headroom on other phases.
+            if remaining.get_available(c.active_phases_mask) <= 0:
+                continue
+            chargers_wanting_more.append(c)
 
         if not chargers_wanting_more:
             break
@@ -1067,14 +1279,12 @@ def _distribute_per_phase_shared(
             additional = max(0, additional)
             batch.append((charger, mask, additional))
 
-        # Check total solar consumption doesn't exceed available.
-        # For source-limited chargers sharing the same phases, scale down if needed.
-        total_increment = sum(incr for _, _, incr in batch if incr > 0)
-        if total_increment > 0:
-            min_solar = min(solar_rem.get_available(c.active_phases_mask) for c in chargers_wanting_more)
-            if total_increment > min_solar > 0:
-                scale = min_solar / total_increment
-                batch = [(c, m, incr * scale) for c, m, incr in batch]
+        # Per-source overshoot: the increments above were all sized against the
+        # same snapshot, so loads bound to one surplus pool can each fit and
+        # still jointly exceed it. Cap each source's group against its own pool,
+        # leaving loads bound to a different source (or to none) alone.
+        batch = _scale_source_increments(batch, _SOLAR_BOUND_BEHAVIORS, solar_rem)
+        batch = _scale_source_increments(batch, _EXCESS_BOUND_BEHAVIORS, excess_rem)
 
         # Apply all increments, deducting each charger's real consumption
         # growth (not the permit increment) so a settled-and-under-drawing

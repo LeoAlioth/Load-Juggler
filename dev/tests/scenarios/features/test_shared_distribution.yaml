@@ -1,0 +1,189 @@
+# Test scenarios: Shared distribution round mechanics
+# Covers the two defects of the batched equal-split round in
+# _distribute_per_phase_shared:
+#   A) a load whose own phases are physically exhausted must not pin the
+#      equal-split share at 0 and freeze the loads that still have headroom
+#   B) source-overshoot scaling must aim at the loads bound to that source,
+#      not at every load in the round
+
+scenarios:
+
+  # ===== A) EXHAUSTED PHASE MUST NOT FREEZE THE ROUND =====
+
+  - name: "shared-exhausted-phase-frees-other-phase"
+    description: >
+      Two 1-phase EVSEs on different phases of a 20 A breaker, no solar.
+      Phase A carries a 14 A household draw, phase B only 2 A, so the
+      grid pool is A = 20 - 14 = 6 A, B = 20 - 2 = 18 A, C = 20 - 0.5 = 19.5 A
+      (no solar or battery, so the inverter adds nothing).
+      Pass 1 reserves both minimums: charger_a takes 6 A, which exhausts
+      phase A exactly (14 + 6 = 20 = breaker); charger_b takes 6 A, leaving
+      B = 18 - 6 = 12 A.
+      Pass 2: charger_a's own headroom is 0 A, so it cannot receive anything
+      and drops out of the round; charger_b is alone in the wanting set and
+      takes the whole remaining share, min(12 A headroom, 16 - 6 = 10 A) = 10 A,
+      reaching its 16 A max (2 + 16 = 18 A, inside the 20 A breaker).
+      Expected: charger_a = 6.0 A (its minimum, all phase A allows),
+      charger_b = 6 + 10 = 16.0 A.
+      Before the fix charger_a stayed in the wanting set with 0 A available,
+      pinning the equal share at 0 and breaking the loop, which froze
+      charger_b at its 6 A minimum despite 12 A free on phase B.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 20
+      distribution_mode: Shared
+      solar_production: 0
+      phase_a_consumption: 14.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 0.5
+    chargers:
+      - entity_id: "charger_a"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "charger_b"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        l1_phase: "B"
+    expected:
+      charger_a:
+        allocated: 6.0   # phase A exhausted by the household — minimum only
+      charger_b:
+        allocated: 16.0  # fills its max from the 12 A free on phase B
+
+  # ===== B) PER-SOURCE OVERSHOOT SCALING =====
+
+  - name: "shared-solar-pair-overshoot-scaled"
+    description: >
+      Two Solar Only EVSEs share phase A while a Standard EVSE sits on phase C,
+      whose household draw leaves it no solar at all — the case that used to
+      switch the overshoot guard OFF (min_solar = 0).
+      Solar 13800/3 = 20 A per phase; household A = B = 2 A, C = 22 A. Export
+      per phase is therefore 20 - 2 = 18 A on A and B, and 20 - 22 < 0 on C,
+      i.e. nothing. The solar pool is the measured export: A = 18 A, B = 18 A,
+      C = 0 A.
+      Pass 1: Standard on C takes 6 A (no solar on C to deduct);
+      solar_1 takes 6 A (solar A 18 -> 12), solar_2 takes 6 A (12 -> 6).
+      Pass 2 round 1: physical headroom is ample, so the equal share exceeds
+      every load's own ceiling. Each Solar Only load is individually offered
+      min(16, 6 + 6) - 6 = 6 A — both fit the 6 A left on phase A on their own,
+      but 6 + 6 = 12 A is double the pool. Per-source scaling multiplies only
+      those two increments by 6/12 = 0.5, giving +3 A each; the Standard load's
+      increment is untouched and it fills to 16 A.
+      Expected: solar_1 = solar_2 = 6 + 3 = 9.0 A (18 A of solar drawn in
+      total, exactly the phase A surplus), charger_std = 16.0 A.
+      Before the fix the guard "total > min_solar > 0" saw min_solar = 0 from
+      the Standard load's solar-free phase C and skipped scaling entirely, so
+      both Solar Only loads took their full 6 A increment and ended at 12.0 A
+      each — 24 A of solar drawn against an 18 A surplus.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: Shared
+      solar_production: 13800   # 20 A per phase
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 22.0
+    chargers:
+      - entity_id: "charger_std"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "C"
+      - entity_id: "solar_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+      - entity_id: "solar_2"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 3
+        l1_phase: "A"
+    expected:
+      charger_std:
+        allocated: 16.0  # grid-backed: never scaled by a solar shortfall
+      solar_1:
+        allocated: 9.0   # 6 + 6 * (6/12)
+      solar_2:
+        allocated: 9.0   # 6 + 6 * (6/12)
+
+  - name: "shared-excess-pair-overshoot-scaled"
+    description: >
+      The excess-pool twin of the solar case: two Excess EVSEs share phase A
+      and a Standard EVSE sits on phase C with no solar on its mask.
+      Solar 27600/3 = 40 A per phase; household A = B = 2 A, C = 45 A. After
+      the feedback loop export is 38/38/0 A = 76 A = 17480 W, so with a
+      3680 W export threshold the excess margin is 17480 - 3680 = 13800 W
+      = 60 A, spread by the symmetric inverter as 20 A per phase.
+      Pass 1: Standard on C takes 6 A (excess C 20 -> 14, phase A untouched);
+      excess_1 takes 6 A (excess A 20 -> 14), excess_2 takes 6 A (14 -> 8).
+      Pass 2 round 1: each Excess load is individually offered
+      min(16, 6 + 8) - 6 = 8 A — each fits the 8 A left on phase A, but
+      8 + 8 = 16 A is double it. Per-source scaling multiplies only those two
+      increments by 8/16 = 0.5, giving +4 A each; the Standard load fills to
+      16 A unscaled.
+      Expected: excess_1 = excess_2 = 6 + 4 = 10.0 A (20 A drawn in total,
+      exactly the phase A excess), charger_std = 16.0 A.
+      Before the fix there was no excess-overshoot check at all — the only
+      batch check was against the solar pool, and it was disabled here anyway
+      (min_solar = 0 on the Standard load's phase C) — so both Excess loads
+      took their full 8 A increment and ended at 14.0 A each, 28 A against a
+      20 A excess pool.
+      The margin figures are unchanged by ISSUES.md #41: export stays gross
+      and per-phase clamped (phase C's 5 A of import buys no export headroom
+      on A or B), and with no battery on this site there is no charge headroom
+      for the load-off reconstruction to give anything back.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: Shared
+      solar_production: 27600   # 40 A per phase
+      excess_export_threshold: 3680
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 45.0
+    chargers:
+      - entity_id: "charger_std"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "C"
+      - entity_id: "excess_1"
+        operating_mode: "Excess"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+      - entity_id: "excess_2"
+        operating_mode: "Excess"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 3
+        l1_phase: "A"
+    expected:
+      charger_std:
+        allocated: 16.0  # grid-backed: never scaled by an excess shortfall
+      excess_1:
+        allocated: 10.0  # 6 + 8 * (8/16)
+      excess_2:
+        allocated: 10.0  # 6 + 8 * (8/16)

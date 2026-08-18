@@ -22,7 +22,12 @@ from ..calculations import (
     recommended_charge_limit,
 )
 from ..const import *
-from ..calculations.utils import is_number, compute_household_per_phase
+from ..calculations.utils import (
+    is_number,
+    compute_household_per_phase,
+    grid_without_managed_draws,
+    hold_per_phase_floor,
+)
 from ..helpers import get_entry_value
 from .. import units
 from .auto_detect import check_inversion, check_phase_mapping
@@ -182,11 +187,19 @@ def _read_entity(hass, entity_id: str, default=0, unit: str = None, voltage: flo
 
 
 def _read_inverter_output(hass, entity_id, voltage):
-    """Read one inverter output phase in amps (A/mA/W/kW all accepted).
+    """Read one inverter output phase in amps, SIGNED (A/mA/W/kW all accepted).
 
-    Magnitude, deliberately: an inverter's output is production regardless of
-    which way round its sensor is wired. The grid reader is the opposite case
-    — see _read_grid_phase, where the sign carries the import/export meaning.
+    The sign is real information, so it is passed straight through. A hybrid
+    with another (AC-coupled) inverter on its load port legitimately reads
+    NEGATIVE output up to the child's production: power flows IN through the
+    parent's AC-out port. Taking a magnitude there fabricates output that does
+    not exist, and clamping it to 0 throws away the very term the fleet sum
+    needs to net the child's back-feed against its parent.
+
+    Consumers must therefore treat a negative reading as "power flowing into
+    this inverter", not as production; the non-negativity clamps live at the
+    aggregates where physics demands them (a member's derived production, the
+    fleet solar total, per-phase household), never on the raw reading.
 
     Returns None for an unconfigured phase, _UNAVAILABLE for a configured
     sensor that is temporarily unreadable (the EMA smoother holds the last
@@ -197,7 +210,7 @@ def _read_inverter_output(hass, entity_id, voltage):
     value = _read_entity(hass, entity_id, None, unit=units.DOMAIN_AMPS, voltage=voltage)
     if value is _UNAVAILABLE or value is None:
         return _UNAVAILABLE
-    return abs(value)
+    return value
 
 
 def _coerce(v, default=0):
@@ -1153,24 +1166,20 @@ def _apply_feedback_loop(site, solar_is_derived, members):
     # Reconstruct raw grid current, remove charger draw, re-split
     orig_consumption = (site.consumption.a, site.consumption.b, site.consumption.c)
     orig_export = (site.export_current.a, site.export_current.b, site.export_current.c)
-    adj_consumption = []
-    adj_export = []
+    new_consumption, new_export = grid_without_managed_draws(
+        site.consumption, site.export_current, total_draws
+    )
+    adj_consumption = (new_consumption.a, new_consumption.b, new_consumption.c)
+    adj_export = (new_export.a, new_export.b, new_export.c)
 
     for i, label in enumerate(_PHASE_LABELS):
         cons = orig_consumption[i]
-        exp = orig_export[i]
         draw = total_draws[i]
         if cons is None:
-            adj_consumption.append(None)
-            adj_export.append(None)
             continue
-        raw_grid = cons - (exp or 0)
-        true_grid = raw_grid - draw
-        adj_cons = max(0.0, true_grid)
-        adj_exp = max(0.0, -true_grid)
-
+        raw_grid = cons - (orig_export[i] or 0)
         # Warn when household consumption gets clamped to 0 by feedback
-        if draw > 0 and adj_cons == 0 and cons > 0:
+        if draw > 0 and adj_consumption[i] == 0 and cons > 0:
             _LOGGER.warning(
                 "Phase %s: household -> 0 after feedback "
                 "(raw_grid=%.1fA - charger=%.1fA = %.1fA)",
@@ -1179,11 +1188,9 @@ def _apply_feedback_loop(site, solar_is_derived, members):
                 draw,
                 raw_grid - draw,
             )
-        adj_consumption.append(adj_cons)
-        adj_export.append(adj_exp)
 
-    site.consumption = PhaseValues(*adj_consumption)
-    site.export_current = PhaseValues(*adj_export)
+    site.consumption = new_consumption
+    site.export_current = new_export
 
     # Update derived solar after feedback. Same per-member derivation as the
     # first pass — only the export term changes, so a fleet where every member
@@ -1443,6 +1450,30 @@ def _mixed_household_per_phase(site, members):
     return PhaseValues(*values)
 
 
+def _household_hold_decay(hub_entry):
+    """Per-cycle retention factor for the household floor hold.
+
+    Derived from wall clock, not a magic per-cycle number: after
+    HOUSEHOLD_HOLD_BRIDGE_SECONDS of a zero reading the held value has decayed
+    to HOUSEHOLD_HOLD_RESIDUAL, whatever the configured cycle length.
+    """
+    try:
+        cycle_seconds = float(
+            get_entry_value(
+                hub_entry,
+                CONF_SITE_UPDATE_FREQUENCY,
+                DEFAULT_SITE_UPDATE_FREQUENCY,
+            )
+        )
+    except (TypeError, ValueError):
+        cycle_seconds = float(DEFAULT_SITE_UPDATE_FREQUENCY)
+    if not math.isfinite(cycle_seconds) or cycle_seconds <= 0:
+        cycle_seconds = float(DEFAULT_SITE_UPDATE_FREQUENCY)
+    return HOUSEHOLD_HOLD_RESIDUAL ** (
+        cycle_seconds / HOUSEHOLD_HOLD_BRIDGE_SECONDS
+    )
+
+
 def _compute_forecast_advice(
     hass,
     hub_entry,
@@ -1610,8 +1641,14 @@ def _build_hub_result(
     excess_margin_power=0,
     forecast_advice=None,
     inverters_data=None,
+    members=(),
 ):
-    """Build the result dict returned by run_hub_calculation."""
+    """Build the result dict returned by run_hub_calculation.
+
+    ``members`` is the inverter fleet (engine/fleet.py) — the display headroom
+    needs the per-member outputs and topologies, which the SiteContext scalars
+    cannot express.
+    """
     # Grid available power (based on consumption after feedback loop).
     # Off-grid there is no grid feed at all — headroom is 0 by definition.
     if site.is_off_grid:
@@ -1723,14 +1760,32 @@ def _build_hub_result(
     #
     # Two ceilings apply, and we take the lower:
     #  - Source: solar surplus + spare battery discharge.
-    #  - Inverter: rated capacity minus what the inverter is *already*
-    #    outputting (its AC output ≈ solar production + battery discharge).
+    #  - Inverter: rated capacity minus what the inverters are *already*
+    #    outputting. That output is MEASURED when output entities exist and
+    #    otherwise estimated topology-aware per fleet member — the old
+    #    solar + battery_power form was the series (DC-coupled) model only, and
+    #    on a parallel (AC-coupled) site it understated the output by the whole
+    #    battery charge power, advertising headroom the site does not have.
     inverter_sourced = solar_available + battery_remaining
     if site.inverter_max_power:
-        current_inverter_output = max(
-            0, (site.solar_production_total or 0) + (battery_power or 0)
+        current_inverter_output = fleet.output_power_total(
+            members or (),
+            voltage,
+            solar_w=site.solar_production_total,
+            battery_power_w=battery_power,
         )
-        inverter_headroom = max(0, site.inverter_max_power - current_inverter_output)
+        # Headroom is clamped to the inverter's own rating: a negative measured
+        # output (a cascaded inverter feeding power IN through the load port)
+        # means the site is absorbing, but it does NOT raise this inverter's AC
+        # output capability above its nameplate — so it cannot buy extra
+        # headroom. Above the rating the headroom is 0, as before.
+        inverter_headroom = max(
+            0.0,
+            min(
+                float(site.inverter_max_power),
+                site.inverter_max_power - current_inverter_output,
+            ),
+        )
         inverter_sourced = min(inverter_sourced, inverter_headroom)
         # Battery Remaining Power is likewise bounded by the inverter: the
         # battery cannot deliver more to loads than the inverter can pass.
@@ -1934,6 +1989,11 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     excess_trigger_margin = get_entry_value(
         hub_entry, CONF_EXCESS_TRIGGER_MARGIN, DEFAULT_EXCESS_TRIGGER_MARGIN
     )
+    # Release band once Excess is engaged (the latch below applies it).
+    excess_hysteresis = (
+        get_entry_value(hub_entry, CONF_EXCESS_HYSTERESIS, DEFAULT_EXCESS_HYSTERESIS)
+        or 0
+    )
     if grid_export_limit > 0:
         excess_threshold = max(0.0, grid_export_limit - excess_trigger_margin)
     else:
@@ -2082,6 +2142,24 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     wiring_topology = fleet.fleet_topology(members)
     inverter_output_per_phase = fleet.sum_outputs(members)
 
+    # Read-time power figures for the calculator's inverter coverage gate
+    # (target_calculator._inverter_covers_load): what the fleet is putting out
+    # right now, and which way the grid is flowing. Same measured-then-estimated
+    # aggregation the display headroom uses, but taken HERE, before the feedback
+    # loop: post-feedback the derived solar has the managed draws folded back
+    # into it, which inflates the estimate by exactly the draw the gate then has
+    # to discount — the two errors would cancel the load-off add-back and the
+    # gate would suppress itself (issue #41).
+    inverter_output_total = fleet.output_power_total(
+        members,
+        voltage,
+        solar_w=solar_production_total,
+        battery_power_w=battery_power,
+    )
+    # Signed net grid flow (+ import / − export) from the smoothed phases. Off
+    # grid every phase reads 0, so this is 0 — correct: nothing to import.
+    net_grid_power = sum(r for r in smoothed_phases if r is not None) * voltage
+
     # --- Runtime state from shared hub data (hub_runtime already fetched above) ---
     distribution_mode = hub_runtime.get("distribution_mode", DEFAULT_DISTRIBUTION_MODE)
     allow_grid_charging = hub_runtime.get("allow_grid_charging", True)
@@ -2228,6 +2306,10 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
         inverter_supports_asymmetric=inverter_supports_asymmetric,
         wiring_topology=wiring_topology,
         inverter_output_per_phase=inverter_output_per_phase,
+        inverter_output_total=float(inverter_output_total)
+        if inverter_output_total is not None
+        else None,
+        net_grid_power=float(net_grid_power),
         excess_export_threshold=excess_threshold,
         allow_grid_charging=allow_grid_charging,
         power_buffer=power_buffer,
@@ -2285,8 +2367,8 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     # Excess trigger + hysteresis latch. excess_margin() returns the watts by
     # which everything the site is absorbing (grid export + battery charging)
     # exceeds everything it is allowed to absorb (export allowance + battery
-    # charge allowance); >= 0 means on. Once engaged, the band widens by
-    # EXCESS_EXPORT_HYSTERESIS so a load doesn't chatter at the trigger point.
+    # charge allowance); >= 0 means on. Once engaged, the band widens by the
+    # hub's Excess hysteresis so a load doesn't chatter at the trigger point.
     # The latch lives here so the calculator stays stateless — it just reads
     # site.excess_hysteresis. The per-sink breakdown goes to excess_margin()'s
     # own debug line.
@@ -2295,12 +2377,10 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     # draws added back, and pre-feedback export is already eaten by the Excess
     # load's own draw — the band would never engage exactly when a load is running.
     was_excess_on = hub_runtime.get("_excess_on", False)
-    margin = excess_margin(
-        site, EXCESS_EXPORT_HYSTERESIS if was_excess_on else 0
-    )
+    margin = excess_margin(site, excess_hysteresis if was_excess_on else 0)
     excess_on = margin >= 0
     hub_runtime["_excess_on"] = excess_on
-    site.excess_hysteresis = EXCESS_EXPORT_HYSTERESIS if excess_on else 0
+    site.excess_hysteresis = excess_hysteresis if excess_on else 0
     _LOGGER.debug(
         "Excess %s (margin %+.0fW)", "ON" if excess_on else "off", margin
     )
@@ -2326,14 +2406,35 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     else:
         household = compute_household_per_phase(site, site.wiring_topology)
     if household is not None:
+        # Asymmetric hold on the household floor. The managed draw side of the
+        # subtraction (OCPP, sub-second) reacts before the polled inverter
+        # output does, so a ramping car transiently zeroes household and the
+        # engine would hand the real household's power out as headroom. Rises
+        # pass straight through; falls are bridged over
+        # HOUSEHOLD_HOLD_BRIDGE_SECONDS of wall clock.
+        decay = _household_hold_decay(hub_entry)
+        raw_household = household
+        household = hold_per_phase_floor(
+            household, hub_runtime.get("_household_held"), decay
+        )
+        hub_runtime["_household_held"] = household
         site.household_consumption = household
         _LOGGER.debug(
-            "Per-phase household from inverter output (%s): A=%.1fA B=%.1fA C=%.1fA",
+            "Per-phase household from inverter output (%s): A=%.1fA B=%.1fA "
+            "C=%.1fA (raw A=%.1fA B=%.1fA C=%.1fA, hold decay %.3f)",
             site.wiring_topology,
             household.a if household.a is not None else 0,
             household.b if household.b is not None else 0,
             household.c if household.c is not None else 0,
+            raw_household.a if raw_household.a is not None else 0,
+            raw_household.b if raw_household.b is not None else 0,
+            raw_household.c if raw_household.c is not None else 0,
+            decay,
         )
+    else:
+        # No inverter output data at all — nothing to hold, and the held value
+        # must be dropped so it cannot resurrect on a later cycle.
+        hub_runtime.pop("_household_held", None)
 
     # --- Calculate targets ---
     calculate_all_charger_targets(site)
@@ -2549,6 +2650,7 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
         excess_margin_power=margin,
         forecast_advice=forecast_advice,
         inverters_data=inverters_data,
+        members=members,
     )
 
 

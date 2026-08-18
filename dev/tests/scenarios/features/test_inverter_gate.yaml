@@ -1,0 +1,157 @@
+# Test scenarios: the inverter coverage gate on SOC-gated binary loads
+#
+# ISSUES.md #17. A battery-backed plug in Solar Priority / Solar Only / Excess is
+# switched on by an SOC verdict alone — "there is stored energy". That says
+# nothing about the PATH: while the inverter is already putting out its rated
+# power, the plug's draw cannot come from the battery, so it comes from the grid.
+# _source_limit() now gates those permits on inverter coverage as well:
+#
+#   load-off headroom = rating − (output − freed)   must cover the load's rating
+#   freed             = max(0, shed draw − net grid flow)
+#
+# All three sites below are grid-tied and identical except for the one variable
+# named in each scenario. Saturation is created by a Continuous plug (a must-run
+# managed load) draining the battery through a small inverter at night, so the
+# only thing that can serve the second plug is the grid — exactly the state #17
+# reported.
+#
+# Note what the cold-start ramp makes these prove: at cycle 0 no managed load is
+# drawing yet, so the inverter is idle, the gate passes and the gated plug is
+# switched ON. It is only from cycle 1 — once the must-run load's draw has taken
+# the inverter to its rating — that the gate sheds it. These scenarios therefore
+# pin the harder half of the fix: shedding a load that is ALREADY RUNNING, not
+# merely refusing to start one.
+#
+# What a 30-cycle scenario cannot express is time-varying saturation: the site is
+# rebuilt from the same YAML every cycle, so there is no way to write "saturated
+# for 2 minutes, then clear". Riding a transient out is the solar-grace hold's
+# job and is covered in entities/load.py, not here.
+
+scenarios:
+
+  - name: "inverter-saturated-sheds-battery-solar-only-plug"
+    description: "Night, 3kW inverter maxed by a must-run plug → the Solar Only plug's SOC permit is not deliverable → shed"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 1.0    # household ≈ 230 W
+      battery_soc: 90             # above target → SOC half of the gate passes
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 3000
+      inverter_max_power_per_phase: 3000
+      inverter_supports_asymmetric: false
+    chargers:
+      - entity_id: "must_run"
+        device_type: "plug"
+        operating_mode: "Continuous"
+        power_rating: 2800
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "solar_plug"
+        device_type: "plug"
+        operating_mode: "Solar Only"
+        power_rating: 1000
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+    expected:
+      must_run:
+        allocated: 12.2   # 2800 W / 230 V — Continuous is never gated
+      solar_plug:
+        # The inverter is at its 3000 W rating carrying household + must-run
+        # load, and the site is importing the rest. Shedding this plug frees no
+        # inverter capacity, so its load-off headroom stays under its 1000 W
+        # rating. Before the gate it ran here on grid power.
+        allocated: 0.0
+        available: 0.0
+
+  - name: "inverter-headroom-keeps-battery-solar-only-plug"
+    description: "Same night, same loads, 12kW inverter → coverage exists → the Solar Only plug stays on"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 1.0
+      battery_soc: 90
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 12000
+      inverter_max_power_per_phase: 12000
+      inverter_supports_asymmetric: false
+    chargers:
+      - entity_id: "must_run"
+        device_type: "plug"
+        operating_mode: "Continuous"
+        power_rating: 2800
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "solar_plug"
+        device_type: "plug"
+        operating_mode: "Solar Only"
+        power_rating: 1000
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+    expected:
+      must_run:
+        allocated: 12.2
+      solar_plug:
+        # ~4 kW of battery-sourced output against a 12 kW rating — the inverter
+        # is nowhere near saturated, so the SOC permit stands as it always did.
+        allocated: 4.3   # 1000 W / 230 V
+
+  - name: "inverter-saturated-sheds-full-battery-excess-plug"
+    description: "Battery at 98% (>= full) but the inverter is maxed and nothing is exported → Excess plug shed"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 1.0
+      battery_soc: 98             # >= full → the near-full shortcut fires
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_soc_full: 97
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 3000
+      inverter_max_power_per_phase: 3000
+      inverter_supports_asymmetric: false
+    chargers:
+      - entity_id: "must_run"
+        device_type: "plug"
+        operating_mode: "Continuous"
+        power_rating: 2800
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "excess_plug"
+        device_type: "plug"
+        operating_mode: "Excess"
+        power_rating: 1000
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+    expected:
+      must_run:
+        allocated: 12.2
+      excess_plug:
+        # "The battery cannot absorb any more" is an SOC verdict, so the
+        # near-full shortcut is gated like the other two. Denied, it falls
+        # through to the export rule — and a site importing at night exports
+        # nothing, so there is no flow-derived permit either.
+        allocated: 0.0
+        available: 0.0

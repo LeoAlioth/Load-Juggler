@@ -181,6 +181,21 @@ class SiteContext:
     inverter_max_power_per_phase: float | None = None  # Max power per phase (W)
     inverter_supports_asymmetric: bool = False  # Can inverter balance power across phases
 
+    # --- Read-time power figures (the pair the inverter coverage gate needs) ---
+    # Both are captured when the site is read, BEFORE the feedback loop, and are
+    # therefore the only place the calculator can still see the site's real grid
+    # position: the feedback loop deliberately erases the managed loads' draws
+    # from consumption/export. See _inverter_covers_load() in target_calculator.
+    #
+    # Fleet AC output right now (W, SIGNED — negative means power is flowing
+    # into the inverters). Measured where output entities exist, otherwise a
+    # topology-aware estimate — engine/fleet.py output_power_total(). None =
+    # unknown, which the coverage gate treats as "do not gate".
+    inverter_output_total: float | None = None
+    # Net grid flow right now (W): positive = importing, negative = exporting.
+    # Smoothed, and 0 on an off-grid site (no CTs, nothing to import).
+    net_grid_power: float | None = None
+
     # Settings
     allow_grid_charging: bool = True
     power_buffer: float = 0

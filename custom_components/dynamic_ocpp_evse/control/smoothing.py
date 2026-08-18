@@ -35,6 +35,14 @@ def apply_smoothing(
                 raw_allocated,
             )
     elif sensor._rate_limited_current == 0:
+        # Intentional fast-start (design decision, 2026-08-17): resuming from 0
+        # seeds the whole pipeline at the raw permit instead of ramping up from
+        # the minimum. The permit was computed inside every site constraint, so
+        # the step is safe by construction, and crawling up would waste surplus.
+        # The ramp exists to damp oscillation, not to protect anything; the
+        # compliance checker's "ramping" skip tolerates the step. The power
+        # station deliberately diverges (resumes at its minimum — see
+        # entities/load.py) because its permit is the volatile excess pool.
         sensor._ema_current = raw_allocated
         sensor._schmitt_current = raw_allocated
         sensor._schmitt_state = "rising"

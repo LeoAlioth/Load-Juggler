@@ -16,6 +16,79 @@ def is_number(value):
         return False
 
 
+def hold_per_phase_floor(
+    new: PhaseValues | None,
+    held: PhaseValues | None,
+    decay: float,
+) -> PhaseValues | None:
+    """Asymmetric per-phase floor hold: fast to rise, slow to fall.
+
+    Per phase the result is ``max(new, held * decay)`` — a rise is passed
+    through instantly, a fall is bounded by the decayed previous value.
+
+    None is pass-through in both directions: a phase that is None in ``new``
+    stays None (the phase does not exist on this site), and a None in ``held``
+    means there is nothing to hold, so ``new`` is taken as-is.
+
+    ``decay`` is the per-cycle retention factor (0..1); the caller derives it
+    from wall-clock time so the bridge length is independent of cycle length.
+    """
+    from .models import PhaseValues  # Local import to avoid circular
+
+    if new is None:
+        return None
+    if held is None:
+        return new
+
+    decay = min(1.0, max(0.0, decay))
+
+    def _floor(n, h):
+        if n is None:
+            return None
+        if h is None:
+            return n
+        return max(n, h * decay)
+
+    return PhaseValues(
+        _floor(new.a, held.a),
+        _floor(new.b, held.b),
+        _floor(new.c, held.c),
+    )
+
+
+def grid_without_managed_draws(
+    consumption: PhaseValues,
+    export: PhaseValues,
+    draws: tuple[float, float, float],
+) -> tuple[PhaseValues, PhaseValues]:
+    """Rebuild the grid readings the site would show with our loads switched off.
+
+    Grid CTs measure the whole site, managed draws included. Per phase the raw
+    signed meter reading is ``consumption - export`` (positive = importing); the
+    load's own draw comes off it and the result is re-split into the
+    import/export pair the engine works with.
+
+    Phases that are None (not present on this site) stay None. Pure function —
+    the caller owns the logging and writes the result back onto the site.
+    """
+    from .models import PhaseValues  # Local import to avoid circular
+
+    adj_consumption: list[float | None] = []
+    adj_export: list[float | None] = []
+    for i in range(3):
+        cons = (consumption.a, consumption.b, consumption.c)[i]
+        exp = (export.a, export.b, export.c)[i]
+        if cons is None:
+            adj_consumption.append(None)
+            adj_export.append(None)
+            continue
+        true_grid = cons - (exp or 0) - draws[i]
+        adj_consumption.append(max(0.0, true_grid))
+        adj_export.append(max(0.0, -true_grid))
+
+    return PhaseValues(*adj_consumption), PhaseValues(*adj_export)
+
+
 def compute_household_per_phase(
     site: SiteContext,
     wiring_topology: str,

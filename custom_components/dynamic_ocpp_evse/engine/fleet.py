@@ -194,6 +194,98 @@ def mixed_topologies(members) -> bool:
     return len(topologies) > 1
 
 
+def _battery_output_term(topology: str, battery_power: Optional[float]) -> float:
+    """How much of a battery's flow shows up in its inverter's AC output.
+
+    - **series** (DC-coupled hybrid): the battery hangs off the DC bus, in front
+      of the inverter. Discharge adds to the AC output, and charging takes DC
+      power that then never reaches the AC side — so the signed battery power
+      applies as-is, and charging genuinely REDUCES the AC output.
+    - **parallel** (AC-coupled battery/hybrid): the battery charges FROM the AC
+      bus, so charging is a load on the bus, not a subtraction from the PV
+      inverter's output — the inverter keeps putting out its full production.
+      Only discharge adds to the output, hence max(0, ·).
+    """
+    bp = battery_power or 0.0
+    if topology == WIRING_TOPOLOGY_SERIES:
+        return bp
+    return max(0.0, bp)
+
+
+def output_power_measured(members, voltage: float) -> Optional[float]:
+    """The fleet's measured AC output in watts — Σ per-phase member outputs ×
+    voltage. None when no member has output entities.
+
+    Signed on purpose (see hub_calculation._read_inverter_output): a cascaded
+    child inverter on a hybrid's load port makes the parent's reading negative,
+    and the signed sum nets that back-feed against the child's own positive
+    reading — which is precisely the AC power the pair delivers to the site.
+    Needs no topology assumption at all: a series member's reading already
+    contains its battery flow and a parallel member's already excludes its
+    charging, whatever the mix.
+    """
+    summed = sum_outputs([m for m in members if m.output is not None])
+    if summed is None:
+        return None
+    return summed.total * voltage
+
+
+def output_power_estimate(
+    members, solar_w: Optional[float], battery_power_w: Optional[float] = None
+) -> float:
+    """Estimated fleet AC output in watts, for sites with NO output sensors.
+
+    Solar production always reaches the AC bus, so it enters in full whatever
+    the wiring; only the battery term is topology-dependent, and it is summed
+    per member using that member's OWN topology (see _battery_output_term), so
+    a mixed fleet is handled by construction. Members without a battery power
+    sensor contribute no battery term.
+
+    When no member has a battery power sensor at all, the fleet-level reading
+    (usually None) is applied with the fleet topology instead — the same single
+    formula the classic single-inverter site used.
+    """
+    base = solar_w or 0.0
+    if any(m.has_battery_power_entity for m in members):
+        return base + sum(
+            _battery_output_term(m.topology, m.battery_power) for m in members
+        )
+    return base + _battery_output_term(fleet_topology(members), battery_power_w)
+
+
+def output_power_total(
+    members,
+    voltage: float,
+    solar_w: Optional[float] = None,
+    battery_power_w: Optional[float] = None,
+) -> float:
+    """The fleet's current AC output in watts — measurement preferred, estimate
+    as fallback. Used for display headroom (``rating − output``).
+
+    1. **Measured**: whenever any member has inverter-output entities, its
+       signed measured output is used. Members without output entities add
+       their own topology-aware estimate from their own production sensor and
+       battery flow — nothing else is attributable to them, since the site's
+       export-derived solar cannot be split per member.
+    2. **Estimated**: no output entities anywhere → output_power_estimate() on
+       the site scalars, topology-aware per member.
+
+    Never None: with no members at all this degenerates to the site scalars,
+    which is what the pre-fleet code did. The result may be negative — a real
+    state (net power flowing INTO the inverters); the caller decides what a
+    negative output means for its own headroom maths.
+    """
+    measured = output_power_measured(members, voltage)
+    if measured is None:
+        return output_power_estimate(members, solar_w, battery_power_w)
+    unmetered = [m for m in members if m.output is None]
+    return measured + sum(
+        (m.solar_measured or 0.0 if m.has_solar_entity else 0.0)
+        + _battery_output_term(m.topology, m.battery_power)
+        for m in unmetered
+    )
+
+
 def inverter_limits(members):
     """(max_power, max_power_per_phase, supports_asymmetric) for the fleet.
 
@@ -230,7 +322,15 @@ def inverter_limits(members):
 def member_solar(member, voltage: float) -> Optional[float]:
     """One member's solar production in watts, or None without output
     entities: a parallel output IS production; a series output carries the
-    battery flow, so production = output − its own battery power."""
+    battery flow, so production = output − its own battery power.
+
+    The max(0, ·) is a physical clamp, and it matters now that outputs are
+    signed (see hub_calculation._read_inverter_output): a negative result means
+    power is flowing INTO this inverter — a cascaded child inverter back-feeding
+    its parent's load port, or the grid charging its battery — and neither is
+    production of its own. The child's production is counted on the child's own
+    member, so clamping here cannot lose it.
+    """
     if member.output is None:
         return None
     out_watts = (member.output.total or 0) * voltage
@@ -261,7 +361,14 @@ def solar_total(members, voltage: float) -> Optional[float]:
         for s in (member_solar_production(m, voltage) for m in members)
         if s is not None
     ]
-    return sum(readings) if readings else None
+    if not readings:
+        return None
+    # Aggregate clamp: a site cannot produce negative solar power. Every derived
+    # term is already non-negative (member_solar clamps), but a MEASURED
+    # production sensor can read slightly negative (night-time offset, inverter
+    # self-consumption), and a negative site production would poison every
+    # downstream pool that multiplies or subtracts it.
+    return max(0.0, sum(readings))
 
 
 def solar_is_measured(members) -> bool:

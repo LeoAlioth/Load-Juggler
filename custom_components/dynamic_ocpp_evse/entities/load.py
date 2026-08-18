@@ -58,6 +58,11 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         self._last_update = None
         self._pause_started_at = None
         self._grace_started_at = None
+        # Binary-load grace state: the last permit the engine actually granted
+        # (what the hold re-offers) and a latch so a spent grace window cannot
+        # re-arm on the next cycle and duty-cycle the load forever.
+        self._binary_last_permit = 0.0
+        self._grace_exhausted = False
         self._prev_operating_mode = None
         self._prev_distribution_mode = None
         self._last_set_current = 0
@@ -239,6 +244,8 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                     "Mode changed for %s — cancelling grace timer", self._attr_name
                 )
                 self._grace_started_at = None
+            # A spent grace window belongs to the mode that spent it.
+            self._grace_exhausted = False
 
         self._prev_operating_mode = self._operating_mode
         self._prev_distribution_mode = current_distribution_mode
@@ -376,6 +383,39 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
         )
         grace_period_seconds = grace_period_minutes * 60
 
+        # Binary loads (plug, tank) run no smoothing pipeline: their permit IS
+        # the raw permit, so the EVSE hold gate below — "the smoothed permit dipped
+        # under the minimum but the engine still physically offers it" — compares a
+        # number with itself and can never be true. The grace hold was therefore
+        # unreachable for every plug and tank. They get the same idea stated on
+        # their own terms: the load had a permit last cycle and it has now
+        # collapsed. Any permit > 0 means ON for a binary load, so the hold
+        # re-offers the load's own last permit rather than an EVSE minimum current.
+        #
+        # What the hold bridges is any collapse of the permit while in these
+        # modes — a brief inverter saturation, a cloud, an SOC dip past target.
+        # This layer cannot see WHY the engine withdrew the permit, and the whole
+        # point of grace is that short-lived reasons should not cycle the relay.
+        # Sustained ones still shed: the window expires exactly once (the
+        # exhausted latch), and only a genuine permit re-arms it.
+        binary_load = device_type in (DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK)
+        if raw_permit > 0:
+            self._binary_last_permit = raw_permit
+            self._grace_exhausted = False
+            if binary_load and self._grace_started_at is not None:
+                # A binary load's permit IS the whole answer, so a permit back
+                # above 0 is the "conditions recovered" reset the EVSE branch
+                # below performs against its minimum current.
+                _LOGGER.debug(
+                    "Grace timer reset for %s — permit recovered", self._attr_name
+                )
+                self._grace_started_at = None
+
+        # Solar Priority is deliberately NOT in this list (decided 2026-08-17):
+        # a grace hold here cannot tell WHY the permit collapsed, so it would
+        # also bridge minimum-SOC sheds — and the minimum SOC is a protective
+        # floor that must act immediately. Consequence: a Solar Priority binary
+        # load sheds at once on inverter saturation, with no ride-through.
         if (
             self._operating_mode
             in (EVSE_MODE_SOLAR_ONLY.key, EVSE_MODE_EXCESS.key)
@@ -400,7 +440,12 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                     device_type == DEVICE_TYPE_POWER_STATION
                     and load_rt.get("station_charging")
                 ) or (
+                    binary_load
+                    and self._binary_last_permit > 0
+                    and not self._grace_exhausted
+                ) or (
                     device_type != DEVICE_TYPE_POWER_STATION
+                    and not binary_load
                     and physical_available >= min_charge_current
                 ):
                     if self._grace_started_at is None:
@@ -413,7 +458,11 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                         )
                     elapsed = time.monotonic() - self._grace_started_at
                     if elapsed < grace_period_seconds:
-                        self._available_current = float(min_charge_current)
+                        self._available_current = float(
+                            self._binary_last_permit
+                            if binary_load
+                            else min_charge_current
+                        )
                     else:
                         _LOGGER.info(
                             "Grace timer expired for %s after %dm — allowing pause",
@@ -421,6 +470,12 @@ class LoadJugglerDeviceSensor(ChargerEntityMixin, SensorEntity):
                             grace_period_minutes,
                         )
                         self._grace_started_at = None
+                        if binary_load:
+                            # Do not re-arm next cycle: for a binary load the
+                            # permit is the on/off answer, so a re-arming window
+                            # would switch it back on for another grace period,
+                            # forever.
+                            self._grace_exhausted = True
                 else:
                     if self._grace_started_at is not None:
                         _LOGGER.info(
