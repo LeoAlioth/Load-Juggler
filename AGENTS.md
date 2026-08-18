@@ -66,11 +66,13 @@ custom_components/dynamic_ocpp_evse/
 │   ├── hot_water_tank.py          # Tank climate control
 │   ├── smoothing.py               # Output smoothing (EMA / Schmitt trigger / ramp limits)
 │   └── status.py                  # Charging status determination
-├── entities/                      # Entity classes shared by the platform files
+├── entities/                      # Entity classes shared by the platform files (ALL push-driven — nothing polls)
 │   ├── load.py                    # LoadJugglerDeviceSensor — per-load processing + dispatch, driven by the hub coordinator
 │   ├── load_sensors.py            # Per-load diagnostic sensors
 │   ├── hub.py / inverter.py / circuit_group.py  # Hub, inverter, and group sensors
-│   └── mixins.py                  # Hub/Charger/Group/InverterEntityMixin (device_info, data write helpers)
+│   ├── freshness.py               # Pure producer-freshness predicate behind every sensor's `available`
+│   └── mixins.py                  # LoadJugglerEntity base + device mixins + SiteFreshnessMixin /
+│                                  #   SiteCycleConsumerMixin (push readers) / SiteCycleWorkerMixin (async per-cycle actuators)
 ├── detection_patterns/            # Per-brand entity-naming patterns for auto-detection (fronius, sma, victron, …)
 ├── [button|number|select|sensor|switch].py  # HA platform files (thin wiring around entities/)
 ├── units.py                       # Unit conversion helpers
@@ -173,7 +175,7 @@ The `calculations/` directory is pure Python and can be imported/tested independ
    - `_coerce()`: converts `_UNAVAILABLE` back to safe defaults for non-smoothed values
    - Solar derivation: `engine/fleet.py` (`solar_total()` / `member_solar()`) — uses inverter output when available, falls back to grid export + battery
    - Off-grid: when no grid CTs are configured, phases with inverter output entities are zeroed (not None), making the site behave like a grid site with 0A grid current
-2. **Hub coordinator (sensor.py) + entities/load.py + control/**: ONE `DataUpdateCoordinator` per hub entry (`hass.data[DOMAIN]["hub_coordinators"]`) runs the engine once per `site_update_frequency`, publishes the trimmed result via `entities/hub.py:publish_hub_data`, then awaits each registered load processor sequentially (`hass.data[DOMAIN]["load_processors"]`, entry_id order). `LoadJugglerDeviceSensor.async_process(hub_data)` does the per-load work — smoothing (`control/smoothing.py`), grace/pause state machines, then dispatch: OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules. Per-load `update_frequency` gates command sends inside the processor. Hub sensors (`entities/hub.py`) are pure readers of hub_data: Site Available Power, Hub Status, per-metric data sensors. Charger sensors: allocated current, available current, charging status.
+2. **Hub coordinator (sensor.py) + entities/load.py + control/**: ONE `DataUpdateCoordinator` per hub entry (`hass.data[DOMAIN]["hub_coordinators"]`) runs the engine once per `site_update_frequency`, publishes the trimmed result via `entities/hub.py:publish_hub_data`, then awaits each registered load processor sequentially (`hass.data[DOMAIN]["load_processors"]`, entry_id order — strict serialization for OCPP), then each async cycle worker (`SITE_CYCLE_WORKERS`, e.g. the inverter charge-limit write — after publish, order-insignificant), and finally notifies the push-reader sensors (`site_cycle_listeners`, rebound every tick so hub-only reloads can't strand them). `LoadJugglerDeviceSensor.async_process(hub_data)` does the per-load work — smoothing (`control/smoothing.py`), grace/pause state machines, then dispatch: OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules. Per-load `update_frequency` gates command sends inside the processor. Hub sensors (`entities/hub.py`) are pure readers of hub_data: Site Available Power, Hub Status, per-metric data sensors. Charger sensors: allocated current, available current, charging status.
 3. **Platform files** (button.py, number.py, select.py, etc.): Thin wiring that exposes the `entities/` classes and controls to the HA UI
 
 ### Asymmetric vs Symmetric Inverters
@@ -260,6 +262,12 @@ python3 dev/tests/run_tests.py "scenario-name" --trace
 ```
 
 Test results are written to `dev/tests/test_results.log`.
+
+Several pure-tier test files also run natively without Docker or pytest, via the
+shared `dev/tests/standalone_loader.py` (e.g. `python3 dev/tests/test_availability_contract.py`;
+same pattern for test_freshness, test_household_hold, test_excess_stayon,
+test_inverter_gate, test_inverter_output, test_inverter_control, test_auto_detect).
+Under the Docker/pytest tier the loader is a structural no-op.
 
 **IMPORTANT**: When creating new or modifying existing test scenarios, always set `human_verified: false`. Only the developer marks scenarios as verified after manual review.
 
