@@ -67,6 +67,11 @@ DEFAULT_CALC_MODULES = ("models", "utils", "target_calculator")
 # chain touches these HA-importing siblings and these engine modules, in this
 # order. helpers.py / forecast_reader.py import homeassistant at module level,
 # which _ensure_ha_stubs() satisfies when HA is not installed.
+#
+# DEPENDENCY ORDER, not alphabetical: the loader stubs the package root, so a
+# module-level relative import (readers -> forecast_reader, load_builders ->
+# readers, hub_calculation -> all of them) only resolves if the target is
+# already in sys.modules. A new engine module goes AFTER everything it imports.
 _HUB_CALC_ENGINE_ORDER = (
     "auto_detect",
     "fleet",
@@ -184,10 +189,12 @@ def load_pure_modules(
     Args:
         calc_modules: calculations/ modules to load, in dependency order
             (subset of "models", "utils", "target_calculator" — models first).
-        engine_modules: engine/ modules to load (any of "auto_detect", "fleet",
-            "forecast_reader", "hub_calculation"). Requesting
-            "hub_calculation" pulls in its whole import chain (the other three
-            plus helpers.py/units.py and the calc __init__) automatically.
+        engine_modules: engine/ modules to load (any of the names in
+            _HUB_CALC_ENGINE_ORDER: "auto_detect", "fleet", "forecast_reader",
+            "readers", "load_builders", "hub_result", "hub_calculation").
+            Requesting "hub_calculation" pulls in its whole import chain (all
+            the others plus helpers.py/units.py and the calc __init__)
+            automatically.
         control_modules: control/ modules to load. Only the ones that import
             nothing but const/helpers/units qualify — which is the actuation
             layer's own rule (see AGENTS.md), so "inverter" loads while the
