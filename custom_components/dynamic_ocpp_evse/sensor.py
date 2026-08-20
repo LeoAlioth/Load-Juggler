@@ -33,7 +33,7 @@ from .entities.inverter import (
     INVERTER_SENSOR_DEFINITIONS,
 )
 from .control.inverter import soc_targets
-from . import get_hub_for_charger
+from .registry import get_hub_for_charger
 
 DynamicOcppEvseChargerSensor = LoadJugglerDeviceSensor
 DynamicOcppEvseHubSensor = LoadJugglerHubSensor

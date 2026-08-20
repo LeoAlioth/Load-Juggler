@@ -12,7 +12,7 @@ from ..const import *
 from ..helpers import get_entry_value
 from .. import units
 from .mixins import ChargerEntityMixin, SiteFreshnessMixin
-from .. import get_hub_for_charger
+from ..registry import get_hub_for_charger
 from ..control.smoothing import apply_smoothing
 from ..control.status import determine_charging_status
 from ..control.compliance import check_profile_compliance

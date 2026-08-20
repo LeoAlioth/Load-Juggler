@@ -28,6 +28,7 @@ from ..const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_POWER_STATION,
 )
+from ..registry import get_hub_for_charger
 from ..helpers import get_entry_value
 from .. import units
 from .freshness import is_producer_fresh
@@ -441,7 +442,6 @@ class ChargerEntityMixin(LoadJugglerEntity):
         """Get the hub ConfigEntry for this charger."""
         if hasattr(self, 'hub_entry') and self.hub_entry:
             return self.hub_entry
-        from .. import get_hub_for_charger
         return get_hub_for_charger(self.hass, self.config_entry.entry_id)
 
     @property

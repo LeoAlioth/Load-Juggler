@@ -36,6 +36,11 @@ from ..calculations.utils import (
     hold_per_phase_floor,
 )
 from ..helpers import get_entry_value
+from ..registry import (
+    get_chargers_for_hub,
+    get_groups_for_hub,
+    get_inverters_for_hub,
+)
 from .. import units
 from .auto_detect import check_inversion, check_phase_mapping
 from . import fleet
@@ -261,8 +266,6 @@ def _check_entity_availability(hass, hub_entry) -> list:
     # Per-inverter entries: their output and battery sensors feed the fleet
     # aggregation, which fails open member-by-member — the status sensor is
     # where a dropout becomes visible, named per inverter.
-    from .. import get_inverters_for_hub
-
     inverter_entries = get_inverters_for_hub(hass, hub_entry.entry_id)
     for inv_entry in inverter_entries:
         inv_name = get_entry_value(inv_entry, CONF_NAME, inv_entry.title)
@@ -1175,8 +1178,6 @@ def _add_chargers_to_site(hass, site, hub_entry_id, charger_entries=None):
     ``charger_entries`` overrides the hub's registered loads (used by tests and
     by any caller that already knows the entries); None reads the registry.
     """
-    from .. import get_chargers_for_hub
-
     if charger_entries is None:
         chargers = get_chargers_for_hub(hass, hub_entry_id)
     else:
@@ -1319,8 +1320,6 @@ def _build_circuit_groups(hass, hub_entry_id):
 
     Returns list of CircuitGroup model objects for the calculation engine.
     """
-    from .. import get_groups_for_hub
-
     group_entries = get_groups_for_hub(hass, hub_entry_id)
     # Build set of valid charger entry_ids for member validation
     valid_charger_ids = {
@@ -1486,8 +1485,6 @@ def _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage):
     legacy hub-level fields remain configured, the hub itself as one implicit
     member (using the historic EMA keys, so pre-import behavior is
     bit-identical)."""
-    from .. import get_inverters_for_hub
-
     members = []
     if any(get_entry_value(hub_entry, key, None) for key in _LEGACY_FLEET_KEYS):
         members.append(

@@ -30,6 +30,7 @@ from .helpers import (
     validate_charger_settings,
     validate_offgrid_battery_requirement,
 )
+from .registry import get_groups_for_hub, get_inverters_for_hub
 from . import units
 
 _LOGGER = logging.getLogger(__name__)
@@ -311,8 +312,6 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
     # Off-grid fallback: infer from the inverter output entities of the whole
     # fleet — the hub's own (pre-import) fields plus every inverter child
     # entry. A phase counts once, no matter how many members feed it.
-    from . import get_inverters_for_hub  # local: avoids a circular import
-
     sources = [opts] + [
         {**inverter.data, **inverter.options}
         for inverter in get_inverters_for_hub(hass, hub_entry_id)
@@ -452,9 +451,7 @@ def _entry_sensor_value(hass, entry, unique_id_suffix: str):
 
 
 def _groups_for_hub(hass, hub_entry_id: str) -> list:
-    """Circuit group entries linked to a hub (one implementation, in __init__)."""
-    from . import get_groups_for_hub  # local: avoids a circular import
-
+    """Circuit group entries linked to a hub (one implementation, in registry.py)."""
     return get_groups_for_hub(hass, hub_entry_id)
 
 
@@ -928,8 +925,6 @@ def _summary_text(hass, hub_entry_id: str) -> str:
     entry = hass.config_entries.async_get_entry(hub_entry_id)
     if entry is None:
         return "The configuration entry no longer exists."
-
-    from . import get_inverters_for_hub  # local: avoids a circular import
 
     phases = _hub_phase_count(hass, hub_entry_id)
     voltage = get_entry_value(entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)

@@ -240,10 +240,12 @@ def load_pure_modules(
         # Preloaded for ANY engine request, not just hub_calculation: the engine
         # modules reach for `from .. import units` (the unit converters and the
         # availability predicates), and resolving that through the stub parent
-        # package would fail. helpers.py rides along for the same reason. The
-        # control modules need exactly the same two.
+        # package would fail. helpers.py and registry.py (the hub ↔ child
+        # config-entry lookups hub_calculation.py imports at module level) ride
+        # along for the same reason. The control modules need the same set.
         _load_module_once(f"{PKG_COMP}.helpers", COMPONENT_DIR / "helpers.py")
         _load_module_once(f"{PKG_COMP}.units", COMPONENT_DIR / "units.py")
+        _load_module_once(f"{PKG_COMP}.registry", COMPONENT_DIR / "registry.py")
 
     engine_dir = COMPONENT_DIR / "engine"
     for mod in engine_modules:
