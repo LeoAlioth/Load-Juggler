@@ -537,15 +537,28 @@ class TestTwoPhaseDetection:
         assert sum(cs.get("score_2ph", {"A": 0, "B": 0, "C": 0}).values()) == 0
 
 
-# ---------------------------------------------------------------------------
-# Run with pytest
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    import pytest
-    # --noconftest: this module is pure Python (the loader above stubs out the
-    # HA package tree), but dev/tests/conftest.py imports homeassistant. Without
-    # this flag a direct `python3 dev/tests/test_auto_detect.py` dies in conftest
-    # collection on any interpreter that has no HA installed. Under the Docker /
-    # WSL pytest tier the file is collected normally and this branch never runs;
-    # no test here uses a conftest fixture.
-    sys.exit(pytest.main([__file__, "-v", "--noconftest"]))
+    # Deliberately pytest-free: the pure tier has to run on the developer's
+    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
+    # Tests here live in Test* classes, so the runner walks those too — a
+    # fresh instance per test method, matching pytest's isolation.
+    failed = []
+
+    def _run(_name, _fn):
+        try:
+            _fn()
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            failed.append((_name, exc))
+            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
+        else:
+            print(f"PASS {_name}")
+
+    for _name, _obj in sorted(list(globals().items())):
+        if _name.startswith("test_") and callable(_obj):
+            _run(_name, _obj)
+        elif _name.startswith("Test") and isinstance(_obj, type):
+            for _meth in sorted(dir(_obj)):
+                if _meth.startswith("test_"):
+                    _run(f"{_name}.{_meth}", getattr(_obj(), _meth))
+    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    sys.exit(1 if failed else 0)
