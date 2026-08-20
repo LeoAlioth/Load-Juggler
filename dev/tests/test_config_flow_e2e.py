@@ -808,10 +808,13 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
     assert _schema_has(schema, CONF_SOC_LIMIT_NORMAL_ENTITY_ID)
     assert _selector_config(schema, CONF_SOC_LIMIT_ENTITY_IDS).get("multiple") is True
 
+    # The frontend never submits a field it renders empty — a stored None
+    # (e.g. the imported inverter's unset per-phase limit) arrives as an
+    # omitted key, letting the schema default fill it.
     submitted = {
         key: value
         for key, value in {**inverter.data, **inverter.options}.items()
-        if _schema_has(schema, key)
+        if _schema_has(schema, key) and value is not None
     }
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -837,7 +840,9 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
     submitted = {
         key: value
         for key, value in {**inverter.data, **inverter.options}.items()
-        if _schema_has(schema, key) and key != CONF_SOC_LIMIT_ENTITY_IDS
+        if _schema_has(schema, key)
+        and key != CONF_SOC_LIMIT_ENTITY_IDS
+        and value is not None
     }
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], user_input=submitted

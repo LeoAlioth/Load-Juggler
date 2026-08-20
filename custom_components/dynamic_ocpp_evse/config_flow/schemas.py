@@ -511,7 +511,12 @@ class SchemaBuilderMixin:
                 # letting the user pick sensors risks double-counting.
                 vol.Optional(
                     CONF_SOLAR_FORECAST_DEVICE_IDS,
-                    default=defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS) or [],
+                    # suggested_value, NOT default — same clearing rule as
+                    # CONF_SOC_LIMIT_ENTITY_IDS (_normalize_forecast_list).
+                    description={
+                        "suggested_value": defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS)
+                        or []
+                    },
                 ),
                 selector(
                     {
@@ -646,7 +651,12 @@ class SchemaBuilderMixin:
                 # letting the user pick sensors risks double-counting.
                 vol.Optional(
                     CONF_SOLAR_FORECAST_DEVICE_IDS,
-                    default=defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS) or [],
+                    # suggested_value, NOT default — same clearing rule as
+                    # CONF_SOC_LIMIT_ENTITY_IDS (_normalize_forecast_list).
+                    description={
+                        "suggested_value": defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS)
+                        or []
+                    },
                 ),
                 selector(
                     {
@@ -703,7 +713,13 @@ class SchemaBuilderMixin:
             (
                 vol.Optional(
                     CONF_INVERTER_MAX_POWER,
-                    default=defaults.get(CONF_INVERTER_MAX_POWER, 0),
+                    # "0 means not configured" is STORED as None
+                    # (_normalize_inverter_powers), and dict.get's fallback
+                    # does not cover a key that exists holding None — while
+                    # voluptuous validates defaults, so a None default fails
+                    # the NumberSelector the moment the field is left empty.
+                    # `or 0` restores the None↔0 round-trip.
+                    default=defaults.get(CONF_INVERTER_MAX_POWER) or 0,
                 ),
                 selector(
                     {
@@ -720,7 +736,8 @@ class SchemaBuilderMixin:
             (
                 vol.Optional(
                     CONF_INVERTER_MAX_POWER_PER_PHASE,
-                    default=defaults.get(CONF_INVERTER_MAX_POWER_PER_PHASE, 0),
+                    # Same None↔0 round-trip as CONF_INVERTER_MAX_POWER above.
+                    default=defaults.get(CONF_INVERTER_MAX_POWER_PER_PHASE) or 0,
                 ),
                 selector(
                     {
@@ -1021,7 +1038,15 @@ class SchemaBuilderMixin:
                 # their own helper.
                 vol.Optional(
                     CONF_SOC_LIMIT_ENTITY_IDS,
-                    default=defaults.get(CONF_SOC_LIMIT_ENTITY_IDS) or [],
+                    # suggested_value, NOT default: a default is injected at
+                    # validation time, so a cleared multi-select (the frontend
+                    # omits the key entirely) would resurrect the stored list
+                    # and clearing would be impossible. The save paths map the
+                    # absent key to [] (_normalize_soc_limit_list).
+                    description={
+                        "suggested_value": defaults.get(CONF_SOC_LIMIT_ENTITY_IDS)
+                        or []
+                    },
                 ),
                 selector(
                     {
