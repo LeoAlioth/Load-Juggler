@@ -6,7 +6,10 @@ a small menu that branches to the settings steps for whatever the entry is
 It owns no schemas of its own: every form it shows comes from the create-flow
 builders, reached through a cached ``LoadJugglerConfigFlow`` instance.
 
-Moved verbatim out of flow.py.
+Two executors carry the shape the steps share — ``_async_edit_page`` for a
+page that saves on submit, ``_async_wizard_page`` for one that routes on to
+the next — so each step is left declaring only what makes it different. The
+priority and circuit-group steps stay hand-written; see their docstrings.
 """
 import voluptuous as vol
 from typing import Any

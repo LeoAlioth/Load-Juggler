@@ -7,7 +7,8 @@ composition, the controlled-device and priority-order helpers behind the
 priority page, the OCPP charger scan the discovery step and ``__init__.py``
 both call, and the hub phase count derived from the configured grid CTs.
 
-Moved verbatim out of the single-file config_flow.py.
+Anything both handlers need lives here rather than on either of them — the
+unit maps below are the create/options twins' single shared declaration.
 """
 import logging
 import voluptuous as vol

@@ -6,7 +6,9 @@ OCPP discovery with its unit and meter-interval probes, and the legacy
 hub-inverter import. The forms themselves come from ``schemas.py``; editing an
 entry afterwards is ``options.py``.
 
-Moved verbatim out of the single-file config_flow.py.
+The three one-page load types (plug, hot-water tank, power station) run on the
+shared ``_async_create_load_page``; the hub, inverter and EVSE wizards are
+hand-written, each being a chain with its own routing.
 """
 import re
 import voluptuous as vol
