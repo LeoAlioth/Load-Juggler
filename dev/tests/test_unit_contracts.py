@@ -17,12 +17,24 @@ actually *reached*, which is where the real bugs were:
    allowlist below with a reason.
 
 Both work by reading the source, so they cover code no runtime test touches.
+
+Runnable two ways:
+  python3 dev/tests/test_unit_contracts.py   (standalone, no pytest needed)
+  pytest dev/tests/test_unit_contracts.py    (Docker / CI tier)
 """
 
 import re
+import sys
 from pathlib import Path
 
-from custom_components.dynamic_ocpp_evse import const, units
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from standalone_loader import load_pure_modules  # noqa: E402
+
+# Only const/ and units.py are needed, and neither imports Home Assistant —
+# the config-flow half of the contract is checked by reading its source.
+load_pure_modules(calc_modules=(), root_modules=("units",))
+
+from custom_components.dynamic_ocpp_evse import const, units  # noqa: E402
 
 _COMPONENT = Path(__file__).parents[2] / "custom_components" / "dynamic_ocpp_evse"
 
@@ -169,3 +181,24 @@ def test_no_new_hand_rolled_state_parsing():
         f"(to_amps/to_watts/to_volts) so the sensor's unit is honoured, or "
         f"update _RAW_PARSE_BUDGET with the reason it is safe"
     )
+
+
+# ---------------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # Deliberately pytest-free: the pure tier has to run on the developer's
+    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
+    failed = []
+    for _name, _fn in sorted(list(globals().items())):
+        if not _name.startswith("test_") or not callable(_fn):
+            continue
+        try:
+            _fn()
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            failed.append((_name, exc))
+            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
+        else:
+            print(f"PASS {_name}")
+    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    sys.exit(1 if failed else 0)

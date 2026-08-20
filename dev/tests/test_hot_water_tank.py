@@ -5,15 +5,31 @@ Machine-authored tests — not yet human-reviewed.
 resolve_tank_setpoint is the core new logic: given the tank's operating mode,
 the three setpoints, the element power and the hub state, it picks which
 setpoint (away / normal / boost) the climate entity should target.
+
+Runnable two ways:
+  python3 dev/tests/test_hot_water_tank.py   (standalone, no pytest needed)
+  pytest dev/tests/test_hot_water_tank.py    (Docker / CI tier)
 """
 
-from custom_components.dynamic_ocpp_evse.control.hot_water_tank import resolve_tank_setpoint
-from custom_components.dynamic_ocpp_evse.const import (
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from standalone_loader import load_pure_modules  # noqa: E402
+
+# control/hot_water_tank.py imports nothing but const/helpers — the actuation
+# layer's own rule — so it loads without Home Assistant installed.
+load_pure_modules(calc_modules=(), control_modules=("hot_water_tank",))
+
+from custom_components.dynamic_ocpp_evse.control.hot_water_tank import (  # noqa: E402
+    resolve_tank_setpoint,
+)
+from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     TANK_MODE_FREEZE_PROTECTION,
     TANK_MODE_NORMAL,
     TANK_MODE_SOLAR_PRIORITY,
 )
-from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
+from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (  # noqa: E402
     resolve_tank_mode_priority,
     TANK_SURPLUS_URGENCY_TIER,
 )
@@ -298,3 +314,24 @@ def test_missing_label_keeps_the_mode_tier():
         FREEZE_TIER,
         False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # Deliberately pytest-free: the pure tier has to run on the developer's
+    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
+    failed = []
+    for _name, _fn in sorted(list(globals().items())):
+        if not _name.startswith("test_") or not callable(_fn):
+            continue
+        try:
+            _fn()
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            failed.append((_name, exc))
+            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
+        else:
+            print(f"PASS {_name}")
+    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    sys.exit(1 if failed else 0)

@@ -168,6 +168,7 @@ def load_pure_modules(
     calc_modules=DEFAULT_CALC_MODULES,
     engine_modules=(),
     control_modules=(),
+    root_modules=(),
     load_calc_init=False,
 ):
     """Make the requested component modules importable without Home Assistant.
@@ -183,6 +184,11 @@ def load_pure_modules(
             nothing but const/helpers/units qualify — which is the actuation
             layer's own rule (see AGENTS.md), so "inverter" loads while the
             ones reaching for HA service helpers do not.
+        root_modules: package-root modules to load directly, by bare name
+            ("units", "helpers", "registry"). For tests whose subject IS one of
+            them, rather than tests that reach them through engine/ or
+            control/. The package root's own __init__.py is never executed —
+            that is the file that hard-imports Home Assistant.
         load_calc_init: also execute calculations/__init__.py so the package
             itself re-exports the public names (needed by callers that do
             ``from ..calculations import X`` beyond PhaseValues).
@@ -192,7 +198,8 @@ def load_pure_modules(
     """
     engine_modules = tuple(engine_modules)
     control_modules = tuple(control_modules)
-    if engine_modules or control_modules:
+    root_modules = tuple(root_modules)
+    if engine_modules or control_modules or root_modules:
         # helpers.py (preloaded below for every engine/control request) imports
         # homeassistant at module level, so the stubs go in first.
         _ensure_ha_stubs()
@@ -221,6 +228,9 @@ def load_pure_modules(
     for sub in CONST_SUBMODULES:
         _load_module_once(f"{PKG_CONST}.{sub}", const_dir / f"{sub}.py")
     _load_module_once(PKG_CONST, const_dir / "__init__.py")
+
+    for mod in root_modules:
+        _load_module_once(f"{PKG_COMP}.{mod}", COMPONENT_DIR / f"{mod}.py")
 
     calc_dir = COMPONENT_DIR / "calculations"
     for mod in calc_modules:
