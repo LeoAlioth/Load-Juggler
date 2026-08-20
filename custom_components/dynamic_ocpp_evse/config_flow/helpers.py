@@ -24,6 +24,8 @@ from ..const import (
     CONF_CHARGER_PRIORITY,
     CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
     CONF_HUB_ENTRY_ID,
+    CONF_INVERTER_MAX_POWER,
+    CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
@@ -147,6 +149,18 @@ def _validate_forecast_devices(hass, user_input: dict, errors: dict) -> str | No
             return device.name_by_user or device.name or device_id
         return device_id
     return None
+
+
+def _normalize_inverter_power_caps(data: dict) -> None:
+    """0 means "not configured" for the inverter power caps → store as None.
+
+    In-place, and the one copy for every page that collects them: the inverter
+    create chain, the inverter options page and the legacy hub-inverter page.
+    The schema builders do the reverse (``or 0``) so the round-trip holds.
+    """
+    for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
+        if data.get(key) == 0:
+            data[key] = None
 
 
 def _compose_entry_title(name: str, type_label: str) -> str:

@@ -158,6 +158,7 @@ from .helpers import (
     _SOLAR_UNIT_MAP,
     _compose_entry_title,
     _hub_phase_count,
+    _normalize_inverter_power_caps,
     _validate_entity_units,
     _validate_forecast_devices,
     scan_ocpp_chargers,
@@ -282,12 +283,6 @@ class LoadJugglerConfigFlow(
             e for e in (data.get(CONF_SOC_LIMIT_ENTITY_IDS) or []) if e
         ]
         return data
-
-    def _normalize_inverter_powers(self):
-        """Normalize inverter power values: 0 means 'not configured' → store as None."""
-        for key in [CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE]:
-            if key in self._data and self._data[key] == 0:
-                self._data[key] = None
 
     def _auto_detect_phase_entities(
         self, pattern_sets: list[dict]
@@ -1167,10 +1162,7 @@ class LoadJugglerConfigFlow(
             user_input = self._normalize_soc_limit_list(user_input)
             if not errors:
                 self._data.update(user_input)
-                # 0 means "not configured" for the power caps, as on the hub
-                for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
-                    if self._data.get(key) == 0:
-                        self._data[key] = None
+                _normalize_inverter_power_caps(self._data)
 
                 name = self._data.get(CONF_NAME, "Inverter")
                 static_data = {

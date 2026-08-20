@@ -714,7 +714,7 @@ class SchemaBuilderMixin:
                 vol.Optional(
                     CONF_INVERTER_MAX_POWER,
                     # "0 means not configured" is STORED as None
-                    # (_normalize_inverter_powers), and dict.get's fallback
+                    # (_normalize_inverter_power_caps), and dict.get's fallback
                     # does not cover a key that exists holding None — while
                     # voluptuous validates defaults, so a None default fails
                     # the NumberSelector the moment the field is left empty.
