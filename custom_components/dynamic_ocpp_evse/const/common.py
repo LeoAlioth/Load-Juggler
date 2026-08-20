@@ -10,13 +10,13 @@ from dataclasses import dataclass
 
 DOMAIN = "dynamic_ocpp_evse"
 
-# Entry types for hub/charger architecture
+# Entry types for the hub/load architecture
 ENTRY_TYPE = "entry_type"
 ENTRY_TYPE_HUB = "hub"
-ENTRY_TYPE_CHARGER = "charger"
+ENTRY_TYPE_LOAD = "charger"
 ENTRY_TYPE_GROUP = "group"
 # An inverter (a power SOURCE, optionally carrying its own battery), linked to
-# a hub via CONF_HUB_ENTRY_ID like chargers and groups. Inverter entries reuse
+# a hub via CONF_HUB_ENTRY_ID like loads and groups. Inverter entries reuse
 # the hub-level CONF_INVERTER_* / CONF_BATTERY_* key names (const/hub.py) in
 # their own options: schemas are shared with the legacy hub pages, and the
 # one-time auto-import of a hub's legacy fields is a verbatim key copy.
@@ -26,7 +26,7 @@ ENTRY_TYPE_INVERTER = "inverter"
 CONF_NAME = "name"
 CONF_ENTITY_ID = "entity_id"
 
-# Device type (charger-level) — EVSE (OCPP), smart load, hot water tank,
+# Device type (load-level) — EVSE (OCPP), smart plug, hot water tank,
 # portable power station, group
 CONF_DEVICE_TYPE = "device_type"
 DEVICE_TYPE_EVSE = "evse"
@@ -36,10 +36,11 @@ DEVICE_TYPE_POWER_STATION = "power_station"
 DEVICE_TYPE_GROUP = "group"
 DEVICE_TYPE_INVERTER = "inverter"
 
-# Charger-specific configuration keys shared by every device type
+# Load-specific configuration keys shared by every device type
 CONF_HUB_ENTRY_ID = "hub_entry_id"
+# The OCPP charge-point identifier — EVSE-only, hence the name.
 CONF_CHARGER_ID = "charger_id"
-CONF_CHARGER_PRIORITY = "charger_priority"
+CONF_LOAD_PRIORITY = "charger_priority"
 CONF_PRIORITY_ORDER = "priority_order"  # Transient form key: ordered list of device entry_ids (hub options)
 CONF_CONNECTED_TO_PHASE = "connected_to_phase"  # Which phase(s) the device is wired to
 CONF_UPDATE_FREQUENCY = "update_frequency"
@@ -60,7 +61,7 @@ CONF_MAX_CURRENT = "max_current"
 # Shared default values
 DEFAULT_PHASE_VOLTAGE = 230
 DEFAULT_UPDATE_FREQUENCY = 15
-DEFAULT_CHARGER_PRIORITY = 1
+DEFAULT_LOAD_PRIORITY = 1
 
 # Current ramp rates (A per second) — limits how fast the commanded current changes
 RAMP_UP_RATE = 0.1       # Max 0.1 A/s ramp up

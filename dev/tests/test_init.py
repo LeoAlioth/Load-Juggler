@@ -7,7 +7,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     CONF_ENTITY_ID,
     CONF_HUB_ENTRY_ID,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,

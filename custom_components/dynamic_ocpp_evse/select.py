@@ -7,7 +7,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .entities.mixins import HubEntityMixin, LoadEntityMixin
 from . import consume_plug_mode_migration
 from .const import (
-    DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID,
+    DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, CONF_NAME, CONF_ENTITY_ID,
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_POWER_STATION,
     DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
@@ -39,7 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         return
 
     # Load entries get per-load operating mode selector
-    if entry_type == ENTRY_TYPE_CHARGER:
+    if entry_type == ENTRY_TYPE_LOAD:
         name = config_entry.data.get(CONF_NAME, "Charger")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "load")
 

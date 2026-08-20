@@ -23,7 +23,7 @@ from ..const import (
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
@@ -43,11 +43,11 @@ from ..const import (
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CHARGE_LIMIT_UNIT_AMPS,
-    DEFAULT_CHARGER_PRIORITY,
+    DEFAULT_LOAD_PRIORITY,
     DEFAULT_CHARGE_LIMIT_UNIT,
     DOMAIN,
     ENTRY_TYPE,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     OCPP_ENTITY_SUFFIX_CURRENT_IMPORT,
     OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L1,
     OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L2,
@@ -225,7 +225,7 @@ def _controlled_devices(hass, hub_entry_id: str) -> list:
     return [
         e
         for e in hass.config_entries.async_entries(DOMAIN)
-        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD
         and e.data.get(CONF_HUB_ENTRY_ID) == hub_entry_id
     ]
 
@@ -235,7 +235,7 @@ def _devices_by_priority(devices: list) -> list:
     return sorted(
         devices,
         key=lambda e: (
-            get_entry_value(e, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
+            get_entry_value(e, CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY),
             e.title,
         ),
     )
@@ -280,10 +280,10 @@ def _apply_priority_order(hass, devices: list, chosen: list) -> None:
             placed.append(entry.entry_id)
     for rank, entry_id in enumerate(placed, start=1):
         child = hass.config_entries.async_get_entry(entry_id)
-        if not child or get_entry_value(child, CONF_CHARGER_PRIORITY, None) == rank:
+        if not child or get_entry_value(child, CONF_LOAD_PRIORITY, None) == rank:
             continue
         hass.config_entries.async_update_entry(
-            child, options={**child.options, CONF_CHARGER_PRIORITY: rank}
+            child, options={**child.options, CONF_LOAD_PRIORITY: rank}
         )
 
 
@@ -315,7 +315,7 @@ def scan_ocpp_chargers(hass) -> list[dict]:
     configured_charger_imports = {
         entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
         for entry in hass.config_entries.async_entries(DOMAIN)
-        if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+        if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD
     }
 
     def _existing(entity_id: str) -> str | None:

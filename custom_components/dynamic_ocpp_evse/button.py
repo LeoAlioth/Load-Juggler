@@ -8,7 +8,7 @@ from .entities.mixins import LoadEntityMixin
 from .const import (
     DOMAIN,
     ENTRY_TYPE,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     CONF_NAME,
     CONF_ENTITY_ID,
     CONF_DEVICE_TYPE,
@@ -21,7 +21,7 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     """Set up the button entity."""
     entry_type = entry.data.get(ENTRY_TYPE)
-    if entry_type != ENTRY_TYPE_CHARGER:
+    if entry_type != ENTRY_TYPE_LOAD:
         _LOGGER.debug("Skipping button setup for non-load entry: %s", entry.title)
         return
 

@@ -19,7 +19,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     CONF_NAME,
     CONF_ENTITY_ID,
     CONF_HUB_ENTRY_ID,
@@ -44,7 +44,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_SOC_TARGET_ENTITY_ID,
     CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
     CONF_POWER_BUFFER_ENTITY_ID,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
     CONF_CHARGE_RATE_UNIT,
@@ -147,7 +147,7 @@ def charger_entry(hub_entry: MockConfigEntry) -> MockConfigEntry:
         data={
             CONF_ENTITY_ID: "test_charger",
             CONF_NAME: "Test Charger",
-            ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
             CONF_CHARGER_ID: "test_charger",
             CONF_OCPP_DEVICE_ID: "ocpp_device_1",
             CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.test_charger_current_import",
@@ -155,7 +155,7 @@ def charger_entry(hub_entry: MockConfigEntry) -> MockConfigEntry:
             CONF_HUB_ENTRY_ID: hub_entry.entry_id,
         },
         options={
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
             CONF_CHARGE_RATE_UNIT: "A",
@@ -506,7 +506,7 @@ def _extra_charger_entry(hub_entry, suffix):
         data={
             CONF_ENTITY_ID: f"charger_{suffix}",
             CONF_NAME: f"Charger {suffix}",
-            ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
             CONF_CHARGER_ID: f"charger_{suffix}",
             CONF_OCPP_DEVICE_ID: f"ocpp_device_{suffix}",
             CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.test_charger_current_import",
@@ -514,7 +514,7 @@ def _extra_charger_entry(hub_entry, suffix):
             CONF_HUB_ENTRY_ID: hub_entry.entry_id,
         },
         options={
-            CONF_CHARGER_PRIORITY: 2,
+            CONF_LOAD_PRIORITY: 2,
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
             CONF_CHARGE_RATE_UNIT: "A",
@@ -970,7 +970,7 @@ async def test_no_ocpp_call_without_device_id(
         data={
             CONF_ENTITY_ID: "no_device_charger",
             CONF_NAME: "No Device",
-            ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
             CONF_CHARGER_ID: "no_device",
             # No CONF_OCPP_DEVICE_ID!
             CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.test_charger_current_import",
@@ -978,7 +978,7 @@ async def test_no_ocpp_call_without_device_id(
             CONF_HUB_ENTRY_ID: hub_entry.entry_id,
         },
         options={
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
             CONF_CHARGE_RATE_UNIT: "A",
@@ -1069,7 +1069,7 @@ async def test_absolute_profile_format(
         data={
             CONF_ENTITY_ID: "abs_charger",
             CONF_NAME: "Abs Charger",
-            ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
             CONF_CHARGER_ID: "abs_charger",
             CONF_OCPP_DEVICE_ID: "device_abs",
             CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.test_charger_current_import",
@@ -1077,7 +1077,7 @@ async def test_absolute_profile_format(
             CONF_HUB_ENTRY_ID: hub_entry.entry_id,
         },
         options={
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
             CONF_CHARGE_RATE_UNIT: "A",
@@ -1141,7 +1141,7 @@ async def test_watts_charge_rate_conversion(
         data={
             CONF_ENTITY_ID: "watts_charger",
             CONF_NAME: "Watts Charger",
-            ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
             CONF_CHARGER_ID: "watts_charger",
             CONF_OCPP_DEVICE_ID: "device_watts",
             CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.test_charger_current_import",
@@ -1149,7 +1149,7 @@ async def test_watts_charge_rate_conversion(
             CONF_HUB_ENTRY_ID: hub_entry.entry_id,
         },
         options={
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
             CONF_CHARGE_RATE_UNIT: "W",
@@ -2061,7 +2061,7 @@ def _watts_power_offered_charger(hub_entry):
         data={
             CONF_ENTITY_ID: "test_charger",
             CONF_NAME: "Test Charger",
-            ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
             CONF_CHARGER_ID: "test_charger",
             CONF_OCPP_DEVICE_ID: "test_charger",
             CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.test_charger_current_import",
@@ -2069,7 +2069,7 @@ def _watts_power_offered_charger(hub_entry):
             CONF_HUB_ENTRY_ID: hub_entry.entry_id,
         },
         options={
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
             CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
             CONF_CHARGE_RATE_UNIT: "W",

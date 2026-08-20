@@ -86,7 +86,7 @@ from .const import (
     DISTRIBUTION_MODE_SHARED,
     DOMAIN,
     ENTRY_TYPE,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     ENTRY_TYPE_GROUP,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
@@ -213,7 +213,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry.version == 2 and getattr(entry, 'minor_version', 0) < 3:
         new_data = dict(entry.data)
         if (
-            entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+            entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD
             and entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG
         ):
             new_data[MIGRATE_PLUG_SOLAR_ONLY_FLAG] = True
@@ -606,7 +606,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     if entry_type == ENTRY_TYPE_HUB:
         await _setup_hub_entry(hass, entry)
-    elif entry_type == ENTRY_TYPE_CHARGER:
+    elif entry_type == ENTRY_TYPE_LOAD:
         await _setup_load_entry(hass, entry)
     elif entry_type == ENTRY_TYPE_GROUP:
         await _setup_group_entry(hass, entry)
@@ -938,7 +938,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         # entries belong to the LOADS' entity lifecycles (they unregister
         # themselves), and a hub reload must not strand loads that stay loaded.
     
-    elif entry_type == ENTRY_TYPE_CHARGER:
+    elif entry_type == ENTRY_TYPE_LOAD:
         # Unload load platforms
         for domain in ["sensor", "number", "button", "select", "switch"]:
             await hass.config_entries.async_forward_entry_unload(entry, domain)

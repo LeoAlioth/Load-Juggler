@@ -106,8 +106,8 @@
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
                     "excess_trigger_margin": "How far below the export limit Excess mode engages. Inverters curtail slightly under the limit, so a trigger exactly at the limit would never fire.",
                     "excess_hysteresis": "How far the surplus may fall below the trigger before an engaged load releases. The trigger margin sets where Excess engages; this sets the band it holds through, so a load stays on instead of chattering while the surplus hovers at the trigger.",
-                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
-                    "auto_detect_phase_mapping": "Monitors charger current draws to detect incorrect phase wiring. Works for all charger types on multi-phase sites. Disable if false alerts occur.",
+                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to loads.",
+                    "auto_detect_phase_mapping": "Monitors load current draws to detect incorrect phase wiring. Works for all load types on multi-phase sites. Disable if false alerts occur.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. The band sits on the safe side of each setting: with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%; with a 20% minimum, discharging stops at 20% and resumes at 23% — the battery never runs below the floor.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
@@ -203,7 +203,7 @@
             },
             "select_hub": {
                 "title": "Select Hub",
-                "description": "Select which electrical hub to add this charger to",
+                "description": "Select which electrical hub to add this load to",
                 "data": {
                     "hub_entry_id": "Home Electrical Hub"
                 }
@@ -480,8 +480,8 @@
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
                     "excess_trigger_margin": "How far below the export limit Excess mode engages. Inverters curtail slightly under the limit, so a trigger exactly at the limit would never fire.",
                     "excess_hysteresis": "How far the surplus may fall below the trigger before an engaged load releases. The trigger margin sets where Excess engages; this sets the band it holds through, so a load stays on instead of chattering while the surplus hovers at the trigger.",
-                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
-                    "auto_detect_phase_mapping": "Monitors charger current draws to detect incorrect phase wiring. Works for all charger types on multi-phase sites. Disable if false alerts occur.",
+                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to loads.",
+                    "auto_detect_phase_mapping": "Monitors load current draws to detect incorrect phase wiring. Works for all load types on multi-phase sites. Disable if false alerts occur.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. The band sits on the safe side of each setting: with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%; with a 20% minimum, discharging stops at 20% and resumes at 23% — the battery never runs below the floor.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",

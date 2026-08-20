@@ -7,7 +7,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from .entities.mixins import HubEntityMixin, LoadEntityMixin, InverterEntityMixin
 from .const import (
-    ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, ENTRY_TYPE_INVERTER,
+    ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, ENTRY_TYPE_INVERTER,
     CONF_NAME, CONF_ENTITY_ID,
     CONF_HUB_ENTRY_ID, CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID,
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION,
@@ -24,7 +24,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     """Set up switch entities."""
     entry_type = config_entry.data.get(ENTRY_TYPE)
 
-    if entry_type == ENTRY_TYPE_CHARGER:
+    if entry_type == ENTRY_TYPE_LOAD:
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "load")
         name = config_entry.data.get(CONF_NAME, "Charger")
         hub_entry_id = config_entry.data.get(CONF_HUB_ENTRY_ID)

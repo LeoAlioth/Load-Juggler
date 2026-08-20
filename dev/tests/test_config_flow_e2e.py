@@ -15,7 +15,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     CONF_NAME,
     CONF_ENTITY_ID,
     CONF_HUB_ENTRY_ID,
@@ -53,7 +53,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
     CONF_WIRING_TOPOLOGY,
     DEFAULT_WIRING_TOPOLOGY,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
     CONF_CHARGER_L1_PHASE,
@@ -93,11 +93,11 @@ def _plug_entry(hub, name, priority=1):
         data={
             CONF_NAME: name,
             CONF_ENTITY_ID: name.lower().replace(" ", "_"),
-            ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
             CONF_DEVICE_TYPE: DEVICE_TYPE_PLUG,
             CONF_HUB_ENTRY_ID: hub.entry_id,
         },
-        options={CONF_CHARGER_PRIORITY: priority},
+        options={CONF_LOAD_PRIORITY: priority},
     )
 
 
@@ -465,7 +465,7 @@ async def test_charger_discovery_creates_entry(
         user_input={
             CONF_NAME: "Wallbox Pro",
             CONF_ENTITY_ID: "wallbox",
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -502,7 +502,7 @@ async def test_charger_discovery_creates_entry(
 
     # Verify entry data
     entry = result["result"]
-    assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_CHARGER
+    assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD
     assert entry.data[CONF_HUB_ENTRY_ID] == mock_hub_entry.entry_id
     assert entry.data[CONF_CHARGER_ID] == "wallbox"
     assert entry.data[CONF_OCPP_DEVICE_ID] == "device_wb_pro"
@@ -549,7 +549,7 @@ async def test_charger_discovery_duplicate_aborts(
         user_input={
             CONF_NAME: "Wallbox Dup",
             CONF_ENTITY_ID: "wallbox_dup",
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
         },
     )
     result1 = await hass.config_entries.flow.async_configure(
@@ -876,7 +876,7 @@ async def test_options_flow_charger_saves_changes(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
-            CONF_CHARGER_PRIORITY: 2,
+            CONF_LOAD_PRIORITY: 2,
         },
     )
 
@@ -913,7 +913,7 @@ async def test_options_flow_charger_saves_changes(
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     # Options should now contain the submitted values
-    assert mock_charger_entry.options.get(CONF_CHARGER_PRIORITY) == 2
+    assert mock_charger_entry.options.get(CONF_LOAD_PRIORITY) == 2
     assert mock_charger_entry.options.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT) == 8
     assert mock_charger_entry.options.get(CONF_UPDATE_FREQUENCY) == 30
 
@@ -941,7 +941,7 @@ async def test_options_flow_charger_validates(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
         },
     )
 
@@ -992,7 +992,7 @@ async def test_options_flow_charger_edits_ocpp_device_id(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
             CONF_OCPP_DEVICE_ID: "device_wallbox_renamed",
         },
     )
@@ -1092,8 +1092,8 @@ async def test_options_flow_priority_reorders_devices(
     )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert get_entry_value(second, CONF_CHARGER_PRIORITY, None) == 1
-    assert get_entry_value(first, CONF_CHARGER_PRIORITY, None) == 2
+    assert get_entry_value(second, CONF_LOAD_PRIORITY, None) == 1
+    assert get_entry_value(first, CONF_LOAD_PRIORITY, None) == 2
 
 
 # ── Read-only pages: Overview + "How it decides" ───────────────────────

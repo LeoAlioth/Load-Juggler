@@ -22,7 +22,7 @@ from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
     CONF_CIRCUIT_GROUP_MEMBERS,
@@ -38,7 +38,7 @@ from ..const import (
     CONF_STATION_MIN_CHARGE_POWER,
     CONF_TANK_POWER_DEVICE_ID,
     CONF_TANK_POWER_ENTITY_ID,
-    DEFAULT_CHARGER_PRIORITY,
+    DEFAULT_LOAD_PRIORITY,
     DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
     DEFAULT_STATION_MAX_CHARGE_POWER,
     DEFAULT_STATION_MIN_CHARGE_POWER,
@@ -47,7 +47,7 @@ from ..const import (
     DEVICE_TYPE_POWER_STATION,
     DOMAIN,
     ENTRY_TYPE,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     ENTRY_TYPE_GROUP,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
@@ -293,7 +293,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         if entry_type == ENTRY_TYPE_HUB:
             return await self.async_step_hub_grid()
-        if entry_type == ENTRY_TYPE_CHARGER:
+        if entry_type == ENTRY_TYPE_LOAD:
             device_type = self.config_entry.data.get(CONF_DEVICE_TYPE)
             if device_type == DEVICE_TYPE_PLUG:
                 return await self.async_step_plug()
@@ -499,9 +499,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         def _schema(defaults: dict[str, Any]) -> vol.Schema:
             fields = {
                 vol.Required(
-                    CONF_CHARGER_PRIORITY,
+                    CONF_LOAD_PRIORITY,
                     default=defaults.get(
-                        CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY
+                        CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
                     ),
                 ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
             }
@@ -645,7 +645,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         load_options = []
         for entry in self.hass.config_entries.async_entries(DOMAIN):
             if (
-                entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+                entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD
                 and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry_id
             ):
                 load_options.append(

@@ -12,11 +12,11 @@ from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     CONF_NAME,
     CONF_ENTITY_ID,
     CONF_HUB_ENTRY_ID,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
     CONF_CHARGER_L1_PHASE,
@@ -111,7 +111,7 @@ async def test_charger_current_validation_min_exceeds_max(
         user_input={
             CONF_NAME: "Test Charger",
             CONF_ENTITY_ID: "test_charger",
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -162,7 +162,7 @@ async def test_charger_current_validation_min_exceeds_max(
         user_input={
             CONF_NAME: "Test Charger 2",
             CONF_ENTITY_ID: "test_charger_2",
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
         },
     )
 
@@ -211,7 +211,7 @@ async def test_charger_config_creates_entry(
         user_input={
             CONF_NAME: "Valid Charger",
             CONF_ENTITY_ID: "valid_charger",
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -247,7 +247,7 @@ async def test_charger_config_creates_entry(
     assert result["type"] == FlowResultType.CREATE_ENTRY
     # Name already contains "Charger" — the type label is not appended again.
     assert result["title"] == "Valid Charger"
-    assert result["data"][ENTRY_TYPE] == ENTRY_TYPE_CHARGER
+    assert result["data"][ENTRY_TYPE] == ENTRY_TYPE_LOAD
 
 
 async def test_options_flow_hub_shows_menu(

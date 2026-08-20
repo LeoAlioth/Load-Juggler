@@ -21,7 +21,7 @@ from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
     CONF_CIRCUIT_GROUP_MEMBERS,
     CONF_DEVICE_TYPE,
@@ -55,7 +55,7 @@ from ..const import (
     CONF_WIRING_TOPOLOGY,
     DEFAULT_BATTERY_SOC_FULL,
     DEFAULT_BATTERY_SOC_MIN,
-    DEFAULT_CHARGER_PRIORITY,
+    DEFAULT_LOAD_PRIORITY,
     DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
     DEFAULT_DISTRIBUTION_MODE,
     DEFAULT_HEATING_ELEMENT_POWER,
@@ -297,7 +297,7 @@ def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
     parts = [f"**{load_entry.title}**", _DEVICE_TYPE_LABELS.get(device_type, "Load")]
     parts.append(_load_mode(hass, load_entry))
 
-    priority = get_entry_value(load_entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
+    priority = get_entry_value(load_entry, CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY)
     rank = (runtime.get("load_ranks") or {}).get(load_entry.entry_id)
     if rank is not None and rank != priority:
         parts.append(f"priority {priority} (served {rank}.)")
@@ -507,7 +507,7 @@ def _load_overview_lines(hass, entry) -> list[str]:
     lines.append("**🔌 This load**")
     lines.append(f"- Type: {_DEVICE_TYPE_LABELS.get(device_type, 'Load')}")
     lines.append(f"- Operating mode: {_load_mode(hass, entry)}")
-    priority = get_entry_value(entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
+    priority = get_entry_value(entry, CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY)
     rank = (runtime.get("load_ranks") or {}).get(entry.entry_id)
     lines.append(
         f"- Priority: {priority}"
@@ -773,7 +773,7 @@ def _summary_text(hass, hub_entry_id: str) -> str:
                 )
                 or get_entry_value(e, CONF_OPERATING_MODE, None),
             ).priority,
-            get_entry_value(e, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
+            get_entry_value(e, CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY),
             e.title,
         ),
     )

@@ -27,9 +27,9 @@ from ..const import (
     CONF_STATION_CHARGE_SPEED_ENTITY_ID,
     CONF_STATION_BATTERY_LEVEL_ENTITY_ID,
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_HUB_ENTRY_ID,
-    DEFAULT_CHARGER_PRIORITY,
+    DEFAULT_LOAD_PRIORITY,
 )
 from ..helpers import get_entry_value
 from .. import units
@@ -116,8 +116,8 @@ class LoadJugglerEffectivePrioritySensor(LoadJugglerLoadSensor):
         self._attrs = {
             "configured_priority": get_entry_value(
                 self.config_entry,
-                CONF_CHARGER_PRIORITY,
-                DEFAULT_CHARGER_PRIORITY,
+                CONF_LOAD_PRIORITY,
+                DEFAULT_LOAD_PRIORITY,
             ),
             "total_devices": self._ranked_siblings(ranks),
         }

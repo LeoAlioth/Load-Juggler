@@ -11,7 +11,7 @@ from .const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     CONF_NAME,
     CONF_ENTITY_ID,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
@@ -96,7 +96,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
         _LOGGER.info(f"Setting up hub number entities: {[entity.unique_id for entity in entities]}")
 
-    elif entry_type == ENTRY_TYPE_CHARGER:
+    elif entry_type == ENTRY_TYPE_LOAD:
         device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         if device_type == DEVICE_TYPE_PLUG:
             entities = [

@@ -28,7 +28,7 @@ from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
     CONF_CIRCUIT_GROUP_MEMBERS,
     CONF_CLIMATE_ENTITY_ID,
@@ -59,7 +59,7 @@ from ..const import (
     CONF_TANK_NORMAL_TEMPERATURE,
     CONF_TANK_POWER_ENTITY_ID,
     CONF_TANK_PRIORITIZE_BELOW_NORMAL,
-    DEFAULT_CHARGER_PRIORITY,
+    DEFAULT_LOAD_PRIORITY,
     DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
     DEFAULT_HEATING_ELEMENT_POWER,
     DEFAULT_MAX_CHARGE_CURRENT,
@@ -81,7 +81,7 @@ from ..const import (
     DEVICE_TYPE_POWER_STATION,
     DOMAIN,
     ENTRY_TYPE,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     SETTLE_DRAW_CYCLES,
     SETTLE_DRAW_TOLERANCE,
     SETTLE_PERMIT_MARGIN,
@@ -792,7 +792,7 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None):
         device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         load_entity_id = entry.data.get(CONF_ENTITY_ID, f"load_{entry.entry_id}")
         priority = get_entry_value(
-            entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY
+            entry, CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
         )
 
         if device_type == DEVICE_TYPE_PLUG:
@@ -848,7 +848,7 @@ def _build_circuit_groups(hass, hub_entry_id):
     valid_load_ids = {
         e.entry_id
         for e in hass.config_entries.async_entries(DOMAIN)
-        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD
     }
     groups = []
     for entry in group_entries:

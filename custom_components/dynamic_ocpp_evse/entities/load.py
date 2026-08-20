@@ -10,7 +10,7 @@ from homeassistant.core import callback
 from datetime import datetime, timezone
 from ..const import (
     CONF_CHARGER_ID,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_CHARGE_PAUSE_DURATION,
     CONF_CONNECTED_TO_PHASE,
     CONF_DEVICE_TYPE,
@@ -23,7 +23,7 @@ from ..const import (
     CONF_SOLAR_GRACE_PERIOD,
     CONF_STATION_MIN_CHARGE_POWER,
     CONF_UPDATE_FREQUENCY,
-    DEFAULT_CHARGER_PRIORITY,
+    DEFAULT_LOAD_PRIORITY,
     DEFAULT_CHARGE_PAUSE_DURATION,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_MIN_CHARGE_CURRENT,
@@ -206,7 +206,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             # Published attribute name predates the charger → load rename and
             # is public API for automations/templates — kept as it shipped.
             "charger_priority": get_entry_value(
-                self.config_entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY
+                self.config_entry, CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
             ),
             "hub_entry_id": self.config_entry.data.get(CONF_HUB_ENTRY_ID),
             "auto_reset_mismatch_count": self._mismatch_count,

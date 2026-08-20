@@ -34,7 +34,7 @@ from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_CHARGE_CONTROL_DEADBAND,
     CONF_CHARGE_CONTROL_INTERVAL,
     CONF_CHARGE_LIMIT_ENTITY_ID,
@@ -105,7 +105,7 @@ from ..const import (
     DEFAULT_BATTERY_NOMINAL_VOLTAGE,
     DEFAULT_BATTERY_SOC_FULL,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
-    DEFAULT_CHARGER_PRIORITY,
+    DEFAULT_LOAD_PRIORITY,
     DEFAULT_CHARGE_CONTROL_DEADBAND,
     DEFAULT_CHARGE_CONTROL_INTERVAL,
     DEFAULT_CHARGE_LIMIT_NORMAL,
@@ -1141,8 +1141,8 @@ class SchemaBuilderMixin:
                 default=defaults.get(CONF_ENTITY_ID, ""),
             ): str,
             vol.Required(
-                CONF_CHARGER_PRIORITY,
-                default=defaults.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
+                CONF_LOAD_PRIORITY,
+                default=defaults.get(CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY),
             ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
         }
 
@@ -1405,9 +1405,9 @@ class SchemaBuilderMixin:
                     default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
                 ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
                 vol.Required(
-                    CONF_CHARGER_PRIORITY,
+                    CONF_LOAD_PRIORITY,
                     default=defaults.get(
-                        CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY
+                        CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
                     ),
                 ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
                 self._optional_entity_field(
@@ -1527,9 +1527,9 @@ class SchemaBuilderMixin:
                     default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
                 ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
                 vol.Required(
-                    CONF_CHARGER_PRIORITY,
+                    CONF_LOAD_PRIORITY,
                     default=defaults.get(
-                        CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY
+                        CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
                     ),
                 ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
                 self._optional_entity_field(
@@ -1673,9 +1673,9 @@ class SchemaBuilderMixin:
                     default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
                 ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
                 vol.Required(
-                    CONF_CHARGER_PRIORITY,
+                    CONF_LOAD_PRIORITY,
                     default=defaults.get(
-                        CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY
+                        CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
                     ),
                 ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
                 vol.Required(

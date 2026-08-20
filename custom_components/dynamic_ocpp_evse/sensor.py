@@ -28,7 +28,7 @@ from .const import (
     DEVICE_TYPE_POWER_STATION,
     DOMAIN,
     ENTRY_TYPE,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     ENTRY_TYPE_GROUP,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
@@ -316,7 +316,7 @@ async def async_setup_entry(
         )
         return
 
-    if entry_type != ENTRY_TYPE_CHARGER:
+    if entry_type != ENTRY_TYPE_LOAD:
         _LOGGER.debug(
             "Skipping sensor setup for unknown entry type: %s", config_entry.title
         )

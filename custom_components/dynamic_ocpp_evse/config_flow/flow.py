@@ -36,7 +36,7 @@ from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_PAUSE_DURATION,
     CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
@@ -139,7 +139,7 @@ from ..const import (
     DEVICE_TYPE_POWER_STATION,
     DOMAIN,
     ENTRY_TYPE,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     ENTRY_TYPE_GROUP,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
@@ -430,12 +430,12 @@ class LoadJugglerConfigFlow(
             if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_HUB
         ]
 
-    def _get_charger_entries(self) -> list:
-        """Get all charger config entries."""
+    def _get_load_entries(self) -> list:
+        """Get all load config entries."""
         return [
             entry
             for entry in self.hass.config_entries.async_entries(DOMAIN)
-            if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+            if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD
         ]
 
     # ==================== HUB CONFIGURATION STEPS ====================
@@ -665,7 +665,7 @@ class LoadJugglerConfigFlow(
     async def async_step_select_hub(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Charger step 1: Select which hub to add charger to."""
+        """Load step 1: Select which hub to add the load to."""
         errors: dict[str, str] = {}
         hubs = self._get_hub_entries()
 
@@ -746,7 +746,7 @@ class LoadJugglerConfigFlow(
                 static_data = {
                     CONF_ENTITY_ID: entity_id,
                     CONF_NAME: name,
-                    ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+                    ENTRY_TYPE: ENTRY_TYPE_LOAD,
                     CONF_DEVICE_TYPE: device_type,
                     CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
                     **{key: self._data.get(key) for key in static_keys},
@@ -794,7 +794,7 @@ class LoadJugglerConfigFlow(
             default_name="Smart Load",
             default_entity_id="lj_smart_load",
             defaults={
-                CONF_CHARGER_PRIORITY: len(self._get_charger_entries()) + 1,
+                CONF_LOAD_PRIORITY: len(self._get_load_entries()) + 1,
                 CONF_PLUG_POWER_RATING: DEFAULT_PLUG_POWER_RATING,
                 CONF_PLUG_MAX_CURRENT: DEFAULT_PLUG_MAX_CURRENT,
                 CONF_CONNECTED_TO_PHASE: "A",
@@ -830,7 +830,7 @@ class LoadJugglerConfigFlow(
             default_name="Hot Water Tank",
             default_entity_id="lj_hot_water_tank",
             defaults={
-                CONF_CHARGER_PRIORITY: len(self._get_charger_entries()) + 1,
+                CONF_LOAD_PRIORITY: len(self._get_load_entries()) + 1,
                 CONF_HEATING_ELEMENT_POWER: DEFAULT_HEATING_ELEMENT_POWER,
                 CONF_TANK_AWAY_TEMPERATURE: DEFAULT_TANK_AWAY_TEMPERATURE,
                 CONF_TANK_NORMAL_TEMPERATURE: DEFAULT_TANK_NORMAL_TEMPERATURE,
@@ -868,7 +868,7 @@ class LoadJugglerConfigFlow(
             default_name="Power Station",
             default_entity_id="lj_power_station",
             defaults={
-                CONF_CHARGER_PRIORITY: len(self._get_charger_entries()) + 1,
+                CONF_LOAD_PRIORITY: len(self._get_load_entries()) + 1,
                 CONF_STATION_MIN_CHARGE_POWER: DEFAULT_STATION_MIN_CHARGE_POWER,
                 CONF_STATION_MAX_CHARGE_POWER: DEFAULT_STATION_MAX_CHARGE_POWER,
                 CONF_STATION_NORMAL_RESERVE: DEFAULT_STATION_NORMAL_RESERVE,
@@ -979,7 +979,7 @@ class LoadJugglerConfigFlow(
         load_options = []
         for entry in self.hass.config_entries.async_entries(DOMAIN):
             if (
-                entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
+                entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD
                 and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry_id
             ):
                 load_options.append(
@@ -1539,8 +1539,8 @@ class LoadJugglerConfigFlow(
             else:
                 return await self.async_step_charger_current()
 
-        existing_chargers = self._get_charger_entries()
-        next_priority = len(existing_chargers) + 1
+        existing_loads = self._get_load_entries()
+        next_priority = len(existing_loads) + 1
 
         data_schema = self._charger_info_schema(
             {
@@ -1550,8 +1550,8 @@ class LoadJugglerConfigFlow(
                 CONF_ENTITY_ID: self._data.get(
                     CONF_ENTITY_ID, f"lj_{self._selected_charger['id']}"
                 ),
-                CONF_CHARGER_PRIORITY: self._data.get(
-                    CONF_CHARGER_PRIORITY, next_priority
+                CONF_LOAD_PRIORITY: self._data.get(
+                    CONF_LOAD_PRIORITY, next_priority
                 ),
                 CONF_OCPP_DEVICE_ID: self._data.get(
                     CONF_OCPP_DEVICE_ID, self._selected_charger.get("device_id")
@@ -1677,7 +1677,7 @@ class LoadJugglerConfigFlow(
         if user_input is not None:
             self._data.update(user_input)
 
-            self._data[ENTRY_TYPE] = ENTRY_TYPE_CHARGER
+            self._data[ENTRY_TYPE] = ENTRY_TYPE_LOAD
             self._data[CONF_CHARGER_ID] = self._selected_charger["id"]
             # Keep the OCPP device ID resolved above (user edit or detected).
             self._data[CONF_OCPP_DEVICE_ID] = ocpp_device_id
@@ -1719,7 +1719,7 @@ class LoadJugglerConfigFlow(
             static_data = {
                 CONF_ENTITY_ID: charger_entity_id,
                 CONF_NAME: charger_name,
-                ENTRY_TYPE: ENTRY_TYPE_CHARGER,
+                ENTRY_TYPE: ENTRY_TYPE_LOAD,
                 CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
                 CONF_CHARGER_ID: self._data.get(CONF_CHARGER_ID),
                 CONF_OCPP_DEVICE_ID: self._data.get(CONF_OCPP_DEVICE_ID),
