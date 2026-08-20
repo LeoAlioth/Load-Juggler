@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 
 _LOGGER = logging.getLogger(__name__)
 
-# Valid charger phase masks — the site phases a load may occupy. Any other
+# Valid load phase masks — the site phases a load may occupy. Any other
 # value (e.g. "L1", "D", "BA", "") is rejected by get_available/deduct rather
 # than crashing the calculation with an AttributeError.
 VALID_PHASE_MASKS = frozenset({"A", "B", "C", "AB", "AC", "BC", "ABC"})
@@ -17,10 +17,10 @@ VALID_PHASE_MASKS = frozenset({"A", "B", "C", "AB", "AC", "BC", "ABC"})
 
 @dataclass
 class LoadContext:
-    """Individual EVSE/charger state and configuration."""
+    """Individual managed-load state and configuration."""
     # Identity
-    charger_id: str  # Config entry ID
-    entity_id: str   # Entity ID (e.g., "my_charger")
+    load_id: str  # Config entry ID
+    entity_id: str   # Entity ID (e.g., "my_load")
 
     # Configuration
     min_current: float
@@ -39,8 +39,8 @@ class LoadContext:
     def __post_init__(self):
         """Set default phase mask from L1/L2/L3 → site phase mapping.
 
-        For OCPP chargers, the mapping determines which site phases the charger
-        occupies. For smart loads, active_phases_mask is set explicitly via
+        For OCPP chargers, the mapping determines which site phases the
+        charger occupies. For smart loads, active_phases_mask is set explicitly via
         connected_to_phase in config and this default is skipped.
         """
         if self.active_phases_mask is None:
@@ -72,7 +72,7 @@ class LoadContext:
     # cycles — it has reached a ceiling below what we offered, rather than
     # still tracking our ramping permit. Only then is the draw trusted as the
     # EVSE's footprint; while it is moving the engine reserves the full permit.
-    # Set by the HA layer (or the test harness) from per-charger draw history.
+    # Set by the HA layer (or the test harness) from per-load draw history.
     draw_settled: bool = False
 
     # Device hardware current rating (A) — the ceiling for available_current.
@@ -138,7 +138,7 @@ class CircuitGroup:
     group_id: str
     name: str
     current_limit: float  # Per-phase current limit (A)
-    member_ids: list[str] = field(default_factory=list)  # charger_ids of member loads
+    member_ids: list[str] = field(default_factory=list)  # load_ids of member loads
 
 
 @dataclass
@@ -207,8 +207,8 @@ class SiteContext:
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
     is_off_grid: bool = False  # True when no grid CT sensors are configured
 
-    # Chargers at this site
-    chargers: list[LoadContext] = field(default_factory=list)
+    # Loads at this site
+    loads: list[LoadContext] = field(default_factory=list)
 
     # Circuit groups (shared breaker limits)
     circuit_groups: list[CircuitGroup] = field(default_factory=list)
@@ -305,7 +305,7 @@ class PhaseConstraints:
         return self._element_op(other, max)
 
     def get_available(self, mask: str) -> float:
-        """Get per-phase current available for a charger with given phase mask.
+        """Get per-phase current available for a load with given phase mask.
 
         Implements Multi-Phase Constraint Principle:
         - 1-phase on A: min(A, any 2-phase combo containing A, ABC)

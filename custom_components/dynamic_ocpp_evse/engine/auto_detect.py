@@ -339,7 +339,7 @@ def _check_draw_phase_correlation(pm_state: dict,
 
     Always updates prev snapshots (even when inactive) for accurate deltas.
     """
-    cid = charger.charger_id
+    cid = charger.load_id
     cs = pm_state.setdefault(cid, {
         "prev_draw": 0.0,
         "prev_grid_a": 0.0, "prev_grid_b": 0.0, "prev_grid_c": 0.0,

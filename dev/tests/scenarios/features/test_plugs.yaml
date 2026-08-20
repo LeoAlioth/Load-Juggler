@@ -26,7 +26,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         power_rating: 1500
@@ -56,7 +56,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         power_rating: 2000
@@ -88,7 +88,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "evse_1"
         min_current: 6
         max_current: 16
@@ -131,7 +131,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "evse_1"
         min_current: 6
         max_current: 16
@@ -174,7 +174,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         power_rating: 11000
@@ -205,7 +205,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         power_rating: 2000
@@ -237,7 +237,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         operating_mode: Continuous

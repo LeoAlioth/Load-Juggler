@@ -71,7 +71,7 @@ def _plug(
     """
     amps = watts / V
     load = LoadContext(
-        charger_id=entity_id,
+        load_id=entity_id,
         entity_id=entity_id,
         min_current=amps,
         max_current=amps,
@@ -117,7 +117,7 @@ def _site(
         inverter_output_total=output,
         net_grid_power=net_grid,
     )
-    site.chargers = list(loads)
+    site.loads = list(loads)
     return site
 
 
@@ -262,7 +262,7 @@ def test_excess_near_full_shortcut_is_gated():
     assert _close(_limit(covered, plug), 2000.0 / V)
     saturated = _site([_plug(2000, behavior=BEHAVIOR_BINARY_EXCESS)],
                       rating=5000.0, output=5000.0, soc=98.0)
-    assert _close(_limit(saturated, saturated.chargers[0]), 0.0)
+    assert _close(_limit(saturated, saturated.loads[0]), 0.0)
 
 
 def test_excess_falls_through_to_the_export_rule_when_saturated():

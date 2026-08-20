@@ -255,7 +255,7 @@ def _build_hub_result(
     total_evse_power = round(
         sum(
             (c.l1_current + c.l2_current + c.l3_current) * voltage
-            for c in site.chargers
+            for c in site.loads
         ),
         0,
     )
@@ -415,7 +415,7 @@ def _build_hub_result(
     inverter_remaining_current = inverter_sourced / voltage if voltage else 0
 
     # Build per-charger operating modes dict
-    charger_modes = {c.charger_id: c.operating_mode for c in site.chargers}
+    charger_modes = {c.load_id: c.operating_mode for c in site.loads}
 
     # Per-charger effective priority rank — the order the engine serves loads
     # when power is contended: mode urgency first, then the configured priority
@@ -423,39 +423,39 @@ def _build_hub_result(
     # 1 is served first. Exposed so each device can show where it really
     # stands, since mode urgency can override the configured priority number.
     _ranked = sorted(
-        site.chargers,
+        site.loads,
         key=lambda c: (c.mode_priority, c.priority),
     )
-    charger_rank = {c.charger_id: idx + 1 for idx, c in enumerate(_ranked)}
+    charger_rank = {c.load_id: idx + 1 for idx, c in enumerate(_ranked)}
 
     # Per-charger actual draw — the measured current the load is really
     # pulling (sum of phase currents). For a binary load this is what the
     # device draws right now, which can be far below its reserved allocation
     # (e.g. a metered plug switched on but its appliance idle).
     charger_draw = {
-        c.charger_id: round(c.l1_current + c.l2_current + c.l3_current, 1)
-        for c in site.chargers
+        c.load_id: round(c.l1_current + c.l2_current + c.l3_current, 1)
+        for c in site.loads
     }
 
     # Per-charger active phase count (for W-based OCPP profiles)
     # Uses actual draw to detect 1-phase car on 3-phase EVSE; falls back to configured phases.
     charger_active_phases = {}
     charger_phase_masks = {}
-    for c in site.chargers:
+    for c in site.loads:
         active = sum(
             1 for cur in (c.l1_current, c.l2_current, c.l3_current) if cur > 1.0
         )
-        charger_active_phases[c.charger_id] = active if active > 0 else c.phases
+        charger_active_phases[c.load_id] = active if active > 0 else c.phases
         # Live site-phase mask: which site phases A/B/C are actively drawing
         site_draw = c.get_site_phase_draw()
-        charger_phase_masks[c.charger_id] = "".join(
+        charger_phase_masks[c.load_id] = "".join(
             phase for phase, draw in zip(("A", "B", "C"), site_draw) if draw > 1.0
         )
 
     return {
         CONF_TOTAL_ALLOCATED_CURRENT: round(sum(charger_targets.values()), 1),
         CONF_PHASES: site.num_phases,
-        "calc_used": "calculate_all_charger_targets",
+        "calc_used": "calculate_all_load_targets",
         # Site-level data for hub sensor
         "battery_soc": site.battery_soc,
         "battery_soc_min": site.battery_soc_min,

@@ -58,7 +58,7 @@ THRESHOLD = 13000.0   # export allowance (grid export limit − trigger margin)
 def _plug(watts, phase="A"):
     """A binary managed load drawing ``watts`` on one site phase."""
     return LoadContext(
-        charger_id="plug",
+        load_id="plug",
         entity_id="plug",
         min_current=0,
         max_current=watts / V,
@@ -92,7 +92,7 @@ def _site(grid_a, grid_b=None, grid_c=None, battery_w=None, soc=60.0,
         battery_max_charge_power=charge_max,
         excess_export_threshold=threshold,
         is_off_grid=off_grid,
-        chargers=list(loads),
+        loads=list(loads),
     )
 
 
@@ -103,7 +103,7 @@ def _margin(site, hysteresis=0.0):
     grid_without_managed_draws) runs first, excess_margin() second.
     """
     draws = [0.0, 0.0, 0.0]
-    for c in site.chargers:
+    for c in site.loads:
         a, b, cc = c.get_site_phase_draw()
         draws[0] += a
         draws[1] += b

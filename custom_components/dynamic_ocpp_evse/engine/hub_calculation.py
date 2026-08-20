@@ -20,7 +20,7 @@ from ..calculations import (
     SiteContext,
     LoadContext,  # noqa: F401 - re-exported via __all__
     PhaseValues,
-    calculate_all_charger_targets,
+    calculate_all_load_targets,
     excess_margin,
 )
 from ..const import (
@@ -101,7 +101,7 @@ def _apply_feedback_loop(site, solar_is_derived, members):
 
     # Sum charger draws per site phase
     total_draws = [0.0, 0.0, 0.0]
-    for c in site.chargers:
+    for c in site.loads:
         a_draw, b_draw, c_draw = c.get_site_phase_draw()
         total_draws[0] += a_draw
         total_draws[1] += b_draw
@@ -397,8 +397,8 @@ def _apply_phase_remaps(site, auto_detect_state):
     cycle (see _run_auto_detection). Mutates the loads in place.
     """
     phase_remaps = auto_detect_state.get("phase_remap", {})
-    for charger in site.chargers:
-        remap = phase_remaps.get(charger.charger_id)
+    for charger in site.loads:
+        remap = phase_remaps.get(charger.load_id)
         if remap:
             old = (charger.l1_phase, charger.l2_phase, charger.l3_phase)
             charger.l1_phase = remap["l1_phase"]
@@ -541,7 +541,7 @@ def _apply_grid_stale_fallback(site, grid_stale_duration):
             grid_stale_duration,
             GRID_STALE_TIMEOUT,
         )
-        for charger in site.chargers:
+        for charger in site.loads:
             # Only an EVSE already charging keeps a minimum-current permit (a
             # hard stop mid-charge is worse than 6 A on a blind site). Binary
             # loads (plugs/tanks) and idle EVSEs get no permit — a permit > 0
@@ -568,7 +568,7 @@ def _build_group_data(site):
     """
     # --- Build per-group allocation data for group sensors ---
     group_data = {}
-    charger_by_id = {c.charger_id: c for c in site.chargers}
+    charger_by_id = {c.load_id: c for c in site.loads}
     for group in site.circuit_groups:
         per_phase_draw = {"A": 0.0, "B": 0.0, "C": 0.0}
         for mid in group.member_ids:
@@ -608,7 +608,7 @@ def _run_auto_detection(hub_entry, auto_detect_state, smoothed_phases, site):
     inv_notif = check_inversion(
         auto_detect_state,
         smoothed_phases,
-        site.chargers,
+        site.loads,
         hub_entry.entry_id,
         get_entry_value(hub_entry, CONF_NAME, "Hub"),
     )
@@ -618,7 +618,7 @@ def _run_auto_detection(hub_entry, auto_detect_state, smoothed_phases, site):
         pm_results = check_phase_mapping(
             auto_detect_state,
             smoothed_phases,
-            site.chargers,
+            site.loads,
             hub_entry.entry_id,
         )
         for notif in pm_results:
@@ -1017,20 +1017,20 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     )
 
     # --- Calculate targets ---
-    calculate_all_charger_targets(site)
+    calculate_all_load_targets(site)
 
     grid_stale = _apply_grid_stale_fallback(site, grid_stale_duration)
 
-    charger_targets = {c.charger_id: c.allocated_current for c in site.chargers}
-    charger_available = {c.charger_id: c.available_current for c in site.chargers}
-    charger_names = {c.charger_id: c.entity_id for c in site.chargers}
+    charger_targets = {c.load_id: c.allocated_current for c in site.loads}
+    charger_available = {c.load_id: c.available_current for c in site.loads}
+    charger_names = {c.load_id: c.entity_id for c in site.loads}
 
     # Persist this cycle's permit for next-cycle settle detection — an EVSE
     # only counts as "settled and under-drawing" when its measured draw stays
     # below the permit we last offered it.
     chargers_rt = hass.data[DOMAIN].get("chargers", {})
-    for c in site.chargers:
-        rt = chargers_rt.get(c.charger_id)
+    for c in site.loads:
+        rt = chargers_rt.get(c.load_id)
         if rt is not None:
             rt["_last_permit"] = c.available_current
 
@@ -1107,6 +1107,6 @@ __all__ = [
     "SiteContext",
     "LoadContext",
     "PhaseValues",
-    "calculate_all_charger_targets",
+    "calculate_all_load_targets",
     "run_hub_calculation",
 ]

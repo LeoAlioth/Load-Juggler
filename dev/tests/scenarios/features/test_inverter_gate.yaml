@@ -46,7 +46,7 @@ scenarios:
       inverter_max_power: 3000
       inverter_max_power_per_phase: 3000
       inverter_supports_asymmetric: false
-    chargers:
+    loads:
       - entity_id: "must_run"
         device_type: "plug"
         operating_mode: "Continuous"
@@ -89,7 +89,7 @@ scenarios:
       inverter_max_power: 12000
       inverter_max_power_per_phase: 12000
       inverter_supports_asymmetric: false
-    chargers:
+    loads:
       - entity_id: "must_run"
         device_type: "plug"
         operating_mode: "Continuous"
@@ -130,7 +130,7 @@ scenarios:
       inverter_max_power: 3000
       inverter_max_power_per_phase: 3000
       inverter_supports_asymmetric: false
-    chargers:
+    loads:
       - entity_id: "must_run"
         device_type: "plug"
         operating_mode: "Continuous"

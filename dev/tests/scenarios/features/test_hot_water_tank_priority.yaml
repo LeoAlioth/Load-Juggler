@@ -40,7 +40,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
       wiring_topology: series
-    chargers:
+    loads:
       - entity_id: "pond_pump"
         device_type: "plug"
         operating_mode: "Solar Priority"
@@ -93,7 +93,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
       wiring_topology: series
-    chargers:
+    loads:
       - entity_id: "pond_pump"
         device_type: "plug"
         operating_mode: "Solar Priority"
@@ -146,7 +146,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
       wiring_topology: series
-    chargers:
+    loads:
       - entity_id: "pond_pump"
         device_type: "plug"
         operating_mode: "Solar Priority"
@@ -199,7 +199,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
       wiring_topology: series
-    chargers:
+    loads:
       - entity_id: "pond_pump"
         device_type: "plug"
         operating_mode: "Solar Priority"

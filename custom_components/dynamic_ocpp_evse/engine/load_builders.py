@@ -154,7 +154,7 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     )
 
     charger = LoadContext(
-        charger_id=entry.entry_id,
+        load_id=entry.entry_id,
         entity_id=charger_entity_id,
         min_current=min_current,
         max_current=max_current,
@@ -474,7 +474,7 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     )
 
     charger = LoadContext(
-        charger_id=entry.entry_id,
+        load_id=entry.entry_id,
         entity_id=charger_entity_id,
         min_current=equivalent_current,
         max_current=equivalent_current,
@@ -606,7 +606,7 @@ def _build_power_station_charger(hass, entry, voltage, charger_entity_id, priori
         mode = STATION_MODE_STANDARD
 
     charger = LoadContext(
-        charger_id=entry.entry_id,
+        load_id=entry.entry_id,
         entity_id=charger_entity_id,
         min_current=min_current,
         max_current=max_current,
@@ -748,7 +748,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     charger_rt["tank_priority_elevated"] = elevated
 
     charger = LoadContext(
-        charger_id=entry.entry_id,
+        load_id=entry.entry_id,
         entity_id=charger_entity_id,
         min_current=equivalent_current,
         max_current=equivalent_current,
@@ -836,7 +836,7 @@ def _add_chargers_to_site(hass, site, hub_entry_id, charger_entries=None):
             )
             charger.active_phases_mask = clamped
 
-        site.chargers.append(charger)
+        site.loads.append(charger)
 
 def _build_circuit_groups(hass, hub_entry_id):
     """Build CircuitGroup objects from config entries for this hub.

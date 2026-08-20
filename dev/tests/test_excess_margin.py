@@ -30,7 +30,7 @@ HYSTERESIS = 500.0
 def _load(draw_w, voltage=230.0):
     """A managed load drawing ``draw_w`` on phase A."""
     return LoadContext(
-        charger_id="load",
+        load_id="load",
         entity_id="load",
         min_current=0,
         max_current=draw_w / voltage,
@@ -68,7 +68,7 @@ def _site(
         excess_export_threshold=export_limit,
         battery_soc_target=SOC_TARGET,
         is_off_grid=off_grid,
-        chargers=list(loads),
+        loads=list(loads),
     )
 
 

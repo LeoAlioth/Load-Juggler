@@ -22,15 +22,15 @@ scenarios:
       inverter_supports_asymmetric: False
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
     expected: # Manually verified expected result
-      charger_1:
+      load_1:
         allocated: 8.0  # 10A solar - 2A consumption = 8A
 
   - name: "1ph-1c-solar-prio-no-bat-insufficient"
@@ -53,13 +53,13 @@ scenarios:
       inverter_supports_asymmetric: False
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
     expected: # Manually verified expected result
-      charger_1:
+      load_1:
         allocated: 0  # 5A - 1A = 4A, below 6A minimum

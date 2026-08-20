@@ -31,7 +31,7 @@ from custom_components.dynamic_ocpp_evse.engine.auto_detect import (
 def _make_charger(**kwargs):
     """Create a LoadContext with sensible defaults."""
     defaults = dict(
-        charger_id="c1", entity_id="charger_1",
+        load_id="c1", entity_id="charger_1",
         min_current=6, max_current=16, phases=3,
         l1_phase="A", l2_phase="B", l3_phase="C",
         connector_status="Charging", device_type="evse",

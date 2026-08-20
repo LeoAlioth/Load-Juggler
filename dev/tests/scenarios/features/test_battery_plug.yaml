@@ -34,7 +34,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         operating_mode: "Solar Priority"
@@ -64,7 +64,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         operating_mode: "Solar Priority"
@@ -94,7 +94,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         operating_mode: "Solar Only"
@@ -124,7 +124,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         operating_mode: "Solar Only"
@@ -155,7 +155,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         operating_mode: "Excess"
@@ -186,7 +186,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         operating_mode: "Excess"

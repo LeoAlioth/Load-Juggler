@@ -19,7 +19,7 @@ scenarios:
       main_breaker_rating: 18
       phase_a_consumption: 0
       distribution_mode: "priority"
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         power_rating: 3000
@@ -54,7 +54,7 @@ scenarios:
       main_breaker_rating: 16
       phase_a_consumption: 0
       distribution_mode: "priority"
-    chargers:
+    loads:
       - entity_id: "plug_1"
         device_type: "plug"
         power_rating: 3000
@@ -91,7 +91,7 @@ scenarios:
       main_breaker_rating: 24
       phase_a_consumption: 0
       distribution_mode: "priority"
-    chargers:
+    loads:
       - entity_id: "evse_1"
         device_type: "evse"
         min_current: 6
@@ -130,7 +130,7 @@ scenarios:
       main_breaker_rating: 50
       phase_a_consumption: 0
       distribution_mode: "shared"
-    chargers:
+    loads:
       - entity_id: "evse_1"
         device_type: "evse"
         min_current: 6

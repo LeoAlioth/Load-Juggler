@@ -40,15 +40,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 0  # Below target: Solar Only blocked
 
   - name: "hyst-solar-only-at-target-rising"
@@ -69,15 +69,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 17.0  # At target: solar pool available (20A - 3A consumption = 17A)
 
   - name: "hyst-solar-only-deadband-above"
@@ -98,15 +98,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 32.0  # SOC 78% > effective target 77% → solar + battery discharge, capped at max
 
   - name: "hyst-solar-only-deadband-below"
@@ -127,15 +127,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 0  # SOC 78% < target 80% — no charging
 
   - name: "hyst-solar-only-at-lower-edge"
@@ -156,15 +156,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 17.0  # SOC 77% >= effective target 77% — still charges
 
   - name: "hyst-solar-only-below-lower-edge"
@@ -185,15 +185,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 0  # SOC 76% < target 80% — no charging
 
   # ========== SOLAR PRIORITY: Target SOC boundary (1-phase) ==========
@@ -216,15 +216,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Priority"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 32.0  # Above effective target: solar + battery discharge, capped at max
 
   - name: "hyst-solar-prio-deadband-below"
@@ -245,15 +245,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Priority"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 6  # Below target: Solar Priority → min only
 
   # ========== MIN SOC HYSTERESIS: Battery discharge gating (1-phase) ==========
@@ -276,15 +276,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Standard"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 32  # SOC 21% >= effective min 20%: grid + solar + battery discharge
 
   - name: "hyst-min-soc-deadband-below"
@@ -305,15 +305,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Standard"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 32  # Standard: grid(35-3=32) + solar(10) but no battery discharge; capped at 32A max
 
   # ========== 3-PHASE: Target SOC boundary ==========
@@ -338,15 +338,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 6000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # SOC 78% > effective target 77%: solar + discharge, capped at 16A max
 
   - name: "hyst-3ph-solar-only-deadband-below"
@@ -369,15 +369,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 6000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 0  # SOC 78% < target 80% — blocked
 
   # ========== SOLAR SURPLUS DISCHARGE: Target SOC boundary ==========
@@ -400,15 +400,15 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 27.0  # SOC 79% > effective target 77%: solar(10-3=7A) + battery discharge(20A) = 27A
 
   - name: "hyst-discharge-potential-deadband-below"
@@ -429,13 +429,13 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 32
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 0  # SOC 79% < target 80% — below target, blocked

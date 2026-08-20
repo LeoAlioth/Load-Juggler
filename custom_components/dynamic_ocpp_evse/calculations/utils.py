@@ -98,7 +98,7 @@ def compute_household_per_phase(
     Shared between HA integration (dynamic_ocpp_evse.py) and test simulation (run_tests.py).
 
     Parallel (AC-coupled): household = grid_consumption + inverter_output - grid_export
-    Series (hybrid):       household = inverter_output - charger_draws
+    Series (hybrid):       household = inverter_output - load_draws
 
     Returns PhaseValues with per-phase household in Amps, or None if no inverter output data.
     """
@@ -107,9 +107,9 @@ def compute_household_per_phase(
     if site.inverter_output_per_phase is None:
         return None
 
-    # Accumulate charger draws per site phase
+    # Accumulate load draws per site phase
     ch_a = ch_b = ch_c = 0.0
-    for c in site.chargers:
+    for c in site.loads:
         a_d, b_d, c_d = c.get_site_phase_draw()
         ch_a += a_d
         ch_b += b_d
@@ -125,7 +125,7 @@ def compute_household_per_phase(
         hh_b = _hh(site.inverter_output_per_phase.b, site.consumption.b, site.export_current.b)
         hh_c = _hh(site.inverter_output_per_phase.c, site.consumption.c, site.export_current.c)
     else:
-        # Series: household = inverter_output - charger_draws
+        # Series: household = inverter_output - load_draws
         hh_a = max(0, (site.inverter_output_per_phase.a or 0) - ch_a) if site.consumption.a is not None else None
         hh_b = max(0, (site.inverter_output_per_phase.b or 0) - ch_b) if site.consumption.b is not None else None
         hh_c = max(0, (site.inverter_output_per_phase.c or 0) - ch_c) if site.consumption.c is not None else None

@@ -30,7 +30,7 @@ scenarios:
       inverter_max_power: 4000
       inverter_max_power_per_phase: 4000
       inverter_supports_asymmetric: false
-    chargers:
+    loads:
       - entity_id: "evse_1"
         device_type: "evse"
         operating_mode: "Solar Only"
@@ -71,7 +71,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
       wiring_topology: series
-    chargers:
+    loads:
       - entity_id: "evse_1"
         device_type: "evse"
         operating_mode: "Solar Only"

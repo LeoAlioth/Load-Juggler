@@ -23,15 +23,15 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 5750  # 25A
       inverter_max_power: 17250  # 75A
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: Excess
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 9.0  # Export = 14A/ph * 3 * 230 = 9660W. Excess = (9660-3450)/230 = 27A / 3 = 9A per phase
 
   - name: "3ph-1c-excess-no-bat-below-threshold"
@@ -55,13 +55,13 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 5750  # 25A
       inverter_max_power: 17250  # 75A
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: Excess
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 0.0  # Export = 3A/ph * 3 * 230 = 2070W < 4600W threshold → no charging

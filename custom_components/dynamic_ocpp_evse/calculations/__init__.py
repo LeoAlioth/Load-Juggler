@@ -6,7 +6,7 @@ All calculations unified in target_calculator.py.
 """
 
 from .models import SiteContext, LoadContext, PhaseConstraints, PhaseValues, CircuitGroup
-from .target_calculator import calculate_all_charger_targets, excess_margin
+from .target_calculator import calculate_all_load_targets, excess_margin
 from .forecast import (
     ClippingForecast,
     merge_forecast_series,
@@ -23,7 +23,7 @@ __all__ = [
     "PhaseConstraints",
     "PhaseValues",
     "CircuitGroup",
-    "calculate_all_charger_targets",
+    "calculate_all_load_targets",
     "excess_margin",
     "ClippingForecast",
     "merge_forecast_series",
