@@ -383,14 +383,16 @@ def test_stale_timer_restarts_after_a_single_healthy_cycle():
 # deliberately not offered: that would have exempted hub_calculation.py, which
 # is where the dangerous copy lived.
 _UNAVAILABLE_LITERAL_BUDGET = {
-    # Two display/vocabulary uses, neither an entity state:
+    # Two display/vocabulary uses, neither an entity state — one per module
+    # since config_flow became a package (the total is unchanged):
     #   errors["base"] = "unknown" is HA's translation key for "unexpected
     #   exception" in a config flow;
+    "config_flow/flow.py": 1,
     #   f"- Status: {status or 'unknown'}" on the load Overview page falls back
     #   for OUR OWN computed charging-status string (hass.data charger_status),
     #   which no sensor ever publishes — the sibling line in the one-line
     #   summary spells the same fallback "status unknown".
-    "config_flow.py": 2,
+    "config_flow/pages.py": 1,
     # A log-line placeholder for a register we could not read back — formatting
     # only, never compared against anything.
     "control/inverter.py": 1,

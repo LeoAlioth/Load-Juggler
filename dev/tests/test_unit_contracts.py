@@ -83,9 +83,15 @@ def test_every_declared_unit_converts_to_its_canonical_domain():
 
 
 def test_config_flow_unit_validation_matches_the_declared_contracts():
-    """The per-step validation maps in config_flow.py must not accept a unit
+    """The per-step validation maps in the config flow must not accept a unit
     the contract table hasn't declared (and therefore nothing converts)."""
-    source = (_COMPONENT / "config_flow.py").read_text()
+    # config_flow is a package: read every module in it, so moving a step from
+    # one module to another can never quietly drop it out of this test's sight.
+    source = "\n".join(
+        path.read_text()
+        for path in sorted((_COMPONENT / "config_flow").rglob("*.py"))
+        if "__pycache__" not in str(path)
+    )
     # Matches lines like "CONF_PHASE_A_CURRENT_ENTITY_ID: _CURRENT_UNITS" and
     # the "_CURRENT_UNITS | _POWER_UNITS" continuation form.
     pattern = re.compile(
@@ -105,7 +111,7 @@ def test_config_flow_unit_validation_matches_the_declared_contracts():
             accepted |= set(sets[name])
         conf_value = getattr(const, const_name)
         assert conf_value in units.ENTITY_UNIT_CONTRACTS, (
-            f"{const_name} is unit-validated in config_flow.py but missing from "
+            f"{const_name} is unit-validated in the config flow but missing from "
             f"units.ENTITY_UNIT_CONTRACTS — declare its canonical domain so the "
             f"conversion is covered"
         )
@@ -125,13 +131,15 @@ def test_config_flow_unit_validation_matches_the_declared_contracts():
 _RAW_PARSE_BUDGET = {
     # Our own min/max-current number entities, in our own amps.
     "__init__.py": 1,
+    # One each since config_flow became a package (the total is unchanged).
     # The battery discharge power hint in the hub_inverter form description —
     # only this detected preview text is unit-naive and never stored; the value
     # the user then types into the field is a real engine input, user-vetted.
+    "config_flow/flow.py": 1,
     # And _entry_sensor_value on the Overview page, which reads back this
     # integration's OWN sensors (our units by construction) for display only
     # and is unit-agnostic on purpose (also passes through status strings).
-    "config_flow.py": 2,
+    "config_flow/pages.py": 1,
     # The offered-current read (amps by OCPP definition) and the
     # offered-power read, which converts through units.to_watts.
     "control/compliance.py": 2,
