@@ -6,12 +6,13 @@ the public face of the split: the two flow handlers, the OCPP scan ``__init__``
 calls, and the read-only page builders.
 
 Split out of the single-file config_flow.py — helpers.py (validation, ordering,
-discovery), pages.py (the Overview / "How it decides" text) and flow.py (the
-handlers themselves).
+discovery), pages.py (the Overview / "How it decides" text), schemas.py (the
+form builders), flow.py (setup) and options.py (editing afterwards).
 """
 
-from .flow import LoadJugglerConfigFlow, LoadJugglerOptionsFlow
+from .flow import LoadJugglerConfigFlow
 from .helpers import scan_ocpp_chargers
+from .options import LoadJugglerOptionsFlow
 from .pages import _overview_text, _summary_text
 
 __all__ = [
