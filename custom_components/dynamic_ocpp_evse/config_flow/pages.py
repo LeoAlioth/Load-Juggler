@@ -390,7 +390,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
     if any(configured_cts):
         grid_phases = [None, None, None]
         try:
-            from .engine.readers import _read_grid_phases
+            from ..engine.readers import _read_grid_phases
 
             grid_phases = _read_grid_phases(hass, entry, voltage)
         except Exception:  # pragma: no cover — display path
@@ -560,7 +560,7 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
     lines.append("**🔆 Output**")
     phase_lines: list[str] = []
     try:
-        from .engine.readers import _read_inverter_output
+        from ..engine.readers import _read_inverter_output
 
         for label, key in (
             ("A", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
