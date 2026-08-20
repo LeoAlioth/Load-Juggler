@@ -1,9 +1,9 @@
-"""Config-entry relationship lookups (hub ↔ chargers / inverters / groups).
+"""Config-entry relationship lookups (hub ↔ loads / inverters / groups).
 
-The integration's entries form a tree: one hub entry per site, with charger,
+The integration's entries form a tree: one hub entry per site, with load,
 inverter and circuit-group entries pointing at it via ``CONF_HUB_ENTRY_ID``.
 These helpers are the single place that walks that tree, for anything that
-needs "the hub of this charger" or "the inverters of this hub".
+needs "the hub of this load" or "the inverters of this hub".
 
 Deliberately free of any runtime ``homeassistant`` import — the HA types are
 annotations only, under ``TYPE_CHECKING``. That is what lets this module live
@@ -31,13 +31,13 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 
-def get_hub_for_charger(hass: HomeAssistant, charger_entry_id: str) -> ConfigEntry | None:
-    """Get the hub config entry for a charger."""
-    charger_data = hass.data[DOMAIN]["chargers"].get(charger_entry_id)
-    if not charger_data:
+def get_hub_for_load(hass: HomeAssistant, load_entry_id: str) -> ConfigEntry | None:
+    """Get the hub config entry for a load."""
+    load_data = hass.data[DOMAIN]["loads"].get(load_entry_id)
+    if not load_data:
         return None
 
-    hub_entry_id = charger_data.get("hub_entry_id")
+    hub_entry_id = load_data.get("hub_entry_id")
     hub_data = hass.data[DOMAIN]["hubs"].get(hub_entry_id)
     if not hub_data:
         return None
@@ -45,19 +45,19 @@ def get_hub_for_charger(hass: HomeAssistant, charger_entry_id: str) -> ConfigEnt
     return hub_data.get("entry")
 
 
-def get_chargers_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigEntry]:
-    """Get all charger config entries for a hub."""
+def get_loads_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigEntry]:
+    """Get all load config entries for a hub."""
     hub_data = hass.data[DOMAIN]["hubs"].get(hub_entry_id)
     if not hub_data:
         return []
 
-    chargers = []
-    for charger_entry_id in hub_data.get("chargers", []):
-        charger_data = hass.data[DOMAIN]["chargers"].get(charger_entry_id)
-        if charger_data:
-            chargers.append(charger_data.get("entry"))
+    loads = []
+    for load_entry_id in hub_data.get("loads", []):
+        load_data = hass.data[DOMAIN]["loads"].get(load_entry_id)
+        if load_data:
+            loads.append(load_data.get("entry"))
 
-    return chargers
+    return loads
 
 
 def _children_of_hub(hass: HomeAssistant, hub_entry_id: str, entry_type: str) -> list[ConfigEntry]:

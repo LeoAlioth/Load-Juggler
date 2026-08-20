@@ -66,7 +66,7 @@ from ..helpers import get_entry_value
 from .auto_detect import check_inversion, check_phase_mapping
 from . import fleet
 from .hub_result import _build_hub_result, _compute_forecast_advice
-from .load_builders import _add_chargers_to_site, _build_circuit_groups
+from .load_builders import _add_loads_to_site, _build_circuit_groups
 from .readers import (
     _PHASE_LABELS,
     _check_entity_availability,
@@ -85,21 +85,21 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _apply_feedback_loop(site, solar_is_derived, members):
-    """Subtract charger draws from grid readings to prevent double-counting.
+    """Subtract load draws from grid readings to prevent double-counting.
 
-    Grid CTs measure total site current INCLUDING charger draws. Without this
-    adjustment, the engine double-counts charger power as both 'consumption'
-    and 'charger demand'. Modifies site.consumption and site.export_current
+    Grid CTs measure total site current INCLUDING load draws. Without this
+    adjustment, the engine double-counts load power as both 'consumption'
+    and 'load demand'. Modifies site.consumption and site.export_current
     in-place.
     """
     # Off-grid: the grid phase readings are synthetic zeros (no CTs exist) and
-    # never contained the charger draws — subtracting them here would fabricate
-    # export equal to each charger's own draw. Solar was already derived from
+    # never contained the load draws — subtracting them here would fabricate
+    # export equal to each load's own draw. Solar was already derived from
     # the inverter output upstream, so nothing needs re-deriving either.
     if site.is_off_grid:
         return
 
-    # Sum charger draws per site phase
+    # Sum load draws per site phase
     total_draws = [0.0, 0.0, 0.0]
     for c in site.loads:
         a_draw, b_draw, c_draw = c.get_site_phase_draw()
@@ -110,7 +110,7 @@ def _apply_feedback_loop(site, solar_is_derived, members):
     if not any(d > 0 for d in total_draws):
         return
 
-    # Reconstruct raw grid current, remove charger draw, re-split
+    # Reconstruct raw grid current, remove load draw, re-split
     orig_consumption = (site.consumption.a, site.consumption.b, site.consumption.c)
     orig_export = (site.export_current.a, site.export_current.b, site.export_current.c)
     new_consumption, new_export = grid_without_managed_draws(
@@ -129,7 +129,7 @@ def _apply_feedback_loop(site, solar_is_derived, members):
         if draw > 0 and adj_consumption[i] == 0 and cons > 0:
             _LOGGER.warning(
                 "Phase %s: household -> 0 after feedback "
-                "(raw_grid=%.1fA - charger=%.1fA = %.1fA)",
+                "(raw_grid=%.1fA - load=%.1fA = %.1fA)",
                 label,
                 raw_grid,
                 draw,
@@ -397,34 +397,34 @@ def _apply_phase_remaps(site, auto_detect_state):
     cycle (see _run_auto_detection). Mutates the loads in place.
     """
     phase_remaps = auto_detect_state.get("phase_remap", {})
-    for charger in site.loads:
-        remap = phase_remaps.get(charger.load_id)
+    for load in site.loads:
+        remap = phase_remaps.get(load.load_id)
         if remap:
-            old = (charger.l1_phase, charger.l2_phase, charger.l3_phase)
-            charger.l1_phase = remap["l1_phase"]
-            charger.l2_phase = remap["l2_phase"]
-            charger.l3_phase = remap["l3_phase"]
+            old = (load.l1_phase, load.l2_phase, load.l3_phase)
+            load.l1_phase = remap["l1_phase"]
+            load.l2_phase = remap["l2_phase"]
+            load.l3_phase = remap["l3_phase"]
             # Recalculate active_phases_mask from new mapping
-            if charger.phases == 3:
-                charger.active_phases_mask = "".join(
-                    sorted({charger.l1_phase, charger.l2_phase, charger.l3_phase})
+            if load.phases == 3:
+                load.active_phases_mask = "".join(
+                    sorted({load.l1_phase, load.l2_phase, load.l3_phase})
                 )
-            elif charger.phases == 2:
-                charger.active_phases_mask = "".join(
-                    sorted({charger.l1_phase, charger.l2_phase})
+            elif load.phases == 2:
+                load.active_phases_mask = "".join(
+                    sorted({load.l1_phase, load.l2_phase})
                 )
-            elif charger.phases == 1:
-                charger.active_phases_mask = charger.l1_phase
+            elif load.phases == 1:
+                load.active_phases_mask = load.l1_phase
             _LOGGER.debug(
                 "Auto-remap applied for %s: L1:%s→%s L2:%s→%s L3:%s→%s mask=%s",
-                charger.entity_id,
+                load.entity_id,
                 old[0],
-                charger.l1_phase,
+                load.l1_phase,
                 old[1],
-                charger.l2_phase,
+                load.l2_phase,
                 old[2],
-                charger.l3_phase,
-                charger.active_phases_mask,
+                load.l3_phase,
+                load.active_phases_mask,
             )
 
 
@@ -444,7 +444,7 @@ def _apply_excess_latch(hub_runtime, site, excess_hysteresis):
     # site.excess_hysteresis. The per-sink breakdown goes to excess_margin()'s
     # own debug line.
     #
-    # Evaluated on POST-feedback figures: the pools compare export with charger
+    # Evaluated on POST-feedback figures: the pools compare export with load
     # draws added back, and pre-feedback export is already eaten by the Excess
     # load's own draw — the band would never engage exactly when a load is running.
     was_excess_on = hub_runtime.get("_excess_on", False)
@@ -541,21 +541,21 @@ def _apply_grid_stale_fallback(site, grid_stale_duration):
             grid_stale_duration,
             GRID_STALE_TIMEOUT,
         )
-        for charger in site.loads:
+        for load in site.loads:
             # Only an EVSE already charging keeps a minimum-current permit (a
             # hard stop mid-charge is worse than 6 A on a blind site). Binary
             # loads (plugs/tanks) and idle EVSEs get no permit — a permit > 0
             # switches a binary load ON, and energizing a load the engine had
             # deliberately shed while it cannot see the site is unsafe.
             if (
-                charger.device_type == DEVICE_TYPE_EVSE
-                and charger.connector_status == "Charging"
+                load.device_type == DEVICE_TYPE_EVSE
+                and load.connector_status == "Charging"
             ):
-                charger.allocated_current = charger.min_current
-                charger.available_current = charger.min_current
+                load.allocated_current = load.min_current
+                load.available_current = load.min_current
             else:
-                charger.allocated_current = 0
-                charger.available_current = 0
+                load.allocated_current = 0
+                load.available_current = 0
     return grid_stale
 
 
@@ -568,11 +568,11 @@ def _build_group_data(site):
     """
     # --- Build per-group allocation data for group sensors ---
     group_data = {}
-    charger_by_id = {c.load_id: c for c in site.loads}
+    load_by_id = {c.load_id: c for c in site.loads}
     for group in site.circuit_groups:
         per_phase_draw = {"A": 0.0, "B": 0.0, "C": 0.0}
         for mid in group.member_ids:
-            c = charger_by_id.get(mid)
+            c = load_by_id.get(mid)
             if c and c.allocated_current > 0 and c.active_phases_mask:
                 for phase in c.active_phases_mask:
                     per_phase_draw[phase] += c.allocated_current
@@ -625,13 +625,13 @@ def _run_auto_detection(hub_entry, auto_detect_state, smoothed_phases, site):
             # Store auto-remap for next cycle
             remap = notif.pop("auto_remap", None)
             if remap:
-                auto_detect_state.setdefault("phase_remap", {})[remap["charger_id"]] = (
+                auto_detect_state.setdefault("phase_remap", {})[remap["load_id"]] = (
                     remap
                 )
                 # Reset correlation state so re-detection runs with new mapping
                 # (allows 2-phase detection to verify/correct after 1-phase remap)
                 pm_state = auto_detect_state.get("phase_map", {})
-                pm_state.pop(remap["charger_id"], None)
+                pm_state.pop(remap["load_id"], None)
             auto_notifications.append(notif)
     return auto_notifications
 
@@ -722,7 +722,7 @@ def _build_hub_status(
 # ---------------------------------------------------------------------------
 
 
-def run_hub_calculation(hass, hub_entry, charger_entries=None):
+def run_hub_calculation(hass, hub_entry, load_entries=None):
     """
     Run the hub calculation: read HA states, build SiteContext, calculate targets.
 
@@ -735,7 +735,7 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     Args:
         hass: Home Assistant instance
         hub_entry: the hub's ConfigEntry
-        charger_entries: optional explicit list of load config entries; None
+        load_entries: optional explicit list of load config entries; None
             reads the hub's registered loads
 
     Returns:
@@ -743,8 +743,8 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
             - CONF_TOTAL_ALLOCATED_CURRENT: Total allocated current (A)
             - CONF_PHASES: Number of phases
             - CONF_CHARGING_MODE: Current charging mode
-            - charger_targets: per-charger target currents
-            - Other site/charger data
+            - load_targets: per-load target currents
+            - Other site/load data
     """
     (
         voltage,
@@ -986,13 +986,13 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
         is_off_grid=not has_grid_cts,
     )
 
-    # --- Add chargers ---
+    # --- Add loads ---
     hub_entry_id = (
         hub_entry.entry_id
         if hasattr(hub_entry, "entry_id")
         else hub_entry.data.get("hub_entry_id")
     )
-    _add_chargers_to_site(hass, site, hub_entry_id, charger_entries)
+    _add_loads_to_site(hass, site, hub_entry_id, load_entries)
 
     # --- Build circuit groups ---
     site.circuit_groups = _build_circuit_groups(hass, hub_entry_id)
@@ -1021,16 +1021,16 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
 
     grid_stale = _apply_grid_stale_fallback(site, grid_stale_duration)
 
-    charger_targets = {c.load_id: c.allocated_current for c in site.loads}
-    charger_available = {c.load_id: c.available_current for c in site.loads}
-    charger_names = {c.load_id: c.entity_id for c in site.loads}
+    load_targets = {c.load_id: c.allocated_current for c in site.loads}
+    load_available = {c.load_id: c.available_current for c in site.loads}
+    load_names = {c.load_id: c.entity_id for c in site.loads}
 
     # Persist this cycle's permit for next-cycle settle detection — an EVSE
     # only counts as "settled and under-drawing" when its measured draw stays
     # below the permit we last offered it.
-    chargers_rt = hass.data[DOMAIN].get("chargers", {})
+    loads_rt = hass.data[DOMAIN].get("loads", {})
     for c in site.loads:
-        rt = chargers_rt.get(c.load_id)
+        rt = loads_rt.get(c.load_id)
         if rt is not None:
             rt["_last_permit"] = c.available_current
 
@@ -1088,9 +1088,9 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
         battery_soc_min,
         battery_max_discharge_power,
         battery_power,
-        charger_targets,
-        charger_available,
-        charger_names,
+        load_targets,
+        load_available,
+        load_names,
         auto_notifications,
         group_data,
         grid_stale=grid_stale,

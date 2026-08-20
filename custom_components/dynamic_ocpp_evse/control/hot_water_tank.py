@@ -97,25 +97,25 @@ async def send_hot_water_tank_command(
         )
         return
 
-    charger_rt = (
+    load_rt = (
         sensor.hass.data.get(DOMAIN, {})
-        .get("chargers", {})
+        .get("loads", {})
         .get(sensor.config_entry.entry_id, {})
     )
-    mode = charger_rt.get(
+    mode = load_rt.get(
         "operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key
     )
-    away = charger_rt.get("tank_away_temperature") or get_entry_value(
+    away = load_rt.get("tank_away_temperature") or get_entry_value(
         sensor.config_entry,
         CONF_TANK_AWAY_TEMPERATURE,
         DEFAULT_TANK_AWAY_TEMPERATURE,
     )
-    normal = charger_rt.get("tank_normal_temperature") or get_entry_value(
+    normal = load_rt.get("tank_normal_temperature") or get_entry_value(
         sensor.config_entry,
         CONF_TANK_NORMAL_TEMPERATURE,
         DEFAULT_TANK_NORMAL_TEMPERATURE,
     )
-    boost = charger_rt.get("tank_boost_temperature") or get_entry_value(
+    boost = load_rt.get("tank_boost_temperature") or get_entry_value(
         sensor.config_entry,
         CONF_TANK_BOOST_TEMPERATURE,
         DEFAULT_TANK_BOOST_TEMPERATURE,
@@ -148,8 +148,8 @@ async def send_hot_water_tank_command(
         except (TypeError, ValueError):
             clamped = setpoint
         if clamped != setpoint:
-            if charger_rt.get("_tank_clamp_warned_for") != setpoint:
-                charger_rt["_tank_clamp_warned_for"] = setpoint
+            if load_rt.get("_tank_clamp_warned_for") != setpoint:
+                load_rt["_tank_clamp_warned_for"] = setpoint
                 _LOGGER.warning(
                     "Hot water tank %s: %s setpoint %.0f°C is outside %s's "
                     "supported range (%s–%s°C) — clamped to %.0f°C. Adjust the "
@@ -164,15 +164,15 @@ async def send_hot_water_tank_command(
                 )
             setpoint = clamped
         else:
-            charger_rt.pop("_tank_clamp_warned_for", None)
+            load_rt.pop("_tank_clamp_warned_for", None)
 
     heating_permitted = limit > 0
 
     # Publish state for the tank status sensor.
-    if charger_rt is not None:
-        charger_rt["tank_setpoint"] = setpoint
-        charger_rt["tank_setpoint_label"] = label
-        charger_rt["tank_heating_permitted"] = heating_permitted
+    if load_rt is not None:
+        load_rt["tank_setpoint"] = setpoint
+        load_rt["tank_setpoint_label"] = label
+        load_rt["tank_heating_permitted"] = heating_permitted
 
     _LOGGER.debug(
         "Hot water tank %s [%s]: setpoint=%.0f°C (%s), heating %s",

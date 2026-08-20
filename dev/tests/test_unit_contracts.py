@@ -163,7 +163,7 @@ _RAW_PARSE_BUDGET = {
     # applies.
     "entities/load_sensors.py": 1,
     # RestoreEntity state restoration of values we published ourselves. Was 2
-    # (one copy per mixin); the hub and charger mixins now share the single
+    # (one copy per mixin); the hub and load mixins now share the single
     # _apply_restored_number() reader, so the ratchet drops to 1.
     "entities/mixins.py": 1,
 }

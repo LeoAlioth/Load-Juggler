@@ -3,7 +3,7 @@
 Machine-authored tests — not yet human-reviewed.
 
 Covers the two halves that need Home Assistant to exercise: the engine builder
-(_build_power_station_charger — bounds, managed draw, status) and the command
+(_build_power_station_load — bounds, managed draw, status) and the command
 module (send_power_station_command — what gets written to which entity). The pure
 resolvers are covered in test_power_station.py.
 
@@ -114,20 +114,20 @@ def domain_data(hass: HomeAssistant, hub_entry, station_entry):
         "hubs": {
             hub_entry.entry_id: {
                 "entry": hub_entry,
-                "chargers": [station_entry.entry_id],
+                "loads": [station_entry.entry_id],
                 "distribution_mode": "Priority",
             }
         },
-        "chargers": {
+        "loads": {
             station_entry.entry_id: {
                 "entry": station_entry,
                 "hub_entry_id": hub_entry.entry_id,
                 "dynamic_control": True,
             }
         },
-        "charger_allocations": {station_entry.entry_id: 0},
+        "load_allocations": {station_entry.entry_id: 0},
     }
-    return hass.data[DOMAIN]["chargers"][station_entry.entry_id]
+    return hass.data[DOMAIN]["loads"][station_entry.entry_id]
 
 
 def _set_states(
@@ -144,10 +144,10 @@ def _set_states(
 
 def _build(hass, station_entry):
     from custom_components.dynamic_ocpp_evse.engine.load_builders import (
-        _build_power_station_charger,
+        _build_power_station_load,
     )
 
-    return _build_power_station_charger(
+    return _build_power_station_load(
         hass, station_entry, 230, "lj_power_station", 1
     )
 
@@ -159,11 +159,11 @@ async def test_builder_derives_current_bounds_from_configured_watts(
     hass, hub_entry, station_entry, domain_data
 ):
     _set_states(hass)
-    charger = _build(hass, station_entry)
+    load = _build(hass, station_entry)
     # 200 W and 2400 W at 230 V, single phase.
-    assert charger.min_current == pytest.approx(200 / 230, abs=0.01)
-    assert charger.max_current == pytest.approx(2400 / 230, abs=0.01)
-    assert charger.device_type == DEVICE_TYPE_POWER_STATION
+    assert load.min_current == pytest.approx(200 / 230, abs=0.01)
+    assert load.max_current == pytest.approx(2400 / 230, abs=0.01)
+    assert load.device_type == DEVICE_TYPE_POWER_STATION
 
 
 async def test_builder_prefers_runtime_sliders_over_config(
@@ -173,9 +173,9 @@ async def test_builder_prefers_runtime_sliders_over_config(
     _set_states(hass)
     domain_data["station_min_charge_power"] = 400
     domain_data["station_max_charge_power"] = 1200
-    charger = _build(hass, station_entry)
-    assert charger.min_current == pytest.approx(400 / 230, abs=0.01)
-    assert charger.max_current == pytest.approx(1200 / 230, abs=0.01)
+    load = _build(hass, station_entry)
+    assert load.min_current == pytest.approx(400 / 230, abs=0.01)
+    assert load.max_current == pytest.approx(1200 / 230, abs=0.01)
 
 
 async def test_builder_clamps_max_below_min(
@@ -184,18 +184,18 @@ async def test_builder_clamps_max_below_min(
     _set_states(hass)
     domain_data["station_min_charge_power"] = 1000
     domain_data["station_max_charge_power"] = 500
-    charger = _build(hass, station_entry)
-    assert charger.max_current == charger.min_current
+    load = _build(hass, station_entry)
+    assert load.max_current == load.min_current
 
 
 async def test_builder_defaults_to_excess_behavior(
     hass, hub_entry, station_entry, domain_data
 ):
     _set_states(hass)
-    charger = _build(hass, station_entry)
-    assert charger.operating_mode == "Excess"
-    assert charger.mode_behavior == BEHAVIOR_EXCESS
-    assert charger.mode_priority == 4
+    load = _build(hass, station_entry)
+    assert load.operating_mode == "Excess"
+    assert load.mode_behavior == BEHAVIOR_EXCESS
+    assert load.mode_priority == 4
 
 
 async def test_storm_reserve_makes_the_station_must_run(
@@ -206,10 +206,10 @@ async def test_storm_reserve_makes_the_station_must_run(
     _set_states(hass)
     domain_data["operating_mode"] = "Excess"
     domain_data["station_storm_reserve"] = True
-    charger = _build(hass, station_entry)
-    assert charger.operating_mode == "Standard"
-    assert charger.mode_behavior == BEHAVIOR_FULL_POWER
-    assert charger.mode_priority == 1
+    load = _build(hass, station_entry)
+    assert load.operating_mode == "Standard"
+    assert load.mode_behavior == BEHAVIOR_FULL_POWER
+    assert load.mode_priority == 1
 
 
 # ── Builder: managed draw ─────────────────────────────────────────────
@@ -221,8 +221,8 @@ async def test_managed_draw_is_the_charging_component_only(
     # 1163 W in, 963 W out: 200 W of that wall draw is charging, the rest is
     # pass-through and belongs to the household, not this load.
     _set_states(hass, ac_in="1163", ac_out="963")
-    charger = _build(hass, station_entry)
-    total = charger.l1_current + charger.l2_current + charger.l3_current
+    load = _build(hass, station_entry)
+    total = load.l1_current + load.l2_current + load.l3_current
     assert total == pytest.approx(200 / 230, abs=0.01)
 
 
@@ -231,8 +231,8 @@ async def test_pure_pass_through_is_not_our_draw(
 ):
     # Input equals output — the station is only passing power through.
     _set_states(hass, ac_in="163", ac_out="163")
-    charger = _build(hass, station_entry)
-    assert charger.l1_current == 0
+    load = _build(hass, station_entry)
+    assert load.l1_current == 0
 
 
 async def test_negative_ac_output_convention_is_handled(
@@ -240,8 +240,8 @@ async def test_negative_ac_output_convention_is_handled(
 ):
     # Some integrations report per-port output as negative.
     _set_states(hass, ac_in="1163", ac_out="-963")
-    charger = _build(hass, station_entry)
-    assert charger.l1_current == pytest.approx(200 / 230, abs=0.01)
+    load = _build(hass, station_entry)
+    assert load.l1_current == pytest.approx(200 / 230, abs=0.01)
 
 
 async def test_draw_falls_back_to_commanded_speed_without_sensors(
@@ -271,18 +271,18 @@ async def test_station_at_its_charge_limit_frees_its_power(
     hass, hub_entry, station_entry, domain_data
 ):
     _set_states(hass, soc="90", limit="90")
-    charger = _build(hass, station_entry)
+    load = _build(hass, station_entry)
     # "Available" is the engine's inactive marker — the allocation goes to
     # other loads instead.
-    assert charger.connector_status == "Available"
+    assert load.connector_status == "Available"
 
 
 async def test_station_below_its_charge_limit_is_active(
     hass, hub_entry, station_entry, domain_data
 ):
     _set_states(hass, soc="60", limit="90")
-    charger = _build(hass, station_entry)
-    assert charger.connector_status == "Charging"
+    load = _build(hass, station_entry)
+    assert load.connector_status == "Charging"
 
 
 async def test_unavailable_speed_entity_marks_the_station_unavailable(
@@ -292,8 +292,8 @@ async def test_unavailable_speed_entity_marks_the_station_unavailable(
     # exactly like this, and we must stop allocating power we can't command.
     _set_states(hass)
     hass.states.async_set(SPEED, "unavailable")
-    charger = _build(hass, station_entry)
-    assert charger.connector_status == "Unavailable"
+    load = _build(hass, station_entry)
+    assert load.connector_status == "Unavailable"
 
 
 # ── Command module ────────────────────────────────────────────────────
@@ -308,7 +308,7 @@ def _entry_variant(station_entry, drop_data=(), drop_options=()):
     return MockConfigEntry(
         domain=DOMAIN,
         # Same entry_id: the builder and command module look their runtime state
-        # up by it in hass.data[DOMAIN]["chargers"].
+        # up by it in hass.data[DOMAIN]["loads"].
         entry_id=station_entry.entry_id,
         version=station_entry.version,
         minor_version=station_entry.minor_version,

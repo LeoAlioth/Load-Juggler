@@ -5,7 +5,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from .entities.mixins import HubEntityMixin, ChargerEntityMixin, InverterEntityMixin
+from .entities.mixins import HubEntityMixin, LoadEntityMixin, InverterEntityMixin
 from .const import (
     ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, ENTRY_TYPE_INVERTER,
     CONF_NAME, CONF_ENTITY_ID,
@@ -25,7 +25,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     entry_type = config_entry.data.get(ENTRY_TYPE)
 
     if entry_type == ENTRY_TYPE_CHARGER:
-        entity_id = config_entry.data.get(CONF_ENTITY_ID, "charger")
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "load")
         name = config_entry.data.get(CONF_NAME, "Charger")
         hub_entry_id = config_entry.data.get(CONF_HUB_ENTRY_ID)
         hub_entry = hass.config_entries.async_get_entry(hub_entry_id) if hub_entry_id else None
@@ -129,15 +129,15 @@ class AllowGridChargingSwitch(HubEntityMixin, SwitchEntity, RestoreEntity):
         self._write_to_hub_data(self._state)
 
 
-class DynamicControlSwitch(ChargerEntityMixin, SwitchEntity, RestoreEntity):
-    """Per-charger switch to enable/disable dynamic current control.
+class DynamicControlSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
+    """Per-load switch to enable/disable dynamic current control.
 
-    When ON (default): the charger receives dynamically calculated current.
-    When OFF: the charger charges at its configured maximum current.
+    When ON (default): the load receives dynamically calculated current.
+    When OFF: the load charges at its configured maximum current.
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _charger_data_key = "dynamic_control"
+    _load_data_key = "dynamic_control"
 
     def __init__(self, hass, config_entry, hub_entry, entity_id, name):
         self.hass = hass
@@ -155,14 +155,14 @@ class DynamicControlSwitch(ChargerEntityMixin, SwitchEntity, RestoreEntity):
     async def async_turn_on(self, **kwargs):
         self._state = True
         self.async_write_ha_state()
-        self._write_to_charger_data(True)
+        self._write_to_load_data(True)
         _LOGGER.info("Dynamic control enabled for %s", self._attr_name)
 
     async def async_turn_off(self, **kwargs):
         self._state = False
         self.async_write_ha_state()
-        self._write_to_charger_data(False)
-        _LOGGER.info("Dynamic control disabled for %s — charger will use max current", self._attr_name)
+        self._write_to_load_data(False)
+        _LOGGER.info("Dynamic control disabled for %s — load will use max current", self._attr_name)
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
@@ -172,10 +172,10 @@ class DynamicControlSwitch(ChargerEntityMixin, SwitchEntity, RestoreEntity):
         else:
             self._state = True
         self.async_write_ha_state()
-        self._write_to_charger_data(self._state)
+        self._write_to_load_data(self._state)
 
 
-class StationStormReserveSwitch(ChargerEntityMixin, SwitchEntity, RestoreEntity):
+class StationStormReserveSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
     """Per-station switch to hold a storm reserve.
 
     When ON: the station holds its storm reserve level, charging from whatever
@@ -188,7 +188,7 @@ class StationStormReserveSwitch(ChargerEntityMixin, SwitchEntity, RestoreEntity)
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _charger_data_key = "station_storm_reserve"
+    _load_data_key = "station_storm_reserve"
 
     def __init__(self, hass, config_entry, hub_entry, entity_id, name):
         self.hass = hass
@@ -206,7 +206,7 @@ class StationStormReserveSwitch(ChargerEntityMixin, SwitchEntity, RestoreEntity)
     async def async_turn_on(self, **kwargs):
         self._state = True
         self.async_write_ha_state()
-        self._write_to_charger_data(True)
+        self._write_to_load_data(True)
         _LOGGER.info(
             "Storm reserve enabled for %s — charging from any source and holding",
             self._attr_name,
@@ -215,7 +215,7 @@ class StationStormReserveSwitch(ChargerEntityMixin, SwitchEntity, RestoreEntity)
     async def async_turn_off(self, **kwargs):
         self._state = False
         self.async_write_ha_state()
-        self._write_to_charger_data(False)
+        self._write_to_load_data(False)
         _LOGGER.info("Storm reserve disabled for %s", self._attr_name)
 
     async def async_added_to_hass(self):
@@ -225,7 +225,7 @@ class StationStormReserveSwitch(ChargerEntityMixin, SwitchEntity, RestoreEntity)
         # one state that lets the station charge from the grid at full rate.
         self._state = last_state is not None and last_state.state == "on"
         self.async_write_ha_state()
-        self._write_to_charger_data(self._state)
+        self._write_to_load_data(self._state)
 
 
 class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):

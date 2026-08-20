@@ -1,6 +1,6 @@
-"""Shared entity mixins for hub and charger entities.
+"""Shared entity mixins for hub and load entities.
 
-Provides HubEntityMixin and ChargerEntityMixin to eliminate duplicated
+Provides HubEntityMixin and LoadEntityMixin to eliminate duplicated
 device_info, _write_to_*_data, and state-restore boilerplate across
 number.py, select.py, switch.py, sensor.py, and button.py.
 
@@ -28,7 +28,7 @@ from ..const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_POWER_STATION,
 )
-from ..registry import get_hub_for_charger
+from ..registry import get_hub_for_load
 from ..helpers import get_entry_value
 from .. import units
 from .freshness import is_producer_fresh
@@ -122,7 +122,7 @@ class SiteFreshnessMixin:
     unavailable before the first cycle and after the producer stops.
 
     ``_site_hub_entry_id`` and ``_hub_data()`` come from the device mixin
-    (Hub/Charger/Group/Inverter via LoadJugglerEntity) — deliberately not
+    (Hub/Load/Group/Inverter via LoadJugglerEntity) — deliberately not
     redefined here, where they would win the MRO over the device's answer.
     """
 
@@ -334,7 +334,7 @@ def _apply_restored_number(entity, last_state):
     """Set ``entity._attr_native_value`` from ``last_state``, clamped to range.
 
     A restored state is just the last value HA saw — it predates any change to
-    the entity's bounds. Reconfiguring a charger's min/max, or shipping a new
+    the entity's bounds. Reconfiguring a load's min/max, or shipping a new
     default range, otherwise brings the slider back outside its own
     native_min/native_max: HA renders it out of range and every consumer
     downstream inherits an impossible number (issue #38). Anything unparseable
@@ -400,28 +400,28 @@ class HubEntityMixin(LoadJugglerEntity):
         self._write_to_hub_data(self._attr_native_value)
 
 
-class ChargerEntityMixin(LoadJugglerEntity):
-    """Mixin for charger-level entities.
+class LoadEntityMixin(LoadJugglerEntity):
+    """Mixin for load-level entities.
 
     Provides:
       - device_info property (EV Charger / Smart Load, linked to hub)
-      - _write_to_charger_data(value) using class attribute _charger_data_key
+      - _write_to_load_data(value) using class attribute _load_data_key
       - _restore_and_publish_number() for NumberEntity + RestoreEntity subclasses
 
-    Subclasses must set _charger_data_key to the dict key in
-    hass.data[DOMAIN]["chargers"][entry_id].
+    Subclasses must set _load_data_key to the dict key in
+    hass.data[DOMAIN]["loads"][entry_id].
 
-    Uses self.hub_entry if stored, otherwise looks up via get_hub_for_charger().
+    Uses self.hub_entry if stored, otherwise looks up via get_hub_for_load().
     """
 
-    _charger_data_key = None
+    _load_data_key = None
 
     @property
     def _site_hub_entry_id(self):
         return self.config_entry.data.get(CONF_HUB_ENTRY_ID)
 
-    def _charger_runtime(self) -> dict:
-        """This load's runtime dict in ``hass.data[DOMAIN]["chargers"]``.
+    def _load_runtime(self) -> dict:
+        """This load's runtime dict in ``hass.data[DOMAIN]["loads"]``.
 
         Written by the load's own processor and by the control/ modules (mode,
         dynamic_control, tank/station state); read by the load's diagnostic
@@ -429,7 +429,7 @@ class ChargerEntityMixin(LoadJugglerEntity):
         """
         return (
             self.hass.data.get(DOMAIN, {})
-            .get("chargers", {})
+            .get("loads", {})
             .get(self.config_entry.entry_id, {})
         )
 
@@ -439,10 +439,10 @@ class ChargerEntityMixin(LoadJugglerEntity):
 
     @property
     def _hub_entry(self):
-        """Get the hub ConfigEntry for this charger."""
+        """Get the hub ConfigEntry for this load."""
         if hasattr(self, 'hub_entry') and self.hub_entry:
             return self.hub_entry
-        return get_hub_for_charger(self.hass, self.config_entry.entry_id)
+        return get_hub_for_load(self.hass, self.config_entry.entry_id)
 
     @property
     def device_info(self):
@@ -461,17 +461,17 @@ class ChargerEntityMixin(LoadJugglerEntity):
             "via_device": (DOMAIN, hub.entry_id) if hub else None,
         }
 
-    def _write_to_charger_data(self, value):
-        """Write a value to hass.data[DOMAIN]['chargers'][entry_id][_charger_data_key]."""
-        charger_data = self.hass.data.get(DOMAIN, {}).get("chargers", {}).get(self.config_entry.entry_id)
-        if charger_data is not None:
-            charger_data[self._charger_data_key] = value
+    def _write_to_load_data(self, value):
+        """Write a value to hass.data[DOMAIN]['loads'][entry_id][_load_data_key]."""
+        load_data = self.hass.data.get(DOMAIN, {}).get("loads", {}).get(self.config_entry.entry_id)
+        if load_data is not None:
+            load_data[self._load_data_key] = value
 
     async def _restore_and_publish_number(self):
-        """Restore a NumberEntity's last state and publish to shared charger data."""
+        """Restore a NumberEntity's last state and publish to shared load data."""
         _apply_restored_number(self, await self.async_get_last_state())
         self.async_write_ha_state()
-        self._write_to_charger_data(self._attr_native_value)
+        self._write_to_load_data(self._attr_native_value)
 
 
 class GroupEntityMixin(LoadJugglerEntity):

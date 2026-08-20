@@ -33,16 +33,16 @@ from ..const import (
 )
 from ..helpers import get_entry_value
 from .. import units
-from .mixins import ChargerEntityMixin, SiteCycleConsumerMixin
+from .mixins import LoadEntityMixin, SiteCycleConsumerMixin
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class LoadJugglerLoadSensor(SiteCycleConsumerMixin, ChargerEntityMixin, SensorEntity):
+class LoadJugglerLoadSensor(SiteCycleConsumerMixin, LoadEntityMixin, SensorEntity):
     """Base for the per-load diagnostic sensors.
 
     Holds the constructor the seven of them shared verbatim. ``hub_entry`` is
-    kept on the instance because ChargerEntityMixin's device_info prefers it
+    kept on the instance because LoadEntityMixin's device_info prefers it
     over a registry lookup.
     """
 
@@ -72,7 +72,7 @@ class LoadJugglerAllocatedCurrentSensor(LoadJugglerLoadSensor):
 
     def _read_site_data(self):
         """Read allocated current from hass.data (populated by the load processor)."""
-        allocations = self._domain_bucket("charger_allocations")
+        allocations = self._domain_bucket("load_allocations")
         value = allocations.get(self.config_entry.entry_id, 0)
         self._attr_native_value = round(float(value), 1)
 
@@ -111,7 +111,7 @@ class LoadJugglerEffectivePrioritySensor(LoadJugglerLoadSensor):
 
     def _read_site_data(self):
         """Read the effective priority rank from hass.data (set by the engine)."""
-        ranks = self._domain_bucket("charger_ranks")
+        ranks = self._domain_bucket("load_ranks")
         self._attr_native_value = ranks.get(self.config_entry.entry_id)
         self._attrs = {
             "configured_priority": get_entry_value(
@@ -125,7 +125,7 @@ class LoadJugglerEffectivePrioritySensor(LoadJugglerLoadSensor):
     def _ranked_siblings(self, ranks: dict) -> int:
         """Count the ranked loads that share this load's hub.
 
-        "charger_ranks" is a flat, domain-wide bucket: it holds every load of
+        "load_ranks" is a flat, domain-wide bucket: it holds every load of
         every hub, and nothing removes a load's key when its config entry is
         deleted. A rank of "2 of N" is only meaningful against the loads the
         engine actually ranked together, so filter at read time rather than
@@ -164,7 +164,7 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
 
     def _read_site_data(self):
         """Read charging status from hass.data (populated by the load processor)."""
-        status = self._domain_bucket("charger_status")
+        status = self._domain_bucket("load_status")
         self._attr_native_value = status.get(self.config_entry.entry_id, "Unknown")
 
 
@@ -251,7 +251,7 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
         return self._attrs
 
     def _read_site_data(self):
-        charger_rt = self._charger_runtime()
+        load_rt = self._load_runtime()
         speed_entity = self.config_entry.data.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID)
         soc = _read_float(
             self.hass,
@@ -273,13 +273,13 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
             # These integrations talk BLE, one connection at a time — the
             # vendor app taking over looks exactly like this.
             self._attr_native_value = "Unavailable"
-        elif not charger_rt.get("dynamic_control", True):
+        elif not load_rt.get("dynamic_control", True):
             self._attr_native_value = "Manual"
-        elif charger_rt.get("station_storm_reserve"):
+        elif load_rt.get("station_storm_reserve"):
             self._attr_native_value = "Storm Reserve"
         elif soc is not None and charge_limit is not None and soc >= charge_limit:
             self._attr_native_value = "Full"
-        elif charger_rt.get("station_charging"):
+        elif load_rt.get("station_charging"):
             self._attr_native_value = "Charging"
         else:
             self._attr_native_value = "Idle"
@@ -288,12 +288,12 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
             self._attr_native_value, "mdi:battery-unknown"
         )
         self._attrs = {
-            "operating_mode": charger_rt.get("operating_mode"),
+            "operating_mode": load_rt.get("operating_mode"),
             "battery_level": soc,
             "charge_limit": charge_limit,
-            "charge_speed": charger_rt.get("station_charge_speed"),
-            "backup_reserve": charger_rt.get("station_reserve"),
-            "reserve_source": charger_rt.get("station_reserve_label"),
+            "charge_speed": load_rt.get("station_charge_speed"),
+            "backup_reserve": load_rt.get("station_reserve"),
+            "reserve_source": load_rt.get("station_reserve_label"),
         }
 
 
@@ -342,7 +342,7 @@ class LoadJugglerPhaseMaskSensor(LoadJugglerLoadSensor):
 
     def _read_site_data(self):
         """Read the live phase mask from hass.data (populated by the load processor)."""
-        masks = self._domain_bucket("charger_phase_masks")
+        masks = self._domain_bucket("load_phase_masks")
         mask = masks.get(self.config_entry.entry_id)
         self._attr_native_value = mask if mask else "Idle"
 
@@ -370,8 +370,8 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
         return self._attrs
 
     def _read_site_data(self):
-        """Derive the tank state from the climate entity + shared charger data."""
-        charger_rt = self._charger_runtime()
+        """Derive the tank state from the climate entity + shared load data."""
+        load_rt = self._load_runtime()
         climate_state = (
             self.hass.states.get(self._climate_entity)
             if self._climate_entity
@@ -388,11 +388,11 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
 
         if units.is_unavailable(climate_state):
             self._attr_native_value = "Unavailable"
-        elif not charger_rt.get("dynamic_control", True):
+        elif not load_rt.get("dynamic_control", True):
             # Dynamic Control off — Load Juggler is not managing the tank;
             # the thermostat runs on its own.
             self._attr_native_value = "Manual"
-        elif not charger_rt.get("tank_heating_permitted", True):
+        elif not load_rt.get("tank_heating_permitted", True):
             self._attr_native_value = "Waiting for Power"
         else:
             self._attr_native_value = {
@@ -402,10 +402,10 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
             }.get(hvac_action, "Idle")
 
         self._attrs = {
-            "operating_mode": charger_rt.get("operating_mode"),
+            "operating_mode": load_rt.get("operating_mode"),
             "current_temperature": current_temp,
-            "target_setpoint": charger_rt.get("tank_setpoint"),
-            "setpoint_source": charger_rt.get("tank_setpoint_label"),
-            "heating_permitted": charger_rt.get("tank_heating_permitted"),
-            "priority_elevated": charger_rt.get("tank_priority_elevated", False),
+            "target_setpoint": load_rt.get("tank_setpoint"),
+            "setpoint_source": load_rt.get("tank_setpoint_label"),
+            "heating_permitted": load_rt.get("tank_heating_permitted"),
+            "priority_elevated": load_rt.get("tank_priority_elevated", False),
         }

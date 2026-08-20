@@ -51,7 +51,7 @@ async def test_hub_setup(
     assert mock_hub_entry.entry_id in hass.data[DOMAIN]["hubs"]
     hub_data = hass.data[DOMAIN]["hubs"][mock_hub_entry.entry_id]
     assert hub_data["entry"] is mock_hub_entry
-    assert hub_data["chargers"] == []
+    assert hub_data["loads"] == []
 
 
 async def test_charger_setup(
@@ -73,15 +73,15 @@ async def test_charger_setup(
     await hass.async_block_till_done()
 
     # Charger should be registered
-    assert mock_charger_entry.entry_id in hass.data[DOMAIN]["chargers"]
-    charger_data = hass.data[DOMAIN]["chargers"][mock_charger_entry.entry_id]
+    assert mock_charger_entry.entry_id in hass.data[DOMAIN]["loads"]
+    charger_data = hass.data[DOMAIN]["loads"][mock_charger_entry.entry_id]
     assert charger_data["hub_entry_id"] == mock_hub_entry.entry_id
 
     # Charger should be linked to hub
-    assert mock_charger_entry.entry_id in hass.data[DOMAIN]["hubs"][mock_hub_entry.entry_id]["chargers"]
+    assert mock_charger_entry.entry_id in hass.data[DOMAIN]["hubs"][mock_hub_entry.entry_id]["loads"]
 
     # Allocation should be initialized to 0
-    assert hass.data[DOMAIN]["charger_allocations"][mock_charger_entry.entry_id] == 0
+    assert hass.data[DOMAIN]["load_allocations"][mock_charger_entry.entry_id] == 0
 
 
 async def test_charger_setup_without_hub(
@@ -94,13 +94,13 @@ async def test_charger_setup_without_hub(
 
     # Initialize domain data so async_setup_entry doesn't create default structure
     # without a hub present
-    hass.data.setdefault(DOMAIN, {"hubs": {}, "chargers": {}, "charger_allocations": {}})
+    hass.data.setdefault(DOMAIN, {"hubs": {}, "loads": {}, "load_allocations": {}})
 
     await hass.config_entries.async_setup(mock_charger_entry.entry_id)
     await hass.async_block_till_done()
 
     # Charger should NOT be in the chargers dict since hub doesn't exist
-    assert mock_charger_entry.entry_id not in hass.data[DOMAIN]["chargers"]
+    assert mock_charger_entry.entry_id not in hass.data[DOMAIN]["loads"]
 
 
 async def test_hub_unload(
@@ -137,15 +137,15 @@ async def test_charger_unload(
     await hass.config_entries.async_setup(mock_charger_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert mock_charger_entry.entry_id in hass.data[DOMAIN]["hubs"][mock_hub_entry.entry_id]["chargers"]
+    assert mock_charger_entry.entry_id in hass.data[DOMAIN]["hubs"][mock_hub_entry.entry_id]["loads"]
 
     await hass.config_entries.async_unload(mock_charger_entry.entry_id)
     await hass.async_block_till_done()
 
     # Charger should be removed from hub's list and from chargers dict
-    assert mock_charger_entry.entry_id not in hass.data[DOMAIN]["hubs"][mock_hub_entry.entry_id]["chargers"]
-    assert mock_charger_entry.entry_id not in hass.data[DOMAIN]["chargers"]
-    assert mock_charger_entry.entry_id not in hass.data[DOMAIN]["charger_allocations"]
+    assert mock_charger_entry.entry_id not in hass.data[DOMAIN]["hubs"][mock_hub_entry.entry_id]["loads"]
+    assert mock_charger_entry.entry_id not in hass.data[DOMAIN]["loads"]
+    assert mock_charger_entry.entry_id not in hass.data[DOMAIN]["load_allocations"]
 
 
 async def test_migration_v1_to_v2(
@@ -299,7 +299,7 @@ async def test_chargers_are_readopted_after_a_hub_reload(
 ):
     """Same regression for chargers, which keep a runtime list because their
     allocation state lives beside it — the hub re-adopts them on setup."""
-    from custom_components.dynamic_ocpp_evse import get_chargers_for_hub
+    from custom_components.dynamic_ocpp_evse import get_loads_for_hub
 
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
@@ -308,13 +308,13 @@ async def test_chargers_are_readopted_after_a_hub_reload(
     await hass.config_entries.async_setup(mock_charger_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert [e.entry_id for e in get_chargers_for_hub(hass, mock_hub_entry.entry_id)] == [
+    assert [e.entry_id for e in get_loads_for_hub(hass, mock_hub_entry.entry_id)] == [
         mock_charger_entry.entry_id
     ]
 
     await hass.config_entries.async_reload(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert [e.entry_id for e in get_chargers_for_hub(hass, mock_hub_entry.entry_id)] == [
+    assert [e.entry_id for e in get_loads_for_hub(hass, mock_hub_entry.entry_id)] == [
         mock_charger_entry.entry_id
     ]

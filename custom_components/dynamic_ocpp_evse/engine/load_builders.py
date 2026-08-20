@@ -3,7 +3,7 @@
 One builder per managed device type (OCPP EVSE, smart plug, power station, hot
 water tank), each turning a load's config entry and its live entity states into
 the ``LoadContext`` the calculation engine distributes power to, plus
-``_add_chargers_to_site()`` which walks the hub's registered loads and dispatches
+``_add_loads_to_site()`` which walks the hub's registered loads and dispatches
 to the right builder, and ``_build_circuit_groups()`` for the shared-breaker
 groups. Reads come through engine/readers.py; nothing here decides allocations.
 
@@ -92,7 +92,7 @@ from ..const import (
     resolve_tank_mode_priority,
 )
 from ..helpers import get_entry_value
-from ..registry import get_chargers_for_hub, get_groups_for_hub
+from ..registry import get_loads_for_hub, get_groups_for_hub
 from .. import units
 from .readers import (
     _PHASE_LABELS,
@@ -106,17 +106,17 @@ from .readers import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
-    """Build a LoadContext for an OCPP EVSE charger."""
-    charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
+def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
+    """Build a LoadContext for an OCPP EVSE load."""
+    load_rt = hass.data[DOMAIN]["loads"].get(entry.entry_id, {})
     config_min = get_entry_value(
         entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT
     )
     config_max = get_entry_value(
         entry, CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT
     )
-    min_current = charger_rt.get("min_current") or config_min
-    max_current = charger_rt.get("max_current") or config_max
+    min_current = load_rt.get("min_current") or config_min
+    max_current = load_rt.get("max_current") or config_max
     # The sliders refuse to cross each other (number.py), but a state restored
     # from an install that predates that guard still can. An inverted interval
     # makes every permit nonsensical, so collapse it — downwards, so a bad pair
@@ -126,14 +126,14 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     if min_current > max_current:
         _LOGGER.warning(
             "%s: min_current %.1fA is above max_current %.1fA — using %.1fA for both",
-            charger_entity_id, min_current, max_current, max_current,
+            load_entity_id, min_current, max_current, max_current,
         )
         min_current = max_current
 
     phases = int(get_entry_value(entry, CONF_PHASES, 3) or 3)
 
     # Get OCPP device ID for sensor lookups (different from Load Juggler entity_id)
-    ocpp_device_id = entry.data.get(CONF_CHARGER_ID, charger_entity_id)
+    ocpp_device_id = entry.data.get(CONF_CHARGER_ID, load_entity_id)
 
     # Read connector status from OCPP entity
     connector_status_entity = f"sensor.{ocpp_device_id}_status_connector"
@@ -147,15 +147,15 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     l2_phase = get_entry_value(entry, CONF_CHARGER_L2_PHASE, "B")
     l3_phase = get_entry_value(entry, CONF_CHARGER_L3_PHASE, "C")
 
-    # Resolve the per-charger operating mode from runtime data.
+    # Resolve the per-load operating mode from runtime data.
     mode = resolve_operating_mode(
         DEVICE_TYPE_EVSE,
-        charger_rt.get("operating_mode", DEFAULT_OPERATING_MODE_EVSE.key),
+        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_EVSE.key),
     )
 
-    charger = LoadContext(
+    load = LoadContext(
         load_id=entry.entry_id,
-        entity_id=charger_entity_id,
+        entity_id=load_entity_id,
         min_current=min_current,
         max_current=max_current,
         phases=phases,
@@ -170,7 +170,7 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
         l3_phase=l3_phase,
     )
 
-    # Get OCPP current draw for this charger with fallback chain:
+    # Get OCPP current draw for this load with fallback chain:
     # 1. Current Import per-phase entities (sensor.{id}_current_import_l1/l2/l3)
     # 2. Current Import entity (per-phase attributes or total)
     # 3. Power Active Import (convert W → A)
@@ -200,16 +200,16 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
         )
 
         if l1_val is not None or l2_val is not None or l3_val is not None:
-            charger.l1_current = l1_val if l1_val is not None else 0
-            charger.l2_current = l2_val if l2_val is not None else 0
-            charger.l3_current = l3_val if l3_val is not None else 0
+            load.l1_current = l1_val if l1_val is not None else 0
+            load.l2_current = l2_val if l2_val is not None else 0
+            load.l3_current = l3_val if l3_val is not None else 0
             current_draw = "current_import_l1l2l3"
             _LOGGER.debug(
                 "EVSE %s: Using per-phase current import entities: L1=%.1f L2=%.1f L3=%.1f",
-                charger_entity_id,
-                charger.l1_current,
-                charger.l2_current,
-                charger.l3_current,
+                load_entity_id,
+                load.l1_current,
+                load.l2_current,
+                load.l3_current,
             )
 
     # Try Current Import entity with per-phase attributes or total
@@ -229,11 +229,11 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
                 )
 
                 if l1 is not None or l2 is not None or l3 is not None:
-                    charger.l1_current = l1 or 0
-                    charger.l2_current = l2 or 0
-                    charger.l3_current = l3 or 0
+                    load.l1_current = l1 or 0
+                    load.l2_current = l2 or 0
+                    load.l3_current = l3 or 0
                     _clamp_reported_phase_draw(
-                        charger, entry, charger_entity_id, max_current
+                        load, entry, load_entity_id, max_current
                     )
                     current_draw = "current_import_attr"
                 else:
@@ -241,13 +241,13 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
                     # needs the same clamp: if the entity really carries the
                     # site total, replicating it would triple-book the draw.
                     current_import = float(evse_state.state)
-                    charger.l1_current = current_import
+                    load.l1_current = current_import
                     if phases >= 2:
-                        charger.l2_current = current_import
+                        load.l2_current = current_import
                     if phases >= 3:
-                        charger.l3_current = current_import
+                        load.l3_current = current_import
                     _clamp_reported_phase_draw(
-                        charger, entry, charger_entity_id, max_current
+                        load, entry, load_entity_id, max_current
                     )
                     current_draw = "current_import_total"
             except (ValueError, TypeError):
@@ -270,15 +270,15 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
                     # Convert W → A (total power across all phases)
                     power_per_phase = power_w / phases
                     current_per_phase = power_per_phase / voltage
-                    charger.l1_current = current_per_phase
+                    load.l1_current = current_per_phase
                     if phases >= 2:
-                        charger.l2_current = current_per_phase
+                        load.l2_current = current_per_phase
                     if phases >= 3:
-                        charger.l3_current = current_per_phase
+                        load.l3_current = current_per_phase
                     current_draw = "power_import"
                     _LOGGER.debug(
                         "EVSE %s: Using Power Active Import fallback: %.1fW → %.1fA per phase",
-                        charger_entity_id,
+                        load_entity_id,
                         power_w,
                         current_per_phase,
                     )
@@ -287,14 +287,14 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
 
     if current_draw:
         _LOGGER.debug(
-            "EVSE %s: Current draw source: %s", charger_entity_id, current_draw
+            "EVSE %s: Current draw source: %s", load_entity_id, current_draw
         )
 
     # No current-import source found — the engine cannot see this EVSE's real
     # draw, so its footprint falls back to its permit (it may reserve more than
     # it uses). Plugs and tanks always carry a correct draw and are never
     # flagged unmetered.
-    charger.unmetered = current_draw is None
+    load.unmetered = current_draw is None
 
     # Draw-settle detection: the measured draw is trusted as the EVSE's real
     # footprint — freeing the unused gap to lower-priority loads — only when
@@ -302,49 +302,49 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
     # *and* it is measurably below the permit we offered last cycle. A car
     # drawing essentially what we offered (util ≈ 1.0) is using all of it, so
     # we keep treating the permit as its footprint. A still-ramping car keeps
-    # changing and stays unsettled. Unmetered chargers have no draw to settle.
-    measured_draw = max(charger.l1_current, charger.l2_current, charger.l3_current)
-    if charger.unmetered:
-        charger.draw_settled = False
-        charger_rt.pop("_settle_last_draw", None)
-        charger_rt.pop("_settle_count", None)
+    # changing and stays unsettled. Unmetered loads have no draw to settle.
+    measured_draw = max(load.l1_current, load.l2_current, load.l3_current)
+    if load.unmetered:
+        load.draw_settled = False
+        load_rt.pop("_settle_last_draw", None)
+        load_rt.pop("_settle_count", None)
     else:
-        last_draw = charger_rt.get("_settle_last_draw")
+        last_draw = load_rt.get("_settle_last_draw")
         if last_draw is not None and abs(measured_draw - last_draw) <= SETTLE_DRAW_TOLERANCE:
-            charger_rt["_settle_count"] = charger_rt.get("_settle_count", 0) + 1
+            load_rt["_settle_count"] = load_rt.get("_settle_count", 0) + 1
         else:
-            charger_rt["_settle_count"] = 0
-        charger_rt["_settle_last_draw"] = measured_draw
-        steady = charger_rt["_settle_count"] >= SETTLE_DRAW_CYCLES
+            load_rt["_settle_count"] = 0
+        load_rt["_settle_last_draw"] = measured_draw
+        steady = load_rt["_settle_count"] >= SETTLE_DRAW_CYCLES
         under_permit = (
             measured_draw + SETTLE_PERMIT_MARGIN
-            < charger_rt.get("_last_permit", 0)
+            < load_rt.get("_last_permit", 0)
         )
-        charger.draw_settled = steady and under_permit
+        load.draw_settled = steady and under_permit
 
     # SuspendedEV grace period: car may briefly pause during normal charging (BMS
     # balancing). Only treat as inactive after SUSPENDED_EV_IDLE_TIMEOUT seconds
     # of continuous SuspendedEV + near-zero draw.
-    total_draw = charger.l1_current + charger.l2_current + charger.l3_current
+    total_draw = load.l1_current + load.l2_current + load.l3_current
     if connector_status == "SuspendedEV" and total_draw < 1.0:
-        if "_suspended_ev_since" not in charger_rt:
-            charger_rt["_suspended_ev_since"] = time.monotonic()
-        idle_duration = time.monotonic() - charger_rt["_suspended_ev_since"]
+        if "_suspended_ev_since" not in load_rt:
+            load_rt["_suspended_ev_since"] = time.monotonic()
+        idle_duration = time.monotonic() - load_rt["_suspended_ev_since"]
         if idle_duration >= SUSPENDED_EV_IDLE_TIMEOUT:
             _LOGGER.debug(
                 "EVSE %s: SuspendedEV idle for %.0fs (>%ds) — treating as inactive",
-                charger_entity_id,
+                load_entity_id,
                 idle_duration,
                 SUSPENDED_EV_IDLE_TIMEOUT,
             )
-            charger.connector_status = "Finishing"
+            load.connector_status = "Finishing"
     else:
-        charger_rt.pop("_suspended_ev_since", None)
+        load_rt.pop("_suspended_ev_since", None)
 
     _LOGGER.debug(
         "  EVSE %s [%s]: %s-%sA %dph(hw) L1->%s/L2->%s/L3->%s mask=%s(%dph) "
         "prio=%d [%s] draw=L1:%s/L2:%s/L3:%s",
-        charger_entity_id,
+        load_entity_id,
         mode.key,
         _fv(min_current),
         _fv(max_current),
@@ -352,15 +352,15 @@ def _build_evse_charger(hass, entry, voltage, charger_entity_id, priority):
         l1_phase,
         l2_phase,
         l3_phase,
-        charger.active_phases_mask,
-        len(charger.active_phases_mask) if charger.active_phases_mask else 0,
+        load.active_phases_mask,
+        len(load.active_phases_mask) if load.active_phases_mask else 0,
         priority,
-        charger.connector_status,
-        _fv(charger.l1_current),
-        _fv(charger.l2_current),
-        _fv(charger.l3_current),
+        load.connector_status,
+        _fv(load.l1_current),
+        _fv(load.l2_current),
+        _fv(load.l3_current),
     )
-    return charger
+    return load
 
 
 def _phase_draw(draw_w, connected_to_phase, voltage):
@@ -383,10 +383,10 @@ def _phase_draw(draw_w, connected_to_phase, voltage):
     }
 
 
-def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
+def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
     """Build a LoadContext for a smart load (plug) device."""
-    charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
-    slider_power = charger_rt.get("device_power", None)
+    load_rt = hass.data[DOMAIN]["loads"].get(entry.entry_id, {})
+    slider_power = load_rt.get("device_power", None)
     config_power = get_entry_value(
         entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING
     )
@@ -429,31 +429,31 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     # is on AND the reading is steady. A transient reading (a switch-off dip, a
     # compressor inrush spike) must not overwrite the configured rating, so we
     # require N consecutive readings within ±20 % of the *first* one before
-    # committing the value. The candidate and its run length live in charger_rt
+    # committing the value. The candidate and its run length live in load_rt
     # so they survive across calculation cycles.
     _POWER_STABLE_CYCLES = 3
     _POWER_STABLE_TOLERANCE = 0.20
     if power_monitor_entity and on and power_draw and power_draw > 10:
-        candidate = charger_rt.get("power_candidate")
+        candidate = load_rt.get("power_candidate")
         if candidate is None or candidate <= 0:
             # First reading of a run — remember it as the yardstick to compare
             # the next cycles against.
-            charger_rt["power_candidate"] = power_draw
-            charger_rt["power_stable_count"] = 1
+            load_rt["power_candidate"] = power_draw
+            load_rt["power_stable_count"] = 1
         elif abs(power_draw - candidate) <= candidate * _POWER_STABLE_TOLERANCE:
-            stable_count = charger_rt.get("power_stable_count", 0) + 1
-            charger_rt["power_stable_count"] = stable_count
+            stable_count = load_rt.get("power_stable_count", 0) + 1
+            load_rt["power_stable_count"] = stable_count
             if stable_count >= _POWER_STABLE_CYCLES:
                 power_rating = power_draw
-                charger_rt["device_power"] = math.ceil(power_draw / 10) * 10
+                load_rt["device_power"] = math.ceil(power_draw / 10) * 10
         else:
             # The reading moved off the candidate — the run is broken, restart
             # counting against the new value.
-            charger_rt["power_candidate"] = power_draw
-            charger_rt["power_stable_count"] = 1
+            load_rt["power_candidate"] = power_draw
+            load_rt["power_stable_count"] = 1
     else:
-        charger_rt["power_candidate"] = None
-        charger_rt["power_stable_count"] = 0
+        load_rt["power_candidate"] = None
+        load_rt["power_stable_count"] = 0
 
     # Clamp to 0.1 A so the value survives the calculator's round(x, 1) and the
     # plug is not permanently locked off due to a very low power rating.
@@ -467,15 +467,15 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     else:
         actual_draw_w = power_rating if on else 0
 
-    # Resolve the per-charger operating mode from runtime data.
+    # Resolve the per-load operating mode from runtime data.
     mode = resolve_operating_mode(
         DEVICE_TYPE_PLUG,
-        charger_rt.get("operating_mode", DEFAULT_OPERATING_MODE_PLUG.key),
+        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_PLUG.key),
     )
 
-    charger = LoadContext(
+    load = LoadContext(
         load_id=entry.entry_id,
-        entity_id=charger_entity_id,
+        entity_id=load_entity_id,
         min_current=equivalent_current,
         max_current=equivalent_current,
         phases=phases,
@@ -491,7 +491,7 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
     )
     _LOGGER.debug(
         "  Plug %s [%s]: %.0fW on %s prio=%d [%s]%s",
-        charger_entity_id,
+        load_entity_id,
         mode.key,
         power_rating,
         connected_to_phase,
@@ -499,10 +499,10 @@ def _build_plug_charger(hass, entry, voltage, charger_entity_id, priority):
         connector_status,
         " (metered)" if power_monitor_entity else "",
     )
-    return charger
+    return load
 
 
-def _build_power_station_charger(hass, entry, voltage, charger_entity_id, priority):
+def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     """Build a LoadContext for a portable power station (modulating load).
 
     The station charges at a commandable rate, so to the engine it is an EVSE
@@ -515,7 +515,7 @@ def _build_power_station_charger(hass, entry, voltage, charger_entity_id, priori
     ordinary household consumption, not ours: counting it here would let the
     feedback loop add it back as available surplus.
     """
-    charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
+    load_rt = hass.data[DOMAIN]["loads"].get(entry.entry_id, {})
 
     # Charge bounds: runtime sliders win over the configured values, mirroring
     # the EVSE's min/max current.
@@ -525,8 +525,8 @@ def _build_power_station_charger(hass, entry, voltage, charger_entity_id, priori
     config_max = get_entry_value(
         entry, CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
     )
-    min_power = charger_rt.get("station_min_charge_power") or config_min
-    max_power = charger_rt.get("station_max_charge_power") or config_max
+    min_power = load_rt.get("station_min_charge_power") or config_min
+    max_power = load_rt.get("station_max_charge_power") or config_max
     if max_power < min_power:
         max_power = min_power
 
@@ -589,7 +589,7 @@ def _build_power_station_charger(hass, entry, voltage, charger_entity_id, priori
     )
     if ac_in is not None and ac_out is not None:
         actual_draw_w = max(0.0, ac_in - abs(ac_out))
-    elif charger_rt.get("station_charging"):
+    elif load_rt.get("station_charging"):
         # _read_entity parses and unit-converts; _coerce only maps the
         # unavailable sentinel, so the raw state string must not go through it.
         actual_draw_w = _coerce(_read_entity(hass, speed_entity, 0, unit="W"), 0) or 0
@@ -598,16 +598,16 @@ def _build_power_station_charger(hass, entry, voltage, charger_entity_id, priori
 
     mode = resolve_operating_mode(
         DEVICE_TYPE_POWER_STATION,
-        charger_rt.get("operating_mode", DEFAULT_OPERATING_MODE_POWER_STATION.key),
+        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_POWER_STATION.key),
     )
     # Storm reserve overrides the mode: filling a backup reserve only from
     # surplus is not a reserve, so it competes as a must-run load.
-    if charger_rt.get("station_storm_reserve"):
+    if load_rt.get("station_storm_reserve"):
         mode = STATION_MODE_STANDARD
 
-    charger = LoadContext(
+    load = LoadContext(
         load_id=entry.entry_id,
-        entity_id=charger_entity_id,
+        entity_id=load_entity_id,
         min_current=min_current,
         max_current=max_current,
         phases=phases,
@@ -624,7 +624,7 @@ def _build_power_station_charger(hass, entry, voltage, charger_entity_id, priori
     _LOGGER.debug(
         "  Station %s [%s]: %.0f-%.0fW on %s prio=%d soc=%s%% limit=%s%% "
         "draw=%.0fW [%s]",
-        charger_entity_id,
+        load_entity_id,
         mode.key,
         min_power,
         max_power,
@@ -635,10 +635,10 @@ def _build_power_station_charger(hass, entry, voltage, charger_entity_id, priori
         actual_draw_w,
         connector_status,
     )
-    return charger
+    return load
 
 
-def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, priority):
+def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     """Build a LoadContext for a hot water tank (climate-driven binary load).
 
     To the engine the tank is a smart load (plug): a fixed-power binary draw.
@@ -647,7 +647,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     Protection / Normal / Solar Priority / Solar Excess) map to engine modes
     here.
     """
-    charger_rt = hass.data[DOMAIN]["chargers"].get(entry.entry_id, {})
+    load_rt = hass.data[DOMAIN]["loads"].get(entry.entry_id, {})
 
     # Connector status from the climate entity's hvac_action: a thermostat
     # reporting "idle" means the tank is satisfied — mark it inactive so the
@@ -673,7 +673,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     element_power = get_entry_value(
         entry, CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER
     )
-    slider_power = charger_rt.get("device_power")
+    slider_power = load_rt.get("device_power")
     power_rating = slider_power if slider_power else element_power
     power_entity = get_entry_value(entry, CONF_TANK_POWER_ENTITY_ID, None)
     live = None
@@ -681,7 +681,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
         live = _coerce(_read_entity(hass, power_entity, 0, unit="W"))
         if live and live > 10 and hvac_action == "heating":
             power_rating = live
-            charger_rt["device_power"] = round(live, 0)
+            load_rt["device_power"] = round(live, 0)
 
     connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
     phases = len(connected_to_phase)
@@ -704,7 +704,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     # decides how the tank competes for power, not whether it runs.
     mode = resolve_operating_mode(
         DEVICE_TYPE_HOT_WATER_TANK,
-        charger_rt.get("operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key),
+        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key),
     )
 
     # Cold-tank promotion: a Solar Priority tank below its normal temperature is
@@ -719,7 +719,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
         current_temp = float(raw_temp) if raw_temp is not None else None
     except (TypeError, ValueError):
         current_temp = None
-    normal_temp = charger_rt.get("tank_normal_temperature") or get_entry_value(
+    normal_temp = load_rt.get("tank_normal_temperature") or get_entry_value(
         entry, CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE
     )
 
@@ -727,11 +727,11 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     # would otherwise dump, so it competes at the Excess tier instead of its
     # mode's own. The label is whatever the command layer last wrote — one cycle
     # stale, which is the honest reading. Resolving it here instead would have to
-    # use PRE-feedback export (chargers are built before the feedback loop and
+    # use PRE-feedback export (loads are built before the feedback loop and
     # the excess latch), and that figure is already depressed by the tank's own
     # draw, so a boosting tank would look like it wasn't. The lag only shifts
     # allocation order, and only while the site is contended.
-    setpoint_label = charger_rt.get("tank_setpoint_label")
+    setpoint_label = load_rt.get("tank_setpoint_label")
 
     mode_priority, elevated = resolve_tank_mode_priority(
         mode.key,
@@ -745,11 +745,11 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
         ),
         setpoint_label,
     )
-    charger_rt["tank_priority_elevated"] = elevated
+    load_rt["tank_priority_elevated"] = elevated
 
-    charger = LoadContext(
+    load = LoadContext(
         load_id=entry.entry_id,
-        entity_id=charger_entity_id,
+        entity_id=load_entity_id,
         min_current=equivalent_current,
         max_current=equivalent_current,
         phases=phases,
@@ -765,7 +765,7 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
     )
     _LOGGER.debug(
         "  Tank %s [%s]: %.0fW on %s prio=%d tier=%d (%s) [%s]",
-        charger_entity_id,
+        load_entity_id,
         mode.key,
         power_rating,
         connected_to_phase,
@@ -774,42 +774,42 @@ def _build_hot_water_tank_charger(hass, entry, voltage, charger_entity_id, prior
         setpoint_label,
         connector_status,
     )
-    return charger
+    return load
 
 
-def _add_chargers_to_site(hass, site, hub_entry_id, charger_entries=None):
-    """Build LoadContext objects for all chargers and add them to the site.
+def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None):
+    """Build LoadContext objects for all loads and add them to the site.
 
-    ``charger_entries`` overrides the hub's registered loads (used by tests and
+    ``load_entries`` overrides the hub's registered loads (used by tests and
     by any caller that already knows the entries); None reads the registry.
     """
-    if charger_entries is None:
-        chargers = get_chargers_for_hub(hass, hub_entry_id)
+    if load_entries is None:
+        loads = get_loads_for_hub(hass, hub_entry_id)
     else:
-        chargers = charger_entries
+        loads = load_entries
 
-    for entry in chargers:
+    for entry in loads:
         device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        charger_entity_id = entry.data.get(CONF_ENTITY_ID, f"charger_{entry.entry_id}")
+        load_entity_id = entry.data.get(CONF_ENTITY_ID, f"load_{entry.entry_id}")
         priority = get_entry_value(
             entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY
         )
 
         if device_type == DEVICE_TYPE_PLUG:
-            charger = _build_plug_charger(
-                hass, entry, site.voltage, charger_entity_id, priority
+            load = _build_plug_load(
+                hass, entry, site.voltage, load_entity_id, priority
             )
         elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
-            charger = _build_hot_water_tank_charger(
-                hass, entry, site.voltage, charger_entity_id, priority
+            load = _build_hot_water_tank_load(
+                hass, entry, site.voltage, load_entity_id, priority
             )
         elif device_type == DEVICE_TYPE_POWER_STATION:
-            charger = _build_power_station_charger(
-                hass, entry, site.voltage, charger_entity_id, priority
+            load = _build_power_station_load(
+                hass, entry, site.voltage, load_entity_id, priority
             )
         else:
-            charger = _build_evse_charger(
-                hass, entry, site.voltage, charger_entity_id, priority
+            load = _build_evse_load(
+                hass, entry, site.voltage, load_entity_id, priority
             )
 
         # Clamp active_phases_mask to only include phases that exist on the site
@@ -822,21 +822,21 @@ def _add_chargers_to_site(hass, site, hub_entry_id, charger_entries=None):
             if v is not None
         }
         mask_phases = (
-            set(charger.active_phases_mask) if charger.active_phases_mask else set()
+            set(load.active_phases_mask) if load.active_phases_mask else set()
         )
         if mask_phases and not mask_phases.issubset(site_phases):
-            clamped = "".join(sorted(mask_phases & site_phases)) or charger.l1_phase
+            clamped = "".join(sorted(mask_phases & site_phases)) or load.l1_phase
             _LOGGER.warning(
                 "%s %s: phase mask %s includes phases not on site (%s) — clamping to %s",
-                "Plug" if charger.device_type == DEVICE_TYPE_PLUG else "EVSE",
-                charger_entity_id,
-                charger.active_phases_mask,
+                "Plug" if load.device_type == DEVICE_TYPE_PLUG else "EVSE",
+                load_entity_id,
+                load.active_phases_mask,
                 "".join(sorted(site_phases)),
                 clamped,
             )
-            charger.active_phases_mask = clamped
+            load.active_phases_mask = clamped
 
-        site.loads.append(charger)
+        site.loads.append(load)
 
 def _build_circuit_groups(hass, hub_entry_id):
     """Build CircuitGroup objects from config entries for this hub.
@@ -844,8 +844,8 @@ def _build_circuit_groups(hass, hub_entry_id):
     Returns list of CircuitGroup model objects for the calculation engine.
     """
     group_entries = get_groups_for_hub(hass, hub_entry_id)
-    # Build set of valid charger entry_ids for member validation
-    valid_charger_ids = {
+    # Build set of valid load entry_ids for member validation
+    valid_load_ids = {
         e.entry_id
         for e in hass.config_entries.async_entries(DOMAIN)
         if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_CHARGER
@@ -859,8 +859,8 @@ def _build_circuit_groups(hass, hub_entry_id):
             CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT
         )
         raw_member_ids = options.get(CONF_CIRCUIT_GROUP_MEMBERS, [])
-        # Filter out stale member references (deleted chargers)
-        member_ids = [mid for mid in raw_member_ids if mid in valid_charger_ids]
+        # Filter out stale member references (deleted loads)
+        member_ids = [mid for mid in raw_member_ids if mid in valid_load_ids]
         stale = set(raw_member_ids) - set(member_ids)
         if stale:
             _LOGGER.warning(

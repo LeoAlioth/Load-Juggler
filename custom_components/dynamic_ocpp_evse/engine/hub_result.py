@@ -204,9 +204,9 @@ def _build_hub_result(
     battery_soc_min,
     battery_max_discharge_power,
     battery_power,
-    charger_targets,
-    charger_available,
-    charger_names,
+    load_targets,
+    load_available,
+    load_names,
     auto_detect_notifications=None,
     group_data=None,
     grid_stale=False,
@@ -251,7 +251,7 @@ def _build_hub_result(
     else:
         battery_rated_discharge = 0
 
-    # Total EVSE power = sum of actual charger draws
+    # Total EVSE power = sum of actual load draws
     total_evse_power = round(
         sum(
             (c.l1_current + c.l2_current + c.l3_current) * voltage
@@ -306,8 +306,8 @@ def _build_hub_result(
             max(0, site.max_grid_import_power - max(0, post_feedback_import)),
         )
 
-    # Solar power available to chargers = solar production - household loads
-    # (household_consumption_total is set after feedback loop, so it excludes charger draws)
+    # Solar power available to loads = solar production - household loads
+    # (household_consumption_total is set after feedback loop, so it excludes load draws)
     solar_available = 0
     if site.solar_production_total and site.solar_production_total > 0:
         household = getattr(site, "household_consumption_total", None)
@@ -414,46 +414,46 @@ def _build_hub_result(
     battery_remaining_current = battery_remaining / voltage if voltage else 0
     inverter_remaining_current = inverter_sourced / voltage if voltage else 0
 
-    # Build per-charger operating modes dict
-    charger_modes = {c.load_id: c.operating_mode for c in site.loads}
+    # Build per-load operating modes dict
+    load_modes = {c.load_id: c.operating_mode for c in site.loads}
 
-    # Per-charger effective priority rank — the order the engine serves loads
+    # Per-load effective priority rank — the order the engine serves loads
     # when power is contended: mode urgency first, then the configured priority
-    # number (the same sort key _sort_chargers uses to distribute power). Rank
+    # number (the same sort key _sort_loads uses to distribute power). Rank
     # 1 is served first. Exposed so each device can show where it really
     # stands, since mode urgency can override the configured priority number.
     _ranked = sorted(
         site.loads,
         key=lambda c: (c.mode_priority, c.priority),
     )
-    charger_rank = {c.load_id: idx + 1 for idx, c in enumerate(_ranked)}
+    load_rank = {c.load_id: idx + 1 for idx, c in enumerate(_ranked)}
 
-    # Per-charger actual draw — the measured current the load is really
+    # Per-load actual draw — the measured current the load is really
     # pulling (sum of phase currents). For a binary load this is what the
     # device draws right now, which can be far below its reserved allocation
     # (e.g. a metered plug switched on but its appliance idle).
-    charger_draw = {
+    load_draw = {
         c.load_id: round(c.l1_current + c.l2_current + c.l3_current, 1)
         for c in site.loads
     }
 
-    # Per-charger active phase count (for W-based OCPP profiles)
+    # Per-load active phase count (for W-based OCPP profiles)
     # Uses actual draw to detect 1-phase car on 3-phase EVSE; falls back to configured phases.
-    charger_active_phases = {}
-    charger_phase_masks = {}
+    load_active_phases = {}
+    load_phase_masks = {}
     for c in site.loads:
         active = sum(
             1 for cur in (c.l1_current, c.l2_current, c.l3_current) if cur > 1.0
         )
-        charger_active_phases[c.load_id] = active if active > 0 else c.phases
+        load_active_phases[c.load_id] = active if active > 0 else c.phases
         # Live site-phase mask: which site phases A/B/C are actively drawing
         site_draw = c.get_site_phase_draw()
-        charger_phase_masks[c.load_id] = "".join(
+        load_phase_masks[c.load_id] = "".join(
             phase for phase, draw in zip(("A", "B", "C"), site_draw) if draw > 1.0
         )
 
     return {
-        CONF_TOTAL_ALLOCATED_CURRENT: round(sum(charger_targets.values()), 1),
+        CONF_TOTAL_ALLOCATED_CURRENT: round(sum(load_targets.values()), 1),
         CONF_PHASES: site.num_phases,
         "calc_used": "calculate_all_load_targets",
         # Site-level data for hub sensor
@@ -484,15 +484,15 @@ def _build_hub_result(
         # of) the trigger the site is; the per-sink split is in the debug log.
         "excess_available": excess_available,
         "excess_margin_power": round(excess_margin_power, 0),
-        # Per-charger targets
-        "charger_targets": charger_targets,
-        "charger_available": charger_available,
-        "charger_names": charger_names,
-        "charger_modes": charger_modes,
-        "charger_rank": charger_rank,
-        "charger_draw": charger_draw,
-        "charger_active_phases": charger_active_phases,
-        "charger_phase_masks": charger_phase_masks,
+        # Per-load targets
+        "load_targets": load_targets,
+        "load_available": load_available,
+        "load_names": load_names,
+        "load_modes": load_modes,
+        "load_rank": load_rank,
+        "load_draw": load_draw,
+        "load_active_phases": load_active_phases,
+        "load_phase_masks": load_phase_masks,
         "distribution_mode": site.distribution_mode,
         # Auto-detection notifications (inversion, phase mapping)
         "auto_detect_notifications": auto_detect_notifications or [],

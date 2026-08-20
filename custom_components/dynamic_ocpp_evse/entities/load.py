@@ -41,8 +41,8 @@ from ..const import (
 )
 from ..helpers import get_entry_value
 from .. import units
-from .mixins import ChargerEntityMixin, SiteFreshnessMixin
-from ..registry import get_hub_for_charger
+from .mixins import LoadEntityMixin, SiteFreshnessMixin
+from ..registry import get_hub_for_load
 from ..control.smoothing import apply_smoothing
 from ..control.status import determine_charging_status
 from ..control.compliance import check_profile_compliance
@@ -54,7 +54,7 @@ from ..control.power_station import send_power_station_command
 _LOGGER = logging.getLogger(__name__)
 
 
-class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEntity):
+class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity):
     """Representation of a managed device (EVSE, smart plug, etc.).
 
     This entity does NOT run the site calculation. Its hub's coordinator
@@ -84,13 +84,13 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
             f"{entity_id}_available_current",
         )
         self.hub_entry = hub_entry
-        charger_entity_id = config_entry.data.get(CONF_ENTITY_ID)
-        ocpp_device_id = config_entry.data.get(CONF_CHARGER_ID, charger_entity_id)
+        load_entity_id = config_entry.data.get(CONF_ENTITY_ID)
+        ocpp_device_id = config_entry.data.get(CONF_CHARGER_ID, load_entity_id)
         self._connector_status_entity = f"sensor.{ocpp_device_id}_status_connector"
         self._charge_control_entity = f"switch.{ocpp_device_id}_charge_control"
         self._state = None
         self._phases = None
-        # Phase count actually seen drawing, from the engine's live per-charger
+        # Phase count actually seen drawing, from the engine's live per-load
         # measurement — surfaced as the "detected_phases" attribute and used to
         # encode Watts-mode OCPP limits (control/ocpp.py, control/compliance.py).
         self._car_active_phases = None
@@ -173,7 +173,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
 
     @property
     def extra_state_attributes(self):
-        """Return charger-specific attributes only (site-level data is on hub sensor)."""
+        """Return load-specific attributes only (site-level data is on hub sensor)."""
         pause_remaining = None
         if self._pause_started_at is not None:
             pause_duration_min = get_entry_value(
@@ -203,6 +203,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
             "grace_remaining_seconds": grace_remaining,
             "last_set_current": self._last_set_current,
             "last_set_power": self._last_set_power,
+            # Published attribute name predates the charger → load rename and
+            # is public API for automations/templates — kept as it shipped.
             "charger_priority": get_entry_value(
                 self.config_entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY
             ),
@@ -232,7 +234,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
             self._last_update = datetime.now(timezone.utc)
         except Exception as e:
             _LOGGER.error(
-                f"Error updating Load Juggler Charger Sensor {self._attr_name}: {e}",
+                f"Error updating Load Juggler load sensor {self._attr_name}: {e}",
                 exc_info=True,
             )
         # Polling is off and there is no coordinator listener, so this is the
@@ -243,24 +245,24 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
 
     async def _async_apply(self, hub_data):
         """The body of async_process — see its docstring."""
-        hub_entry = get_hub_for_charger(self.hass, self.config_entry.entry_id)
+        hub_entry = get_hub_for_load(self.hass, self.config_entry.entry_id)
         if not hub_entry:
-            _LOGGER.error("Hub not found for charger: %s", self._attr_name)
+            _LOGGER.error("Hub not found for load: %s", self._attr_name)
             return
 
         self.hub_entry = hub_entry
 
         self._phases = hub_data.get(CONF_PHASES)
-        charger_active_phases = hub_data.get("charger_active_phases", {})
-        self._car_active_phases = charger_active_phases.get(
+        load_active_phases = hub_data.get("load_active_phases", {})
+        self._car_active_phases = load_active_phases.get(
             self.config_entry.entry_id,
             self._phases or 1,
         )
-        charger_phase_masks = hub_data.get("charger_phase_masks", {})
+        load_phase_masks = hub_data.get("load_phase_masks", {})
         current_distribution_mode = hub_data.get("distribution_mode")
 
-        charger_modes = hub_data.get("charger_modes", {})
-        self._operating_mode = charger_modes.get(self.config_entry.entry_id)
+        load_modes = hub_data.get("load_modes", {})
+        self._operating_mode = load_modes.get(self.config_entry.entry_id)
 
         mode_changed = (
             self._prev_operating_mode is not None
@@ -297,19 +299,19 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
         # The site-level republish into hass.data is the hub coordinator's job
         # (one writer per cycle) — see publish_hub_data in entities/hub.py.
 
-        charger_targets = hub_data.get("charger_targets", {})
+        load_targets = hub_data.get("load_targets", {})
 
-        if charger_targets:
-            charger_names = hub_data.get("charger_names", {})
-            charger_modes = hub_data.get("charger_modes", {})
-            charger_avail = hub_data.get("charger_available", {})
+        if load_targets:
+            load_names = hub_data.get("load_names", {})
+            load_modes = hub_data.get("load_modes", {})
+            load_avail = hub_data.get("load_available", {})
             _LOGGER.debug(
-                "Charger targets: %s",
+                "Load targets: %s",
                 ", ".join(
                     [
-                        f"{charger_names.get(k, k[-8:])}({charger_modes.get(k, '?')}): "
-                        f"alloc={v:.1f}A avail={charger_avail.get(k, 0):.1f}A"
-                        for k, v in charger_targets.items()
+                        f"{load_names.get(k, k[-8:])}({load_modes.get(k, '?')}): "
+                        f"alloc={v:.1f}A avail={load_avail.get(k, 0):.1f}A"
+                        for k, v in load_targets.items()
                     ]
                 ),
             )
@@ -318,16 +320,16 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
         # It is what the "Allocated Current" sensor shows, for every
         # device type — no smoothing, it is a measurement.
         self._allocated_current = round(
-            charger_targets.get(self.config_entry.entry_id, 0), 1
+            load_targets.get(self.config_entry.entry_id, 0), 1
         )
 
         # available_current = the permit the engine grants this device,
         # up to its rated/max. It drives the device command. For an EVSE
         # the OCPP charge limit is the permit, smoothed to avoid
         # oscillation; binary loads (plug, tank) use it directly.
-        charger_avail_data = hub_data.get("charger_available", {})
+        load_avail_data = hub_data.get("load_available", {})
         raw_permit = round(
-            charger_avail_data.get(self.config_entry.entry_id, 0), 1
+            load_avail_data.get(self.config_entry.entry_id, 0), 1
         )
 
         device_type = self.config_entry.data.get(
@@ -349,8 +351,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
                 and raw_permit > 0
                 and not mode_changed
             ):
-                charger_rt = self._charger_runtime()
-                min_power = charger_rt.get(
+                load_rt = self._load_runtime()
+                min_power = load_rt.get(
                     "station_min_charge_power"
                 ) or get_entry_value(
                     self.config_entry,
@@ -383,10 +385,10 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
         # measured it against the static one and paused anyway (issue #37).
         # Both branches therefore read the live runtime slider first and fall
         # back to the config value exactly as engine/hub_calculation.py does.
-        load_rt = self._charger_runtime()
+        load_rt = self._load_runtime()
         if device_type == DEVICE_TYPE_POWER_STATION:
             # The station's floor is its minimum charge POWER, not a current —
-            # see _build_power_station_charger().
+            # see _build_power_station_load().
             _min_power = load_rt.get(
                 "station_min_charge_power"
             ) or get_entry_value(
@@ -403,7 +405,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
             )
             min_charge_current = _min_power / (_voltage * _phases)
         else:
-            # Mirrors _build_evse_charger(): runtime "Min Current" slider, then
+            # Mirrors _build_evse_load(): runtime "Min Current" slider, then
             # the configured minimum. Plugs and tanks never publish
             # "min_current" (they are power-rated), so they keep resolving to
             # the config value.
@@ -456,8 +458,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
             and grace_period_seconds > 0
         ):
             if self._available_current < min_charge_current:
-                charger_avail = hub_data.get("charger_available", {})
-                physical_available = charger_avail.get(
+                load_avail = hub_data.get("load_available", {})
+                physical_available = load_avail.get(
                     self.config_entry.entry_id, 0
                 )
                 # For an EVSE, grace holds only while the engine still
@@ -530,27 +532,27 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
 
         if DOMAIN not in self.hass.data:
             self.hass.data[DOMAIN] = {}
-        if "charger_allocations" not in self.hass.data[DOMAIN]:
-            self.hass.data[DOMAIN]["charger_allocations"] = {}
+        if "load_allocations" not in self.hass.data[DOMAIN]:
+            self.hass.data[DOMAIN]["load_allocations"] = {}
         # "Allocated Current" reflects the real footprint for every device
         # type — _allocated_current is the engine's measured draw.
-        self.hass.data[DOMAIN]["charger_allocations"][
+        self.hass.data[DOMAIN]["load_allocations"][
             self.config_entry.entry_id
         ] = self._allocated_current
 
         # Effective priority rank from the engine — the order this device
         # is served when power is contended (mode urgency, then priority).
-        if "charger_ranks" not in self.hass.data[DOMAIN]:
-            self.hass.data[DOMAIN]["charger_ranks"] = {}
-        self.hass.data[DOMAIN]["charger_ranks"][
+        if "load_ranks" not in self.hass.data[DOMAIN]:
+            self.hass.data[DOMAIN]["load_ranks"] = {}
+        self.hass.data[DOMAIN]["load_ranks"][
             self.config_entry.entry_id
-        ] = hub_data.get("charger_rank", {}).get(self.config_entry.entry_id)
+        ] = hub_data.get("load_rank", {}).get(self.config_entry.entry_id)
 
-        if "charger_phase_masks" not in self.hass.data[DOMAIN]:
-            self.hass.data[DOMAIN]["charger_phase_masks"] = {}
-        self.hass.data[DOMAIN]["charger_phase_masks"][
+        if "load_phase_masks" not in self.hass.data[DOMAIN]:
+            self.hass.data[DOMAIN]["load_phase_masks"] = {}
+        self.hass.data[DOMAIN]["load_phase_masks"][
             self.config_entry.entry_id
-        ] = charger_phase_masks.get(self.config_entry.entry_id, "")
+        ] = load_phase_masks.get(self.config_entry.entry_id, "")
 
         command_interval = get_entry_value(
             self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
@@ -575,8 +577,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
             DEFAULT_MAX_CHARGE_CURRENT,
         )
 
-        charger_rt = self._charger_runtime()
-        dynamic_control_on = charger_rt.get("dynamic_control", True)
+        load_rt = self._load_runtime()
+        dynamic_control_on = load_rt.get("dynamic_control", True)
 
         if device_type == DEVICE_TYPE_HOT_WATER_TANK:
             # The tank is a binary load whose thermostat — not the engine —
@@ -649,9 +651,9 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, ChargerEntityMixin, SensorEnti
             min_charge_current,
         )
 
-        if "charger_status" not in self.hass.data.get(DOMAIN, {}):
-            self.hass.data.setdefault(DOMAIN, {})["charger_status"] = {}
-        self.hass.data[DOMAIN]["charger_status"][self.config_entry.entry_id] = (
+        if "load_status" not in self.hass.data.get(DOMAIN, {}):
+            self.hass.data.setdefault(DOMAIN, {})["load_status"] = {}
+        self.hass.data[DOMAIN]["load_status"][self.config_entry.entry_id] = (
             self._charging_status
         )
 

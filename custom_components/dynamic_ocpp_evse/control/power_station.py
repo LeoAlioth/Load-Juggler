@@ -60,9 +60,9 @@ async def send_power_station_command(
         )
         return
 
-    charger_rt = (
+    load_rt = (
         sensor.hass.data.get(DOMAIN, {})
-        .get("chargers", {})
+        .get("loads", {})
         .get(entry.entry_id, {})
     )
 
@@ -70,19 +70,19 @@ async def send_power_station_command(
     phases = len(get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A")
     allocated_w = limit * voltage * phases
 
-    min_power = charger_rt.get("station_min_charge_power") or get_entry_value(
+    min_power = load_rt.get("station_min_charge_power") or get_entry_value(
         entry, CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
     )
-    max_power = charger_rt.get("station_max_charge_power") or get_entry_value(
+    max_power = load_rt.get("station_max_charge_power") or get_entry_value(
         entry, CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
     )
-    normal_reserve = charger_rt.get("station_normal_reserve") or get_entry_value(
+    normal_reserve = load_rt.get("station_normal_reserve") or get_entry_value(
         entry, CONF_STATION_NORMAL_RESERVE, DEFAULT_STATION_NORMAL_RESERVE
     )
-    storm_reserve = charger_rt.get("station_storm_reserve_level") or get_entry_value(
+    storm_reserve = load_rt.get("station_storm_reserve_level") or get_entry_value(
         entry, CONF_STATION_STORM_RESERVE, DEFAULT_STATION_STORM_RESERVE
     )
-    storm_on = bool(charger_rt.get("station_storm_reserve"))
+    storm_on = bool(load_rt.get("station_storm_reserve"))
 
     # The station's own max charge limit is the user's battery-health cap; the
     # reserve is never raised above it.
@@ -106,10 +106,10 @@ async def send_power_station_command(
 
     # Publish state for the status sensor and for the next engine cycle (the
     # builder needs to know whether we asked the station to charge).
-    charger_rt["station_charging"] = speed is not None
-    charger_rt["station_charge_speed"] = speed
-    charger_rt["station_reserve"] = reserve
-    charger_rt["station_reserve_label"] = reserve_label
+    load_rt["station_charging"] = speed is not None
+    load_rt["station_charge_speed"] = speed
+    load_rt["station_reserve"] = reserve
+    load_rt["station_reserve_label"] = reserve_label
 
     _LOGGER.debug(
         "Power station %s: allocated %.0fW -> speed %s, reserve %s%% (%s)",

@@ -61,9 +61,8 @@ from .entities.inverter import (
     INVERTER_SENSOR_DEFINITIONS,
 )
 from .control.inverter import soc_targets
-from .registry import get_hub_for_charger
+from .registry import get_hub_for_load
 
-DynamicOcppEvseChargerSensor = LoadJugglerDeviceSensor
 DynamicOcppEvseHubSensor = LoadJugglerHubSensor
 DynamicOcppEvseHubDataSensor = LoadJugglerHubDataSensor
 
@@ -79,7 +78,7 @@ async def async_run_hub_cycle(hass: HomeAssistant, hub_entry: ConfigEntry) -> di
     """Run ONE site cycle for a hub: calculate once, then serve every consumer.
 
     This is the hub coordinator's update method and the only thing that drives
-    the engine. Running it per load (as the per-charger coordinators used to)
+    the engine. Running it per load (as the per-load coordinators used to)
     advanced every cycle-counted mechanism in the engine — settle counters,
     input EMAs, power-stable counts — N times per interval on an N-load site.
 
@@ -325,11 +324,11 @@ async def async_setup_entry(
 
     name = config_entry.data[CONF_NAME]
     entity_id = config_entry.data[CONF_ENTITY_ID]
-    charger_entry_id = config_entry.entry_id
+    load_entry_id = config_entry.entry_id
 
-    hub_entry = get_hub_for_charger(hass, charger_entry_id)
+    hub_entry = get_hub_for_load(hass, load_entry_id)
     if not hub_entry:
-        _LOGGER.error("No hub found for charger: %s", name)
+        _LOGGER.error("No hub found for load: %s", name)
         return
 
     # No coordinator here: the load is driven by its hub's site cycle, which it
@@ -382,9 +381,9 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-    # No per-charger options-update listener is registered here. Option changes
+    # No per-load options-update listener is registered here. Option changes
     # are handled centrally by _async_options_updated (in __init__.py), which
-    # does a clean full reload of the entry — and, for a hub, of its chargers —
+    # does a clean full reload of the entry — and, for a hub, of its loads —
     # so a changed site_update_frequency is picked up by rebuilding the hub's
     # coordinator from scratch. A second listener that swapped the coordinator
     # in place raced with that reload and leaked the old coordinator's timer.

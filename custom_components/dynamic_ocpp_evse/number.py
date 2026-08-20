@@ -6,7 +6,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from .entities.mixins import HubEntityMixin, ChargerEntityMixin
+from .entities.mixins import HubEntityMixin, LoadEntityMixin
 from .const import (
     DOMAIN,
     ENTRY_TYPE,
@@ -154,7 +154,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
                 EVSEMinCurrentSlider(hass, config_entry, name, entity_id),
                 EVSEMaxCurrentSlider(hass, config_entry, name, entity_id),
             ]
-        _LOGGER.info(f"Setting up charger number entities: {[entity.unique_id for entity in entities]}")
+        _LOGGER.info(f"Setting up load number entities: {[entity.unique_id for entity in entities]}")
 
     else:
         _LOGGER.debug("Skipping number setup for unknown entry type: %s", config_entry.title)
@@ -166,14 +166,14 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 # ==================== CHARGER NUMBER ENTITIES ====================
 
 
-class _EVSECurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+class _EVSECurrentSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     """Shared base for the paired EVSE Min/Max Current sliders.
 
     The two sliders bound the same interval from opposite ends, and the engine
     trusts that interval: ``min_current > max_current`` makes every permit
     nonsensical (allocation floors above its own ceiling). Neither slider can
     see the other's HA state cheaply, but both publish into the same
-    hass.data[DOMAIN]["chargers"][entry_id] bucket the engine reads, so that
+    hass.data[DOMAIN]["loads"][entry_id] bucket the engine reads, so that
     bucket is the cross-check (issue #38).
 
     Behavior on a crossing set: the value being SET is clamped to the sibling's
@@ -192,14 +192,14 @@ class _EVSECurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
 
     def _sibling_value(self):
         """The sibling slider's last published value, or None if not yet set."""
-        charger_data = (
+        load_data = (
             self.hass.data.get(DOMAIN, {})
-            .get("chargers", {})
+            .get("loads", {})
             .get(self.config_entry.entry_id)
         )
-        if not charger_data:
+        if not load_data:
             return None
-        value = charger_data.get(self._sibling_data_key)
+        value = load_data.get(self._sibling_data_key)
         return value if isinstance(value, (int, float)) else None
 
     async def async_added_to_hass(self) -> None:
@@ -232,13 +232,13 @@ class _EVSECurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
                 value = sibling
         self._attr_native_value = value
         self.async_write_ha_state()
-        self._write_to_charger_data(value)
+        self._write_to_load_data(value)
 
 
 class EVSEMinCurrentSlider(_EVSECurrentSlider):
-    """Slider for minimum current (charger-level)."""
+    """Slider for minimum current (load-level)."""
 
-    _charger_data_key = "min_current"
+    _load_data_key = "min_current"
     _sibling_data_key = "max_current"
     _sibling_is_upper_bound = True
 
@@ -256,9 +256,9 @@ class EVSEMinCurrentSlider(_EVSECurrentSlider):
 
 
 class EVSEMaxCurrentSlider(_EVSECurrentSlider):
-    """Slider for maximum current (charger-level)."""
+    """Slider for maximum current (load-level)."""
 
-    _charger_data_key = "max_current"
+    _load_data_key = "max_current"
     _sibling_data_key = "min_current"
     _sibling_is_upper_bound = False
 
@@ -275,7 +275,7 @@ class EVSEMaxCurrentSlider(_EVSECurrentSlider):
         self._attr_icon = "mdi:current-ac"
 
 
-class LoadPowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+class LoadPowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     """Slider for a binary load's power rating in Watts (smart plug or tank).
 
     Holds the load's set power. When a power-measurement entity is configured
@@ -284,7 +284,7 @@ class LoadPowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _charger_data_key = "device_power"
+    _load_data_key = "device_power"
 
     def __init__(
         self, hass: HomeAssistant, config_entry: ConfigEntry, name: str,
@@ -313,21 +313,21 @@ class LoadPowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
         self.async_write_ha_state()
-        self._write_to_charger_data(value)
+        self._write_to_load_data(value)
 
     async def async_update(self) -> None:
         """Reflect the value the engine learned from the power-measurement entity."""
-        charger_data = (
+        load_data = (
             self.hass.data.get(DOMAIN, {})
-            .get("chargers", {})
+            .get("loads", {})
             .get(self.config_entry.entry_id, {})
         )
-        learned = charger_data.get("device_power")
+        learned = load_data.get("device_power")
         if learned is not None:
             self._attr_native_value = learned
 
 
-class TankTemperatureSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+class TankTemperatureSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     """Slider for a hot water tank setpoint temperature (away / normal / boost)."""
 
     _attr_entity_category = EntityCategory.CONFIG
@@ -339,7 +339,7 @@ class TankTemperatureSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         self.hass = hass
         self.config_entry = config_entry
         # Instance-level data key — matches what hot_water_tank.py reads back.
-        self._charger_data_key = f"tank_{kind}_temperature"
+        self._load_data_key = f"tank_{kind}_temperature"
         self._attr_name = f"{name} {label} Temperature"
         self._attr_unique_id = f"{entity_id}_tank_{kind}_temperature"
         self._attr_native_min_value = 10
@@ -357,10 +357,10 @@ class TankTemperatureSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
         self._attr_native_value = value
         self.async_write_ha_state()
-        self._write_to_charger_data(value)
+        self._write_to_load_data(value)
 
 
-class StationChargePowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+class StationChargePowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     """Slider for a power station's min/max charge power in Watts.
 
     These bound what the engine may allocate, deliberately *configured* rather
@@ -378,7 +378,7 @@ class StationChargePowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         self.hass = hass
         self.config_entry = config_entry
         # Instance-level key — matches what power_station.py reads back.
-        self._charger_data_key = f"station_{kind}_charge_power"
+        self._load_data_key = f"station_{kind}_charge_power"
         self._attr_name = f"{name} {label}"
         self._attr_unique_id = f"{entity_id}_station_{kind}_charge_power"
         self._attr_native_min_value = 0
@@ -400,10 +400,10 @@ class StationChargePowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         )
         self._attr_native_value = value
         self.async_write_ha_state()
-        self._write_to_charger_data(value)
+        self._write_to_load_data(value)
 
 
-class StationReserveSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
+class StationReserveSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     """Slider for a power station's normal or storm backup reserve (%).
 
     The reserve is the station's on/off gate: below its current battery level it
@@ -419,7 +419,7 @@ class StationReserveSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
     ):
         self.hass = hass
         self.config_entry = config_entry
-        self._charger_data_key = (
+        self._load_data_key = (
             "station_normal_reserve" if kind == "normal"
             else "station_storm_reserve_level"
         )
@@ -443,7 +443,7 @@ class StationReserveSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         )
         self._attr_native_value = value
         self.async_write_ha_state()
-        self._write_to_charger_data(value)
+        self._write_to_load_data(value)
 
 
 # ==================== HUB NUMBER ENTITIES ====================

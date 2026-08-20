@@ -4,7 +4,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from .entities.mixins import HubEntityMixin, ChargerEntityMixin
+from .entities.mixins import HubEntityMixin, LoadEntityMixin
 from . import consume_plug_mode_migration
 from .const import (
     DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID,
@@ -38,27 +38,27 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         async_add_entities(entities)
         return
 
-    # Charger entries get per-charger operating mode selector
+    # Load entries get per-load operating mode selector
     if entry_type == ENTRY_TYPE_CHARGER:
         name = config_entry.data.get(CONF_NAME, "Charger")
-        entity_id = config_entry.data.get(CONF_ENTITY_ID, "charger")
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "load")
 
         entities = [
             OperatingModeSelect(hass, config_entry, name, entity_id)
         ]
-        _LOGGER.info(f"Setting up charger select entities: {[entity.unique_id for entity in entities]}")
+        _LOGGER.info(f"Setting up load select entities: {[entity.unique_id for entity in entities]}")
         async_add_entities(entities)
         return
 
 
-class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
-    """Per-charger operating mode selector (EVSE / Smart Load / Hot Water Tank).
+class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
+    """Per-load operating mode selector (EVSE / Smart Load / Hot Water Tank).
 
     Each device type has its own independent list of OperatingMode objects;
     the select exposes their keys as options.
     """
 
-    _charger_data_key = "operating_mode"
+    _load_data_key = "operating_mode"
 
     # Mode keys renamed across versions — a restored value is migrated before
     # use so existing installs keep a valid selection.
@@ -116,13 +116,13 @@ class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
             if restored in self._attr_options:
                 self._attr_current_option = restored
         self.async_write_ha_state()
-        self._write_to_charger_data(self._attr_current_option)
+        self._write_to_load_data(self._attr_current_option)
 
     async def async_select_option(self, option: str) -> None:
         if option in self._attr_options:
             self._attr_current_option = option
             self.async_write_ha_state()
-            self._write_to_charger_data(option)
+            self._write_to_load_data(option)
             _LOGGER.info(f"Operating mode changed to: {option}")
         else:
             _LOGGER.error(f"Invalid option selected: {option}")

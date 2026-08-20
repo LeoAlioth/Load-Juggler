@@ -1181,8 +1181,8 @@ async def test_overview_page_reports_live_values(
             "excess_margin_power": 350,
         }
     }
-    hass.data[DOMAIN]["charger_allocations"] = {plug.entry_id: 4.3}
-    hass.data[DOMAIN]["charger_status"] = {plug.entry_id: "Charging"}
+    hass.data[DOMAIN]["load_allocations"] = {plug.entry_id: 4.3}
+    hass.data[DOMAIN]["load_status"] = {plug.entry_id: "Charging"}
 
     text = _overview_text(hass, mock_hub_entry.entry_id)
     assert "3400 W" in text  # solar production

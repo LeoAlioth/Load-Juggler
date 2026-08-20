@@ -16,7 +16,7 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 # --- Inversion detection parameters ---
-_INV_MIN_DELTA_A = 1.0      # Minimum charger draw change (A) to count as significant
+_INV_MIN_DELTA_A = 1.0      # Minimum load draw change (A) to count as significant
 _INV_MIN_GRID_DELTA_A = 0.5  # Minimum grid change (A) for its sign to be meaningful
 _INV_WINDOW_SIZE = 15       # Rolling window length (samples with significant delta)
 _INV_THRESHOLD = 10         # Inversion signals needed in a full window to fire
@@ -30,22 +30,22 @@ _PM_DECAY_FACTOR = 0.5      # Score multiplier on inconclusive data
 _PM_DECAY_THRESHOLD = 10.0  # Total score before decay triggers
 _PM_WEIGHT_CAP = 15.0       # Max |delta_draw| for weight calc
 _PM_WEIGHT_DIVISOR = 5.0    # Denominator: weight = min(|delta|, cap) / divisor
-_PM_LINE_ACTIVE_A = 1.0     # Min current (A) to consider a charger line active
+_PM_LINE_ACTIVE_A = 1.0     # Min current (A) to consider a load line active
 
 
 # ------------------------------------------------------------------ #
 # Feature 1: Grid CT Inversion Detection
 # ------------------------------------------------------------------ #
 
-def check_inversion(state: dict, smoothed_phases: list, chargers: list,
+def check_inversion(state: dict, smoothed_phases: list, loads: list,
                     hub_entry_id: str, hub_name: str) -> dict | None:
-    """Detect inverted grid CTs by correlating charger draw vs grid changes.
+    """Detect inverted grid CTs by correlating load draw vs grid changes.
 
     Returns a notification dict or None.
     """
     inv = state.setdefault("inversion", {
         "prev_grid_total": None,
-        "prev_charger_total": None,
+        "prev_load_total": None,
         "window": [],
         "notified": False,
     })
@@ -56,20 +56,20 @@ def check_inversion(state: dict, smoothed_phases: list, chargers: list,
     # Grid total (signed): positive = import, negative = export
     grid_total = sum(p for p in smoothed_phases if p is not None)
 
-    # Total charger draw across all site phases
-    charger_total = 0.0
-    for c in chargers:
+    # Total load draw across all site phases
+    load_total = 0.0
+    for c in loads:
         a, b, cc = c.get_site_phase_draw()
-        charger_total += a + b + cc
+        load_total += a + b + cc
 
     prev_grid = inv["prev_grid_total"]
-    prev_draw = inv["prev_charger_total"]
+    prev_draw = inv["prev_load_total"]
 
     result = None
     try:
         if prev_grid is not None and prev_draw is not None:
             delta_grid = grid_total - prev_grid
-            delta_draw = charger_total - prev_draw
+            delta_draw = load_total - prev_draw
 
             # Both sides need a floor. A significant draw change paired with a
             # near-zero grid change (solar or another load absorbed it) carries
@@ -123,7 +123,7 @@ def check_inversion(state: dict, smoothed_phases: list, chargers: list,
                     }
     finally:
         inv["prev_grid_total"] = grid_total
-        inv["prev_charger_total"] = charger_total
+        inv["prev_load_total"] = load_total
 
     return result
 
@@ -132,9 +132,9 @@ def check_inversion(state: dict, smoothed_phases: list, chargers: list,
 # Feature 2: Phase Mapping Detection
 # ------------------------------------------------------------------ #
 
-def check_phase_mapping(state: dict, smoothed_phases: list, chargers: list,
+def check_phase_mapping(state: dict, smoothed_phases: list, loads: list,
                         hub_entry_id: str) -> list[dict]:
-    """Detect phase mapping mismatches for chargers on multi-phase sites.
+    """Detect phase mapping mismatches for loads on multi-phase sites.
 
     Uses confidence-weighted scoring: stronger signals (larger delta_draw)
     accumulate more points, allowing fast detection during oscillation
@@ -145,12 +145,12 @@ def check_phase_mapping(state: dict, smoothed_phases: list, chargers: list,
     - 1-phase car: correlates total draw with per-phase grid changes
       → identifies which site phase L1 is connected to.
     - 2-phase car: finds the grid phase that does NOT correlate with draw
-      → identifies which site phase the inactive charger line is on.
+      → identifies which site phase the inactive load line is on.
 
     After both a 1-phase and 2-phase car have charged, the complete
     L1/L2/L3 → A/B/C mapping is verified.
 
-    Returns a list of notification dicts (one per mismatched charger).
+    Returns a list of notification dicts (one per mismatched load).
     """
     # Need 3-phase site (otherwise nothing to mis-map)
     if sum(1 for p in smoothed_phases if p is not None) < 3:
@@ -163,15 +163,15 @@ def check_phase_mapping(state: dict, smoothed_phases: list, chargers: list,
     grid_b = smoothed_phases[1] if smoothed_phases[1] is not None else 0.0
     grid_c = smoothed_phases[2] if smoothed_phases[2] is not None else 0.0
 
-    for charger in chargers:
-        total_draw = charger.l1_current + charger.l2_current + charger.l3_current
-        is_active = charger.connector_status in (
+    for load in loads:
+        total_draw = load.l1_current + load.l2_current + load.l3_current
+        is_active = load.connector_status in (
             "Charging", "SuspendedEVSE", "SuspendedEV",
         )
 
         notif = _check_draw_phase_correlation(
             pm_state, grid_a, grid_b, grid_c, total_draw,
-            charger, hub_entry_id, is_active,
+            load, hub_entry_id, is_active,
         )
         if notif:
             notifications.append(notif)
@@ -181,12 +181,12 @@ def check_phase_mapping(state: dict, smoothed_phases: list, chargers: list,
 
 # --- Helpers ---
 
-def _detect_inactive_line(charger) -> str:
-    """Return the charger line with the lowest current ("l1", "l2", or "l3")."""
+def _detect_inactive_line(load) -> str:
+    """Return the load line with the lowest current ("l1", "l2", or "l3")."""
     currents = {
-        "l1": charger.l1_current,
-        "l2": charger.l2_current,
-        "l3": charger.l3_current,
+        "l1": load.l1_current,
+        "l2": load.l2_current,
+        "l3": load.l3_current,
     }
     return min(currents, key=lambda k: currents[k])
 
@@ -215,16 +215,16 @@ def _evaluate_score(score: dict, notify_threshold: float):
     return best
 
 
-def _build_phase_swap(charger, line_key: str, detected_phase: str) -> dict:
+def _build_phase_swap(load, line_key: str, detected_phase: str) -> dict:
     """Build a phase remap by swapping line_key to detected_phase.
 
     Swaps with whichever line currently occupies detected_phase to avoid
     duplicate phase assignments.
     """
     remap = {
-        "l1_phase": charger.l1_phase,
-        "l2_phase": charger.l2_phase,
-        "l3_phase": charger.l3_phase,
+        "l1_phase": load.l1_phase,
+        "l2_phase": load.l2_phase,
+        "l3_phase": load.l3_phase,
     }
     configured_phase = remap[line_key]
     for key in ("l1_phase", "l2_phase", "l3_phase"):
@@ -235,7 +235,7 @@ def _build_phase_swap(charger, line_key: str, detected_phase: str) -> dict:
     return remap
 
 
-def _handle_mismatch(cs: dict, charger, hub_entry_id: str, cid: str,
+def _handle_mismatch(cs: dict, load, hub_entry_id: str, cid: str,
                      line_key: str, detected_phase: str,
                      configured_phase: str, line_label: str,
                      best_score: float, notify_key: str) -> dict | None:
@@ -249,22 +249,22 @@ def _handle_mismatch(cs: dict, charger, hub_entry_id: str, cid: str,
         _LOGGER.warning(
             "AutoDetect: Phase mismatch for %s. %s configured: %s, detected: %s "
             "(score: %.1f, remap at %.1f)",
-            charger.entity_id, line_label, configured_phase, detected_phase,
+            load.entity_id, line_label, configured_phase, detected_phase,
             best_score, _PM_REMAP_SCORE,
         )
         return {
             "title": (
                 f"Load Juggler \u2014 Phase Mismatch: "
-                f"{charger.entity_id}"
+                f"{load.entity_id}"
             ),
             "message": (
-                f"Charger '{charger.entity_id}' line {line_label} is connected "
+                f"Charger '{load.entity_id}' line {line_label} is connected "
                 f"to site **Phase {detected_phase}**, but is mapped to "
                 f"**Phase {configured_phase}**.\n\n"
                 f"To fix this manually, change '{line_label} \u2192 Site Phase' "
                 f"from **{configured_phase}** to **{detected_phase}** in:\n"
                 "Settings \u2192 Devices & Services \u2192 Load Juggler "
-                f"\u2192 '{charger.entity_id}' \u2192 Configure.\n\n"
+                f"\u2192 '{load.entity_id}' \u2192 Configure.\n\n"
                 "If no action is taken, the mapping will be auto-corrected "
                 "once sufficient confidence is reached."
             ),
@@ -277,27 +277,27 @@ def _handle_mismatch(cs: dict, charger, hub_entry_id: str, cid: str,
     if best_score < _PM_REMAP_SCORE:
         return None
 
-    remap = _build_phase_swap(charger, line_key, detected_phase)
+    remap = _build_phase_swap(load, line_key, detected_phase)
     cs["remapped"] = True
     _LOGGER.warning(
         "AutoDetect: Auto-remapping %s (score: %.1f). "
         "L1:%s\u2192%s L2:%s\u2192%s L3:%s\u2192%s",
-        charger.entity_id, best_score,
-        charger.l1_phase, remap["l1_phase"],
-        charger.l2_phase, remap["l2_phase"],
-        charger.l3_phase, remap["l3_phase"],
+        load.entity_id, best_score,
+        load.l1_phase, remap["l1_phase"],
+        load.l2_phase, remap["l2_phase"],
+        load.l3_phase, remap["l3_phase"],
     )
     return {
         "title": (
             f"Load Juggler \u2014 Phase Mapping Auto-Corrected: "
-            f"{charger.entity_id}"
+            f"{load.entity_id}"
         ),
         "message": (
-            f"Phase mapping for '{charger.entity_id}' was automatically "
+            f"Phase mapping for '{load.entity_id}' was automatically "
             f"corrected.\n\n"
-            f"L1: {charger.l1_phase} \u2192 {remap['l1_phase']}\n"
-            f"L2: {charger.l2_phase} \u2192 {remap['l2_phase']}\n"
-            f"L3: {charger.l3_phase} \u2192 {remap['l3_phase']}\n\n"
+            f"L1: {load.l1_phase} \u2192 {remap['l1_phase']}\n"
+            f"L2: {load.l2_phase} \u2192 {remap['l2_phase']}\n"
+            f"L3: {load.l3_phase} \u2192 {remap['l3_phase']}\n\n"
             "To make this permanent, update the charger configuration.\n"
             "This auto-correction resets on restart."
         ),
@@ -305,7 +305,7 @@ def _handle_mismatch(cs: dict, charger, hub_entry_id: str, cid: str,
             f"dynamic_ocpp_evse_phase_map_{hub_entry_id}_{cid}"
         ),
         "auto_remap": {
-            "charger_id": cid,
+            "load_id": cid,
             "l1_phase": remap["l1_phase"],
             "l2_phase": remap["l2_phase"],
             "l3_phase": remap["l3_phase"],
@@ -318,9 +318,9 @@ def _handle_mismatch(cs: dict, charger, hub_entry_id: str, cid: str,
 def _check_draw_phase_correlation(pm_state: dict,
                                   grid_a: float, grid_b: float, grid_c: float,
                                   total_draw: float,
-                                  charger, hub_entry_id: str,
+                                  load, hub_entry_id: str,
                                   is_active: bool) -> dict | None:
-    """Detect phase mapping by correlating charger draw with grid phases.
+    """Detect phase mapping by correlating load draw with grid phases.
 
     Uses confidence-weighted scoring: stronger signals (larger delta_draw)
     accumulate more points, allowing fast detection during oscillation
@@ -339,7 +339,7 @@ def _check_draw_phase_correlation(pm_state: dict,
 
     Always updates prev snapshots (even when inactive) for accurate deltas.
     """
-    cid = charger.load_id
+    cid = load.load_id
     cs = pm_state.setdefault(cid, {
         "prev_draw": 0.0,
         "prev_grid_a": 0.0, "prev_grid_b": 0.0, "prev_grid_c": 0.0,
@@ -373,8 +373,8 @@ def _check_draw_phase_correlation(pm_state: dict,
     if is_active and abs(delta_draw) >= _PM_MIN_DELTA_A:
         weight = min(abs(delta_draw), _PM_WEIGHT_CAP) / _PM_WEIGHT_DIVISOR
         active_lines = sum(
-            1 for c in (charger.l1_current, charger.l2_current,
-                        charger.l3_current)
+            1 for c in (load.l1_current, load.l2_current,
+                        load.l3_current)
             if c > _PM_LINE_ACTIVE_A
         )
         if active_lines == 1:
@@ -385,13 +385,13 @@ def _check_draw_phase_correlation(pm_state: dict,
             _LOGGER.debug(
                 "AutoDetect 1ph %s: delta=%.1fA weight=%.2f "
                 "scores=A:%.1f B:%.1f C:%.1f",
-                charger.entity_id, delta_draw, weight,
+                load.entity_id, delta_draw, weight,
                 cs["score"]["A"], cs["score"]["B"], cs["score"]["C"],
             )
 
-        elif active_lines == 2 and charger.phases >= 3:
+        elif active_lines == 2 and load.phases >= 3:
             # Two-phase: track which grid phase does NOT correlate
-            inactive = _detect_inactive_line(charger)
+            inactive = _detect_inactive_line(load)
             # Reset if inactive line changed (different car)
             if (cs["inactive_line"] is not None
                     and cs["inactive_line"] != inactive):
@@ -405,7 +405,7 @@ def _check_draw_phase_correlation(pm_state: dict,
             _LOGGER.debug(
                 "AutoDetect 2ph %s: delta=%.1fA weight=%.2f inactive=%s "
                 "scores=A:%.1f B:%.1f C:%.1f",
-                charger.entity_id, delta_draw, weight, inactive,
+                load.entity_id, delta_draw, weight, inactive,
                 cs["score_2ph"]["A"], cs["score_2ph"]["B"],
                 cs["score_2ph"]["C"],
             )
@@ -430,23 +430,23 @@ def _check_draw_phase_correlation(pm_state: dict,
             _LOGGER.debug(
                 "AutoDetect 1ph for %s: inconclusive, decaying scores "
                 "(A:%.1f B:%.1f C:%.1f)",
-                charger.entity_id,
+                load.entity_id,
                 cs["score"]["A"], cs["score"]["B"], cs["score"]["C"],
             )
         elif result_1ph is not None:
-            configured = charger.l1_phase
-            if (charger.active_phases_mask
-                    and len(charger.active_phases_mask) == 1):
-                configured = charger.active_phases_mask  # plug
+            configured = load.l1_phase
+            if (load.active_phases_mask
+                    and len(load.active_phases_mask) == 1):
+                configured = load.active_phases_mask  # plug
             if result_1ph == configured:
                 cs["confirmed_1ph"] = True
                 _LOGGER.debug(
                     "AutoDetect: L1 for %s confirmed on phase %s",
-                    charger.entity_id, configured,
+                    load.entity_id, configured,
                 )
             else:
                 return _handle_mismatch(
-                    cs, charger, hub_entry_id, cid,
+                    cs, load, hub_entry_id, cid,
                     "l1_phase", result_1ph, configured,
                     "L1", cs["score"][result_1ph], "notify_sent_1ph",
                 )
@@ -462,24 +462,24 @@ def _check_draw_phase_correlation(pm_state: dict,
             _LOGGER.debug(
                 "AutoDetect 2ph for %s: inconclusive, decaying scores "
                 "(A:%.1f B:%.1f C:%.1f)",
-                charger.entity_id,
+                load.entity_id,
                 cs["score_2ph"]["A"], cs["score_2ph"]["B"],
                 cs["score_2ph"]["C"],
             )
         elif result_2ph is not None:
             inactive_line = cs["inactive_line"]
             line_key = f"{inactive_line}_phase"  # e.g. "l3_phase"
-            configured = getattr(charger, line_key)
+            configured = getattr(load, line_key)
             line_label = inactive_line.upper()  # e.g. "L3"
             if result_2ph == configured:
                 cs["confirmed_2ph"] = True
                 _LOGGER.debug(
                     "AutoDetect: %s for %s confirmed on phase %s",
-                    line_label, charger.entity_id, configured,
+                    line_label, load.entity_id, configured,
                 )
             else:
                 return _handle_mismatch(
-                    cs, charger, hub_entry_id, cid,
+                    cs, load, hub_entry_id, cid,
                     line_key, result_2ph, configured,
                     line_label, cs["score_2ph"][result_2ph],
                     "notify_sent_2ph",
@@ -490,13 +490,13 @@ def _check_draw_phase_correlation(pm_state: dict,
         inactive_line = cs.get("inactive_line", "")
         inactive_label = inactive_line.upper() if inactive_line else "?"
         inactive_phase = (
-            getattr(charger, f"{inactive_line}_phase", "?")
+            getattr(load, f"{inactive_line}_phase", "?")
             if inactive_line else "?"
         )
         _LOGGER.info(
             "AutoDetect: Full phase mapping verified for %s "
             "(L1\u2192%s, %s\u2192%s, remaining line by elimination)",
-            charger.entity_id, charger.l1_phase,
+            load.entity_id, load.l1_phase,
             inactive_label, inactive_phase,
         )
 

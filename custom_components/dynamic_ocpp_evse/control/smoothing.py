@@ -17,7 +17,7 @@ def apply_smoothing(
 ) -> float:
     """Apply EMA smoothing → Schmitt trigger → rate limiting pipeline.
 
-    Returns the final rate-limited current to send to the charger.
+    Returns the final rate-limited current to send to the load.
     """
     if sensor._schmitt_current is None and sensor._ema_current is not None:
         sensor._schmitt_current = sensor._rate_limited_current

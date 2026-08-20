@@ -389,7 +389,7 @@ _UNAVAILABLE_LITERAL_BUDGET = {
     #   exception" in a config flow;
     "config_flow/flow.py": 1,
     #   f"- Status: {status or 'unknown'}" on the load Overview page falls back
-    #   for OUR OWN computed charging-status string (hass.data charger_status),
+    #   for OUR OWN computed charging-status string (hass.data load_status),
     #   which no sensor ever publishes — the sibling line in the one-line
     #   summary spells the same fallback "status unknown".
     "config_flow/pages.py": 1,

@@ -365,9 +365,9 @@ def _display_result(site):
         battery_soc_min=site.battery_soc_min,
         battery_max_discharge_power=site.battery_max_discharge_power,
         battery_power=site.battery_power,
-        charger_targets={},
-        charger_available={},
-        charger_names={},
+        load_targets={},
+        load_available={},
+        load_names={},
     )
 
 

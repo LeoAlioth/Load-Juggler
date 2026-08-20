@@ -176,12 +176,12 @@ def _load_permit(hass, load_entry, hub_data: dict):
     sensor; then the full hub_data, which only carries per-load permits when
     the hub sensor itself ran the calculation.
     """
-    runtime = (_runtime(hass).get("chargers") or {}).get(load_entry.entry_id) or {}
+    runtime = (_runtime(hass).get("loads") or {}).get(load_entry.entry_id) or {}
     permit = runtime.get("_last_permit")
     if permit is None:
         permit = _entry_sensor_value(hass, load_entry, "_available_current")
     if permit is None:
-        permit = (hub_data.get("charger_available") or {}).get(load_entry.entry_id)
+        permit = (hub_data.get("load_available") or {}).get(load_entry.entry_id)
     return permit
 
 
@@ -232,7 +232,7 @@ def _group_cap_for(hass, hub_entry_id: str, load_entry_id: str) -> str | None:
 def _load_mode(hass, load_entry) -> str:
     """The load's current operating mode (live if set, else its default)."""
     device_type = load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-    runtime = (_runtime(hass).get("chargers") or {}).get(load_entry.entry_id) or {}
+    runtime = (_runtime(hass).get("loads") or {}).get(load_entry.entry_id) or {}
     key = runtime.get("operating_mode") or get_entry_value(
         load_entry, CONF_OPERATING_MODE, None
     )
@@ -298,7 +298,7 @@ def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
     parts.append(_load_mode(hass, load_entry))
 
     priority = get_entry_value(load_entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
-    rank = (runtime.get("charger_ranks") or {}).get(load_entry.entry_id)
+    rank = (runtime.get("load_ranks") or {}).get(load_entry.entry_id)
     if rank is not None and rank != priority:
         parts.append(f"priority {priority} (served {rank}.)")
     else:
@@ -306,15 +306,15 @@ def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
 
     parts.append(f"permitted {_fmt(_load_permit(hass, load_entry, hub_data), 'A')}")
 
-    draw = (runtime.get("charger_allocations") or {}).get(load_entry.entry_id)
+    draw = (runtime.get("load_allocations") or {}).get(load_entry.entry_id)
     if draw is None:
-        draw = (hub_data.get("charger_targets") or {}).get(load_entry.entry_id)
+        draw = (hub_data.get("load_targets") or {}).get(load_entry.entry_id)
     parts.append(f"drawing {_fmt(draw, 'A')}")
 
-    status = (runtime.get("charger_status") or {}).get(load_entry.entry_id)
+    status = (runtime.get("load_status") or {}).get(load_entry.entry_id)
     parts.append(status or "status unknown")
 
-    mask = (runtime.get("charger_phase_masks") or {}).get(load_entry.entry_id)
+    mask = (runtime.get("load_phase_masks") or {}).get(load_entry.entry_id)
     if mask:
         parts.append(f"on {mask}")
 
@@ -508,7 +508,7 @@ def _load_overview_lines(hass, entry) -> list[str]:
     lines.append(f"- Type: {_DEVICE_TYPE_LABELS.get(device_type, 'Load')}")
     lines.append(f"- Operating mode: {_load_mode(hass, entry)}")
     priority = get_entry_value(entry, CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY)
-    rank = (runtime.get("charger_ranks") or {}).get(entry.entry_id)
+    rank = (runtime.get("load_ranks") or {}).get(entry.entry_id)
     lines.append(
         f"- Priority: {priority}"
         + (f" · served {rank}. this cycle" if rank is not None else "")
@@ -519,15 +519,15 @@ def _load_overview_lines(hass, entry) -> list[str]:
 
     lines += ["", "**📊 Right now**"]
     lines.append(f"- Permitted: {_fmt(_load_permit(hass, entry, hub_data), 'A')}")
-    draw = (runtime.get("charger_allocations") or {}).get(entry.entry_id)
+    draw = (runtime.get("load_allocations") or {}).get(entry.entry_id)
     lines.append(f"- Actual draw: {_fmt(draw, 'A')}")
-    status = (runtime.get("charger_status") or {}).get(entry.entry_id)
+    status = (runtime.get("load_status") or {}).get(entry.entry_id)
     lines.append(f"- Status: {status or 'unknown'}")
-    mask = (runtime.get("charger_phase_masks") or {}).get(entry.entry_id)
+    mask = (runtime.get("load_phase_masks") or {}).get(entry.entry_id)
     if mask:
         lines.append(f"- Drawing on phases: {mask}")
-    charger_runtime = (runtime.get("chargers") or {}).get(entry.entry_id) or {}
-    if charger_runtime.get("dynamic_control") is False:
+    load_runtime = (runtime.get("loads") or {}).get(entry.entry_id) or {}
+    if load_runtime.get("dynamic_control") is False:
         lines.append("- ⚠️ Dynamic control is OFF — Load Juggler is not limiting this load")
 
     cap = _group_cap_for(hass, hub_entry_id, entry.entry_id)
@@ -654,8 +654,8 @@ def _group_overview_lines(hass, entry) -> list[str]:
         if member is None:
             lines.append(f"- (removed entry {member_id[-8:]})")
             continue
-        draw = (runtime.get("charger_allocations") or {}).get(member_id)
-        status = (runtime.get("charger_status") or {}).get(member_id)
+        draw = (runtime.get("load_allocations") or {}).get(member_id)
+        status = (runtime.get("load_status") or {}).get(member_id)
         lines.append(
             f"- **{member.title}**: drawing {_fmt(draw, 'A')}"
             f" · {status or 'status unknown'}"
@@ -768,7 +768,7 @@ def _summary_text(hass, hub_entry_id: str) -> str:
         key=lambda e: (
             resolve_operating_mode(
                 e.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE),
-                ((_runtime(hass).get("chargers") or {}).get(e.entry_id) or {}).get(
+                ((_runtime(hass).get("loads") or {}).get(e.entry_id) or {}).get(
                     "operating_mode"
                 )
                 or get_entry_value(e, CONF_OPERATING_MODE, None),
