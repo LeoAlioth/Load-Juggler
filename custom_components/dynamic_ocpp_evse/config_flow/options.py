@@ -88,6 +88,77 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             self._flow.hass = self.hass
         return self._flow
 
+    @property
+    def _defaults(self) -> dict[str, Any]:
+        """The stored config as every form here shows it: data, options on top."""
+        return {**self.config_entry.data, **self.config_entry.options}
+
+    def _save(self) -> config_entries.FlowResult:
+        """Write what the steps collected in ``self._data`` back to the entry.
+
+        Options only — the static ``data`` half is never edited after setup, so
+        the previous options are the base every step merges onto.
+        """
+        return self.async_create_entry(
+            title="", data={**self.config_entry.options, **self._data}
+        )
+
+    async def _async_edit_page(
+        self,
+        user_input: dict[str, Any] | None,
+        *,
+        step_id: str,
+        schema,
+        entity_keys: list[str] | None = None,
+        list_normalizers: tuple = (),
+        unit_map: dict | None = None,
+        validate=None,
+        finalize=None,
+        last_step: bool | None = True,
+    ) -> config_entries.FlowResult:
+        """Run one self-contained edit page: normalize → validate → save.
+
+        The shape every single-page settings step shares. The stored config is
+        the form's defaults; a submit normalizes the page's entity fields
+        (``entity_keys`` — omitted ones were cleared) and any multi-select
+        lists, validates units and whatever else the page demands, and saves.
+        A failed validation re-shows the form over what the user just typed.
+
+        Hooks, all optional:
+            unit_map: field→accepted-units map for _validate_entity_units.
+            validate: extra check(data, errors); may return an entity name to
+                pass to the form as the ``entity`` placeholder.
+            finalize: last-moment rewrite of the data about to be stored.
+
+        The hub and charger wizards do NOT use this — their submit branch
+        routes to the next step instead of saving, so they stay hand-written.
+        """
+        errors: dict[str, str] = {}
+        placeholder = None
+        f = self._schema_helper
+
+        if user_input is not None:
+            user_input = f._normalize_optional_inputs(user_input, entity_keys)
+            for normalize_list in list_normalizers:
+                user_input = normalize_list(user_input)
+            self._data.update(user_input)
+            if unit_map:
+                _validate_entity_units(self.hass, self._data, unit_map, errors)
+            if validate is not None:
+                placeholder = validate(self._data, errors)
+            if not errors:
+                if finalize is not None:
+                    finalize(self._data)
+                return self._save()
+
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=schema({**self._defaults, **self._data}),
+            errors=errors,
+            description_placeholders=({"entity": placeholder} if placeholder else None),
+            last_step=last_step,
+        )
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
@@ -172,59 +243,40 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Options for an inverter entry — one page: inverter, PV and battery."""
-        errors: dict[str, str] = {}
-        bad_forecast_entity = None
-        defaults = {**self.config_entry.data, **self.config_entry.options}
         f = self._schema_helper
 
-        if user_input is not None:
-            user_input = f._normalize_optional_inputs(
-                user_input,
-                f._INVERTER_ENTITY_KEYS
-                + [
-                    CONF_SOLAR_PRODUCTION_ENTITY_ID,
-                    CONF_BATTERY_SOC_ENTITY_ID,
-                    CONF_BATTERY_POWER_ENTITY_ID,
-                    CONF_CHARGE_LIMIT_ENTITY_ID,
-                    CONF_BATTERY_VOLTAGE_ENTITY_ID,
-                    CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
-                ],
-            )
-            user_input = f._normalize_forecast_list(user_input)
-            user_input = f._normalize_soc_limit_list(user_input)
-            _validate_entity_units(
-                self.hass,
-                user_input,
-                _INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP | _BATTERY_UNIT_MAP,
-                errors,
-            )
-            bad_forecast_entity = _validate_forecast_devices(
-                self.hass, user_input, errors
-            )
-            if not errors:
-                for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
-                    if user_input.get(key) == 0:
-                        user_input[key] = None
-                return self.async_create_entry(
-                    title="",
-                    data={**self.config_entry.options, **user_input},
-                )
-            defaults = {**defaults, **user_input}
+        def _zero_means_unset(data: dict[str, Any]) -> None:
+            for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
+                if data.get(key) == 0:
+                    data[key] = None
 
-        return self.async_show_form(
+        return await self._async_edit_page(
+            user_input,
             step_id="inverter",
-            data_schema=f._inverter_combined_schema(defaults),
-            errors=errors,
-            description_placeholders=(
-                {"entity": bad_forecast_entity} if bad_forecast_entity else None
+            schema=f._inverter_combined_schema,
+            entity_keys=f._INVERTER_ENTITY_KEYS
+            + [
+                CONF_SOLAR_PRODUCTION_ENTITY_ID,
+                CONF_BATTERY_SOC_ENTITY_ID,
+                CONF_BATTERY_POWER_ENTITY_ID,
+                CONF_CHARGE_LIMIT_ENTITY_ID,
+                CONF_BATTERY_VOLTAGE_ENTITY_ID,
+                CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+            ],
+            list_normalizers=(f._normalize_forecast_list, f._normalize_soc_limit_list),
+            unit_map=_INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP | _BATTERY_UNIT_MAP,
+            validate=lambda data, errors: _validate_forecast_devices(
+                self.hass, data, errors
             ),
+            finalize=_zero_means_unset,
+            last_step=None,
         )
 
     async def async_step_hub_grid(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         errors: dict[str, str] = {}
-        defaults = {**self.config_entry.data, **self.config_entry.options}
+        defaults = self._defaults
         f = self._schema_helper
 
         if user_input is not None:
@@ -267,7 +319,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         errors: dict[str, str] = {}
-        defaults = {**self.config_entry.data, **self.config_entry.options}
+        defaults = self._defaults
         f = self._schema_helper
 
         if user_input is not None:
@@ -328,7 +380,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         """LEGACY hub solar/battery page — reachable only while the hub still
         carries those fields (i.e. before the one-time auto-import)."""
         errors: dict[str, str] = {}
-        defaults = {**self.config_entry.data, **self.config_entry.options}
+        defaults = self._defaults
         f = self._schema_helper
 
         if user_input is not None:
@@ -383,10 +435,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         devices = _controlled_devices(self.hass, self.config_entry.entry_id)
 
         def _save_hub() -> config_entries.FlowResult:
-            return self.async_create_entry(
-                title="",
-                data={**self.config_entry.options, **self._data},
-            )
+            return self._save()
 
         # No loads to order yet — just persist the hub settings and finish.
         if not devices:
@@ -409,7 +458,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.FlowResult:
         """Options charger step 1: Priority and OCPP device ID."""
         errors: dict[str, str] = {}
-        defaults = {**self.config_entry.data, **self.config_entry.options}
+        defaults = self._defaults
 
         if user_input is not None:
             self._data.update(user_input)
@@ -446,7 +495,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.FlowResult:
         """Options charger step 2: Current limits and phase mapping."""
         errors: dict[str, str] = {}
-        defaults = {**self.config_entry.data, **self.config_entry.options}
+        defaults = self._defaults
         f = self._schema_helper
         hub_entry_id = defaults.get(CONF_HUB_ENTRY_ID)
         hub_phases = f._get_hub_phase_count(hub_entry_id)
@@ -483,7 +532,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.FlowResult:
         """Options charger step 3: Units and timing (final — saves)."""
         errors: dict[str, str] = {}
-        defaults = {**self.config_entry.data, **self.config_entry.options}
+        defaults = self._defaults
         f = self._schema_helper
 
         # Options-first: an edited device ID lives in entry.options.
@@ -492,10 +541,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             self._data.update(user_input)
-            return self.async_create_entry(
-                title="",
-                data={**self.config_entry.options, **self._data},
-            )
+            return self._save()
 
         return self.async_show_form(
             step_id="charger_timing",
@@ -507,83 +553,55 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_plug(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        errors: dict[str, str] = {}
-        defaults = {**self.config_entry.data, **self.config_entry.options}
         f = self._schema_helper
-
-        if user_input is not None:
-            user_input = f._normalize_optional_inputs(user_input, f._PLUG_ENTITY_KEYS)
-            self._data.update(user_input)
-            return self.async_create_entry(
-                title="",
-                data={**self.config_entry.options, **self._data},
-            )
-
-        return self.async_show_form(
+        return await self._async_edit_page(
+            user_input,
             step_id="plug",
-            data_schema=f._plug_schema(defaults),
-            errors=errors,
-            last_step=True,
+            schema=f._plug_schema,
+            entity_keys=f._PLUG_ENTITY_KEYS,
         )
 
     async def async_step_hot_water_tank(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        errors: dict[str, str] = {}
-        defaults = {**self.config_entry.data, **self.config_entry.options}
         f = self._schema_helper
 
-        if user_input is not None:
-            user_input = f._normalize_optional_inputs(user_input, f._TANK_ENTITY_KEYS)
-            self._data.update(user_input)
-
-            device_id = self._data.pop(CONF_TANK_POWER_DEVICE_ID, None)
-            if device_id and not self._data.get(CONF_TANK_POWER_ENTITY_ID):
+        def _resolve_power_device(data: dict[str, Any]) -> None:
+            """A picked power device becomes its power-sensor entity, so runtime
+            only ever deals with CONF_TANK_POWER_ENTITY_ID."""
+            device_id = data.pop(CONF_TANK_POWER_DEVICE_ID, None)
+            if device_id and not data.get(CONF_TANK_POWER_ENTITY_ID):
                 resolved = f._resolve_device_power_entity(device_id)
                 if resolved:
-                    self._data[CONF_TANK_POWER_ENTITY_ID] = resolved
+                    data[CONF_TANK_POWER_ENTITY_ID] = resolved
 
-            return self.async_create_entry(
-                title="",
-                data={**self.config_entry.options, **self._data},
-            )
-
-        return self.async_show_form(
+        return await self._async_edit_page(
+            user_input,
             step_id="hot_water_tank",
-            data_schema=f._hot_water_tank_schema(defaults),
-            errors=errors,
-            last_step=True,
+            schema=f._hot_water_tank_schema,
+            entity_keys=f._TANK_ENTITY_KEYS,
+            finalize=_resolve_power_device,
         )
 
     async def async_step_power_station(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        errors: dict[str, str] = {}
-        defaults = {**self.config_entry.data, **self.config_entry.options}
         f = self._schema_helper
 
-        if user_input is not None:
-            user_input = f._normalize_optional_inputs(
-                user_input, f._STATION_ENTITY_KEYS
-            )
-            self._data.update(user_input)
-            if self._data.get(
+        def _check_power_window(data: dict[str, Any], errors: dict[str, str]) -> None:
+            if data.get(
                 CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
-            ) < self._data.get(
+            ) < data.get(
                 CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
             ):
                 errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
-            else:
-                return self.async_create_entry(
-                    title="",
-                    data={**self.config_entry.options, **self._data},
-                )
 
-        return self.async_show_form(
+        return await self._async_edit_page(
+            user_input,
             step_id="power_station",
-            data_schema=f._power_station_schema({**defaults, **self._data}),
-            errors=errors,
-            last_step=True,
+            schema=f._power_station_schema,
+            entity_keys=f._STATION_ENTITY_KEYS,
+            validate=_check_power_window,
         )
 
     async def async_step_group(
@@ -591,7 +609,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.FlowResult:
         """Options flow for circuit group: current limit + member selection."""
         errors: dict[str, str] = {}
-        defaults = {**self.config_entry.data, **self.config_entry.options}
+        defaults = self._defaults
 
         if user_input is not None:
             selected = user_input.get(CONF_CIRCUIT_GROUP_MEMBERS, [])
