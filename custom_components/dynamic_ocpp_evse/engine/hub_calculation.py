@@ -229,34 +229,12 @@ def _household_hold_decay(hub_entry):
     )
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
+def _read_hub_config(hub_entry):
+    """The hub's own scalar settings, read once per cycle.
 
-
-def run_hub_calculation(hass, hub_entry, charger_entries=None):
-    """
-    Run the hub calculation: read HA states, build SiteContext, calculate targets.
-
-    This is the ONE site calculation for a hub, run once per site cycle by the
-    hub's DataUpdateCoordinator (see sensor.py). It takes no entity — every
-    cycle-counted mechanism inside (settle counters, input EMAs, power-stable
-    counts) advances exactly once per call, so a site with N loads no longer
-    advances them N times per interval.
-
-    Args:
-        hass: Home Assistant instance
-        hub_entry: the hub's ConfigEntry
-        charger_entries: optional explicit list of load config entries; None
-            reads the hub's registered loads
-
-    Returns:
-        dict with calculated values including:
-            - CONF_TOTAL_ALLOCATED_CURRENT: Total allocated current (A)
-            - CONF_PHASES: Number of phases
-            - CONF_CHARGING_MODE: Current charging mode
-            - charger_targets: per-charger target currents
-            - Other site/charger data
+    Returns ``(voltage, main_breaker_rating, excess_hysteresis,
+    excess_threshold)`` — the site electricals plus the Excess trigger
+    point and release band derived from the configured export limit.
     """
     # --- Read hub config values ---
     voltage = (
@@ -290,7 +268,17 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
         excess_threshold = max(0.0, grid_export_limit - excess_trigger_margin)
     else:
         excess_threshold = float("inf")
+    return voltage, main_breaker_rating, excess_hysteresis, excess_threshold
 
+
+def _read_site_phases(hass, hub_entry, voltage):
+    """The site's per-phase grid readings and whether it has grid CTs at all.
+
+    Returns ``(raw_phases, has_grid_cts)``. Which phases EXIST is decided
+    here, from the CTs and the inverter output sensors together, because
+    everything downstream (the phase count, the per-phase split, off-grid
+    handling) reads it off this one list.
+    """
     # --- Read per-phase grid current (raw, signed; W/kW converted to A) ---
     # Entries are floats, None (no CT on that phase) or the _UNAVAILABLE
     # sentinel (CT configured but unreadable) — _resolve_grid_phases below is
@@ -318,6 +306,454 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     # Nothing configured at all — fall back to a single phase.
     if all(r is None for r in raw_phases):
         raw_phases = [0.0, None, None]
+    return raw_phases, has_grid_cts
+
+
+def _read_max_import_power(hass, hub_entry):
+    """The site's max grid import power, or None for unlimited.
+
+    Three sources in precedence order, which is what the section comment
+    below spells out: a configured entity wins, then the hub's own slider,
+    and a disabled limit is None.
+    """
+    # --- Max grid import power (entity override → shared hub data → None) ---
+    enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
+    max_import_power_entity = get_entry_value(
+        hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None
+    )
+    if max_import_power_entity:
+        max_grid_import_power = _coerce(
+            _read_entity(hass, max_import_power_entity, None, unit="W"), None
+        )  # Convert kW→W if needed
+    elif enable_max_import:
+        hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
+        max_grid_import_power = hub_rt.get("max_import_power", None)
+    else:
+        max_grid_import_power = None
+    return max_grid_import_power
+
+
+def _apply_soc_hysteresis(
+    hub_runtime,
+    battery_soc,
+    battery_soc_hysteresis,
+    battery_soc_target,
+    battery_soc_min,
+):
+    """Latch the battery SOC thresholds so the calculator stays stateless.
+
+    The two latch bits live in ``hub_runtime``; the adjusted thresholds are
+    returned rather than mutated in place, so the caller can see exactly
+    which values the rest of the cycle runs on. Returns
+    ``(battery_soc_target, battery_soc_min, now_above_target,
+    now_above_min)`` — the last two feed the debug line's hysteresis marks.
+    """
+    # Apply SOC hysteresis — adjust thresholds so engine stays stateless
+    now_above_target = False
+    now_above_min = False
+    if (
+        battery_soc is not None
+        and battery_soc_hysteresis
+        and battery_soc_hysteresis > 0
+    ):
+        was_above_target = hub_runtime.get("_soc_above_target", False)
+        if was_above_target:
+            now_above_target = (
+                battery_soc >= battery_soc_target - battery_soc_hysteresis
+            )
+        else:
+            now_above_target = battery_soc >= battery_soc_target
+        hub_runtime["_soc_above_target"] = now_above_target
+        if now_above_target:
+            battery_soc_target = battery_soc_target - battery_soc_hysteresis
+
+        # The min floor's band sits ABOVE the setting (mirror of the target's):
+        # the floor is protective, so discharge stops AT the configured floor
+        # and only resumes once the battery has recovered a full hysteresis
+        # above it (floor 20, hysteresis 3 → stop at 20, resume at 23). The
+        # target's band sits below its setting for the same reason in reverse —
+        # charging never overshoots the configured ceiling.
+        was_above_min = hub_runtime.get("_soc_above_min", False)
+        if was_above_min:
+            now_above_min = battery_soc >= battery_soc_min
+        else:
+            now_above_min = battery_soc >= battery_soc_min + battery_soc_hysteresis
+        hub_runtime["_soc_above_min"] = now_above_min
+        if not now_above_min:
+            battery_soc_min = battery_soc_min + battery_soc_hysteresis
+    return (
+        battery_soc_target,
+        battery_soc_min,
+        now_above_target,
+        now_above_min,
+    )
+
+
+def _apply_phase_remaps(site, auto_detect_state):
+    """Re-point loads onto the phases auto-detection worked out earlier.
+
+    Runs before the calculation so this cycle already allocates on the
+    corrected mapping; the detection that produced it ran on a previous
+    cycle (see _run_auto_detection). Mutates the loads in place.
+    """
+    phase_remaps = auto_detect_state.get("phase_remap", {})
+    for charger in site.chargers:
+        remap = phase_remaps.get(charger.charger_id)
+        if remap:
+            old = (charger.l1_phase, charger.l2_phase, charger.l3_phase)
+            charger.l1_phase = remap["l1_phase"]
+            charger.l2_phase = remap["l2_phase"]
+            charger.l3_phase = remap["l3_phase"]
+            # Recalculate active_phases_mask from new mapping
+            if charger.phases == 3:
+                charger.active_phases_mask = "".join(
+                    sorted({charger.l1_phase, charger.l2_phase, charger.l3_phase})
+                )
+            elif charger.phases == 2:
+                charger.active_phases_mask = "".join(
+                    sorted({charger.l1_phase, charger.l2_phase})
+                )
+            elif charger.phases == 1:
+                charger.active_phases_mask = charger.l1_phase
+            _LOGGER.debug(
+                "Auto-remap applied for %s: L1:%s→%s L2:%s→%s L3:%s→%s mask=%s",
+                charger.entity_id,
+                old[0],
+                charger.l1_phase,
+                old[1],
+                charger.l2_phase,
+                old[2],
+                charger.l3_phase,
+                charger.active_phases_mask,
+            )
+
+
+def _apply_excess_latch(hub_runtime, site, excess_hysteresis):
+    """Decide whether Excess mode is engaged this cycle, with hysteresis.
+
+    Sets ``site.excess_hysteresis`` to the band the calculator should use
+    and returns ``(excess_on, margin)`` for the status/result side. The
+    latch bit lives in ``hub_runtime``.
+    """
+    # Excess trigger + hysteresis latch. excess_margin() returns the watts by
+    # which everything the site is absorbing (grid export + battery charging)
+    # exceeds everything it is allowed to absorb (export allowance + battery
+    # charge allowance); >= 0 means on. Once engaged, the band widens by the
+    # hub's Excess hysteresis so a load doesn't chatter at the trigger point.
+    # The latch lives here so the calculator stays stateless — it just reads
+    # site.excess_hysteresis. The per-sink breakdown goes to excess_margin()'s
+    # own debug line.
+    #
+    # Evaluated on POST-feedback figures: the pools compare export with charger
+    # draws added back, and pre-feedback export is already eaten by the Excess
+    # load's own draw — the band would never engage exactly when a load is running.
+    was_excess_on = hub_runtime.get("_excess_on", False)
+    margin = excess_margin(site, excess_hysteresis if was_excess_on else 0)
+    excess_on = margin >= 0
+    hub_runtime["_excess_on"] = excess_on
+    site.excess_hysteresis = excess_hysteresis if excess_on else 0
+    _LOGGER.debug(
+        "Excess %s (margin %+.0fW)", "ON" if excess_on else "off", margin
+    )
+    return excess_on, margin
+
+
+def _apply_household_figures(
+    site,
+    members,
+    hub_entry,
+    hub_runtime,
+    solar_is_derived,
+    solar_production_total,
+    battery_power,
+):
+    """Fill in what the household (everything unmanaged) is drawing.
+
+    Post-feedback on purpose: both the total and the per-phase figures are
+    derived from readings the managed draws have already been taken out of.
+    Sets ``site.household_consumption_total`` / ``site.household_consumption``
+    and owns the asymmetric hold state in ``hub_runtime``.
+    """
+    # Compute household_consumption_total when solar entity provides ground truth
+    if not solar_is_derived and solar_production_total > 0:
+        export_power_after_feedback = site.export_current.total * site.voltage
+        bp = float(battery_power) if battery_power is not None else 0
+        site.household_consumption_total = max(
+            0, solar_production_total + bp - export_power_after_feedback
+        )
+        _LOGGER.debug(
+            "Computed household_consumption_total=%.1fW (solar=%.1fW + bat=%.1fW - export=%.1fW)",
+            site.household_consumption_total,
+            solar_production_total,
+            bp,
+            export_power_after_feedback,
+        )
+
+    # Compute per-phase household from inverter output entities (after feedback)
+    if fleet.mixed_topologies(members):
+        household = _mixed_household_per_phase(site, members)
+    else:
+        household = compute_household_per_phase(site, site.wiring_topology)
+    if household is not None:
+        # Asymmetric hold on the household floor. The managed draw side of the
+        # subtraction (OCPP, sub-second) reacts before the polled inverter
+        # output does, so a ramping car transiently zeroes household and the
+        # engine would hand the real household's power out as headroom. Rises
+        # pass straight through; falls are bridged over
+        # HOUSEHOLD_HOLD_BRIDGE_SECONDS of wall clock.
+        decay = _household_hold_decay(hub_entry)
+        raw_household = household
+        household = hold_per_phase_floor(
+            household, hub_runtime.get("_household_held"), decay
+        )
+        hub_runtime["_household_held"] = household
+        site.household_consumption = household
+        _LOGGER.debug(
+            "Per-phase household from inverter output (%s): A=%.1fA B=%.1fA "
+            "C=%.1fA (raw A=%.1fA B=%.1fA C=%.1fA, hold decay %.3f)",
+            site.wiring_topology,
+            household.a if household.a is not None else 0,
+            household.b if household.b is not None else 0,
+            household.c if household.c is not None else 0,
+            raw_household.a if raw_household.a is not None else 0,
+            raw_household.b if raw_household.b is not None else 0,
+            raw_household.c if raw_household.c is not None else 0,
+            decay,
+        )
+    else:
+        # No inverter output data at all — nothing to hold, and the held value
+        # must be dropped so it cannot resurrect on a later cycle.
+        hub_runtime.pop("_household_held", None)
+
+
+def _apply_grid_stale_fallback(site, grid_stale_duration):
+    """Override the calculated permits once the grid CTs have been blind too long.
+
+    Returns whether the timeout has been exceeded — the hub status and the
+    published result both report it.
+    """
+    # --- Grid stale fallback: force min_current after timeout ---
+    grid_stale = grid_stale_duration > GRID_STALE_TIMEOUT
+    if grid_stale:
+        _LOGGER.warning(
+            "Grid CT unavailable for %.0fs (>%ds) — charging EVSEs falling to "
+            "minimum current, binary loads switched off",
+            grid_stale_duration,
+            GRID_STALE_TIMEOUT,
+        )
+        for charger in site.chargers:
+            # Only an EVSE already charging keeps a minimum-current permit (a
+            # hard stop mid-charge is worse than 6 A on a blind site). Binary
+            # loads (plugs/tanks) and idle EVSEs get no permit — a permit > 0
+            # switches a binary load ON, and energizing a load the engine had
+            # deliberately shed while it cannot see the site is unsafe.
+            if (
+                charger.device_type == DEVICE_TYPE_EVSE
+                and charger.connector_status == "Charging"
+            ):
+                charger.allocated_current = charger.min_current
+                charger.available_current = charger.min_current
+            else:
+                charger.allocated_current = 0
+                charger.available_current = 0
+    return grid_stale
+
+
+def _build_group_data(site):
+    """Per-circuit-group allocation data for the group sensors.
+
+    Read-only over the calculated site: what each group's members were
+    allocated per phase, and how much of the group's breaker limit that
+    leaves. Keyed by group_id.
+    """
+    # --- Build per-group allocation data for group sensors ---
+    group_data = {}
+    charger_by_id = {c.charger_id: c for c in site.chargers}
+    for group in site.circuit_groups:
+        per_phase_draw = {"A": 0.0, "B": 0.0, "C": 0.0}
+        for mid in group.member_ids:
+            c = charger_by_id.get(mid)
+            if c and c.allocated_current > 0 and c.active_phases_mask:
+                for phase in c.active_phases_mask:
+                    per_phase_draw[phase] += c.allocated_current
+        # Headroom = limit minus max draw on any active phase
+        active_draws = [
+            per_phase_draw[p]
+            for p in ("A", "B", "C")
+            if site.consumption and getattr(site.consumption, p.lower()) is not None
+        ]
+        max_draw = max(active_draws) if active_draws else 0
+        headroom = max(0, group.current_limit - max_draw)
+        group_data[group.group_id] = {
+            "name": group.name,
+            "current_limit": group.current_limit,
+            "member_ids": group.member_ids,
+            "per_phase_draw": per_phase_draw,
+            "max_phase_draw": round(max_draw, 1),
+            "headroom": round(headroom, 1),
+        }
+    return group_data
+
+
+def _run_auto_detection(hub_entry, auto_detect_state, smoothed_phases, site):
+    """Run the CT-inversion and phase-mapping detectors for this cycle.
+
+    Returns the notifications to publish. Any phase remap it works out is
+    stored in ``auto_detect_state`` for the NEXT cycle to apply (see
+    _apply_phase_remaps) — never mid-calculation.
+    """
+    # --- Auto-detection (inversion + phase mapping) ---
+    # auto_detect_state already initialized above (line 926)
+    auto_notifications = []
+    inv_notif = check_inversion(
+        auto_detect_state,
+        smoothed_phases,
+        site.chargers,
+        hub_entry.entry_id,
+        get_entry_value(hub_entry, CONF_NAME, "Hub"),
+    )
+    if inv_notif:
+        auto_notifications.append(inv_notif)
+    if get_entry_value(hub_entry, CONF_AUTO_DETECT_PHASE_MAPPING, True):
+        pm_results = check_phase_mapping(
+            auto_detect_state,
+            smoothed_phases,
+            site.chargers,
+            hub_entry.entry_id,
+        )
+        for notif in pm_results:
+            # Store auto-remap for next cycle
+            remap = notif.pop("auto_remap", None)
+            if remap:
+                auto_detect_state.setdefault("phase_remap", {})[remap["charger_id"]] = (
+                    remap
+                )
+                # Reset correlation state so re-detection runs with new mapping
+                # (allows 2-phase detection to verify/correct after 1-phase remap)
+                pm_state = auto_detect_state.get("phase_map", {})
+                pm_state.pop(remap["charger_id"], None)
+            auto_notifications.append(notif)
+    return auto_notifications
+
+
+def _build_hub_status(
+    hass,
+    hub_entry,
+    members,
+    has_grid_cts,
+    inverter_output_per_phase,
+    grid_stale,
+    grid_stale_duration,
+):
+    """The hub Status sensor's state and its warnings attribute.
+
+    Returns ``(hub_status, hub_warnings)``. Names the specific sensor or
+    setting at fault rather than a generic error, so the user knows what to
+    fix without reading the log.
+    """
+    # --- Hub status (config validation + runtime state) ---
+    # The hub Status sensor names exactly which sensor/input is missing or
+    # unavailable so the user knows precisely what to fix.
+    hub_status = "OK"
+    hub_warnings = []
+
+    has_inverter_output = inverter_output_per_phase is not None
+    # Any fleet member with its own production sensor counts as a
+    # power-measurement input for the setup-completeness check.
+    has_solar_entity = any(m.has_solar_entity for m in members)
+
+    if not has_grid_cts and not has_inverter_output and not has_solar_entity:
+        hub_status = "Setup incomplete"
+        hub_warnings.append(
+            "No power-measurement input configured. Add at least one in the "
+            "hub options: grid CT current sensors (grid-tied sites), inverter "
+            "output power sensors, or a solar production sensor."
+        )
+    elif not has_grid_cts:
+        # Off-grid: no grid CTs, so the battery is the primary state source.
+        # Any fleet member's battery satisfies the requirement — the battery
+        # may live on the hub's legacy fields or on an inverter entry.
+        hub_warnings.append("Off-grid mode (no grid CTs)")
+        if not any(m.battery_soc is not None or m.has_battery for m in members):
+            hub_status = "Setup incomplete"
+            hub_warnings.append(
+                "Off-grid hub needs a battery SOC sensor — it drives the "
+                "operating-mode logic. Set it on the hub or an inverter entry."
+            )
+        if not any(m.has_battery_power_entity for m in members):
+            hub_status = "Setup incomplete"
+            hub_warnings.append(
+                "Off-grid hub needs a battery power sensor — it is used to "
+                "detect available solar surplus. Set it on the hub or an "
+                "inverter entry."
+            )
+        if not has_inverter_output and not has_solar_entity:
+            hub_warnings.append(
+                "Off-grid hub has no inverter output or solar production "
+                "sensor — available solar can only be inferred from battery "
+                "charging. Add one for an accurate measurement."
+            )
+
+    if grid_stale:
+        hub_status = "Grid sensors unavailable"
+        hub_warnings.append(
+            f"Grid CT sensors unavailable (stale for {grid_stale_duration:.0f}s)."
+        )
+
+    # Configured non-grid sensors that are currently unavailable. Name them in
+    # the status line itself (not just the warnings attribute) so the user sees
+    # *which* sensor dropped out at a glance, without expanding attributes.
+    unavailable = _check_entity_availability(hass, hub_entry)
+    if unavailable:
+        hub_warnings.extend(
+            f"{label} ({entity_id}) is unavailable" for label, entity_id in unavailable
+        )
+        if hub_status == "OK":
+            labels = [label for label, _ in unavailable]
+            named = ", ".join(labels[:2])
+            if len(labels) > 2:
+                named += f" +{len(labels) - 2} more"
+            hub_status = f"Sensor unavailable: {named}"
+    return hub_status, hub_warnings
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+
+def run_hub_calculation(hass, hub_entry, charger_entries=None):
+    """
+    Run the hub calculation: read HA states, build SiteContext, calculate targets.
+
+    This is the ONE site calculation for a hub, run once per site cycle by the
+    hub's DataUpdateCoordinator (see sensor.py). It takes no entity — every
+    cycle-counted mechanism inside (settle counters, input EMAs, power-stable
+    counts) advances exactly once per call, so a site with N loads no longer
+    advances them N times per interval.
+
+    Args:
+        hass: Home Assistant instance
+        hub_entry: the hub's ConfigEntry
+        charger_entries: optional explicit list of load config entries; None
+            reads the hub's registered loads
+
+    Returns:
+        dict with calculated values including:
+            - CONF_TOTAL_ALLOCATED_CURRENT: Total allocated current (A)
+            - CONF_PHASES: Number of phases
+            - CONF_CHARGING_MODE: Current charging mode
+            - charger_targets: per-charger target currents
+            - Other site/charger data
+    """
+    (
+        voltage,
+        main_breaker_rating,
+        excess_hysteresis,
+        excess_threshold,
+    ) = _read_hub_config(hub_entry)
+
+    raw_phases, has_grid_cts = _read_site_phases(hass, hub_entry, voltage)
 
     # --- Input EMA smoothing (grid CT, solar, battery power) ---
     hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
@@ -374,20 +810,7 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     # full-SOC; discharge is summed after the SOC-min hysteresis latch below.
     battery_max_charge_power = fleet.charge_power_total(members)
 
-    # --- Max grid import power (entity override → shared hub data → None) ---
-    enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
-    max_import_power_entity = get_entry_value(
-        hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None
-    )
-    if max_import_power_entity:
-        max_grid_import_power = _coerce(
-            _read_entity(hass, max_import_power_entity, None, unit="W"), None
-        )  # Convert kW→W if needed
-    elif enable_max_import:
-        hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
-        max_grid_import_power = hub_rt.get("max_import_power", None)
-    else:
-        max_grid_import_power = None
+    max_grid_import_power = _read_max_import_power(hass, hub_entry)
 
     # --- Inverter configuration (fleet) ---
     # Member outputs are already stale-guarded + smoothed at read time (per-
@@ -435,39 +858,18 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
     # fleet.charge_power_total(), and a fleet-SOC gate would be wrong.
     battery_soc_full = fleet.soc_full_scalar(members)
 
-    # Apply SOC hysteresis — adjust thresholds so engine stays stateless
-    now_above_target = False
-    now_above_min = False
-    if (
-        battery_soc is not None
-        and battery_soc_hysteresis
-        and battery_soc_hysteresis > 0
-    ):
-        was_above_target = hub_runtime.get("_soc_above_target", False)
-        if was_above_target:
-            now_above_target = (
-                battery_soc >= battery_soc_target - battery_soc_hysteresis
-            )
-        else:
-            now_above_target = battery_soc >= battery_soc_target
-        hub_runtime["_soc_above_target"] = now_above_target
-        if now_above_target:
-            battery_soc_target = battery_soc_target - battery_soc_hysteresis
-
-        # The min floor's band sits ABOVE the setting (mirror of the target's):
-        # the floor is protective, so discharge stops AT the configured floor
-        # and only resumes once the battery has recovered a full hysteresis
-        # above it (floor 20, hysteresis 3 → stop at 20, resume at 23). The
-        # target's band sits below its setting for the same reason in reverse —
-        # charging never overshoots the configured ceiling.
-        was_above_min = hub_runtime.get("_soc_above_min", False)
-        if was_above_min:
-            now_above_min = battery_soc >= battery_soc_min
-        else:
-            now_above_min = battery_soc >= battery_soc_min + battery_soc_hysteresis
-        hub_runtime["_soc_above_min"] = now_above_min
-        if not now_above_min:
-            battery_soc_min = battery_soc_min + battery_soc_hysteresis
+    (
+        battery_soc_target,
+        battery_soc_min,
+        now_above_target,
+        now_above_min,
+    ) = _apply_soc_hysteresis(
+        hub_runtime,
+        battery_soc,
+        battery_soc_hysteresis,
+        battery_soc_target,
+        battery_soc_min,
+    )
 
     # Discharge capacity sums only members whose OWN battery is at/above the
     # (hysteresis-adjusted) hub minimum — a battery below the floor cannot be
@@ -597,139 +999,27 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
 
     # Apply auto-detected phase remaps from previous cycles
     auto_detect_state = hub_runtime.setdefault("_auto_detect", {})
-    phase_remaps = auto_detect_state.get("phase_remap", {})
-    for charger in site.chargers:
-        remap = phase_remaps.get(charger.charger_id)
-        if remap:
-            old = (charger.l1_phase, charger.l2_phase, charger.l3_phase)
-            charger.l1_phase = remap["l1_phase"]
-            charger.l2_phase = remap["l2_phase"]
-            charger.l3_phase = remap["l3_phase"]
-            # Recalculate active_phases_mask from new mapping
-            if charger.phases == 3:
-                charger.active_phases_mask = "".join(
-                    sorted({charger.l1_phase, charger.l2_phase, charger.l3_phase})
-                )
-            elif charger.phases == 2:
-                charger.active_phases_mask = "".join(
-                    sorted({charger.l1_phase, charger.l2_phase})
-                )
-            elif charger.phases == 1:
-                charger.active_phases_mask = charger.l1_phase
-            _LOGGER.debug(
-                "Auto-remap applied for %s: L1:%s→%s L2:%s→%s L3:%s→%s mask=%s",
-                charger.entity_id,
-                old[0],
-                charger.l1_phase,
-                old[1],
-                charger.l2_phase,
-                old[2],
-                charger.l3_phase,
-                charger.active_phases_mask,
-            )
+    _apply_phase_remaps(site, auto_detect_state)
 
     # --- Feedback loop ---
     _apply_feedback_loop(site, solar_is_derived, members)
 
-    # Excess trigger + hysteresis latch. excess_margin() returns the watts by
-    # which everything the site is absorbing (grid export + battery charging)
-    # exceeds everything it is allowed to absorb (export allowance + battery
-    # charge allowance); >= 0 means on. Once engaged, the band widens by the
-    # hub's Excess hysteresis so a load doesn't chatter at the trigger point.
-    # The latch lives here so the calculator stays stateless — it just reads
-    # site.excess_hysteresis. The per-sink breakdown goes to excess_margin()'s
-    # own debug line.
-    #
-    # Evaluated on POST-feedback figures: the pools compare export with charger
-    # draws added back, and pre-feedback export is already eaten by the Excess
-    # load's own draw — the band would never engage exactly when a load is running.
-    was_excess_on = hub_runtime.get("_excess_on", False)
-    margin = excess_margin(site, excess_hysteresis if was_excess_on else 0)
-    excess_on = margin >= 0
-    hub_runtime["_excess_on"] = excess_on
-    site.excess_hysteresis = excess_hysteresis if excess_on else 0
-    _LOGGER.debug(
-        "Excess %s (margin %+.0fW)", "ON" if excess_on else "off", margin
+    excess_on, margin = _apply_excess_latch(hub_runtime, site, excess_hysteresis)
+
+    _apply_household_figures(
+        site,
+        members,
+        hub_entry,
+        hub_runtime,
+        solar_is_derived,
+        solar_production_total,
+        battery_power,
     )
-
-    # Compute household_consumption_total when solar entity provides ground truth
-    if not solar_is_derived and solar_production_total > 0:
-        export_power_after_feedback = site.export_current.total * site.voltage
-        bp = float(battery_power) if battery_power is not None else 0
-        site.household_consumption_total = max(
-            0, solar_production_total + bp - export_power_after_feedback
-        )
-        _LOGGER.debug(
-            "Computed household_consumption_total=%.1fW (solar=%.1fW + bat=%.1fW - export=%.1fW)",
-            site.household_consumption_total,
-            solar_production_total,
-            bp,
-            export_power_after_feedback,
-        )
-
-    # Compute per-phase household from inverter output entities (after feedback)
-    if fleet.mixed_topologies(members):
-        household = _mixed_household_per_phase(site, members)
-    else:
-        household = compute_household_per_phase(site, site.wiring_topology)
-    if household is not None:
-        # Asymmetric hold on the household floor. The managed draw side of the
-        # subtraction (OCPP, sub-second) reacts before the polled inverter
-        # output does, so a ramping car transiently zeroes household and the
-        # engine would hand the real household's power out as headroom. Rises
-        # pass straight through; falls are bridged over
-        # HOUSEHOLD_HOLD_BRIDGE_SECONDS of wall clock.
-        decay = _household_hold_decay(hub_entry)
-        raw_household = household
-        household = hold_per_phase_floor(
-            household, hub_runtime.get("_household_held"), decay
-        )
-        hub_runtime["_household_held"] = household
-        site.household_consumption = household
-        _LOGGER.debug(
-            "Per-phase household from inverter output (%s): A=%.1fA B=%.1fA "
-            "C=%.1fA (raw A=%.1fA B=%.1fA C=%.1fA, hold decay %.3f)",
-            site.wiring_topology,
-            household.a if household.a is not None else 0,
-            household.b if household.b is not None else 0,
-            household.c if household.c is not None else 0,
-            raw_household.a if raw_household.a is not None else 0,
-            raw_household.b if raw_household.b is not None else 0,
-            raw_household.c if raw_household.c is not None else 0,
-            decay,
-        )
-    else:
-        # No inverter output data at all — nothing to hold, and the held value
-        # must be dropped so it cannot resurrect on a later cycle.
-        hub_runtime.pop("_household_held", None)
 
     # --- Calculate targets ---
     calculate_all_charger_targets(site)
 
-    # --- Grid stale fallback: force min_current after timeout ---
-    grid_stale = grid_stale_duration > GRID_STALE_TIMEOUT
-    if grid_stale:
-        _LOGGER.warning(
-            "Grid CT unavailable for %.0fs (>%ds) — charging EVSEs falling to "
-            "minimum current, binary loads switched off",
-            grid_stale_duration,
-            GRID_STALE_TIMEOUT,
-        )
-        for charger in site.chargers:
-            # Only an EVSE already charging keeps a minimum-current permit (a
-            # hard stop mid-charge is worse than 6 A on a blind site). Binary
-            # loads (plugs/tanks) and idle EVSEs get no permit — a permit > 0
-            # switches a binary load ON, and energizing a load the engine had
-            # deliberately shed while it cannot see the site is unsafe.
-            if (
-                charger.device_type == DEVICE_TYPE_EVSE
-                and charger.connector_status == "Charging"
-            ):
-                charger.allocated_current = charger.min_current
-                charger.available_current = charger.min_current
-            else:
-                charger.allocated_current = 0
-                charger.available_current = 0
+    grid_stale = _apply_grid_stale_fallback(site, grid_stale_duration)
 
     charger_targets = {c.charger_id: c.allocated_current for c in site.chargers}
     charger_available = {c.charger_id: c.available_current for c in site.chargers}
@@ -744,128 +1034,21 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
         if rt is not None:
             rt["_last_permit"] = c.available_current
 
-    # --- Build per-group allocation data for group sensors ---
-    group_data = {}
-    charger_by_id = {c.charger_id: c for c in site.chargers}
-    for group in site.circuit_groups:
-        per_phase_draw = {"A": 0.0, "B": 0.0, "C": 0.0}
-        for mid in group.member_ids:
-            c = charger_by_id.get(mid)
-            if c and c.allocated_current > 0 and c.active_phases_mask:
-                for phase in c.active_phases_mask:
-                    per_phase_draw[phase] += c.allocated_current
-        # Headroom = limit minus max draw on any active phase
-        active_draws = [
-            per_phase_draw[p]
-            for p in ("A", "B", "C")
-            if site.consumption and getattr(site.consumption, p.lower()) is not None
-        ]
-        max_draw = max(active_draws) if active_draws else 0
-        headroom = max(0, group.current_limit - max_draw)
-        group_data[group.group_id] = {
-            "name": group.name,
-            "current_limit": group.current_limit,
-            "member_ids": group.member_ids,
-            "per_phase_draw": per_phase_draw,
-            "max_phase_draw": round(max_draw, 1),
-            "headroom": round(headroom, 1),
-        }
+    group_data = _build_group_data(site)
 
-    # --- Auto-detection (inversion + phase mapping) ---
-    # auto_detect_state already initialized above (line 926)
-    auto_notifications = []
-    inv_notif = check_inversion(
-        auto_detect_state,
-        smoothed_phases,
-        site.chargers,
-        hub_entry.entry_id,
-        get_entry_value(hub_entry, CONF_NAME, "Hub"),
+    auto_notifications = _run_auto_detection(
+        hub_entry, auto_detect_state, smoothed_phases, site
     )
-    if inv_notif:
-        auto_notifications.append(inv_notif)
-    if get_entry_value(hub_entry, CONF_AUTO_DETECT_PHASE_MAPPING, True):
-        pm_results = check_phase_mapping(
-            auto_detect_state,
-            smoothed_phases,
-            site.chargers,
-            hub_entry.entry_id,
-        )
-        for notif in pm_results:
-            # Store auto-remap for next cycle
-            remap = notif.pop("auto_remap", None)
-            if remap:
-                auto_detect_state.setdefault("phase_remap", {})[remap["charger_id"]] = (
-                    remap
-                )
-                # Reset correlation state so re-detection runs with new mapping
-                # (allows 2-phase detection to verify/correct after 1-phase remap)
-                pm_state = auto_detect_state.get("phase_map", {})
-                pm_state.pop(remap["charger_id"], None)
-            auto_notifications.append(notif)
 
-    # --- Hub status (config validation + runtime state) ---
-    # The hub Status sensor names exactly which sensor/input is missing or
-    # unavailable so the user knows precisely what to fix.
-    hub_status = "OK"
-    hub_warnings = []
-
-    has_inverter_output = inverter_output_per_phase is not None
-    # Any fleet member with its own production sensor counts as a
-    # power-measurement input for the setup-completeness check.
-    has_solar_entity = any(m.has_solar_entity for m in members)
-
-    if not has_grid_cts and not has_inverter_output and not has_solar_entity:
-        hub_status = "Setup incomplete"
-        hub_warnings.append(
-            "No power-measurement input configured. Add at least one in the "
-            "hub options: grid CT current sensors (grid-tied sites), inverter "
-            "output power sensors, or a solar production sensor."
-        )
-    elif not has_grid_cts:
-        # Off-grid: no grid CTs, so the battery is the primary state source.
-        # Any fleet member's battery satisfies the requirement — the battery
-        # may live on the hub's legacy fields or on an inverter entry.
-        hub_warnings.append("Off-grid mode (no grid CTs)")
-        if not any(m.battery_soc is not None or m.has_battery for m in members):
-            hub_status = "Setup incomplete"
-            hub_warnings.append(
-                "Off-grid hub needs a battery SOC sensor — it drives the "
-                "operating-mode logic. Set it on the hub or an inverter entry."
-            )
-        if not any(m.has_battery_power_entity for m in members):
-            hub_status = "Setup incomplete"
-            hub_warnings.append(
-                "Off-grid hub needs a battery power sensor — it is used to "
-                "detect available solar surplus. Set it on the hub or an "
-                "inverter entry."
-            )
-        if not has_inverter_output and not has_solar_entity:
-            hub_warnings.append(
-                "Off-grid hub has no inverter output or solar production "
-                "sensor — available solar can only be inferred from battery "
-                "charging. Add one for an accurate measurement."
-            )
-
-    if grid_stale:
-        hub_status = "Grid sensors unavailable"
-        hub_warnings.append(
-            f"Grid CT sensors unavailable (stale for {grid_stale_duration:.0f}s)."
-        )
-
-    # Configured non-grid sensors that are currently unavailable. Name them in
-    # the status line itself (not just the warnings attribute) so the user sees
-    # *which* sensor dropped out at a glance, without expanding attributes.
-    unavailable = _check_entity_availability(hass, hub_entry)
-    if unavailable:
-        hub_warnings.extend(
-            f"{label} ({entity_id}) is unavailable" for label, entity_id in unavailable
-        )
-        if hub_status == "OK":
-            labels = [label for label, _ in unavailable]
-            named = ", ".join(labels[:2])
-            if len(labels) > 2:
-                named += f" +{len(labels) - 2} more"
-            hub_status = f"Sensor unavailable: {named}"
+    hub_status, hub_warnings = _build_hub_status(
+        hass,
+        hub_entry,
+        members,
+        has_grid_cts,
+        inverter_output_per_phase,
+        grid_stale,
+        grid_stale_duration,
+    )
 
     # --- Per-inverter data for the inverter-entry sensors ---
     # The legacy implicit member (the hub's own fields) has no device of its
