@@ -26,7 +26,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
     if entry_type == ENTRY_TYPE_LOAD:
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "load")
-        name = config_entry.data.get(CONF_NAME, "Charger")
+        name = config_entry.data.get(CONF_NAME, "Load")
         hub_entry_id = config_entry.data.get(CONF_HUB_ENTRY_ID)
         hub_entry = hass.config_entries.async_get_entry(hub_entry_id) if hub_entry_id else None
         entities = [DynamicControlSwitch(hass, config_entry, hub_entry, entity_id, name)]

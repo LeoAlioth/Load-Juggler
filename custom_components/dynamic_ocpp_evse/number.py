@@ -163,7 +163,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     async_add_entities(entities)
 
 
-# ==================== CHARGER NUMBER ENTITIES ====================
+# ==================== LOAD NUMBER ENTITIES ====================
 
 
 class _EVSECurrentSlider(LoadEntityMixin, NumberEntity, RestoreEntity):

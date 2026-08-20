@@ -40,7 +40,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
     # Load entries get per-load operating mode selector
     if entry_type == ENTRY_TYPE_LOAD:
-        name = config_entry.data.get(CONF_NAME, "Charger")
+        name = config_entry.data.get(CONF_NAME, "Load")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "load")
 
         entities = [

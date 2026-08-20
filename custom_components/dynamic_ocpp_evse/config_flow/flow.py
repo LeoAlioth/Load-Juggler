@@ -358,7 +358,7 @@ class LoadJugglerConfigFlow(
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Initial step: choose hub, EVSE charger, or smart outlet."""
+        """Initial step: choose what to add — hub, EVSE, smart load, group, inverter."""
         errors: dict[str, str] = {}
 
         # Check if any hubs exist
@@ -612,7 +612,7 @@ class LoadJugglerConfigFlow(
             step_id="hub_grid", data_schema=data_schema, errors=errors, last_step=True
         )
 
-    # ==================== CHARGER CONFIGURATION STEPS ====================
+    # ==================== LOAD CONFIGURATION STEPS ====================
 
     async def async_step_integration_discovery(
         self, discovery_info: dict[str, Any]

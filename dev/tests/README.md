@@ -37,7 +37,7 @@ Scenario YAML files live in `dev/tests/scenarios/`:
 - `test_scenarios_3ph.yaml` — Three-phase scenarios
 - `test_scenarios_3ph_battery.yaml` — Three-phase with battery
 
-Each YAML file contains a `scenarios:` list with inputs and expected targets for chargers.
+Each YAML file contains a `scenarios:` list with inputs and expected targets for loads.
 
 ## 2. HA Integration Tests (WSL/Linux)
 
@@ -59,9 +59,9 @@ wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Docu
 
 | File | What it tests |
 |---|---|
-| `test_init.py` | Hub/charger setup, teardown, v1→v2 migration |
+| `test_init.py` | Hub/load setup, teardown, v1→v2 migration |
 | `test_config_flow.py` | Config flow step navigation and input validation |
-| `test_config_flow_e2e.py` | Full hub/charger creation, discovery, options flow |
+| `test_config_flow_e2e.py` | Full hub/load creation, discovery, options flow, entry migration |
 | `test_sensor_update.py` | Sensor init, update cycle, OCPP calls, charge pause, profiles |
 | `test_power_station_ha.py` | Power station builder (bounds, managed draw, status) and command module (what is written where) |
 | `conftest.py` | Shared fixtures (`mock_hub_entry`, `mock_charger_entry`, `mock_setup`) |

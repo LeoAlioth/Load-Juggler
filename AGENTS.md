@@ -38,7 +38,7 @@ Each In Progress and Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bug
 ```text
 custom_components/dynamic_ocpp_evse/
 ├── __init__.py                    # HA setup/unload, services (re-exports the registry helpers)
-├── registry.py                    # Entry-relationship lookups (get_hub_for_charger, get_*_for_hub) —
+├── registry.py                    # Entry-relationship lookups (get_hub_for_load, get_*_for_hub) —
 │                                  #   HA-import-free, so pure tooling can load it without Home Assistant
 ├── manifest.json                  # Component metadata
 ├── config_flow/                   # HA configuration flow (initial setup + options "Configure" flow — the single
@@ -57,8 +57,8 @@ custom_components/dynamic_ocpp_evse/
 │   ├── readers.py                 # HA-state edge: _read_entity() (returns _UNAVAILABLE sentinel),
 │   │                              #   _smooth() (EMA) + _stale_guard() (holdover), _coerce(),
 │   │                              #   grid/inverter/fleet-member reading
-│   ├── load_builders.py           # _build_[evse|plug|power_station|hot_water_tank]_charger(),
-│   │                              #   _add_chargers_to_site(), _build_circuit_groups()
+│   ├── load_builders.py           # _build_[evse|plug|power_station|hot_water_tank]_load(),
+│   │                              #   _add_loads_to_site(), _build_circuit_groups()
 │   ├── hub_result.py              # _compute_forecast_advice(), _build_hub_result() (the published dict)
 │   ├── fleet.py                   # Multi-inverter fleet aggregation (solar_total, weighted_soc, inverter_limits)
 │   ├── auto_detect.py             # Grid CT inversion + phase mapping auto-detection
@@ -108,14 +108,14 @@ custom_components/dynamic_ocpp_evse/
 **CRITICAL**: ALL calculation functions must return a constraint dict with keys:
 
 - `'A'`, `'B'`, `'C'` - Single-phase limits
-- `'AB'`, `'AC'`, `'BC'` - Two-phase limits (for 2-phase chargers)
+- `'AB'`, `'AC'`, `'BC'` - Two-phase limits (for 2-phase loads)
 - `'ABC'` - Three-phase limit (total)
 
-This properly enforces constraints for every charger configuration:
+This properly enforces constraints for every load configuration:
 
-- 1-phase charger on phase A: Uses `constraints['A']`
-- 2-phase charger on AB: Uses `min(constraints['A'], constraints['B'], constraints['AB'])`
-- 3-phase charger: Uses `min(constraints['A'], constraints['B'], constraints['C'], constraints['ABC'])`
+- 1-phase load on phase A: Uses `constraints['A']`
+- 2-phase load on AB: Uses `min(constraints['A'], constraints['B'], constraints['AB'])`
+- 3-phase load: Uses `min(constraints['A'], constraints['B'], constraints['C'], constraints['ABC'])`
 
 **Why**: Physical reality — inverters and breakers have limits for EACH phase combination, not just individual phases.
 
@@ -125,7 +125,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 ```text
 0. Refresh SiteContext (done externally in HA integration)
-   → Subtract charger draws from consumption (feedback loop correction)
+   → Subtract load draws from consumption (feedback loop correction)
    ↓
 1. Calculate absolute site limits (per-phase physical constraints)
    → _calculate_site_limit()
@@ -139,7 +139,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
    → _calculate_excess_available()
    ↓
 4. Compute per-load ceilings based on each load's operating mode
-   → _compute_charger_ceiling() per load (mode-aware, uses solar/excess pools)
+   → _source_limit() per load (mode-aware, uses solar/excess pools)
    ↓
 5. Distribute power among loads (sorted by mode urgency + priority)
    → _distribute_power()
@@ -162,11 +162,11 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Derived: total_export_current, total_export_power (computed properties)
 - Battery: battery_soc, battery_soc_min, battery_soc_target, battery_max_charge/discharge_power
 - Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, wiring_topology, inverter_output_per_phase
-- Charging: distribution_mode, chargers[], circuit_groups[]
+- Charging: distribution_mode, loads[], circuit_groups[]
 
 **LoadContext** (`calculations/models.py`) — Represents a single managed load (EVSE or smart plug):
 
-- Config: charger_id, min_current, max_current, phases, priority, device_type, operating_mode
+- Config: load_id, min_current, max_current, phases, priority, device_type, operating_mode
 - Status: connector_status (Available, Charging, etc.)
 - Phase tracking: active_phases_mask ("A", "B", "C", "AB", "BC", "AC", "ABC")
 - Current: l1_current, l2_current, l3_current (actual OCPP draw)
@@ -187,7 +187,7 @@ The `calculations/` directory is pure Python and can be imported/tested independ
    - `_coerce()` (`readers.py`): converts `_UNAVAILABLE` back to safe defaults for non-smoothed values
    - Solar derivation: `engine/fleet.py` (`solar_total()` / `member_solar()`) — uses inverter output when available, falls back to grid export + battery
    - Off-grid: when no grid CTs are configured, phases with inverter output entities are zeroed (not None), making the site behave like a grid site with 0A grid current
-2. **Hub coordinator (sensor.py) + entities/load.py + control/**: ONE `DataUpdateCoordinator` per hub entry (`hass.data[DOMAIN]["hub_coordinators"]`) runs the engine once per `site_update_frequency`, publishes the trimmed result via `entities/hub.py:publish_hub_data`, then awaits each registered load processor sequentially (`hass.data[DOMAIN]["load_processors"]`, entry_id order — strict serialization for OCPP), then each async cycle worker (`SITE_CYCLE_WORKERS`, e.g. the inverter charge-limit write — after publish, order-insignificant), and finally notifies the push-reader sensors (`site_cycle_listeners`, rebound every tick so hub-only reloads can't strand them). `LoadJugglerDeviceSensor.async_process(hub_data)` does the per-load work — smoothing (`control/smoothing.py`), grace/pause state machines, then dispatch: OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules. Per-load `update_frequency` gates command sends inside the processor. Hub sensors (`entities/hub.py`) are pure readers of hub_data: Site Available Power, Hub Status, per-metric data sensors. Charger sensors: allocated current, available current, charging status.
+2. **Hub coordinator (sensor.py) + entities/load.py + control/**: ONE `DataUpdateCoordinator` per hub entry (`hass.data[DOMAIN]["hub_coordinators"]`) runs the engine once per `site_update_frequency`, publishes the trimmed result via `entities/hub.py:publish_hub_data`, then awaits each registered load processor sequentially (`hass.data[DOMAIN]["load_processors"]`, entry_id order — strict serialization for OCPP), then each async cycle worker (`SITE_CYCLE_WORKERS`, e.g. the inverter charge-limit write — after publish, order-insignificant), and finally notifies the push-reader sensors (`site_cycle_listeners`, rebound every tick so hub-only reloads can't strand them). `LoadJugglerDeviceSensor.async_process(hub_data)` does the per-load work — smoothing (`control/smoothing.py`), grace/pause state machines, then dispatch: OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules. Per-load `update_frequency` gates command sends inside the processor. Hub sensors (`entities/hub.py`) are pure readers of hub_data: Site Available Power, Hub Status, per-metric data sensors. Load sensors: allocated current, available current, charging status.
 3. **Platform files** (button.py, number.py, select.py, etc.): Thin wiring that exposes the `entities/` classes and controls to the HA UI
 
 ### Asymmetric vs Symmetric Inverters
@@ -196,7 +196,7 @@ The `calculations/` directory is pure Python and can be imported/tested independ
 
 - Solar/battery power is fixed per-phase
 - Each phase operates independently
-- 3-phase chargers limited by minimum available phase
+- 3-phase loads limited by minimum available phase
 
 **Asymmetric Inverter** (`inverter_supports_asymmetric=True`):
 
@@ -204,15 +204,15 @@ The `calculations/` directory is pure Python and can be imported/tested independ
 - Inverter can balance load dynamically
 - Total power pool available (not per-phase limited, respecting inverter limits)
 
-**Important**: Regardless of inverter type, chargers are physically connected to specific phases and can only draw from those phases. The inverter asymmetric capability affects power SUPPLY flexibility, not charger DRAW flexibility.
+**Important**: Regardless of inverter type, loads are physically connected to specific phases and can only draw from those phases. The inverter asymmetric capability affects power SUPPLY flexibility, not load DRAW flexibility.
 
 ### Phase-Specific Allocation
 
-When chargers have explicit phase assignments (e.g., `l1_phase: "B"`):
+When loads have explicit phase assignments (e.g., `l1_phase: "B"`):
 
 - All distribution uses PhaseConstraints — per-phase limits are enforced automatically
 - Each phase is allocated independently via `_distribute_power()`
-- 3-phase chargers limited by minimum available phase
+- 3-phase loads limited by minimum available phase
 
 ## Operating & Distribution Modes
 
@@ -230,24 +230,24 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 4. **Logging**: Use `_LOGGER.debug()` extensively for troubleshooting
 5. **Test First**: Run relevant tests before and after changes
 6. **Helper Functions**: Prefer helper functions over inline logic for maintainability
-7. **General naming**: When something concerns more than one device type, name it by the general concept — prefer `load` over `charger` for the generic managed-device idea (the codebase already uses `LoadContext` / `LoadJuggler`). Rename mis-named identifiers opportunistically while editing nearby code, not only in dedicated rename passes.
+7. **General naming**: When something concerns more than one device type, name it by the general concept — `load`, never `charger`, for the generic managed-device idea. The generic rename is done: `charger` now survives ONLY where the thing can only ever be an EVSE (OCPP discovery and profiles, `CONF_CHARGER_ID`/`CONF_CHARGER_L1..L3_PHASE`, the `charger_*` config-flow steps, `validate_charger_settings`, compliance, the `*_ocpp_evse` service). If a plug, tank or power station can flow through it, it is a `load`. Two deliberate exceptions, both documented in place: the published `charger_priority` entity attribute (public API since 2.0.5) and the EVSE phase-mapping notification text.
 
 ### Adding New Features
 
-1. **Operating Mode**: Add ceiling logic in `_compute_charger_ceiling()` in `target_calculator.py`
+1. **Operating Mode**: Add ceiling logic in `_source_limit()` in `target_calculator.py`
 2. **Distribution Mode**: Add to `target_calculator.py` as `_distribute_<mode>()`
 3. **Test Scenarios**: Create YAML scenarios in `dev/tests/scenarios/`
 4. **Documentation**: Update CHARGE_MODES_GUIDE.md, README.md
 
 ### Common Pitfalls
 
-1. **Asymmetric vs Symmetric confusion**: Remember inverter capability affects SUPPLY, not charger DRAW
+1. **Asymmetric vs Symmetric confusion**: Remember inverter capability affects SUPPLY, not load DRAW
 2. **Per-phase vs total power**: Track carefully whether working with per-phase (A) or total (A*3)
 3. **Battery priority**: Battery charges BEFORE EVs when SOC < target (Standard mode being the exception)
-4. **Minimum current**: Chargers need >= min_current or get 0 (can't charge below minimum)
+4. **Minimum current**: Loads need >= min_current or get 0 (can't run below minimum)
 5. **Phase assignment defaults**: Don't default to "A" — only set when explicitly specified
 6. **Legacy code**: This is version 2.0.0 — legacy compatibility should be removed as users are expected to reconfigure the integration
-7. **Grid CT consumption includes charger draws**: Grid current sensors measure TOTAL site import, which includes charger power. `engine/hub_calculation.py` (`_apply_feedback_loop()`) subtracts each charger's l1/l2/l3_current from `site.consumption` before calling the engine (step 0). Without this, the engine double-counts charger power as both "consumption" and "charger demand", leading to under-allocation or false pauses. Hub sensor display values intentionally show the raw (unadjusted) grid readings.
+7. **Grid CT consumption includes load draws**: Grid current sensors measure TOTAL site import, which includes managed-load power. `engine/hub_calculation.py` (`_apply_feedback_loop()`) subtracts each load's l1/l2/l3_current from `site.consumption` before calling the engine (step 0). Without this, the engine double-counts load power as both "consumption" and "load demand", leading to under-allocation or false pauses. Hub sensor display values intentionally show the raw (unadjusted) grid readings.
 
 ## Testing and Debugging
 
@@ -292,8 +292,8 @@ scenarios:
     human_verified: false
     site:
       voltage: 230
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
@@ -301,7 +301,7 @@ scenarios:
         l1_phase: "A"
         operating_mode: "Solar Only"
     expected:
-      charger_1:
+      load_1:
         allocated: 10.0
 ```
 
@@ -340,7 +340,7 @@ docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python dev/tests/run_tests
 
 - `test_init.py` — Setup, teardown, migration (v1->v2, v2.0->v2.1)
 - `test_config_flow.py` — Config flow step navigation and validation
-- `test_config_flow_e2e.py` — Full hub/charger creation flows, options flow, discovery
+- `test_config_flow_e2e.py` — Full hub/load creation flows, options flow, discovery, entry migration
 - `test_sensor_update.py` — Sensor initialization, update cycle, OCPP calls, charge pause, profile formats
 
 ### Linting and Type Checking

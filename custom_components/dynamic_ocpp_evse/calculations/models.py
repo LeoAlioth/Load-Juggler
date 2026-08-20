@@ -28,7 +28,7 @@ class LoadContext:
     phases: int  # 1 or 3 (EVSE hardware capability)
     priority: int = 1  # Per-load configured priority (lower = higher priority)
     device_type: str = "evse"  # "evse" (OCPP) or "plug" (smart load)
-    operating_mode: str = "Standard"  # Mode key — for logs / charger_modes export
+    operating_mode: str = "Standard"  # Mode key — for logs / load_modes export
     mode_behavior: str = "full_power"  # BEHAVIOR_* — what the engine switches on
     mode_priority: int = 1  # Mode urgency tier 1-4 (lower = served first)
     
