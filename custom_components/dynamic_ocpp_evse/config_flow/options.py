@@ -67,6 +67,8 @@ from .helpers import (
     _LOGGER,
     _POWER_FACTOR,
     _SOLAR_UNIT_MAP,
+    _WRITE_CONTROL_UNIT_MAP,
+    _validate_charge_limit_unit,
     _apply_priority_order,
     _controlled_devices,
     _normalize_inverter_power_caps,
@@ -311,6 +313,13 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.FlowResult:
         """Options for an inverter entry — one page: inverter, PV and battery."""
         f = self._schema_helper
+
+        def _validate(data: dict, errors: dict):
+            _validate_charge_limit_unit(self.hass, data, errors)
+            # Returned last: a bad forecast device's name feeds the form's
+            # ``entity`` placeholder (see _async_edit_page's validate hook).
+            return _validate_forecast_devices(self.hass, data, errors)
+
         return await self._async_edit_page(
             user_input,
             step_id="inverter",
@@ -325,10 +334,11 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
             ],
             list_normalizers=(f._normalize_forecast_list, f._normalize_soc_limit_list),
-            unit_map=_INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP | _BATTERY_UNIT_MAP,
-            validate=lambda data, errors: _validate_forecast_devices(
-                self.hass, data, errors
-            ),
+            unit_map=_INVERTER_OUTPUT_UNIT_MAP
+            | _SOLAR_UNIT_MAP
+            | _BATTERY_UNIT_MAP
+            | _WRITE_CONTROL_UNIT_MAP,
+            validate=_validate,
             finalize=_normalize_inverter_power_caps,
             last_step=None,
         )

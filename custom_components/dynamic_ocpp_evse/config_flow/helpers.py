@@ -22,7 +22,10 @@ from .. import units
 from ..const import (
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_CHARGER_PRIORITY,
+    CONF_CHARGE_LIMIT_ENTITY_ID,
+    CONF_CHARGE_LIMIT_UNIT,
     CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
     CONF_HUB_ENTRY_ID,
     CONF_INVERTER_MAX_POWER,
@@ -36,9 +39,12 @@ from ..const import (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PRIORITY_ORDER,
+    CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
+    CHARGE_LIMIT_UNIT_AMPS,
     DEFAULT_CHARGER_PRIORITY,
+    DEFAULT_CHARGE_LIMIT_UNIT,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_CHARGER,
@@ -70,7 +76,8 @@ _VOLTAGE_UNITS = units.VOLTAGE_UNITS
 #   hub grid (create + options)   _GRID_UNIT_MAP
 #   inverter config (create)      _INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP
 #   inverter battery (create)     _BATTERY_UNIT_MAP
-#   inverter (options, one page)  all three of the above
+#   inverter control (create)     _WRITE_CONTROL_UNIT_MAP
+#   inverter (options, one page)  all four of the above
 #   hub inverter (options)        _INVERTER_OUTPUT_UNIT_MAP
 #   hub battery (options)         _SOLAR_UNIT_MAP | _BATTERY_UNIT_MAP
 #
@@ -96,6 +103,37 @@ _BATTERY_UNIT_MAP = {
     CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
     CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
 }
+_WRITE_CONTROL_UNIT_MAP = {
+    # The charge-limit register is NOT here: it is written in whatever unit the
+    # user chose (CONF_CHARGE_LIMIT_UNIT), so it has no fixed physical domain —
+    # _validate_charge_limit_unit checks it against the choice instead.
+    CONF_BATTERY_VOLTAGE_ENTITY_ID: _VOLTAGE_UNITS,
+    CONF_SOC_LIMIT_NORMAL_ENTITY_ID: _SOC_UNITS,
+}
+
+
+def _validate_charge_limit_unit(hass, user_input: dict, errors: dict) -> None:
+    """Validate the charge-limit register entity against the CHOSEN unit.
+
+    The register is written raw in the unit the user declared
+    (CONF_CHARGE_LIMIT_UNIT: DC amps on a Deye, watts elsewhere), so unlike the
+    physical-domain fields there is no canonical unit to convert into — an "A"
+    register configured as watts is exactly the mistake this catches. Skips
+    like _validate_entity_units: no entity, no state, or no unit → no error.
+    """
+    entity_id = user_input.get(CONF_CHARGE_LIMIT_ENTITY_ID)
+    if not entity_id:
+        return
+    state = hass.states.get(entity_id)
+    if units.is_unavailable(state):
+        return
+    unit = state.attributes.get("unit_of_measurement")
+    if not unit:
+        return
+    chosen = user_input.get(CONF_CHARGE_LIMIT_UNIT) or DEFAULT_CHARGE_LIMIT_UNIT
+    expected = _CURRENT_UNITS if chosen == CHARGE_LIMIT_UNIT_AMPS else _POWER_UNITS
+    if unit not in expected:
+        errors[CONF_CHARGE_LIMIT_ENTITY_ID] = "invalid_unit"
 
 
 def _validate_entity_units(

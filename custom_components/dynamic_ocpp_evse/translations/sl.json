@@ -396,7 +396,7 @@
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
             "entity_id_in_use": "Ta ID entitete že uporablja druga naprava Load Juggler — izberite enoličen ID.",
             "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta napolnjenosti baterije in entiteta moči baterije.",
-            "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %).",
+            "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V).",
             "unknown": "Prišlo je do neznane napake"
         },
         "abort": {
@@ -412,7 +412,7 @@
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
             "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta napolnjenosti baterije in entiteta moči baterije.",
-            "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %)."
+            "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V)."
         },
         "abort": {
             "entry_not_found": "Konfiguracijski vnos ni najden"

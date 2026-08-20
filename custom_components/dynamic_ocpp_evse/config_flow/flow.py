@@ -158,6 +158,8 @@ from .helpers import (
     _INVERTER_OUTPUT_UNIT_MAP,
     _LOGGER,
     _SOLAR_UNIT_MAP,
+    _WRITE_CONTROL_UNIT_MAP,
+    _validate_charge_limit_unit,
     _compose_entry_title,
     _hub_phase_count,
     _normalize_inverter_power_caps,
@@ -1113,6 +1115,10 @@ class LoadJugglerConfigFlow(
                 ],
             )
             user_input = self._normalize_soc_limit_list(user_input)
+            _validate_entity_units(
+                self.hass, user_input, _WRITE_CONTROL_UNIT_MAP, errors
+            )
+            _validate_charge_limit_unit(self.hass, user_input, errors)
             if not errors:
                 self._data.update(user_input)
                 _normalize_inverter_power_caps(self._data)
