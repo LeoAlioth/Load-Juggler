@@ -141,11 +141,15 @@ _RAW_PARSE_BUDGET = {
     "control/inverter.py": 1,
     # Same pattern for the station's charge-speed/reserve numbers.
     "control/power_station.py": 1,
-    # _read_entity (the one converting reader) plus the EVSE current-import
-    # total and power fallbacks (the latter via units.to_watts). Was 4: the
-    # grid staleness check used to re-parse the raw state string itself, and
-    # now reads the sentinel _read_grid_phases already resolved (ISSUES.md #31).
-    "engine/hub_calculation.py": 3,
+    # The EVSE current-import total and power fallbacks (the latter via
+    # units.to_watts).
+    "engine/hub_calculation.py": 2,
+    # _read_entity (the one converting reader), which moved here with the rest
+    # of the sensor-reading layer. Was 4 when engine/hub_calculation.py still
+    # held all three: the grid staleness check used to re-parse the raw state
+    # string itself, and now reads the sentinel _read_grid_phases already
+    # resolved (ISSUES.md #31).
+    "engine/readers.py": 1,
     # The station status sensor reading the power station's external battery
     # SOC and charge-limit entities — both percentages, so no unit conversion
     # applies.

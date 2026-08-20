@@ -44,7 +44,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     GRID_STALE_TIMEOUT,
 )
-from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+from custom_components.dynamic_ocpp_evse.engine.readers import (
     _UNAVAILABLE,
     _read_entity,
     _read_grid_phases,
@@ -490,7 +490,7 @@ def test_grid_phase_reader_does_not_coerce_the_sentinel_away():
     the sentinel into 0 A, and 0 A on a grid phase is full breaker headroom. The
     behavioural tests above would catch it too, but this names the mistake.
     """
-    source = (COMPONENT / "engine" / "hub_calculation.py").read_text()
+    source = (COMPONENT / "engine" / "readers.py").read_text()
     tree = ast.parse(source)
     reader = next(
         node

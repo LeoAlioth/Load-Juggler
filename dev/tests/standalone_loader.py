@@ -67,7 +67,13 @@ DEFAULT_CALC_MODULES = ("models", "utils", "target_calculator")
 # chain touches these HA-importing siblings and these engine modules, in this
 # order. helpers.py / forecast_reader.py import homeassistant at module level,
 # which _ensure_ha_stubs() satisfies when HA is not installed.
-_HUB_CALC_ENGINE_ORDER = ("auto_detect", "fleet", "forecast_reader", "hub_calculation")
+_HUB_CALC_ENGINE_ORDER = (
+    "auto_detect",
+    "fleet",
+    "forecast_reader",
+    "readers",
+    "hub_calculation",
+)
 
 
 def _ensure_stub_package(name, search_path=None):
