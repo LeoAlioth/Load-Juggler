@@ -72,6 +72,7 @@ _HUB_CALC_ENGINE_ORDER = (
     "fleet",
     "forecast_reader",
     "readers",
+    "load_builders",
     "hub_calculation",
 )
 

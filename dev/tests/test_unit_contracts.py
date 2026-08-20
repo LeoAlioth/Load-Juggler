@@ -142,8 +142,8 @@ _RAW_PARSE_BUDGET = {
     # Same pattern for the station's charge-speed/reserve numbers.
     "control/power_station.py": 1,
     # The EVSE current-import total and power fallbacks (the latter via
-    # units.to_watts).
-    "engine/hub_calculation.py": 2,
+    # units.to_watts), which moved here with the LoadContext builders.
+    "engine/load_builders.py": 2,
     # _read_entity (the one converting reader), which moved here with the rest
     # of the sensor-reading layer. Was 4 when engine/hub_calculation.py still
     # held all three: the grid staleness check used to re-parse the raw state

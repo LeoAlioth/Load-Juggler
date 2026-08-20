@@ -143,7 +143,7 @@ def _set_states(
 
 
 def _build(hass, station_entry):
-    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+    from custom_components.dynamic_ocpp_evse.engine.load_builders import (
         _build_power_station_charger,
     )
 
