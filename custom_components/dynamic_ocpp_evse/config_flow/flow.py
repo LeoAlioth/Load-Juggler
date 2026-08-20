@@ -693,241 +693,192 @@ class LoadJugglerConfigFlow(
             last_step=False,
         )
 
-    async def async_step_plug_config(
-        self, user_input: dict[str, Any] | None = None
+    async def _async_create_load_page(
+        self,
+        user_input: dict[str, Any] | None,
+        *,
+        step_id: str,
+        schema,
+        device_type: str,
+        type_label: str,
+        default_name: str,
+        default_entity_id: str,
+        defaults: dict[str, Any],
+        entity_keys: list[str] | None = None,
+        static_keys: tuple = (),
+        prepare=None,
+        validate=None,
     ) -> config_entries.FlowResult:
-        """Smart load configuration step."""
+        """Run a one-page load-creation step: name it, configure it, create it.
+
+        Shared by the plug, hot-water-tank and power-station steps, which are
+        the same page three times over: name and entity_id on top of the
+        device's own fields, and a submit that checks the entity_id is free and
+        splits what was collected into the static ``data`` half (identity, type,
+        hub and the entities the device is defined by — ``static_keys``) and the
+        editable ``options`` half (everything else).
+
+        The EVSE charger does NOT use this — it comes with a discovery step and
+        a three-page wizard. Hooks: ``prepare`` rewrites the submitted data
+        before the checks, ``validate`` adds device-specific ones.
+        """
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input, self._PLUG_ENTITY_KEYS
+            self._data.update(
+                self._normalize_optional_inputs(user_input, entity_keys)
             )
-            self._data.update(user_input)
+            if prepare is not None:
+                prepare(self._data)
 
-            plug_name = self._data.get(CONF_NAME, "Smart Load")
-            plug_entity_id = self._data.get(CONF_ENTITY_ID, "lj_smart_load")
+            name = self._data.get(CONF_NAME, default_name)
+            entity_id = self._data.get(CONF_ENTITY_ID, default_entity_id)
 
-            if self._entity_id_in_use(plug_entity_id):
+            if self._entity_id_in_use(entity_id):
                 errors[CONF_ENTITY_ID] = "entity_id_in_use"
-            else:
+            if validate is not None and not errors:
+                validate(self._data, errors)
+            if not errors:
                 static_data = {
-                    CONF_ENTITY_ID: plug_entity_id,
-                    CONF_NAME: plug_name,
+                    CONF_ENTITY_ID: entity_id,
+                    CONF_NAME: name,
                     ENTRY_TYPE: ENTRY_TYPE_CHARGER,
-                    CONF_DEVICE_TYPE: DEVICE_TYPE_PLUG,
+                    CONF_DEVICE_TYPE: device_type,
                     CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
-                    CONF_PLUG_SWITCH_ENTITY_ID: self._data.get(
-                        CONF_PLUG_SWITCH_ENTITY_ID
-                    ),
+                    **{key: self._data.get(key) for key in static_keys},
                 }
                 options_data = {
                     k: v for k, v in self._data.items() if k not in static_data
                 }
-
                 return self.async_create_entry(
-                    title=_compose_entry_title(plug_name, "Smart Load"),
+                    title=_compose_entry_title(name, type_label),
                     data=static_data,
                     options=options_data,
                 )
 
-        existing_chargers = self._get_charger_entries()
-        next_priority = len(existing_chargers) + 1
-
-        # Name + entity_id fields, then the plug-specific schema. self._data is
+        # Name + entity_id fields, then the device's own schema. self._data is
         # merged last so a validation-error re-show keeps the user's input.
-        plug_defaults = {
-            CONF_CHARGER_PRIORITY: next_priority,
-            CONF_PLUG_POWER_RATING: DEFAULT_PLUG_POWER_RATING,
-            CONF_PLUG_MAX_CURRENT: DEFAULT_PLUG_MAX_CURRENT,
-            CONF_CONNECTED_TO_PHASE: "A",
-            CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
-            CONF_PLUG_POWER_MONITOR_ENTITY_ID: self._auto_detect_entity(
-                PLUG_POWER_MONITOR_PATTERNS
-            ),
-        }
-        plug_defaults.update(self._data)
-        name_schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_NAME, default=plug_defaults.get(CONF_NAME, "Smart Load")
-                ): str,
-                vol.Required(
-                    CONF_ENTITY_ID,
-                    default=plug_defaults.get(CONF_ENTITY_ID, "lj_smart_load"),
-                ): str,
-            }
-        )
-        plug_fields = self._plug_schema(plug_defaults)
-        # Merge both schemas
-        combined = vol.Schema({**name_schema.schema, **plug_fields.schema})
-
+        form_defaults = {**defaults, **self._data}
         return self.async_show_form(
-            step_id="plug_config",
-            data_schema=combined,
+            step_id=step_id,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_NAME, default=form_defaults.get(CONF_NAME, default_name)
+                    ): str,
+                    vol.Required(
+                        CONF_ENTITY_ID,
+                        default=form_defaults.get(CONF_ENTITY_ID, default_entity_id),
+                    ): str,
+                    **schema(form_defaults).schema,
+                }
+            ),
             errors=errors,
             last_step=True,
+        )
+
+    async def async_step_plug_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Smart load configuration step."""
+        return await self._async_create_load_page(
+            user_input,
+            step_id="plug_config",
+            schema=self._plug_schema,
+            device_type=DEVICE_TYPE_PLUG,
+            type_label="Smart Load",
+            default_name="Smart Load",
+            default_entity_id="lj_smart_load",
+            defaults={
+                CONF_CHARGER_PRIORITY: len(self._get_charger_entries()) + 1,
+                CONF_PLUG_POWER_RATING: DEFAULT_PLUG_POWER_RATING,
+                CONF_PLUG_MAX_CURRENT: DEFAULT_PLUG_MAX_CURRENT,
+                CONF_CONNECTED_TO_PHASE: "A",
+                CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+                CONF_PLUG_POWER_MONITOR_ENTITY_ID: self._auto_detect_entity(
+                    PLUG_POWER_MONITOR_PATTERNS
+                ),
+            },
+            entity_keys=self._PLUG_ENTITY_KEYS,
+            static_keys=(CONF_PLUG_SWITCH_ENTITY_ID,),
         )
 
     async def async_step_hot_water_tank_config(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Hot water tank configuration step."""
-        errors: dict[str, str] = {}
 
-        if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input, self._TANK_ENTITY_KEYS
-            )
-            self._data.update(user_input)
-
-            # A picked power device is resolved to its power-sensor entity now,
-            # so runtime only ever deals with CONF_TANK_POWER_ENTITY_ID.
-            device_id = self._data.pop(CONF_TANK_POWER_DEVICE_ID, None)
-            if device_id and not self._data.get(CONF_TANK_POWER_ENTITY_ID):
+        def _resolve_power_device(data: dict[str, Any]) -> None:
+            """A picked power device is resolved to its power-sensor entity now,
+            so runtime only ever deals with CONF_TANK_POWER_ENTITY_ID."""
+            device_id = data.pop(CONF_TANK_POWER_DEVICE_ID, None)
+            if device_id and not data.get(CONF_TANK_POWER_ENTITY_ID):
                 resolved = self._resolve_device_power_entity(device_id)
                 if resolved:
-                    self._data[CONF_TANK_POWER_ENTITY_ID] = resolved
+                    data[CONF_TANK_POWER_ENTITY_ID] = resolved
 
-            tank_name = self._data.get(CONF_NAME, "Hot Water Tank")
-            tank_entity_id = self._data.get(CONF_ENTITY_ID, "lj_hot_water_tank")
-
-            if self._entity_id_in_use(tank_entity_id):
-                errors[CONF_ENTITY_ID] = "entity_id_in_use"
-            else:
-                static_data = {
-                    CONF_ENTITY_ID: tank_entity_id,
-                    CONF_NAME: tank_name,
-                    ENTRY_TYPE: ENTRY_TYPE_CHARGER,
-                    CONF_DEVICE_TYPE: DEVICE_TYPE_HOT_WATER_TANK,
-                    CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
-                    CONF_CLIMATE_ENTITY_ID: self._data.get(CONF_CLIMATE_ENTITY_ID),
-                }
-                options_data = {
-                    k: v for k, v in self._data.items() if k not in static_data
-                }
-                return self.async_create_entry(
-                    title=_compose_entry_title(tank_name, "Hot Water Tank"),
-                    data=static_data,
-                    options=options_data,
-                )
-
-        # Defaults; self._data is merged last so a validation-error re-show
-        # keeps the user's input.
-        tank_defaults = {
-            CONF_CHARGER_PRIORITY: len(self._get_charger_entries()) + 1,
-            CONF_HEATING_ELEMENT_POWER: DEFAULT_HEATING_ELEMENT_POWER,
-            CONF_TANK_AWAY_TEMPERATURE: DEFAULT_TANK_AWAY_TEMPERATURE,
-            CONF_TANK_NORMAL_TEMPERATURE: DEFAULT_TANK_NORMAL_TEMPERATURE,
-            CONF_TANK_BOOST_TEMPERATURE: DEFAULT_TANK_BOOST_TEMPERATURE,
-            CONF_CONNECTED_TO_PHASE: "A",
-            CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
-            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
-        }
-        tank_defaults.update(self._data)
-        name_schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_NAME,
-                    default=tank_defaults.get(CONF_NAME, "Hot Water Tank"),
-                ): str,
-                vol.Required(
-                    CONF_ENTITY_ID,
-                    default=tank_defaults.get(CONF_ENTITY_ID, "lj_hot_water_tank"),
-                ): str,
-            }
-        )
-        tank_fields = self._hot_water_tank_schema(tank_defaults)
-        combined = vol.Schema({**name_schema.schema, **tank_fields.schema})
-
-        return self.async_show_form(
+        return await self._async_create_load_page(
+            user_input,
             step_id="hot_water_tank_config",
-            data_schema=combined,
-            errors=errors,
-            last_step=True,
+            schema=self._hot_water_tank_schema,
+            device_type=DEVICE_TYPE_HOT_WATER_TANK,
+            type_label="Hot Water Tank",
+            default_name="Hot Water Tank",
+            default_entity_id="lj_hot_water_tank",
+            defaults={
+                CONF_CHARGER_PRIORITY: len(self._get_charger_entries()) + 1,
+                CONF_HEATING_ELEMENT_POWER: DEFAULT_HEATING_ELEMENT_POWER,
+                CONF_TANK_AWAY_TEMPERATURE: DEFAULT_TANK_AWAY_TEMPERATURE,
+                CONF_TANK_NORMAL_TEMPERATURE: DEFAULT_TANK_NORMAL_TEMPERATURE,
+                CONF_TANK_BOOST_TEMPERATURE: DEFAULT_TANK_BOOST_TEMPERATURE,
+                CONF_CONNECTED_TO_PHASE: "A",
+                CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+                CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
+            },
+            entity_keys=self._TANK_ENTITY_KEYS,
+            static_keys=(CONF_CLIMATE_ENTITY_ID,),
+            prepare=_resolve_power_device,
         )
 
     async def async_step_power_station_config(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Portable power station configuration step."""
-        errors: dict[str, str] = {}
 
-        if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input, self._STATION_ENTITY_KEYS
-            )
-            self._data.update(user_input)
-
-            station_name = self._data.get(CONF_NAME, "Power Station")
-            station_entity_id = self._data.get(CONF_ENTITY_ID, "lj_power_station")
-
-            min_power = self._data.get(
-                CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
-            )
-            max_power = self._data.get(
+        def _check_power_window(
+            data: dict[str, Any], errors: dict[str, str]
+        ) -> None:
+            if data.get(
                 CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
-            )
-            if self._entity_id_in_use(station_entity_id):
-                errors[CONF_ENTITY_ID] = "entity_id_in_use"
-            elif max_power < min_power:
+            ) < data.get(
+                CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
+            ):
                 errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
-            else:
-                static_data = {
-                    CONF_ENTITY_ID: station_entity_id,
-                    CONF_NAME: station_name,
-                    ENTRY_TYPE: ENTRY_TYPE_CHARGER,
-                    CONF_DEVICE_TYPE: DEVICE_TYPE_POWER_STATION,
-                    CONF_HUB_ENTRY_ID: self._data.get(CONF_HUB_ENTRY_ID),
-                    CONF_STATION_CHARGE_SPEED_ENTITY_ID: self._data.get(
-                        CONF_STATION_CHARGE_SPEED_ENTITY_ID
-                    ),
-                    CONF_STATION_RESERVE_ENTITY_ID: self._data.get(
-                        CONF_STATION_RESERVE_ENTITY_ID
-                    ),
-                }
-                options_data = {
-                    k: v for k, v in self._data.items() if k not in static_data
-                }
-                return self.async_create_entry(
-                    title=_compose_entry_title(station_name, "Power Station"),
-                    data=static_data,
-                    options=options_data,
-                )
 
-        # Defaults; self._data is merged last so a validation-error re-show
-        # keeps the user's input.
-        station_defaults = {
-            CONF_CHARGER_PRIORITY: len(self._get_charger_entries()) + 1,
-            CONF_STATION_MIN_CHARGE_POWER: DEFAULT_STATION_MIN_CHARGE_POWER,
-            CONF_STATION_MAX_CHARGE_POWER: DEFAULT_STATION_MAX_CHARGE_POWER,
-            CONF_STATION_NORMAL_RESERVE: DEFAULT_STATION_NORMAL_RESERVE,
-            CONF_STATION_STORM_RESERVE: DEFAULT_STATION_STORM_RESERVE,
-            CONF_CONNECTED_TO_PHASE: "A",
-            CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
-            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
-        }
-        station_defaults.update(self._data)
-        name_schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_NAME,
-                    default=station_defaults.get(CONF_NAME, "Power Station"),
-                ): str,
-                vol.Required(
-                    CONF_ENTITY_ID,
-                    default=station_defaults.get(CONF_ENTITY_ID, "lj_power_station"),
-                ): str,
-            }
-        )
-        station_fields = self._power_station_schema(station_defaults)
-        combined = vol.Schema({**name_schema.schema, **station_fields.schema})
-
-        return self.async_show_form(
+        return await self._async_create_load_page(
+            user_input,
             step_id="power_station_config",
-            data_schema=combined,
-            errors=errors,
-            last_step=True,
+            schema=self._power_station_schema,
+            device_type=DEVICE_TYPE_POWER_STATION,
+            type_label="Power Station",
+            default_name="Power Station",
+            default_entity_id="lj_power_station",
+            defaults={
+                CONF_CHARGER_PRIORITY: len(self._get_charger_entries()) + 1,
+                CONF_STATION_MIN_CHARGE_POWER: DEFAULT_STATION_MIN_CHARGE_POWER,
+                CONF_STATION_MAX_CHARGE_POWER: DEFAULT_STATION_MAX_CHARGE_POWER,
+                CONF_STATION_NORMAL_RESERVE: DEFAULT_STATION_NORMAL_RESERVE,
+                CONF_STATION_STORM_RESERVE: DEFAULT_STATION_STORM_RESERVE,
+                CONF_CONNECTED_TO_PHASE: "A",
+                CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+                CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
+            },
+            entity_keys=self._STATION_ENTITY_KEYS,
+            static_keys=(
+                CONF_STATION_CHARGE_SPEED_ENTITY_ID,
+                CONF_STATION_RESERVE_ENTITY_ID,
+            ),
+            validate=_check_power_window,
         )
 
     # ==================== CIRCUIT GROUP CONFIGURATION STEPS ====================
