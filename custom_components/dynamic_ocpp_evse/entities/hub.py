@@ -5,7 +5,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from datetime import datetime, timezone
-from ..const import *
+from ..const import DOMAIN
 from ..helpers import get_entry_value
 from .mixins import HubEntityMixin, SiteCycleConsumerMixin
 

@@ -4,7 +4,6 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from ..const import *
 from ..helpers import get_entry_value
 from .mixins import GroupEntityMixin, SiteCycleConsumerMixin
 
