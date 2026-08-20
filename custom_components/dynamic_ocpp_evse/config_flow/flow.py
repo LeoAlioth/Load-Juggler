@@ -151,10 +151,11 @@ from ..helpers import (
     validate_charger_settings,
 )
 from .helpers import (
-    _CURRENT_UNITS,
+    _BATTERY_UNIT_MAP,
+    _GRID_UNIT_MAP,
+    _INVERTER_OUTPUT_UNIT_MAP,
     _LOGGER,
-    _POWER_UNITS,
-    _SOC_UNITS,
+    _SOLAR_UNIT_MAP,
     _compose_entry_title,
     _hub_phase_count,
     _validate_entity_units,
@@ -507,17 +508,7 @@ class LoadJugglerConfigFlow(
             user_input = self._normalize_optional_inputs(
                 user_input, self._GRID_ENTITY_KEYS
             )
-            _validate_entity_units(
-                self.hass,
-                user_input,
-                {
-                    CONF_PHASE_A_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
-                    CONF_PHASE_B_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
-                    CONF_PHASE_C_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
-                    CONF_MAX_IMPORT_POWER_ENTITY_ID: _POWER_UNITS,
-                },
-                errors,
-            )
+            _validate_entity_units(self.hass, user_input, _GRID_UNIT_MAP, errors)
             if not errors:
                 self._data.update(user_input)
 
@@ -1090,15 +1081,7 @@ class LoadJugglerConfigFlow(
             _validate_entity_units(
                 self.hass,
                 user_input,
-                {
-                    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
-                },
+                _INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP,
                 errors,
             )
             bad_forecast_entity = _validate_forecast_devices(
@@ -1148,15 +1131,7 @@ class LoadJugglerConfigFlow(
                 user_input,
                 [CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
             )
-            _validate_entity_units(
-                self.hass,
-                user_input,
-                {
-                    CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
-                    CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
-                },
-                errors,
-            )
+            _validate_entity_units(self.hass, user_input, _BATTERY_UNIT_MAP, errors)
             if not errors:
                 self._data.update(user_input)
                 return await self.async_step_inverter_control()

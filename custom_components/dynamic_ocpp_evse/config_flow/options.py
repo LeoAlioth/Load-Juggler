@@ -27,14 +27,7 @@ from ..const import (
     CONF_HUB_ENTRY_ID,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
-    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-    CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_OCPP_DEVICE_ID,
-    CONF_PHASE_A_CURRENT_ENTITY_ID,
-    CONF_PHASE_B_CURRENT_ENTITY_ID,
-    CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PRIORITY_ORDER,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -65,11 +58,12 @@ from ..helpers import (
 )
 from .flow import LoadJugglerConfigFlow
 from .helpers import (
-    _CURRENT_UNITS,
+    _BATTERY_UNIT_MAP,
+    _GRID_UNIT_MAP,
+    _INVERTER_OUTPUT_UNIT_MAP,
     _LOGGER,
     _POWER_FACTOR,
-    _POWER_UNITS,
-    _SOC_UNITS,
+    _SOLAR_UNIT_MAP,
     _apply_priority_order,
     _controlled_devices,
     _priority_order_schema,
@@ -201,17 +195,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             _validate_entity_units(
                 self.hass,
                 user_input,
-                {
-                    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
-                    CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
-                    CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
-                },
+                _INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP | _BATTERY_UNIT_MAP,
                 errors,
             )
             bad_forecast_entity = _validate_forecast_devices(
@@ -245,17 +229,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             user_input = f._normalize_optional_inputs(user_input, f._GRID_ENTITY_KEYS)
-            _validate_entity_units(
-                self.hass,
-                user_input,
-                {
-                    CONF_PHASE_A_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
-                    CONF_PHASE_B_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
-                    CONF_PHASE_C_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
-                    CONF_MAX_IMPORT_POWER_ENTITY_ID: _POWER_UNITS,
-                },
-                errors,
-            )
+            _validate_entity_units(self.hass, user_input, _GRID_UNIT_MAP, errors)
             # Dropping the grid CTs here is what makes a hub off-grid, so this
             # is where the battery requirement belongs now that the battery
             # itself lives on an inverter entry.
@@ -301,17 +275,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 user_input, f._INVERTER_ENTITY_KEYS
             )
             _validate_entity_units(
-                self.hass,
-                user_input,
-                {
-                    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS
-                    | _POWER_UNITS,
-                },
-                errors,
+                self.hass, user_input, _INVERTER_OUTPUT_UNIT_MAP, errors
             )
             if not errors:
                 self._data.update(user_input)
@@ -373,14 +337,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             )
             user_input = f._normalize_forecast_list(user_input)
             _validate_entity_units(
-                self.hass,
-                user_input,
-                {
-                    CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
-                    CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
-                    CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
-                },
-                errors,
+                self.hass, user_input, _SOLAR_UNIT_MAP | _BATTERY_UNIT_MAP, errors
             )
             bad_forecast_entity = _validate_forecast_devices(
                 self.hass, user_input, errors

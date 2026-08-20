@@ -19,18 +19,22 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.selector import selector
 from .. import units
 from ..const import (
+    CONF_BATTERY_POWER_ENTITY_ID,
+    CONF_BATTERY_SOC_ENTITY_ID,
     CONF_CHARGER_PRIORITY,
     CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
     CONF_HUB_ENTRY_ID,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+    CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_NAME,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PRIORITY_ORDER,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
+    CONF_SOLAR_PRODUCTION_ENTITY_ID,
     DEFAULT_CHARGER_PRIORITY,
     DOMAIN,
     ENTRY_TYPE,
@@ -55,6 +59,40 @@ _CURRENT_UNITS = units.CURRENT_UNITS
 _POWER_UNITS = units.POWER_UNITS
 _SOC_UNITS = units.SOC_UNITS
 _VOLTAGE_UNITS = units.VOLTAGE_UNITS
+
+# The field→accepted-units maps _validate_entity_units is called with, one
+# declaration per FIELD GROUP rather than per page. A page validates the
+# groups it shows, composing them with ``|``:
+#
+#   hub grid (create + options)   _GRID_UNIT_MAP
+#   inverter config (create)      _INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP
+#   inverter battery (create)     _BATTERY_UNIT_MAP
+#   inverter (options, one page)  all three of the above
+#   hub inverter (options)        _INVERTER_OUTPUT_UNIT_MAP
+#   hub battery (options)         _SOLAR_UNIT_MAP | _BATTERY_UNIT_MAP
+#
+# Grouping rather than paging is what keeps a create/options twin pair honest:
+# both sides of a group get the same units by construction, and a multi-step
+# create chain can share a map with the single-page options twin because
+# _validate_entity_units skips any key the submitted form didn't collect.
+_GRID_UNIT_MAP = {
+    CONF_PHASE_A_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+    CONF_PHASE_B_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+    CONF_PHASE_C_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+    CONF_MAX_IMPORT_POWER_ENTITY_ID: _POWER_UNITS,
+}
+_INVERTER_OUTPUT_UNIT_MAP = {
+    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+}
+_SOLAR_UNIT_MAP = {
+    CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
+}
+_BATTERY_UNIT_MAP = {
+    CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
+    CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
+}
 
 
 def _validate_entity_units(
