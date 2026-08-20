@@ -37,7 +37,9 @@ Each In Progress and Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bug
 
 ```text
 custom_components/dynamic_ocpp_evse/
-├── __init__.py                    # HA setup/unload, services, entry-registry helpers (get_hub_for_charger, …)
+├── __init__.py                    # HA setup/unload, services (re-exports the registry helpers)
+├── registry.py                    # Entry-relationship lookups (get_hub_for_charger, get_*_for_hub) —
+│                                  #   HA-import-free, so pure tooling can load it without Home Assistant
 ├── manifest.json                  # Component metadata
 ├── config_flow.py                 # HA configuration flow (initial setup + options "Configure" flow — the single
 │                                  #   edit path; no reconfigure flow. Options menu: settings / overview / summary)
