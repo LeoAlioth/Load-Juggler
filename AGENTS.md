@@ -41,8 +41,13 @@ custom_components/dynamic_ocpp_evse/
 ├── registry.py                    # Entry-relationship lookups (get_hub_for_charger, get_*_for_hub) —
 │                                  #   HA-import-free, so pure tooling can load it without Home Assistant
 ├── manifest.json                  # Component metadata
-├── config_flow.py                 # HA configuration flow (initial setup + options "Configure" flow — the single
-│                                  #   edit path; no reconfigure flow. Options menu: settings / overview / summary)
+├── config_flow/                   # HA configuration flow (initial setup + options "Configure" flow — the single
+│   │                              #   edit path; no reconfigure flow. Options menu: settings / overview / summary)
+│   ├── flow.py                    # LoadJugglerConfigFlow — the initial-setup step methods
+│   ├── options.py                 # LoadJugglerOptionsFlow — the "Configure" edit steps
+│   ├── schemas.py                 # SchemaBuilderMixin — every voluptuous schema builder (needs only self.hass)
+│   ├── pages.py                   # Overview / "How it decides" read-only page text builders
+│   └── helpers.py                 # Unit validation, priority ordering, OCPP discovery scan
 ├── const/                         # Constants per area: common, hub, evse, plug, hot_water_tank, group,
 │                                  #   inverter, modes, power_station
 ├── engine/                        # HA → SiteContext bridge (reads HA states, drives the calculation)
