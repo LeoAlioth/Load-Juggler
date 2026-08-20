@@ -482,97 +482,71 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Options charger step 1: Priority and OCPP device ID."""
-        errors: dict[str, str] = {}
-        defaults = self._defaults
 
-        if user_input is not None:
-            self._data.update(user_input)
-            return await self.async_step_charger_current()
+        def _schema(defaults: dict[str, Any]) -> vol.Schema:
+            fields = {
+                vol.Required(
+                    CONF_CHARGER_PRIORITY,
+                    default=defaults.get(
+                        CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY
+                    ),
+                ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
+            }
+            # The OCPP device ID is editable only on chargers that have one
+            ocpp_device_id = defaults.get(CONF_OCPP_DEVICE_ID)
+            if ocpp_device_id:
+                fields[vol.Optional(CONF_OCPP_DEVICE_ID, default=ocpp_device_id)] = str
+            return vol.Schema(fields)
 
-        # Build schema with priority and OCPP Device ID
-        fields = {
-            vol.Required(
-                CONF_CHARGER_PRIORITY,
-                default=defaults.get(CONF_CHARGER_PRIORITY, DEFAULT_CHARGER_PRIORITY),
-            ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
-        }
-
-        # Add OCPP Device ID as editable field if it exists
-        ocpp_device_id = defaults.get(CONF_OCPP_DEVICE_ID)
-        if ocpp_device_id:
-            fields[
-                vol.Optional(
-                    CONF_OCPP_DEVICE_ID,
-                    default=ocpp_device_id,
-                )
-            ] = str
-
-        data_schema = vol.Schema(fields)
-        return self.async_show_form(
+        return await self._async_wizard_page(
+            user_input,
             step_id="charger",
-            data_schema=data_schema,
-            errors=errors,
-            last_step=False,
+            schema=_schema,
+            next_step=self.async_step_charger_current,
         )
 
     async def async_step_charger_current(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Options charger step 2: Current limits and phase mapping."""
-        errors: dict[str, str] = {}
-        defaults = self._defaults
         f = self._schema_helper
-        hub_entry_id = defaults.get(CONF_HUB_ENTRY_ID)
-        hub_phases = f._get_hub_phase_count(hub_entry_id)
+        hub_phases = f._get_hub_phase_count(self._defaults.get(CONF_HUB_ENTRY_ID))
 
-        if user_input is not None:
-            self._data.update(user_input)
+        def _validate(data: dict[str, Any], errors: dict[str, str]) -> None:
             # Auto-fill hidden phase mappings to match L1
-            l1 = self._data.get(CONF_CHARGER_L1_PHASE, "A")
+            l1 = data.get(CONF_CHARGER_L1_PHASE, "A")
             if hub_phases < 2:
-                self._data[CONF_CHARGER_L2_PHASE] = l1
+                data[CONF_CHARGER_L2_PHASE] = l1
             if hub_phases < 3:
-                self._data[CONF_CHARGER_L3_PHASE] = l1
-            validate_charger_settings(self._data, errors)
-            if errors:
-                return self.async_show_form(
-                    step_id="charger_current",
-                    data_schema=f._charger_current_schema(
-                        self._data, hub_phases=hub_phases
-                    ),
-                    errors=errors,
-                    last_step=False,
-                )
-            return await self.async_step_charger_timing()
+                data[CONF_CHARGER_L3_PHASE] = l1
+            validate_charger_settings(data, errors)
 
-        return self.async_show_form(
+        return await self._async_wizard_page(
+            user_input,
             step_id="charger_current",
-            data_schema=f._charger_current_schema(defaults, hub_phases=hub_phases),
-            errors=errors,
-            last_step=False,
+            schema=lambda defaults: f._charger_current_schema(
+                defaults, hub_phases=hub_phases
+            ),
+            next_step=self.async_step_charger_timing,
+            validate=_validate,
         )
 
     async def async_step_charger_timing(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Options charger step 3: Units and timing (final — saves)."""
-        errors: dict[str, str] = {}
-        defaults = self._defaults
         f = self._schema_helper
 
         # Options-first: an edited device ID lives in entry.options.
         ocpp_device_id = get_entry_value(self.config_entry, CONF_OCPP_DEVICE_ID, None)
         detected_unit = await f._detect_charge_rate_unit(ocpp_device_id)
 
-        if user_input is not None:
-            self._data.update(user_input)
-            return self._save()
-
-        return self.async_show_form(
+        return await self._async_edit_page(
+            user_input,
             step_id="charger_timing",
-            data_schema=f._charger_timing_schema(defaults, detected_unit=detected_unit),
-            errors=errors,
-            last_step=True,
+            schema=lambda defaults: f._charger_timing_schema(
+                defaults, detected_unit=detected_unit
+            ),
         )
 
     async def async_step_plug(
