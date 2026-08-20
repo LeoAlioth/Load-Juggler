@@ -73,6 +73,7 @@ _HUB_CALC_ENGINE_ORDER = (
     "forecast_reader",
     "readers",
     "load_builders",
+    "hub_result",
     "hub_calculation",
 )
 

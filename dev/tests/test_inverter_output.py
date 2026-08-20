@@ -32,9 +32,10 @@ from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Module loading — shared stub loader (avoids the HA-importing package root).
-# hub_calculation is needed for the display-headroom test (#48); requesting it
-# pulls in fleet and the rest of its import chain, with the few homeassistant
-# modules its siblings import at module level stubbed when HA is absent.
+# hub_calculation is needed for the display-headroom test (#48) — it pulls in
+# fleet and the rest of its import chain, engine/hub_result.py (where
+# _build_hub_result lives) included, with the few homeassistant modules its
+# siblings import at module level stubbed when HA is absent.
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from standalone_loader import load_pure_modules
@@ -49,7 +50,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
 )
-from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+from custom_components.dynamic_ocpp_evse.engine.hub_result import (
     _build_hub_result,
 )
 from custom_components.dynamic_ocpp_evse.engine.fleet import (
