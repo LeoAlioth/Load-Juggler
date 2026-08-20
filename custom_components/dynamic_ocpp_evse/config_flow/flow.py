@@ -175,7 +175,7 @@ class LoadJugglerConfigFlow(
     """Handle a config flow for Load Juggler."""
 
     VERSION = 2
-    MINOR_VERSION = 4
+    MINOR_VERSION = 5
 
     def __init__(self):
         self._data = {}

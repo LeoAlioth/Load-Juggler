@@ -13,7 +13,7 @@ DOMAIN = "dynamic_ocpp_evse"
 # Entry types for the hub/load architecture
 ENTRY_TYPE = "entry_type"
 ENTRY_TYPE_HUB = "hub"
-ENTRY_TYPE_LOAD = "charger"
+ENTRY_TYPE_LOAD = "load"
 ENTRY_TYPE_GROUP = "group"
 # An inverter (a power SOURCE, optionally carrying its own battery), linked to
 # a hub via CONF_HUB_ENTRY_ID like loads and groups. Inverter entries reuse
@@ -40,7 +40,7 @@ DEVICE_TYPE_INVERTER = "inverter"
 CONF_HUB_ENTRY_ID = "hub_entry_id"
 # The OCPP charge-point identifier — EVSE-only, hence the name.
 CONF_CHARGER_ID = "charger_id"
-CONF_LOAD_PRIORITY = "charger_priority"
+CONF_LOAD_PRIORITY = "load_priority"
 CONF_PRIORITY_ORDER = "priority_order"  # Transient form key: ordered list of device entry_ids (hub options)
 CONF_CONNECTED_TO_PHASE = "connected_to_phase"  # Which phase(s) the device is wired to
 CONF_UPDATE_FREQUENCY = "update_frequency"

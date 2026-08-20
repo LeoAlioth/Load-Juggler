@@ -43,6 +43,7 @@ from .const import (
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+    CONF_LOAD_PRIORITY,
     CONF_OCPP_DEVICE_ID,
     CONF_OCPP_PROFILE_TIMEOUT,
     CONF_PHASES,
@@ -109,10 +110,18 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 # Integration version for entity migration
 INTEGRATION_VERSION = "2.0.0"
 
+# The stored strings the generic charger → load rename replaced (2.4 → 2.5).
+# Named here rather than in const/ because nothing outside the migration may
+# read or write them: they exist only so entries written before the rename can
+# still be recognised, both by the 2.5 step and by the older steps below that
+# have to inspect an entry_type predating it.
+_LEGACY_ENTRY_TYPE_CHARGER = "charger"
+_LEGACY_CONF_CHARGER_PRIORITY = "charger_priority"
+
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old entry to new version."""
-    _LOGGER.info("Migrating from version %s.%s to version 2.4",
+    _LOGGER.info("Migrating from version %s.%s to version 2.5",
                  entry.version,
                  getattr(entry, 'minor_version', 0))
 
@@ -212,8 +221,11 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # "Solar Only" state to "Solar Priority" exactly once (see select.py).
     if entry.version == 2 and getattr(entry, 'minor_version', 0) < 3:
         new_data = dict(entry.data)
+        # An entry this old still stores the pre-rename entry_type, so match
+        # the legacy value as well as the current one.
         if (
-            entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD
+            entry.data.get(ENTRY_TYPE)
+            in (ENTRY_TYPE_LOAD, _LEGACY_ENTRY_TYPE_CHARGER)
             and entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_PLUG
         ):
             new_data[MIGRATE_PLUG_SOLAR_ONLY_FLAG] = True
@@ -261,6 +273,44 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry, options=options, minor_version=4
         )
         _LOGGER.info("Updated minor version to 4")
+
+    # Migrate 2.4 → 2.5: "charger" was the codebase's generic word for a
+    # managed device, but a smart plug, a hot water tank and a power station
+    # are not chargers. The stored strings follow the code rename: the
+    # entry_type VALUE "charger" becomes "load", and the priority KEY
+    # "charger_priority" becomes "load_priority" in both data and options.
+    #
+    # Idempotent by construction — each rewrite is conditional on the legacy
+    # spelling still being present — and load-scoped: a hub, inverter or group
+    # entry carries neither, so it passes through with only its minor_version
+    # bumped. CONF_CHARGER_ID is deliberately NOT touched: it holds the OCPP
+    # charge-point identifier, which really is a charger's.
+    if entry.version == 2 and getattr(entry, 'minor_version', 0) < 5:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        changed = []
+
+        if data.get(ENTRY_TYPE) == _LEGACY_ENTRY_TYPE_CHARGER:
+            data[ENTRY_TYPE] = ENTRY_TYPE_LOAD
+            changed.append(f"{ENTRY_TYPE}={ENTRY_TYPE_LOAD}")
+
+        for store, label in ((data, "data"), (options, "options")):
+            if _LEGACY_CONF_CHARGER_PRIORITY not in store:
+                continue
+            value = store.pop(_LEGACY_CONF_CHARGER_PRIORITY)
+            # A half-migrated entry (both spellings present) keeps the new
+            # key's value — it is the one every reader already uses.
+            store.setdefault(CONF_LOAD_PRIORITY, value)
+            changed.append(f"{label}.{CONF_LOAD_PRIORITY}")
+
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, minor_version=5
+        )
+        if changed:
+            _LOGGER.info(
+                "Migrated %s to the load naming: %s", entry.title, ", ".join(changed)
+            )
+        _LOGGER.info("Updated minor version to 5")
 
     return True
 

@@ -7,6 +7,7 @@ the final ConfigEntry structure.
 from unittest.mock import patch, AsyncMock
 
 import pytest
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -1324,7 +1325,7 @@ async def test_migration_seeds_grid_export_limit_in_one_pass(hass: HomeAssistant
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 4
+    assert entry.minor_version == 5
     assert entry.options[CONF_GRID_EXPORT_LIMIT] == 13000 + DEFAULT_EXCESS_TRIGGER_MARGIN
     assert entry.options[CONF_EXCESS_TRIGGER_MARGIN] == DEFAULT_EXCESS_TRIGGER_MARGIN
 
@@ -1354,8 +1355,133 @@ async def test_migration_leaves_offgrid_hub_unlimited(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 4
+    assert entry.minor_version == 5
     assert not entry.options.get(CONF_GRID_EXPORT_LIMIT)
+
+
+# ── 2.4 → 2.5: the charger → load stored-string rename ────────────────
+
+
+def _legacy_plug_entry(hub_entry_id: str, **overrides) -> MockConfigEntry:
+    """A smart-plug entry as 2.4 wrote it: entry_type and priority key legacy."""
+    data = {
+        CONF_NAME: "Old Plug",
+        CONF_ENTITY_ID: "old_plug",
+        ENTRY_TYPE: "charger",
+        CONF_DEVICE_TYPE: DEVICE_TYPE_PLUG,
+        CONF_HUB_ENTRY_ID: hub_entry_id,
+        "charger_priority": 2,
+    }
+    data.update(overrides.pop("data", {}))
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="Old Plug",
+        data=data,
+        options=overrides.pop("options", {"charger_priority": 3}),
+    )
+
+
+async def test_migration_renames_stored_charger_strings(hass: HomeAssistant):
+    """entry_type "charger" → "load" and charger_priority → load_priority."""
+    from custom_components.dynamic_ocpp_evse import async_migrate_entry
+    from custom_components.dynamic_ocpp_evse.const import CONF_LOAD_PRIORITY
+
+    entry = _legacy_plug_entry("hub-1")
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry)
+
+    assert entry.minor_version == 5
+    assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD == "load"
+    # Both stores are renamed, and the legacy spelling is gone from each.
+    assert entry.data[CONF_LOAD_PRIORITY] == 2
+    assert entry.options[CONF_LOAD_PRIORITY] == 3
+    assert "charger_priority" not in entry.data
+    assert "charger_priority" not in entry.options
+    # Untouched: the OCPP charge-point key is genuinely a charger's.
+    assert entry.data[CONF_DEVICE_TYPE] == DEVICE_TYPE_PLUG
+
+
+async def test_migration_of_stored_charger_strings_is_idempotent(
+    hass: HomeAssistant,
+):
+    """An already-migrated entry survives a second pass unchanged."""
+    from custom_components.dynamic_ocpp_evse import async_migrate_entry
+    from custom_components.dynamic_ocpp_evse.const import CONF_LOAD_PRIORITY
+
+    entry = _legacy_plug_entry("hub-1")
+    entry.add_to_hass(hass)
+    assert await async_migrate_entry(hass, entry)
+    migrated_data = dict(entry.data)
+    migrated_options = dict(entry.options)
+
+    # Re-run from the same minor_version the first pass produced, and again
+    # from below it — neither may reintroduce or lose anything.
+    assert await async_migrate_entry(hass, entry)
+    assert dict(entry.data) == migrated_data
+    assert dict(entry.options) == migrated_options
+
+    hass.config_entries.async_update_entry(entry, minor_version=4)
+    assert await async_migrate_entry(hass, entry)
+    assert dict(entry.data) == migrated_data
+    assert dict(entry.options) == migrated_options
+    assert entry.minor_version == 5
+
+
+async def test_migration_leaves_non_load_entries_alone(hass: HomeAssistant):
+    """A hub entry carries neither string — only its minor_version moves."""
+    from custom_components.dynamic_ocpp_evse import async_migrate_entry
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="Hub",
+        data={
+            CONF_NAME: "Hub",
+            CONF_ENTITY_ID: "hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_a"},
+    )
+    entry.add_to_hass(hass)
+    data_before, options_before = dict(entry.data), dict(entry.options)
+
+    assert await async_migrate_entry(hass, entry)
+
+    assert entry.minor_version == 5
+    assert dict(entry.data) == data_before
+    assert dict(entry.options) == options_before
+
+
+async def test_migrated_load_entry_sets_up(hass: HomeAssistant, mock_hub_entry):
+    """A 2.4-shaped plug entry migrates and then actually sets up.
+
+    The end-to-end half: the rename touches the entry_type that drives the
+    whole setup dispatch, so proving the shape is not enough — the entry has
+    to reach ConfigEntryState.LOADED through the real setup path and land in
+    the runtime buckets under their renamed keys.
+    """
+    mock_hub_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    entry = _legacy_plug_entry(mock_hub_entry.entry_id)
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.minor_version == 5
+    assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD
+    assert entry.entry_id in hass.data[DOMAIN]["loads"]
+    assert entry.entry_id in hass.data[DOMAIN]["load_allocations"]
+    assert entry.entry_id in (
+        hass.data[DOMAIN]["hubs"][mock_hub_entry.entry_id]["loads"]
+    )
 
 
 # ── Inverter entry creation ────────────────────────────────────────────
