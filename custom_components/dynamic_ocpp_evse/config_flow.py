@@ -1823,6 +1823,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         With no target entity the inverter stays advisory: the forecast's
         recommended charge limit is published as a sensor and nothing is
         written. Naming a register adds the opt-in switch that starts writes.
+
+        Two independent controls share this page — the charge RATE (one register)
+        and the SOC CEILING (a list of time-of-use slot entities). Each gets its
+        own switch, and configuring one does not imply the other.
         """
         defaults = defaults or {}
         return [
@@ -1936,6 +1940,38 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             "unit_of_measurement": "%",
                         }
                     }
+                ),
+            ),
+            (
+                # MULTI-select on purpose: on a Deye the SOC ceiling is one
+                # entity per time-of-use slot, so controlling the ceiling means
+                # writing every slot the battery may charge in. input_number is
+                # offered beside number because a user may front the slots with
+                # their own helper.
+                vol.Optional(
+                    CONF_SOC_LIMIT_ENTITY_IDS,
+                    default=defaults.get(CONF_SOC_LIMIT_ENTITY_IDS) or [],
+                ),
+                selector(
+                    {
+                        "entity": {
+                            "multiple": True,
+                            "domain": ["number", "input_number"],
+                        }
+                    }
+                ),
+            ),
+            (
+                # The live "normal" ceiling. An entity rather than a number so
+                # whatever already owns the slots keeps owning them — we only
+                # ever push below it. sensor is allowed too: a template sensor
+                # deriving the ceiling from a schedule is a normal way to do it.
+                self._optional_entity_field(
+                    CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+                    defaults.get(CONF_SOC_LIMIT_NORMAL_ENTITY_ID),
+                ),
+                selector(
+                    {"entity": {"domain": ["input_number", "number", "sensor"]}}
                 ),
             ),
         ]
@@ -2656,6 +2692,20 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             d for d in (data.get(CONF_SOLAR_FORECAST_DEVICE_IDS) or []) if d
         ]
         data[CONF_SOLAR_FORECAST_ENTITY_IDS] = []
+        return data
+
+    def _normalize_soc_limit_list(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Normalize the SOC-ceiling target list (inverter write-control step).
+
+        Same reason as the forecast list above and not the scalar path: a
+        multi-entity selector yields a list and omits the key entirely once the
+        user clears it, so an emptied selection must become [] — which is what
+        removes the Battery SOC Control switch and sensor again — rather than
+        leaving the previously stored slots armed.
+        """
+        data[CONF_SOC_LIMIT_ENTITY_IDS] = [
+            e for e in (data.get(CONF_SOC_LIMIT_ENTITY_IDS) or []) if e
+        ]
         return data
 
     def _normalize_inverter_powers(self):
@@ -3548,20 +3598,24 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_inverter_control(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Inverter step 3: optional battery charge write-control — creates
-        the entry.
+        """Inverter step 3: optional battery write-control — creates the entry.
 
         Skip it (submit empty) to keep the inverter advisory: the clipping
-        forecast still publishes its recommended charge limit as a sensor,
-        Load Juggler just doesn't write it anywhere.
+        forecast still publishes its recommended charge limit and max SOC as
+        sensors, Load Juggler just doesn't write them anywhere.
         """
         errors: dict[str, str] = {}
 
         if user_input is not None:
             user_input = self._normalize_optional_inputs(
                 user_input,
-                [CONF_CHARGE_LIMIT_ENTITY_ID, CONF_BATTERY_VOLTAGE_ENTITY_ID],
+                [
+                    CONF_CHARGE_LIMIT_ENTITY_ID,
+                    CONF_BATTERY_VOLTAGE_ENTITY_ID,
+                    CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+                ],
             )
+            user_input = self._normalize_soc_limit_list(user_input)
             if not errors:
                 self._data.update(user_input)
                 # 0 means "not configured" for the power caps, as on the hub
@@ -4338,9 +4392,11 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                     CONF_BATTERY_POWER_ENTITY_ID,
                     CONF_CHARGE_LIMIT_ENTITY_ID,
                     CONF_BATTERY_VOLTAGE_ENTITY_ID,
+                    CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
                 ],
             )
             user_input = f._normalize_forecast_list(user_input)
+            user_input = f._normalize_soc_limit_list(user_input)
             _validate_entity_units(
                 self.hass,
                 user_input,

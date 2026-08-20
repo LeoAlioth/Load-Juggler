@@ -86,10 +86,15 @@ class LoadJugglerEntity:
         The unique_id is passed in fully built, and stays spelled out at each
         call site: it is the identity HA stores in its registry, so it must be
         greppable next to the class that owns it.
+
+        name=None is for entities named through ``_attr_translation_key``:
+        assigning ``_attr_name = None`` would instead tell HA "this entity IS
+        the device", so the attribute must stay unset for those.
         """
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = name
+        if name is not None:
+            self._attr_name = name
         self._attr_unique_id = unique_id
 
     def _hub_data(self) -> dict:

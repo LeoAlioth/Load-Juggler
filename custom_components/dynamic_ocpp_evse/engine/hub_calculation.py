@@ -2258,14 +2258,20 @@ def run_hub_calculation(hass, hub_entry, charger_entries=None):
         if now_above_target:
             battery_soc_target = battery_soc_target - battery_soc_hysteresis
 
+        # The min floor's band sits ABOVE the setting (mirror of the target's):
+        # the floor is protective, so discharge stops AT the configured floor
+        # and only resumes once the battery has recovered a full hysteresis
+        # above it (floor 20, hysteresis 3 → stop at 20, resume at 23). The
+        # target's band sits below its setting for the same reason in reverse —
+        # charging never overshoots the configured ceiling.
         was_above_min = hub_runtime.get("_soc_above_min", False)
         if was_above_min:
-            now_above_min = battery_soc >= battery_soc_min - battery_soc_hysteresis
-        else:
             now_above_min = battery_soc >= battery_soc_min
+        else:
+            now_above_min = battery_soc >= battery_soc_min + battery_soc_hysteresis
         hub_runtime["_soc_above_min"] = now_above_min
-        if now_above_min:
-            battery_soc_min = battery_soc_min - battery_soc_hysteresis
+        if not now_above_min:
+            battery_soc_min = battery_soc_min + battery_soc_hysteresis
 
     # Discharge capacity sums only members whose OWN battery is at/above the
     # (hysteresis-adjusted) hub minimum — a battery below the floor cannot be

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -68,10 +69,16 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_FORECAST_SOC_FLOOR,
     ENTRY_TYPE_INVERTER,
     CONF_CHARGE_LIMIT_ENTITY_ID,
+    CONF_CHARGE_LIMIT_UNIT,
     CONF_CHARGE_CONTROL_INTERVAL,
     CONF_BATTERY_NOMINAL_VOLTAGE,
+    CHARGE_LIMIT_UNIT_AMPS,
+    CHARGE_LIMIT_UNIT_WATTS,
     INVERTER_RT_APPLIED,
     INVERTER_RT_CONTROL_ENABLED,
+    CONF_SOC_LIMIT_ENTITY_IDS,
+    CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    INVERTER_RT_SOC_CONTROL_ENABLED,
 )
 from custom_components.dynamic_ocpp_evse.sensor import (
     DynamicOcppEvseChargerSensor,
@@ -81,6 +88,13 @@ from custom_components.dynamic_ocpp_evse.sensor import (
 )
 from custom_components.dynamic_ocpp_evse.entities.inverter import (
     LoadJugglerInverterChargeControlSensor,
+    LoadJugglerInverterSocControlSensor,
+)
+from custom_components.dynamic_ocpp_evse.control.inverter import (
+    CONTROL_STATE_IDLE,
+    CONTROL_STATE_LIMITING,
+    CONTROL_STATE_OFF,
+    soc_targets,
 )
 from custom_components.dynamic_ocpp_evse.entities.mixins import SITE_CYCLE_WORKERS
 
@@ -2328,6 +2342,15 @@ async def test_grid_phase_export_keeps_its_sign(
 # the write happening through the real cycle, the opt-in gate, the pacing across
 # cycles, and async_update no longer writing anything.
 #
+# The sensor's PUBLISHED VALUE is a measurement of the target register — the
+# number the inverter's charge-limit entity holds, in that register's own unit —
+# and our own standing ("off"/"idle"/"limiting") is the ``control_state``
+# attribute beside it. So each of these also pins what the cycle publishes:
+# a numeric state that keeps moving with the register whether or not this cycle
+# wrote anything, which is what makes the sensor graphable and gives it long-term
+# statistics. The register read-back is taken BEFORE the write, so the value is
+# what the inverter last reported rather than an echo of our own intention.
+#
 # The pacing/deadband/release contract itself is tested in
 # dev/tests/test_inverter_control.py, which also runs in the pure tier.
 
@@ -2356,7 +2379,29 @@ def inverter_entry(hub_entry: MockConfigEntry) -> MockConfigEntry:
     )
 
 
-async def _add_charge_control(hass, inverter_entry, *, armed=True):
+@pytest.fixture
+def inverter_entry_watts(hub_entry: MockConfigEntry) -> MockConfigEntry:
+    """The same, on an inverter whose register counts watts instead of DC amps."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Watt Hybrid",
+        data={
+            CONF_NAME: "Watt Hybrid",
+            CONF_ENTITY_ID: "watt_hybrid",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={
+            CONF_CHARGE_LIMIT_ENTITY_ID: CHARGE_TARGET,
+            CONF_CHARGE_LIMIT_UNIT: CHARGE_LIMIT_UNIT_WATTS,
+            CONF_CHARGE_CONTROL_INTERVAL: 300,
+        },
+    )
+
+
+async def _add_charge_control(hass, inverter_entry, *, armed=True, register="100"):
     """Create the charge-control sensor and let it join its hub's site cycle.
 
     Registration goes through async_added_to_hass — the production path, which
@@ -2365,15 +2410,14 @@ async def _add_charge_control(hass, inverter_entry, *, armed=True):
     tests at all: registration, not a coordinator reference, is the whole link.
 
     The register starts at its 100 A maximum, which is also the value a release
-    restores (no configured normal), making the deadband 5 % of 100 A.
+    restores (no configured normal), making the deadband 5 % of 100 A. That
+    starting value is what the sensor reports until the inverter moves it.
     """
-    hass.states.async_set(CHARGE_TARGET, "100", {"max": 100})
+    hass.states.async_set(CHARGE_TARGET, register, {"max": float(register)})
     hass.data.setdefault(DOMAIN, {}).setdefault("inverters", {})[
         inverter_entry.entry_id
     ] = {INVERTER_RT_CONTROL_ENABLED: armed}
-    sensor = LoadJugglerInverterChargeControlSensor(
-        hass, inverter_entry, "Deye Hybrid", "deye_hybrid"
-    )
+    sensor = LoadJugglerInverterChargeControlSensor(hass, inverter_entry, "deye_hybrid")
     await sensor.async_added_to_hass()
     return sensor
 
@@ -2404,6 +2448,31 @@ def _register_writes(mock_call):
     ]
 
 
+def _accepting_register(hass, maximum=100):
+    """Patch the service registry with an inverter that ACCEPTS what we write.
+
+    A bare AsyncMock swallows the write, so the register would sit at its
+    starting value forever — and the register is what this sensor now reports.
+    This applies ``number.set_value`` to the state machine the way a real number
+    entity would, which is what lets the next cycle read our own write back.
+    Calls are still recorded, so ``_register_writes`` works unchanged.
+    """
+
+    async def _apply(domain, service, data, *args, **kwargs):
+        # Patched on the class, so there is no self argument (see _register_writes
+        # indexing the same positional triple).
+        if (domain, service) == ("number", "set_value"):
+            hass.states.async_set(
+                str(data["entity_id"]), str(data["value"]), {"max": maximum}
+            )
+
+    return patch(
+        "homeassistant.core.ServiceRegistry.async_call",
+        new_callable=AsyncMock,
+        side_effect=_apply,
+    )
+
+
 async def test_charge_control_registers_as_a_site_cycle_worker(
     hass, hub_entry, inverter_entry
 ):
@@ -2413,30 +2482,59 @@ async def test_charge_control_registers_as_a_site_cycle_worker(
     assert list(workers.values()) == [sensor]
     # A poll would be a second caller of the write that nothing serializes.
     assert sensor.should_poll is False
-    # Unconditionally available, and "Off" before any cycle has run. Unlike the
-    # readers on this device it mirrors no measurement — it states the standing
-    # of our own control, and "the switch is not armed" is true whether or not
-    # the engine has ever produced a result.
+    # Unconditionally available — deliberately, even though the value is now a
+    # reading: a charge-limit register only changes when something writes it, so
+    # the last value read stays true, and the reading's own failure (unreadable)
+    # is reported as unknown rather than by blanking the entity.
     assert sensor.available is True
-    assert sensor.native_value == "Off"
+    # No cycle has read the register yet, so there is no value — unknown, not 0,
+    # which would claim a real limit of zero.
+    assert sensor.native_value is None
+    # The standing is an attribute now, and before the first cycle it is "off" —
+    # the control has recorded nothing and has written nothing.
+    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_OFF
+    assert sensor.extra_state_attributes["seconds_since_write"] is None
 
 
 async def test_the_site_cycle_performs_the_charge_limit_write(
     hass, hub_entry, inverter_entry
 ):
-    """The write rides the coordinator's cycle — no poll involved."""
+    """The write rides the coordinator's cycle — no poll involved.
+
+    And the sensor reports the register through it: 100 A while that is still what
+    the inverter holds, 50 A once it has taken the write.
+    """
     sensor = await _add_charge_control(hass, inverter_entry)
 
-    with patch(
-        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
-    ) as mock_call, _advice_cycle(inverter_entry, 2560.0):
+    with _accepting_register(hass) as mock_call, _advice_cycle(
+        inverter_entry, 2560.0
+    ):
         await _run_site_cycle(hass, hub_entry)
 
-    writes = _register_writes(mock_call)
-    assert len(writes) == 1, writes
-    # 2560 W at 51.2 V = 50 A, half the register's 100 A
-    assert writes[0][0][2] == {"entity_id": CHARGE_TARGET, "value": 50.0}
-    assert sensor.native_value == "Limiting to 50.0A"
+        writes = _register_writes(mock_call)
+        assert len(writes) == 1, writes
+        # 2560 W at 51.2 V = 50 A, half the register's 100 A
+        assert writes[0][0][2] == {"entity_id": CHARGE_TARGET, "value": 50.0}
+        # The read-back precedes the write, so this cycle still reports the value
+        # the inverter had. The state is a measurement of the register, never an
+        # echo of what we asked for.
+        assert sensor.native_value == 100.0
+        attributes = sensor.extra_state_attributes
+        assert attributes["control_state"] == CONTROL_STATE_LIMITING
+        assert attributes["recommended_value"] == 50.0
+        assert attributes["applied_value"] == 50.0
+        assert attributes["normal_value"] == 100.0
+        assert sensor.native_unit_of_measurement == CHARGE_LIMIT_UNIT_AMPS
+
+        # The inverter took the 50 A. The next cycle writes nothing (paced out)
+        # and still reports the new value — the read-back does not depend on a
+        # write having happened, which is what makes this a graph.
+        await _run_site_cycle(hass, hub_entry)
+
+        assert len(_register_writes(mock_call)) == 1
+        assert sensor.native_value == 50.0
+        assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_LIMITING
+
     inverter_rt = hass.data[DOMAIN]["inverters"][inverter_entry.entry_id]
     assert inverter_rt[INVERTER_RT_APPLIED] == 50.0
 
@@ -2447,14 +2545,16 @@ async def test_nothing_is_written_while_the_switch_is_off(
     """The opt-in gate is per call, so a faster cadence cannot leak a write."""
     sensor = await _add_charge_control(hass, inverter_entry, armed=False)
 
-    with patch(
-        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
-    ) as mock_call, _advice_cycle(inverter_entry, 2560.0):
+    with _accepting_register(hass) as mock_call, _advice_cycle(inverter_entry, 2560.0):
         for _ in range(5):
             await _run_site_cycle(hass, hub_entry)
 
     assert _register_writes(mock_call) == []
-    assert sensor.native_value == "Off"
+    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_OFF
+    # An unarmed control still reports the register: the value is the inverter's,
+    # not ours, so the graph runs continuously through the periods we do nothing.
+    assert sensor.native_value == 100.0
+    assert sensor.available is True
 
 
 async def test_repeated_cycles_write_once_inside_the_interval(
@@ -2491,16 +2591,17 @@ async def test_the_cycle_releases_the_limit_exactly_once(
 
     # The inverter took the 50 A we wrote; now the forecast releases.
     hass.states.async_set(CHARGE_TARGET, "50", {"max": 100})
-    with patch(
-        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
-    ) as mock_call, _advice_cycle(inverter_entry, None):
+    with _accepting_register(hass) as mock_call, _advice_cycle(inverter_entry, None):
         for _ in range(4):
             await _run_site_cycle(hass, hub_entry)
 
     writes = _register_writes(mock_call)
     assert len(writes) == 1, writes
     assert writes[0][0][2]["value"] == 100.0
-    assert sensor.native_value == "Not limiting"
+    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_IDLE
+    # And the restore is visible in the value the sensor graphs: back up at the
+    # normal limit, read from the register the later cycles saw.
+    assert sensor.native_value == 100.0
     inverter_rt = hass.data[DOMAIN]["inverters"][inverter_entry.entry_id]
     assert inverter_rt[INVERTER_RT_APPLIED] is None
 
@@ -2509,14 +2610,12 @@ async def test_update_entity_refreshes_the_status_without_writing(
     hass, hub_entry, inverter_entry
 ):
     """``homeassistant.update_entity`` is a service any automation can call at
-    any rate. It must only re-read the status the last cycle recorded: writing
-    here would be a second writer nothing serializes, able to overlap the
-    cycle's own write and to spend the min-interval budget outside it."""
+    any rate. It must only re-read what the last cycle recorded: writing here
+    would be a second writer nothing serializes, able to overlap the cycle's own
+    write and to spend the min-interval budget outside it."""
     sensor = await _add_charge_control(hass, inverter_entry)
 
-    with patch(
-        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
-    ), _advice_cycle(inverter_entry, 2560.0):
+    with _accepting_register(hass), _advice_cycle(inverter_entry, 2560.0):
         await _run_site_cycle(hass, hub_entry)
 
     with patch(
@@ -2526,7 +2625,90 @@ async def test_update_entity_refreshes_the_status_without_writing(
             await sensor.async_update()
 
     assert _register_writes(mock_call) == []
-    assert sensor.native_value == "Limiting to 50.0A"
+    # The register is at 50 A by now (the inverter took the write), but the last
+    # cycle read it back at 100 A before writing — and re-reading what the cycle
+    # recorded is exactly all this does. It reads no register of its own: that
+    # would be a second reader on a device the control loop owns, running at
+    # whatever rate an automation calls the service.
+    assert sensor.native_value == 100.0
+    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_LIMITING
+
+
+async def test_the_unit_and_device_class_follow_the_configured_register_unit(
+    hass, inverter_entry, inverter_entry_watts
+):
+    """The register's unit is a per-entry choice — a Deye counts DC amps, other
+    hybrids watts — so the sensor's unit, device class and precision follow the
+    entry rather than being fixed. Getting this wrong is not cosmetic: HA rejects
+    a unit its device class does not recognise, and the sensor would have no
+    statistics at all.
+    """
+    amps = await _add_charge_control(hass, inverter_entry)
+    watts = await _add_charge_control(hass, inverter_entry_watts)
+
+    assert amps.native_unit_of_measurement == CHARGE_LIMIT_UNIT_AMPS
+    assert amps.device_class == SensorDeviceClass.CURRENT
+    assert amps.suggested_display_precision == 1
+
+    assert watts.native_unit_of_measurement == CHARGE_LIMIT_UNIT_WATTS
+    assert watts.device_class == SensorDeviceClass.POWER
+    assert watts.suggested_display_precision == 0
+
+    # Either way it is a measurement — that is what earns long-term statistics,
+    # and what the text state it replaced could never have.
+    for sensor in (amps, watts):
+        assert sensor.state_class == SensorStateClass.MEASUREMENT
+    # Amps is the default: an entry that never chose (the fixture's own case is
+    # explicit only for watts) still gets a coherent unit/class pair.
+    assert CONF_CHARGE_LIMIT_UNIT not in inverter_entry.options
+
+
+async def test_a_watts_register_is_reported_in_watts(
+    hass, hub_entry, inverter_entry_watts
+):
+    """The advice is computed in watts, so a watts register takes it unconverted —
+    and the value graphs in watts with no battery voltage involved anywhere."""
+    sensor = await _add_charge_control(hass, inverter_entry_watts, register="5000")
+
+    with _accepting_register(hass, maximum=5000) as mock_call, _advice_cycle(
+        inverter_entry_watts, 2560.0
+    ):
+        await _run_site_cycle(hass, hub_entry)
+        assert _register_writes(mock_call)[0][0][2]["value"] == 2560.0
+        # Second cycle: the inverter has taken it, nothing new is written.
+        await _run_site_cycle(hass, hub_entry)
+
+    assert len(_register_writes(mock_call)) == 1
+    assert sensor.native_value == 2560.0
+    assert sensor.native_unit_of_measurement == CHARGE_LIMIT_UNIT_WATTS
+    assert sensor.extra_state_attributes["recommended_value"] == 2560.0
+    assert sensor.extra_state_attributes["normal_value"] == 5000.0
+
+
+async def test_an_unreadable_register_reports_unknown(
+    hass, hub_entry, inverter_entry
+):
+    """No read-back, no value: None (unknown), never a held number and never 0 —
+    a 0 A charge limit is a real and very different claim.
+
+    The entity stays available through it. That is the deliberate half of the
+    availability decision: the thing that failed is the reading, and the reading
+    says so itself, while ``control_state`` still reports what our control is
+    doing about it.
+    """
+    sensor = await _add_charge_control(hass, inverter_entry)
+
+    with _accepting_register(hass), _advice_cycle(inverter_entry, 2560.0):
+        await _run_site_cycle(hass, hub_entry)
+        assert sensor.native_value == 100.0
+
+        # The Modbus link drops: the number entity goes unavailable.
+        hass.states.async_set(CHARGE_TARGET, STATE_UNAVAILABLE)
+        await _run_site_cycle(hass, hub_entry)
+
+    assert sensor.native_value is None
+    assert sensor.available is True
+    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_LIMITING
 
 
 async def test_removing_the_entity_releases_its_worker_slot(
@@ -2552,3 +2734,410 @@ async def test_removing_the_entity_releases_its_worker_slot(
         await _run_site_cycle(hass, hub_entry)
 
     assert _register_writes(mock_call) == []
+
+
+# ── Inverter SOC control: one ceiling, several time-of-use slots ───────
+#
+# The SOC twin of the block above, and the half these tests exist for is the
+# fan-out: on a Deye the "charge up to %" ceiling is not one register but one
+# `number` per time-of-use slot, so this control drives a LIST of entities from
+# a single recommendation. What is pinned here is the entity-level half — the
+# sensor and switch appearing only when slots are configured, the writes going
+# out through the real coordinator cycle, and the sensor reporting the ceiling
+# being enforced with the per-slot read-backs beside it.
+#
+# The min()/deadband/pacing contract itself is in dev/tests/test_inverter_control.py,
+# which also runs in the pure tier.
+
+SOC_SLOTS = ["number.deye_tou_soc_1", "number.deye_tou_soc_2"]
+SOC_NORMAL_ENTITY = "input_number.battery_ceiling"
+
+
+@pytest.fixture
+def soc_inverter_entry(hub_entry: MockConfigEntry) -> MockConfigEntry:
+    """An inverter entry that drives two SOC slots and no charge register.
+
+    Deliberately no CONF_CHARGE_LIMIT_ENTITY_ID: this is the configuration that
+    proves the SOC control does not depend on the charge-rate one being set up,
+    which is why it is a site-cycle worker in its own right.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Deye TOU",
+        data={
+            CONF_NAME: "Deye TOU",
+            CONF_ENTITY_ID: "deye_tou",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={
+            CONF_SOC_LIMIT_ENTITY_IDS: list(SOC_SLOTS),
+            CONF_CHARGE_CONTROL_INTERVAL: 300,
+        },
+    )
+
+
+@pytest.fixture
+def soc_inverter_entry_with_normal(hub_entry: MockConfigEntry) -> MockConfigEntry:
+    """The same, plus a live normal-ceiling entity the user's automations own."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Deye TOU",
+        data={
+            CONF_NAME: "Deye TOU",
+            CONF_ENTITY_ID: "deye_tou",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={
+            CONF_SOC_LIMIT_ENTITY_IDS: list(SOC_SLOTS),
+            CONF_SOC_LIMIT_NORMAL_ENTITY_ID: SOC_NORMAL_ENTITY,
+            CONF_CHARGE_CONTROL_INTERVAL: 300,
+        },
+    )
+
+
+@pytest.fixture
+def dual_control_inverter_entry(hub_entry: MockConfigEntry) -> MockConfigEntry:
+    """An inverter running BOTH write-controls — the Deye case in full."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Deye Both",
+        data={
+            CONF_NAME: "Deye Both",
+            CONF_ENTITY_ID: "deye_both",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={
+            CONF_CHARGE_LIMIT_ENTITY_ID: CHARGE_TARGET,
+            CONF_SOC_LIMIT_ENTITY_IDS: list(SOC_SLOTS),
+            CONF_CHARGE_CONTROL_INTERVAL: 300,
+        },
+    )
+
+
+async def _add_soc_control(hass, inverter_entry, *, armed=True, slots=100, normal=None):
+    """Create the SOC-control sensor and let it join its hub's site cycle.
+
+    Registration goes through async_added_to_hass, the production path, so the
+    registration itself is under test — as with the charge-control sensor, there
+    is no hub coordinator in these tests at all.
+    """
+    for entity_id in soc_targets(inverter_entry):
+        hass.states.async_set(entity_id, str(slots), {"max": 100})
+    if normal is not None:
+        hass.states.async_set(SOC_NORMAL_ENTITY, str(normal))
+    hass.data.setdefault(DOMAIN, {}).setdefault("inverters", {})[
+        inverter_entry.entry_id
+    ] = {INVERTER_RT_SOC_CONTROL_ENABLED: armed}
+    sensor = LoadJugglerInverterSocControlSensor(hass, inverter_entry, "deye_tou")
+    await sensor.async_added_to_hass()
+    return sensor
+
+
+def _soc_advice_cycle(inverter_entry, advice_soc):
+    """Run the cycle with one crafted recommended max SOC.
+
+    The engine is patched out for the same reason as in the charge-limit block:
+    these tests are about who writes the slots and when, not about how the
+    clipping forecast arrives at a ceiling.
+    """
+    return patch(
+        "custom_components.dynamic_ocpp_evse.sensor.run_hub_calculation",
+        return_value={
+            "inverters": {
+                inverter_entry.entry_id: {"forecast_battery_max_soc": advice_soc}
+            },
+        },
+    )
+
+
+def _slot_writes(mock_call):
+    """(entity_id, value) of every set_value call the cycle made, any domain."""
+    return [
+        (c[0][2]["entity_id"], c[0][2]["value"])
+        for c in mock_call.call_args_list
+        if c[0][1] == "set_value"
+    ]
+
+
+def _accepting_slots(hass):
+    """Patch the service registry with slots that ACCEPT what we write.
+
+    Without this a bare AsyncMock swallows the write and the slots sit at their
+    starting value forever, so the per-slot deadband could never be observed.
+    """
+
+    async def _apply(domain, service, data, *args, **kwargs):
+        if service == "set_value":
+            hass.states.async_set(str(data["entity_id"]), str(data["value"]),
+                                  {"max": 100})
+
+    return patch(
+        "homeassistant.core.ServiceRegistry.async_call",
+        new_callable=AsyncMock,
+        side_effect=_apply,
+    )
+
+
+async def test_soc_control_registers_as_its_own_site_cycle_worker(
+    hass, hub_entry, soc_inverter_entry
+):
+    """It has to be its own worker: this entry configures no charge-limit
+    register, so there is no charge-control sensor here to ride."""
+    sensor = await _add_soc_control(hass, soc_inverter_entry)
+
+    workers = hass.data[DOMAIN][SITE_CYCLE_WORKERS][hub_entry.entry_id]
+    assert list(workers.values()) == [sensor]
+    assert sensor.should_poll is False
+    # Nothing enforced yet, so no value — unknown, not 100, which would be a
+    # claim about the slots we are not making.
+    assert sensor.native_value is None
+    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_OFF
+    assert sensor.extra_state_attributes["seconds_since_write"] is None
+    # Its unit and device class match the Recommended Battery Max SOC sensor's,
+    # so the recommendation and what was enforced share one axis.
+    assert sensor.native_unit_of_measurement == "%"
+    assert sensor.device_class == SensorDeviceClass.BATTERY
+    assert sensor.state_class == SensorStateClass.MEASUREMENT
+
+
+async def test_the_site_cycle_writes_every_configured_slot(
+    hass, hub_entry, soc_inverter_entry
+):
+    """The fan-out through the real cycle: one recommendation, both slots."""
+    sensor = await _add_soc_control(hass, soc_inverter_entry)
+
+    with _accepting_slots(hass) as mock_call, _soc_advice_cycle(
+        soc_inverter_entry, 70.0
+    ):
+        await _run_site_cycle(hass, hub_entry)
+
+        assert _slot_writes(mock_call) == [(eid, 70.0) for eid in SOC_SLOTS]
+        # The state is what is being enforced — the min() of the recommendation
+        # and the normal ceiling, which here defaults to 100.
+        assert sensor.native_value == 70.0
+        attributes = sensor.extra_state_attributes
+        assert attributes["control_state"] == CONTROL_STATE_LIMITING
+        assert attributes["recommended_value"] == 70.0
+        assert attributes["normal_value"] == 100.0
+        # Read BEFORE the write, so these are what the inverter last reported.
+        assert attributes["slot_values"] == {eid: 100.0 for eid in SOC_SLOTS}
+        assert attributes["seconds_since_write"] == 0
+
+        # The slots took the 70. The next cycle is paced out AND every slot is
+        # inside the deadband, so nothing is written and the read-backs move.
+        await _run_site_cycle(hass, hub_entry)
+
+    assert _slot_writes(mock_call) == [(eid, 70.0) for eid in SOC_SLOTS]
+    assert sensor.extra_state_attributes["slot_values"] == {
+        eid: 70.0 for eid in SOC_SLOTS
+    }
+    assert sensor.native_value == 70.0
+
+
+async def test_nothing_is_written_while_the_soc_switch_is_off(
+    hass, hub_entry, soc_inverter_entry
+):
+    """Default off, checked per call — a faster cadence cannot leak a write."""
+    sensor = await _add_soc_control(hass, soc_inverter_entry, armed=False)
+
+    with _accepting_slots(hass) as mock_call, _soc_advice_cycle(
+        soc_inverter_entry, 70.0
+    ):
+        for _ in range(5):
+            await _run_site_cycle(hass, hub_entry)
+
+    assert _slot_writes(mock_call) == []
+    assert sensor.native_value is None
+    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_OFF
+    # The slots are still read while disarmed, so the attribute keeps reporting
+    # what their owner has them at.
+    assert sensor.extra_state_attributes["slot_values"] == {
+        eid: 100.0 for eid in SOC_SLOTS
+    }
+
+
+async def test_the_normal_entity_owns_the_ceiling_and_the_forecast_only_lowers_it(
+    hass, hub_entry, soc_inverter_entry_with_normal
+):
+    """min() at the entity level: an owner asking for 80 gets 80 while the
+    forecast is happy with 95."""
+    soc_inverter_entry = soc_inverter_entry_with_normal
+    sensor = await _add_soc_control(hass, soc_inverter_entry, normal=80)
+
+    with _accepting_slots(hass) as mock_call, _soc_advice_cycle(
+        soc_inverter_entry, 95.0
+    ):
+        await _run_site_cycle(hass, hub_entry)
+
+    assert _slot_writes(mock_call) == [(eid, 80.0) for eid in SOC_SLOTS]
+    assert sensor.native_value == 80.0
+    # Holding the owner's own ceiling is idle, not limiting.
+    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_IDLE
+    assert sensor.extra_state_attributes["normal_entity"] == SOC_NORMAL_ENTITY
+
+
+async def test_an_unreadable_normal_entity_defers_the_writes(
+    hass, hub_entry, soc_inverter_entry_with_normal
+):
+    """We never invent somebody else's setting: with the normal ceiling
+    unavailable the cycle writes nothing and reports no enforced value."""
+    soc_inverter_entry = soc_inverter_entry_with_normal
+    sensor = await _add_soc_control(hass, soc_inverter_entry, normal=80)
+    hass.states.async_set(SOC_NORMAL_ENTITY, STATE_UNAVAILABLE)
+
+    with _accepting_slots(hass) as mock_call, _soc_advice_cycle(
+        soc_inverter_entry, 70.0
+    ):
+        await _run_site_cycle(hass, hub_entry)
+
+    assert _slot_writes(mock_call) == []
+    assert sensor.native_value is None
+    assert sensor.extra_state_attributes["normal_value"] is None
+    # The slots themselves are still reported — only the ceiling is unknown.
+    assert sensor.extra_state_attributes["slot_values"] == {
+        eid: 100.0 for eid in SOC_SLOTS
+    }
+
+
+async def test_an_unreadable_slot_is_skipped_and_its_sibling_is_written(
+    hass, hub_entry, soc_inverter_entry
+):
+    """One dead slot degrades this to partial control, not to none."""
+    sensor = await _add_soc_control(hass, soc_inverter_entry)
+    hass.states.async_set(SOC_SLOTS[0], STATE_UNAVAILABLE)
+
+    with _accepting_slots(hass) as mock_call, _soc_advice_cycle(
+        soc_inverter_entry, 70.0
+    ):
+        await _run_site_cycle(hass, hub_entry)
+
+    assert _slot_writes(mock_call) == [(SOC_SLOTS[1], 70.0)]
+    # And the attribute says which one is missing, so it is diagnosable without
+    # reading the log.
+    assert sensor.extra_state_attributes["slot_values"] == {
+        SOC_SLOTS[0]: None,
+        SOC_SLOTS[1]: 100.0,
+    }
+
+
+async def test_the_soc_sensor_goes_unavailable_with_a_dead_site_cycle(
+    hass, hub_entry, soc_inverter_entry
+):
+    """Unlike the charge-control sensor beside it. That one measures a device
+    register, which stays true while nobody writes it; this one reports our own
+    intention, which only exists while the cycle computing it runs."""
+    sensor = await _add_soc_control(hass, soc_inverter_entry)
+
+    # Before any cycle there is no publication to be fresh.
+    assert sensor.available is False
+
+    with _accepting_slots(hass), _soc_advice_cycle(soc_inverter_entry, 70.0):
+        await _run_site_cycle(hass, hub_entry)
+
+    assert sensor.available is True
+
+
+async def test_soc_update_entity_refreshes_without_writing(
+    hass, hub_entry, soc_inverter_entry
+):
+    """``homeassistant.update_entity`` must not become a second writer on the
+    slots, at whatever rate an automation calls it."""
+    sensor = await _add_soc_control(hass, soc_inverter_entry)
+
+    with _accepting_slots(hass), _soc_advice_cycle(soc_inverter_entry, 70.0):
+        await _run_site_cycle(hass, hub_entry)
+
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ) as mock_call:
+        for _ in range(10):
+            await sensor.async_update()
+
+    assert _slot_writes(mock_call) == []
+    assert sensor.native_value == 70.0
+
+
+async def test_removing_the_soc_sensor_releases_its_worker_slot(
+    hass, hub_entry, soc_inverter_entry
+):
+    """An unloaded inverter entry must stop being driven."""
+    sensor = await _add_soc_control(hass, soc_inverter_entry)
+    workers = hass.data[DOMAIN][SITE_CYCLE_WORKERS][hub_entry.entry_id]
+    assert list(workers.values()) == [sensor]
+
+    assert sensor._on_remove, "the worker registered no removal callback"
+    while sensor._on_remove:
+        sensor._on_remove.pop()()
+
+    assert workers == {}
+    with _accepting_slots(hass) as mock_call, _soc_advice_cycle(
+        soc_inverter_entry, 70.0
+    ):
+        await _run_site_cycle(hass, hub_entry)
+
+    assert _slot_writes(mock_call) == []
+
+
+# ── Platform gating: each control's entities need its own target ───────
+
+
+async def test_the_soc_entities_exist_only_when_slots_are_configured(
+    hass, hub_entry, inverter_entry, soc_inverter_entry, dual_control_inverter_entry
+):
+    """The two write-controls gate independently. The charge-rate entry gets a
+    Charge Control sensor and no SOC one; the TOU entry the reverse; an inverter
+    running both gets both, each driving its own control."""
+    from custom_components.dynamic_ocpp_evse.sensor import (
+        async_setup_entry as sensor_setup,
+    )
+
+    async def _created(entry):
+        added = []
+        await sensor_setup(hass, entry, lambda entities, *a, **kw: added.extend(entities))
+        return {type(e).__name__ for e in added}
+
+    charge_side = await _created(inverter_entry)
+    assert "LoadJugglerInverterChargeControlSensor" in charge_side
+    assert "LoadJugglerInverterSocControlSensor" not in charge_side
+
+    soc_side = await _created(soc_inverter_entry)
+    assert "LoadJugglerInverterSocControlSensor" in soc_side
+    assert "LoadJugglerInverterChargeControlSensor" not in soc_side
+
+    both = await _created(dual_control_inverter_entry)
+    assert {
+        "LoadJugglerInverterChargeControlSensor",
+        "LoadJugglerInverterSocControlSensor",
+    } <= both
+
+
+async def test_the_soc_switch_appears_only_when_slots_are_configured(
+    hass, hub_entry, inverter_entry, soc_inverter_entry, dual_control_inverter_entry
+):
+    """Same gate on the switch platform — an opt-in with nothing to write to
+    would be a lie, and the two switches are independent."""
+    from custom_components.dynamic_ocpp_evse.switch import (
+        async_setup_entry as switch_setup,
+    )
+
+    async def _created(entry):
+        added = []
+        await switch_setup(hass, entry, lambda entities, *a, **kw: added.extend(entities))
+        return {type(e).__name__ for e in added}
+
+    assert await _created(inverter_entry) == {"BatteryChargeControlSwitch"}
+    assert await _created(soc_inverter_entry) == {"BatterySocControlSwitch"}
+    # Both configured on one inverter: both switches, armed separately.
+    assert await _created(dual_control_inverter_entry) == {
+        "BatteryChargeControlSwitch",
+        "BatterySocControlSwitch",
+    }

@@ -685,6 +685,14 @@ def _schema_has(data_schema, key) -> bool:
     )
 
 
+def _selector_config(data_schema, key) -> dict:
+    """The selector config behind a field — e.g. to assert `multiple: True`."""
+    for marker, validator in data_schema.schema.items():
+        if getattr(marker, "schema", None) == key:
+            return getattr(validator, "config", {}) or {}
+    raise AssertionError(f"{key} not present in schema")
+
+
 async def _open_options(hass, entry_id, step="settings"):
     """Open an entry's options menu and pick one of its entries.
 
@@ -748,6 +756,96 @@ async def test_inverter_options_does_not_autodetect_phases(
     assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID) is None
     assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID) is None
     assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID) is None
+
+
+async def test_inverter_options_offers_and_clears_the_soc_slots(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """The SOC write-control is editable from the options page too, and an
+    emptied slot list means OFF.
+
+    The clearing half is the one that matters: a multi-entity selector omits its
+    key entirely once the user removes the last entity, so without the explicit
+    normalization the previously stored slots would stay armed while the form
+    showed none — Load Juggler would keep writing entities the user believes it
+    has released.
+    """
+    from custom_components.dynamic_ocpp_evse.const import (
+        ENTRY_TYPE_INVERTER,
+        CONF_SOC_LIMIT_ENTITY_IDS,
+        CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    )
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    inverter = next(
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+    )
+
+    # Entities the hub already references, so the schemas render.
+    for ent in (
+        "sensor.inverter_phase_a",
+        "sensor.inverter_phase_b",
+        "sensor.inverter_phase_c",
+    ):
+        hass.states.async_set(
+            ent, "5.0", {"device_class": "current", "unit_of_measurement": "A"}
+        )
+    hass.states.async_set("number.deye_tou_soc_1", "100", {"max": 100})
+    hass.states.async_set("number.deye_tou_soc_2", "100", {"max": 100})
+    hass.states.async_set("input_number.battery_ceiling", "90")
+
+    result = await _open_options(hass, inverter.entry_id)
+    assert result["step_id"] == "inverter"
+    schema = result["data_schema"]
+    assert _schema_has(schema, CONF_SOC_LIMIT_ENTITY_IDS)
+    assert _schema_has(schema, CONF_SOC_LIMIT_NORMAL_ENTITY_ID)
+    assert _selector_config(schema, CONF_SOC_LIMIT_ENTITY_IDS).get("multiple") is True
+
+    submitted = {
+        key: value
+        for key, value in {**inverter.data, **inverter.options}.items()
+        if _schema_has(schema, key)
+    }
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            **submitted,
+            CONF_SOC_LIMIT_ENTITY_IDS: [
+                "number.deye_tou_soc_1",
+                "number.deye_tou_soc_2",
+            ],
+            CONF_SOC_LIMIT_NORMAL_ENTITY_ID: "input_number.battery_ceiling",
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert inverter.options[CONF_SOC_LIMIT_ENTITY_IDS] == [
+        "number.deye_tou_soc_1",
+        "number.deye_tou_soc_2",
+    ]
+
+    # Now clear them the way the UI does: the key simply isn't submitted.
+    result = await _open_options(hass, inverter.entry_id)
+    schema = result["data_schema"]
+    submitted = {
+        key: value
+        for key, value in {**inverter.data, **inverter.options}.items()
+        if _schema_has(schema, key) and key != CONF_SOC_LIMIT_ENTITY_IDS
+    }
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input=submitted
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    assert inverter.options[CONF_SOC_LIMIT_ENTITY_IDS] == []
 
 
 async def test_options_flow_charger_saves_changes(
@@ -1271,6 +1369,8 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
         CONF_CHARGE_LIMIT_ENTITY_ID,
         CONF_CHARGE_LIMIT_UNIT,
         CONF_BATTERY_NOMINAL_VOLTAGE,
+        CONF_SOC_LIMIT_ENTITY_IDS,
+        CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     )
 
     hub = MockConfigEntry(
@@ -1338,12 +1438,26 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "inverter_control"
 
+    # Both write-controls are configured on this one page. The SOC side is a
+    # LIST — a Deye's ceiling lives in its time-of-use slots, one entity each —
+    # with the everyday ceiling coming from an entity the user's own automations
+    # keep owning.
+    schema = result["data_schema"]
+    assert _schema_has(schema, CONF_SOC_LIMIT_ENTITY_IDS)
+    assert _schema_has(schema, CONF_SOC_LIMIT_NORMAL_ENTITY_ID)
+    assert _selector_config(schema, CONF_SOC_LIMIT_ENTITY_IDS).get("multiple") is True
+
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             CONF_CHARGE_LIMIT_ENTITY_ID: "number.deye_max_charge_current",
             CONF_CHARGE_LIMIT_UNIT: "A",
             CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+            CONF_SOC_LIMIT_ENTITY_IDS: [
+                "number.deye_tou_soc_1",
+                "number.deye_tou_soc_2",
+            ],
+            CONF_SOC_LIMIT_NORMAL_ENTITY_ID: "input_number.battery_ceiling",
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -1359,6 +1473,11 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
     assert stored[CONF_BATTERY_SOC_ENTITY_ID] == "sensor.deye_battery_soc"
     assert stored[CONF_BATTERY_CAPACITY_KWH] == 15
     assert stored[CONF_CHARGE_LIMIT_ENTITY_ID] == "number.deye_max_charge_current"
+    assert stored[CONF_SOC_LIMIT_ENTITY_IDS] == [
+        "number.deye_tou_soc_1",
+        "number.deye_tou_soc_2",
+    ]
+    assert stored[CONF_SOC_LIMIT_NORMAL_ENTITY_ID] == "input_number.battery_ceiling"
     # The transient flow key must not leak into the stored options
     assert CONF_DEVICE_TYPE not in entry.options
 

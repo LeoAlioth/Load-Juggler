@@ -8,7 +8,12 @@
 #
 # When HA layer sets _soc_above_target=True:  effective_target = 77% (target - hysteresis)
 # When HA layer sets _soc_above_target=False: effective_target = 80% (target)
-# Same pattern for min_soc.
+#
+# The min floor's band sits ABOVE the setting (min=20%, hysteresis=3%):
+#   Falling: SOC must drop below 20% to trigger "below min" (floor is hard)
+#   Rising:  SOC must recover to 23% (min + hysteresis) to count as above again
+# When HA layer sets _soc_above_min=True:  effective_min = 20% (min)
+# When HA layer sets _soc_above_min=False: effective_min = 23% (min + hysteresis)
 #
 # Paired scenarios test the SAME SOC with different effective thresholds,
 # simulating "was previously above" vs "was previously below" prior state.
@@ -254,7 +259,7 @@ scenarios:
   # ========== MIN SOC HYSTERESIS: Battery discharge gating (1-phase) ==========
 
   - name: "hyst-min-soc-deadband-above"
-    description: "Standard mode, SOC 18% in min dead band [17-20], previously above min — battery discharge available"
+    description: "Standard mode, SOC 21% in min dead band [20-23], previously above min — battery discharge available"
     human_verified: false
     site:
       voltage: 230
@@ -263,8 +268,8 @@ scenarios:
       distribution_mode: priority
       solar_production: 2300  # 10A
       phase_a_consumption: 3.0
-      battery_soc: 18
-      battery_soc_min: 17  # Effective min: 17% (previously above, hysteresis applied)
+      battery_soc: 21
+      battery_soc_min: 20  # Effective min: 20% (previously above — the floor itself)
       battery_soc_target: 80
       battery_max_charge_power: 4600
       battery_max_discharge_power: 4600  # 20A
@@ -280,10 +285,10 @@ scenarios:
         priority: 1
     expected:
       charger_1:
-        allocated: 32  # SOC 18% >= effective min 17%: grid + solar + battery discharge
+        allocated: 32  # SOC 21% >= effective min 20%: grid + solar + battery discharge
 
   - name: "hyst-min-soc-deadband-below"
-    description: "Standard mode, SOC 18% in min dead band [17-20], NOT previously above min — no battery discharge"
+    description: "Standard mode, SOC 21% in min dead band [20-23], NOT previously above min — no battery discharge"
     human_verified: false
     site:
       voltage: 230
@@ -292,8 +297,8 @@ scenarios:
       distribution_mode: priority
       solar_production: 2300  # 10A
       phase_a_consumption: 3.0
-      battery_soc: 18
-      battery_soc_min: 20  # Effective min: 20% (not previously above)
+      battery_soc: 21
+      battery_soc_min: 23  # Effective min: 23% (not previously above, min + hysteresis)
       battery_soc_target: 80
       battery_max_charge_power: 4600
       battery_max_discharge_power: 4600

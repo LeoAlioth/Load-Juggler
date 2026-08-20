@@ -29,8 +29,10 @@ from .entities.circuit_group import LoadJugglerCircuitGroupSensor
 from .entities.inverter import (
     LoadJugglerInverterDataSensor,
     LoadJugglerInverterChargeControlSensor,
+    LoadJugglerInverterSocControlSensor,
     INVERTER_SENSOR_DEFINITIONS,
 )
+from .control.inverter import soc_targets
 from . import get_hub_for_charger
 
 DynamicOcppEvseChargerSensor = LoadJugglerDeviceSensor
@@ -256,7 +258,7 @@ async def async_setup_entry(
             if defn.get("requires_forecast") and not inv_has_forecast:
                 continue
             entities.append(
-                LoadJugglerInverterDataSensor(hass, config_entry, name, entity_id, defn)
+                LoadJugglerInverterDataSensor(hass, config_entry, entity_id, defn)
             )
         # Write-control status — created only with a target register, since
         # that sensor is also what drives the writes.
@@ -265,18 +267,25 @@ async def async_setup_entry(
         )
         if writes_charge_limit:
             entities.append(
-                LoadJugglerInverterChargeControlSensor(
-                    hass, config_entry, name, entity_id
-                )
+                LoadJugglerInverterChargeControlSensor(hass, config_entry, entity_id)
+            )
+        # The SOC ceiling's own reporter, gated on its own targets. A pure reader
+        # of what the charge-control worker records — the writes stay in that one
+        # worker, so this adds a sensor and not a second writer.
+        writes_soc_limit = bool(soc_targets(config_entry))
+        if writes_soc_limit:
+            entities.append(
+                LoadJugglerInverterSocControlSensor(hass, config_entry, entity_id)
             )
         async_add_entities(entities)
         _LOGGER.info(
             "Setting up inverter sensors for %s (battery=%s, forecast=%s, "
-            "charge control=%s)",
+            "charge control=%s, SOC control=%s)",
             name,
             "yes" if inv_has_battery else "no",
             "yes" if inv_has_forecast else "no",
             "yes" if writes_charge_limit else "no",
+            "yes" if writes_soc_limit else "no",
         )
         return
 

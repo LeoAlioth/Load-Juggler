@@ -12,7 +12,9 @@ from .const import (
     CONF_HUB_ENTRY_ID, CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID,
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION,
     CONF_CHARGE_LIMIT_ENTITY_ID, INVERTER_RT_CONTROL_ENABLED,
+    INVERTER_RT_SOC_CONTROL_ENABLED,
 )
+from .control.inverter import soc_targets
 from .helpers import get_entry_value, hub_has_battery
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,19 +41,31 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         return
 
     if entry_type == ENTRY_TYPE_INVERTER:
-        # Write-control opt-in. Only offered once a target register is
-        # configured — with nothing to write to, the switch would be a lie.
-        if not get_entry_value(config_entry, CONF_CHARGE_LIMIT_ENTITY_ID, None):
+        # Write-control opt-ins, one per control and each gated on its own
+        # target being configured — with nothing to write to, a switch would be
+        # a lie. The two are independent: an inverter may expose a charge-current
+        # register, TOU SOC slots, both, or neither.
+        #
+        # No name is passed to either: both are named off the device via
+        # has_entity_name + a translation key, so HA composes the displayed name
+        # from device_info's name rather than it being baked in here.
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "inverter")
+        entities = []
+        if get_entry_value(config_entry, CONF_CHARGE_LIMIT_ENTITY_ID, None):
+            entities.append(
+                BatteryChargeControlSwitch(hass, config_entry, entity_id)
+            )
+        if soc_targets(config_entry):
+            entities.append(
+                BatterySocControlSwitch(hass, config_entry, entity_id)
+            )
+        if not entities:
             _LOGGER.debug(
-                "No charge-limit entity on %s - skipping charge control switch",
+                "No write-control targets on %s - skipping its control switches",
                 config_entry.title,
             )
             return
-        entity_id = config_entry.data.get(CONF_ENTITY_ID, "inverter")
-        name = config_entry.data.get(CONF_NAME, "Inverter")
-        async_add_entities(
-            [BatteryChargeControlSwitch(hass, config_entry, entity_id, name)]
-        )
+        async_add_entities(entities)
         return
 
     if entry_type != ENTRY_TYPE_HUB:
@@ -230,13 +244,16 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
 
     _attr_entity_category = EntityCategory.CONFIG
     _inverter_data_key = INVERTER_RT_CONTROL_ENABLED
-    # Named off the device, so renaming the inverter renames this too.
+    # Named off the device, so renaming the inverter renames this too, and the
+    # entity half of that name comes from the translations (entity.switch.
+    # battery_charge_control.name) so the Slovenian UI names it the same way its
+    # help text does. unique_id is unaffected either way.
     _attr_has_entity_name = True
+    _attr_translation_key = "battery_charge_control"
 
-    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, entity_id: str, name: str):
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, entity_id: str):
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = "Battery Charge Control"
         self._attr_unique_id = f"{entity_id}_battery_charge_control"
         self._state = False
         self._attr_icon = "mdi:battery-clock"
@@ -266,6 +283,79 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
         _LOGGER.info(
             "Battery charge control disabled for %s — restoring its normal "
             "charge limit",
+            self.config_entry.title,
+        )
+
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        self._state = last_state is not None and last_state.state == "on"
+        self.async_write_ha_state()
+        self._write_to_inverter_data(self._state)
+
+
+class BatterySocControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
+    """Per-inverter opt-in for writing the forecast's battery SOC ceiling.
+
+    OFF (the default): the recommended max SOC stays advisory — the sensor shows
+    it and none of the configured time-of-use slots is touched. ON: every
+    configured slot is driven to the lower of the forecast's recommendation and
+    the normal ceiling, and rises back with the recommendation on its own.
+
+    A switch of its own rather than a second meaning for Battery Charge Control.
+    The two controls write different things at different strengths — a rate limit
+    slows the fill, a SOC ceiling stops it dead — and an inverter may support
+    either without the other, so a site that wants only the gentler one must be
+    able to say exactly that.
+
+    Default off, for the same reason as its sibling: 'on' makes Load Juggler
+    write to a third-party device, here to several of its entities at once, so
+    arming it should be a deliberate act — including after a restore with no
+    previous state.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _inverter_data_key = INVERTER_RT_SOC_CONTROL_ENABLED
+    # Named off the device, so renaming the inverter renames this too, and the
+    # entity half of that name comes from the translations (entity.switch.
+    # battery_soc_control.name) so the Slovenian UI names it the same way its
+    # help text does. unique_id is unaffected either way.
+    _attr_has_entity_name = True
+    _attr_translation_key = "battery_soc_control"
+
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, entity_id: str):
+        self.hass = hass
+        self.config_entry = config_entry
+        self._attr_unique_id = f"{entity_id}_battery_soc_control"
+        self._state = False
+        self._attr_icon = "mdi:battery-lock"
+
+    @property
+    def is_on(self):
+        return self._state
+
+    async def async_turn_on(self, **kwargs):
+        self._state = True
+        self.async_write_ha_state()
+        self._write_to_inverter_data(True)
+        _LOGGER.info(
+            "Battery SOC control enabled for %s — the PV clipping forecast will "
+            "now write %s",
+            self.config_entry.title,
+            ", ".join(soc_targets(self.config_entry)),
+        )
+
+    async def async_turn_off(self, **kwargs):
+        self._state = False
+        self.async_write_ha_state()
+        self._write_to_inverter_data(False)
+        # No restore write from here, and none from the control loop either: the
+        # slots keep whatever ceiling they currently hold, which is either their
+        # owner's value or a limit that will simply stop being maintained.
+        # Turning this off stops writing; it does not undo history.
+        _LOGGER.info(
+            "Battery SOC control disabled for %s — its SOC slots are left as they "
+            "stand",
             self.config_entry.title,
         )
 

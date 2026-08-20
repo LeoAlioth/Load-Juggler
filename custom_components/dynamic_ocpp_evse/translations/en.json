@@ -22,6 +22,37 @@
                     "normal": "Normal"
                 }
             }
+        },
+        "sensor": {
+            "solar_production": {
+                "name": "Solar production"
+            },
+            "battery_soc": {
+                "name": "Battery SOC"
+            },
+            "battery_power": {
+                "name": "Battery power"
+            },
+            "forecast_battery_max_soc": {
+                "name": "Recommended battery max SOC"
+            },
+            "forecast_charge_limit": {
+                "name": "Recommended battery charge limit"
+            },
+            "charge_control": {
+                "name": "Applied charge rate limit"
+            },
+            "soc_control": {
+                "name": "Applied charge level limit"
+            }
+        },
+        "switch": {
+            "battery_charge_control": {
+                "name": "Battery charge control"
+            },
+            "battery_soc_control": {
+                "name": "Battery SOC control"
+            }
         }
     },
     "config": {
@@ -78,7 +109,7 @@
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
                     "auto_detect_phase_mapping": "Monitors charger current draws to detect incorrect phase wiring. Works for all charger types on multi-phase sites. Disable if false alerts occur.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
-                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. The band sits on the safe side of each setting: with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%; with a 20% minimum, discharging stops at 20% and resumes at 23% — the battery never runs below the floor.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
                 }
@@ -145,8 +176,8 @@
                 }
             },
             "inverter_control": {
-                "title": "Battery Charge Control",
-                "description": "Optional. Lets the PV clipping forecast slow this battery's charging on days when the midday peak would otherwise be clipped at the export limit — the battery stays lower in the morning so there is somewhere to put the surplus. Leave empty to skip; nothing is ever written to your inverter until you also turn on the Battery Charge Control switch.",
+                "title": "Battery Charge Management",
+                "description": "Optional, and two independent controls. Both let the PV clipping forecast keep room for the midday peak on days it would otherwise be clipped at the export limit — one by slowing this battery's charging, the other by holding its SOC below a ceiling. Configure either, both, or neither: each adds a switch of its own, and nothing is ever written to your inverter until you turn that switch on.",
                 "data": {
                     "inverter_charge_limit_entity_id": "Battery charge limit entity to control (optional)",
                     "inverter_charge_limit_unit": "What that entity expects",
@@ -154,7 +185,9 @@
                     "battery_nominal_voltage": "Battery nominal voltage",
                     "inverter_charge_limit_normal": "Normal charge limit",
                     "inverter_charge_control_interval": "Minimum time between writes",
-                    "inverter_charge_control_deadband": "Write deadband"
+                    "inverter_charge_control_deadband": "Write deadband",
+                    "inverter_soc_limit_entity_ids": "Battery SOC ceiling entities (optional)",
+                    "inverter_soc_limit_normal_entity_id": "Normal SOC ceiling source (optional)"
                 },
                 "data_description": {
                     "inverter_charge_limit_entity_id": "The inverter's own maximum battery charge current/power number entity (Deye: 'Battery Max Charge Current'). Leave empty to keep this inverter advisory — the forecast still publishes its recommendation as a sensor, nothing is written. Setting it adds a Battery Charge Control switch, which must be turned on before anything is written.",
@@ -163,7 +196,9 @@
                     "battery_nominal_voltage": "Fallback for the conversion — 51.2 V for a 16S LFP pack, 25.6 V for 8S.",
                     "inverter_charge_limit_normal": "Written back when the forecast releases the limit, in the same unit as the target entity. 0 restores the entity's own maximum, which is where an unmanaged inverter sits.",
                     "inverter_charge_control_interval": "These registers go over Modbus and some firmwares write them to EEPROM, so writes are paced rather than sent every cycle.",
-                    "inverter_charge_control_deadband": "As a percentage of the normal charge limit. A new recommendation closer than this to what the register already holds is not written."
+                    "inverter_charge_control_deadband": "As a percentage of the normal charge limit. A new recommendation closer than this to what the register already holds is not written.",
+                    "inverter_soc_limit_entity_ids": "The entities holding this battery's 'charge up to %' ceiling. On a Deye that is not one register but one entity per time-of-use slot, so select every slot the battery may charge in — the recommended max SOC is written to all of them together. Leave empty to keep the recommendation advisory. Selecting slots adds a Battery SOC Control switch, which must be turned on before anything is written.",
+                    "inverter_soc_limit_normal_entity_id": "Where the everyday ceiling comes from: the slots track this entity, and the forecast may only push them below it, never above, so your own automations keep owning it. Without it, the everyday ceiling is 100%. If it is set but unavailable, nothing is written that cycle rather than a ceiling being guessed."
                 }
             },
             "select_hub": {
@@ -448,7 +483,7 @@
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to chargers.",
                     "auto_detect_phase_mapping": "Monitors charger current draws to detect incorrect phase wiring. Works for all charger types on multi-phase sites. Disable if false alerts occur.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
-                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. E.g., with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%.",
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. The band sits on the safe side of each setting: with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%; with a 20% minimum, discharging stops at 20% and resumes at 23% — the battery never runs below the floor.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
                 }
@@ -520,7 +555,9 @@
                     "battery_nominal_voltage": "Battery nominal voltage",
                     "inverter_charge_limit_normal": "Normal charge limit",
                     "inverter_charge_control_interval": "Minimum time between writes",
-                    "inverter_charge_control_deadband": "Write deadband"
+                    "inverter_charge_control_deadband": "Write deadband",
+                    "inverter_soc_limit_entity_ids": "Battery SOC ceiling entities (optional)",
+                    "inverter_soc_limit_normal_entity_id": "Normal SOC ceiling source (optional)"
                 },
                 "data_description": {
                     "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
@@ -535,7 +572,9 @@
                     "battery_nominal_voltage": "Fallback for the conversion — 51.2 V for a 16S LFP pack, 25.6 V for 8S.",
                     "inverter_charge_limit_normal": "Written back when the forecast releases the limit, in the same unit as the target entity. 0 restores the entity's own maximum, which is where an unmanaged inverter sits.",
                     "inverter_charge_control_interval": "These registers go over Modbus and some firmwares write them to EEPROM, so writes are paced rather than sent every cycle.",
-                    "inverter_charge_control_deadband": "As a percentage of the normal charge limit. A new recommendation closer than this to what the register already holds is not written."
+                    "inverter_charge_control_deadband": "As a percentage of the normal charge limit. A new recommendation closer than this to what the register already holds is not written.",
+                    "inverter_soc_limit_entity_ids": "The entities holding this battery's 'charge up to %' ceiling. On a Deye that is not one register but one entity per time-of-use slot, so select every slot the battery may charge in — the recommended max SOC is written to all of them together. Leave empty to keep the recommendation advisory. Selecting slots adds a Battery SOC Control switch, which must be turned on before anything is written.",
+                    "inverter_soc_limit_normal_entity_id": "Where the everyday ceiling comes from: the slots track this entity, and the forecast may only push them below it, never above, so your own automations keep owning it. Without it, the everyday ceiling is 100%. If it is set but unavailable, nothing is written that cycle rather than a ceiling being guessed."
                 }
             },
             "plug": {
