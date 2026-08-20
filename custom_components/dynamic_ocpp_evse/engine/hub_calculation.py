@@ -603,7 +603,7 @@ def _run_auto_detection(hub_entry, auto_detect_state, smoothed_phases, site):
     _apply_phase_remaps) — never mid-calculation.
     """
     # --- Auto-detection (inversion + phase mapping) ---
-    # auto_detect_state already initialized above (line 926)
+    # auto_detect_state is initialized by the caller before the first use.
     auto_notifications = []
     inv_notif = check_inversion(
         auto_detect_state,

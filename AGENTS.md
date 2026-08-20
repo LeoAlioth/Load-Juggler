@@ -47,9 +47,14 @@ custom_components/dynamic_ocpp_evse/
 │                                  #   inverter, modes, power_station
 ├── engine/                        # HA → SiteContext bridge (reads HA states, drives the calculation)
 │   ├── hub_calculation.py         # Main entry point — run_hub_calculation() builds SiteContext, calls engine
-│   │                              #   Key helpers: _read_entity() (returns _UNAVAILABLE sentinel),
+│   │                              #   Keeps the core cycle: _apply_feedback_loop(), the SOC/Excess latches,
+│   │                              #   household figures; everything else lives in the siblings below
+│   ├── readers.py                 # HA-state edge: _read_entity() (returns _UNAVAILABLE sentinel),
 │   │                              #   _smooth() (EMA) + _stale_guard() (holdover), _coerce(),
-│   │                              #   _apply_feedback_loop(), _build_[evse|plug|power_station|hot_water_tank]_charger()
+│   │                              #   grid/inverter/fleet-member reading
+│   ├── load_builders.py           # _build_[evse|plug|power_station|hot_water_tank]_charger(),
+│   │                              #   _add_chargers_to_site(), _build_circuit_groups()
+│   ├── hub_result.py              # _compute_forecast_advice(), _build_hub_result() (the published dict)
 │   ├── fleet.py                   # Multi-inverter fleet aggregation (solar_total, weighted_soc, inverter_limits)
 │   ├── auto_detect.py             # Grid CT inversion + phase mapping auto-detection
 │   └── forecast_reader.py         # Solar forecast sensor reading
@@ -171,10 +176,10 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 The `calculations/` directory is pure Python and can be imported/tested independently. The HA integration layer:
 
-1. **engine/hub_calculation.py**: Reads HA entity states, builds SiteContext/LoadContext, calls calculation engine. Key patterns:
-   - `_UNAVAILABLE` sentinel: returned by `_read_entity()` when a configured sensor is unavailable/unknown
-   - `_smooth()` + `_stale_guard()`: EMA smoothing with `_UNAVAILABLE` holdover (holds last value instead of decaying to 0), NaN/Inf rejection
-   - `_coerce()`: converts `_UNAVAILABLE` back to safe defaults for non-smoothed values
+1. **engine/hub_calculation.py** (with `readers.py`, `load_builders.py`, `hub_result.py`): Reads HA entity states, builds SiteContext/LoadContext, calls calculation engine. Key patterns:
+   - `_UNAVAILABLE` sentinel: returned by `readers.py:_read_entity()` when a configured sensor is unavailable/unknown
+   - `_smooth()` + `_stale_guard()` (`readers.py`): EMA smoothing with `_UNAVAILABLE` holdover (holds last value instead of decaying to 0), NaN/Inf rejection
+   - `_coerce()` (`readers.py`): converts `_UNAVAILABLE` back to safe defaults for non-smoothed values
    - Solar derivation: `engine/fleet.py` (`solar_total()` / `member_solar()`) — uses inverter output when available, falls back to grid export + battery
    - Off-grid: when no grid CTs are configured, phases with inverter output entities are zeroed (not None), making the site behave like a grid site with 0A grid current
 2. **Hub coordinator (sensor.py) + entities/load.py + control/**: ONE `DataUpdateCoordinator` per hub entry (`hass.data[DOMAIN]["hub_coordinators"]`) runs the engine once per `site_update_frequency`, publishes the trimmed result via `entities/hub.py:publish_hub_data`, then awaits each registered load processor sequentially (`hass.data[DOMAIN]["load_processors"]`, entry_id order — strict serialization for OCPP), then each async cycle worker (`SITE_CYCLE_WORKERS`, e.g. the inverter charge-limit write — after publish, order-insignificant), and finally notifies the push-reader sensors (`site_cycle_listeners`, rebound every tick so hub-only reloads can't strand them). `LoadJugglerDeviceSensor.async_process(hub_data)` does the per-load work — smoothing (`control/smoothing.py`), grace/pause state machines, then dispatch: OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules. Per-load `update_frequency` gates command sends inside the processor. Hub sensors (`entities/hub.py`) are pure readers of hub_data: Site Available Power, Hub Status, per-metric data sensors. Charger sensors: allocated current, available current, charging status.
