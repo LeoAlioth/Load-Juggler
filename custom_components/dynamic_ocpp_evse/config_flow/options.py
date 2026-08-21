@@ -59,20 +59,32 @@ from ..helpers import (
     validate_charger_settings,
     validate_offgrid_battery_requirement,
 )
-from .flow import LoadJugglerConfigFlow
 from .helpers import (
+    _BATTERY_ENTITY_KEYS,
     _BATTERY_UNIT_MAP,
+    _GRID_ENTITY_KEYS,
     _GRID_UNIT_MAP,
+    _INVERTER_ENTITY_KEYS,
     _INVERTER_OUTPUT_UNIT_MAP,
     _LOGGER,
+    _PLUG_ENTITY_KEYS,
     _POWER_FACTOR,
     _SOLAR_UNIT_MAP,
+    _STATION_ENTITY_KEYS,
+    _TANK_ENTITY_KEYS,
     _WRITE_CONTROL_UNIT_MAP,
-    _validate_charge_limit_unit,
     _apply_priority_order,
+    _auto_detect_entity_value,
     _controlled_devices,
+    _detect_charge_rate_unit,
+    _hub_phase_count,
+    _normalize_forecast_list,
     _normalize_inverter_power_caps,
+    _normalize_optional_inputs,
+    _normalize_soc_limit_list,
     _priority_order_schema,
+    _resolve_device_power_entity,
+    _validate_charge_limit_unit,
     _validate_entity_units,
     _validate_forecast_devices,
 )
@@ -95,15 +107,6 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self):
         self._data = {}
-        self._flow = None  # Cached config flow for schema/helper access
-
-    @property
-    def _schema_helper(self) -> LoadJugglerConfigFlow:
-        """Cached LoadJugglerConfigFlow instance for schema building."""
-        if self._flow is None:
-            self._flow = LoadJugglerConfigFlow()
-            self._flow.hass = self.hass
-        return self._flow
 
     @property
     def _defaults(self) -> dict[str, Any]:
@@ -152,10 +155,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         """
         errors: dict[str, str] = {}
         placeholder = None
-        f = self._schema_helper
 
         if user_input is not None:
-            user_input = f._normalize_optional_inputs(user_input, entity_keys)
+            user_input = _normalize_optional_inputs(user_input, entity_keys)
             for normalize_list in list_normalizers:
                 user_input = normalize_list(user_input)
             self._data.update(user_input)
@@ -206,10 +208,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         """
         errors: dict[str, str] = {}
         extra_placeholders = None
-        f = self._schema_helper
 
         if user_input is not None:
-            user_input = f._normalize_optional_inputs(user_input, entity_keys)
+            user_input = _normalize_optional_inputs(user_input, entity_keys)
             for normalize_list in list_normalizers:
                 user_input = normalize_list(user_input)
             if unit_map:
@@ -323,7 +324,6 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Options for an inverter entry — one page: inverter, PV and battery."""
-        f = self._schema_helper
 
         def _validate(data: dict, errors: dict):
             _validate_charge_limit_unit(self.hass, data, errors)
@@ -335,7 +335,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             user_input,
             step_id="inverter",
             schema=lambda defaults: _inverter_combined_schema(self.hass, defaults),
-            entity_keys=f._INVERTER_ENTITY_KEYS
+            entity_keys=_INVERTER_ENTITY_KEYS
             + [
                 CONF_SOLAR_PRODUCTION_ENTITY_ID,
                 CONF_BATTERY_SOC_ENTITY_ID,
@@ -344,7 +344,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 CONF_BATTERY_VOLTAGE_ENTITY_ID,
                 CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
             ],
-            list_normalizers=(f._normalize_forecast_list, f._normalize_soc_limit_list),
+            list_normalizers=(_normalize_forecast_list, _normalize_soc_limit_list),
             unit_map=_INVERTER_OUTPUT_UNIT_MAP
             | _SOLAR_UNIT_MAP
             | _BATTERY_UNIT_MAP
@@ -364,7 +364,6 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         unrelated system (e.g. a second inverter in another building), silently
         adding phantom phases. The stored values are shown as-is.
         """
-        f = self._schema_helper
 
         def _require_battery_when_offgrid(data, errors) -> None:
             # Dropping the grid CTs here is what makes a hub off-grid, so this
@@ -388,7 +387,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             step_id="hub_grid",
             schema=lambda defaults: _hub_grid_schema(self.hass, defaults),
             next_step=_next,
-            entity_keys=f._GRID_ENTITY_KEYS,
+            entity_keys=_GRID_ENTITY_KEYS,
             unit_map=_GRID_UNIT_MAP,
             validate=_require_battery_when_offgrid,
         )
@@ -405,12 +404,11 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         L2/L3 phases that split the available power across phases that don't
         exist on this site. The stored values are shown as-is.
         """
-        f = self._schema_helper
 
         def _battery_power_hint() -> dict[str, str]:
             """Detected battery discharge power — form text only, sets nothing."""
-            hint = f._auto_detect_entity_value(
-                BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR
+            hint = _auto_detect_entity_value(
+                self.hass, BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR
             )
             return {
                 "battery_power_hint": f"{hint}W detected" if hint else "not detected"
@@ -436,7 +434,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             step_id="hub_inverter",
             schema=lambda defaults: _hub_inverter_schema(self.hass, defaults),
             next_step=self.async_step_hub,
-            entity_keys=f._INVERTER_ENTITY_KEYS,
+            entity_keys=_INVERTER_ENTITY_KEYS,
             unit_map=_INVERTER_OUTPUT_UNIT_MAP,
             finalize=_normalize_inverter_power_caps,
             show_defaults=_stored_with_zeroed_caps,
@@ -452,7 +450,6 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         No auto-detection here either: re-detecting can grab battery/solar
         entities from an unrelated system. The stored values are shown as-is.
         """
-        f = self._schema_helper
 
         def _validate(data, errors) -> dict[str, str] | None:
             bad_forecast_entity = _validate_forecast_devices(self.hass, data, errors)
@@ -467,8 +464,8 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             step_id="hub",
             schema=lambda defaults: _hub_battery_schema(self.hass, defaults),
             next_step=self.async_step_priority,
-            entity_keys=f._BATTERY_ENTITY_KEYS,
-            list_normalizers=(f._normalize_forecast_list,),
+            entity_keys=_BATTERY_ENTITY_KEYS,
+            list_normalizers=(_normalize_forecast_list,),
             unit_map=_SOLAR_UNIT_MAP | _BATTERY_UNIT_MAP,
             validate=_validate,
         )
@@ -533,8 +530,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Options charger step 2: Current limits and phase mapping."""
-        f = self._schema_helper
-        hub_phases = f._get_hub_phase_count(self._defaults.get(CONF_HUB_ENTRY_ID))
+        hub_phases = _hub_phase_count(self.hass, self._defaults.get(CONF_HUB_ENTRY_ID))
 
         def _validate(data: dict[str, Any], errors: dict[str, str]) -> None:
             # Auto-fill hidden phase mappings to match L1
@@ -559,11 +555,10 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Options charger step 3: Units and timing (final — saves)."""
-        f = self._schema_helper
 
         # Options-first: an edited device ID lives in entry.options.
         ocpp_device_id = get_entry_value(self.config_entry, CONF_OCPP_DEVICE_ID, None)
-        detected_unit = await f._detect_charge_rate_unit(ocpp_device_id)
+        detected_unit = await _detect_charge_rate_unit(self.hass, ocpp_device_id)
 
         return await self._async_edit_page(
             user_input,
@@ -576,25 +571,22 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_plug(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        f = self._schema_helper
         return await self._async_edit_page(
             user_input,
             step_id="plug",
             schema=_plug_schema,
-            entity_keys=f._PLUG_ENTITY_KEYS,
+            entity_keys=_PLUG_ENTITY_KEYS,
         )
 
     async def async_step_hot_water_tank(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        f = self._schema_helper
-
         def _resolve_power_device(data: dict[str, Any]) -> None:
             """A picked power device becomes its power-sensor entity, so runtime
             only ever deals with CONF_TANK_POWER_ENTITY_ID."""
             device_id = data.pop(CONF_TANK_POWER_DEVICE_ID, None)
             if device_id and not data.get(CONF_TANK_POWER_ENTITY_ID):
-                resolved = f._resolve_device_power_entity(device_id)
+                resolved = _resolve_device_power_entity(self.hass, device_id)
                 if resolved:
                     data[CONF_TANK_POWER_ENTITY_ID] = resolved
 
@@ -602,15 +594,13 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             user_input,
             step_id="hot_water_tank",
             schema=_hot_water_tank_schema,
-            entity_keys=f._TANK_ENTITY_KEYS,
+            entity_keys=_TANK_ENTITY_KEYS,
             finalize=_resolve_power_device,
         )
 
     async def async_step_power_station(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        f = self._schema_helper
-
         def _check_power_window(data: dict[str, Any], errors: dict[str, str]) -> None:
             if data.get(
                 CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
@@ -623,7 +613,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             user_input,
             step_id="power_station",
             schema=_power_station_schema,
-            entity_keys=f._STATION_ENTITY_KEYS,
+            entity_keys=_STATION_ENTITY_KEYS,
             validate=_check_power_window,
         )
 

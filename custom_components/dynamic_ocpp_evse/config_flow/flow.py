@@ -1,10 +1,11 @@
 """Load Juggler - the config flow handler: everything up to a created entry.
 
 ``LoadJugglerConfigFlow`` drives initial setup: the hub, inverter, group and
-per-device-type creation steps, the normalize/auto-detect helpers behind them,
-OCPP discovery with its unit and meter-interval probes, and the legacy
-hub-inverter import. The forms themselves come from ``schemas.py``; editing an
-entry afterwards is ``options.py``.
+per-device-type creation steps, OCPP charger discovery, and the legacy
+hub-inverter import. The forms come from ``schemas.py``; the normalizers,
+auto-detection and OCPP capability probes the steps lean on come from
+``helpers.py``, shared with the options flow. Editing an entry afterwards is
+``options.py``.
 
 The three one-page load types (plug, hot-water tank, power station) run on the
 shared ``_async_create_load_page``; the hub, inverter and EVSE wizards are
@@ -19,8 +20,6 @@ from homeassistant.helpers.device_registry import async_get as async_get_device_
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.selector import selector
 from ..const import (
-    CHARGE_RATE_UNIT_AMPS,
-    CHARGE_RATE_UNIT_WATTS,
     CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
     CONF_AUTO_DETECT_PHASE_MAPPING,
     CONF_BATTERY_CAPACITY_KWH,
@@ -68,7 +67,6 @@ from ..const import (
     CONF_INVERT_PHASES,
     CONF_MAIN_BREAKER_RATING,
     CONF_MAX_CURRENT_ENTITY_ID,
-    CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_MIN_CURRENT_ENTITY_ID,
     CONF_NAME,
     CONF_OCPP_DEVICE_ID,
@@ -83,16 +81,12 @@ from ..const import (
     CONF_PLUG_SWITCH_ENTITY_ID,
     CONF_POWER_BUFFER_ENTITY_ID,
     CONF_PROFILE_VALIDITY_MODE,
-    CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_GRACE_PERIOD,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_STACK_LEVEL,
-    CONF_STATION_AC_INPUT_ENTITY_ID,
-    CONF_STATION_AC_OUTPUT_ENTITY_ID,
-    CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
     CONF_STATION_CHARGE_SPEED_ENTITY_ID,
     CONF_STATION_MAX_CHARGE_POWER,
     CONF_STATION_MIN_CHARGE_POWER,
@@ -148,21 +142,34 @@ from ..const import (
 from ..detection_patterns import PHASE_PATTERNS, PLUG_POWER_MONITOR_PATTERNS
 from ..helpers import (
     get_entry_value,
-    normalize_optional_entity,
     prettify_name,
     validate_charger_settings,
 )
 from .helpers import (
     _BATTERY_UNIT_MAP,
+    _GRID_ENTITY_KEYS,
     _GRID_UNIT_MAP,
+    _INVERTER_ENTITY_KEYS,
     _INVERTER_OUTPUT_UNIT_MAP,
     _LOGGER,
+    _PLUG_ENTITY_KEYS,
     _SOLAR_UNIT_MAP,
+    _STATION_ENTITY_KEYS,
+    _TANK_ENTITY_KEYS,
     _WRITE_CONTROL_UNIT_MAP,
-    _validate_charge_limit_unit,
+    _auto_detect_entity,
+    _auto_detect_phase_entities,
     _compose_entry_title,
+    _detect_charge_rate_unit,
+    _detect_meter_value_interval,
+    _entity_registry_ids,
     _hub_phase_count,
+    _normalize_forecast_list,
     _normalize_inverter_power_caps,
+    _normalize_optional_inputs,
+    _normalize_soc_limit_list,
+    _resolve_device_power_entity,
+    _validate_charge_limit_unit,
     _validate_entity_units,
     _validate_forecast_devices,
     scan_ocpp_chargers,
@@ -195,176 +202,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._entity_cache = None
 
     def _get_entity_registry_ids(self) -> list[str]:
+        """The auto-detection candidates, scanned once per flow."""
         if self._entity_cache is None:
-            entity_registry = async_get_entity_registry(self.hass)
-            # Only include entities that are present in the state machine.
-            # Disabled/stale registry entries have no state and should not be
-            # offered as auto-detection candidates (they would end up as a
-            # suggested_value that is not in include_entities, breaking submission).
-            self._entity_cache = [
-                eid
-                for eid in entity_registry.entities.keys()
-                if self.hass.states.get(eid) is not None
-            ]
+            self._entity_cache = _entity_registry_ids(self.hass)
         return self._entity_cache
-
-    def _get_hub_phase_count(self, hub_entry_id: str | None = None) -> int:
-        """Number of phases this site has, as the engine sees it.
-
-        Thin wrapper around the module-level ``_hub_phase_count`` so the flow
-        and the read-only pages share one derivation.
-        """
-        return _hub_phase_count(
-            self.hass, hub_entry_id or self._data.get(CONF_HUB_ENTRY_ID)
-        )
-
-    # Optional entity keys grouped by config step (for entity selector clearing)
-    _GRID_ENTITY_KEYS = [
-        CONF_PHASE_A_CURRENT_ENTITY_ID,
-        CONF_PHASE_B_CURRENT_ENTITY_ID,
-        CONF_PHASE_C_CURRENT_ENTITY_ID,
-        CONF_MAX_IMPORT_POWER_ENTITY_ID,
-    ]
-    _BATTERY_ENTITY_KEYS = [
-        CONF_SOLAR_PRODUCTION_ENTITY_ID,
-        CONF_BATTERY_SOC_ENTITY_ID,
-        CONF_BATTERY_POWER_ENTITY_ID,
-    ]
-    _INVERTER_ENTITY_KEYS = [
-        CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-        CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-        CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-    ]
-    _PLUG_ENTITY_KEYS = [CONF_PLUG_POWER_MONITOR_ENTITY_ID]
-    _TANK_ENTITY_KEYS = [CONF_TANK_POWER_ENTITY_ID, CONF_TANK_POWER_DEVICE_ID]
-    _STATION_ENTITY_KEYS = [
-        CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
-        CONF_STATION_AC_INPUT_ENTITY_ID,
-        CONF_STATION_AC_OUTPUT_ENTITY_ID,
-    ]
-
-    def _normalize_optional_inputs(
-        self, data: dict[str, Any], step_entity_keys: list[str] | None = None
-    ) -> dict[str, Any]:
-        """Normalize optional entity inputs.
-
-        Args:
-            data: The user_input from the form step.
-            step_entity_keys: Optional entity keys expected in this step.
-                Keys missing from data are set to None (user cleared the field).
-        """
-        normalized = dict(data)
-        for key in (
-            self._GRID_ENTITY_KEYS
-            + self._BATTERY_ENTITY_KEYS
-            + self._INVERTER_ENTITY_KEYS
-            + self._PLUG_ENTITY_KEYS
-            + self._TANK_ENTITY_KEYS
-        ):
-            if key in normalized:
-                normalized[key] = normalize_optional_entity(normalized.get(key))
-        # Entity selectors omit unselected fields — explicitly clear them
-        if step_entity_keys:
-            for key in step_entity_keys:
-                if key not in normalized:
-                    normalized[key] = None
-        return normalized
-
-    def _normalize_forecast_list(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Normalize the solar forecast device list (battery step).
-
-        Separate from _normalize_optional_inputs, which is per-key scalar: the
-        multi-device selector yields a list and omits the key entirely when
-        cleared, so an emptied selection must become [] (feature off), not a
-        stale stored value. Submitting the form also drops any legacy
-        directly-configured sensor list — the device selection replaces it.
-        """
-        data[CONF_SOLAR_FORECAST_DEVICE_IDS] = [
-            d for d in (data.get(CONF_SOLAR_FORECAST_DEVICE_IDS) or []) if d
-        ]
-        data[CONF_SOLAR_FORECAST_ENTITY_IDS] = []
-        return data
-
-    def _normalize_soc_limit_list(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Normalize the SOC-ceiling target list (inverter write-control step).
-
-        Same reason as the forecast list above and not the scalar path: a
-        multi-entity selector yields a list and omits the key entirely once the
-        user clears it, so an emptied selection must become [] — which is what
-        removes the Battery SOC Control switch and sensor again — rather than
-        leaving the previously stored slots armed.
-        """
-        data[CONF_SOC_LIMIT_ENTITY_IDS] = [
-            e for e in (data.get(CONF_SOC_LIMIT_ENTITY_IDS) or []) if e
-        ]
-        return data
-
-    def _auto_detect_phase_entities(
-        self, pattern_sets: list[dict]
-    ) -> dict[str, str | None]:
-        """Auto-detect a matching set of phase A/B/C entities from pattern sets.
-
-        Returns dict with keys 'phase_a', 'phase_b', 'phase_c' (values may be None).
-        """
-        entity_ids = self._get_entity_registry_ids()
-        for pattern_set in pattern_sets:
-            a = next(
-                (
-                    eid
-                    for eid in entity_ids
-                    if re.match(pattern_set["patterns"]["phase_a"], eid)
-                ),
-                None,
-            )
-            b = next(
-                (
-                    eid
-                    for eid in entity_ids
-                    if re.match(pattern_set["patterns"]["phase_b"], eid)
-                ),
-                None,
-            )
-            c = next(
-                (
-                    eid
-                    for eid in entity_ids
-                    if re.match(pattern_set["patterns"]["phase_c"], eid)
-                ),
-                None,
-            )
-            if a and b and c:
-                return {"phase_a": a, "phase_b": b, "phase_c": c}
-        return {"phase_a": None, "phase_b": None, "phase_c": None}
-
-    def _auto_detect_entity(self, pattern_sets: list[dict]) -> str | None:
-        """Auto-detect a single entity from pattern sets. Returns first match."""
-        entity_ids = self._get_entity_registry_ids()
-        for pattern_set in pattern_sets:
-            match = next(
-                (eid for eid in entity_ids if re.match(pattern_set["pattern"], eid)),
-                None,
-            )
-            if match:
-                return match
-        return None
-
-    def _auto_detect_entity_value(
-        self, pattern_sets: list[dict], factor: float = 1.0
-    ) -> int | None:
-        """Auto-detect an entity and read its numeric state value.
-
-        Returns int(state * factor), or None if not found / not numeric.
-        """
-        entity_id = self._auto_detect_entity(pattern_sets)
-        if not entity_id:
-            return None
-        state = self.hass.states.get(entity_id)
-        if not state:
-            return None
-        try:
-            return int(float(state.state) * factor)
-        except (ValueError, TypeError):
-            return None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -458,17 +299,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             for entry in self.hass.config_entries.async_entries(DOMAIN)
         )
 
-    def _resolve_device_power_entity(self, device_id: str) -> str | None:
-        """Return the first power-class sensor entity belonging to a device."""
-        entity_registry = async_get_entity_registry(self.hass)
-        for entity in entity_registry.entities.values():
-            if entity.device_id != device_id:
-                continue
-            device_class = entity.device_class or entity.original_device_class
-            if device_class == "power":
-                return entity.entity_id
-        return None
-
     async def async_step_hub_info(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
@@ -515,9 +345,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(
-                user_input, self._GRID_ENTITY_KEYS
-            )
+            user_input = _normalize_optional_inputs(user_input, _GRID_ENTITY_KEYS)
             _validate_entity_units(self.hass, user_input, _GRID_UNIT_MAP, errors)
             if not errors:
                 self._data.update(user_input)
@@ -561,7 +389,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             # Try to find a complete set of phases using pattern sets
-            ct_detected = self._auto_detect_phase_entities(PHASE_PATTERNS)
+            ct_detected = _auto_detect_phase_entities(
+                self._get_entity_registry_ids(), PHASE_PATTERNS
+            )
             default_phase_a = ct_detected["phase_a"]
             default_phase_b = ct_detected["phase_b"]
             default_phase_c = ct_detected["phase_c"]
@@ -741,9 +571,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            self._data.update(
-                self._normalize_optional_inputs(user_input, entity_keys)
-            )
+            self._data.update(_normalize_optional_inputs(user_input, entity_keys))
             if prepare is not None:
                 prepare(self._data)
 
@@ -811,11 +639,11 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_PLUG_MAX_CURRENT: DEFAULT_PLUG_MAX_CURRENT,
                 CONF_CONNECTED_TO_PHASE: "A",
                 CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
-                CONF_PLUG_POWER_MONITOR_ENTITY_ID: self._auto_detect_entity(
-                    PLUG_POWER_MONITOR_PATTERNS
+                CONF_PLUG_POWER_MONITOR_ENTITY_ID: _auto_detect_entity(
+                    self._get_entity_registry_ids(), PLUG_POWER_MONITOR_PATTERNS
                 ),
             },
-            entity_keys=self._PLUG_ENTITY_KEYS,
+            entity_keys=_PLUG_ENTITY_KEYS,
             static_keys=(CONF_PLUG_SWITCH_ENTITY_ID,),
         )
 
@@ -829,7 +657,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             so runtime only ever deals with CONF_TANK_POWER_ENTITY_ID."""
             device_id = data.pop(CONF_TANK_POWER_DEVICE_ID, None)
             if device_id and not data.get(CONF_TANK_POWER_ENTITY_ID):
-                resolved = self._resolve_device_power_entity(device_id)
+                resolved = _resolve_device_power_entity(self.hass, device_id)
                 if resolved:
                     data[CONF_TANK_POWER_ENTITY_ID] = resolved
 
@@ -851,7 +679,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
                 CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
             },
-            entity_keys=self._TANK_ENTITY_KEYS,
+            entity_keys=_TANK_ENTITY_KEYS,
             static_keys=(CONF_CLIMATE_ENTITY_ID,),
             prepare=_resolve_power_device,
         )
@@ -889,7 +717,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
                 CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
             },
-            entity_keys=self._STATION_ENTITY_KEYS,
+            entity_keys=_STATION_ENTITY_KEYS,
             static_keys=(
                 CONF_STATION_CHARGE_SPEED_ENTITY_ID,
                 CONF_STATION_RESERVE_ENTITY_ID,
@@ -1035,11 +863,11 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         bad_forecast_entity = None
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(
+            user_input = _normalize_optional_inputs(
                 user_input,
-                self._INVERTER_ENTITY_KEYS + [CONF_SOLAR_PRODUCTION_ENTITY_ID],
+                _INVERTER_ENTITY_KEYS + [CONF_SOLAR_PRODUCTION_ENTITY_ID],
             )
-            user_input = self._normalize_forecast_list(user_input)
+            user_input = _normalize_forecast_list(user_input)
             _validate_entity_units(
                 self.hass,
                 user_input,
@@ -1089,7 +917,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(
+            user_input = _normalize_optional_inputs(
                 user_input,
                 [CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
             )
@@ -1120,7 +948,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            user_input = self._normalize_optional_inputs(
+            user_input = _normalize_optional_inputs(
                 user_input,
                 [
                     CONF_CHARGE_LIMIT_ENTITY_ID,
@@ -1128,7 +956,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
                 ],
             )
-            user_input = self._normalize_soc_limit_list(user_input)
+            user_input = _normalize_soc_limit_list(user_input)
             _validate_entity_units(
                 self.hass, user_input, _WRITE_CONTROL_UNIT_MAP, errors
             )
@@ -1405,142 +1233,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """
         return scan_ocpp_chargers(self.hass)
 
-    async def _detect_charge_rate_unit(self, ocpp_device_id: str) -> str | None:
-        """
-        Detect the charge rate unit supported by the OCPP charger.
-
-        Queries the charger via OCPP GetConfiguration for the
-        ChargingScheduleAllowedChargingRateUnit key.
-
-        Returns:
-            "A" for Amperes, "W" for Watts, None if detection fails.
-        """
-        if not ocpp_device_id:
-            _LOGGER.debug("No OCPP device ID — cannot detect charge rate unit")
-            return None
-
-        if not self.hass.services.has_service("ocpp", "get_configuration"):
-            _LOGGER.debug("ocpp.get_configuration service not available")
-            return None
-
-        try:
-            response = await self.hass.services.async_call(
-                "ocpp",
-                "get_configuration",
-                {
-                    "devid": ocpp_device_id,
-                    "ocpp_key": "ChargingScheduleAllowedChargingRateUnit",
-                },
-                blocking=True,
-                return_response=True,
-            )
-
-            if not response:
-                _LOGGER.debug("Empty response from ocpp.get_configuration")
-                return None
-
-            # Parse the response — handle multiple possible formats
-            value = None
-            if isinstance(response, dict):
-                # Direct key-value: {"ChargingScheduleAllowedChargingRateUnit": "Current"}
-                value = response.get("ChargingScheduleAllowedChargingRateUnit")
-                # Or nested: {"value": "Current"}
-                if value is None:
-                    value = response.get("value")
-                # Or list format: {"configurationKey": [{"key": ..., "value": ...}]}
-                if value is None:
-                    for item in response.get("configurationKey", []):
-                        if (
-                            isinstance(item, dict)
-                            and item.get("key")
-                            == "ChargingScheduleAllowedChargingRateUnit"
-                        ):
-                            value = item.get("value")
-                            break
-
-            if not value:
-                _LOGGER.debug(
-                    "Could not parse charge rate unit from OCPP response: %s", response
-                )
-                return None
-
-            value = str(value).strip()
-            value_lower = value.lower()
-            _LOGGER.info("OCPP ChargingScheduleAllowedChargingRateUnit = %s", value)
-
-            if "current" in value_lower and "power" in value_lower:
-                return CHARGE_RATE_UNIT_AMPS  # Both supported — prefer Amps
-            elif "power" in value_lower:
-                return CHARGE_RATE_UNIT_WATTS
-            elif "current" in value_lower:
-                return CHARGE_RATE_UNIT_AMPS
-            else:
-                _LOGGER.warning(
-                    "Unrecognised ChargingScheduleAllowedChargingRateUnit value: %s",
-                    value,
-                )
-                return None
-
-        except Exception as e:
-            _LOGGER.warning("Could not detect charge rate unit via OCPP: %s", e)
-            return None
-
-    async def _detect_meter_value_interval(self, ocpp_device_id: str) -> int | None:
-        """Detect the MeterValueSampleInterval from the OCPP charger.
-
-        This tells us how often the charger reports meter values, which is the
-        practical minimum interval for sending charging profile updates.
-
-        Returns:
-            Interval in seconds, or None if detection fails.
-        """
-        if not ocpp_device_id:
-            return None
-
-        if not self.hass.services.has_service("ocpp", "get_configuration"):
-            return None
-
-        try:
-            response = await self.hass.services.async_call(
-                "ocpp",
-                "get_configuration",
-                {
-                    "devid": ocpp_device_id,
-                    "ocpp_key": "MeterValueSampleInterval",
-                },
-                blocking=True,
-                return_response=True,
-            )
-
-            if not response:
-                return None
-
-            value = None
-            if isinstance(response, dict):
-                value = response.get("MeterValueSampleInterval")
-                if value is None:
-                    value = response.get("value")
-                if value is None:
-                    for item in response.get("configurationKey", []):
-                        if (
-                            isinstance(item, dict)
-                            and item.get("key") == "MeterValueSampleInterval"
-                        ):
-                            value = item.get("value")
-                            break
-
-            if value is None:
-                return None
-
-            interval = int(value)
-            _LOGGER.info("OCPP MeterValueSampleInterval = %ds", interval)
-            # Clamp to our supported range (5–300s)
-            return max(5, min(300, interval))
-
-        except Exception as e:
-            _LOGGER.debug("Could not detect MeterValueSampleInterval via OCPP: %s", e)
-            return None
-
     async def async_step_charger_info(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
@@ -1628,7 +1320,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> config_entries.FlowResult:
         """Charger step 3b: Current limits and phase mapping."""
         errors: dict[str, str] = {}
-        hub_phases = self._get_hub_phase_count()
+        hub_phases = _hub_phase_count(self.hass, self._data.get(CONF_HUB_ENTRY_ID))
 
         if user_input is not None:
             self._data.update(user_input)
@@ -1687,8 +1379,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         ocpp_device_id = self._data.get(CONF_OCPP_DEVICE_ID) or detected_device_id
 
         # Detect charger capabilities via OCPP
-        detected_unit = await self._detect_charge_rate_unit(ocpp_device_id)
-        detected_interval = await self._detect_meter_value_interval(ocpp_device_id)
+        detected_unit = await _detect_charge_rate_unit(self.hass, ocpp_device_id)
+        detected_interval = await _detect_meter_value_interval(
+            self.hass, ocpp_device_id
+        )
 
         if user_input is not None:
             self._data.update(user_input)
