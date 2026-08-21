@@ -55,6 +55,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     ENTRY_TYPE_LOAD,
     FIELD_OCPP_DEVICE,
 )
+from custom_components.dynamic_ocpp_evse.helpers import get_entry_value
 
 # The payload contract both entry points depend on: the manual wizard reads
 # these keys off _selected_charger and __init__ splats them into the discovery
@@ -848,3 +849,218 @@ async def test_status_entity_is_resolved_once_per_setup(
         ocpp_connector_status_entity(hass, entry)
         == "sensor.cache_cp_status_connector"
     )
+
+
+# ── the options charger page's device picker ───────────────────────────
+
+
+async def _open_charger_options(hass, entry_id):
+    """Open a charger entry's options flow on its first (charger) page."""
+    result = await hass.config_entries.options.async_init(entry_id)
+    assert result["type"] == FlowResultType.MENU
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "settings"}
+    )
+    assert result["step_id"] == "charger"
+    return result
+
+
+async def _finish_charger_options(hass, flow_id):
+    """Walk the remaining charger options pages with the stored values."""
+    result = await hass.config_entries.options.async_configure(
+        flow_id,
+        user_input={
+            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+            CONF_CHARGER_L1_PHASE: "A",
+            CONF_CHARGER_L2_PHASE: "B",
+            CONF_CHARGER_L3_PHASE: "C",
+        },
+    )
+    assert result["step_id"] == "charger_timing"
+    return await hass.config_entries.options.async_configure(
+        flow_id,
+        user_input={
+            CONF_CHARGE_RATE_UNIT: "A",
+            CONF_PROFILE_VALIDITY_MODE: "relative",
+            CONF_UPDATE_FREQUENCY: 15,
+            CONF_OCPP_PROFILE_TIMEOUT: 120,
+            CONF_CHARGE_PAUSE_DURATION: 3,
+            CONF_STACK_LEVEL: 3,
+        },
+    )
+
+
+async def _live_charger(hass, hub_entry, charger_entry):
+    """Both entries set up, so the options flow runs against real runtime."""
+    hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(hub_entry.entry_id)
+    await hass.async_block_till_done()
+    charger_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(charger_entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_options_charger_offers_the_device_picker_preselected(
+    hass: HomeAssistant,
+    ocpp_entry: MockConfigEntry,
+    mock_hub_entry: MockConfigEntry,
+    mock_charger_entry: MockConfigEntry,
+    mock_setup,
+):
+    """The free-text charge point id is gone here too, same as the wizard."""
+    device = _standard_charger(hass, ocpp_entry, "device_wallbox_1")
+    await _live_charger(hass, mock_hub_entry, mock_charger_entry)
+
+    result = await _open_charger_options(hass, mock_charger_entry.entry_id)
+
+    schema = result["data_schema"]
+    assert CONF_OCPP_DEVICE_ID not in [str(m) for m in schema.schema]
+    marker, validator = _field(schema, FIELD_OCPP_DEVICE)
+    assert validator.config.get("integration") == "ocpp"
+    # Pre-selected to the device that claims the stored charge point id.
+    assert marker.description == {"suggested_value": device.id}
+    # And the stored charge point id is named in the page text either way.
+    assert result["description_placeholders"] == {
+        "charge_point_id": "device_wallbox_1"
+    }
+
+
+async def test_options_charger_repoints_the_whole_ocpp_side(
+    hass: HomeAssistant,
+    ocpp_entry: MockConfigEntry,
+    mock_hub_entry: MockConfigEntry,
+    mock_charger_entry: MockConfigEntry,
+    mock_setup,
+):
+    """Options can change which OCPP device backs the charger — and now the
+    charge point id AND every sensor entity move together.
+
+    The rewrite of test_options_flow_charger_edits_ocpp_device_id: it used to
+    type a new device id and check that one string landed in options, leaving
+    the charger's sensors pointing at the OLD charger. bravo is watts-only, so
+    the old current_offered must be cleared rather than linger.
+    """
+    _standard_charger(hass, ocpp_entry, "device_wallbox_1")
+    bravo = _ocpp_device(hass, ocpp_entry, "bravo_cp")
+    for metric in (
+        "Current.Import",
+        "Current.Import.L1",
+        "Power.Offered",
+        "Power.Active.Import",
+    ):
+        _ocpp_sensor(hass, ocpp_entry, bravo, "bravo_cp", metric)
+    await _live_charger(hass, mock_hub_entry, mock_charger_entry)
+
+    result = await _open_charger_options(hass, mock_charger_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_LOAD_PRIORITY: 1, FIELD_OCPP_DEVICE: bravo.id},
+    )
+    assert result["step_id"] == "charger_current"
+    result = await _finish_charger_options(hass, result["flow_id"])
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    options = mock_charger_entry.options
+    # The charge point id, resolved off the picked device — never its UUID.
+    assert options[CONF_OCPP_DEVICE_ID] == "bravo_cp"
+    assert bravo.id not in options.values()
+    assert options[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID] == (
+        "sensor.bravo_cp_current_import"
+    )
+    assert options[CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID] == (
+        "sensor.bravo_cp_current_import_l1"
+    )
+    assert options[CONF_EVSE_POWER_OFFERED_ENTITY_ID] == (
+        "sensor.bravo_cp_power_offered"
+    )
+    assert options[CONF_EVSE_POWER_IMPORT_ENTITY_ID] == (
+        "sensor.bravo_cp_power_active_import"
+    )
+    # Watts-only: the previous charger's current_offered cannot linger.
+    assert options[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID] is None
+    # The picker itself is flow-only and never stored.
+    assert FIELD_OCPP_DEVICE not in options
+    assert FIELD_OCPP_DEVICE not in mock_charger_entry.data
+
+    # The data half is untouched — options shadow it (options-first reads),
+    # which is what every runtime read of these keys now goes through.
+    assert mock_charger_entry.data[CONF_OCPP_DEVICE_ID] == "device_wallbox_1"
+    assert mock_charger_entry.data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID] == (
+        "sensor.wallbox_1_current_import"
+    )
+    for key, expected in (
+        (CONF_OCPP_DEVICE_ID, "bravo_cp"),
+        (CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, "sensor.bravo_cp_current_import"),
+        (CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, None),
+    ):
+        assert get_entry_value(mock_charger_entry, key, None) == expected
+    # CONF_CHARGER_ID is identity, not wiring: it stays where it was.
+    assert get_entry_value(mock_charger_entry, CONF_CHARGER_ID, None) == "wallbox_1"
+
+
+async def test_options_charger_keeps_its_config_with_no_ocpp_device(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_charger_entry: MockConfigEntry,
+    mock_setup,
+):
+    """A template-sensor site has no device to pick — submit must still work.
+
+    Nothing in the registry claims "device_wallbox_1", so the picker opens
+    empty. Pressing submit keeps every stored value: that is the one thing the
+    page may never take away.
+    """
+    await _live_charger(hass, mock_hub_entry, mock_charger_entry)
+
+    result = await _open_charger_options(hass, mock_charger_entry.entry_id)
+    marker, _validator = _field(result["data_schema"], FIELD_OCPP_DEVICE)
+    assert marker.description is None
+    assert result["description_placeholders"] == {
+        "charge_point_id": "device_wallbox_1"
+    }
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_LOAD_PRIORITY: 2}
+    )
+    assert result["step_id"] == "charger_current"
+    result = await _finish_charger_options(hass, result["flow_id"])
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    assert mock_charger_entry.options[CONF_LOAD_PRIORITY] == 2
+    # Untouched, and still what every read resolves to.
+    assert CONF_OCPP_DEVICE_ID not in mock_charger_entry.options
+    assert (
+        get_entry_value(mock_charger_entry, CONF_OCPP_DEVICE_ID, None)
+        == "device_wallbox_1"
+    )
+    assert (
+        get_entry_value(mock_charger_entry, CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, None)
+        == "sensor.wallbox_1_current_import"
+    )
+
+
+async def test_options_charger_refuses_a_device_that_is_no_charger(
+    hass: HomeAssistant,
+    ocpp_entry: MockConfigEntry,
+    mock_hub_entry: MockConfigEntry,
+    mock_charger_entry: MockConfigEntry,
+    mock_setup,
+):
+    """Same error path as the wizard — refused on the field, nothing stored."""
+    empty = _ocpp_device(hass, ocpp_entry, "empty_cp")
+    await _live_charger(hass, mock_hub_entry, mock_charger_entry)
+
+    result = await _open_charger_options(hass, mock_charger_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_LOAD_PRIORITY: 1, FIELD_OCPP_DEVICE: empty.id},
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger"
+    assert result["errors"] == {FIELD_OCPP_DEVICE: "ocpp_device_not_usable"}
+    # The refused pick stays in the form, next to its error.
+    marker, _validator = _field(result["data_schema"], FIELD_OCPP_DEVICE)
+    assert marker.description == {"suggested_value": empty.id}
+    assert CONF_OCPP_DEVICE_ID not in mock_charger_entry.options

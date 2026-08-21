@@ -42,6 +42,12 @@ from .const import (
     CONF_CHARGER_ID,
     CONF_ENTITY_ID,
     CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
+    CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID,
+    CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID,
+    CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID,
+    CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
+    CONF_EVSE_POWER_IMPORT_ENTITY_ID,
+    CONF_EVSE_POWER_OFFERED_ENTITY_ID,
     CONF_OCPP_DEVICE_ID,
     DOMAIN,
     ENTRY_TYPE,
@@ -294,9 +300,12 @@ def scan_ocpp_chargers(hass) -> list[dict]:
     current_offered_entity, power_offered_entity, power_import_entity
     (entity values are None when that entity does not exist).
     """
-    # Already-configured chargers are identified by their current_import entity
+    # Already-configured chargers are identified by their current_import entity.
+    # Options-first: re-pointing a charger at another OCPP device on the options
+    # page rewrites that entity into options, and a charger re-pointed onto this
+    # device must stop being offered as an undiscovered one.
     configured_charger_imports = {
-        entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
+        get_entry_value(entry, CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, None)
         for entry in hass.config_entries.async_entries(DOMAIN)
         if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD
     }
@@ -348,6 +357,64 @@ def ocpp_charger_for_device(hass, ha_device_id: str | None) -> dict | None:
 
     payload = _ocpp_charger_payload(charge_point_id, candidates[charge_point_id])
     return payload if _ocpp_charger_is_usable(payload) else None
+
+
+def ocpp_device_for_charge_point(hass, charge_point_id: str | None) -> str | None:
+    """The device-registry UUID a stored charge point id belongs to, or None.
+
+    The reverse of ``ocpp_charger_for_device``, and what pre-selects the device
+    picker on the options charger page. Read straight off the identifier the
+    ocpp integration stamps (``_ocpp_device_identity``), not off the candidate
+    groups, so the picker still opens on the right device for a charger whose
+    sensors are all unclassifiable. The charge point outranks its connectors —
+    the same rule as the scan — so the picker never opens on a single leg.
+
+    None when nothing in the device registry claims that charge point id, which
+    is the template-sensor case: there is no device to point at.
+    """
+    if not charge_point_id:
+        return None
+    best_id = None
+    best_rank = None
+    for device in async_get_device_registry(hass).devices.values():
+        identity = _ocpp_device_identity(device)
+        if identity is None or identity[0] != charge_point_id:
+            continue
+        rank = identity[1] or 0
+        if best_rank is None or rank < best_rank:
+            best_id, best_rank = device.id, rank
+    return best_id
+
+
+# Which stored entry key each payload sensor key lands on. ONE declaration, so
+# the create wizard's final step and the options charger page can never move a
+# different subset of a re-pointed charger's sensors.
+_OCPP_ENTRY_KEY_BY_PAYLOAD = {
+    CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "current_import_entity",
+    CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID: "current_import_l1_entity",
+    CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID: "current_import_l2_entity",
+    CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID: "current_import_l3_entity",
+    CONF_EVSE_CURRENT_OFFERED_ENTITY_ID: "current_offered_entity",
+    CONF_EVSE_POWER_OFFERED_ENTITY_ID: "power_offered_entity",
+    CONF_EVSE_POWER_IMPORT_ENTITY_ID: "power_import_entity",
+}
+
+
+def ocpp_entry_fields(payload: dict) -> dict:
+    """The whole OCPP side of a charger entry, from one resolved payload.
+
+    The charge point id every ocpp service call addresses plus every sensor
+    entity key — as one dict, so re-pointing a charger is all-or-nothing on
+    both edit paths. Absent sensors come back as None rather than missing, so
+    a watts-only charger cannot inherit the previous charger's current sensor.
+    """
+    return {
+        CONF_OCPP_DEVICE_ID: payload["device_id"],
+        **{
+            entry_key: payload.get(payload_key)
+            for entry_key, payload_key in _OCPP_ENTRY_KEY_BY_PAYLOAD.items()
+        },
+    }
 
 
 # ── the connector-status sensor, for the runtime ───────────────────────

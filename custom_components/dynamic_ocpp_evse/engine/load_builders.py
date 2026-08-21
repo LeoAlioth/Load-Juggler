@@ -174,11 +174,14 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
     # 1. Current Import per-phase entities (sensor.{id}_current_import_l1/l2/l3)
     # 2. Current Import entity (per-phase attributes or total)
     # 3. Power Active Import (convert W → A)
-    evse_import = entry.data.get(CONF_EVSE_CURRENT_IMPORT_ENTITY_ID)
-    evse_import_l1 = entry.data.get(CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID)
-    evse_import_l2 = entry.data.get(CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID)
-    evse_import_l3 = entry.data.get(CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID)
-    evse_power_import = entry.data.get(CONF_EVSE_POWER_IMPORT_ENTITY_ID)
+    # Options-first (get_entry_value): re-pointing the charger at another OCPP
+    # device on the options page rewrites the whole sensor set into options, and
+    # the entry's static data half keeps whatever setup found.
+    evse_import = get_entry_value(entry, CONF_EVSE_CURRENT_IMPORT_ENTITY_ID, None)
+    evse_import_l1 = get_entry_value(entry, CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID, None)
+    evse_import_l2 = get_entry_value(entry, CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID, None)
+    evse_import_l3 = get_entry_value(entry, CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID, None)
+    evse_power_import = get_entry_value(entry, CONF_EVSE_POWER_IMPORT_ENTITY_ID, None)
     current_draw = None
 
     # Try per-phase current import entities first (separate sensors for each phase)

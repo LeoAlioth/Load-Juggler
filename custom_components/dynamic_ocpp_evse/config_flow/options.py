@@ -51,7 +51,9 @@ from ..const import (
     ENTRY_TYPE_GROUP,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
+    FIELD_OCPP_DEVICE,
     MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
+    OCPP_INTEGRATION_DOMAIN,
 )
 from ..detection_patterns import BATTERY_MAX_DISCHARGE_POWER_PATTERNS
 from ..helpers import (
@@ -87,6 +89,11 @@ from .helpers import (
     _validate_charge_limit_unit,
     _validate_entity_units,
     _validate_forecast_devices,
+)
+from ..ocpp_discovery import (
+    ocpp_charger_for_device,
+    ocpp_device_for_charge_point,
+    ocpp_entry_fields,
 )
 from .pages import _overview_text, _summary_text
 from .schemas import (
@@ -502,7 +509,20 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_charger(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Options charger step 1: Priority and OCPP device ID."""
+        """Options charger step 1: priority and the OCPP device behind it.
+
+        The same device picker the create wizard's charger_info step offers,
+        instead of the free-text charge point id it replaces — an id nobody can
+        check, typed against a device the registry already knows by name.
+
+        Pre-selected to whatever device claims the stored charge point id. When
+        nothing does (an OCPP-shaped template-sensor site has no device at all)
+        the picker simply opens empty and the stored charge point id is named in
+        the page text, rather than falling back to a second, free-text field:
+        the picker is Optional either way, so submitting the page untouched
+        keeps the working config on both paths, and one field beats two that
+        contradict each other.
+        """
 
         def _schema(defaults: dict[str, Any]) -> vol.Schema:
             fields = {
@@ -513,17 +533,62 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                     ),
                 ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
             }
-            # The OCPP device ID is editable only on chargers that have one
-            ocpp_device_id = defaults.get(CONF_OCPP_DEVICE_ID)
-            if ocpp_device_id:
-                fields[vol.Optional(CONF_OCPP_DEVICE_ID, default=ocpp_device_id)] = str
+            # suggested_value, not default: a default would silently re-fill the
+            # picker after the user clears it (same reason charger_info uses it).
+            picked = defaults.get(FIELD_OCPP_DEVICE) or ocpp_device_for_charge_point(
+                self.hass, get_entry_value(self.config_entry, CONF_OCPP_DEVICE_ID, None)
+            )
+            fields[
+                vol.Optional(
+                    FIELD_OCPP_DEVICE, description={"suggested_value": picked}
+                )
+                if picked
+                else vol.Optional(FIELD_OCPP_DEVICE)
+            ] = selector({"device": {"integration": OCPP_INTEGRATION_DOMAIN}})
             return vol.Schema(fields)
+
+        def _charge_point_hint() -> dict[str, str]:
+            """The stored charge point id, named in the page text.
+
+            The one thing the picker cannot show: it renders device names, and
+            on a site with no OCPP device it renders nothing at all.
+            """
+            return {
+                "charge_point_id": get_entry_value(
+                    self.config_entry, CONF_OCPP_DEVICE_ID, None
+                )
+                or "—"
+            }
+
+        def _apply_picked_device(
+            data: dict[str, Any], errors: dict[str, str]
+        ) -> None:
+            """A picked device rewrites the charger's whole OCPP side.
+
+            Through the very resolver and mapping the create wizard uses, so
+            both edit paths derive the charge point id and every sensor entity
+            once. An untouched (or cleared) picker changes nothing.
+            """
+            picked = data.get(FIELD_OCPP_DEVICE)
+            if not picked:
+                data.pop(FIELD_OCPP_DEVICE, None)
+                return
+            resolved = ocpp_charger_for_device(self.hass, picked)
+            if resolved is None:
+                # Left in ``data`` on purpose: the re-shown form is built from
+                # it, so the bad pick stays visible next to its error.
+                errors[FIELD_OCPP_DEVICE] = "ocpp_device_not_usable"
+                return
+            data.pop(FIELD_OCPP_DEVICE)
+            data.update(ocpp_entry_fields(resolved))
 
         return await self._async_wizard_page(
             user_input,
             step_id="charger",
             schema=_schema,
             next_step=self.async_step_charger_current,
+            validate=_apply_picked_device,
+            placeholders=_charge_point_hint,
         )
 
     async def async_step_charger_current(
@@ -556,8 +621,13 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.FlowResult:
         """Options charger step 3: Units and timing (final — saves)."""
 
-        # Options-first: an edited device ID lives in entry.options.
-        ocpp_device_id = get_entry_value(self.config_entry, CONF_OCPP_DEVICE_ID, None)
+        # A device picked on the charger page is not stored yet, so the pending
+        # charge point id wins — the detected-unit hint has to describe the
+        # charger the user just pointed at, not the one being replaced. Then
+        # options-first, since a previous edit lives in entry.options.
+        ocpp_device_id = self._data.get(CONF_OCPP_DEVICE_ID) or get_entry_value(
+            self.config_entry, CONF_OCPP_DEVICE_ID, None
+        )
         detected_unit = await _detect_charge_rate_unit(self.hass, ocpp_device_id)
 
         return await self._async_edit_page(

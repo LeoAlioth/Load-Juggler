@@ -415,6 +415,7 @@
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
             "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta napolnjenosti baterije in entiteta moči baterije.",
+            "ocpp_device_not_usable": "Ta naprava nima uporabnih senzorjev OCPP polnilne postaje. Izberite napravo, ki jo je za polnilno postajo ustvarila integracija OCPP — potrebuje senzor uvoženega toka ter senzor ponujenega toka ali ponujene moči.",
             "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V)."
         },
         "abort": {
@@ -656,14 +657,14 @@
             },
             "charger": {
                 "title": "Posodobi polnilno postajo",
-                "description": "Posodobite prioriteto polnilne postaje in ID naprave OCPP",
+                "description": "Posodobite prioriteto polnilne postaje in napravo OCPP, na kateri temelji.\n\nTrenutni ID polnilne točke (charge point id): {charge_point_id}",
                 "data": {
                     "charger_priority": "Prioriteta (1 = najvišja)",
-                    "ocpp_device_id": "ID naprave OCPP"
+                    "ocpp_device": "Naprava OCPP polnilne postaje"
                 },
                 "data_description": {
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
-                    "ocpp_device_id": "Identifikator naprave za to polnilno postajo v integraciji OCPP. Spremenite ga le, če je bila polnilna postaja v integraciji OCPP preimenovana ali zamenjana."
+                    "ocpp_device": "Naprava, ki jo je za to polnilno postajo ustvarila integracija OCPP. Če izberete drugo, se na njo prenesejo ID polnilne točke (charge point id) in vsi senzorji toka in moči. Pustite jo nespremenjeno, da ohranite trenutno polnilno postajo — ostane prazna, če integracija OCPP za njo ni ustvarila naprave."
                 }
             },
             "charger_current": {

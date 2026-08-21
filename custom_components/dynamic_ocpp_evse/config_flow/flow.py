@@ -174,7 +174,11 @@ from .helpers import (
     _validate_entity_units,
     _validate_forecast_devices,
 )
-from ..ocpp_discovery import ocpp_charger_for_device, scan_ocpp_chargers
+from ..ocpp_discovery import (
+    ocpp_charger_for_device,
+    ocpp_entry_fields,
+    scan_ocpp_chargers,
+)
 from .options import LoadJugglerOptionsFlow
 from .schemas import (
     _build_hub_inverter_schema,
@@ -1414,29 +1418,12 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             self._data[ENTRY_TYPE] = ENTRY_TYPE_LOAD
             self._data[CONF_CHARGER_ID] = self._selected_charger["id"]
-            # Keep the OCPP device ID resolved above (user edit or detected).
+            # The whole OCPP side in one write, through the shared mapping the
+            # options charger page goes through too. Then the charge point id
+            # resolved above (user pick or detected) wins over the payload's,
+            # which is what makes an edit on charger_info stick.
+            self._data.update(ocpp_entry_fields(self._selected_charger))
             self._data[CONF_OCPP_DEVICE_ID] = ocpp_device_id
-            self._data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID] = self._selected_charger[
-                "current_import_entity"
-            ]
-            self._data[CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID] = (
-                self._selected_charger.get("current_import_l1_entity")
-            )
-            self._data[CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID] = (
-                self._selected_charger.get("current_import_l2_entity")
-            )
-            self._data[CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID] = (
-                self._selected_charger.get("current_import_l3_entity")
-            )
-            self._data[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID] = self._selected_charger[
-                "current_offered_entity"
-            ]
-            self._data[CONF_EVSE_POWER_OFFERED_ENTITY_ID] = self._selected_charger.get(
-                "power_offered_entity"
-            )
-            self._data[CONF_EVSE_POWER_IMPORT_ENTITY_ID] = self._selected_charger.get(
-                "power_import_entity"
-            )
 
             # Use user-provided name/entity_id from charger_info step
             charger_name = self._data.get(CONF_NAME, self._selected_charger["name"])

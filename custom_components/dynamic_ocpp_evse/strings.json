@@ -415,6 +415,7 @@
             "invalid_current": "Charge current values must be greater than zero.",
             "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
             "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. A battery SOC entity and a battery power entity are both required.",
+            "ocpp_device_not_usable": "That device has no usable OCPP charger sensors. Pick the device the OCPP integration created for the charger — it needs a current import sensor plus a current offered or power offered sensor.",
             "invalid_unit": "Sensor unit mismatch — check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V)."
         },
         "abort": {
@@ -656,14 +657,14 @@
             },
             "charger": {
                 "title": "Update Charger",
-                "description": "Update the charger priority and its OCPP device ID",
+                "description": "Update the charger priority and the OCPP device backing it.\n\nCurrent OCPP charge point id: {charge_point_id}",
                 "data": {
                     "charger_priority": "Priority (1 = highest)",
-                    "ocpp_device_id": "OCPP device ID"
+                    "ocpp_device": "OCPP charger device"
                 },
                 "data_description": {
                     "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
-                    "ocpp_device_id": "The OCPP integration's device identifier for this charger. Change it only if the charger was renamed or replaced in the OCPP integration."
+                    "ocpp_device": "The device the OCPP integration created for this charger. Picking another one moves the charge point id and every current/power sensor to it. Leave it as it is to keep the current charger — it stays empty when the OCPP integration created no device for it."
                 }
             },
             "charger_current": {

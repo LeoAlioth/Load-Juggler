@@ -53,11 +53,13 @@ async def check_profile_compliance(
         sensor._mismatch_count = 0
         return
 
-    current_offered_entity_id = sensor.config_entry.data.get(
-        CONF_EVSE_CURRENT_OFFERED_ENTITY_ID
+    # Options-first, like every other charger field: the options charger page
+    # rewrites the whole OCPP sensor set when the charger is re-pointed.
+    current_offered_entity_id = get_entry_value(
+        sensor.config_entry, CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, None
     )
-    power_offered_entity_id = sensor.config_entry.data.get(
-        CONF_EVSE_POWER_OFFERED_ENTITY_ID
+    power_offered_entity_id = get_entry_value(
+        sensor.config_entry, CONF_EVSE_POWER_OFFERED_ENTITY_ID, None
     )
 
     current_offered = None
