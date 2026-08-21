@@ -167,11 +167,22 @@ from .helpers import (
     _validate_forecast_devices,
     scan_ocpp_chargers,
 )
-from .schemas import SchemaBuilderMixin
+from .schemas import (
+    _build_hub_inverter_schema,
+    _build_inverter_solar_schema,
+    _charger_current_schema,
+    _charger_info_schema,
+    _charger_timing_schema,
+    _hot_water_tank_schema,
+    _hub_grid_schema,
+    _inverter_battery_schema,
+    _inverter_control_schema,
+    _plug_schema,
+    _power_station_schema,
+)
 
-class LoadJugglerConfigFlow(
-    SchemaBuilderMixin, config_entries.ConfigFlow, domain=DOMAIN
-):
+
+class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Load Juggler."""
 
     VERSION = 2
@@ -543,7 +554,7 @@ class LoadJugglerConfigFlow(
                 )
             return self.async_show_form(
                 step_id="hub_grid",
-                data_schema=self._hub_grid_schema(user_input),
+                data_schema=_hub_grid_schema(self.hass, user_input),
                 errors=errors,
                 last_step=True,
             )
@@ -587,7 +598,8 @@ class LoadJugglerConfigFlow(
                             None,
                         )
 
-            data_schema = self._hub_grid_schema(
+            data_schema = _hub_grid_schema(
+                self.hass,
                 {
                     CONF_PHASE_A_CURRENT_ENTITY_ID: default_phase_a,
                     CONF_PHASE_B_CURRENT_ENTITY_ID: default_phase_b,
@@ -788,7 +800,7 @@ class LoadJugglerConfigFlow(
         return await self._async_create_load_page(
             user_input,
             step_id="plug_config",
-            schema=self._plug_schema,
+            schema=_plug_schema,
             device_type=DEVICE_TYPE_PLUG,
             type_label="Smart Load",
             default_name="Smart Load",
@@ -824,7 +836,7 @@ class LoadJugglerConfigFlow(
         return await self._async_create_load_page(
             user_input,
             step_id="hot_water_tank_config",
-            schema=self._hot_water_tank_schema,
+            schema=_hot_water_tank_schema,
             device_type=DEVICE_TYPE_HOT_WATER_TANK,
             type_label="Hot Water Tank",
             default_name="Hot Water Tank",
@@ -862,7 +874,7 @@ class LoadJugglerConfigFlow(
         return await self._async_create_load_page(
             user_input,
             step_id="power_station_config",
-            schema=self._power_station_schema,
+            schema=_power_station_schema,
             device_type=DEVICE_TYPE_POWER_STATION,
             type_label="Power Station",
             default_name="Power Station",
@@ -1054,8 +1066,8 @@ class LoadJugglerConfigFlow(
                     CONF_ENTITY_ID,
                     default=defaults.get(CONF_ENTITY_ID, "lj_inverter"),
                 ): str,
-                **dict(self._build_hub_inverter_schema(defaults)),
-                **dict(self._build_inverter_solar_schema(defaults)),
+                **dict(_build_hub_inverter_schema(self.hass, defaults)),
+                **dict(_build_inverter_solar_schema(self.hass, defaults)),
             }
         )
 
@@ -1086,7 +1098,9 @@ class LoadJugglerConfigFlow(
                 self._data.update(user_input)
                 return await self.async_step_inverter_control()
 
-        data_schema = self._inverter_battery_schema({**self._data, **(user_input or {})})
+        data_schema = _inverter_battery_schema(
+            self.hass, {**self._data, **(user_input or {})}
+        )
         return self.async_show_form(
             step_id="inverter_battery",
             data_schema=data_schema,
@@ -1161,7 +1175,9 @@ class LoadJugglerConfigFlow(
                     options=options_data,
                 )
 
-        data_schema = self._inverter_control_schema({**self._data, **(user_input or {})})
+        data_schema = _inverter_control_schema(
+            self.hass, {**self._data, **(user_input or {})}
+        )
         return self.async_show_form(
             step_id="inverter_control",
             data_schema=data_schema,
@@ -1542,7 +1558,7 @@ class LoadJugglerConfigFlow(
         existing_loads = self._get_load_entries()
         next_priority = len(existing_loads) + 1
 
-        data_schema = self._charger_info_schema(
+        data_schema = _charger_info_schema(
             {
                 CONF_NAME: self._data.get(
                     CONF_NAME, self._selected_charger["name"]
@@ -1627,7 +1643,7 @@ class LoadJugglerConfigFlow(
             if errors:
                 return self.async_show_form(
                     step_id="charger_current",
-                    data_schema=self._charger_current_schema(
+                    data_schema=_charger_current_schema(
                         self._data, hub_phases=hub_phases
                     ),
                     errors=errors,
@@ -1636,7 +1652,7 @@ class LoadJugglerConfigFlow(
 
             return await self.async_step_charger_timing()
 
-        data_schema = self._charger_current_schema(
+        data_schema = _charger_current_schema(
             {
                 CONF_EVSE_MINIMUM_CHARGE_CURRENT: DEFAULT_MIN_CHARGE_CURRENT,
                 CONF_EVSE_MAXIMUM_CHARGE_CURRENT: DEFAULT_MAX_CHARGE_CURRENT,
@@ -1753,7 +1769,7 @@ class LoadJugglerConfigFlow(
                 options=options_data,
             )
 
-        data_schema = self._charger_timing_schema(
+        data_schema = _charger_timing_schema(
             {
                 CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
                 CONF_UPDATE_FREQUENCY: detected_interval or DEFAULT_UPDATE_FREQUENCY,

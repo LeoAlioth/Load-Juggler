@@ -3,8 +3,8 @@
 ``LoadJugglerOptionsFlow`` is what "Configure" opens on an existing entry —
 a small menu that branches to the settings steps for whatever the entry is
 (hub, inverter, group or one of the load types) and to the two read-only pages.
-It owns no schemas of its own: every form it shows comes from the create-flow
-builders, reached through a cached ``LoadJugglerConfigFlow`` instance.
+It owns no schemas of its own: every form it shows comes from ``schemas.py``,
+the same builders the create flow uses.
 
 Two executors carry the shape the steps share — ``_async_edit_page`` for a
 page that saves on submit, ``_async_wizard_page`` for one that routes on to
@@ -77,6 +77,17 @@ from .helpers import (
     _validate_forecast_devices,
 )
 from .pages import _overview_text, _summary_text
+from .schemas import (
+    _charger_current_schema,
+    _charger_timing_schema,
+    _hot_water_tank_schema,
+    _hub_battery_schema,
+    _hub_grid_schema,
+    _hub_inverter_schema,
+    _inverter_combined_schema,
+    _plug_schema,
+    _power_station_schema,
+)
 
 
 class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
@@ -323,7 +334,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         return await self._async_edit_page(
             user_input,
             step_id="inverter",
-            schema=f._inverter_combined_schema,
+            schema=lambda defaults: _inverter_combined_schema(self.hass, defaults),
             entity_keys=f._INVERTER_ENTITY_KEYS
             + [
                 CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -375,7 +386,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         return await self._async_wizard_page(
             user_input,
             step_id="hub_grid",
-            schema=f._hub_grid_schema,
+            schema=lambda defaults: _hub_grid_schema(self.hass, defaults),
             next_step=_next,
             entity_keys=f._GRID_ENTITY_KEYS,
             unit_map=_GRID_UNIT_MAP,
@@ -423,7 +434,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         return await self._async_wizard_page(
             user_input,
             step_id="hub_inverter",
-            schema=f._hub_inverter_schema,
+            schema=lambda defaults: _hub_inverter_schema(self.hass, defaults),
             next_step=self.async_step_hub,
             entity_keys=f._INVERTER_ENTITY_KEYS,
             unit_map=_INVERTER_OUTPUT_UNIT_MAP,
@@ -454,7 +465,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         return await self._async_wizard_page(
             user_input,
             step_id="hub",
-            schema=f._hub_battery_schema,
+            schema=lambda defaults: _hub_battery_schema(self.hass, defaults),
             next_step=self.async_step_priority,
             entity_keys=f._BATTERY_ENTITY_KEYS,
             list_normalizers=(f._normalize_forecast_list,),
@@ -537,7 +548,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         return await self._async_wizard_page(
             user_input,
             step_id="charger_current",
-            schema=lambda defaults: f._charger_current_schema(
+            schema=lambda defaults: _charger_current_schema(
                 defaults, hub_phases=hub_phases
             ),
             next_step=self.async_step_charger_timing,
@@ -557,7 +568,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         return await self._async_edit_page(
             user_input,
             step_id="charger_timing",
-            schema=lambda defaults: f._charger_timing_schema(
+            schema=lambda defaults: _charger_timing_schema(
                 defaults, detected_unit=detected_unit
             ),
         )
@@ -569,7 +580,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         return await self._async_edit_page(
             user_input,
             step_id="plug",
-            schema=f._plug_schema,
+            schema=_plug_schema,
             entity_keys=f._PLUG_ENTITY_KEYS,
         )
 
@@ -590,7 +601,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         return await self._async_edit_page(
             user_input,
             step_id="hot_water_tank",
-            schema=f._hot_water_tank_schema,
+            schema=_hot_water_tank_schema,
             entity_keys=f._TANK_ENTITY_KEYS,
             finalize=_resolve_power_device,
         )
@@ -611,7 +622,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         return await self._async_edit_page(
             user_input,
             step_id="power_station",
-            schema=f._power_station_schema,
+            schema=_power_station_schema,
             entity_keys=f._STATION_ENTITY_KEYS,
             validate=_check_power_window,
         )
