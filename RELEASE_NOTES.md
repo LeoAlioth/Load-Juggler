@@ -17,6 +17,7 @@
 
 ### Improvements
 
+- **OCPP charger discovery goes through the device registry**: chargers whose entities were renamed, or whose per-phase sensors live on per-connector sub-devices, are now found and set up correctly instead of being silently skipped. The charger wizard's "OCPP device ID" text box is replaced by a device picker filtered to the OCPP integration — picking a device fills in the charge point id and every current/power sensor at once. Existing chargers are unaffected and need no reconfiguration.
 - **Loads are called loads everywhere**: internally and in config-entry storage, anything that isn't an EV charger (smart plugs, hot water tanks, power stations) is no longer stored or named as a "charger". Existing entries migrate automatically on startup; no entity ids, entity names, attributes or service fields change.
 - **One way to edit settings**: the ⋮ *Reconfigure* menu is gone — everything is edited through the **Configure** button, which was always the more complete of the two. One edit path also means a setting can no longer be saved by one flow and ignored by the other.
 - **The site is calculated exactly once per cycle**: previously every managed load re-ran the full site calculation on its own timer, so smoothing and settle detection effectively sped up with every load you added, and overlapping updates could send duplicate charging commands. One hub-owned cycle now computes the site once per *Site sensor refresh rate* and serves every load in turn; charging commands are dispatched one at a time.
