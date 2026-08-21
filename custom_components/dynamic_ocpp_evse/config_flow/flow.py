@@ -137,6 +137,7 @@ from ..const import (
     ENTRY_TYPE_GROUP,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
+    FIELD_OCPP_DEVICE,
     MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
 )
 from ..detection_patterns import PHASE_PATTERNS, PLUG_POWER_MONITOR_PATTERNS
@@ -172,6 +173,7 @@ from .helpers import (
     _validate_charge_limit_unit,
     _validate_entity_units,
     _validate_forecast_devices,
+    ocpp_charger_for_device,
     scan_ocpp_chargers,
 )
 from .options import LoadJugglerOptionsFlow
@@ -1240,15 +1242,37 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_charger_info(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Charger step 3a: Name, entity ID, and priority."""
+        """Charger step 3a: Name, entity ID, priority, and the OCPP device."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            user_input = dict(user_input)
+            # The picker is flow-only: what the entry stores is the charge point
+            # id the picked device resolves to, never its registry UUID.
+            picked_device = user_input.pop(FIELD_OCPP_DEVICE, None)
             self._data.update(user_input)
+
+            if picked_device:
+                resolved = ocpp_charger_for_device(self.hass, picked_device)
+                if resolved is None:
+                    errors[FIELD_OCPP_DEVICE] = "ocpp_device_not_usable"
+                else:
+                    # Everything about the charger's OCPP side follows the
+                    # picked device — charge point id and every sensor entity,
+                    # from the same derivation the discovery scan uses. Only
+                    # "id" stays put: the discovery unique_id and
+                    # CONF_CHARGER_ID were already claimed on it.
+                    self._selected_charger = {
+                        **self._selected_charger,
+                        **resolved,
+                        "id": self._selected_charger["id"],
+                    }
+                    self._data[CONF_OCPP_DEVICE_ID] = resolved["device_id"]
+
             entity_id = self._data.get(CONF_ENTITY_ID)
             if entity_id and self._entity_id_in_use(entity_id):
                 errors[CONF_ENTITY_ID] = "entity_id_in_use"
-            else:
+            if not errors:
                 return await self.async_step_charger_current()
 
         existing_loads = self._get_load_entries()
@@ -1265,9 +1289,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_LOAD_PRIORITY: self._data.get(
                     CONF_LOAD_PRIORITY, next_priority
                 ),
-                CONF_OCPP_DEVICE_ID: self._data.get(
-                    CONF_OCPP_DEVICE_ID, self._selected_charger.get("device_id")
-                ),
+                FIELD_OCPP_DEVICE: self._selected_charger.get("ha_device_id"),
             }
         )
 

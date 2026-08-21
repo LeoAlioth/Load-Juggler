@@ -65,7 +65,6 @@ from ..const import (
     CONF_MAIN_BREAKER_RATING,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_NAME,
-    CONF_OCPP_DEVICE_ID,
     CONF_OCPP_PROFILE_TIMEOUT,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
@@ -139,6 +138,8 @@ from ..const import (
     DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL,
     DEFAULT_UPDATE_FREQUENCY,
     DEFAULT_WIRING_TOPOLOGY,
+    FIELD_OCPP_DEVICE,
+    OCPP_INTEGRATION_DOMAIN,
     PROFILE_VALIDITY_MODE_ABSOLUTE,
     PROFILE_VALIDITY_MODE_RELATIVE,
     STATION_CHARGE_POWER_STEP,
@@ -1154,7 +1155,7 @@ def _hub_inverter_schema(hass, defaults: dict | None = None) -> vol.Schema:
 
 
 def _charger_info_schema(defaults: dict | None = None) -> vol.Schema:
-    """Build schema for charger info step (name, entity ID, priority, OCPP device ID)."""
+    """Build schema for charger info step (name, entity ID, priority, OCPP device)."""
     defaults = defaults or {}
 
     # Build dynamic fields based on what was detected
@@ -1173,14 +1174,26 @@ def _charger_info_schema(defaults: dict | None = None) -> vol.Schema:
         ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
     }
 
-    # Add OCPP Device ID as optional editable field (shown when detected)
-    if defaults.get(CONF_OCPP_DEVICE_ID):
-        fields[
-            vol.Optional(
-                CONF_OCPP_DEVICE_ID,
-                default=defaults.get(CONF_OCPP_DEVICE_ID, ""),
-            )
-        ] = str
+    # A device picker rather than the free-text charge point id it replaces.
+    # The flow resolves the picked device back to the charge point id AND to
+    # the charger's sensor entities through the same derivation the discovery
+    # scan uses, so a charger matched to the wrong OCPP device is fixed by
+    # pointing at the right one instead of by typing an id nobody can check.
+    # Optional and pre-filled with the discovered device: leaving it alone
+    # keeps exactly what discovery found. Filtered to the ocpp integration, so
+    # it is empty (and skippable) when that integration is not the source —
+    # OCPP-shaped template sensors have no device to offer.
+    # suggested_value, not default, for the same reason the entity fields use
+    # it: a default would silently re-fill the picker when the user clears it.
+    device_default = defaults.get(FIELD_OCPP_DEVICE)
+    device_key = (
+        vol.Optional(
+            FIELD_OCPP_DEVICE, description={"suggested_value": device_default}
+        )
+        if device_default
+        else vol.Optional(FIELD_OCPP_DEVICE)
+    )
+    fields[device_key] = selector({"device": {"integration": OCPP_INTEGRATION_DOMAIN}})
 
     return vol.Schema(fields)
 

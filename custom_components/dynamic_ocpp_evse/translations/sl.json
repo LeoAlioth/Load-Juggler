@@ -317,11 +317,13 @@
                 "data": {
                     "name": "Ime polnilne postaje",
                     "entity_id": "Predpona ID entitete",
-                    "charger_priority": "Prioriteta (1 = najvišja)"
+                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "ocpp_device": "Naprava OCPP polnilne postaje"
                 },
                 "data_description": {
                     "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power).",
-                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno."
+                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "ocpp_device": "Naprava, ki jo je za to polnilno postajo ustvarila integracija OCPP. Iz nje se preberejo ID polnilne točke (charge point id) ter senzorji toka in moči — zamenjajte jo le, če je bila prepoznana napačna polnilna postaja."
                 }
             },
             "charger_current": {
@@ -390,6 +392,7 @@
             "no_hub_configured": "Merilno mesto ni nastavljeno. Najprej ga nastavite.",
             "no_ocpp_chargers_found": "Polnilne postaje OCPP niso najdene. Prepričajte se, da imate nameščeno in konfigurirano integracijo OCPP z vsaj eno polnilno postajo.",
             "charger_not_found": "Izbrana polnilna postaja ni več na voljo. Morda je bila odstranjena iz integracije OCPP. Poskusite znova.",
+            "ocpp_device_not_usable": "Ta naprava nima uporabnih senzorjev OCPP polnilne postaje. Izberite napravo, ki jo je za polnilno postajo ustvarila integracija OCPP — potrebuje senzor uvoženega toka ter senzor ponujenega toka ali ponujene moči.",
             "no_members_selected": "Izberite vsaj enega porabnika za to deljeno varovalko.",
             "no_loads_available": "Na tem merilnem mestu ni na voljo nobenih porabnikov. Najprej dodajte polnilne postaje ali pametne porabnike.",
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",

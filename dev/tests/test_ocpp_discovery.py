@@ -13,6 +13,7 @@ already-configured filter) that must survive the change untouched.
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -21,13 +22,37 @@ from custom_components.dynamic_ocpp_evse.config_flow.helpers import (
     scan_ocpp_chargers,
 )
 from custom_components.dynamic_ocpp_evse.const import (
+    CONF_CHARGE_PAUSE_DURATION,
+    CONF_CHARGE_RATE_UNIT,
+    CONF_CHARGER_ID,
+    CONF_CHARGER_L1_PHASE,
+    CONF_CHARGER_L2_PHASE,
+    CONF_CHARGER_L3_PHASE,
     CONF_ENTITY_ID,
     CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
+    CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID,
+    CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
+    CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
+    CONF_EVSE_MINIMUM_CHARGE_CURRENT,
+    CONF_EVSE_POWER_IMPORT_ENTITY_ID,
+    CONF_EVSE_POWER_OFFERED_ENTITY_ID,
     CONF_HUB_ENTRY_ID,
+    CONF_LOAD_PRIORITY,
     CONF_NAME,
+    CONF_OCPP_DEVICE_ID,
+    CONF_OCPP_PROFILE_TIMEOUT,
+    CONF_PROFILE_VALIDITY_MODE,
+    CONF_STACK_LEVEL,
+    CONF_UPDATE_FREQUENCY,
+    DEFAULT_CHARGE_PAUSE_DURATION,
+    DEFAULT_OCPP_PROFILE_TIMEOUT,
+    DEFAULT_PROFILE_VALIDITY_MODE,
+    DEFAULT_STACK_LEVEL,
+    DEFAULT_UPDATE_FREQUENCY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
+    FIELD_OCPP_DEVICE,
 )
 
 # The payload contract both entry points depend on: the manual wizard reads
@@ -416,3 +441,207 @@ async def test_resolver_rejects_a_device_that_is_not_a_usable_charger(
     assert ocpp_charger_for_device(hass, stranger.id) is None
     assert ocpp_charger_for_device(hass, "no-such-device") is None
     assert ocpp_charger_for_device(hass, None) is None
+
+
+# ── the charger_info device picker ─────────────────────────────────────
+
+
+def _field(schema, key):
+    """``(marker, validator)`` for one key of a voluptuous schema."""
+    for marker, validator in schema.schema.items():
+        if str(marker) == key:
+            return marker, validator
+    raise AssertionError(f"{key} not in schema: {[str(m) for m in schema.schema]}")
+
+
+async def _start_discovery(hass, hub_entry, charger):
+    """Open the charger wizard on charger_info for one scanned charger."""
+    return await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "integration_discovery"},
+        data={
+            "hub_entry_id": hub_entry.entry_id,
+            "charger_id": charger["id"],
+            "charger_name": charger["name"],
+            **{k: v for k, v in charger.items() if k not in ("id", "name")},
+        },
+    )
+
+
+async def _finish_charger_wizard(hass, flow_id):
+    """Walk charger_current and charger_timing with plain valid values."""
+    result = await hass.config_entries.flow.async_configure(
+        flow_id,
+        user_input={
+            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+            CONF_CHARGER_L1_PHASE: "A",
+            CONF_CHARGER_L2_PHASE: "B",
+            CONF_CHARGER_L3_PHASE: "C",
+        },
+    )
+    assert result["step_id"] == "charger_timing"
+    return await hass.config_entries.flow.async_configure(
+        flow_id,
+        user_input={
+            CONF_CHARGE_RATE_UNIT: "A",
+            CONF_PROFILE_VALIDITY_MODE: DEFAULT_PROFILE_VALIDITY_MODE,
+            CONF_UPDATE_FREQUENCY: DEFAULT_UPDATE_FREQUENCY,
+            CONF_OCPP_PROFILE_TIMEOUT: DEFAULT_OCPP_PROFILE_TIMEOUT,
+            CONF_CHARGE_PAUSE_DURATION: DEFAULT_CHARGE_PAUSE_DURATION,
+            CONF_STACK_LEVEL: DEFAULT_STACK_LEVEL,
+        },
+    )
+
+
+async def test_charger_info_offers_a_device_picker_not_a_text_field(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry, mock_hub_entry: MockConfigEntry
+):
+    """The free-text charge point id is gone; an ocpp device picker replaces it."""
+    mock_hub_entry.add_to_hass(hass)
+    device = _standard_charger(hass, ocpp_entry, "picker_cp")
+    (charger,) = scan_ocpp_chargers(hass)
+
+    result = await _start_discovery(hass, mock_hub_entry, charger)
+
+    assert result["step_id"] == "charger_info"
+    schema = result["data_schema"]
+    assert CONF_OCPP_DEVICE_ID not in [str(m) for m in schema.schema]
+    marker, validator = _field(schema, FIELD_OCPP_DEVICE)
+    assert validator.config.get("integration") == "ocpp"
+    # Pre-filled with the device discovery matched, so leaving it alone is a
+    # no-op — and suggested_value rather than default, so it can be cleared.
+    assert marker.description == {"suggested_value": device.id}
+
+
+async def test_the_manual_flow_preselects_the_scanned_device(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry, mock_hub_entry: MockConfigEntry
+):
+    """Same picker, same pre-fill, on the "Add OCPP Charger" path."""
+    mock_hub_entry.add_to_hass(hass)
+    device = _standard_charger(hass, ocpp_entry, "manual_cp")
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "evse"}
+    )
+    assert result["step_id"] == "discover_chargers"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"charger": "manual_cp"}
+    )
+
+    assert result["step_id"] == "charger_info"
+    marker, _validator = _field(result["data_schema"], FIELD_OCPP_DEVICE)
+    assert marker.description == {"suggested_value": device.id}
+
+
+async def test_picking_another_device_rewrites_the_charge_point_and_its_sensors(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry, mock_hub_entry: MockConfigEntry
+):
+    """Correcting a mis-matched charger moves every OCPP field at once.
+
+    The picked device decides the stored charge point id and the whole sensor
+    set — one derivation, the scanner's. Only CONF_CHARGER_ID stays behind: the
+    discovery unique_id was already claimed on it.
+    """
+    mock_hub_entry.add_to_hass(hass)
+    _standard_charger(hass, ocpp_entry, "alpha_cp")
+    bravo = _ocpp_device(hass, ocpp_entry, "bravo_cp")
+    for metric in (
+        "Current.Import",
+        "Current.Import.L1",
+        "Power.Offered",
+        "Power.Active.Import",
+    ):
+        _ocpp_sensor(hass, ocpp_entry, bravo, "bravo_cp", metric)
+
+    alpha = next(c for c in scan_ocpp_chargers(hass) if c["id"] == "alpha_cp")
+    result = await _start_discovery(hass, mock_hub_entry, alpha)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_NAME: "Alpha",
+            CONF_ENTITY_ID: "lj_alpha",
+            CONF_LOAD_PRIORITY: 1,
+            FIELD_OCPP_DEVICE: bravo.id,
+        },
+    )
+    assert result["step_id"] == "charger_current"
+
+    result = await _finish_charger_wizard(hass, result["flow_id"])
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    data = result["result"].data
+    # The charge point id, resolved off the picked device — not its UUID.
+    assert data[CONF_OCPP_DEVICE_ID] == "bravo_cp"
+    assert bravo.id not in data.values()
+    assert data[CONF_CHARGER_ID] == "alpha_cp"
+    assert data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID] == "sensor.bravo_cp_current_import"
+    assert (
+        data[CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID]
+        == "sensor.bravo_cp_current_import_l1"
+    )
+    assert data[CONF_EVSE_POWER_OFFERED_ENTITY_ID] == "sensor.bravo_cp_power_offered"
+    assert (
+        data[CONF_EVSE_POWER_IMPORT_ENTITY_ID]
+        == "sensor.bravo_cp_power_active_import"
+    )
+    # bravo is watts-only, so alpha's current_offered must not linger.
+    assert data[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID] is None
+    assert FIELD_OCPP_DEVICE not in data
+    assert FIELD_OCPP_DEVICE not in result["result"].options
+
+
+async def test_leaving_the_picker_alone_keeps_what_discovery_found(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry, mock_hub_entry: MockConfigEntry
+):
+    mock_hub_entry.add_to_hass(hass)
+    device = _standard_charger(hass, ocpp_entry, "keep_cp")
+    (charger,) = scan_ocpp_chargers(hass)
+
+    result = await _start_discovery(hass, mock_hub_entry, charger)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_NAME: "Keep",
+            CONF_ENTITY_ID: "lj_keep",
+            CONF_LOAD_PRIORITY: 1,
+            FIELD_OCPP_DEVICE: device.id,
+        },
+    )
+    result = await _finish_charger_wizard(hass, result["flow_id"])
+
+    data = result["result"].data
+    assert data[CONF_OCPP_DEVICE_ID] == "keep_cp"
+    assert data[CONF_CHARGER_ID] == "keep_cp"
+    assert data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID] == "sensor.keep_cp_current_import"
+    assert (
+        data[CONF_EVSE_CURRENT_OFFERED_ENTITY_ID] == "sensor.keep_cp_current_offered"
+    )
+
+
+async def test_picking_a_device_that_is_no_charger_re_shows_the_form(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry, mock_hub_entry: MockConfigEntry
+):
+    """A device with no usable OCPP sensors is refused on the field, not stored."""
+    mock_hub_entry.add_to_hass(hass)
+    _standard_charger(hass, ocpp_entry, "good_cp")
+    empty = _ocpp_device(hass, ocpp_entry, "empty_cp")
+    (charger,) = scan_ocpp_chargers(hass)
+
+    result = await _start_discovery(hass, mock_hub_entry, charger)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_NAME: "Good",
+            CONF_ENTITY_ID: "lj_good",
+            CONF_LOAD_PRIORITY: 1,
+            FIELD_OCPP_DEVICE: empty.id,
+        },
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "charger_info"
+    assert result["errors"] == {FIELD_OCPP_DEVICE: "ocpp_device_not_usable"}

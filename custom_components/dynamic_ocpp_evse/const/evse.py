@@ -29,6 +29,12 @@ CONF_CHARGER_L3_PHASE = "charger_l3_phase"
 # entities carry, and the device selector's integration filter.
 OCPP_INTEGRATION_DOMAIN = "ocpp"
 
+# The charger_info device picker's form key. Flow-only, never stored: the HA
+# device-registry UUID it hands back is resolved to CONF_OCPP_DEVICE_ID (the
+# OCPP charge point id) and to the charger's sensor entities before the entry
+# is written, because a UUID is not something an ocpp service can address.
+FIELD_OCPP_DEVICE = "ocpp_device"
+
 # OCPP integration entity suffixes for auto-discovery
 OCPP_ENTITY_SUFFIX_CURRENT_IMPORT = "_current_import"
 OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L1 = "_current_import_l1"

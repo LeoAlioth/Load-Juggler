@@ -317,11 +317,13 @@
                 "data": {
                     "name": "Charger name",
                     "entity_id": "Entity ID prefix",
-                    "charger_priority": "Priority (1 = highest)"
+                    "charger_priority": "Priority (1 = highest)",
+                    "ocpp_device": "OCPP charger device"
                 },
                 "data_description": {
                     "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.[prefix]_power).",
-                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes."
+                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "ocpp_device": "The device the OCPP integration created for this charger. Its charge point id and its current/power sensors are read from here — change it only if the wrong charger was matched."
                 }
             },
             "charger_current": {
@@ -390,6 +392,7 @@
             "no_hub_configured": "No hub configured. Please set up a Home Electrical Hub first.",
             "no_ocpp_chargers_found": "No OCPP chargers found. Make sure you have the OCPP integration installed and configured with at least one charger.",
             "charger_not_found": "The selected charger is no longer available. It may have been removed from the OCPP integration. Please try again.",
+            "ocpp_device_not_usable": "That device has no usable OCPP charger sensors. Pick the device the OCPP integration created for the charger — it needs a current import sensor plus a current offered or power offered sensor.",
             "no_members_selected": "Please select at least one load for this circuit group.",
             "no_loads_available": "No loads available on this hub. Add chargers or smart loads first.",
             "invalid_current": "Charge current values must be greater than zero.",
