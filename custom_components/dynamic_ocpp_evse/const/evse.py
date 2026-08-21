@@ -24,6 +24,11 @@ CONF_CHARGER_L1_PHASE = "charger_l1_phase"
 CONF_CHARGER_L2_PHASE = "charger_l2_phase"
 CONF_CHARGER_L3_PHASE = "charger_l3_phase"
 
+# The ocpp integration's own domain — the device-registry identifier domain it
+# stamps on every charge point ("ocpp", <charge point id>), the platform its
+# entities carry, and the device selector's integration filter.
+OCPP_INTEGRATION_DOMAIN = "ocpp"
+
 # OCPP integration entity suffixes for auto-discovery
 OCPP_ENTITY_SUFFIX_CURRENT_IMPORT = "_current_import"
 OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L1 = "_current_import_l1"

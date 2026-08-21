@@ -471,6 +471,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "id": discovery_info["charger_id"],
             "name": discovery_info["charger_name"],
             "device_id": discovery_info.get("device_id"),
+            # The HA device-registry UUID, for the charger_info device picker
+            # only — never stored, and never handed to an ocpp service.
+            "ha_device_id": discovery_info.get("ha_device_id"),
             "current_import_entity": discovery_info["current_import_entity"],
             "current_import_l1_entity": discovery_info.get("current_import_l1_entity"),
             "current_import_l2_entity": discovery_info.get("current_import_l2_entity"),

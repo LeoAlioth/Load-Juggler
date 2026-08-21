@@ -880,11 +880,12 @@ async def _discover_and_notify_chargers(hass: HomeAssistant, hub_entry_id: str):
 
     The scan itself is the config flow's own scanner, so an auto-discovered
     charger is described exactly like a manually added one: the OCPP charge
-    point id (the entity base name, NOT the HA device-registry UUID, which the
-    ocpp services cannot address), plus the full set of per-phase current and
-    power entities, and watts-only chargers (power_offered, no current_offered)
-    included. The whole dict is handed to the discovery flow, which stores
-    every key on the created entry.
+    point id (read off the device-registry identifier the ocpp integration
+    stamps, NOT the HA device-registry UUID, which the ocpp services cannot
+    address), plus the full set of per-phase current and power entities found
+    by device membership, and watts-only chargers (power_offered, no
+    current_offered) included. The whole dict is handed to the discovery flow,
+    which stores every key on the created entry.
     """
     # Imported here rather than at module scope: config_flow imports from this
     # package, and the flow module is only needed once a hub is set up.
