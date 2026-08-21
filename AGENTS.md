@@ -16,7 +16,7 @@ Load Juggler is a Home Assistant custom component for intelligent load managemen
 - Symmetric and asymmetric inverter support
 - Off-grid support (no grid CTs required — infers phases from inverter output)
 
-**Version 2.0** — disregard backwards compatibility. No migration processes needed.
+**Backwards compatibility** — stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 5); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API — keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
 
 **Bug tracking**: Open issues live in `dev/ISSUES.md`. Claude picks them up automatically at the start of each session.
 
