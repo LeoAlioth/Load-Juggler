@@ -45,9 +45,12 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   edit path; no reconfigure flow. Options menu: settings / overview / summary)
 │   ├── flow.py                    # LoadJugglerConfigFlow — the initial-setup step methods
 │   ├── options.py                 # LoadJugglerOptionsFlow — the "Configure" edit steps
-│   ├── schemas.py                 # SchemaBuilderMixin — every voluptuous schema builder (needs only self.hass)
+│   ├── schemas.py                 # Every voluptuous schema builder, as module functions — no handler
+│   │                              #   state; `hass` is a parameter only where a form offers entity selectors
 │   ├── pages.py                   # Overview / "How it decides" read-only page text builders
-│   └── helpers.py                 # Unit validation, priority ordering, OCPP discovery scan
+│   └── helpers.py                 # Everything both handlers share: unit validation, the optional-entity
+│                                  #   key groups and their normalizers, entity auto-detection, priority
+│                                  #   ordering, the OCPP discovery scan and capability probes, phase count
 ├── const/                         # Constants per area: common, hub, evse, plug, hot_water_tank, group,
 │                                  #   inverter, modes, power_station
 ├── engine/                        # HA → SiteContext bridge (reads HA states, drives the calculation)
