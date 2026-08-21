@@ -161,19 +161,28 @@ def _ensure_ha_stubs():
 
         config_entries.ConfigEntry = ConfigEntry
         sys.modules["homeassistant.config_entries"] = config_entries
-    if "homeassistant.helpers.entity_registry" not in sys.modules:
-        sys.modules["homeassistant.helpers.entity_registry"] = types.ModuleType(
-            "homeassistant.helpers.entity_registry"
-        )
+    # The registry accessors ocpp_discovery.py imports by name. Stubs, not
+    # fakes: nothing in the pure tier owns a registry, so a pure test that
+    # actually reaches one is a bug worth the AttributeError.
+    for registry in ("entity_registry", "device_registry"):
+        name = f"homeassistant.helpers.{registry}"
+        if name not in sys.modules:
+            module = types.ModuleType(name)
+            module.async_get = lambda hass: None
+            module.async_entries_for_device = lambda registry, device_id: []
+            sys.modules[name] = module
     if "homeassistant.util.dt" not in sys.modules:
         sys.modules["homeassistant.util.dt"] = types.ModuleType(
             "homeassistant.util.dt"
         )
+    if not hasattr(util, "slugify"):
+        util.slugify = lambda text, separator="_": text
 
     ha.config_entries = sys.modules["homeassistant.config_entries"]
     ha.helpers = helpers
     ha.util = util
     helpers.entity_registry = sys.modules["homeassistant.helpers.entity_registry"]
+    helpers.device_registry = sys.modules["homeassistant.helpers.device_registry"]
     util.dt = sys.modules["homeassistant.util.dt"]
 
 
@@ -268,9 +277,15 @@ def load_pure_modules(
         # package would fail. helpers.py and registry.py (the hub ↔ child
         # config-entry lookups hub_calculation.py imports at module level) ride
         # along for the same reason. The control modules need the same set.
+        # ocpp_discovery.py rides along for the same reason (engine/
+        # load_builders.py resolves the charger's connector-status sensor
+        # through it) and is loaded AFTER helpers.py, which it imports.
         _load_module_once(f"{PKG_COMP}.helpers", COMPONENT_DIR / "helpers.py")
         _load_module_once(f"{PKG_COMP}.units", COMPONENT_DIR / "units.py")
         _load_module_once(f"{PKG_COMP}.registry", COMPONENT_DIR / "registry.py")
+        _load_module_once(
+            f"{PKG_COMP}.ocpp_discovery", COMPONENT_DIR / "ocpp_discovery.py"
+        )
 
     engine_dir = COMPONENT_DIR / "engine"
     for mod in engine_modules:

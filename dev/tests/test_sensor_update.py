@@ -13,6 +13,7 @@ import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dynamic_ocpp_evse.const import (
@@ -3141,3 +3142,76 @@ async def test_the_soc_switch_appears_only_when_slots_are_configured(
         "BatteryChargeControlSwitch",
         "BatterySocControlSwitch",
     }
+
+
+# ── The connector-status sensor is resolved, not composed ──────────────
+
+
+def _renamed_status_sensor(hass, charge_point_id, object_id):
+    """An ocpp charge point whose status sensor was renamed by the user."""
+    ocpp_entry = MockConfigEntry(domain="ocpp", title="OCPP")
+    ocpp_entry.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=ocpp_entry.entry_id,
+        identifiers={("ocpp", charge_point_id)},
+        name=charge_point_id,
+    )
+    return (
+        er.async_get(hass)
+        .async_get_or_create(
+            "sensor",
+            "ocpp",
+            f"ocpp.{charge_point_id}.status_connector.sensor",
+            suggested_object_id=object_id,
+            original_name="Status Connector",
+            config_entry=ocpp_entry,
+            device_id=device.id,
+        )
+        .entity_id
+    )
+
+
+async def test_engine_reads_the_resolved_connector_status_entity(
+    hass, hub_entry, charger_entry, setup_domain_data
+):
+    """The whole point of the fix, end to end through the load builder.
+
+    The composed ``sensor.test_charger_status_connector`` exists and says
+    "Available"; the charger's REAL status sensor was renamed and says
+    "Charging". Reading the wrong one strands a charging car at 0 A.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.load_builders import (
+        _build_evse_load,
+    )
+
+    charger_entry.add_to_hass(hass)
+    renamed = _renamed_status_sensor(hass, "ocpp_device_1", "garage_wallbox_state")
+    hass.states.async_set(renamed, "Charging")
+    hass.states.async_set("sensor.test_charger_status_connector", "Available")
+
+    load = _build_evse_load(hass, charger_entry, 230, "test_charger", 1)
+
+    assert load.connector_status == "Charging"
+
+    # And the entity the command layer checks (control/ocpp.py, compliance)
+    # is the same one, off the same cached resolution.
+    sensor = LoadJugglerDeviceSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
+    )
+    assert sensor._connector_status_entity == renamed == "sensor.garage_wallbox_state"
+
+
+async def test_composed_status_name_still_used_without_a_registry_entry(
+    hass, hub_entry, charger_entry, setup_domain_data
+):
+    """Template-sensor sites keep working — nothing to classify, so guess."""
+    from custom_components.dynamic_ocpp_evse.engine.load_builders import (
+        _build_evse_load,
+    )
+
+    charger_entry.add_to_hass(hass)
+    hass.states.async_set("sensor.test_charger_status_connector", "SuspendedEV")
+
+    load = _build_evse_load(hass, charger_entry, 230, "test_charger", 1)
+
+    assert load.connector_status == "SuspendedEV"

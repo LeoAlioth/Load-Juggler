@@ -22,6 +22,14 @@ sub-devices, discoverable at all.
 Moved here verbatim from ``config_flow/helpers.py``, where it could only be
 reached by the flows.
 """
+
+# PEP 604 unions (``str | None``) appear in this module's signatures, and
+# engine/load_builders.py imports it, so it has to load on the Python 3.9
+# interpreters the standalone test runners use. Nothing here evaluates
+# annotations at runtime, so deferring them is enough (same arrangement as
+# engine/load_builders.py and engine/auto_detect.py).
+from __future__ import annotations
+
 import logging
 
 from homeassistant.helpers.device_registry import async_get as async_get_device_registry
@@ -31,7 +39,10 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.util import slugify
 
 from .const import (
+    CONF_CHARGER_ID,
+    CONF_ENTITY_ID,
     CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
+    CONF_OCPP_DEVICE_ID,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
@@ -42,9 +53,10 @@ from .const import (
     OCPP_ENTITY_SUFFIX_CURRENT_OFFERED,
     OCPP_ENTITY_SUFFIX_POWER_IMPORT,
     OCPP_ENTITY_SUFFIX_POWER_OFFERED,
+    OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR,
     OCPP_INTEGRATION_DOMAIN,
 )
-from .helpers import prettify_name
+from .helpers import get_entry_value, prettify_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,9 +78,24 @@ _OCPP_PAYLOAD_BY_SUFFIX = {
 _OCPP_PAYLOAD_BY_METRIC = {
     suffix[1:]: payload_key for suffix, payload_key in _OCPP_PAYLOAD_BY_SUFFIX.items()
 }
-# Longest suffix first: "_current_import" must never claim an "_l1" sensor.
-_OCPP_SUFFIXES = sorted(_OCPP_PAYLOAD_BY_SUFFIX, key=len, reverse=True)
 _OCPP_ENTITY_KEYS = tuple(_OCPP_PAYLOAD_BY_SUFFIX.values())
+
+# The connector-status sensor is classified with the metrics above but is
+# deliberately NOT one of _OCPP_ENTITY_KEYS: it never becomes a stored entry
+# key, it is resolved from the registries at every setup instead (see
+# ``ocpp_connector_status_entity``). So the discovery payload contract — and
+# with it every stored charger entry — is exactly what it was.
+_STATUS_GROUP_KEY = "status_connector_entity"
+_OCPP_GROUP_KEY_BY_METRIC = {
+    **_OCPP_PAYLOAD_BY_METRIC,
+    OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR[1:]: _STATUS_GROUP_KEY,
+}
+# Longest suffix first: "_current_import" must never claim an "_l1" sensor.
+_OCPP_SUFFIXES = sorted(
+    (*_OCPP_PAYLOAD_BY_SUFFIX, OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR),
+    key=len,
+    reverse=True,
+)
 
 # The ocpp integration names a connector sub-device "<charge point id>-conn<n>".
 _OCPP_CONNECTOR_MARK = "-conn"
@@ -126,10 +153,10 @@ def _ocpp_metric_of(entity) -> str | None:
        (template sensors mirroring a charger) keep being discovered.
     """
     parsed = _split_ocpp_unique_id(entity.unique_id)
-    if parsed and parsed[1] in _OCPP_PAYLOAD_BY_METRIC:
+    if parsed and parsed[1] in _OCPP_GROUP_KEY_BY_METRIC:
         return parsed[1]
     from_name = slugify(entity.original_name or "")
-    if from_name in _OCPP_PAYLOAD_BY_METRIC:
+    if from_name in _OCPP_GROUP_KEY_BY_METRIC:
         return from_name
     for suffix in _OCPP_SUFFIXES:
         if entity.entity_id.endswith(suffix):
@@ -147,8 +174,9 @@ def _ocpp_charger_candidates(hass) -> dict[str, dict]:
     sensor wins over a connector's, and the lowest connector number wins
     among connectors.
 
-    Returns ``{charge point id: {"entities": {payload key: entity_id},
-    "name": str | None, "ha_device_id": str | None}}``.
+    Returns ``{charge point id: {"entities": {group key: entity_id},
+    "name": str | None, "ha_device_id": str | None}}``. The group keys are the
+    payload keys plus _STATUS_GROUP_KEY, which only the runtime resolver reads.
     """
     entity_registry = async_get_entity_registry(hass)
     device_registry = async_get_device_registry(hass)
@@ -193,7 +221,7 @@ def _ocpp_charger_candidates(hass) -> dict[str, dict]:
         )
         # Rank 0 is the charge point itself, 1..n its connectors.
         rank = connector or 0
-        payload_key = _OCPP_PAYLOAD_BY_METRIC[metric]
+        payload_key = _OCPP_GROUP_KEY_BY_METRIC[metric]
         if rank < group["ranks"].get(payload_key, rank + 1):
             group["entities"][payload_key] = entity_id
             group["ranks"][payload_key] = rank
@@ -320,3 +348,67 @@ def ocpp_charger_for_device(hass, ha_device_id: str | None) -> dict | None:
 
     payload = _ocpp_charger_payload(charge_point_id, candidates[charge_point_id])
     return payload if _ocpp_charger_is_usable(payload) else None
+
+
+# ── the connector-status sensor, for the runtime ───────────────────────
+#
+# Runtime cache key inside a load's ``hass.data[DOMAIN]["loads"][entry_id]``
+# bucket. That bucket is created when the load entry is set up and dropped when
+# it is unloaded, which is exactly the invalidation this needs: the resolution
+# is a registry read, and the registry is loaded from storage before any config
+# entry sets up, so one resolution per setup is always made against a complete
+# registry. Editing the charger (or reloading the entry, or restarting HA)
+# re-resolves; nothing scans the registry per calculation cycle.
+_RT_STATUS_ENTITY = "_ocpp_status_entity"
+
+
+def _ocpp_status_entity_for(hass, charge_point_id: str | None) -> str | None:
+    """This charge point's connector-status sensor, or None if it has none.
+
+    Same classification and the same precedence as every other metric: the
+    charger-level sensor outranks a connector's, and the lowest connector
+    number wins among connectors — so on a multi-connector charger the status
+    comes from the very connector whose current sensors the charger is
+    configured with.
+    """
+    if not charge_point_id:
+        return None
+    group = _ocpp_charger_candidates(hass).get(charge_point_id)
+    if group is None:
+        return None
+    return group["entities"].get(_STATUS_GROUP_KEY)
+
+
+def ocpp_connector_status_entity(hass, entry) -> str:
+    """The connector-status sensor of the charger behind one load entry.
+
+    Resolved from the registries by metric classification rather than composed
+    as ``sensor.{charge point id}_status_connector``: that string is wrong for
+    a renamed status entity, and wrong on a multi-connector charger, where the
+    real sensor is ``sensor.{cpid}_connector_{n}_status_connector``. Nothing
+    new is stored — an existing entry is fixed the moment it is loaded again.
+
+    Falls back to the legacy composed name when classification finds nothing,
+    so a site whose "OCPP" sensors are template sensors with no registry entry
+    keeps working exactly as before. Resolved once per entry setup and cached
+    (see _RT_STATUS_ENTITY).
+    """
+    load_rt = (hass.data.get(DOMAIN, {}).get("loads") or {}).get(entry.entry_id)
+    if load_rt is not None and _RT_STATUS_ENTITY in load_rt:
+        return load_rt[_RT_STATUS_ENTITY]
+
+    # The canonical charge point id for classification is the one every OCPP
+    # service call uses (options-first, so an options edit is honoured); the
+    # legacy fallback keeps composing off CONF_CHARGER_ID, byte-for-byte what
+    # this used to be, so no working site can shift underneath itself.
+    legacy_id = entry.data.get(CONF_CHARGER_ID) or entry.data.get(CONF_ENTITY_ID)
+    charge_point_id = get_entry_value(entry, CONF_OCPP_DEVICE_ID, None) or legacy_id
+    resolved = _ocpp_status_entity_for(hass, charge_point_id)
+    if resolved is None and charge_point_id != legacy_id:
+        resolved = _ocpp_status_entity_for(hass, legacy_id)
+    if resolved is None:
+        resolved = f"sensor.{legacy_id}{OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR}"
+
+    if load_rt is not None:
+        load_rt[_RT_STATUS_ENTITY] = resolved
+    return resolved

@@ -24,7 +24,6 @@ import time
 
 from ..calculations import LoadContext, CircuitGroup
 from ..const import (
-    CONF_CHARGER_ID,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
@@ -92,6 +91,7 @@ from ..const import (
     resolve_tank_mode_priority,
 )
 from ..helpers import get_entry_value
+from ..ocpp_discovery import ocpp_connector_status_entity
 from ..registry import get_loads_for_hub, get_groups_for_hub
 from .. import units
 from .readers import (
@@ -132,11 +132,11 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
 
     phases = int(get_entry_value(entry, CONF_PHASES, 3) or 3)
 
-    # Get OCPP device ID for sensor lookups (different from Load Juggler entity_id)
-    ocpp_device_id = entry.data.get(CONF_CHARGER_ID, load_entity_id)
-
-    # Read connector status from OCPP entity
-    connector_status_entity = f"sensor.{ocpp_device_id}_status_connector"
+    # Read connector status from the charger's own status sensor — resolved
+    # from the registries by metric classification (and cached per entry setup),
+    # never composed from the charge point id: that guess is wrong for a renamed
+    # status entity and on every multi-connector charger.
+    connector_status_entity = ocpp_connector_status_entity(hass, entry)
     connector_status_state = hass.states.get(connector_status_entity)
     connector_status = (
         connector_status_state.state if connector_status_state else "Unknown"

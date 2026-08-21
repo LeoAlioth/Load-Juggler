@@ -19,6 +19,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dynamic_ocpp_evse.ocpp_discovery import (
     ocpp_charger_for_device,
+    ocpp_connector_status_entity,
     scan_ocpp_chargers,
 )
 from custom_components.dynamic_ocpp_evse.const import (
@@ -645,3 +646,205 @@ async def test_picking_a_device_that_is_no_charger_re_shows_the_form(
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger_info"
     assert result["errors"] == {FIELD_OCPP_DEVICE: "ocpp_device_not_usable"}
+
+
+# ── the connector-status sensor, resolved for the runtime ──────────────
+
+
+def _lj_charger(hass, *, charger_id, ocpp_device_id=None, options=None, runtime=True):
+    """A stored Load Juggler EVSE entry, plus its runtime bucket.
+
+    ``charger_id`` is CONF_CHARGER_ID — the id the legacy name guess composed
+    off, kept for exactly that fallback. ``ocpp_device_id`` overrides the
+    canonical charge point id the resolver classifies by (options when passed
+    inside ``options``, mirroring an options-flow edit).
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_NAME: "Charger",
+            CONF_ENTITY_ID: "lj_charger",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_CHARGER_ID: charger_id,
+            CONF_OCPP_DEVICE_ID: ocpp_device_id or charger_id,
+        },
+        options=options or {},
+    )
+    entry.add_to_hass(hass)
+    if runtime:
+        hass.data.setdefault(DOMAIN, {}).setdefault("loads", {})[entry.entry_id] = {}
+    return entry
+
+
+async def test_status_entity_resolves_a_renamed_status_sensor(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry
+):
+    """The bug: a renamed status entity made the composed name point at nothing.
+
+    ``sensor.renamed_cp_status_connector`` does not exist here — the real
+    sensor is ``sensor.garage_state``, and only the registry knows that.
+    """
+    device = _ocpp_device(hass, ocpp_entry, "renamed_cp")
+    for metric in ("Current.Import", "Current.Offered"):
+        _ocpp_sensor(hass, ocpp_entry, device, "renamed_cp", metric)
+    status = _ocpp_sensor(
+        hass, ocpp_entry, device, "renamed_cp", "Status.Connector",
+        object_id="garage_state",
+    )
+    entry = _lj_charger(hass, charger_id="renamed_cp")
+
+    resolved = ocpp_connector_status_entity(hass, entry)
+
+    assert resolved == status == "sensor.garage_state"
+    assert resolved != "sensor.renamed_cp_status_connector"
+
+
+async def test_status_entity_follows_the_connector_the_charger_is_built_from(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry
+):
+    """Multi-connector: the status must be the SAME connector's as the draw.
+
+    The composed name (``sensor.abb_terra_status_connector``) exists on no
+    device at all here — every status sensor is per connector.
+    """
+    charge_point = _ocpp_device(hass, ocpp_entry, "abb_terra")
+    conn1 = _ocpp_device(hass, ocpp_entry, "abb_terra", connector=1)
+    conn2 = _ocpp_device(hass, ocpp_entry, "abb_terra", connector=2)
+    _ocpp_sensor(hass, ocpp_entry, charge_point, "abb_terra", "Current.Offered")
+    first_import = _ocpp_sensor(
+        hass, ocpp_entry, conn1, "abb_terra", "Current.Import", connector=1
+    )
+    first_status = _ocpp_sensor(
+        hass, ocpp_entry, conn1, "abb_terra", "Status.Connector", connector=1
+    )
+    second_status = _ocpp_sensor(
+        hass, ocpp_entry, conn2, "abb_terra", "Status.Connector", connector=2
+    )
+    _ocpp_sensor(hass, ocpp_entry, conn2, "abb_terra", "Current.Import", connector=2)
+    entry = _lj_charger(hass, charger_id="abb_terra")
+
+    resolved = ocpp_connector_status_entity(hass, entry)
+
+    # Lowest connector wins, exactly like every other metric — so the status
+    # belongs to the connector whose current_import the scan configured.
+    (charger,) = scan_ocpp_chargers(hass)
+    assert charger["current_import_entity"] == first_import
+    assert resolved == first_status == "sensor.abb_terra_connector_1_status_connector"
+    assert resolved != second_status
+    assert resolved != "sensor.abb_terra_status_connector"
+
+
+async def test_charger_level_status_outranks_a_connector_status(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry
+):
+    """Same precedence as the payload metrics: the charge point beats rank 1."""
+    charge_point = _ocpp_device(hass, ocpp_entry, "both_cp")
+    conn1 = _ocpp_device(hass, ocpp_entry, "both_cp", connector=1)
+    _ocpp_sensor(hass, ocpp_entry, charge_point, "both_cp", "Current.Offered")
+    _ocpp_sensor(hass, ocpp_entry, conn1, "both_cp", "Current.Import", connector=1)
+    top = _ocpp_sensor(
+        hass, ocpp_entry, charge_point, "both_cp", "Status.Connector",
+        object_id="both_cp_master_state",
+    )
+    below = _ocpp_sensor(
+        hass, ocpp_entry, conn1, "both_cp", "Status.Connector", connector=1
+    )
+    entry = _lj_charger(hass, charger_id="both_cp")
+
+    assert ocpp_connector_status_entity(hass, entry) == top
+    assert top != below
+
+
+async def test_status_entity_follows_an_options_edited_charge_point(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry
+):
+    """Re-pointing the charger in options moves its status sensor too."""
+    _standard_charger(hass, ocpp_entry, "old_cp", metrics=("Status.Connector",))
+    moved = _ocpp_device(hass, ocpp_entry, "new_cp")
+    status = _ocpp_sensor(
+        hass, ocpp_entry, moved, "new_cp", "Status.Connector", object_id="new_state"
+    )
+    entry = _lj_charger(
+        hass, charger_id="old_cp", options={CONF_OCPP_DEVICE_ID: "new_cp"}
+    )
+
+    assert ocpp_connector_status_entity(hass, entry) == status
+
+
+async def test_status_entity_keeps_the_standard_single_connector_name(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry
+):
+    """No regression for the ordinary charger: same entity as the old guess."""
+    device = _ocpp_device(hass, ocpp_entry, "plain_cp")
+    for metric in ("Current.Import", "Current.Offered", "Status.Connector"):
+        _ocpp_sensor(hass, ocpp_entry, device, "plain_cp", metric)
+    entry = _lj_charger(hass, charger_id="plain_cp")
+
+    assert (
+        ocpp_connector_status_entity(hass, entry)
+        == "sensor.plain_cp_status_connector"
+    )
+
+
+async def test_status_entity_falls_back_to_the_composed_name(
+    hass: HomeAssistant
+):
+    """Nothing classifiable in the registry — today's working sites must hold.
+
+    An OCPP-shaped template sensor that only exists as a state (no registry
+    entry at all) is the case the composed name still has to cover.
+    """
+    entry = _lj_charger(hass, charger_id="tpl_cp")
+
+    assert (
+        ocpp_connector_status_entity(hass, entry)
+        == "sensor.tpl_cp_status_connector"
+    )
+
+
+async def test_status_sensor_never_enters_the_stored_payload(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry
+):
+    """Classifying it must not add a stored key — no migration, no new field."""
+    _standard_charger(
+        hass,
+        ocpp_entry,
+        "quiet_cp",
+        metrics=("Current.Import", "Current.Offered", "Status.Connector"),
+    )
+
+    (charger,) = scan_ocpp_chargers(hass)
+
+    assert set(charger) == PAYLOAD_KEYS
+    assert not any(
+        isinstance(value, str) and value.endswith("_status_connector")
+        for value in charger.values()
+    )
+
+
+async def test_status_entity_is_resolved_once_per_setup(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry
+):
+    """Cached in the load's runtime bucket — the engine cannot scan per cycle."""
+    device = _ocpp_device(hass, ocpp_entry, "cache_cp")
+    status = _ocpp_sensor(
+        hass, ocpp_entry, device, "cache_cp", "Status.Connector",
+        object_id="cache_state",
+    )
+    entry = _lj_charger(hass, charger_id="cache_cp")
+
+    assert ocpp_connector_status_entity(hass, entry) == status
+    runtime = hass.data[DOMAIN]["loads"][entry.entry_id]
+    assert runtime["_ocpp_status_entity"] == status
+
+    # The registry entry disappearing does NOT re-scan: the cache is what the
+    # cycle reads, and it is dropped when the entry is unloaded.
+    er.async_get(hass).async_remove(status)
+    assert ocpp_connector_status_entity(hass, entry) == status
+
+    # A fresh bucket (i.e. the entry set up again) resolves from scratch.
+    hass.data[DOMAIN]["loads"][entry.entry_id] = {}
+    assert (
+        ocpp_connector_status_entity(hass, entry)
+        == "sensor.cache_cp_status_connector"
+    )
