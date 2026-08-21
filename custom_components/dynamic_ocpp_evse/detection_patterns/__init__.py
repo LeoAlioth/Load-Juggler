@@ -57,7 +57,24 @@ def _collect(attr: str) -> list:
     return [p for brand in _BRANDS for p in getattr(brand, attr, [])]
 
 
-PHASE_PATTERNS = _collect("GRID_CT")
+def _power_first(pattern_sets: list) -> list:
+    """Order watt-based pattern sets ahead of amp-based ones.
+
+    A grid CT's POWER entity is signed — negative while exporting — but the
+    CURRENT entity from the same meter is very often magnitude-only. Picking
+    the latter makes export structurally invisible: the export term is always
+    zero, so grid-side Excess can never trigger and exported power is counted
+    as household consumption. Neither is detectable at config time, which is
+    why the preference belongs here rather than in a warning.
+
+    A stable sort, so brand priority still decides within each group and a
+    current-only meter is still detected — just after every power option has
+    been ruled out.
+    """
+    return sorted(pattern_sets, key=lambda p: 0 if p.get("unit") == "W" else 1)
+
+
+PHASE_PATTERNS = _power_first(_collect("GRID_CT"))
 INVERTER_OUTPUT_PATTERNS = _collect("INVERTER_OUTPUT")
 BATTERY_SOC_PATTERNS = _collect("BATTERY_SOC")
 BATTERY_POWER_PATTERNS = _collect("BATTERY_POWER")

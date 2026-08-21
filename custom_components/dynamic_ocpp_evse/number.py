@@ -6,17 +6,20 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from .entity_mixins import HubEntityMixin, ChargerEntityMixin
+from .entities.mixins import HubEntityMixin, LoadEntityMixin
 from .const import (
+    DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     CONF_NAME,
     CONF_ENTITY_ID,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
     CONF_PLUG_POWER_RATING,
     DEFAULT_PLUG_POWER_RATING,
+    CONF_HEATING_ELEMENT_POWER,
+    DEFAULT_HEATING_ELEMENT_POWER,
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_BATTERY_SOC_MIN,
@@ -26,6 +29,23 @@ from .const import (
     CONF_DEVICE_TYPE,
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
+    DEVICE_TYPE_HOT_WATER_TANK,
+    DEVICE_TYPE_POWER_STATION,
+    CONF_STATION_MIN_CHARGE_POWER,
+    CONF_STATION_MAX_CHARGE_POWER,
+    CONF_STATION_NORMAL_RESERVE,
+    CONF_STATION_STORM_RESERVE,
+    DEFAULT_STATION_MIN_CHARGE_POWER,
+    DEFAULT_STATION_MAX_CHARGE_POWER,
+    DEFAULT_STATION_NORMAL_RESERVE,
+    DEFAULT_STATION_STORM_RESERVE,
+    STATION_CHARGE_POWER_STEP,
+    CONF_TANK_AWAY_TEMPERATURE,
+    CONF_TANK_NORMAL_TEMPERATURE,
+    CONF_TANK_BOOST_TEMPERATURE,
+    DEFAULT_TANK_AWAY_TEMPERATURE,
+    DEFAULT_TANK_NORMAL_TEMPERATURE,
+    DEFAULT_TANK_BOOST_TEMPERATURE,
     CONF_ENABLE_MAX_IMPORT_POWER,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_MAIN_BREAKER_RATING,
@@ -35,7 +55,7 @@ from .const import (
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
 )
-from .helpers import get_entry_value
+from .helpers import get_entry_value, hub_has_battery
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,10 +69,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     entities = []
 
     if entry_type == ENTRY_TYPE_HUB:
-        # Check if battery is configured
-        battery_soc_entity = get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID)
-        battery_power_entity = get_entry_value(config_entry, CONF_BATTERY_POWER_ENTITY_ID)
-        has_battery = bool(battery_soc_entity or battery_power_entity)
+        # Any battery on the fleet (hub legacy fields or an inverter entry)
+        has_battery = hub_has_battery(hass, config_entry)
 
         # Always create Power Buffer (useful even without battery)
         entities.append(PowerBufferSlider(hass, config_entry, name, entity_id))
@@ -78,16 +96,65 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
         _LOGGER.info(f"Setting up hub number entities: {[entity.unique_id for entity in entities]}")
 
-    elif entry_type == ENTRY_TYPE_CHARGER:
+    elif entry_type == ENTRY_TYPE_LOAD:
         device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         if device_type == DEVICE_TYPE_PLUG:
-            entities = [PlugDevicePowerSlider(hass, config_entry, name, entity_id)]
+            entities = [
+                LoadPowerSlider(
+                    hass, config_entry, name, entity_id, "Device Power",
+                    CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING,
+                )
+            ]
+        elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
+            entities = [
+                TankTemperatureSlider(
+                    hass, config_entry, name, entity_id, "away",
+                    CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE, "Away",
+                ),
+                TankTemperatureSlider(
+                    hass, config_entry, name, entity_id, "normal",
+                    CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE,
+                    "Normal",
+                ),
+                TankTemperatureSlider(
+                    hass, config_entry, name, entity_id, "boost",
+                    CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE,
+                    "Boost",
+                ),
+                LoadPowerSlider(
+                    hass, config_entry, name, entity_id, "Element Power",
+                    CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER,
+                ),
+            ]
+        elif device_type == DEVICE_TYPE_POWER_STATION:
+            entities = [
+                StationChargePowerSlider(
+                    hass, config_entry, name, entity_id, "min",
+                    CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER,
+                    "Minimum Charge Power",
+                ),
+                StationChargePowerSlider(
+                    hass, config_entry, name, entity_id, "max",
+                    CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER,
+                    "Maximum Charge Power",
+                ),
+                StationReserveSlider(
+                    hass, config_entry, name, entity_id, "normal",
+                    CONF_STATION_NORMAL_RESERVE, DEFAULT_STATION_NORMAL_RESERVE,
+                    "Normal Reserve",
+                ),
+                StationReserveSlider(
+                    hass, config_entry, name, entity_id, "storm",
+                    CONF_STATION_STORM_RESERVE, DEFAULT_STATION_STORM_RESERVE,
+                    "Storm Reserve",
+                ),
+            ]
         else:
             entities = [
                 EVSEMinCurrentSlider(hass, config_entry, name, entity_id),
                 EVSEMaxCurrentSlider(hass, config_entry, name, entity_id),
             ]
-        _LOGGER.info(f"Setting up charger number entities: {[entity.unique_id for entity in entities]}")
+        _LOGGER.info(f"Setting up load number entities: {[entity.unique_id for entity in entities]}")
 
     else:
         _LOGGER.debug("Skipping number setup for unknown entry type: %s", config_entry.title)
@@ -96,13 +163,84 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     async_add_entities(entities)
 
 
-# ==================== CHARGER NUMBER ENTITIES ====================
+# ==================== LOAD NUMBER ENTITIES ====================
 
-class EVSEMinCurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
-    """Slider for minimum current (charger-level)."""
+
+class _EVSECurrentSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
+    """Shared base for the paired EVSE Min/Max Current sliders.
+
+    The two sliders bound the same interval from opposite ends, and the engine
+    trusts that interval: ``min_current > max_current`` makes every permit
+    nonsensical (allocation floors above its own ceiling). Neither slider can
+    see the other's HA state cheaply, but both publish into the same
+    hass.data[DOMAIN]["loads"][entry_id] bucket the engine reads, so that
+    bucket is the cross-check (issue #38).
+
+    Behavior on a crossing set: the value being SET is clamped to the sibling's
+    current value; the sibling is never moved. Rationale — the alternative
+    (pushing the sibling along) silently rewrites a second entity the user did
+    not touch, and would let one drag reconfigure the whole range. Clamping is
+    also what the widget already does at the native_min/native_max ends, so the
+    slider simply refuses to travel past its partner.
+    """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _charger_data_key = "min_current"
+
+    # Subclasses set the sibling's bucket key and which side it bounds.
+    _sibling_data_key: str = None
+    _sibling_is_upper_bound: bool = True
+
+    def _sibling_value(self):
+        """The sibling slider's last published value, or None if not yet set."""
+        load_data = (
+            self.hass.data.get(DOMAIN, {})
+            .get("loads", {})
+            .get(self.config_entry.entry_id)
+        )
+        if not load_data:
+            return None
+        value = load_data.get(self._sibling_data_key)
+        return value if isinstance(value, (int, float)) else None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._restore_and_publish_number()
+
+    async def async_set_native_value(self, value: float) -> None:
+        value = max(
+            self._attr_native_min_value,
+            min(
+                self._attr_native_max_value,
+                round(value / self._attr_native_step) * self._attr_native_step,
+            ),
+        )
+        sibling = self._sibling_value()
+        if sibling is not None:
+            crossed = (
+                value > sibling if self._sibling_is_upper_bound else value < sibling
+            )
+            if crossed:
+                _LOGGER.info(
+                    "%s: %.1fA would %s %s (%.1fA) — clamped to %.1fA",
+                    self._attr_name,
+                    value,
+                    "exceed" if self._sibling_is_upper_bound else "fall below",
+                    self._sibling_data_key,
+                    sibling,
+                    sibling,
+                )
+                value = sibling
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        self._write_to_load_data(value)
+
+
+class EVSEMinCurrentSlider(_EVSECurrentSlider):
+    """Slider for minimum current (load-level)."""
+
+    _load_data_key = "min_current"
+    _sibling_data_key = "max_current"
+    _sibling_is_upper_bound = True
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -116,22 +254,13 @@ class EVSEMinCurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
 
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        await self._restore_and_publish_number()
 
-    async def async_set_native_value(self, value: float) -> None:
-        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
-        self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_charger_data(value)
+class EVSEMaxCurrentSlider(_EVSECurrentSlider):
+    """Slider for maximum current (load-level)."""
 
-
-class EVSEMaxCurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
-    """Slider for maximum current (charger-level)."""
-
-    _attr_entity_category = EntityCategory.CONFIG
-    _charger_data_key = "max_current"
+    _load_data_key = "max_current"
+    _sibling_data_key = "min_current"
+    _sibling_is_upper_bound = False
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -145,35 +274,36 @@ class EVSEMaxCurrentSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         self._attr_native_unit_of_measurement = "A"
         self._attr_icon = "mdi:current-ac"
 
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        await self._restore_and_publish_number()
 
-    async def async_set_native_value(self, value: float) -> None:
-        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
-        self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_charger_data(value)
+class LoadPowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
+    """Slider for a binary load's power rating in Watts (smart plug or tank).
 
-
-class PlugDevicePowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
-    """Slider for device power rating in Watts (smart load devices)."""
+    Holds the load's set power. When a power-measurement entity is configured
+    the engine overwrites ``device_power`` with the live measured draw each
+    cycle, so this slider both seeds and then displays the device's real power.
+    """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _charger_data_key = "device_power"
+    _load_data_key = "device_power"
 
-    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
+    def __init__(
+        self, hass: HomeAssistant, config_entry: ConfigEntry, name: str,
+        entity_id: str, label: str, conf_key: str, default: float,
+    ):
         self.hass = hass
         self.config_entry = config_entry
-        self._attr_name = f"{name} Device Power"
+        self._attr_name = f"{name} {label}"
         self._attr_unique_id = f"{entity_id}_device_power"
-        power_rating = get_entry_value(config_entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
-        self._attr_native_min_value = 100
-        self._attr_native_max_value = power_rating
-        self._attr_native_step = 100
-        self._attr_native_value = power_rating
+        default_power = get_entry_value(config_entry, conf_key, default)
+        # A managed load can be anything from a small pump to a 3-phase
+        # heater, so the range is wide and the step fine — the value is
+        # mostly auto-learned from the power-measurement entity anyway.
+        self._attr_native_min_value = 10
+        self._attr_native_max_value = max(default_power, 30000)
+        self._attr_native_step = 10
+        self._attr_native_value = default_power
         self._attr_native_unit_of_measurement = "W"
-        self._attr_icon = "mdi:power-plug"
+        self._attr_icon = "mdi:flash"
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -183,7 +313,137 @@ class PlugDevicePowerSlider(ChargerEntityMixin, NumberEntity, RestoreEntity):
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
         self.async_write_ha_state()
-        self._write_to_charger_data(value)
+        self._write_to_load_data(value)
+
+    async def async_update(self) -> None:
+        """Reflect the value the engine learned from the power-measurement entity."""
+        load_data = (
+            self.hass.data.get(DOMAIN, {})
+            .get("loads", {})
+            .get(self.config_entry.entry_id, {})
+        )
+        learned = load_data.get("device_power")
+        if learned is not None:
+            self._attr_native_value = learned
+
+
+class TankTemperatureSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
+    """Slider for a hot water tank setpoint temperature (away / normal / boost)."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self, hass: HomeAssistant, config_entry: ConfigEntry, name: str,
+        entity_id: str, kind: str, conf_key: str, default: float, label: str,
+    ):
+        self.hass = hass
+        self.config_entry = config_entry
+        # Instance-level data key — matches what hot_water_tank.py reads back.
+        self._load_data_key = f"tank_{kind}_temperature"
+        self._attr_name = f"{name} {label} Temperature"
+        self._attr_unique_id = f"{entity_id}_tank_{kind}_temperature"
+        self._attr_native_min_value = 10
+        self._attr_native_max_value = 90
+        self._attr_native_step = 1
+        self._attr_native_value = get_entry_value(config_entry, conf_key, default)
+        self._attr_native_unit_of_measurement = "°C"
+        self._attr_icon = "mdi:thermometer-water"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._restore_and_publish_number()
+
+    async def async_set_native_value(self, value: float) -> None:
+        value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        self._write_to_load_data(value)
+
+
+class StationChargePowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
+    """Slider for a power station's min/max charge power in Watts.
+
+    These bound what the engine may allocate, deliberately *configured* rather
+    than read from the device — a station whose hardware accepts 2400 W can be
+    held to less. The engine reads them back from the runtime dict, so a change
+    takes effect on the next cycle without a reconfigure.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self, hass: HomeAssistant, config_entry: ConfigEntry, name: str,
+        entity_id: str, kind: str, conf_key: str, default: float, label: str,
+    ):
+        self.hass = hass
+        self.config_entry = config_entry
+        # Instance-level key — matches what power_station.py reads back.
+        self._load_data_key = f"station_{kind}_charge_power"
+        self._attr_name = f"{name} {label}"
+        self._attr_unique_id = f"{entity_id}_station_{kind}_charge_power"
+        self._attr_native_min_value = 0
+        self._attr_native_max_value = 5000
+        self._attr_native_step = STATION_CHARGE_POWER_STEP
+        self._attr_native_value = get_entry_value(config_entry, conf_key, default)
+        self._attr_native_unit_of_measurement = "W"
+        self._attr_icon = "mdi:lightning-bolt-outline"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._restore_and_publish_number()
+
+    async def async_set_native_value(self, value: float) -> None:
+        step = self._attr_native_step
+        value = max(
+            self._attr_native_min_value,
+            min(self._attr_native_max_value, round(value / step) * step),
+        )
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        self._write_to_load_data(value)
+
+
+class StationReserveSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
+    """Slider for a power station's normal or storm backup reserve (%).
+
+    The reserve is the station's on/off gate: below its current battery level it
+    stops drawing from the wall and serves its own loads from its battery. The
+    normal value is what it falls back to whenever there is nothing to absorb.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self, hass: HomeAssistant, config_entry: ConfigEntry, name: str,
+        entity_id: str, kind: str, conf_key: str, default: float, label: str,
+    ):
+        self.hass = hass
+        self.config_entry = config_entry
+        self._load_data_key = (
+            "station_normal_reserve" if kind == "normal"
+            else "station_storm_reserve_level"
+        )
+        self._attr_name = f"{name} {label}"
+        self._attr_unique_id = f"{entity_id}_station_{kind}_reserve"
+        self._attr_native_min_value = 0
+        self._attr_native_max_value = 100
+        self._attr_native_step = 1
+        self._attr_native_value = get_entry_value(config_entry, conf_key, default)
+        self._attr_native_unit_of_measurement = "%"
+        self._attr_icon = "mdi:battery-charging-30"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        await self._restore_and_publish_number()
+
+    async def async_set_native_value(self, value: float) -> None:
+        value = max(
+            self._attr_native_min_value,
+            min(self._attr_native_max_value, round(value)),
+        )
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        self._write_to_load_data(value)
 
 
 # ==================== HUB NUMBER ENTITIES ====================

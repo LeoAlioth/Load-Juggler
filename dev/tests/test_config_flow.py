@@ -12,11 +12,11 @@ from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    ENTRY_TYPE_CHARGER,
+    ENTRY_TYPE_LOAD,
     CONF_NAME,
     CONF_ENTITY_ID,
     CONF_HUB_ENTRY_ID,
-    CONF_CHARGER_PRIORITY,
+    CONF_LOAD_PRIORITY,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
     CONF_CHARGER_L1_PHASE,
@@ -111,7 +111,7 @@ async def test_charger_current_validation_min_exceeds_max(
         user_input={
             CONF_NAME: "Test Charger",
             CONF_ENTITY_ID: "test_charger",
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -162,7 +162,7 @@ async def test_charger_current_validation_min_exceeds_max(
         user_input={
             CONF_NAME: "Test Charger 2",
             CONF_ENTITY_ID: "test_charger_2",
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
         },
     )
 
@@ -211,7 +211,7 @@ async def test_charger_config_creates_entry(
         user_input={
             CONF_NAME: "Valid Charger",
             CONF_ENTITY_ID: "valid_charger",
-            CONF_CHARGER_PRIORITY: 1,
+            CONF_LOAD_PRIORITY: 1,
         },
     )
     assert result["type"] == FlowResultType.FORM
@@ -245,22 +245,31 @@ async def test_charger_config_creates_entry(
     )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Valid Charger Charger"
-    assert result["data"][ENTRY_TYPE] == ENTRY_TYPE_CHARGER
+    # Name already contains "Charger" — the type label is not appended again.
+    assert result["title"] == "Valid Charger"
+    assert result["data"][ENTRY_TYPE] == ENTRY_TYPE_LOAD
 
 
-async def test_options_flow_hub_shows_form(
+async def test_options_flow_hub_shows_menu(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test that options flow for a hub entry shows the hub form."""
+    """A hub's options open on the menu: settings, overview, how it decides."""
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
     result = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
 
+    assert result["type"] == FlowResultType.MENU
+    assert result["step_id"] == "init"
+    assert result["menu_options"] == ["settings", "overview", "summary"]
+
+    # "Edit settings" leads to the first editable hub page.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "settings"}
+    )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hub_grid"
 
@@ -271,7 +280,7 @@ async def test_options_flow_charger_shows_form(
     mock_charger_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test that options flow for a charger entry shows the charger form."""
+    """A load's options menu has settings + overview, and no "how it decides"."""
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
@@ -282,6 +291,12 @@ async def test_options_flow_charger_shows_form(
 
     result = await hass.config_entries.options.async_init(mock_charger_entry.entry_id)
 
+    assert result["type"] == FlowResultType.MENU
+    assert result["menu_options"] == ["settings", "overview"]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "settings"}
+    )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger"
 
@@ -347,22 +362,24 @@ async def test_hub_grid_with_entities_without_device_class(
             "invert_phases": False,
             "enable_max_import_power": True,
             "phase_voltage": 230,
-            "excess_export_threshold": 13000,
+            "grid_export_limit": 13500,
             "auto_detect_phase_mapping": True,
             "solar_grace_period": 5,
         },
     )
 
-    # Should advance to hub_inverter
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_inverter"
+    # Grid + site policy is the whole hub — all hardware lives on separate
+    # Inverter entries, so the flow finishes here.
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Test Hub"
 
 
-async def test_hub_battery_with_soc_sensor_without_device_class(
+async def test_inverter_battery_with_soc_sensor_without_device_class(
     hass: HomeAssistant,
     mock_setup,
 ):
-    """Test hub_battery step with SOC sensor that has unit % but no device_class.
+    """Test the inverter battery step with a SOC sensor that has unit % but no
+    device_class.
 
     This tests that battery SOC sensors without device_class='battery' work
     correctly using unit_of_measurement='%' for filtering.
@@ -425,43 +442,47 @@ async def test_hub_battery_with_soc_sensor_without_device_class(
             "invert_phases": False,
             "enable_max_import_power": True,
             "phase_voltage": 230,
-            "excess_export_threshold": 13000,
+            "grid_export_limit": 13500,
             "auto_detect_phase_mapping": True,
             "solar_grace_period": 5,
-        },
-    )
-
-    # hub_inverter step - just proceed, optional entity fields omitted
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            "inverter_max_power": 0,
-            "inverter_max_power_per_phase": 0,
-            "inverter_supports_asymmetric": False,
-            "wiring_topology": "parallel",
-        },
-    )
-
-    # Should show hub_battery step
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_battery"
-
-    # Submit battery config with SOC sensor that doesn't have device_class
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            "solar_production_entity_id": "sensor.solar_power",
-            "battery_soc_entity_id": "sensor.battery_soc",
-            "battery_power_entity_id": "sensor.battery_power",
-            "battery_max_charge_power": 5000,
-            "battery_max_discharge_power": 5000,
             "battery_soc_hysteresis": 3,
         },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    # Now add the inverter that owns the battery — the SOC sensor is offered
+    # there, and a % unit alone is enough to qualify it.
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "inverter"}
+    )
+    assert result["step_id"] == "inverter_config"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_NAME: "Hybrid",
+            CONF_ENTITY_ID: "lj_hybrid",
+            "solar_production_entity_id": "sensor.solar_power",
+        },
+    )
+    assert result["step_id"] == "inverter_battery"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            "battery_soc_entity_id": "sensor.battery_soc",
+            "battery_power_entity_id": "sensor.battery_power",
+        },
+    )
+    # Write-control page skipped (empty = advisory only)
+    assert result["step_id"] == "inverter_control"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={}
     )
 
     # Should create entry
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["title"] == "Test Hub"
 
 
 async def test_power_sensors_with_watts_unit_without_device_class(
@@ -518,31 +539,125 @@ async def test_power_sensors_with_watts_unit_without_device_class(
             "invert_phases": False,
             "enable_max_import_power": True,
             "phase_voltage": 230,
-            "excess_export_threshold": 13000,
+            "grid_export_limit": 13500,
             "auto_detect_phase_mapping": True,
             "solar_grace_period": 5,
         },
     )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    # The solar production sensor is picked on the inverter that owns the
+    # array — a W unit without device_class must still qualify it.
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "inverter"}
+    )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
-            "inverter_max_power": 0,
-            "inverter_max_power_per_phase": 0,
-            "inverter_supports_asymmetric": False,
-            "wiring_topology": "parallel",
+            CONF_NAME: "String Inverter",
+            CONF_ENTITY_ID: "lj_string_inv",
+            "solar_production_entity_id": "sensor.solar_production",
         },
     )
-
-    # hub_battery step - use sensors without device_class, battery_soc_entity_id omitted (optional)
+    assert result["step_id"] == "inverter_battery"
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        user_input={
-            "solar_production_entity_id": "sensor.solar_production",
-            "battery_power_entity_id": "sensor.battery_power",
-            "battery_max_charge_power": 5000,
-            "battery_max_discharge_power": 5000,
-            "battery_soc_hysteresis": 3,
-        },
+        user_input={"battery_power_entity_id": "sensor.battery_power"},
+    )
+    assert result["step_id"] == "inverter_control"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={}
     )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
+
+
+# ---------------------------------------------------------------------------
+# Off-grid battery requirement — a hub with no grid CTs must configure a
+# battery (SOC + power). Hard block in the hub config and options
+# flows. Machine-authored tests — not yet human-reviewed.
+# ---------------------------------------------------------------------------
+
+from custom_components.dynamic_ocpp_evse.helpers import (  # noqa: E402
+    validate_offgrid_battery_requirement,
+)
+from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+    CONF_PHASE_A_CURRENT_ENTITY_ID,
+    CONF_PHASE_B_CURRENT_ENTITY_ID,
+    CONF_PHASE_C_CURRENT_ENTITY_ID,
+    CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_POWER_ENTITY_ID,
+)
+
+_BATTERY_FULL = {
+    CONF_BATTERY_SOC_ENTITY_ID: "sensor.bat_soc",
+    CONF_BATTERY_POWER_ENTITY_ID: "sensor.bat_power",
+}
+
+
+def test_offgrid_battery_grid_cts_present_no_battery_ok():
+    """Grid CTs configured → battery not required."""
+    errors = {}
+    validate_offgrid_battery_requirement(
+        {CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_a"}, {}, errors
+    )
+    assert errors == {}
+
+
+def test_offgrid_battery_no_cts_with_full_battery_ok():
+    """No grid CTs but SOC + power both configured → valid."""
+    errors = {}
+    validate_offgrid_battery_requirement({}, _BATTERY_FULL, errors)
+    assert errors == {}
+
+
+def test_offgrid_battery_no_cts_no_battery_blocked():
+    """No grid CTs and no battery → hard block."""
+    errors = {}
+    validate_offgrid_battery_requirement({}, {}, errors)
+    assert errors.get("base") == "battery_required_no_cts"
+
+
+def test_offgrid_battery_no_cts_only_soc_blocked():
+    """No grid CTs, battery SOC but no power → hard block."""
+    errors = {}
+    validate_offgrid_battery_requirement(
+        {}, {CONF_BATTERY_SOC_ENTITY_ID: "sensor.bat_soc"}, errors
+    )
+    assert errors.get("base") == "battery_required_no_cts"
+
+
+def test_offgrid_battery_no_cts_only_power_blocked():
+    """No grid CTs, battery power but no SOC → hard block."""
+    errors = {}
+    validate_offgrid_battery_requirement(
+        {}, {CONF_BATTERY_POWER_ENTITY_ID: "sensor.bat_power"}, errors
+    )
+    assert errors.get("base") == "battery_required_no_cts"
+
+
+def test_offgrid_battery_partial_cts_count_as_grid():
+    """A single phase CT counts as grid-connected → battery not required."""
+    errors = {}
+    validate_offgrid_battery_requirement(
+        {CONF_PHASE_C_CURRENT_ENTITY_ID: "sensor.grid_c"}, {}, errors
+    )
+    assert errors == {}
+
+
+def test_offgrid_battery_none_grid_values_blocked():
+    """Grid CT keys explicitly None → treated as no CTs."""
+    grid = {
+        CONF_PHASE_A_CURRENT_ENTITY_ID: None,
+        CONF_PHASE_B_CURRENT_ENTITY_ID: None,
+        CONF_PHASE_C_CURRENT_ENTITY_ID: None,
+    }
+    errors = {}
+    validate_offgrid_battery_requirement(grid, _BATTERY_FULL, errors)
+    assert errors == {}
+    errors = {}
+    validate_offgrid_battery_requirement(grid, {}, errors)
+    assert errors.get("base") == "battery_required_no_cts"

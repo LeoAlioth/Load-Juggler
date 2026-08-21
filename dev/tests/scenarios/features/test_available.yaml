@@ -25,15 +25,15 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
         active: false
     expected:
-      charger_1:
+      load_1:
         allocated: 0
         available: 16  # 25A breaker - 2A load = 23A per phase, capped at max 16A
 
@@ -59,24 +59,24 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
         active: false
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 2
         active: false
     expected:
-      charger_1:
+      load_1:
         allocated: 0
         available: 16  # Each idle charger independently sees 23A per phase, capped at 16A
-      charger_2:
+      load_2:
         allocated: 0
         available: 16  # Same pool - hypothetical, not deducted between idle chargers
 
@@ -102,26 +102,26 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
         # active: true (default)
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 2
         active: false
     expected:
-      charger_1:
+      load_1:
         allocated: 16  # 25A - 2A = 23A per phase, capped at 16A
         available: 16
-      charger_2:
+      load_2:
         allocated: 0
-        available: 7  # 23A per phase - 16A charger_1 = 7A remaining per phase
+        available: 7  # 23A per phase - 16A load_1 = 7A remaining per phase
 
   - name: "3ph-2c-one-active-one-idle-tight"
     description: "Active charger leaves less than min for idle charger"
@@ -145,24 +145,24 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
         # active: true (default)
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 2
         active: false
     expected:
-      charger_1:
+      load_1:
         allocated: 16  # 25A - 5A = 20A per phase, capped at 16A
         available: 16
-      charger_2:
+      load_2:
         allocated: 0
         available: 0  # 20A - 16A = 4A remaining per phase, below min 6A -> 0
 
@@ -188,14 +188,14 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
         # active: true (default)
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         min_current: 6
         max_current: 16
         phases: 1
@@ -203,12 +203,12 @@ scenarios:
         priority: 2
         active: false
     expected:
-      charger_1:
+      load_1:
         allocated: 16  # Standard mode: 25A - 2A = 23A on phase A (worst), capped at 16A
         available: 16
-      charger_2:
+      load_2:
         allocated: 0
-        available: 8  # Phase B: 25A - 1A load - 16A from charger_1 = 8A remaining
+        available: 8  # Phase B: 25A - 1A load - 16A from load_1 = 8A remaining
 
   - name: "1ph-1c-idle-standard-no-solar"
     description: "Single idle 1-phase charger, Standard mode, no solar"
@@ -231,15 +231,15 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
         active: false
     expected:
-      charger_1:
+      load_1:
         allocated: 0
         available: 16  # 25A breaker - 2A load = 23A, capped at max 16A
 
@@ -264,24 +264,24 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
         # active: true (default)
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 2
         active: false
     expected:
-      charger_1:
+      load_1:
         allocated: 16  # 25A - 2A = 23A, capped at 16A
         available: 16
-      charger_2:
+      load_2:
         allocated: 0
         available: 7  # 23A - 16A = 7A remaining
 
@@ -306,24 +306,24 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
         # active: true (default)
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 2
         active: false
     expected:
-      charger_1:
+      load_1:
         allocated: 16  # 25A - 5A = 20A, capped at 16A
         available: 16
-      charger_2:
+      load_2:
         allocated: 0
         available: 0  # 20A - 16A = 4A, below min 6A -> 0
 
@@ -348,14 +348,14 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
         active: false
     expected:
-      charger_1:
+      load_1:
         allocated: 0
         available: 12  # Solar: 15A - 3A = 12A export available

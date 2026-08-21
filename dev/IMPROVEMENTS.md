@@ -119,23 +119,14 @@ Replaced flat counts with weighted scoring:
 
 ---
 
-## GitHub issue triage (reviewed 2026-02-17)
+## GitHub issue triage (re-checked 2026-08-17)
 
-### Can be closed (fixed in v2.0.0)
-- **#3** — `UnboundLocalError: target_evse` + deprecated methods → v1.1.1 code, fully rewritten in v2.0.0
-- **#7** — Single phase installation validation error → fixed since v1.2.1 (phases 2/3 optional)
-- **#12** — Multi-charger support → implemented in v2.0.0
-- **#14** — Huawei charger rejecting Amps profiles → charge rate unit auto-detection added (TODO #7)
-- **#13** — Conditional entity visibility → implemented (TODO #29, Phase B/C hiding + battery entities)
-- **#11** — User guide / documentation → README.md rewritten (TODO #31)
-- **#9** — "Allow grid charging" documentation → covered in README.md
-- **#8** — Time-of-day charging → HA service actions implemented (TODO #30)
-- **#4** — Helper setting clarification → old v1.x question, resolved
+Only two issues remain open on the mirror (the rest of the February list was
+closed in the meantime). Closing comments are drafted; needs Anže's GitHub
+hands (no `gh`/credentials on this machine):
 
-### Need follow-up testing on v2.0.0
-- **#18** — Charge Offered instability (clock drift) → relative time profile mode implemented (CONF_PROFILE_VALIDITY_MODE)
-- **#19** — Solar mode not working → likely fixed by v2.0.0 solar refactoring; user testing v2.0.0-pre release
-- **#5** — HomeWizard P1 + WallBox setup → user testing v2.0.0
+- **#7** — Single phase installation → fixed since v1.2.1 (phases B/C optional), scenario-tested throughout 2.x. Close as fixed.
+- **#19** — Solar mode not working in 1.2.1 → solar logic fully rewritten in 2.0.x; close as fixed with an invitation to reopen on 2.0.5+.
 
 ## Circuit Groups — shared breaker limit for co-located loads
 **Status:** Implemented (TODO #96)
@@ -243,4 +234,34 @@ Extended failure handling beyond grid CT to all sensor types:
 - Voltage validation: `<= 0` falls back to `DEFAULT_PHASE_VOLTAGE` (230V)
 - Circuit group stale member filtering: deleted charger entry_ids silently dropped with warning log
 
-## Fallback to Power Offered if Current offered (total or per phase) is not available
+## Cascaded inverters — child on the parent's load/backup port
+**Status:** Not yet implemented (requested 2026-08-17; real site: SolarEdge AC-coupled on the Deye's load port)
+**Complexity:** Medium-high (fleet maths)
+
+### Problem
+The fleet model treats all inverters as parallel peers on the site bus. A cascaded setup — an AC-coupled inverter wired to a hybrid's load/backup port — breaks that: the child's output flows THROUGH the parent, so the fleet currently over-counts capacity and may double-count production.
+
+### Idea
+Optional field on the inverter entry: **"Output feeds"** — a selector of the other inverters on the same hub (default: the grid/site bus, today's behavior). Validation: same hub only, no cycles.
+
+Engine implications to work through:
+1. **Throughput capping** — the parent's `inverter_max_power`(/per-phase) must cap its own output PLUS the child's passthrough; `fleet.inverter_limits` / `sum_outputs` need a nested (tree) model instead of a flat sum.
+2. **Double counting** — establish whether the parent's output sensors already include the child's passthrough power (measurement point question — on a Deye the load-port input likely does NOT appear on its grid-side output sensors, but must be verified on the real site). `solar_total` must count the child's production exactly once.
+3. **Behavioral gains** — child production can charge the parent's battery (the point of this wiring); off-grid, the child is only alive while the parent is up; the child is effectively "series behind the parent" regardless of its own topology field.
+4. **Display** — Overview/Summary pages render the relationship, e.g. "Solaredge Inverter · 10000 W · symmetric · behind DEYE Inverter (load port)".
+
+First step when picked up: measure on the real site (child exporting hard, parent idle/charging/discharging) to pin down what each Deye sensor actually includes before touching the fleet maths.
+
+## Dry-run mode + Debug options page
+**Status:** Not yet implemented — idea from the Adaptive Cover Pro discussion (2026-08-17). The companion Overview and "How it decides" summary pages are NOT part of this item; they are being built directly into the options flow alongside the reconfigure→options collapse.
+**Complexity:** Medium
+
+### Idea
+A third read-only page in the hub's options ("Configure") menu — **Debug** — next to Overview and Summary, mirroring Adaptive Cover Pro's Debug & Diagnostics screen:
+
+- **Dry Run switch (hub-level)** — the engine runs its full cycle every interval, but ALL actuation is suppressed: OCPP profiles (`control/ocpp.py`), plug switches (`control/plug.py`), inverter register writes (`control/inverter.py`), tank climate calls (`control/hot_water_tank.py`), power-station writes (`control/power_station.py`). Instead, log at INFO and publish a per-load "last decision" attribute — what *would* have been sent and why (AC Pro's "Decision Trace" / "Last Skipped Action" pattern). Gate it at the single dispatch choke point in `entities/load.py`, not per control module, so future device types inherit it automatically.
+- **Debug log promotion** — multi-select of log areas (engine, distribution, OCPP, compliance, auto-detect) promoted from DEBUG to INFO without touching YAML/logger config.
+- **`diagnostics.py` platform** — standard HA diagnostics: downloadable JSON of entry config (redacted entity IDs optional) + the latest `hub_data` snapshot, for attaching to bug reports. ~50 lines, independent of the rest — could land first.
+
+### Why
+Config validation without moving real loads (new installs, phase-mapping experiments); dramatically better support/bug-report loops.

@@ -25,8 +25,8 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 5666
       inverter_max_power: 17000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
@@ -35,7 +35,7 @@ scenarios:
         l2_phase: "C"
         l3_phase: "A"
     expected:
-      charger_1:
+      load_1:
         allocated: 7.0  # Same result as default mapping — 7A per phase from solar surplus
 
   - name: "3ph-2c-solar-phase-mapping-swapped"
@@ -59,8 +59,8 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 5666
       inverter_max_power: 17000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
@@ -68,16 +68,16 @@ scenarios:
         l1_phase: "C"
         l2_phase: "A"
         l3_phase: "B"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 2
         l1_phase: "A"
     expected:
-      charger_1:
-        allocated: 10.0  # Same as non-mapped: 10A/phase, takes all available leaving <6A for charger_2
-      charger_2:
+      load_1:
+        allocated: 10.0  # Same as non-mapped: 10A/phase, takes all available leaving <6A for load_2
+      load_2:
         allocated: 0  # Can't get minimum 6A on phase A
 
   - name: "3ph-1c-standard-phase-mapping-default"
@@ -99,8 +99,8 @@ scenarios:
       battery_max_charge_power: null
       battery_max_discharge_power: null
       inverter_supports_asymmetric: false
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
@@ -109,5 +109,5 @@ scenarios:
         l2_phase: "B"
         l3_phase: "C"
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # Standard mode: max current, limited by breaker: 25-5=20A available on phase A, 16A max

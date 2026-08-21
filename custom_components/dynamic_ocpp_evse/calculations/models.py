@@ -9,21 +9,28 @@ from dataclasses import dataclass, field, replace
 
 _LOGGER = logging.getLogger(__name__)
 
+# Valid load phase masks — the site phases a load may occupy. Any other
+# value (e.g. "L1", "D", "BA", "") is rejected by get_available/deduct rather
+# than crashing the calculation with an AttributeError.
+VALID_PHASE_MASKS = frozenset({"A", "B", "C", "AB", "AC", "BC", "ABC"})
+
 
 @dataclass
 class LoadContext:
-    """Individual EVSE/charger state and configuration."""
+    """Individual managed-load state and configuration."""
     # Identity
-    charger_id: str  # Config entry ID
-    entity_id: str   # Entity ID (e.g., "my_charger")
+    load_id: str  # Config entry ID
+    entity_id: str   # Entity ID (e.g., "my_load")
 
     # Configuration
     min_current: float
     max_current: float
     phases: int  # 1 or 3 (EVSE hardware capability)
-    priority: int = 1  # For distribution (lower = higher priority)
+    priority: int = 1  # Per-load configured priority (lower = higher priority)
     device_type: str = "evse"  # "evse" (OCPP) or "plug" (smart load)
-    operating_mode: str = "Standard"  # Per-load operating mode (EVSE: Standard, Plug: Continuous)
+    operating_mode: str = "Standard"  # Mode key — for logs / load_modes export
+    mode_behavior: str = "full_power"  # BEHAVIOR_* — what the engine switches on
+    mode_priority: int = 1  # Mode urgency tier 1-4 (lower = served first)
     
     # Active car connection (detected from OCPP or configured)
     active_phases_mask: str = None  # "A", "AB", "ABC", "B", "BC", "C", "AC"
@@ -32,8 +39,8 @@ class LoadContext:
     def __post_init__(self):
         """Set default phase mask from L1/L2/L3 → site phase mapping.
 
-        For OCPP chargers, the mapping determines which site phases the charger
-        occupies. For smart loads, active_phases_mask is set explicitly via
+        For OCPP chargers, the mapping determines which site phases the
+        charger occupies. For smart loads, active_phases_mask is set explicitly via
         connected_to_phase in config and this default is skipped.
         """
         if self.active_phases_mask is None:
@@ -53,10 +60,35 @@ class LoadContext:
     l1_current: float = 0  # L1 current (A) — maps to l1_phase
     l2_current: float = 0  # L2 current (A) — maps to l2_phase
     l3_current: float = 0  # L3 current (A) — maps to l3_phase
-    
+
+    # True when the engine has no live draw measurement for this load (an EVSE
+    # with no current-import sensor). The load's footprint then falls back to
+    # its permit — without a meter we cannot see it draw less than it is
+    # granted. Plugs and tanks always carry a correct l1/l2/l3 draw (rating
+    # when on, 0 when off), so they are never flagged unmetered.
+    unmetered: bool = False
+
+    # EVSE only: True when the car's measured draw has held steady for several
+    # cycles — it has reached a ceiling below what we offered, rather than
+    # still tracking our ramping permit. Only then is the draw trusted as the
+    # EVSE's footprint; while it is moving the engine reserves the full permit.
+    # Set by the HA layer (or the test harness) from per-load draw history.
+    draw_settled: bool = False
+
+    # Device hardware current rating (A) — the ceiling for available_current.
+    # EVSE: its configured max current. Plug: the socket/relay rating, which
+    # is separate from the set-power slider (the slider tracks the connected
+    # load, not the plug's capability). Tank: the heating-element current.
+    # 0 → callers fall back to max_current.
+    rated_current: float = 0
+
     # Calculated values (populated during calculation)
-    allocated_current: float = 0   # What the charger actually gets (sent via OCPP)
-    available_current: float = 0   # What the charger could get if a car were plugged in
+    # allocated_current = the load's real FOOTPRINT on the budget (measured
+    #   draw) — what other loads are budgeted against.
+    # available_current = the PERMIT — what the engine grants the device to
+    #   draw, up to its rated/max. Drives the device command.
+    allocated_current: float = 0
+    available_current: float = 0
 
     # OCPP settings
     ocpp_device_id: str = None
@@ -106,7 +138,7 @@ class CircuitGroup:
     group_id: str
     name: str
     current_limit: float  # Per-phase current limit (A)
-    member_ids: list[str] = field(default_factory=list)  # charger_ids of member loads
+    member_ids: list[str] = field(default_factory=list)  # load_ids of member loads
 
 
 @dataclass
@@ -136,6 +168,7 @@ class SiteContext:
     battery_power: float | None = None  # Positive = discharging, Negative = charging
     battery_soc_target: float | None = None
     battery_soc_min: float | None = None
+    battery_soc_full: float | None = None  # SOC at/above which the battery counts as "full"
     battery_soc_hysteresis: float = 5
     battery_max_charge_power: float | None = None
     battery_max_discharge_power: float | None = None
@@ -148,17 +181,47 @@ class SiteContext:
     inverter_max_power_per_phase: float | None = None  # Max power per phase (W)
     inverter_supports_asymmetric: bool = False  # Can inverter balance power across phases
 
+    # --- Read-time power figures (the pair the inverter coverage gate needs) ---
+    # Both are captured when the site is read, BEFORE the feedback loop, and are
+    # therefore the only place the calculator can still see the site's real grid
+    # position: the feedback loop deliberately erases the managed loads' draws
+    # from consumption/export. See _inverter_covers_load() in target_calculator.
+    #
+    # Fleet AC output right now (W, SIGNED — negative means power is flowing
+    # into the inverters). Measured where output entities exist, otherwise a
+    # topology-aware estimate — engine/fleet.py output_power_total(). None =
+    # unknown, which the coverage gate treats as "do not gate".
+    inverter_output_total: float | None = None
+    # Net grid flow right now (W): positive = importing, negative = exporting.
+    # Smoothed, and 0 on an off-grid site (no CTs, nothing to import).
+    net_grid_power: float | None = None
+
     # Settings
     allow_grid_charging: bool = True
     power_buffer: float = 0
     excess_export_threshold: float = 13000
+    # Deadband subtracted from the excess absorption capacity while Excess is
+    # engaged, so a load doesn't chatter at the trigger point. The engine owns
+    # the latch and sets this; the calculator stays stateless.
+    excess_hysteresis: float = 0
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
+    is_off_grid: bool = False  # True when no grid CT sensors are configured
 
-    # Chargers at this site
-    chargers: list[LoadContext] = field(default_factory=list)
+    # Loads at this site
+    loads: list[LoadContext] = field(default_factory=list)
 
     # Circuit groups (shared breaker limits)
     circuit_groups: list[CircuitGroup] = field(default_factory=list)
+
+    def __post_init__(self):
+        # Voltage divides nearly every power→current conversion in the target
+        # calculator; a 0/negative reading (dead or misconfigured voltage entity)
+        # would raise ZeroDivisionError. Clamp to the standard default.
+        if not self.voltage or self.voltage <= 0:
+            _LOGGER.warning(
+                "SiteContext voltage was %s; clamping to 230 V", self.voltage
+            )
+            self.voltage = 230
 
     @property
     def num_phases(self) -> int:
@@ -242,13 +305,17 @@ class PhaseConstraints:
         return self._element_op(other, max)
 
     def get_available(self, mask: str) -> float:
-        """Get per-phase current available for a charger with given phase mask.
+        """Get per-phase current available for a load with given phase mask.
 
         Implements Multi-Phase Constraint Principle:
         - 1-phase on A: min(A, any 2-phase combo containing A, ABC)
         - 2-phase on AB: min(A, B, AB/2, ABC/2)
         - 3-phase: min(A, B, C, AB/2, AC/2, BC/2, ABC/3)
         """
+        if mask not in VALID_PHASE_MASKS:
+            _LOGGER.warning("Unknown phase mask '%s', returning 0", mask)
+            return 0
+
         if len(mask) == 1:
             phase = mask
             two_phase_limits = []
@@ -277,6 +344,10 @@ class PhaseConstraints:
 
     def deduct(self, current: float, mask: str) -> PhaseConstraints:
         """Deduct current from all affected phase combinations. Returns new instance."""
+        if mask not in VALID_PHASE_MASKS:
+            _LOGGER.warning("Unknown phase mask '%s', deduct skipped", mask)
+            return self.copy()
+
         result = self.copy()
 
         # Deduct from individual phases

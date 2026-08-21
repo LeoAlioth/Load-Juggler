@@ -1,0 +1,87 @@
+# Test scenarios: inverter headroom accounting in the solar pool
+#
+# Regression tests for two bugs found 2026-06-11:
+#   1. _calculate_solar_surplus capped extra battery discharge by
+#      inverter_max − estimated_solar, never subtracting the discharge ALREADY
+#      flowing through the inverter. With the battery covering the household
+#      (grid CT ≈ 0, derived mode) the headroom read as the full inverter
+#      rating, letting Solar-mode loads overload the inverter.
+#   2. _build_inverter_constraints subtracted household from the per-phase
+#      inverter cap only in the asymmetric branch; a symmetric inverter phase
+#      already serving the household handed its full per-phase capacity to
+#      chargers.
+
+scenarios:
+
+  - name: "night-battery-household-inverter-headroom"
+    description: "Night, battery covers 3kW household through 4kW inverter → no discharge headroom for Solar Only EVSE"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 13.0   # household ≈ 3 kW, covered by the battery
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4500
+      battery_max_discharge_power: 8000
+      inverter_max_power: 4000
+      inverter_max_power_per_phase: 4000
+      inverter_supports_asymmetric: false
+    loads:
+      - entity_id: "evse_1"
+        device_type: "evse"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      evse_1:
+        # Inverter already passes 13 A of battery discharge for the household;
+        # additional discharge fits only in 17.4 − 13 ≈ 4.4 A < the EVSE's 6 A
+        # minimum → no charge. The old headroom (17.4 − estimated_solar 0 =
+        # 17.4 A) offered the full inverter rating and charged at ~16 A on a
+        # site whose inverter was already saturated.
+        # (A binary battery-backed plug would NOT be gated here: above-target
+        # plugs are SOC-gated by design and the grid tops up — see ISSUES.md.)
+        allocated: 0.0
+
+  - name: "symmetric-phase-household-caps-solar-only-evse"
+    description: "3ph symmetric inverter, household concentrated on phase A → per-phase capacity left (3A) below EVSE min → no charge"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 10.0   # household ≈ 2.3 kW, all on phase A
+      phase_b_consumption: 0.0
+      phase_c_consumption: 0.0
+      battery_soc: 98             # above "full" so the sim battery won't charge
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4500
+      battery_max_discharge_power: 9000
+      inverter_max_power: 9000
+      inverter_max_power_per_phase: 3000   # 13 A per phase
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "evse_1"
+        device_type: "evse"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      evse_1:
+        # Phase A inverter capacity left after the 10 A household = 13 − 10 =
+        # 3 A < the EVSE's 6 A minimum on every phase → no charge. The old
+        # symmetric branch capped at the raw 13 A per phase and charged ~7.5 A.
+        allocated: 0.0
