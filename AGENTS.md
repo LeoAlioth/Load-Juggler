@@ -50,11 +50,7 @@ custom_components/dynamic_ocpp_evse/
 │   ├── pages.py                   # Overview / "How it decides" read-only page text builders
 │   └── helpers.py                 # Everything both handlers share: unit validation, the optional-entity
 │                                  #   key groups and their normalizers, entity auto-detection, priority
-│                                  #   ordering, the OCPP discovery scan (device-registry driven: sensors are
-│                                  #   grouped by charge point and classified by the ocpp integration's own
-│                                  #   metric keys, never by guessing entity_id prefixes) plus the
-│                                  #   single-device resolver behind the charger wizard's device picker,
-│                                  #   the OCPP capability probes, phase count
+│                                  #   ordering, the OCPP capability probes, phase count
 ├── const/                         # Constants per area: common, hub, evse, plug, hot_water_tank, group,
 │                                  #   inverter, modes, power_station
 ├── engine/                        # HA → SiteContext bridge (reads HA states, drives the calculation)
@@ -96,6 +92,17 @@ custom_components/dynamic_ocpp_evse/
 ├── [button|number|select|sensor|switch].py  # HA platform files (thin wiring around entities/)
 ├── units.py                       # Unit conversion helpers
 ├── helpers.py                     # get_entry_value() and misc helpers
+├── ocpp_discovery.py              # The ONE OCPP registry derivation, at the package root so BOTH the
+│                                  #   flows and engine/ can reach it (engine must not import config_flow).
+│                                  #   Sensors are grouped by charge point and classified by the ocpp
+│                                  #   integration's own metric keys (unique_id → original_name →
+│                                  #   entity_id suffix), never by guessing entity_id prefixes:
+│                                  #   scan_ocpp_chargers() (discovery + the manual wizard),
+│                                  #   ocpp_charger_for_device() / ocpp_device_for_charge_point() (the two
+│                                  #   directions the device pickers need), ocpp_entry_fields() (the stored
+│                                  #   OCPP field set both edit paths write), ocpp_connector_status_entity()
+│                                  #   (the runtime's status sensor, resolved once per load setup and cached
+│                                  #   in that load's hass.data bucket, legacy composed name as fallback)
 └── translations/                  # Localization files (en, sl)
 ```
 
@@ -348,8 +355,9 @@ docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python dev/tests/run_tests
 - `test_init.py` — Setup, teardown, migration (v1->v2, v2.0->v2.1)
 - `test_config_flow.py` — Config flow step navigation and validation
 - `test_config_flow_e2e.py` — Full hub/load creation flows, options flow, discovery, entry migration
-- `test_ocpp_discovery.py` — The OCPP charger scan against a mocked device+entity registry, and the
-  charger wizard's OCPP device picker
+- `test_ocpp_discovery.py` — The OCPP charger scan against a mocked device+entity registry, the OCPP
+  device pickers on both edit paths (create wizard and options charger page), and the runtime
+  connector-status resolution
 - `test_sensor_update.py` — Sensor initialization, update cycle, OCPP calls, charge pause, profile formats
 
 ### Linting and Type Checking
