@@ -174,6 +174,7 @@ from .helpers import (
     _validate_forecast_devices,
     scan_ocpp_chargers,
 )
+from .options import LoadJugglerOptionsFlow
 from .schemas import (
     _build_hub_inverter_schema,
     _build_inverter_solar_schema,
@@ -1485,8 +1486,4 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry):
         """Get the options flow for this handler."""
-        # Imported here rather than at module scope: options.py imports this
-        # module for the schema builders, so the edge has to point one way.
-        from .options import LoadJugglerOptionsFlow
-
         return LoadJugglerOptionsFlow()
