@@ -95,6 +95,7 @@ from .const import (
 )
 from .helpers import get_entry_value
 from . import units
+from .ocpp_discovery import scan_ocpp_chargers
 from .registry import (  # noqa: F401 — re-exported; canonical home is registry.py
     get_loads_for_hub,
     get_groups_for_hub,
@@ -878,8 +879,9 @@ async def _setup_inverter_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def _discover_and_notify_chargers(hass: HomeAssistant, hub_entry_id: str):
     """Discover unconfigured OCPP chargers and create discovery flows.
 
-    The scan itself is the config flow's own scanner, so an auto-discovered
-    charger is described exactly like a manually added one: the OCPP charge
+    The scan itself is the shared ``ocpp_discovery`` scanner the config flow
+    goes through too, so an auto-discovered charger is described exactly like a
+    manually added one: the OCPP charge
     point id (read off the device-registry identifier the ocpp integration
     stamps, NOT the HA device-registry UUID, which the ocpp services cannot
     address), plus the full set of per-phase current and power entities found
@@ -887,10 +889,6 @@ async def _discover_and_notify_chargers(hass: HomeAssistant, hub_entry_id: str):
     current_offered) included. The whole dict is handed to the discovery flow,
     which stores every key on the created entry.
     """
-    # Imported here rather than at module scope: config_flow imports from this
-    # package, and the flow module is only needed once a hub is set up.
-    from .config_flow import scan_ocpp_chargers
-
     for charger in scan_ocpp_chargers(hass):
         _LOGGER.info("Discovered OCPP charger: %s (%s)", charger["name"], charger["id"])
 

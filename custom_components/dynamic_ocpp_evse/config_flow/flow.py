@@ -173,9 +173,8 @@ from .helpers import (
     _validate_charge_limit_unit,
     _validate_entity_units,
     _validate_forecast_devices,
-    ocpp_charger_for_device,
-    scan_ocpp_chargers,
 )
+from ..ocpp_discovery import ocpp_charger_for_device, scan_ocpp_chargers
 from .options import LoadJugglerOptionsFlow
 from .schemas import (
     _build_hub_inverter_schema,

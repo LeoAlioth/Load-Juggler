@@ -17,7 +17,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.dynamic_ocpp_evse.config_flow.helpers import (
+from custom_components.dynamic_ocpp_evse.ocpp_discovery import (
     ocpp_charger_for_device,
     scan_ocpp_chargers,
 )
