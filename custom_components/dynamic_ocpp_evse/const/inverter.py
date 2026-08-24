@@ -42,6 +42,22 @@ DEFAULT_BATTERY_NOMINAL_VOLTAGE = 51.2  # V — 16S LFP, the common hybrid pack
 CONF_CHARGE_LIMIT_NORMAL = "inverter_charge_limit_normal"
 DEFAULT_CHARGE_LIMIT_NORMAL = 0
 
+# The lowest value ever WRITTEN while the forecast is holding this battery back,
+# in the target register's own units — the same convention as the normal above.
+#
+# A recommendation of 0 is legitimate: solar below the export threshold with the
+# battery already at the reserved ceiling means "do not add any more". Written as
+# a hard 0 the battery stops charging entirely, so it keeps serving the house
+# instead and the SOC sags — until the latch releases and the inverter recharges
+# at full rate, which is a sawtooth rather than a hold. A couple of amps is
+# enough for the battery to trickle back the house draw and hug the ceiling.
+#
+# 0 (the default) is exactly the behaviour that existed before this knob: the
+# recommendation is applied as-is. It is a device-protection floor and not
+# forecast policy — the published advice sensors stay unclamped.
+CONF_CHARGE_LIMIT_MINIMUM = "inverter_charge_limit_minimum"
+DEFAULT_CHARGE_LIMIT_MINIMUM = 0
+
 # Write pacing. These registers go over Modbus and some firmwares commit them
 # to EEPROM, so a value that moves a few watts every cycle is genuinely
 # harmful — write only on a real change, and not more often than this.

@@ -40,6 +40,7 @@ from ..const import (
     CONF_CHARGE_CONTROL_DEADBAND,
     CONF_CHARGE_CONTROL_INTERVAL,
     CONF_CHARGE_LIMIT_ENTITY_ID,
+    CONF_CHARGE_LIMIT_MINIMUM,
     CONF_CHARGE_LIMIT_NORMAL,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_CHARGE_PAUSE_DURATION,
@@ -109,6 +110,7 @@ from ..const import (
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CHARGE_CONTROL_DEADBAND,
     DEFAULT_CHARGE_CONTROL_INTERVAL,
+    DEFAULT_CHARGE_LIMIT_MINIMUM,
     DEFAULT_CHARGE_LIMIT_NORMAL,
     DEFAULT_CHARGE_LIMIT_UNIT,
     DEFAULT_CHARGE_PAUSE_DURATION,
@@ -1002,6 +1004,21 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
                 CONF_CHARGE_LIMIT_NORMAL,
                 default=defaults.get(
                     CONF_CHARGE_LIMIT_NORMAL, DEFAULT_CHARGE_LIMIT_NORMAL
+                ),
+            ),
+            selector(
+                {"number": {"min": 0, "max": 1000, "step": 1, "mode": "box"}}
+            ),
+        ),
+        (
+            # The floor under the ENGAGED limit, in the same own-units
+            # convention as the normal above: a plain number, not an entity, so
+            # no ENTITY_UNIT_CONTRACTS entry applies. 0 is "no floor" and is
+            # exactly the behaviour before this field existed.
+            vol.Optional(
+                CONF_CHARGE_LIMIT_MINIMUM,
+                default=defaults.get(
+                    CONF_CHARGE_LIMIT_MINIMUM, DEFAULT_CHARGE_LIMIT_MINIMUM
                 ),
             ),
             selector(
