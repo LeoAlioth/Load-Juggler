@@ -48,6 +48,7 @@ from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_CHARGE_LIMIT_NORMAL,
+    CONF_CHARGE_LIMIT_MINIMUM,
     CONF_CHARGE_CONTROL_INTERVAL,
     CONF_CHARGE_CONTROL_DEADBAND,
     CONF_BATTERY_NOMINAL_VOLTAGE,
@@ -76,6 +77,7 @@ from custom_components.dynamic_ocpp_evse.control.inverter import (  # noqa: E402
     INVERTER_RT_SOC_SLOTS,
     battery_voltage,
     desired_soc,
+    resolve_minimum_value,
     resolve_normal_soc,
     resolve_normal_value,
     send_inverter_charge_limit,
@@ -341,6 +343,134 @@ def test_deadband_is_a_percentage_of_the_normal_value():
     # 4608 W = 90 A, a 10 A move
     asyncio.run(send_inverter_charge_limit(hass, entry, 4608.0, 10.0))
     assert len(hass.services.calls) == 1
+
+
+# --- The minimum charge limit (the floor) -------------------------------------
+#
+# Why it exists, from a live site: the advice is legitimately 0 W while solar
+# sits below the export threshold and the battery is already at the reserved
+# ceiling. Written as a hard 0 A the battery stops charging and serves the house
+# from its own cells, so the SOC sags a few points, the forecast latch releases,
+# the inverter recharges at full rate — a sawtooth (71↔75 % was the observation)
+# instead of a hold. A couple of amps is enough to cover the house draw.
+#
+# The floor is stored in the TARGET REGISTER's units, like the normal value, and
+# applies to the engaged write only. The default of 0 must be indistinguishable
+# from the behaviour before it existed.
+
+
+def test_the_floor_is_zero_by_default_and_clamped_to_the_normal():
+    assert resolve_minimum_value(_entry(), 100.0) == 0.0
+    assert resolve_minimum_value(_entry({CONF_CHARGE_LIMIT_MINIMUM: 2}), 100.0) == 2.0
+    # Never above full rate: a floor of 120 on a 100 A normal is 100.
+    assert resolve_minimum_value(_entry({CONF_CHARGE_LIMIT_MINIMUM: 120}), 100.0) == 100.0
+    # A negative stored value is not a ceiling-raiser either way.
+    assert resolve_minimum_value(_entry({CONF_CHARGE_LIMIT_MINIMUM: -5}), 100.0) == 0.0
+    # Nothing to clamp against — the configured number stands as the user typed it.
+    assert resolve_minimum_value(_entry({CONF_CHARGE_LIMIT_MINIMUM: 2}), None) == 2.0
+
+
+def test_a_zero_advice_writes_the_floor_instead_of_zero():
+    """The bug this exists for: 0 W advice, engaged, with a 2 A floor."""
+    hass = _hass_with_target(current=100.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_LIMIT_MINIMUM: 2,
+    })
+    rt = _arm(hass, entry)
+
+    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+
+    assert hass.services.calls == [
+        ("number", "set_value", {"entity_id": TARGET, "value": 2.0})
+    ]
+    assert rt[INVERTER_RT_APPLIED] == 2.0
+    assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_LIMITING
+    assert rt[INVERTER_RT_RECOMMENDED] == 2.0
+
+
+def test_the_default_floor_of_zero_writes_the_advice_as_is():
+    """Byte-identical to before the knob existed: 0 W means 0 A."""
+    hass = _hass_with_target(current=100.0, maximum=100.0)
+    entry = _entry({CONF_BATTERY_NOMINAL_VOLTAGE: 51.2})
+    _arm(hass, entry)
+
+    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+
+    assert hass.services.calls == [
+        ("number", "set_value", {"entity_id": TARGET, "value": 0.0})
+    ]
+
+
+def test_an_advice_above_the_floor_is_untouched():
+    hass = _hass_with_target(current=100.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_LIMIT_MINIMUM: 2,
+    })
+    _arm(hass, entry)
+
+    # 2560 W at 51.2 V = 50 A, far above the 2 A floor
+    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+
+    assert hass.services.calls[-1][2]["value"] == 50.0
+
+
+def test_the_floor_does_not_apply_to_the_release_write():
+    """A release restores full rate — the floor is a lower bound on how far we
+    hold the battery back, never a cap on handing it back."""
+    hass = _hass_with_target(current=100.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 0,
+        CONF_CHARGE_LIMIT_MINIMUM: 2,
+    })
+    rt = _arm(hass, entry)
+
+    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+    hass.states.set(TARGET, 2.0, max=100.0)
+    asyncio.run(send_inverter_charge_limit(hass, entry, None, 10.0))
+
+    assert hass.services.calls[-1][2]["value"] == 100.0
+    assert rt[INVERTER_RT_APPLIED] is None
+
+
+def test_a_floor_above_the_normal_value_is_clamped_to_it():
+    """Configured, not rejected: the normal may be the register's own live
+    maximum, so this is resolved at apply time rather than at config time."""
+    hass = _hass_with_target(current=100.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_LIMIT_NORMAL: 60,
+        CONF_CHARGE_LIMIT_MINIMUM: 90,
+    })
+    _arm(hass, entry)
+
+    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+
+    # 60, the normal — never the 90 the user asked for, which would hold the
+    # battery HIGHER than a release would.
+    assert hass.services.calls[-1][2]["value"] == 60.0
+
+
+def test_the_floor_is_in_the_registers_own_units_on_a_watt_register():
+    """Watts on a watt register, amps on an amp register — the same convention
+    as the normal value, and the reason the clamp is after the conversion."""
+    hass = _hass_with_target(current=6000.0, maximum=6000.0)
+    entry = _entry({
+        CONF_CHARGE_LIMIT_UNIT: "W",
+        CONF_CHARGE_LIMIT_MINIMUM: 100,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    _arm(hass, entry)
+
+    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+    assert hass.services.calls[-1][2]["value"] == 100.0
+
+    # And a real advice above it still passes through in watts.
+    hass.states.set(TARGET, 100.0, max=6000.0)
+    asyncio.run(send_inverter_charge_limit(hass, entry, 2000.0, 10.0))
+    assert hass.services.calls[-1][2]["value"] == 2000.0
 
 
 # --- The register read-back the charge-control sensor publishes ---------------

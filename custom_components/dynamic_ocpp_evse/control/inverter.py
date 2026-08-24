@@ -17,6 +17,14 @@ register rather than a software knob:
    applied-state marker clears, so a released limit is not rewritten every
    cycle for the rest of the night.
 
+One optional clamp sits on top of them: a configured **minimum charge limit**
+(:func:`resolve_minimum_value`) is the lowest value ever written while the
+advice is engaged. It exists because a hard 0 stops the battery charging
+altogether, so the pack starts serving the house and drifts down off the ceiling
+the advice was holding it at. Engaged writes only — a release restores full rate
+and can never be "too low" — and nothing upstream is affected: the forecast's
+own numbers, and the sensors publishing them, stay unclamped.
+
 Single reader, too. The register is read back once per call — before any branch,
 so the paced-out calls and the release path read it as well — both to compare
 against what we are about to write and to be republished as the charge-control
@@ -59,6 +67,7 @@ from ..const import (
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_CHARGE_LIMIT_NORMAL,
+    CONF_CHARGE_LIMIT_MINIMUM,
     CONF_CHARGE_CONTROL_INTERVAL,
     CONF_CHARGE_CONTROL_DEADBAND,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
@@ -68,6 +77,7 @@ from ..const import (
     CHARGE_LIMIT_UNIT_AMPS,
     DEFAULT_CHARGE_LIMIT_UNIT,
     DEFAULT_CHARGE_LIMIT_NORMAL,
+    DEFAULT_CHARGE_LIMIT_MINIMUM,
     DEFAULT_CHARGE_CONTROL_INTERVAL,
     DEFAULT_CHARGE_CONTROL_DEADBAND,
     DEFAULT_BATTERY_NOMINAL_VOLTAGE,
@@ -191,6 +201,34 @@ def resolve_normal_value(hass, entry, target_entity):
     return _entity_max(hass, target_entity)
 
 
+def resolve_minimum_value(entry, normal):
+    """The floor the engaged limit is never written below, in target units.
+
+    A device-protection knob, not forecast policy: a recommendation of 0 is a
+    legitimate "add nothing", but a battery held at a hard 0 A serves the house
+    from its own cells instead, so the SOC sags away from the ceiling the advice
+    was reserving and the recharge that follows is a sawtooth. A couple of amps
+    lets the battery cover the house draw and sit still.
+
+    ``normal`` is the value a release restores — full rate, by definition — and
+    so is the ceiling of the floor. Clamping happens here rather than at config
+    time because the normal may be the register's own live maximum. A normal
+    that is not knowable (None) leaves the configured floor as it stands: there
+    is nothing to clamp against, and the floor is the user's own number.
+
+    0 (the default) means no floor at all, which is byte-identical to the
+    behaviour before this knob existed.
+    """
+    configured = (
+        get_entry_value(entry, CONF_CHARGE_LIMIT_MINIMUM, DEFAULT_CHARGE_LIMIT_MINIMUM)
+        or 0
+    )
+    floor = max(float(configured), 0.0)
+    if normal is None:
+        return floor
+    return min(floor, float(normal))
+
+
 def should_write(current, desired, previous_applied, deadband) -> bool:
     """Whether ``desired`` is far enough from what the register already holds.
 
@@ -273,7 +311,18 @@ async def send_inverter_charge_limit(hass, entry, advice_w, now_mono) -> None:
         )
         return
 
-    desired = round(to_target_units(advice_w, unit, voltage), 1)
+    # The floor applies to the ENGAGED value only, and after the conversion —
+    # it is stored in the register's own units, so it cannot be folded into the
+    # watt advice. The release path above is deliberately untouched: restoring
+    # full rate is never "too low". Nothing upstream sees this — the advice
+    # pipeline and the published forecast_charge_limit_w sensors stay unclamped.
+    desired = round(
+        max(
+            to_target_units(advice_w, unit, voltage),
+            resolve_minimum_value(entry, normal),
+        ),
+        1,
+    )
     inverter_rt[INVERTER_RT_STATUS] = CONTROL_STATE_LIMITING
     inverter_rt[INVERTER_RT_RECOMMENDED] = desired
 
