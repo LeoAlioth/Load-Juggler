@@ -88,13 +88,18 @@ DEFAULT_EXCESS_TRIGGER_MARGIN = 500
 DEFAULT_BASE_CONSUMPTION = 300
 DEFAULT_BATTERY_CAPACITY_KWH = 0
 DEFAULT_FORECAST_SOC_FLOOR = 30
-FORECAST_SOC_HYSTERESIS = 2  # % — serves both forecast latches, so one
+FORECAST_SOC_HYSTERESIS = 2  # % — serves every forecast latch, so one
 # setting sizes the whole feature's stickiness:
 #  1. the published ceiling rises freely but falls only by more than this band,
 #     so forecast refreshes don't chatter the advice;
 #  2. the charge cap's SOC gate is a band this wide — it engages this far below
 #     the ceiling and releases only twice this far below it, so an integer SOC
-#     tick at either threshold cannot flap the cap (and its register writes).
+#     tick at either threshold cannot flap the cap (and its register writes);
+#  3. the yield-to-Excess latch at the battery's DESTINATION is the same shape:
+#     it engages exactly at the destination (below it the battery is served
+#     first, never a percent early) and releases only this far below, because
+#     the crossing moves the advice by whole kilowatts and an integer SOC
+#     register would otherwise sit on the boundary and flip it.
 
 # Distribution mode configuration (hub-level)
 CONF_DISTRIBUTION_MODE = "distribution_mode"
