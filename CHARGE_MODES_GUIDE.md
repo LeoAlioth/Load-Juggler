@@ -383,16 +383,28 @@ Threshold-based charging that starts when excess export exceeds a configured thr
 
 **Behavior:**
 - Threshold-based charging that uses excess export above threshold
-- Starts charging when `export_power > threshold`
+- Starts charging once `export_power >= threshold` — at the load's **minimum
+  current**, even when the excess is smaller than that minimum
 - Charging rate: `max(min_current, (export_power - threshold) / voltage)`
 
 **Logic:**
 ```
-If export_power > threshold:
+If export_power >= threshold:
     charge_current = max(min_current, (export_power - threshold) / voltage)
 Else:
     No charging
 ```
+
+**The threshold starts the load; the excess only sizes it.** A car cannot be
+charged below the EVSE's minimum current, so a permit cut to the size of the
+momentary excess would be a permit the hardware cannot express — and gating the
+start on it would leave the load off on exactly the site that needs it most: with
+the inverter's **Battery Charge Control** holding export just under the limit,
+the excess sits *at* the threshold and peaks only between register writes. The
+minimum is therefore a floor for as long as the threshold is met, which is the
+same threshold-hit engagement a smart plug in this mode has always had (its whole
+rating overshoots the excess too). Above the minimum nothing changes — the rate
+follows the excess.
 
 **When to use:**
 - Want to prevent excessive export to grid
@@ -460,14 +472,18 @@ however high the fleet average sits.
 
 Zero counts as on, because it is the saturated case — export sitting at the
 allowance *and* the battery pulling its maximum charge rate is precisely "nothing
-more can be absorbed".
+more can be absorbed". A margin of zero is a pool of zero amps, and a modulating
+load (EVSE, power station) still starts — at its **minimum**, on the strength of
+the verdict alone, the same floor the batteryless threshold above describes. The
+pool only sizes the rate above that minimum.
 
 A site with no allowance at all therefore sits exactly at the trigger: off-grid
 with a full battery. That is correct — a full battery cannot take another watt,
-and an off-grid inverter in that state is curtailing — and it is self-limiting,
-because a margin of zero is a pool of zero, so EVSEs and plugs, which need a pool
-above zero, still get nothing. Only a consumer reading the plain verdict acts on
-it: the hot water tank's boost setpoint.
+and an off-grid inverter in that state is curtailing. The loads that read the
+plain verdict run there: the hot water tank's boost setpoint, a plug on its
+near-full trigger, a modulating load at its minimum. It self-corrects rather than
+self-limits — if production cannot cover them the battery discharges, SOC leaves
+"full", its charge allowance returns and the verdict clears.
 
 **Why a battery below its maximum blocks Excess.** If the battery still has
 charge headroom, that surplus belongs in the battery, not in an opportunistic
@@ -669,8 +685,10 @@ sensors configured the commanded speed is used instead.
 Minimum and Maximum Charge Power are set during configuration and adjustable as
 sliders afterwards. They are deliberately *not* read from the device: a station
 whose hardware accepts 2400 W can be held to less. The minimum matters more than
-it sounds — an allocation below it cannot be expressed at all, so the mode drops
-the reserve instead of writing a rate.
+it sounds — an allocation below it cannot be expressed at all, so it is the floor
+the station charges at for as long as its mode says charge (in Excess mode, for as
+long as the verdict holds, however small the momentary surplus). Only when the
+mode itself says stop does the reserve drop instead of a rate being written.
 
 ### How It Works
 
@@ -694,14 +712,21 @@ Mode: Excess | Margin: 900W | Min/Max charge power: 200/2400W
 Result: Charge at 900W (floored to 900), reserve raised to the 90% charge limit
 ```
 
-*Scenario 2: Excess mode, margin too small*
+*Scenario 2: Excess mode, margin smaller than the minimum*
 ```
 Mode: Excess | Margin: 150W (below the 200W minimum)
+Result: Charge at 200W — the verdict is what starts the station, and 200 W is the
+        smallest rate it can express, so the minimum is the floor
+```
+
+*Scenario 3: Excess mode, no verdict*
+```
+Mode: Excess | Margin: -900W (the site can still place its production)
 Result: Not charging — reserve dropped to 30%, wall draw goes to zero, and the
         station runs its own loads from its battery
 ```
 
-*Scenario 3: Storm reserve*
+*Scenario 4: Storm reserve*
 ```
 Storm Reserve switch: on | Storm level: 80%
 Result: Reserve 80%, charge speed at maximum, competing as a must-run load

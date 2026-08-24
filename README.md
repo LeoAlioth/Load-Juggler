@@ -54,7 +54,7 @@ Each load has its own operating mode, set independently. This allows mixing mode
 - **Standard**: Charges as fast as possible from all available power sources (grid + solar + battery). Ideal for maximum charging speed.
 - **Solar Priority**: Charges at minimum current, increases with solar production. Prevents grid export while maintaining minimum charge rate. With battery: graduates charging based on SOC thresholds.
 - **Solar Only**: Only charges when sufficient solar power is available. Zero grid import — stops if import would be required.
-- **Excess**: Starts charging only once the site can no longer absorb its own production — grid export has reached the configured threshold *and* the home battery is charging as fast as it is allowed to (or is full). Designed for large solar systems to soak up power that would otherwise be curtailed.
+- **Excess**: Starts charging only once the site can no longer absorb its own production — grid export has reached the configured threshold *and* the home battery is charging as fast as it is allowed to (or is full). That verdict is what starts the charge, at the load's minimum current even when the surplus of the moment is smaller than that minimum; from there the rate follows the surplus. Designed for large solar systems to soak up power that would otherwise be curtailed.
 
 ### Smart Plug Modes
 

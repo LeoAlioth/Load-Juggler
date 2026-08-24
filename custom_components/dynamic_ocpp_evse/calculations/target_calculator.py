@@ -660,12 +660,13 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
 
     A site with no allowance therefore sits exactly at 0: off-grid with a full
     battery. That is correct rather than degenerate — a full battery cannot take
-    another watt, and an off-grid inverter in that state is curtailing — and it is
-    self-limiting, because a margin of 0 is a pool of 0, so EVSEs and plugs (which
-    need a pool strictly above zero) still get nothing. Only a consumer reading the
-    plain verdict acts on it: the hot water tank's boost setpoint. If that load
-    runs and production cannot cover it, the battery discharges, SOC falls below
-    full, its charge allowance returns and the verdict clears.
+    another watt, and an off-grid inverter in that state is curtailing. The loads
+    that read the plain verdict do run there: the hot water tank's boost setpoint,
+    a plug on its near-full trigger, and a modulating Excess load at its minimum
+    current (a margin of 0 is a pool of 0, and the minimum is a floor while the
+    verdict holds — see _source_limit). It self-corrects rather than self-limits:
+    if production cannot cover them, the battery discharges, SOC falls below full,
+    its charge allowance returns and the verdict clears.
 
     Pure function — unit-testable.
     """
@@ -1065,7 +1066,7 @@ def _distribute_power(
     - Standard/Continuous: physical pool only (any source)
     - Solar Priority: solar pool + grid minimum guarantee
     - Solar Only: solar pool only
-    - Excess: excess pool + minimum guarantee when excess > 0
+    - Excess: excess pool + minimum guarantee while the verdict is on
     """
     if not site.loads:
         return
