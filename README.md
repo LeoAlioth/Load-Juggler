@@ -150,9 +150,9 @@ Sites with more PV than they may export (e.g. 15 kWp behind a 5 kW export limit)
 
 | Sensor | Meaning |
 |---|---|
-| Forecast Clippable Energy (kWh) | Production above the export limit + base consumption for the rest of the day |
+| Forecast Clippable Energy (kWh) | Production above the export limit + base consumption in the next clipping window — the rest of today while today still clips, tomorrow's peak once it does not |
 | Forecast Storable Energy (kWh) | The part of that the battery could physically absorb at its charge rate |
-| Recommended Battery Max SOC (%) | SOC ceiling that leaves exactly that much headroom **below where the battery was heading anyway** — your *Normal SOC ceiling source*, or 100% when none is configured — and rises back to that destination as the peak passes, so the battery still ends the day where you wanted it |
+| Recommended Battery Max SOC (%) | SOC ceiling that leaves exactly that much headroom **below where the battery was heading anyway** — your *Normal SOC ceiling source*, or 100% when none is configured — and rises back to that destination as the peak passes, so the battery still ends the day where you wanted it — then holds there through the evening and drops to the next day's reserve just in time for it: the overnight discharge is estimated from your Base consumption and scheduled against the forecast's first crossing above that draw (with a 20% head start), so the house drains the battery for free through the small hours instead of the floor parking it full while the grid serves the night |
 | Battery Headroom Deficit (kWh) | Non-zero when the battery already holds more than the recommendation allows |
 | Recommended Battery Charge Limit (W) | Charge-rate cap protecting the reserved headroom — anchored one *Excess trigger margin* below the export limit, so export settles just under the limit and a hard-limiting inverter cannot mask the signal; released (full rate) whenever there is nothing left to clip or SOC is comfortably below the ceiling |
 
