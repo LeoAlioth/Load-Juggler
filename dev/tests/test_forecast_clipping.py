@@ -18,12 +18,17 @@ clipping — the nonlinearity is site-level.
 from datetime import datetime, timedelta, timezone
 
 from custom_components.dynamic_ocpp_evse.calculations import (
+    FORECAST_TRIM_CLAMP_W,
+    FORECAST_TRIM_MAX_STEP_S,
+    FORECAST_TRIM_TAU_S,
     battery_max_soc,
     clipping_forecast,
+    export_trim,
     headroom_deficit_kwh,
     merge_forecast_series,
     recommended_charge_limit,
     unexportable_power,
+    yields_to_excess,
 )
 
 T0 = datetime(2026, 8, 14, 6, 0, tzinfo=timezone.utc)
@@ -540,6 +545,263 @@ def test_unpinned_equilibrium_puts_export_a_margin_under_the_limit():
         # production stays honest: the margin is the whole safety distance,
         # and only a house drawing less than base could eat into it.
         assert export < _LIMIT
+
+
+# --- The integral trim: base consumption stops being a permanent error --------
+#
+# The anchored advice is feedforward, and its standing error is that
+# ``base_consumption`` stands in for the house: the export equilibrium inherits
+# ``(base − house)``, so a base 200 W low rides 200 W under (limit − margin) for
+# ever and delays every Excess load. The trim integrates RECONSTRUCTED export
+# against that setpoint, slowly and within a hard clamp.
+
+_SETPOINT = _LIMIT - _MARGIN   # 8200 — the export the advice is aiming for
+
+
+def test_trim_holds_still_when_export_sits_on_the_setpoint():
+    assert export_trim(0.0, _SETPOINT, _SETPOINT, 10.0) == 0.0
+    assert export_trim(-200.0, _SETPOINT, _SETPOINT, 10.0) == -200.0
+
+
+def test_trim_follows_the_error_downward_and_upward():
+    # Export 200 W under the setpoint means the battery is taking too much, so
+    # the trim goes NEGATIVE and the advice comes down. Over the setpoint, up.
+    assert export_trim(0.0, _SETPOINT - 200.0, _SETPOINT, 60.0) < 0.0
+    assert export_trim(0.0, _SETPOINT + 200.0, _SETPOINT, 60.0) > 0.0
+
+
+def test_trim_moves_slowly_enough_to_ignore_a_kettle():
+    # One 10 s cycle of a 2 kW error: 2000 × 10/600 = 33 W. Six of them — a
+    # kettle for a minute — is 200 W, which the charge control's write deadband
+    # (5 % of the register's normal) absorbs; see the register assertion in
+    # test_a_kettle_cannot_move_the_written_register below.
+    step = export_trim(0.0, _SETPOINT - 2000.0, _SETPOINT, 10.0)
+    assert abs(step + 2000.0 * 10.0 / FORECAST_TRIM_TAU_S) < 1e-9
+    trim = 0.0
+    for _ in range(6):
+        trim = export_trim(trim, _SETPOINT - 2000.0, _SETPOINT, 10.0)
+    assert abs(trim + 200.0) < 1e-6
+
+
+def test_trim_is_hard_clamped_in_both_directions():
+    # Windup is impossible by construction: hours of a 5 kW error stop here.
+    trim = 0.0
+    for _ in range(200):
+        trim = export_trim(trim, 0.0, _SETPOINT, 60.0)
+    assert trim == -FORECAST_TRIM_CLAMP_W
+    for _ in range(200):
+        trim = export_trim(trim, 30000.0, _SETPOINT, 60.0)
+    assert trim == FORECAST_TRIM_CLAMP_W
+
+
+def test_trim_caps_the_interval_a_single_step_may_integrate():
+    # A stalled and resumed coordinator hands over an hour of elapsed time; only
+    # FORECAST_TRIM_MAX_STEP_S of it is integrated.
+    long_gap = export_trim(0.0, _SETPOINT - 600.0, _SETPOINT, 3600.0)
+    capped = export_trim(0.0, _SETPOINT - 600.0, _SETPOINT, FORECAST_TRIM_MAX_STEP_S)
+    assert long_gap == capped
+    assert export_trim(0.0, 0.0, _SETPOINT, 0.0) == 0.0
+
+
+def test_trim_only_touches_the_engaged_advice():
+    # Engaged: the trim shifts the setpoint. Released: full rate is full rate,
+    # whatever the trim happens to hold.
+    engaged, limiting = recommended_charge_limit(
+        4.0, 100.0, 100.0, _FULL_RATE, 14000.0, _ANCHOR, 2.0, True, trim_w=-200.0
+    )
+    assert (engaged, limiting) == (14000.0 - _ANCHOR - 200.0, True)
+    released = recommended_charge_limit(
+        4.0, 50.0, 100.0, _FULL_RATE, 14000.0, _ANCHOR, 2.0, False, trim_w=-200.0
+    )
+    assert released == (_FULL_RATE, False)
+    # And it can never push the setpoint below zero or above the rating.
+    assert recommended_charge_limit(
+        4.0, 100.0, 100.0, _FULL_RATE, 8600.0, _ANCHOR, 2.0, True, trim_w=-400.0
+    ) == (0.0, True)
+    assert recommended_charge_limit(
+        4.0, 100.0, 100.0, _FULL_RATE, 30000.0, _ANCHOR, 2.0, True, trim_w=400.0
+    ) == (_FULL_RATE, True)
+
+
+def _tracking_export(trim, house):
+    """One unpinned tracking cycle: advise, let the battery take it, measure.
+
+    Production is the array's potential (export well under the hard limit, so
+    nothing is curtailed and the reading is honest), the battery absorbs the
+    advice, and what is left leaves through the meter.
+    """
+    advice, limiting = recommended_charge_limit(
+        4.0, 100.0, 100.0, _FULL_RATE, _POTENTIAL, _ANCHOR, 2.0, True, trim_w=trim
+    )
+    assert limiting is True
+    return advice, _POTENTIAL - house - advice
+
+
+def test_a_misconfigured_base_is_a_permanent_export_offset_without_the_trim():
+    """The bug the trim exists for: base 300 against a 500 W house.
+
+    Feedforward alone, the equilibrium is exactly (limit − margin) + (base −
+    house) — 200 W under the setpoint, for ever, delaying every Excess load.
+    """
+    _, export = _tracking_export(0.0, house=500.0)
+    assert export == _SETPOINT - 200.0
+
+
+def test_the_trim_converges_the_export_onto_the_setpoint():
+    """The same site with the trim: the offset is corrected, on the clock.
+
+    Ten-second cycles, house 500 W against a 300 W base. One time constant
+    closes ~63 % of the 200 W error, two ~86 %, and by 40 minutes it is gone.
+    The trim itself converges to (base − house) = −200 W, which is precisely the
+    feedforward's standing error — the point of the whole mechanism.
+    """
+    trim = 0.0
+    exports = {}
+    for cycle in range(1, 241):  # 40 minutes of 10 s cycles
+        _, export = _tracking_export(trim, house=500.0)
+        trim = export_trim(trim, export, _SETPOINT, 10.0)
+        exports[cycle * 10] = export
+
+    assert abs(exports[600] - (_SETPOINT - 200.0 * 0.37)) < 3.0    # 1 τ: ~63 %
+    assert abs(exports[1200] - (_SETPOINT - 200.0 * 0.135)) < 3.0  # 2 τ: ~86 %
+    assert abs(exports[2400] - _SETPOINT) < 5.0                    # gone
+    assert abs(trim - (-200.0)) < 5.0
+    # Monotone approach — an integral this slow cannot overshoot the setpoint.
+    ordered = [exports[t] for t in sorted(exports)]
+    assert all(b >= a for a, b in zip(ordered, ordered[1:]))
+    assert max(ordered) <= _SETPOINT
+
+
+def test_a_cloud_drops_the_advice_to_the_floor_whatever_the_trim_holds():
+    """Production collapse is the feedforward's own response, not the trim's.
+
+    Even holding its full positive clamp, the trim cannot keep the battery
+    charging through a cloud: the advice is the overshoot plus at most a few
+    hundred watts, so a collapse takes it to the floor within one cycle.
+    """
+    sunny, _ = recommended_charge_limit(
+        4.0, 100.0, 100.0, _FULL_RATE, _POTENTIAL, _ANCHOR, 2.0, True,
+        trim_w=FORECAST_TRIM_CLAMP_W,
+    )
+    assert sunny == _POTENTIAL - _ANCHOR + FORECAST_TRIM_CLAMP_W
+    for production in (2000.0, 500.0, 0.0):
+        clouded, limiting = recommended_charge_limit(
+            4.0, 100.0, 100.0, _FULL_RATE, production, _ANCHOR, 2.0, True,
+            trim_w=FORECAST_TRIM_CLAMP_W,
+        )
+        assert limiting is True
+        assert clouded <= FORECAST_TRIM_CLAMP_W
+    # And the clamp is a hard bound on how far the trim could ever hold it up,
+    # however long the cloud lasts — see the freeze rule in
+    # engine/hub_result._advance_export_trim, which stops integrating there.
+    assert export_trim(FORECAST_TRIM_CLAMP_W, 0.0, _SETPOINT, 3600.0) < 0.0
+
+
+def test_masked_site_replay_still_self_creeps_with_the_trim_active():
+    """The 91aa5ed property survives the trim: the masked site still escapes.
+
+    Closed-loop replay of the hard-limiting inverter, now with the trim running
+    on the reconstructed export the site would read. While export is pinned AT
+    the limit the trim is being pushed UP (export is a margin ABOVE the
+    setpoint), so it can only help the creep; once export falls off the limit
+    the sign reverses and the trim decays back toward zero, because here the
+    house draws exactly the configured base and there is no standing error to
+    correct. The equilibrium is the same one as without the trim.
+    """
+    allowance = 1000.0
+    trim = 0.0
+    trajectory = [allowance]
+    for _ in range(11):
+        production = _hard_limited_production(allowance)
+        export = production - _HOUSE - allowance
+        allowance, limiting = recommended_charge_limit(
+            4.0, 100.0, 100.0, _FULL_RATE, production, _ANCHOR, 2.0, True,
+            trim_w=trim,
+        )
+        assert limiting is True
+        trim = export_trim(trim, export, _SETPOINT, 10.0)
+        trajectory.append(allowance)
+
+    # Monotone, and off the hard limit no slower than before: the pinned cycles
+    # still gain at least one margin each.
+    assert all(b >= a for a, b in zip(trajectory, trajectory[1:]))
+    assert trajectory[-1] >= 6500.0
+    assert _hard_limited_production(trajectory[-1]) == _POTENTIAL
+
+    # Unpinned, it settles on the same equilibrium the untrimmed loop found.
+    for _ in range(400):
+        production = _hard_limited_production(allowance)
+        export = production - _HOUSE - allowance
+        allowance, _ = recommended_charge_limit(
+            4.0, 100.0, 100.0, _FULL_RATE, production, _ANCHOR, 2.0, True,
+            trim_w=trim,
+        )
+        trim = export_trim(trim, export, _SETPOINT, 10.0)
+    assert abs(allowance - 6500.0) < 5.0
+    assert abs(trim) < 5.0
+
+
+# --- Above the destination: the battery is the absorber of last resort --------
+
+def test_yield_engages_at_the_destination_and_releases_a_band_below_it():
+    # Not a percent early: below the destination the battery is served first.
+    assert yields_to_excess(94.0, 95.0, 2.0, False) is False
+    assert yields_to_excess(95.0, 95.0, 2.0, False) is True
+    # Engaged, it holds through an integer tick and releases a full band below.
+    assert yields_to_excess(94.0, 95.0, 2.0, True) is True
+    assert yields_to_excess(93.0, 95.0, 2.0, True) is True
+    assert yields_to_excess(92.0, 95.0, 2.0, True) is False
+
+
+def test_yield_latch_holds_through_an_integer_soc_flap_at_the_destination():
+    # The crossing decides a step of kilowatts in the advice, so an SOC register
+    # ticking 94↔95 must not flip it — the same failure the charge gate's latch
+    # was built for, at a different boundary.
+    yielding = yields_to_excess(95.0, 95.0, 2.0, False)
+    assert yielding is True
+    for soc in [94.0, 95.0] * 6:
+        yielding = yields_to_excess(soc, 95.0, 2.0, yielding)
+        assert yielding is True, f"yield released at SOC {soc}"
+
+
+def test_yield_is_off_without_an_soc_or_a_destination():
+    assert yields_to_excess(None, 95.0, 2.0, True) is False
+    assert yields_to_excess(99.0, None, 2.0, True) is False
+
+
+def test_an_engaged_excess_load_displaces_the_battery_above_the_destination():
+    # Overshoot 5500 W with a 3 kW Excess EVSE running: the battery takes the
+    # 2500 W the car cannot, watt for watt.
+    advice, limiting = recommended_charge_limit(
+        4.0, 96.0, 90.0, _FULL_RATE, _POTENTIAL, _ANCHOR, 2.0, True,
+        excess_draw_w=3000.0,
+    )
+    assert (advice, limiting) == (_POTENTIAL - _ANCHOR - 3000.0, True)
+    # A load drawing more than the overshoot floors the advice rather than
+    # going negative.
+    assert recommended_charge_limit(
+        4.0, 96.0, 90.0, _FULL_RATE, _POTENTIAL, _ANCHOR, 2.0, True,
+        excess_draw_w=9000.0,
+    ) == (0.0, True)
+
+
+def test_with_nothing_engaged_the_battery_takes_the_whole_overshoot():
+    # Above the destination and no Excess load able to absorb: unchanged from
+    # before this rule — the battery keeps buffering toward 100 %.
+    assert recommended_charge_limit(
+        4.0, 96.0, 90.0, _FULL_RATE, _POTENTIAL, _ANCHOR, 2.0, True,
+        excess_draw_w=0.0,
+    ) == (_POTENTIAL - _ANCHOR, True)
+
+
+def test_below_the_destination_the_battery_is_served_first():
+    """The caller passes no draw at all below the destination (yielding False),
+    so the advice is the plain overshoot even with a car on the surplus."""
+    assert yields_to_excess(88.0, 95.0, 2.0, False) is False
+    assert recommended_charge_limit(
+        4.0, 88.0, 90.0, _FULL_RATE, _POTENTIAL, _ANCHOR, 2.0, True,
+        excess_draw_w=0.0,
+    ) == (_POTENTIAL - _ANCHOR, True)
 
 
 def test_unexportable_power_clamps_at_zero():

@@ -243,6 +243,99 @@ def unexportable_power(solar_now_w, threshold_w):
     return max(0.0, (solar_now_w or 0.0) - threshold_w)
 
 
+# --- The engaged advice's integral trim ---------------------------------------
+#
+# The production anchor is FEEDFORWARD: cloud-correct and kettle-immune, because
+# it never looks at the meter. Its one weakness is that ``base_consumption``
+# stands in for the house, so the export equilibrium inherits ``(base − house)``
+# as a standing offset — a site whose base is 200 W low rides 200 W under
+# ``limit − margin`` for ever, delaying every Excess load. The fix is a slow,
+# bounded INTEGRAL trim steered by reconstructed export, which makes base an
+# initial guess instead of a permanent error.
+#
+# Both numbers below are constants rather than settings on purpose: they are
+# control-loop tuning, not site policy, and a user who could set them could
+# make the register chatter.
+#
+# The time constant is what keeps the trim off the register. A kettle, a passing
+# cloud or a car starting to charge moves reconstructed export by kilowatts for
+# a minute or two; at this rate that is worth a couple of hundred watts at most
+# — inside the charge control's write deadband — while a STANDING error of the
+# same size is most of the way corrected within twenty minutes (63 % at one
+# time constant, 86 % at two).
+FORECAST_TRIM_TAU_S = 600.0  # s — first-order time constant (10 minutes)
+# And the clamp is what makes windup impossible BY CONSTRUCTION: whatever the
+# meter says and for however long, the trim can never move the advice by more
+# than this, so no accumulated history can survive a cloud or hijack the
+# feedforward's response to one. A few hundred watts is enough to absorb a
+# realistically misconfigured base consumption and small next to any battery's
+# charge rating.
+FORECAST_TRIM_CLAMP_W = 400.0
+# Longest cycle gap that may be integrated in one step, so a stalled or
+# resumed coordinator cannot make a single step a large one.
+FORECAST_TRIM_MAX_STEP_S = 60.0
+
+
+def export_trim(trim_w, reconstructed_export_w, setpoint_w, elapsed_s):
+    """One step of the engaged advice's integral trim, in watts.
+
+    Steered by RECONSTRUCTED export — the draws-credited-back figure the Excess
+    verdict decides on — against ``setpoint_w`` (``export limit − Excess trigger
+    margin``, the export the anchored advice is aiming for). Reconstruction is
+    what makes this safe to close a loop on: our own engaged loads' draw is
+    credited back, so a car charging on the surplus is not read as an export
+    shortfall and cannot steer the battery's limit.
+
+    Sign convention follows the plant: export sitting BELOW the setpoint means
+    the battery is taking too much, so the trim goes negative and the advice
+    comes down. At the equilibrium the trim converges to ``base − house``,
+    exactly cancelling the feedforward's standing offset.
+
+    Two bounds, both structural rather than tuned: ``elapsed_s`` is capped so no
+    single step is large, and the result is hard-clamped to
+    ±``FORECAST_TRIM_CLAMP_W``. Anti-windup does not depend on either — the
+    caller integrates only while the advice is actually free to move (see
+    ``engine/hub_result._advance_export_trim``) — but the clamp means even a
+    caller that got that wrong could not wind up.
+
+    Pure function — unit-testable.
+    """
+    error = (reconstructed_export_w or 0.0) - setpoint_w
+    window = max(0.0, min(elapsed_s or 0.0, FORECAST_TRIM_MAX_STEP_S))
+    stepped = (trim_w or 0.0) + error * window / FORECAST_TRIM_TAU_S
+    return max(-FORECAST_TRIM_CLAMP_W, min(FORECAST_TRIM_CLAMP_W, stepped))
+
+
+def yields_to_excess(battery_soc, soc_target, hysteresis_pct, was_yielding=False):
+    """Whether the battery is the absorber of LAST RESORT this cycle.
+
+    Below its destination the battery is served first: it is on its way to where
+    its owner sends it, and the clipping reserve exists precisely so it gets
+    there. Above the destination it has already arrived — everything further is
+    the overshoot buffer — so the surplus should go to the Excess loads that
+    exist to soak it up, and the battery takes only what they cannot
+    (``excess_draw_w`` in ``recommended_charge_limit``).
+
+    A LATCH, for the same reason the charge gate is one: this decides a step
+    change of kilowatts in the advice, and an integer SOC register sitting
+    exactly on the destination would otherwise flip it back and forth. Engage at
+    ``battery_soc >= soc_target``, release only below
+    ``soc_target − hysteresis_pct``. The band is deliberately on the release
+    side: yielding starts exactly at the destination and never a percent early,
+    which is what keeps "below the destination the battery comes first" true.
+
+    False whenever either number is unknown — no SOC to judge by, or no
+    destination configured (a battery heading for 100 % is never above it).
+
+    Pure function — unit-testable.
+    """
+    if battery_soc is None or soc_target is None:
+        return False
+    if was_yielding:
+        return battery_soc >= soc_target - hysteresis_pct
+    return battery_soc >= soc_target
+
+
 def recommended_charge_limit(
     absorbable_kwh,
     battery_soc,
@@ -252,6 +345,8 @@ def recommended_charge_limit(
     threshold_w,
     hysteresis_pct,
     was_limiting=False,
+    trim_w=0.0,
+    excess_draw_w=0.0,
 ):
     """Battery charge-rate cap that protects the reserved headroom.
 
@@ -298,6 +393,20 @@ def recommended_charge_limit(
     the gate. ``max_soc`` moving (a forecast refresh) needs no special case —
     the same rule is applied against the new ceiling.
 
+    Two engaged-only adjustments ride on top of the anchored overshoot, and
+    neither exists while the gate is released (full rate is full rate):
+
+    * ``trim_w`` — the slow, bounded integral trim that zeroes the standing
+      ``(base − house)`` offset out of the equilibrium. See ``export_trim``; the
+      caller owns its state and its anti-windup, this just adds it.
+    * ``excess_draw_w`` — what the site's engaged Excess loads are already
+      drawing, subtracted only when the caller says the battery is above its
+      destination and therefore the absorber of last resort (see
+      ``yields_to_excess``). An Excess EVSE then displaces battery charging
+      watt for watt; with nothing engaged, or nothing able to absorb, the
+      battery goes on taking the whole overshoot toward 100 % exactly as
+      before. 0 below the destination, where the battery is served first.
+
     Returns ``(limit_w, limiting)``. The limit is always a legitimate setpoint
     ("restricted" is exactly ``limit_w < battery_max_charge_power``); the flag
     is the latch state to carry into the next cycle.
@@ -305,15 +414,25 @@ def recommended_charge_limit(
     Pure function — unit-testable.
     """
     full_rate = max(0.0, battery_max_charge_power or 0.0)
+
+    def engaged_limit():
+        """The overshoot, trimmed, less what the Excess loads already took."""
+        advice = (
+            unexportable_power(solar_now_w, threshold_w)
+            + (trim_w or 0.0)
+            - max(0.0, excess_draw_w or 0.0)
+        )
+        return min(full_rate, max(0.0, advice))
+
     if absorbable_kwh <= 0:
         return full_rate, False
     if battery_soc is None:
         # No SOC to judge headroom by: protect it (the pre-latch behaviour).
-        return min(full_rate, unexportable_power(solar_now_w, threshold_w)), True
+        return engaged_limit(), True
     if was_limiting:
         limiting = battery_soc >= max_soc - 2 * hysteresis_pct
     else:
         limiting = battery_soc >= max_soc - hysteresis_pct
     if not limiting:
         return full_rate, False
-    return min(full_rate, unexportable_power(solar_now_w, threshold_w)), True
+    return engaged_limit(), True

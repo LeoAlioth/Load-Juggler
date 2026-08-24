@@ -41,6 +41,7 @@ from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E
 )
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (  # noqa: E402
     excess_margin,
+    reconstructed_export_power,
 )
 from custom_components.dynamic_ocpp_evse.calculations.utils import (  # noqa: E402
     grid_without_managed_draws,
@@ -96,11 +97,10 @@ def _site(grid_a, grid_b=None, grid_c=None, battery_w=None, soc=60.0,
     )
 
 
-def _margin(site, hysteresis=0.0):
-    """Reconstruct the load-off grid view, then read the margin.
+def _apply_feedback(site):
+    """Take the managed draws off the grid readings, as the engine does.
 
-    Mirrors the engine's order: _apply_feedback_loop() (whose arithmetic is
-    grid_without_managed_draws) runs first, excess_margin() second.
+    The pure core of ``_apply_feedback_loop`` — ``grid_without_managed_draws``.
     """
     draws = [0.0, 0.0, 0.0]
     for c in site.loads:
@@ -112,7 +112,16 @@ def _margin(site, hysteresis=0.0):
         site.consumption, site.export_current = grid_without_managed_draws(
             site.consumption, site.export_current, tuple(draws)
         )
-    return excess_margin(site, hysteresis)
+    return site
+
+
+def _margin(site, hysteresis=0.0):
+    """Reconstruct the load-off grid view, then read the margin.
+
+    Mirrors the engine's order: _apply_feedback_loop() (whose arithmetic is
+    grid_without_managed_draws) runs first, excess_margin() second.
+    """
+    return excess_margin(_apply_feedback(site), hysteresis)
 
 
 def _close(a, b, tol=1e-6):
@@ -411,6 +420,77 @@ def test_the_enforced_allowance_keeps_the_load_off_identity():
     running = _clipping_site(ENFORCED, export=LIVE_EXPORT_LIMIT - 2000,
                              loads=[_plug(2000)])
     assert _close(_margin(running), _margin(idle))
+
+
+# ---------------------------------------------------------------------------
+# The same reconstruction, read as a steering signal
+# ---------------------------------------------------------------------------
+#
+# The forecast's charge-limit advice carries a slow integral trim steered by
+# RECONSTRUCTED export against (export limit − trigger margin). That is only
+# safe to close a loop on because of the identity above: our own loads' draw is
+# credited back, so a car charging on the surplus is not read as an export
+# shortfall and cannot steer the battery's charge limit. These pin that
+# invariance on the same geometries, through the same reconstruction.
+
+
+def _reconstructed(site):
+    """The load-off export figure, after the engine's feedback loop."""
+    _apply_feedback(site)
+    return reconstructed_export_power(site)
+
+
+def test_reconstructed_export_ignores_an_export_displaced_load():
+    off = _reconstructed(_site(-13500 / V, battery_w=-CHARGE_MAX))
+    on = _reconstructed(
+        _site(-11500 / V, battery_w=-CHARGE_MAX, loads=[_plug(2000)])
+    )
+    assert _close(off, 13500.0)
+    assert _close(on, off)
+
+
+def test_reconstructed_export_ignores_a_battery_displaced_load():
+    # The meter never moved — only battery_power did — and the reconstruction
+    # still lands on the same export the site would show with the plug off.
+    off = _reconstructed(_site(-13500 / V, battery_w=-CHARGE_MAX))
+    on = _reconstructed(
+        _site(-13500 / V, battery_w=-3000.0, loads=[_plug(2000)])
+    )
+    assert _close(on, off)
+
+
+def test_reconstructed_export_ignores_a_load_on_the_importing_phase_geometry():
+    # The geometry that cycled in the field, and the one a naive export reading
+    # would have handed the trim as a 2 kW error.
+    off = _reconstructed(
+        _site(6.667, -3.333, -3.333, battery_w=-4600.0, threshold=1000.0)
+    )
+    on = _reconstructed(
+        _site(12.464, -6.232, -6.232, battery_w=-2600.0, threshold=1000.0,
+              loads=[_plug(2000)])
+    )
+    assert _close(on, off, tol=1.0)
+
+
+def test_reconstructed_export_ignores_an_engaged_load_in_a_clipping_window():
+    # The trim's own operating point: the charge cap engaged, export pinned at
+    # the limit, an Excess load running on the surplus.
+    idle = _reconstructed(_clipping_site(ENFORCED))
+    running = _reconstructed(
+        _clipping_site(ENFORCED, export=LIVE_EXPORT_LIMIT - 2000,
+                       loads=[_plug(2000)])
+    )
+    assert _close(idle, LIVE_EXPORT_LIMIT)
+    assert _close(running, idle)
+
+
+def test_reconstructed_export_still_sees_the_household():
+    # The other half of the property: unmanaged draw is NOT credited back, so a
+    # real house step is a real error — the trim's slowness is what keeps a
+    # kettle off the register, not blindness to it.
+    quiet = _reconstructed(_site(-13500 / V, battery_w=-CHARGE_MAX))
+    kettle = _reconstructed(_site(-11500 / V, battery_w=-CHARGE_MAX))
+    assert _close(quiet - kettle, 2000.0)
 
 
 # ---------------------------------------------------------------------------

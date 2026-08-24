@@ -614,6 +614,149 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
     return constraints
 
 
+def _charge_allowance(site: SiteContext) -> float:
+    """The rate the site's battery is PERMITTED to take, as a sink allowance.
+
+    0 when no battery is configured or the one configured is at/above its full
+    SOC — a full battery draws nothing, so leaving its rating in an allowance
+    would make the sum unreachable exactly when the site is dumping the most
+    energy. Otherwise ``battery_max_charge_power``, which the engine has already
+    narrowed to whatever our own charge control is enforcing (see
+    ``excess_margin`` and ``engine/fleet.charge_power_total``).
+    """
+    battery_present = site.battery_power is not None or site.battery_soc is not None
+    battery_full = (
+        site.battery_soc is not None
+        and site.battery_soc_full is not None
+        and site.battery_soc >= site.battery_soc_full
+    )
+    if not battery_present or battery_full:
+        return 0.0
+    return site.battery_max_charge_power or 0
+
+
+def _reconstruct_placement(site: SiteContext):
+    """The load-off reconstruction: ``(export_w, battery_restored_w)``.
+
+    Every figure the Excess verdict decides on is read as the site would read it
+    *with our own managed loads off* — that is what makes the number stable
+    enough to decide with, since a load that is running must not suppress the
+    verdict that engaged it. This is the part of that reconstruction that
+    depends on the grid readings, split out because ``excess_margin`` is no
+    longer its only consumer: the forecast's charge-limit trim steers on the
+    same reconstructed export (see ``engine/hub_result._compute_forecast_advice``).
+
+    Off-grid there are no readings at all, so nothing is reconstructed from
+    them: export is 0 and the managed draws are handed back wholesale.
+    ``_apply_feedback_loop`` returns early there (the grid readings are
+    synthetic zeros that never contained the draws), so without that a load's
+    own consumption would come straight out of the battery's charge rate and
+    suppress the very margin that engaged it — the verdict would chatter every
+    cycle. Adding it back makes each load a probe: drawing power makes a
+    curtailing inverter ramp up, and the margin settles at the site's *true*
+    surplus, which is otherwise invisible off-grid.
+
+    Grid-tied, ``_apply_feedback_loop`` has already taken the draws off the grid
+    readings, which is the load-off state for every watt the inverter served by
+    exporting less. What it cannot see is the watt served by CHARGING THE
+    BATTERY LESS on a site whose phases are unbalanced: the battery's rate falls
+    site-wide while the draw is subtracted from one phase, and on a phase that
+    still reads net import the subtraction is clamped at zero instead of showing
+    up as export. The margin then dropped the moment the load engaged — the
+    on/off cycling of #41.
+
+    So finish the reconstruction the same way the site would: give the freed
+    power back to the battery, up to the headroom it actually has, and restore
+    the per-phase demand that charging represents. Whatever the battery cannot
+    take stays where the feedback loop put it, on the export side. A saturated
+    (or full, or absent) battery has no headroom, so nothing moves and this is
+    exactly the plain gross reading — and a battery sitting on an enforced
+    charge limit is saturated in precisely that sense, which is why narrowing
+    the allowance to the enforced rate cannot make the verdict move when a load
+    starts: the load's draw was taken off the grid readings, the battery has no
+    room to be handed it back, so it stays on the export side and the margin is
+    unchanged.
+
+    The export term is GROSS and clamped per phase: an export limit is physical
+    and contractual per exported flow, so a site pushing 30 A out on two phases
+    while pulling 10 A in on the third is exporting 30 A, not 20 A. Import on
+    one phase never buys export headroom on another.
+
+    Pure function — unit-testable.
+    """
+    # battery_power is positive discharging, negative charging.
+    charge_power = max(0.0, -(site.battery_power or 0))
+    managed_draw = (
+        sum(sum(c.get_site_phase_draw()) for c in site.loads) * site.voltage
+    )
+
+    if site.is_off_grid:
+        return 0.0, managed_draw
+
+    headroom = (
+        max(0.0, _charge_allowance(site) - charge_power)
+        if (site.battery_power or 0) <= 0
+        else 0.0  # discharging: the freed power stops the discharge first
+    )
+    battery_restored = min(managed_draw, headroom)
+    # Charging is symmetric across the phases that exist, so the restored
+    # demand lands per phase — which is why it can cancel export on one
+    # phase without touching the import on another. Gross, clamped per
+    # phase, then summed: the export semantics never change.
+    per_phase = (
+        battery_restored / site.export_current.active_count / site.voltage
+        if battery_restored and site.export_current.active_count
+        else 0.0
+    )
+    export = 0.0
+    for exp, cons in (
+        (site.export_current.a, site.consumption.a),
+        (site.export_current.b, site.consumption.b),
+        (site.export_current.c, site.consumption.c),
+    ):
+        if exp is None:
+            continue
+        export += max(0.0, exp - (cons or 0) - per_phase)
+    return export * site.voltage, battery_restored
+
+
+def reconstructed_export_power(site: SiteContext) -> float:
+    """Export in watts as the site would read it with our managed loads off.
+
+    The steering signal for the forecast's charge-limit trim, and the same
+    number the Excess verdict places against its allowance — see
+    ``_reconstruct_placement`` for why it is not simply the CT reading. Its
+    load-invariance is the property the trim needs: an engaged Excess load
+    drawing kilowatts must not look like an export shortfall, or the trim would
+    be steering on our own loads instead of on the site's standing error.
+
+    Pure function — unit-testable.
+    """
+    export, _ = _reconstruct_placement(site)
+    return export
+
+
+def excess_load_draw_power(site: SiteContext) -> float:
+    """Watts drawn right now by the loads in an Excess operating mode.
+
+    The measured draw, phase-mapped, which is the same figure the reconstruction
+    above credits back to the site. Above the battery's destination this is what
+    the battery yields to: the Excess loads get the surplus first and the
+    battery only absorbs what they cannot (see
+    ``calculations.recommended_charge_limit``).
+
+    Pure function — unit-testable.
+    """
+    return (
+        sum(
+            sum(c.get_site_phase_draw())
+            for c in site.loads
+            if c.mode_behavior in (BEHAVIOR_EXCESS, BEHAVIOR_BINARY_EXCESS)
+        )
+        * site.voltage
+    )
+
+
 def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     """Watts by which the site is over the point where Excess mode triggers.
 
@@ -678,6 +821,11 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     if production cannot cover them, the battery discharges, SOC falls below full,
     its charge allowance returns and the verdict clears.
 
+    The reconstruction itself — the export the site would read with our loads
+    off, and the share of their freed power the battery would take — lives in
+    ``_reconstruct_placement``, because the forecast's charge-limit trim steers
+    on the same figures.
+
     Pure function — unit-testable.
     """
     # battery_power is positive discharging, negative charging.
@@ -687,80 +835,13 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     )
 
     export_allowance = 0.0 if site.is_off_grid else (site.excess_export_threshold or 0)
-
-    battery_present = site.battery_power is not None or site.battery_soc is not None
-    battery_full = (
-        site.battery_soc is not None
-        and site.battery_soc_full is not None
-        and site.battery_soc >= site.battery_soc_full
-    )
-    if not battery_present or battery_full:
-        charge_allowance = 0.0
-    else:
-        # The rate the battery is PERMITTED to take, not its nameplate rating —
-        # the engine narrows this scalar to whatever our charge control is
-        # actually enforcing (see the docstring). Everything below is unchanged
-        # by that: a narrower allowance is a smaller headroom in exactly the same
-        # way a partly-charged battery is, so the draw add-back keeps cancelling.
-        charge_allowance = site.battery_max_charge_power or 0
-
-    if site.is_off_grid:
-        # Off-grid, add our managed loads' draws back wholesale.
-        # _apply_feedback_loop returns early there (the grid readings are
-        # synthetic zeros that never contained the draws), so without this a
-        # load's own consumption comes straight out of the battery's charge rate
-        # and suppresses the very margin that engaged it — the verdict would
-        # chatter every cycle. Adding it back makes each load a probe: drawing
-        # power makes a curtailing inverter ramp up, and the margin settles at
-        # the site's *true* surplus, which is otherwise invisible off-grid.
-        export = 0.0
-        battery_restored = managed_draw
-    else:
-        # Grid-tied the feedback loop has already taken the draws off the grid
-        # readings, which is the load-off state for every watt the inverter
-        # served by exporting less. What it cannot see is the watt served by
-        # CHARGING THE BATTERY LESS on a site whose phases are unbalanced: the
-        # battery's rate falls site-wide while the draw is subtracted from one
-        # phase, and on a phase that still reads net import the subtraction is
-        # clamped at zero instead of showing up as export. The margin then
-        # dropped the moment the load engaged — the on/off cycling of #41.
-        #
-        # So finish the reconstruction the same way the site would: give the
-        # freed power back to the battery, up to the headroom it actually has,
-        # and restore the per-phase demand that charging represents. Whatever
-        # the battery cannot take stays where the feedback loop put it, on the
-        # export side. A saturated (or full, or absent) battery has no headroom,
-        # so nothing moves and this is exactly the plain gross reading — and a
-        # battery sitting on an enforced charge limit is saturated in precisely
-        # that sense, which is why narrowing the allowance to the enforced rate
-        # cannot make the verdict move when a load starts: the load's draw was
-        # taken off the grid readings, the battery has no room to be handed it
-        # back, so it stays on the export side and the margin is unchanged.
-        headroom = (
-            max(0.0, charge_allowance - charge_power)
-            if (site.battery_power or 0) <= 0
-            else 0.0  # discharging: the freed power stops the discharge first
-        )
-        battery_restored = min(managed_draw, headroom)
-        # Charging is symmetric across the phases that exist, so the restored
-        # demand lands per phase — which is why it can cancel export on one
-        # phase without touching the import on another. Gross, clamped per
-        # phase, then summed: the export semantics never change.
-        per_phase = (
-            battery_restored / site.export_current.active_count / site.voltage
-            if battery_restored and site.export_current.active_count
-            else 0.0
-        )
-        export = 0.0
-        for exp, cons in (
-            (site.export_current.a, site.consumption.a),
-            (site.export_current.b, site.consumption.b),
-            (site.export_current.c, site.consumption.c),
-        ):
-            if exp is None:
-                continue
-            export += max(0.0, exp - (cons or 0) - per_phase)
-        export *= site.voltage
+    # The rate the battery is PERMITTED to take, not its nameplate rating — the
+    # engine narrows this scalar to whatever our charge control is actually
+    # enforcing (see the docstring). Everything else is unchanged by that: a
+    # narrower allowance is a smaller headroom in exactly the same way a
+    # partly-charged battery is, so the draw add-back keeps cancelling.
+    charge_allowance = _charge_allowance(site)
+    export, battery_restored = _reconstruct_placement(site)
 
     allowance = max(0.0, export_allowance + charge_allowance - hysteresis)
     absorbed = export + charge_power + battery_restored

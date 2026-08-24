@@ -19,12 +19,17 @@ them.
 from __future__ import annotations
 
 import logging
+import time
 
 from ..calculations import (
     clipping_forecast,
     battery_max_soc,
+    excess_load_draw_power,
+    export_trim,
     headroom_deficit_kwh,
+    reconstructed_export_power,
     recommended_charge_limit,
+    yields_to_excess,
 )
 from ..const import (
     CONF_BASE_CONSUMPTION,
@@ -50,6 +55,70 @@ from .forecast_reader import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _advance_export_trim(
+    hub_runtime, site, setpoint_w, advice_w, full_rate_w, limiting
+):
+    """Carry the engaged advice's integral trim into the next cycle.
+
+    The seam: ``recommended_charge_limit`` stays a pure formula that is HANDED a
+    trim, and the state — the value and the monotonic stamp the step is measured
+    against — lives here in ``hub_runtime`` beside ``_forecast_charge_limiting``,
+    for the same reason that latch does. Wall-clock seconds, never cycles, so a
+    site polling every 5 s and one polling every 60 s converge at the same rate
+    (the cadence changes how often the trim is *nudged*, not how fast it moves).
+
+    Three regimes:
+
+    * **RESET** — on release, on disengage, and off-grid. The trim corrects the
+      standing error of the ENGAGED tracking equilibrium; while nothing is being
+      held back, observed export says nothing about that error, so a frozen
+      value would only be yesterday's correction waiting to kick the register
+      the moment the gate re-engaged. Off-grid there is no export to steer on at
+      all. A reload resets it too, because ``hub_runtime`` is fresh — the trim is
+      re-earned in ten to twenty minutes, and being wrong on the safe side for
+      that long is exactly what the feedforward is for.
+    * **FREEZE** — engaged but the advice is pinned at 0 or at full rate. The
+      actuator cannot move, so the error is not ours to correct: this is textbook
+      conditional integration, and it is what makes a cloud a non-event. As
+      production collapses the advice falls to 0 on the feedforward alone and the
+      trim simply stops, keeping the value it had earned in the sun instead of
+      running away and having to re-converge afterwards.
+    * **INTEGRATE** — engaged, advice free to move: one ``export_trim`` step on
+      reconstructed export against ``setpoint_w`` (``limit − margin``).
+
+    The first engaged cycle after a reset only stamps the clock; there is no
+    elapsed interval to integrate over yet.
+    """
+    if not limiting or site.is_off_grid:
+        hub_runtime.pop("_forecast_export_trim", None)
+        hub_runtime.pop("_forecast_trim_at", None)
+        return
+
+    now = time.monotonic()
+    last = hub_runtime.get("_forecast_trim_at")
+    hub_runtime["_forecast_trim_at"] = now
+    trim = hub_runtime.get("_forecast_export_trim", 0.0)
+    hub_runtime["_forecast_export_trim"] = trim
+    if last is None:
+        return
+    if advice_w is None or advice_w <= 0 or advice_w >= full_rate_w:
+        return
+
+    export_w = reconstructed_export_power(site)
+    hub_runtime["_forecast_export_trim"] = export_trim(
+        trim, export_w, setpoint_w, now - last
+    )
+    _LOGGER.debug(
+        "Forecast advice trim: reconstructed export %.0fW vs setpoint %.0fW"
+        " over %.1fs → trim %.0fW (was %.0fW)",
+        export_w,
+        setpoint_w,
+        now - last,
+        hub_runtime["_forecast_export_trim"],
+        trim,
+    )
 
 
 def _compute_forecast_advice(
@@ -102,9 +171,18 @@ def _compute_forecast_advice(
     hard-limiting inverter cannot mask the signal. The derivation below
     spells out why.
 
-    Two fleet-level pieces of carried state, both in ``hub_runtime`` and
-    neither ever per-member (the advice is uniform by construction, so
-    per-member state would diverge):
+    That anchored advice is FEEDFORWARD (it reads production, not the meter,
+    which is what makes it immune to kettles and correct through clouds), and
+    its one standing error is that ``base_consumption`` stands in for the real
+    house draw. A slow, bounded integral trim on RECONSTRUCTED export closes
+    that gap without giving up the feedforward's immunity — see
+    ``_advance_export_trim`` for the state and ``export_trim`` for the
+    arithmetic. base_consumption remains exact where it belongs: in the
+    clipping integral, which is an energy question about the whole day.
+
+    The fleet-level carried state, all of it in ``hub_runtime`` and none of it
+    ever per-member (the advice is uniform by construction, so per-member state
+    would diverge):
 
     * ``_forecast_max_soc`` — the published ceiling's ratchet, mirroring the
       Excess latch: it rises freely and falls only past
@@ -115,6 +193,15 @@ def _compute_forecast_advice(
       instead of one boundary the integer SOC can sit on and flap across (see
       ``recommended_charge_limit``). The engine owns the persistence; the
       calculation stays a pure function of state in, state out.
+    * ``_forecast_soc_yielding`` — whether the battery was already yielding to
+      the Excess loads above its destination, the latch of the same shape at
+      that crossing (``yields_to_excess``).
+    * ``_forecast_export_trim`` / ``_forecast_trim_at`` — the engaged advice's
+      slow integral trim and the monotonic stamp its steps are measured from
+      (``_advance_export_trim``, and ``export_trim`` for the arithmetic).
+
+    Every one of them is dropped the moment the feature is not configured, so a
+    site that turns it off leaves nothing behind.
     """
     export_limit = (
         get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT)
@@ -134,6 +221,9 @@ def _compute_forecast_advice(
     if export_limit <= 0 or capacity_kwh <= 0 or not (device_ids or legacy_entity_ids):
         hub_runtime.pop("_forecast_max_soc", None)
         hub_runtime.pop("_forecast_charge_limiting", None)
+        hub_runtime.pop("_forecast_soc_yielding", None)
+        hub_runtime.pop("_forecast_export_trim", None)
+        hub_runtime.pop("_forecast_trim_at", None)
         hub_runtime.pop("_forecast_parse_memo", None)
         return None, {}
 
@@ -226,6 +316,19 @@ def _compute_forecast_advice(
     deficit = headroom_deficit_kwh(fc.absorbable_kwh, capacity_kwh, battery_soc)
     charge_limit = None
     if fleet_charge_cap:
+        # Above the destination the battery is the absorber of LAST RESORT: the
+        # Excess loads that exist to soak up surplus get it first, and the
+        # battery takes what they cannot. Below it the battery comes first, as
+        # ever. Latched at the crossing (see ``yields_to_excess``) because this
+        # moves the advice by whole kilowatts and an integer SOC register would
+        # otherwise sit on the boundary and flip it.
+        yielding = yields_to_excess(
+            battery_soc,
+            soc_target,
+            FORECAST_SOC_HYSTERESIS,
+            hub_runtime.get("_forecast_soc_yielding", False),
+        )
+        hub_runtime["_forecast_soc_yielding"] = yielding
         charge_limit, limiting = recommended_charge_limit(
             fc.absorbable_kwh,
             battery_soc,
@@ -236,10 +339,23 @@ def _compute_forecast_advice(
             advice_threshold,
             FORECAST_SOC_HYSTERESIS,
             hub_runtime.get("_forecast_charge_limiting", False),
+            trim_w=hub_runtime.get("_forecast_export_trim", 0.0),
+            excess_draw_w=excess_load_draw_power(site) if yielding else 0.0,
         )
         hub_runtime["_forecast_charge_limiting"] = limiting
+        _advance_export_trim(
+            hub_runtime,
+            site,
+            max(0.0, export_limit - excess_trigger_margin),
+            charge_limit,
+            fleet_charge_cap,
+            limiting,
+        )
     else:
         hub_runtime.pop("_forecast_charge_limiting", None)
+        hub_runtime.pop("_forecast_soc_yielding", None)
+        hub_runtime.pop("_forecast_export_trim", None)
+        hub_runtime.pop("_forecast_trim_at", None)
 
     # Per-inverter advice: the uniform ceiling for every battery member, and
     # the fleet charge limit split proportionally to each member's charge cap,
