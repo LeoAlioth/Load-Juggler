@@ -2269,6 +2269,102 @@ async def test_forecast_max_soc_ratchet(hass):
         assert result["forecast_battery_max_soc"] == 60
 
 
+async def test_forecast_charge_limit_latch_round_trips_through_hub_runtime(hass):
+    """The charge cap's latch state survives between cycles, so an integer SOC
+    tick at the engage threshold cannot flap the published limit.
+
+    Same rig as the ratchet test above: threshold 5300 W, 10 kWh pack, 5 kW
+    charge cap. One hour 1000 W over the threshold = 1 kWh absorbable, so the
+    ceiling is 90 % — engage at 88, release only below 86.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Forecast Latch Hub",
+        data={
+            CONF_NAME: "Forecast Latch Hub",
+            CONF_ENTITY_ID: "forecast_latch_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.fl_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.fl_battery_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.fl_battery_power",
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_GRID_EXPORT_LIMIT: 5000,
+            CONF_BASE_CONSUMPTION: 300,
+            CONF_BATTERY_CAPACITY_KWH: 10,
+            CONF_FORECAST_SOC_FLOOR: 30,
+            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.fl_forecast"],
+        },
+    )
+    hub_runtime = {"loads": []}
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: hub_runtime},
+        "loads": {},
+        "load_allocations": {},
+    }
+
+    hass.states.async_set(
+        "sensor.fl_phase_a", "2.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.fl_battery_power", "-500",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.states.async_set(
+        "sensor.fl_forecast",
+        "1.0",
+        {"watts": {"2026-08-14T10:00:00+00:00": 6300, "2026-08-14T11:00:00+00:00": 0}},
+    )
+
+    def set_soc(soc):
+        hass.states.async_set(
+            "sensor.fl_battery_soc", str(soc),
+            {"device_class": "battery", "unit_of_measurement": "%"},
+        )
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        # SOC below the band: released, full rate, no latch.
+        set_soc(80)
+        result = run_hub_calculation(hass, hub)
+        assert result["forecast_battery_max_soc"] == 90
+        assert result["forecast_charge_limit_w"] == 5000
+        assert hub_runtime["_forecast_charge_limiting"] is False
+
+        # At the engage threshold (88 = 90 − 2): the cap engages, and with no
+        # unexportable production the setpoint is 0 W.
+        set_soc(88)
+        result = run_hub_calculation(hass, hub)
+        assert result["forecast_charge_limit_w"] == 0
+        assert hub_runtime["_forecast_charge_limiting"] is True
+
+        # The flap: one integer tick down. The single-threshold version released
+        # here; the latch carried in hub_runtime holds, because 87 is still
+        # inside the band (release is below 86).
+        for soc in (87, 88, 87, 88):
+            set_soc(soc)
+            result = run_hub_calculation(hass, hub)
+            assert result["forecast_charge_limit_w"] == 0, f"released at SOC {soc}"
+            assert hub_runtime["_forecast_charge_limiting"] is True
+
+        # A full band below the engage threshold — the latch lets go.
+        set_soc(85)
+        result = run_hub_calculation(hass, hub)
+        assert result["forecast_charge_limit_w"] == 5000
+        assert hub_runtime["_forecast_charge_limiting"] is False
+
+
 async def test_grid_phases_in_watts_are_converted_to_amps(
     hass,
     hub_entry,

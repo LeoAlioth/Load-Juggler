@@ -221,21 +221,28 @@ def test_deficit_unknown_soc_is_zero():
 def test_cap_released_when_nothing_to_clip():
     assert recommended_charge_limit(
         0.0, 90.0, 100.0, 5000.0, 0.0, THRESHOLD, 2.0
-    ) == 5000.0
+    ) == (5000.0, False)
+
+
+def test_cap_released_immediately_when_nothing_left_to_clip():
+    # Even while engaged: with nothing left to protect the latch drops at once.
+    assert recommended_charge_limit(
+        0.0, 100.0, 100.0, 5000.0, 0.0, THRESHOLD, 2.0, True
+    ) == (5000.0, False)
 
 
 def test_cap_released_below_the_band():
     # SOC 50 against a 60 % ceiling with 2 % hysteresis: headroom not at risk.
     assert recommended_charge_limit(
         4.0, 50.0, 60.0, 5000.0, 10000.0, THRESHOLD, 2.0
-    ) == 5000.0
+    ) == (5000.0, False)
 
 
 def test_cap_restricts_to_unexportable_power_at_the_ceiling():
     # At the ceiling, charge only with power that could not have been exported.
     assert recommended_charge_limit(
         4.0, 60.0, 60.0, 5000.0, 8000.0, THRESHOLD, 2.0
-    ) == 2000.0
+    ) == (2000.0, True)
 
 
 def test_cap_zero_at_ceiling_with_exportable_production():
@@ -243,13 +250,96 @@ def test_cap_zero_at_ceiling_with_exportable_production():
     # reserved headroom, so 0 is the correct setpoint here.
     assert recommended_charge_limit(
         4.0, 60.0, 60.0, 5000.0, 4000.0, THRESHOLD, 2.0
-    ) == 0.0
+    ) == (0.0, True)
 
 
 def test_cap_never_exceeds_full_rate():
     assert recommended_charge_limit(
         4.0, 60.0, 60.0, 5000.0, 20000.0, THRESHOLD, 2.0
-    ) == 5000.0
+    ) == (5000.0, True)
+
+
+def test_cap_unknown_soc_protects_the_headroom():
+    # No SOC to judge by: keep protecting, and report the latch as engaged so
+    # the next cycle (SOC back) starts from "limiting" rather than re-engaging.
+    assert recommended_charge_limit(
+        4.0, None, 60.0, 5000.0, 8000.0, THRESHOLD, 2.0
+    ) == (2000.0, True)
+
+
+# --- The charge-cap SOC latch: two thresholds, not one boundary ---------------
+
+
+def test_cap_latch_holds_through_an_integer_soc_flap():
+    """Regression: the live flap of 2026-08-23 08:44–10:48 UTC.
+
+    An integer SOC sat on the single old boundary (ceiling 100, hysteresis 2 →
+    98) while partly-cloudy sun ticked it 97↔98. Each tick flipped the gate,
+    and each flip was a Modbus/EEPROM write to the Deye register: ~12
+    engage/release cycles in two hours. The feedback is structural — the cap
+    suppresses the very charging that raised SOC over the boundary — so only a
+    real band can break it.
+
+    Solar alternates 2400/550 W, both below the 6000 W threshold, so while
+    engaged the cap is 0 W (the value that was being written and un-written).
+    """
+    limiting = False
+    limit, limiting = recommended_charge_limit(
+        4.0, 98.0, 100.0, 10000.0, 2400.0, THRESHOLD, 2.0, limiting
+    )
+    assert (limit, limiting) == (0.0, True), "SOC 98 must engage the cap"
+
+    # Two hours of the observed alternation. Not one release, and the setpoint
+    # never returns to full rate — nothing to pace, nothing to write.
+    for i, (soc, solar) in enumerate([(97.0, 550.0), (98.0, 2400.0)] * 12):
+        limit, limiting = recommended_charge_limit(
+            4.0, soc, 100.0, 10000.0, solar, THRESHOLD, 2.0, limiting
+        )
+        assert limiting is True, f"cycle {i}: cap released at SOC {soc}"
+        assert limit == 0.0, f"cycle {i}: cap jumped to {limit} W at SOC {soc}"
+
+
+def test_cap_latch_releases_a_full_band_below_the_engage_threshold():
+    # Engaged at ceiling 100 with hysteresis 2: engage boundary 98, release
+    # below 96. 96 still holds; 95 lets go.
+    limit, limiting = recommended_charge_limit(
+        4.0, 96.0, 100.0, 10000.0, 550.0, THRESHOLD, 2.0, True
+    )
+    assert (limit, limiting) == (0.0, True)
+
+    limit, limiting = recommended_charge_limit(
+        4.0, 95.0, 100.0, 10000.0, 550.0, THRESHOLD, 2.0, True
+    )
+    assert (limit, limiting) == (10000.0, False)
+
+
+def test_cap_latch_does_not_re_engage_below_the_engage_threshold():
+    # Released at 95, the gate stays open until SOC is back at 98 — an integer
+    # tick at the release threshold cannot flip it either.
+    limit, limiting = recommended_charge_limit(
+        4.0, 96.0, 100.0, 10000.0, 550.0, THRESHOLD, 2.0, False
+    )
+    assert (limit, limiting) == (10000.0, False)
+    limit, limiting = recommended_charge_limit(
+        4.0, 97.0, 100.0, 10000.0, 550.0, THRESHOLD, 2.0, False
+    )
+    assert (limit, limiting) == (10000.0, False)
+    limit, limiting = recommended_charge_limit(
+        4.0, 98.0, 100.0, 10000.0, 550.0, THRESHOLD, 2.0, False
+    )
+    assert (limit, limiting) == (0.0, True)
+
+
+def test_cap_latch_follows_a_moving_ceiling():
+    # A forecast refresh lowers the ceiling to 90 while the cap is engaged at
+    # SOC 96: the same rule against the new ceiling keeps it engaged (96 >= 86).
+    # Raising the ceiling to 100 with SOC at 95 releases it (95 < 96).
+    assert recommended_charge_limit(
+        4.0, 96.0, 90.0, 10000.0, 550.0, THRESHOLD, 2.0, True
+    ) == (0.0, True)
+    assert recommended_charge_limit(
+        4.0, 95.0, 100.0, 10000.0, 550.0, THRESHOLD, 2.0, True
+    ) == (10000.0, False)
 
 
 def test_unexportable_power_clamps_at_zero():

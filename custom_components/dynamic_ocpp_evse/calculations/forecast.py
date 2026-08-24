@@ -228,26 +228,50 @@ def recommended_charge_limit(
     solar_now_w,
     threshold_w,
     hysteresis_pct,
+    was_limiting=False,
 ):
     """Battery charge-rate cap that protects the reserved headroom.
 
     ``max(0, solar_now − T)`` alone would be catastrophic as unconditional
     advice — on a cloudy day it reads 0 W all day and the house ends the
-    evening with no reserve — so the cap is released whenever there is nothing
-    to protect:
+    evening with no reserve — so the cap engages only while the headroom is
+    actually at risk:
 
-    - nothing left to clip today (``absorbable_kwh == 0``) → full rate
-    - SOC comfortably below the ceiling → full rate
+    - nothing left to clip today (``absorbable_kwh <= 0``) → full rate, and the
+      latch drops immediately: there is nothing left to protect
+    - SOC below the SOC band (see below) → full rate
     - otherwise → charge only with power that could not have been exported
 
-    The returned value is therefore always a legitimate setpoint; "restricted"
-    is exactly ``value < battery_max_charge_power``.
+    The SOC test is a two-threshold LATCH, not one boundary, which is why the
+    caller must hand the previous state back in as ``was_limiting``:
+
+    - disarmed → engage at ``battery_soc >= max_soc − hysteresis_pct``
+    - engaged  → release only below ``max_soc − 2 × hysteresis_pct``
+
+    A single threshold in both directions was a genuine bug: the cap suppresses
+    the very charging that pushed SOC over the boundary, so an integer SOC
+    sitting on it flapped engage/release every couple of minutes and each flip
+    became a Modbus/EEPROM register write. With the band a full
+    ``hysteresis_pct`` wide, an integer ±1 tick at either threshold cannot flip
+    the gate. ``max_soc`` moving (a forecast refresh) needs no special case —
+    the same rule is applied against the new ceiling.
+
+    Returns ``(limit_w, limiting)``. The limit is always a legitimate setpoint
+    ("restricted" is exactly ``limit_w < battery_max_charge_power``); the flag
+    is the latch state to carry into the next cycle.
 
     Pure function — unit-testable.
     """
     full_rate = max(0.0, battery_max_charge_power or 0.0)
     if absorbable_kwh <= 0:
-        return full_rate
-    if battery_soc is not None and battery_soc < max_soc - hysteresis_pct:
-        return full_rate
-    return min(full_rate, unexportable_power(solar_now_w, threshold_w))
+        return full_rate, False
+    if battery_soc is None:
+        # No SOC to judge headroom by: protect it (the pre-latch behaviour).
+        return min(full_rate, unexportable_power(solar_now_w, threshold_w)), True
+    if was_limiting:
+        limiting = battery_soc >= max_soc - 2 * hysteresis_pct
+    else:
+        limiting = battery_soc >= max_soc - hysteresis_pct
+    if not limiting:
+        return full_rate, False
+    return min(full_rate, unexportable_power(solar_now_w, threshold_w)), True

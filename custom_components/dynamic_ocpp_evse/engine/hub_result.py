@@ -76,11 +76,19 @@ def _compute_forecast_advice(
     recommended charge limit splits proportionally to each member's charge
     cap, clamped to its own cap.
 
-    ONE fleet-level ratchet (`hub_runtime["_forecast_max_soc"]`), mirroring
-    the Excess latch: the ceiling rises freely, falls only past
-    FORECAST_SOC_HYSTERESIS. Never per-member — the ceiling is uniform by
-    construction and per-member ratchets would diverge. Whole percent —
-    inverter SOC registers are integers.
+    Two fleet-level pieces of carried state, both in ``hub_runtime`` and
+    neither ever per-member (the advice is uniform by construction, so
+    per-member state would diverge):
+
+    * ``_forecast_max_soc`` — the published ceiling's ratchet, mirroring the
+      Excess latch: it rises freely and falls only past
+      FORECAST_SOC_HYSTERESIS. Whole percent — inverter SOC registers are
+      integers.
+    * ``_forecast_charge_limiting`` — whether the charge-rate cap was engaged
+      last cycle, which is what makes its SOC gate a two-threshold latch
+      instead of one boundary the integer SOC can sit on and flap across (see
+      ``recommended_charge_limit``). The engine owns the persistence; the
+      calculation stays a pure function of state in, state out.
     """
     export_limit = (
         get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT)
@@ -99,6 +107,7 @@ def _compute_forecast_advice(
     )
     if export_limit <= 0 or capacity_kwh <= 0 or not (device_ids or legacy_entity_ids):
         hub_runtime.pop("_forecast_max_soc", None)
+        hub_runtime.pop("_forecast_charge_limiting", None)
         hub_runtime.pop("_forecast_parse_memo", None)
         return None, {}
 
@@ -143,7 +152,7 @@ def _compute_forecast_advice(
     deficit = headroom_deficit_kwh(fc.absorbable_kwh, capacity_kwh, battery_soc)
     charge_limit = None
     if fleet_charge_cap:
-        charge_limit = recommended_charge_limit(
+        charge_limit, limiting = recommended_charge_limit(
             fc.absorbable_kwh,
             battery_soc,
             proposed,
@@ -151,7 +160,11 @@ def _compute_forecast_advice(
             site.solar_production_total or 0,
             threshold,
             FORECAST_SOC_HYSTERESIS,
+            hub_runtime.get("_forecast_charge_limiting", False),
         )
+        hub_runtime["_forecast_charge_limiting"] = limiting
+    else:
+        hub_runtime.pop("_forecast_charge_limiting", None)
 
     # Per-inverter advice: the uniform ceiling for every battery member, and
     # the fleet charge limit split proportionally to each member's charge cap,
