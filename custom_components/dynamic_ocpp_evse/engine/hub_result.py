@@ -274,6 +274,7 @@ def _build_hub_result(
     auto_detect_notifications=None,
     group_data=None,
     grid_stale=False,
+    grid_assumed=False,
     hub_status="OK",
     hub_warnings=None,
     excess_available=False,
@@ -281,7 +282,31 @@ def _build_hub_result(
     forecast_advice=None,
     inverters_data=None,
 ):
-    """Build the result dict returned by run_hub_calculation."""
+    """Build the result dict returned by run_hub_calculation.
+
+    ``grid_assumed`` says that at least one grid phase this cycle is the
+    main-breaker worst case invented by ``_resolve_grid_phases`` (a CT
+    unreadable with no EMA history — cold start, or the first cycles after an
+    entry reload), not a reading and not a held EMA value. It splits the two
+    kinds of published figure apart:
+
+    * the grid MEASUREMENTS — ``grid_power``, ``total_export_power`` and the
+      ``household_power`` derived from them — publish None, so their sensors
+      read unknown and the recorder stores nothing. Publishing the assumption
+      instead painted a fabricated grid spike (3 x breaker x voltage) onto
+      Current Grid Power and into long-term statistics on every reload;
+    * the computed ALLOCATIONS — every ``available_*`` / remaining figure and
+      the per-load permits — keep publishing. The engine really did allocate
+      on the worst case, so "no headroom" is the truthful consequence of the
+      assumption, not a fabrication.
+
+    None for the TOTALS even when only one phase is assumed: a total that
+    contains one fabricated phase is itself fabricated, and there is no
+    per-phase grid measurement published to partial it out into. A HELD EMA
+    value is not covered — that is a legitimate estimate of what the phase was
+    doing moments ago, and suppressing it would blank the grid sensors during
+    every brief CT dropout.
+    """
     # Grid available power (based on consumption after feedback loop).
     # Off-grid there is no grid feed at all — headroom is 0 by definition.
     if site.is_off_grid:
@@ -478,6 +503,15 @@ def _build_hub_result(
     battery_remaining_current = battery_remaining / voltage if voltage else 0
     inverter_remaining_current = inverter_sourced / voltage if voltage else 0
 
+    # The grid measurements, or None while any phase is the breaker assumption
+    # (see the docstring). Computed either way — the household identity above
+    # needs the same terms — and dropped only at the point of publication.
+    published_grid_power = None if grid_assumed else round(net_consumption, 0)
+    published_export_power = (
+        None if grid_assumed else round(site.total_export_power, 0)
+    )
+    published_household_power = None if grid_assumed else household_power
+
     # Build per-load operating modes dict
     load_modes = {c.load_id: c.operating_mode for c in site.loads}
 
@@ -533,14 +567,14 @@ def _build_hub_result(
         "available_battery_current": round(battery_remaining_current, 1),
         "available_inverter_current": round(inverter_remaining_current, 1),
         "total_site_available_power": round(total_site_available, 0),
-        "grid_power": round(net_consumption, 0),
+        "grid_power": published_grid_power,
         "available_grid_power": round(grid_headroom, 0),
         "available_battery_power": battery_remaining,
         "total_evse_power": total_evse_power,
-        "household_power": household_power,
+        "household_power": published_household_power,
         "solar_power": round(site.solar_production_total or 0, 0),
         "available_solar_power": round(solar_available, 0),
-        "total_export_power": round(site.total_export_power, 0),
+        "total_export_power": published_export_power,
         # The one Excess decision, computed by excess_margin() with the hysteresis
         # latch applied. Every Excess-mode load reads this rather than re-deriving
         # the rule — including the hot water tank, whose boost setpoint is

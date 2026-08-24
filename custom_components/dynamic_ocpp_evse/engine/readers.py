@@ -407,9 +407,9 @@ def _resolve_grid_phases(raw_phases, ema_inputs, main_breaker_rating):
 
     The counterpart to _read_grid_phases' refusal to invent a number, and the
     ONLY place allowed to decide what an unreadable grid CT stands in for.
-    Returns ``(resolved_phases, any_stale)``; ``resolved_phases`` holds only
-    floats and Nones, so nothing unusable can reach the EMA smoothing, the
-    engine, or the published grid figures.
+    Returns ``(resolved_phases, any_stale, assumed_phases)``;
+    ``resolved_phases`` holds only floats and Nones, so nothing unusable can
+    reach the EMA smoothing, the engine, or the published grid figures.
 
     Documented failure-mode behaviour, unchanged:
       * a reading we have history for → hold the last known EMA value, which a
@@ -420,6 +420,20 @@ def _resolve_grid_phases(raw_phases, ema_inputs, main_breaker_rating):
     The >GRID_STALE_TIMEOUT escalation is the caller's, driven by the
     ``any_stale`` flag through _track_grid_stale.
 
+    ``assumed_phases`` is a per-phase tuple of bools marking ONLY the second
+    case — the phases standing on the breaker assumption rather than on a
+    reading or a held EMA value. It exists because the two substitutes are
+    different kinds of number: a held EMA value is a legitimate estimate of
+    what the phase was doing a moment ago and is fine to publish as a
+    measurement, whereas the breaker assumption is a fabrication chosen for
+    safety, and publishing it paints a 3 x breaker x voltage spike onto the
+    grid sensors, the recorder and long-term statistics (issue: cold-start
+    failsafe published as a measurement). The publisher (engine/hub_result.py)
+    nulls the grid MEASUREMENTS while any phase is flagged; the allocation
+    keeps using the assumption, which is what makes it safe. Derived here
+    rather than re-tested downstream: this is the one place that knows which
+    substitute each phase got.
+
     Driven by the READINGS, not by a second walk over the config keys. The
     sentinel is the single source of truth for "this CT is unreadable", so there
     is no membership list here that can drift away from the reader's — which is
@@ -429,6 +443,7 @@ def _resolve_grid_phases(raw_phases, ema_inputs, main_breaker_rating):
     Pure: a list, the EMA dict, a number. No hass, no config entry.
     """
     resolved = list(raw_phases)
+    assumed = [False] * len(resolved)
     any_stale = False
     for i, raw in enumerate(resolved):
         if raw is None:
@@ -437,8 +452,9 @@ def _resolve_grid_phases(raw_phases, ema_inputs, main_breaker_rating):
             continue  # Usable signed reading
         held = ema_inputs.get(f"grid_{i}")
         resolved[i] = main_breaker_rating if held is None else held
+        assumed[i] = held is None
         any_stale = True
-    return resolved, any_stale
+    return resolved, any_stale, tuple(assumed)
 
 
 def _track_grid_stale(hub_runtime, any_stale, now):

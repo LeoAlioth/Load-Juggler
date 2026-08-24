@@ -262,49 +262,63 @@ def test_grid_phases_inversion_cannot_turn_the_sentinel_into_a_number():
 
 
 def test_resolve_leaves_healthy_readings_alone():
-    resolved, stale = _resolve_grid_phases([5.0, -2.0, None], {}, BREAKER)
+    resolved, stale, assumed = _resolve_grid_phases([5.0, -2.0, None], {}, BREAKER)
     assert resolved == [5.0, -2.0, None]
     assert stale is False
+    assert assumed == (False, False, False)
 
 
 def test_resolve_holds_the_last_ema_during_a_brief_dropout():
     # Failure mode 1: the CT blinks. Holding the last known EMA means a brief
     # dropout has no visible effect at all.
     ema = {"grid_0": 7.5, "grid_1": -1.5}
-    resolved, stale = _resolve_grid_phases(
+    resolved, stale, assumed = _resolve_grid_phases(
         [_UNAVAILABLE, _UNAVAILABLE, None], ema, BREAKER
     )
     assert resolved == [7.5, -1.5, None]
     assert stale is True
+    # A held value is an estimate, NOT the breaker fabrication — so it stays
+    # publishable as a measurement and nothing is flagged.
+    assert assumed == (False, False, False)
 
 
 def test_resolve_assumes_the_breaker_on_a_cold_start():
     # Failure mode 2: unavailable from the very first cycle, no EMA history.
     # Worst case on purpose — a fully loaded phase hands out no headroom, where
     # the old 0 A fallback handed out all of it.
-    resolved, stale = _resolve_grid_phases([_UNAVAILABLE, None, None], {}, BREAKER)
+    resolved, stale, assumed = _resolve_grid_phases(
+        [_UNAVAILABLE, None, None], {}, BREAKER
+    )
     assert resolved == [BREAKER, None, None]
     assert stale is True
     assert resolved[0] != 0
+    # ...and the substitution is reported, because the number is a safety
+    # fabrication and must not be published as a grid measurement.
+    assert assumed == (True, False, False)
 
 
 def test_resolve_is_per_phase():
     # One dead CT must not discard the two good ones, and each dead phase picks
     # its own substitute from its own history.
     ema = {"grid_0": 9.0}
-    resolved, stale = _resolve_grid_phases(
+    resolved, stale, assumed = _resolve_grid_phases(
         [_UNAVAILABLE, 3.0, _UNAVAILABLE], ema, BREAKER
     )
     assert resolved == [9.0, 3.0, BREAKER]
     assert stale is True
+    # Held, read, assumed — the flag distinguishes all three per phase.
+    assert assumed == (False, False, True)
 
 
 def test_resolve_holds_a_zero_ema_because_zero_can_be_a_real_reading():
     # 0 A is a legitimate measurement (a balanced phase). "Held 0" and
     # "invented 0" are different things, and only the second one is the bug.
-    resolved, stale = _resolve_grid_phases([_UNAVAILABLE], {"grid_0": 0.0}, BREAKER)
+    resolved, stale, assumed = _resolve_grid_phases(
+        [_UNAVAILABLE], {"grid_0": 0.0}, BREAKER
+    )
     assert resolved == [0.0]
     assert stale is True
+    assert assumed == (False,)
 
 
 def test_resolve_never_lets_anything_unusable_reach_the_engine():
@@ -316,7 +330,7 @@ def test_resolve_never_lets_anything_unusable_reach_the_engine():
     junk = [_UNAVAILABLE, float("nan"), float("inf"), None, "unavailable", 4.0]
     for value in junk:
         for ema in ({}, {"grid_0": 8.0}):
-            resolved, _ = _resolve_grid_phases([value], dict(ema), BREAKER)
+            resolved, _, _ = _resolve_grid_phases([value], dict(ema), BREAKER)
             assert resolved[0] is None or not units.is_unusable_number(resolved[0]), (
                 value,
                 ema,
@@ -327,6 +341,32 @@ def test_resolve_does_not_mutate_its_input():
     raw = [_UNAVAILABLE, None, None]
     _resolve_grid_phases(raw, {}, BREAKER)
     assert raw == [_UNAVAILABLE, None, None]
+
+
+def test_resolve_flags_a_phase_only_when_it_invented_the_breaker_value():
+    """The publisher's signal has to mean exactly one thing.
+
+    Flagged if and only if this phase had no usable reading AND no EMA
+    history — i.e. the resolved value is the invented main-breaker worst case,
+    which is the one substitute that must not reach the published grid
+    measurements. Never flagged for a real reading, for an absent CT, or for a
+    held EMA value (a held value is an estimate of what the phase was doing
+    moments ago, and blanking the grid sensors through every brief dropout
+    would be its own bug).
+    """
+    raws = [_UNAVAILABLE, 3.0, None, float("nan")]
+    for ema in ({}, {"grid_0": 8.0}, {"grid_3": -1.0}):
+        resolved, _, assumed = _resolve_grid_phases(raws, dict(ema), BREAKER)
+        assert len(assumed) == len(raws)
+        for i, (value, flag) in enumerate(zip(resolved, assumed)):
+            invented = (
+                raws[i] is not None
+                and units.is_unusable_number(raws[i])
+                and f"grid_{i}" not in ema
+            )
+            assert flag is invented, (i, ema)
+            if flag:
+                assert value == BREAKER
 
 
 # ---------------------------------------------------------------------------

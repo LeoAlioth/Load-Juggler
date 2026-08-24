@@ -760,7 +760,12 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     ema_inputs = hub_runtime.setdefault("_ema_inputs", {})
 
     # --- Resolve unreadable grid CTs (the only place allowed to substitute) ---
-    raw_phases, any_grid_stale = _resolve_grid_phases(
+    # ``grid_assumed_phases`` marks the phases standing on the main-breaker
+    # worst case rather than on a reading or a held EMA value. The allocation
+    # below runs on the assumption exactly as before — that is what keeps a
+    # blind site from handing out headroom — but the PUBLISHED grid
+    # measurements must not carry it (see _build_hub_result).
+    raw_phases, any_grid_stale, grid_assumed_phases = _resolve_grid_phases(
         raw_phases, ema_inputs, main_breaker_rating
     )
     grid_stale_duration = _track_grid_stale(
@@ -1100,6 +1105,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         auto_notifications,
         group_data,
         grid_stale=grid_stale,
+        grid_assumed=any(grid_assumed_phases),
         hub_status=hub_status,
         hub_warnings=hub_warnings,
         excess_available=excess_on,
