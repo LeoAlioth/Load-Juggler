@@ -1067,7 +1067,10 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     inverters_data = {
         m.entry_id: {
             "name": m.name,
-            "solar_w": fleet.member_solar_production(m, voltage),
+            # None while this member's own production sensor is unreadable with
+            # nothing to hold — its device sensor reads unknown rather than a
+            # confident 0 W. A healthy sibling keeps publishing its own figure.
+            "solar_w": fleet.member_solar_published(m, voltage),
             "battery_soc": m.battery_soc,
             "battery_power": m.battery_power,
         }
@@ -1106,6 +1109,9 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         group_data,
         grid_stale=grid_stale,
         grid_assumed=any(grid_assumed_phases),
+        # Same split for solar: the calculation keeps the conservative 0 W of a
+        # dead production sensor, the published measurement does not.
+        solar_assumed=fleet.solar_is_assumed(members),
         hub_status=hub_status,
         hub_warnings=hub_warnings,
         excess_available=excess_on,

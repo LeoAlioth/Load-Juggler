@@ -275,6 +275,7 @@ def _build_hub_result(
     group_data=None,
     grid_stale=False,
     grid_assumed=False,
+    solar_assumed=False,
     hub_status="OK",
     hub_warnings=None,
     excess_available=False,
@@ -306,6 +307,19 @@ def _build_hub_result(
     value is not covered — that is a legitimate estimate of what the phase was
     doing moments ago, and suppressing it would blank the grid sensors during
     every brief CT dropout.
+
+    ``solar_assumed`` is the same split for solar (``fleet.solar_is_assumed``):
+    a CONFIGURED production sensor that is unreadable with nothing to hold
+    substitutes 0 W, which the calculation keeps — it is the conservative
+    figure, and the household maths cannot take None — while ``solar_power``
+    publishes None. A confident 0 W is right at night and a lie in daylight,
+    and either way it lands in long-term statistics. ``household_power`` joins
+    it ONLY when the household figure was itself computed from solar (the
+    supply identity); the inverter-output form does not consume solar and
+    stays. A site with NO production sensor configured is not affected at all:
+    its solar is derived from the inverter output or grid export, and nothing
+    there is invented. Per-inverter figures are handled one member at a time in
+    hub_calculation.py, where each member has a published sensor of its own.
     """
     # Grid available power (based on consumption after feedback loop).
     # Off-grid there is no grid feed at all — headroom is 0 by definition.
@@ -372,16 +386,22 @@ def _build_hub_result(
         + (battery_power or 0)
         - total_evse_power,
     )
+    # ``household_from_solar`` records which of the three it was, because only
+    # the two identity forms carry a fabricated solar figure into the household
+    # result — form 2 is built from grid and inverter output alone.
     if not site.solar_is_derived and site.solar_production_total:
         household_power = round(_identity_household, 0)
+        household_from_solar = True
     elif hh_phases is not None:
         household_power = round(
             sum(v for v in (hh_phases.a, hh_phases.b, hh_phases.c) if v is not None)
             * voltage,
             0,
         )
+        household_from_solar = False
     else:
         household_power = round(_identity_household, 0)
+        household_from_solar = True
 
     # Cap grid headroom by max grid import power limit (if configured)
     if site.max_grid_import_power is not None:
@@ -510,7 +530,16 @@ def _build_hub_result(
     published_export_power = (
         None if grid_assumed else round(site.total_export_power, 0)
     )
-    published_household_power = None if grid_assumed else household_power
+    # Same for solar, and for the household figure whenever it was derived FROM
+    # solar (see the docstring and household_from_solar above).
+    published_solar_power = (
+        None if solar_assumed else round(site.solar_production_total or 0, 0)
+    )
+    published_household_power = (
+        None
+        if grid_assumed or (solar_assumed and household_from_solar)
+        else household_power
+    )
 
     # Build per-load operating modes dict
     load_modes = {c.load_id: c.operating_mode for c in site.loads}
@@ -572,7 +601,7 @@ def _build_hub_result(
         "available_battery_power": battery_remaining,
         "total_evse_power": total_evse_power,
         "household_power": published_household_power,
-        "solar_power": round(site.solar_production_total or 0, 0),
+        "solar_power": published_solar_power,
         "available_solar_power": round(solar_available, 0),
         "total_export_power": published_export_power,
         # The one Excess decision, computed by excess_margin() with the hysteresis

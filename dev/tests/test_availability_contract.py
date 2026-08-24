@@ -29,6 +29,7 @@ import ast
 import math
 import re
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,11 +43,14 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
+    CONF_SOLAR_PRODUCTION_ENTITY_ID,
     GRID_STALE_TIMEOUT,
+    INPUT_STALE_TIMEOUT,
 )
 from custom_components.dynamic_ocpp_evse.engine.readers import (
     _UNAVAILABLE,
     _read_entity,
+    _read_fleet_member,
     _read_grid_phases,
     _resolve_grid_phases,
     _track_grid_stale,
@@ -79,6 +83,9 @@ class FakeStates:
 class FakeHass:
     def __init__(self, mapping=None):
         self.states = FakeStates(mapping or {})
+        # Only the inverter runtime bucket is ever looked up (the enforced
+        # charge limit); an empty dict is the "nothing is being held back" case.
+        self.data = {}
 
 
 class FakeEntry:
@@ -367,6 +374,107 @@ def test_resolve_flags_a_phase_only_when_it_invented_the_breaker_value():
             assert flag is invented, (i, ema)
             if flag:
                 assert value == BREAKER
+
+
+# ---------------------------------------------------------------------------
+# _read_fleet_member: which solar figures are measurements
+# ---------------------------------------------------------------------------
+#
+# The same two-substitutes distinction as the grid CTs, one layer along. A
+# configured production sensor that cannot be read resolves to either a HELD
+# EMA value (an estimate of what the array was doing moments ago — publishable)
+# or an invented 0 W (a fresh start with no history, or the stale guard having
+# given up on it — not publishable). ``solar_assumed`` marks the second case
+# only, and the calculation goes on using the 0 W either way.
+
+_SOLAR = "sensor.solar"
+
+
+class FakeInverterEntry(FakeEntry):
+    """A minimal inverter config entry: an id, a title, and its data dict."""
+
+    title = "Inverter"
+
+
+def _solar_entry(entity_id=_SOLAR):
+    return FakeInverterEntry({CONF_SOLAR_PRODUCTION_ENTITY_ID: entity_id})
+
+
+def _read_solar(state, ema=None, stale_for=None, entity_id=_SOLAR):
+    """One member read, returning ``(solar_measured, solar_assumed)``.
+
+    ``ema`` seeds the smoothing history, ``stale_for`` how many seconds this
+    sensor has already been continuously unavailable (which is what decides
+    whether the stale guard has swapped its 0 W fallback in yet).
+    """
+    entry = _solar_entry(entity_id)
+    key = f"solar_{entry.entry_id}"
+    hass = FakeHass({_SOLAR: state} if state is not None else {})
+    hub_runtime = {}
+    if stale_for is not None:
+        hub_runtime["_input_stale_since"] = {key: time.monotonic() - stale_for}
+    ema_inputs = dict(ema or {})
+    member = _read_fleet_member(
+        hass, entry, hub_runtime, ema_inputs, V, legacy=False
+    )
+    return member.solar_measured, member.solar_assumed
+
+
+def test_a_readable_production_sensor_is_a_measurement():
+    measured, assumed = _read_solar(FakeState("1800", unit="W"))
+    assert measured == 1800.0
+    assert assumed is False
+
+
+def test_a_genuine_zero_reading_is_a_measurement():
+    # Night, or an array genuinely producing nothing. "Measured 0" and
+    # "invented 0" are different figures and only the second one is the bug.
+    measured, assumed = _read_solar(FakeState("0", unit="W"))
+    assert measured == 0.0
+    assert assumed is False
+
+
+def test_a_cold_start_on_a_dead_sensor_invents_its_zero():
+    # Unreadable from the very first cycle: nothing to hold, so 0 W goes into
+    # the calculation and the flag says it must not be published.
+    for state in (None, FakeState("unavailable", unit="W"), FakeState("", unit="W")):
+        measured, assumed = _read_solar(state)
+        assert measured == 0.0, state
+        assert assumed is True, state
+
+
+def test_a_brief_dropout_holds_its_ema_and_stays_publishable():
+    measured, assumed = _read_solar(
+        FakeState("unavailable", unit="W"),
+        ema={"solar_hub": 4200.0},
+        stale_for=1,
+    )
+    assert measured == 4200.0
+    assert assumed is False
+
+
+def test_the_stale_guard_giving_up_is_an_invented_zero():
+    # Past INPUT_STALE_TIMEOUT the guard drops the held value for its 0 W
+    # fallback — deliberately, so a sensor that died at 8 kW cannot feed
+    # phantom production forever. That 0 is a substitute, not a reading, which
+    # is what makes a mid-run None reachable for the solar keys.
+    measured, assumed = _read_solar(
+        FakeState("unavailable", unit="W"),
+        ema={"solar_hub": 8000.0},
+        stale_for=INPUT_STALE_TIMEOUT + 5,
+    )
+    assert measured == 0.0
+    assert assumed is True
+
+
+def test_no_production_sensor_configured_is_not_a_fabrication():
+    # Nothing was invented: this member derives its production from its
+    # inverter output, or the site falls back to grid export.
+    entry = FakeInverterEntry({})
+    member = _read_fleet_member(FakeHass({}), entry, {}, {}, V, legacy=False)
+    assert member.has_solar_entity is False
+    assert member.solar_measured is None
+    assert member.solar_assumed is False
 
 
 # ---------------------------------------------------------------------------

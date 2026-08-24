@@ -372,9 +372,24 @@ class LoadJugglerHubDataSensor(
         self._attr_native_value = None
 
     def _read_site_data(self):
+        """Publish this cycle's figure, or unknown when there isn't one.
+
+        A key that arrives as None means the producer ran and reported that it
+        has no measurement — a sensor unreadable with nothing to hold, so the
+        engine substituted a safety value internally and refuses to publish it
+        (see engine/hub_result.py). Clearing the value is what turns that into
+        `unknown`; HOLDING the last one would freeze a stale reading that looks
+        live, which for a figure like solar production is exactly the lie the
+        substitution was suppressed to avoid.
+
+        Before the first cycle there is no hub_data at all and nothing to
+        report either way; availability (SiteFreshnessMixin) is the separate
+        question of whether the producer is still running.
+        """
         hub_data = self._hub_data()
-        key = self._defn["hub_data_key"]
-        if hub_data and hub_data.get(key) is not None:
-            self._attr_native_value = round(
-                float(hub_data[key]), self._defn["decimals"]
-            )
+        if not hub_data:
+            return
+        value = hub_data.get(self._defn["hub_data_key"])
+        self._attr_native_value = (
+            None if value is None else round(float(value), self._defn["decimals"])
+        )

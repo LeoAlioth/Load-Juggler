@@ -143,9 +143,25 @@ class LoadJugglerInverterDataSensor(
         self._attr_native_value = None
 
     def _read_site_data(self):
-        value = self._my_inverter_data().get(self._defn["data_key"])
-        if value is not None:
-            self._attr_native_value = round(float(value), self._defn["decimals"])
+        """This cycle's figure, or unknown when this inverter has none.
+
+        Same contract as the hub data sensors: None from the producer means "no
+        measurement this cycle" — this inverter's production sensor is
+        unreadable with nothing to hold, so the fleet substituted 0 W for the
+        calculation and refuses to publish it. Clearing shows `unknown`;
+        holding the last value would freeze a stale reading that looks live,
+        which is precisely the fabrication the None exists to prevent.
+
+        An empty section (before the first cycle, or an inverter the hub has
+        not aggregated yet) leaves the value untouched.
+        """
+        own = self._my_inverter_data()
+        if not own:
+            return
+        value = own.get(self._defn["data_key"])
+        self._attr_native_value = (
+            None if value is None else round(float(value), self._defn["decimals"])
+        )
 
 
 class LoadJugglerInverterChargeControlSensor(

@@ -348,10 +348,18 @@ def _unmanaged_household_w(hub_data):
     truth from a dedicated solar sensor, else derived from inverter output,
     else the supply identity). The identity below is only the fallback for
     hub_data written before that key existed.
+
+    A key that is PRESENT and None is not that case: the engine ran and
+    deliberately published no household figure, because one of the terms it
+    would be built from was a substituted value rather than a reading (see
+    engine/hub_result.py). Re-deriving it here from those same terms would put
+    the fabrication back on the page — so the em dash stands.
     """
     household = hub_data.get("household_power")
     if isinstance(household, (int, float)):
         return household
+    if "household_power" in hub_data:
+        return None
     grid = hub_data.get("grid_power")
     solar = hub_data.get("solar_power")
     if not isinstance(grid, (int, float)) or not isinstance(solar, (int, float)):

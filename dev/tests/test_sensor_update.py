@@ -6,6 +6,7 @@ function) to verify the data flow from HA entities through the calculation
 engine to the sensor state and the device commands.
 """
 
+import time
 from unittest.mock import patch, AsyncMock, MagicMock
 from datetime import datetime, timedelta, timezone
 
@@ -84,6 +85,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     INVERTER_RT_SOC_CONTROL_ENABLED,
+    INPUT_STALE_TIMEOUT,
 )
 from custom_components.dynamic_ocpp_evse.sensor import (
     LoadJugglerDeviceSensor,
@@ -1402,6 +1404,304 @@ async def test_current_grid_power_sensor_reads_unknown_on_a_cold_start(
         await _run_site_cycle(hass, hub_entry, charger_sensor)
     await sensor.async_update()
     assert sensor.native_value is not None
+
+
+# ── Dead solar sensor: 0 W for the maths, nothing published ──────────
+
+
+def _solar_hub(slug, solar_entity):
+    """A hub whose own solar production sensor is its only fleet member.
+
+    Measured solar (not derived), so ``solar_power`` is exactly that sensor's
+    reading and ``household_power`` comes from the supply identity — the two
+    published figures a fabricated 0 W would poison.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title=f"Solar Hub {slug}",
+        data={
+            CONF_NAME: f"Solar Hub {slug}",
+            CONF_ENTITY_ID: f"solar_hub_{slug}",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: f"sensor.sl_{slug}_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: solar_entity,
+        },
+    )
+
+
+def _set_solar_states(hass, slug, solar_entity, solar_state):
+    """2 A of import on phase A, and whatever the solar sensor is doing."""
+    hass.states.async_set(
+        f"sensor.sl_{slug}_phase_a", "2.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        solar_entity, solar_state,
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+
+async def test_a_dead_solar_sensor_publishes_no_production(hass):
+    """Configured, unreadable, no history — 0 W internally, unknown outside.
+
+    The one place that substitutes it (engine/readers.py) keeps handing 0 W to
+    the calculation, because the household maths cannot take None and 0 W is
+    the conservative figure. Publishing it painted a confident 0 W onto Current
+    Solar Power — right at night, a lie in daylight, and in long-term
+    statistics either way.
+
+    Two hubs identical but for what their solar sensor says decide it: the one
+    reading a real 0 W and the one that cannot be read at all must allocate
+    identically (the internal figure really is the same 0 W), and differ only
+    in what they publish.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    dead = _solar_hub("dead", "sensor.sl_dead_pv")
+    zero = _solar_hub("zero", "sensor.sl_zero_pv")
+    hass.data[DOMAIN] = {
+        "hubs": {dead.entry_id: {"loads": []}, zero.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+    }
+    _set_solar_states(hass, "dead", "sensor.sl_dead_pv", STATE_UNAVAILABLE)
+    _set_solar_states(hass, "zero", "sensor.sl_zero_pv", "0")
+
+    dead_result = run_hub_calculation(hass, dead)
+    zero_result = run_hub_calculation(hass, zero)
+
+    # --- The measurement side: nothing, rather than a confident 0 W. ---
+    assert dead_result["solar_power"] is None
+    # The household figure is the supply identity, which consumes solar — so it
+    # carries the fabrication and goes with it.
+    assert dead_result["household_power"] is None
+
+    # --- The allocation side: byte-for-byte the same as a measured 0 W. ---
+    assert zero_result["solar_power"] == 0
+    for key in (
+        "available_solar_power",
+        "available_solar_current",
+        "available_grid_power",
+        "total_site_available_power",
+        "available_current_a",
+        "excess_available",
+    ):
+        assert dead_result[key] == zero_result[key], key
+
+
+async def test_a_solar_reading_resumes_publication_on_the_first_cycle(hass):
+    """The silence lasts exactly as long as the sensor is unreadable."""
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _solar_hub("resume", "sensor.sl_resume_pv")
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+    }
+    _set_solar_states(hass, "resume", "sensor.sl_resume_pv", STATE_UNAVAILABLE)
+    assert run_hub_calculation(hass, hub)["solar_power"] is None
+
+    _set_solar_states(hass, "resume", "sensor.sl_resume_pv", "3000")
+    recovered = run_hub_calculation(hass, hub)
+    assert recovered["solar_power"] == 3000
+    assert recovered["household_power"] is not None
+
+
+async def test_a_held_solar_reading_still_publishes_after_a_dropout(hass):
+    """A held EMA value is an estimate, not a fabrication — so it publishes.
+
+    Same distinction the grid fix rests on: the sensor died moments ago and we
+    know what it was reading, so holding it is honest. Blanking Current Solar
+    Power through every brief dropout would be its own bug.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _solar_hub("held", "sensor.sl_held_pv")
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+    }
+    _set_solar_states(hass, "held", "sensor.sl_held_pv", "4000")
+    healthy = run_hub_calculation(hass, hub)
+    assert healthy["solar_power"] == 4000
+
+    _set_solar_states(hass, "held", "sensor.sl_held_pv", STATE_UNAVAILABLE)
+    held = run_hub_calculation(hass, hub)
+    assert held["solar_power"] == 4000
+    assert held["household_power"] is not None
+
+
+async def test_a_site_with_no_solar_sensor_is_unaffected(hass, hub_entry, charger_entry,
+                                                         setup_domain_data):
+    """No production sensor configured is not a fabrication.
+
+    Such a site derives its production from the inverter output, or falls back
+    to grid export plus the fleet's charging draw. Nothing there is invented,
+    so the figure publishes exactly as it always did.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    result = run_hub_calculation(hass, hub_entry)
+
+    assert result["solar_power"] is not None
+    assert result["household_power"] is not None
+
+
+def _solar_inverter(hub_entry, slug, solar_entity):
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title=f"Inverter {slug}",
+        data={
+            CONF_NAME: f"Inverter {slug}",
+            CONF_ENTITY_ID: f"lj_inv_{slug}",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={CONF_SOLAR_PRODUCTION_ENTITY_ID: solar_entity},
+    )
+
+
+async def test_one_dead_inverter_keeps_its_sibling_publishing(hass):
+    """Per-inverter honesty, fleet-total silence.
+
+    Each inverter has a Solar Production sensor of its OWN, so a healthy
+    member's real figure is a measurement worth keeping and only the dead
+    member's device sensor reads unknown. The fleet total is a sum containing an
+    invented term, which makes the whole sum fabricated — the same rule the
+    grid phases follow, and here the true value is unknowable in BOTH
+    directions (idle array or full output), which argues for silence rather
+    than against it.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Fleet Hub",
+        data={
+            CONF_NAME: "Fleet Hub",
+            CONF_ENTITY_ID: "fleet_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.fl_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_PHASE_VOLTAGE: 230,
+        },
+    )
+    live = _solar_inverter(hub, "live", "sensor.fl_live_pv")
+    dead = _solar_inverter(hub, "dead", "sensor.fl_dead_pv")
+    live.add_to_hass(hass)
+    dead.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    hass.states.async_set(
+        "sensor.fl_phase_a", "2.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.fl_live_pv", "3000",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.states.async_set(
+        "sensor.fl_dead_pv", STATE_UNAVAILABLE,
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    result = run_hub_calculation(hass, hub)
+
+    assert result["inverters"][live.entry_id]["solar_w"] == 3000
+    assert result["inverters"][dead.entry_id]["solar_w"] is None
+    assert result["solar_power"] is None
+
+
+async def test_current_solar_power_clears_when_the_sensor_dies_mid_run(hass):
+    """The mid-run case the grid fix could not reach — and the sensor hold.
+
+    A solar sensor that dies at noon is held for INPUT_STALE_TIMEOUT (honest,
+    published), and after that the stale guard substitutes its 0 W fallback:
+    a mid-run None, which the grid keys could never produce. A hub data sensor
+    that HELD its last value there would freeze 5,000 W of production onto a
+    dark array — a stale reading that looks live, which is exactly what the
+    suppression exists to prevent. It clears to unknown instead, and stays
+    available: the producer ran and reported honestly that it has nothing.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+    from custom_components.dynamic_ocpp_evse.entities.hub import publish_hub_data
+
+    hub = _solar_hub("midrun", "sensor.sl_midrun_pv")
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+    }
+    defn = next(
+        d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "solar_power"
+    )
+    sensor = DynamicOcppEvseHubDataSensor(
+        hass, hub, "Solar Hub", "solar_hub_midrun", defn
+    )
+
+    # Hours of healthy readings.
+    _set_solar_states(hass, "midrun", "sensor.sl_midrun_pv", "5000")
+    publish_hub_data(hass, hub.entry_id, run_hub_calculation(hass, hub))
+    await sensor.async_update()
+    assert sensor.native_value == 5000
+
+    # The sensor dies. Within the timeout the held value still publishes.
+    _set_solar_states(hass, "midrun", "sensor.sl_midrun_pv", STATE_UNAVAILABLE)
+    publish_hub_data(hass, hub.entry_id, run_hub_calculation(hass, hub))
+    await sensor.async_update()
+    assert sensor.native_value == 5000
+
+    # Past INPUT_STALE_TIMEOUT the guard gives up on the held value, and the
+    # published figure goes with it.
+    hub_runtime = hass.data[DOMAIN]["hubs"][hub.entry_id]
+    hub_runtime["_input_stale_since"]["solar"] = (
+        time.monotonic() - INPUT_STALE_TIMEOUT - 5
+    )
+    published = publish_hub_data(hass, hub.entry_id, run_hub_calculation(hass, hub))
+    assert published["solar_power"] is None
+    await sensor.async_update()
+    assert sensor.native_value is None
+    assert sensor.available is True
+
+    # And a returning sensor publishes again on its very first reading (the
+    # value ramps because the stale guard cleared the EMA — the point here is
+    # that a number is being reported at all).
+    _set_solar_states(hass, "midrun", "sensor.sl_midrun_pv", "4500")
+    publish_hub_data(hass, hub.entry_id, run_hub_calculation(hass, hub))
+    await sensor.async_update()
+    assert sensor.native_value is not None
+    assert sensor.native_value > 0
 
 
 # ── Result dict completeness test ────────────────────────────────────

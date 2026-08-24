@@ -38,8 +38,10 @@ from custom_components.dynamic_ocpp_evse.engine.fleet import (  # noqa: E402
     forecast_device_ids,
     member_solar,
     member_solar_production,
+    member_solar_published,
     mixed_topologies,
     soc_full_scalar,
+    solar_is_assumed,
     solar_is_measured,
     solar_total,
     sum_outputs,
@@ -280,6 +282,65 @@ def test_solar_is_measured_only_when_every_member_measures():
     assert solar_is_measured([measured, derived]) is False
     # No members at all: nothing is measured, so solar stays derived.
     assert solar_is_measured([]) is False
+
+
+def test_an_invented_zero_is_not_published_as_production():
+    """A dead production sensor computes as 0 W and publishes as nothing.
+
+    ``solar_assumed`` is set by the reader when the configured sensor is
+    unreadable and there is nothing to hold, so the 0 W in ``solar_measured``
+    was invented rather than measured. The calculation keeps using it — 0 W is
+    the conservative figure and the household maths cannot take None — but the
+    member's published production is None, so its device sensor reads unknown
+    instead of a confident 0 W in full sun.
+    """
+    dead = _member("d", has_solar_entity=True, solar_measured=0.0, solar_assumed=True)
+    assert member_solar_production(dead, V) == 0.0  # what the engine allocates on
+    assert member_solar_published(dead, V) is None  # what the sensor shows
+    assert solar_is_assumed([dead]) is True
+
+
+def test_a_readable_production_sensor_publishes_normally():
+    live = _member("m", has_solar_entity=True, solar_measured=1800.0)
+    assert member_solar_published(live, V) == 1800.0
+    assert solar_is_assumed([live]) is False
+    # A real 0 W (night, or a sensor genuinely reading zero) still publishes:
+    # "measured 0" and "invented 0" are different things and only the second
+    # one is the bug.
+    night = _member("n", has_solar_entity=True, solar_measured=0.0)
+    assert member_solar_published(night, V) == 0.0
+    assert solar_is_assumed([night]) is False
+
+
+def test_a_derived_member_is_never_assumed():
+    """No production sensor configured is not a fabrication.
+
+    Such a member derives its production from its inverter output (or the site
+    falls back to grid export), and nothing there is invented — so a site with
+    no solar sensor at all publishes exactly what it always did.
+    """
+    derived = _member("d", output=PhaseValues(a=10.0, b=None, c=None))
+    assert member_solar_published(derived, V) == 10.0 * V
+    assert solar_is_assumed([derived]) is False
+    assert solar_is_assumed([]) is False
+
+
+def test_one_dead_member_keeps_its_sibling_honest_and_silences_the_total():
+    """Per-member publication, fleet-total suppression.
+
+    Each inverter publishes a production sensor of its OWN, so the healthy
+    member keeps reporting its real figure — that is a measurement worth
+    keeping. The fleet TOTAL is a sum containing one invented term, which
+    makes the whole sum fabricated (the rule the grid phases already follow).
+    """
+    live = _member("m", has_solar_entity=True, solar_measured=3000.0)
+    dead = _member("d", has_solar_entity=True, solar_measured=0.0, solar_assumed=True)
+    assert member_solar_published(live, V) == 3000.0
+    assert member_solar_published(dead, V) is None
+    # The engine still allocates on the partial sum...
+    assert solar_total([live, dead], V) == 3000.0
+    # ...and the publisher is told the sum cannot be shown as a measurement.
+    assert solar_is_assumed([live, dead]) is True
 
 
 def test_forecast_device_ids_merge_and_dedupe():

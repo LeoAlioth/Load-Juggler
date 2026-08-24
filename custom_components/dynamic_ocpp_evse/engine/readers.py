@@ -612,17 +612,29 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     solar_entity = get_entry_value(entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
     solar_key = "solar" if legacy else f"solar_{entry.entry_id}"
     solar_measured = None
+    solar_assumed = False
     if solar_entity:
         raw_solar = _read_entity(hass, solar_entity, 0, unit="W")  # kW→W if needed
         # A dead solar sensor must not keep feeding its last reading forever
         # (e.g. 8 kW held into the night) — fall back to 0 W after timeout.
-        raw_solar = _stale_guard(hub_runtime, ema_inputs, solar_key, raw_solar, 0.0)
-        solar_measured = _smooth(ema_inputs, solar_key, raw_solar)
+        guarded_solar = _stale_guard(
+            hub_runtime, ema_inputs, solar_key, raw_solar, 0.0
+        )
+        # The guard swapped its own 0 W fallback in, which it does only after
+        # INPUT_STALE_TIMEOUT of continuous unavailability: from here on the
+        # figure is a safety substitute, not a measurement. Detected by the
+        # substitution itself rather than by re-testing the timer, so there is
+        # only ever one place that knows the rule.
+        solar_assumed = raw_solar is _UNAVAILABLE and guarded_solar is not _UNAVAILABLE
+        solar_measured = _smooth(ema_inputs, solar_key, guarded_solar)
         # _smooth returns None when the entity is unavailable and there is no
         # EMA history yet (a fresh start at night) — 0 W, not None, since the
-        # household maths downstream cannot take None.
+        # household maths downstream cannot take None. Flagged for the same
+        # reason as above: nothing measured this, so it must not be PUBLISHED
+        # as a solar reading (see fleet.FleetMember.solar_assumed).
         if solar_measured is None:
             solar_measured = 0.0
+            solar_assumed = True
 
     soc_entity = get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
     power_entity = get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
@@ -651,6 +663,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         output=output_pv,
         has_solar_entity=bool(solar_entity),
         solar_measured=solar_measured,
+        solar_assumed=solar_assumed,
         forecast_device_ids=tuple(
             get_entry_value(entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or ()
         ),

@@ -62,6 +62,16 @@ class FleetMember:
     output: Optional[PhaseValues] = None  # smoothed amps per phase
     has_solar_entity: bool = False  # a solar production sensor is configured
     solar_measured: Optional[float] = None  # W, smoothed, when measured
+    # True when ``solar_measured`` is the 0 W SUBSTITUTE rather than a reading:
+    # this member's production sensor is configured but unreadable, and there is
+    # no EMA history to hold (a fresh start) or the stale guard has already
+    # given up on it. Set only by engine/readers.py, which is the one place that
+    # knows which substitute a reading got. The 0 W stays for the calculation —
+    # the household maths cannot take None and 0 is the conservative figure —
+    # but a fabricated 0 must not be PUBLISHED as production: right at night, a
+    # lie in daylight, and it lands in long-term statistics either way (see
+    # member_solar_published / solar_is_assumed).
+    solar_assumed: bool = False
     forecast_device_ids: tuple = ()  # this inverter's PV forecast sources
     has_battery: bool = False  # a battery SOC or power entity is configured
     has_battery_power_entity: bool = False
@@ -409,6 +419,33 @@ def solar_total(members, voltage: float) -> Optional[float]:
     # self-consumption), and a negative site production would poison every
     # downstream pool that multiplies or subtracts it.
     return max(0.0, sum(readings))
+
+
+def member_solar_published(member, voltage: float) -> Optional[float]:
+    """One member's production for PUBLICATION — None while its own figure is
+    the invented 0 W (``solar_assumed``), its real production otherwise.
+
+    Per member on purpose: unlike the grid phases, each inverter publishes a
+    production sensor of its OWN, so a healthy sibling has a measurement worth
+    keeping and only the dead member's device sensor reads unknown. The FLEET
+    total is a different question — see solar_is_assumed.
+    """
+    if member.solar_assumed:
+        return None
+    return member_solar_production(member, voltage)
+
+
+def solar_is_assumed(members) -> bool:
+    """True when any member's production figure is an invented 0 W.
+
+    The fleet total sums every member, so one fabricated term makes the whole
+    sum fabricated — the same rule the grid phases follow, and for the same
+    reason: there is no honest way to publish a total that is partly invented.
+    0 W differs from the grid's breaker assumption in that the true value is
+    unknowable in BOTH directions (the array could be idle or at full output),
+    which is an argument for silence rather than against it.
+    """
+    return any(m.solar_assumed for m in members)
 
 
 def solar_is_measured(members) -> bool:
