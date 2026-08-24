@@ -10,7 +10,10 @@ produced above what the site can export or consume, and therefore how full may
 the battery be right now?*
 
 The threshold is ``T = grid export limit + base consumption`` — power the site
-can place without curtailment. The forecast is a mapping of block-start
+can place without curtailment. (That is the ENERGY threshold, used by the
+integral here. ``recommended_charge_limit``'s instantaneous advice is anchored
+a margin lower; its docstring explains why a hard-limiting inverter makes that
+necessary.) The forecast is a mapping of block-start
 timestamps to average watts for that block (the ``watts`` attribute of the
 Open-Meteo Solar Forecast sensors). Each block is treated as constant power
 for its duration, so the maths is a plain sum over blocks:
@@ -241,6 +244,25 @@ def recommended_charge_limit(
       latch drops immediately: there is nothing left to protect
     - SOC below the SOC band (see below) → full rate
     - otherwise → charge only with power that could not have been exported
+
+    ``threshold_w`` here is the instantaneous ADVICE ANCHOR, and the caller
+    deliberately hands in a value one Excess trigger margin BELOW the true
+    clipping threshold the forecast integral uses (``export limit + base
+    consumption``). The two are different numbers on purpose:
+
+    An inverter that hard-enforces the export limit curtails its own PV to
+    hold it, so measured production can never exceed ``export_limit + house +
+    battery_allowance``. Anchored at the true threshold, this function then
+    returns ``battery_allowance + (house − base)`` — its own previous output.
+    The allowance freezes near its floor while real kilowatts are curtailed,
+    and the masking hides the very overshoot signal the advice is computed
+    from. Anchored a margin lower, the same arithmetic SELF-RECOVERS with no
+    probe state at all: while export is pinned at the limit each cycle returns
+    ``allowance + margin + (house − base)``, so the allowance creeps up by
+    about one margin per cycle until export falls off the limit; from there
+    the battery absorbs ``production − house − (limit − margin)`` and export
+    settles a margin under the limit, where production is measured honestly
+    and this plain formula tracks the sun.
 
     The SOC test is a two-threshold LATCH, not one boundary, which is why the
     caller must hand the previous state back in as ``was_limiting``:

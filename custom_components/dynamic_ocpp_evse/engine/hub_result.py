@@ -28,12 +28,14 @@ from ..calculations import (
 )
 from ..const import (
     CONF_BASE_CONSUMPTION,
+    CONF_EXCESS_TRIGGER_MARGIN,
     CONF_FORECAST_SOC_FLOOR,
     CONF_GRID_EXPORT_LIMIT,
     CONF_PHASES,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_TOTAL_ALLOCATED_CURRENT,
     DEFAULT_BASE_CONSUMPTION,
+    DEFAULT_EXCESS_TRIGGER_MARGIN,
     DEFAULT_FORECAST_SOC_FLOOR,
     DEFAULT_GRID_EXPORT_LIMIT,
     FORECAST_SOC_HYSTERESIS,
@@ -76,6 +78,12 @@ def _compute_forecast_advice(
     recommended charge limit splits proportionally to each member's charge
     cap, clamped to its own cap.
 
+    The energy question and the power question are asked at DIFFERENT
+    thresholds — the integral at the true export limit, the instantaneous
+    charge-limit advice one Excess trigger margin below it, so a
+    hard-limiting inverter cannot mask the signal. The derivation below
+    spells out why.
+
     Two fleet-level pieces of carried state, both in ``hub_runtime`` and
     neither ever per-member (the advice is uniform by construction, so
     per-member state would diverge):
@@ -117,7 +125,47 @@ def _compute_forecast_advice(
     soc_floor = get_entry_value(
         hub_entry, CONF_FORECAST_SOC_FLOOR, DEFAULT_FORECAST_SOC_FLOOR
     )
-    threshold = export_limit + base_consumption
+    # TWO thresholds, and they are deliberately different numbers.
+    #
+    # ``clip_threshold`` is the TRUE one — power the site can place without
+    # curtailment — and it is what the forecast INTEGRAL must use: the energy
+    # question ("how many kWh will this day produce above what we can place?")
+    # is answered at the real export limit, or the reserved headroom would be
+    # systematically too large.
+    #
+    # ``advice_threshold`` is the anchor for the INSTANTANEOUS charge-limit
+    # advice, and it sits one Excess trigger margin lower. The reason is the
+    # same one that already puts the Excess trigger below the limit: a signal
+    # anchored exactly AT a hard limit can never be observed. An inverter that
+    # hard-enforces the export limit curtails its own PV to hold it, so
+    # measured production can never exceed
+    #     export_limit + house + battery_allowance
+    # and an advice anchored at the limit degenerates into
+    #     battery_allowance + (house − base)
+    # — a formula that reproduces its own previous output. The allowance then
+    # freezes near its floor while real kilowatts are curtailed: the masking
+    # hides the very overshoot signal the advice is computed from.
+    #
+    # Anchoring a margin below the limit breaks that fixed point without any
+    # probe state, in two regimes:
+    #  1. Unpinned: the battery absorbs production − house − (limit − margin),
+    #     so export settles at (limit − margin) — comfortably under the hard
+    #     limit, nothing is curtailed, measured production is honest and the
+    #     plain formula tracks the sun.
+    #  2. Pinned (export clamped at the limit, production masked): measured
+    #     production is limit + house + allowance, so the next advice is
+    #     allowance + margin + (house − base) — the allowance SELF-CREEPS by
+    #     about one margin per cycle until export falls off the limit and
+    #     regime 1 takes over. The escape from masking falls out of the
+    #     arithmetic.
+    excess_trigger_margin = (
+        get_entry_value(
+            hub_entry, CONF_EXCESS_TRIGGER_MARGIN, DEFAULT_EXCESS_TRIGGER_MARGIN
+        )
+        or 0
+    )
+    clip_threshold = export_limit + base_consumption
+    advice_threshold = max(0.0, export_limit - excess_trigger_margin) + base_consumption
 
     # UNGATED fleet charge rate (see docstring) and total inverter capacity.
     fleet_charge_cap = sum(m.charge_cap or 0 for m in members) or None
@@ -135,7 +183,7 @@ def _compute_forecast_advice(
     now, until = forecast_window()
     fc = clipping_forecast(
         series,
-        threshold,
+        clip_threshold,
         now,
         until,
         charge_cap_w=fleet_charge_cap,
@@ -158,7 +206,8 @@ def _compute_forecast_advice(
             proposed,
             fleet_charge_cap,
             site.solar_production_total or 0,
-            threshold,
+            # The shifted anchor, never clip_threshold — see above.
+            advice_threshold,
             FORECAST_SOC_HYSTERESIS,
             hub_runtime.get("_forecast_charge_limiting", False),
         )
@@ -185,11 +234,13 @@ def _compute_forecast_advice(
         }
 
     _LOGGER.debug(
-        "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW to %s"
+        "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW"
+        " (advice anchored at %dW) to %s"
         " | max SOC %d%% (raw %.1f) deficit %.2f kWh charge cap %s",
         fc.clipped_kwh,
         fc.absorbable_kwh,
-        threshold,
+        clip_threshold,
+        advice_threshold,
         until,
         proposed,
         max_soc,
