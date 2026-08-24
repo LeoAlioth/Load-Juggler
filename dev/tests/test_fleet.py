@@ -41,6 +41,7 @@ from custom_components.dynamic_ocpp_evse.engine.fleet import (  # noqa: E402
     member_solar_published,
     mixed_topologies,
     soc_full_scalar,
+    soc_target_weighted,
     solar_is_assumed,
     solar_is_measured,
     solar_total,
@@ -212,6 +213,55 @@ def test_soc_full_scalar_single_battery_is_its_own():
 
 def test_soc_full_scalar_multi_battery_is_none():
     assert soc_full_scalar([_battery("a"), _battery("b")]) is None
+
+
+# --- Battery destination: the anchor the clipping reserve is carved below -------
+
+def test_soc_target_single_battery_is_its_own():
+    # The single-battery case must reduce to exactly the member's own ceiling.
+    assert soc_target_weighted([_battery(capacity=20, soc_target=95.0)]) == 95.0
+
+
+def test_soc_target_all_unconfigured_is_a_hundred():
+    # No ceiling source anywhere — every battery is heading for 100 %, which is
+    # the pre-destination behaviour of every site that never configured one.
+    members = [_battery("a", capacity=10), _battery("b", capacity=5)]
+    assert soc_target_weighted(members) == 100.0
+
+
+def test_soc_target_is_capacity_weighted():
+    # 90 % of 10 kWh and 100 % of 30 kWh → (900 + 3000) / 40 = 97.5 %, so one
+    # uniform ceiling leaves exactly the kWh the members' own ceilings imply.
+    members = [
+        _battery("a", capacity=10, soc_target=90.0),
+        _battery("b", capacity=30, soc_target=100.0),
+    ]
+    assert soc_target_weighted(members) == 97.5
+
+
+def test_soc_target_unconfigured_member_contributes_a_hundred():
+    # Mixed: a configured 80 % on 10 kWh beside an unconfigured 10 kWh pack.
+    members = [
+        _battery("a", capacity=10, soc_target=80.0),
+        _battery("b", capacity=10),
+    ]
+    assert soc_target_weighted(members) == 90.0
+
+
+def test_soc_target_ignores_members_without_a_battery_or_capacity():
+    # A PV-only inverter has no destination, and a battery with no configured
+    # capacity contributes no headroom — neither may drag the mean.
+    members = [
+        _battery("a", capacity=20, soc_target=95.0),
+        _battery("b", capacity=0, soc_target=50.0),
+        _member("pv"),
+    ]
+    assert soc_target_weighted(members) == 95.0
+
+
+def test_soc_target_without_batteries_is_the_default():
+    assert soc_target_weighted([_member("pv")]) == 100.0
+    assert soc_target_weighted([]) == 100.0
 
 
 # --- Outputs and solar ----------------------------------------------------------

@@ -3247,6 +3247,270 @@ async def test_forecast_charge_limit_anchor_never_goes_below_base_consumption(ha
     assert result["forecast_charge_limit_w"] == 700
 
 
+# ── PV clipping forecast: the reserve is carved below the destination ──
+#
+# The battery's destination is the per-inverter "normal SOC ceiling source"
+# entity — where that pack ends the day when the forecast says nothing. Carving
+# the reserve out of 100 % on a site whose ceiling sits at 95 % reserves the top
+# 5 % twice, and the battery meets the peak with 5 % of room instead of the
+# reserve. A site that configures no ceiling source anchors at 100 as before.
+
+
+def _destination_hub(slug):
+    """A forecast hub whose battery (and its ceiling source) is an inverter entry.
+
+    Hub-level: the grid CT, the export limit and base consumption — clipping
+    threshold 5300 W — and the forecast source. The battery belongs to the
+    inverter entry, because that is where the SOC write-control and its normal
+    ceiling source live.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title=f"Destination Hub {slug}",
+        data={
+            CONF_NAME: f"Destination Hub {slug}",
+            CONF_ENTITY_ID: f"destination_hub_{slug}",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.dst_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_GRID_EXPORT_LIMIT: 5000,
+            CONF_BASE_CONSUMPTION: 300,
+            CONF_FORECAST_SOC_FLOOR: 30,
+            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.dst_forecast"],
+        },
+    )
+
+
+def _destination_inverter(hub, slug, normal_entity=None):
+    """That hub's inverter: a 20 kWh battery, optionally with a ceiling source."""
+    options = {
+        CONF_BATTERY_SOC_ENTITY_ID: "sensor.dst_battery_soc",
+        CONF_BATTERY_POWER_ENTITY_ID: "sensor.dst_battery_power",
+        CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+        CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+        CONF_BATTERY_CAPACITY_KWH: 20,
+    }
+    if normal_entity:
+        options[CONF_SOC_LIMIT_NORMAL_ENTITY_ID] = normal_entity
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title=f"Destination Inverter {slug}",
+        data={
+            CONF_NAME: f"Destination Inverter {slug}",
+            CONF_ENTITY_ID: f"destination_inverter_{slug}",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options=options,
+    )
+
+
+def _set_destination_states(hass, soc, normal="95"):
+    hass.states.async_set(
+        "sensor.dst_phase_a", "2.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.dst_battery_soc", str(soc),
+        {"device_class": "battery", "unit_of_measurement": "%"},
+    )
+    hass.states.async_set(
+        "sensor.dst_battery_power", "-500",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.states.async_set(
+        "number.dst_normal", normal, {"unit_of_measurement": "%"}
+    )
+    # One hour at 7300 W is 2 kWh above the 5300 W threshold, and the 5 kW
+    # charge rating can take all of it: 2 kWh of a 20 kWh pack is 10 % of SOC.
+    hass.states.async_set(
+        "sensor.dst_forecast",
+        "1.0",
+        {
+            "watts": {
+                "2026-08-14T10:00:00+00:00": 7300,
+                "2026-08-14T11:00:00+00:00": 0,
+            }
+        },
+    )
+
+
+async def test_forecast_max_soc_is_carved_below_the_configured_destination(hass):
+    """Same site, same forecast, one difference: a 95 % ceiling source.
+
+    2 kWh of a 20 kWh pack is 10 points of SOC, so the advice is 85 % where the
+    battery is heading for 95 and 90 % where nothing says otherwise.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    with_dest = _destination_hub("with")
+    without = _destination_hub("without")
+    inv_with = _destination_inverter(with_dest, "with", "number.dst_normal")
+    inv_without = _destination_inverter(without, "without")
+    for entry in (inv_with, inv_without):
+        entry.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {
+            with_dest.entry_id: {"loads": []},
+            without.entry_id: {"loads": []},
+        },
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=70)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        dest_result = run_hub_calculation(hass, with_dest)
+        flat_result = run_hub_calculation(hass, without)
+
+    # The ENERGY question is untouched by the anchor — the same 2 kWh either way.
+    assert dest_result["forecast_absorbable_kwh"] == 2.0
+    assert flat_result["forecast_absorbable_kwh"] == 2.0
+
+    assert dest_result["forecast_battery_max_soc"] == 85
+    assert flat_result["forecast_battery_max_soc"] == 90
+    # And the per-inverter advice each device drives its own slots from.
+    assert (
+        dest_result["inverters"][inv_with.entry_id]["forecast_battery_max_soc"] == 85
+    )
+
+
+async def test_forecast_charge_gate_engages_relative_to_the_destination_advice(hass):
+    """The gate follows the recommendation, so the destination moves it too.
+
+    SOC 84 against the 85 % destination advice is inside the engage band
+    (85 − 2); against the 90 % flat-anchored advice of the identical site it is
+    not. Same battery, same forecast, same SOC — only the anchor differs.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    with_dest = _destination_hub("gate")
+    without = _destination_hub("gateflat")
+    inv_with = _destination_inverter(with_dest, "gate", "number.dst_normal")
+    inv_without = _destination_inverter(without, "gateflat")
+    for entry in (inv_with, inv_without):
+        entry.add_to_hass(hass)
+    dest_runtime = {"loads": []}
+    flat_runtime = {"loads": []}
+    hass.data[DOMAIN] = {
+        "hubs": {
+            with_dest.entry_id: dest_runtime,
+            without.entry_id: flat_runtime,
+        },
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=84)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        dest_result = run_hub_calculation(hass, with_dest)
+        flat_result = run_hub_calculation(hass, without)
+
+    # Engaged: production (derived, ~500 W) is far below the advice anchor, so
+    # there is nothing unexportable to charge with.
+    assert dest_result["forecast_charge_limit_w"] == 0
+    assert dest_runtime["_forecast_charge_limiting"] is True
+    # Released on the identical site whose battery is heading for 100 %.
+    assert flat_result["forecast_charge_limit_w"] == 5000
+    assert flat_runtime["_forecast_charge_limiting"] is False
+
+
+async def test_a_mid_day_destination_change_moves_the_advice_with_it(hass):
+    """The user moves their own ceiling at noon; the advice follows.
+
+    The ratchet only absorbs falls SMALLER than its band, so a real change
+    lands on the next cycle in both directions. A change inside the band is
+    held — and there the write is still the user's own number, because the
+    fan-out writes min(normal, recommendation) (see
+    test_inverter_control.py::test_advice_above_the_normal_writes_the_normal).
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("moving")
+    inverter = _destination_inverter(hub, "moving", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=70)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+        # Lowered to 80 %: the reserve moves down with the destination at once.
+        hass.states.async_set("number.dst_normal", "80", {"unit_of_measurement": "%"})
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 70
+
+        # Raised back: a rise is never resisted.
+        hass.states.async_set("number.dst_normal", "95", {"unit_of_measurement": "%"})
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+        # A one-point trim is inside the FORECAST_SOC_HYSTERESIS band, so the
+        # published advice holds — the write follows the user's 94 regardless.
+        hass.states.async_set("number.dst_normal", "94", {"unit_of_measurement": "%"})
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+
+async def test_an_unreadable_destination_holds_its_last_known_value(hass):
+    """A ceiling source is a SETPOINT, so it is held rather than stale-guarded.
+
+    "The user asked for 95 %" stays true through a dropout. Snapping back to the
+    100 % anchor would RAISE the published ceiling, which the ratchet would then
+    resist bringing down again for the rest of the day — and the write-control
+    defers every write while the entity is unreadable anyway.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("dropout")
+    inverter = _destination_inverter(hub, "dropout", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=70)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+        hass.states.async_set("number.dst_normal", STATE_UNAVAILABLE)
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+        # Never readable at all (a fresh hub, a typo'd entity) is the one case
+        # with nothing better to hold: the 100 % anchor, exactly as before.
+        fresh_hub = _destination_hub("fresh")
+        fresh_inv = _destination_inverter(fresh_hub, "fresh", "number.dst_missing")
+        fresh_inv.add_to_hass(hass)
+        hass.data[DOMAIN]["hubs"][fresh_hub.entry_id] = {"loads": []}
+        assert run_hub_calculation(hass, fresh_hub)["forecast_battery_max_soc"] == 90
+
+
 async def test_grid_phases_in_watts_are_converted_to_amps(
     hass,
     hub_entry,

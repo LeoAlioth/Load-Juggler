@@ -194,6 +194,85 @@ def test_max_soc_rises_as_now_advances():
     assert previous == 100.0
 
 
+# --- The destination anchor: the reserve is carved below the user's ceiling ----
+#
+# The battery's *destination* is where it would have ended the day anyway (the
+# per-inverter "normal SOC ceiling source" entity). Carving the reserve out of
+# 100 % on a site whose ceiling sits at 95 % reserves that top 5 % twice: the
+# battery is allowed up to 100 − reserve, hits its owner's 95 % first, and meets
+# the peak with 5 % of room instead of the reserve.
+
+def test_max_soc_carves_the_reserve_below_the_destination():
+    # The maintainer's site: 20 kWh pack heading for 95 %, 2 kWh clippable →
+    # hold at 85, absorb the clip through the peak, arrive at 95.
+    assert battery_max_soc(2.0, 20.0, soc_floor=30.0, soc_target=95.0) == 85.0
+
+
+def test_max_soc_with_no_destination_is_the_old_formula_exactly():
+    """A site that configures no ceiling source must not move at all.
+
+    Pinned term-for-term against the pre-destination expression
+    ``min(100, max(floor, 100 − absorbable/capacity × 100))``, both by omitting
+    the argument and by passing the 100 % default explicitly.
+    """
+    for absorbable, capacity, floor in [
+        (0.0, 10.0, 30.0),
+        (1.0, 10.0, 30.0),
+        (4.0, 10.0, 30.0),
+        (9.5, 10.0, 30.0),
+        (20.0, 10.0, 30.0),
+        (2.0, 20.0, 50.0),
+        (0.3, 13.5, 10.0),
+    ]:
+        needed = min(max(0.0, absorbable), capacity)
+        old = min(100.0, max(floor, 100.0 - needed / capacity * 100.0))
+        assert battery_max_soc(absorbable, capacity, soc_floor=floor) == old
+        assert (
+            battery_max_soc(absorbable, capacity, soc_floor=floor, soc_target=100.0)
+            == old
+        )
+
+
+def test_max_soc_with_nothing_to_absorb_is_the_destination():
+    # Not 100: with nothing to clip the advice is exactly where the owner was
+    # sending the battery anyway, so the fan-out's min() writes their number.
+    assert battery_max_soc(0.0, 20.0, soc_floor=30.0, soc_target=95.0) == 95.0
+
+
+def test_max_soc_floor_wins_over_the_destination_reserve():
+    # 8 kWh of a 10 kWh pack below a 90 % destination is −10 %: the floor holds.
+    assert battery_max_soc(8.0, 10.0, soc_floor=30.0, soc_target=90.0) == 30.0
+    # And the floor is what binds, not the destination arithmetic: one kWh less
+    # still lands on the floor, but 5 kWh clears it.
+    assert battery_max_soc(7.0, 10.0, soc_floor=30.0, soc_target=90.0) == 30.0
+    assert battery_max_soc(5.0, 10.0, soc_floor=30.0, soc_target=90.0) == 40.0
+
+
+def test_max_soc_destination_below_the_floor_still_respects_the_floor():
+    # A destination under the floor cannot lower the advice below it. The
+    # recommendation then sits ABOVE the destination, which the ceiling
+    # fan-out's min() resolves in the user's favour (see engine/hub_result.py).
+    assert battery_max_soc(1.0, 10.0, soc_floor=50.0, soc_target=40.0) == 50.0
+
+
+def test_max_soc_destination_heals_toward_the_destination_not_a_hundred():
+    # Fixed series, advancing now: as the remaining clip burns down the ceiling
+    # rises to the DESTINATION and stops there — the band above it is the
+    # site's buffer against a forecast under-read, never advice.
+    series = _series([8000, 10000, 8000, 0])
+    previous = -1.0
+    for hours in range(0, 6):
+        fc = _fc(series, now=T0 + timedelta(hours=hours),
+                 until=T0 + timedelta(hours=18))
+        ceiling = battery_max_soc(
+            fc.absorbable_kwh, 10.0, soc_floor=30.0, soc_target=95.0
+        )
+        assert ceiling >= previous
+        assert ceiling <= 95.0
+        previous = ceiling
+    assert previous == 95.0
+
+
 # --- The deficit: honesty when the advice cannot be met -----------------------
 
 def test_deficit_zero_while_achievable():

@@ -38,6 +38,7 @@ from ..const import (
     DEFAULT_EXCESS_TRIGGER_MARGIN,
     DEFAULT_FORECAST_SOC_FLOOR,
     DEFAULT_GRID_EXPORT_LIMIT,
+    DEFAULT_SOC_LIMIT_NORMAL,
     FORECAST_SOC_HYSTERESIS,
 )
 from ..helpers import get_entry_value
@@ -72,11 +73,28 @@ def _compute_forecast_advice(
     for the current instant, so a battery that is momentarily full still
     counts (its ceiling advice is exactly what empties it). Reserving
     ``absorbable_kwh`` across the fleet at one uniform ceiling ``s`` gives
-    ``Σ cap_i × (100 − s)/100`` — precisely what battery_max_soc computes
-    from the summed capacity — so every battery is advised the same percent,
-    splitting the headroom proportionally to capacity by construction. The
-    recommended charge limit splits proportionally to each member's charge
+    ``Σ cap_i × (target_i − s)/100`` — precisely what battery_max_soc computes
+    from the summed capacity and the capacity-weighted destination
+    (``fleet.soc_target_weighted``) — so every battery is advised the same
+    percent, splitting the headroom proportionally to capacity by construction.
+    The recommended charge limit splits proportionally to each member's charge
     cap, clamped to its own cap.
+
+    The reserve is carved below where the batteries are HEADING rather than
+    below 100 %: each member's "normal SOC ceiling source" entity is its
+    destination, and a member without one is heading for 100 (so a site that
+    configures none behaves exactly as it did before). Nothing downstream needs
+    to change for it — the write-control fan-out already writes
+    ``min(normal, recommendation)``, and the recommendation is now at or below
+    the destination by construction. The two ways it can sit ABOVE a member's
+    own normal are both safe there: a floor higher than the destination
+    (``CONF_FORECAST_SOC_FLOOR``), and the ratchet holding a recommendation
+    from before the user lowered their ceiling by less than
+    FORECAST_SOC_HYSTERESIS. The min() writes the user's number in both cases.
+    A larger mid-day change to the destination is not resisted at all: the
+    ratchet only absorbs falls smaller than its band, so lowering the ceiling by
+    more than that lowers the recommendation on the very next cycle, and raising
+    it lets the recommendation rise freely.
 
     The energy question and the power question are asked at DIFFERENT
     thresholds — the integral at the true export limit, the instantaneous
@@ -190,7 +208,15 @@ def _compute_forecast_advice(
         power_cap_w=power_cap,
     )
 
-    max_soc = battery_max_soc(fc.absorbable_kwh, capacity_kwh, soc_floor)
+    # Where the fleet's batteries are HEADING (their own normal-ceiling sources,
+    # capacity-weighted; 100 % for every member that configures none). The
+    # reserve is carved below this, not below 100 — see
+    # ``fleet.soc_target_weighted`` for the weighting's derivation and
+    # ``battery_max_soc`` for why the destination is the right anchor.
+    soc_target = fleet.soc_target_weighted(members, DEFAULT_SOC_LIMIT_NORMAL)
+    max_soc = battery_max_soc(
+        fc.absorbable_kwh, capacity_kwh, soc_floor, soc_target=soc_target
+    )
     proposed = round(max_soc)
     prev = hub_runtime.get("_forecast_max_soc")
     if prev is not None and prev - FORECAST_SOC_HYSTERESIS <= proposed < prev:
@@ -236,7 +262,8 @@ def _compute_forecast_advice(
     _LOGGER.debug(
         "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW"
         " (advice anchored at %dW) to %s"
-        " | max SOC %d%% (raw %.1f) deficit %.2f kWh charge cap %s",
+        " | max SOC %d%% (raw %.1f of destination %.1f%%) deficit %.2f kWh"
+        " charge cap %s",
         fc.clipped_kwh,
         fc.absorbable_kwh,
         clip_threshold,
@@ -244,6 +271,7 @@ def _compute_forecast_advice(
         until,
         proposed,
         max_soc,
+        soc_target,
         deficit,
         f"{charge_limit:.0f}W" if charge_limit is not None else "n/a",
     )

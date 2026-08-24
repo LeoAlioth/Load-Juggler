@@ -45,6 +45,7 @@ from ..const import (
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
+    CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -653,6 +654,32 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         _smooth(ema_inputs, power_key, raw_power) if power_entity else None
     )
 
+    # This member's battery DESTINATION — the live value of the same "normal SOC
+    # ceiling source" entity the SOC write-control idles its slots at. The
+    # clipping reserve is carved out below it rather than below 100 %
+    # (fleet.soc_target_weighted → calculations.battery_max_soc).
+    #
+    # HELD while unreadable, not stale-guarded: this is a SETPOINT, not a
+    # measurement. "The user asked for 95 %" stays true through a brief
+    # unavailability, where a held power reading would be a phantom kilowatt —
+    # and letting it snap back to 100 % would instead raise the published
+    # ceiling, which the ratchet would then resist lowering again for the rest
+    # of the day. None only while no entity is configured, or one is and has
+    # never yet been readable in this hub's lifetime; both anchor at 100 %,
+    # exactly as every site did before this existed. (The write-control's own
+    # fan-out defers all writes while the entity is unreadable, so nothing is
+    # written from a held value either way.)
+    soc_target_entity = get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
+    soc_target = None
+    if soc_target_entity:
+        held = hub_runtime.setdefault("_soc_target_hold", {})
+        raw_target = _read_entity(hass, soc_target_entity, None)
+        if raw_target is _UNAVAILABLE or raw_target is None:
+            soc_target = held.get(entry.entry_id)
+        else:
+            soc_target = float(raw_target)
+            held[entry.entry_id] = soc_target
+
     return fleet.FleetMember(
         entry_id=entry.entry_id,
         name=get_entry_value(entry, CONF_NAME, entry.title if not legacy else "Hub"),
@@ -675,6 +702,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         enforced_charge_limit=_read_enforced_charge_limit(hass, entry),
         discharge_cap=get_entry_value(entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None),
         soc_full=get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL),
+        soc_target=soc_target,
         capacity_kwh=get_entry_value(
             entry, CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH
         ),

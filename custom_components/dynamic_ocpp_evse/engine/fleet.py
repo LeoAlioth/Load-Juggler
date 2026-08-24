@@ -86,6 +86,13 @@ class FleetMember:
     enforced_charge_limit: Optional[float] = None
     discharge_cap: Optional[float] = None  # W
     soc_full: Optional[float] = None  # %
+    # % — this battery's DESTINATION: the live value of the same "normal SOC
+    # ceiling source" entity the SOC write-control idles its slots at, which is
+    # where this pack ends the day when the forecast says nothing. The clipping
+    # reserve is carved out below it (see soc_target_weighted). None means no
+    # destination is known — no entity configured, or one configured that has
+    # never yet been readable — and anchors that member at 100 %.
+    soc_target: Optional[float] = None
     capacity_kwh: Optional[float] = None
 
     def spans_phase(self, phase: str) -> bool:
@@ -204,6 +211,45 @@ def soc_full_scalar(members) -> Optional[float]:
 
 def capacity_total(members) -> float:
     return sum(m.capacity_kwh or 0 for m in members)
+
+
+def soc_target_weighted(members, default: float = 100.0) -> float:
+    """The fleet's battery destination in percent — capacity-weighted.
+
+    Capacity weighting is not a matter of taste. The forecast reserves headroom
+    at ONE uniform ceiling ``s`` for the whole fleet, which buys
+    ``Σ cap_i × (target_i − s)/100`` kWh, so the ``s`` that leaves exactly
+    ``absorbable_kwh`` is
+
+        s = (Σ cap_i × target_i) / Σ cap_i  −  absorbable / Σ cap × 100
+
+    — the capacity-weighted mean destination, minus the reserve. That is the
+    same derivation as the flat-100 % one in ``_compute_forecast_advice``, with
+    each member's own destination in place of the 100, and it is what makes
+    ``battery_max_soc``'s single anchor exact for a mixed fleet.
+
+    Only members that HAVE a battery with a known capacity count — a member
+    with no pack has no destination to average, and one with no capacity
+    contributes no headroom either way. A member whose own destination is
+    unknown (no ceiling source configured, or one that has never been readable)
+    counts as ``default``: 100 %, where an unmanaged battery is heading.
+
+    Reduces to exactly the member's own target for a single battery, and to
+    ``default`` when nothing is configured anywhere — byte-identical to the
+    behavior before the destination anchor existed.
+    """
+    weighted = [
+        (
+            float(m.soc_target if m.soc_target is not None else default),
+            float(m.capacity_kwh),
+        )
+        for m in members
+        if m.has_battery and (m.capacity_kwh or 0) > 0
+    ]
+    if not weighted:
+        return float(default)
+    total_capacity = sum(c for _, c in weighted)
+    return sum(t * c for t, c in weighted) / total_capacity
 
 
 def sum_outputs(members, topology: Optional[str] = None) -> Optional[PhaseValues]:

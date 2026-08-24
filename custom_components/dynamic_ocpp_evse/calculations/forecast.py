@@ -176,13 +176,33 @@ def clipping_forecast(
     return result
 
 
-def battery_max_soc(absorbable_kwh, capacity_kwh, soc_floor, soc_ceiling=100.0):
+def battery_max_soc(
+    absorbable_kwh, capacity_kwh, soc_floor, soc_ceiling=100.0, soc_target=100.0
+):
     """Recommended battery SOC ceiling that keeps room for the forecast clip.
 
     The battery must be able to take ``absorbable_kwh``, so the ceiling is the
-    SOC that leaves exactly that much headroom, clamped to
-    ``[soc_floor, soc_ceiling]``. With nothing to absorb the answer is the
-    ceiling — the battery may fill completely.
+    SOC that leaves exactly that much headroom below the battery's
+    DESTINATION — ``soc_target``, where this pack was going to end the day
+    anyway — clamped to ``[soc_floor, soc_ceiling]``. With nothing to absorb
+    the answer is the destination itself: fill as full as its owner asked.
+
+    The anchor is the destination rather than a flat 100 % because the reserve
+    only has to exist *while the clip happens*. A site whose ceiling normally
+    sits at 95 % has 5 % of pack it never fills; carving the reserve out of
+    100 % reserves that 5 % twice — the battery is allowed up to
+    ``100 − reserve``, hits its owner's 95 % first, and meets the peak with 5 %
+    of room instead of the reserve. Anchored at 95 % it holds at
+    ``95 − reserve``, absorbs the clip through the peak and arrives at 95 %:
+    the same place, by the intended route. Worked example — 20 kWh pack,
+    destination 95 %, 2 kWh clippable → hold at 85 %.
+
+    ``soc_target`` defaults to 100 %, where an unmanaged battery is heading, so
+    a site that configures no ceiling source gets exactly the old formula
+    ``100 − absorbable/capacity × 100``. It is deliberately independent of
+    ``soc_ceiling``, which clamps the OUTPUT: the band between the destination
+    and 100 % is the site's safety buffer against a forecast under-read, and
+    this advice never reaches up into it.
 
     Pure function — unit-testable.
     """
@@ -194,7 +214,7 @@ def battery_max_soc(absorbable_kwh, capacity_kwh, soc_floor, soc_ceiling=100.0):
         )
         return soc_ceiling
     needed = min(max(0.0, absorbable_kwh), capacity_kwh)
-    max_soc = 100.0 - needed / capacity_kwh * 100.0
+    max_soc = soc_target - needed / capacity_kwh * 100.0
     return min(soc_ceiling, max(soc_floor, max_soc))
 
 
