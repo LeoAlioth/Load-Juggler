@@ -32,6 +32,15 @@ sensor's own numeric state. That sensor therefore measures the register without
 ever touching it: everything it reports comes from the runtime dict this module
 records (``INVERTER_RT_*``).
 
+That same read-back has a second consumer, and it is not a sensor: while the
+limit is engaged, the register value is *the rate the battery is permitted to
+take*, so it is republished in watts as ``INVERTER_RT_ENFORCED_CHARGE_W`` for
+the calculation engine — which narrows the Excess verdict's battery charge
+allowance to it instead of the configured nameplate rate (see
+``engine/fleet.charge_power_total``). A clipping window is exactly when the site
+has surplus it cannot place, so the verdict must not go on counting a charge
+rate this module is actively forbidding. None means nothing is being held back.
+
 Single writer: the one caller is the inverter's charge-control sensor, which the
 hub coordinator awaits once per site cycle as a site-cycle worker (see
 ``entities/inverter.py``). Nothing else — no poll, no service call — may write
@@ -85,6 +94,7 @@ from ..const import (
     SOC_LIMIT_DEADBAND,
     INVERTER_RT_APPLIED,
     INVERTER_RT_CONTROL_ENABLED,
+    INVERTER_RT_ENFORCED_CHARGE_W,
     INVERTER_RT_LAST_WRITE,
     INVERTER_RT_STATUS,
     INVERTER_RT_SOC_CONTROL_ENABLED,
@@ -183,6 +193,18 @@ def to_target_units(watts: float, unit: str, voltage: float) -> float:
     if unit == CHARGE_LIMIT_UNIT_AMPS:
         return watts / voltage if voltage > 0 else 0.0
     return watts
+
+
+def from_target_units(value: float, unit: str, voltage: float) -> float:
+    """The inverse: a register value back into watts.
+
+    Needed because the enforced rate is published for the calculation engine
+    (``INVERTER_RT_ENFORCED_CHARGE_W``), which works in watts throughout and
+    must not have to know that this register may count DC amps.
+    """
+    if unit == CHARGE_LIMIT_UNIT_AMPS:
+        return value * voltage
+    return value
 
 
 def resolve_normal_value(hass, entry, target_entity):
@@ -295,6 +317,11 @@ async def send_inverter_charge_limit(hass, entry, advice_w, now_mono) -> None:
             CONTROL_STATE_OFF if not enabled else CONTROL_STATE_IDLE
         )
         inverter_rt[INVERTER_RT_RECOMMENDED] = None
+        # Nothing is being held back, so the battery is permitted its full
+        # nameplate rate again — which is what None tells the engine. Set on the
+        # way out rather than after the restore write: the write below happens
+        # only once, while this must be true on every released cycle.
+        inverter_rt[INVERTER_RT_ENFORCED_CHARGE_W] = None
         # Only ever undo our own limit, and only once. Never having written
         # (applied is None) means the register is the user's, not ours.
         if applied is None or normal is None:
@@ -325,6 +352,17 @@ async def send_inverter_charge_limit(hass, entry, advice_w, now_mono) -> None:
     )
     inverter_rt[INVERTER_RT_STATUS] = CONTROL_STATE_LIMITING
     inverter_rt[INVERTER_RT_RECOMMENDED] = desired
+    # What the battery is PERMITTED to take right now, in watts, for the
+    # calculation engine's Excess verdict (see INVERTER_RT_ENFORCED_CHARGE_W).
+    # The register's live value, not our desired one: until the write below
+    # actually lands — the pacing can defer it for a whole interval — the
+    # battery really may still take the full rate the register still holds, and
+    # narrowing the allowance before that would engage Excess against a battery
+    # that has not been held back yet. Only when the register cannot be read at
+    # all does the value we are driving it to stand in for it.
+    inverter_rt[INVERTER_RT_ENFORCED_CHARGE_W] = from_target_units(
+        desired if current is None else current, unit, voltage
+    )
 
     last_write = inverter_rt.get(INVERTER_RT_LAST_WRITE)
     if last_write is not None and (now_mono - last_write) < interval:

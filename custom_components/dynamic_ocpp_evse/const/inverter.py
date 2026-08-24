@@ -97,6 +97,15 @@ INVERTER_RT_CONTROL_ENABLED = "charge_control_enabled"
 INVERTER_RT_APPLIED = "charge_control_applied"  # last value written (target units)
 INVERTER_RT_LAST_WRITE = "charge_control_last_write"  # monotonic seconds
 INVERTER_RT_STATUS = "charge_control_status"
+# The rate the battery is actually PERMITTED to take while this control holds
+# its register down, in WATTS — None whenever nothing is being held back (switch
+# off, no advice, released). The one runtime key here that the calculation
+# engine reads rather than an entity: engine/readers.py picks it up per fleet
+# member so the Excess verdict's charge allowance is the permitted rate rather
+# than the nameplate one (see engine/fleet.charge_power_total). Watts rather
+# than the register's own units, so the engine never has to know about
+# CONF_CHARGE_LIMIT_UNIT or the DC battery voltage.
+INVERTER_RT_ENFORCED_CHARGE_W = "charge_control_enforced_w"
 
 # The same three for the SOC control — its own arming flag, its own write clock
 # and its own standing, because the two controls are armed and paced

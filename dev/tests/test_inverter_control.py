@@ -59,6 +59,7 @@ from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     SOC_LIMIT_DEADBAND,
     INVERTER_RT_APPLIED,
     INVERTER_RT_CONTROL_ENABLED,
+    INVERTER_RT_ENFORCED_CHARGE_W,
     INVERTER_RT_STATUS,
     INVERTER_RT_SOC_CONTROL_ENABLED,
     INVERTER_RT_SOC_LAST_WRITE,
@@ -77,6 +78,7 @@ from custom_components.dynamic_ocpp_evse.control.inverter import (  # noqa: E402
     INVERTER_RT_SOC_SLOTS,
     battery_voltage,
     desired_soc,
+    from_target_units,
     resolve_minimum_value,
     resolve_normal_soc,
     resolve_normal_value,
@@ -527,6 +529,109 @@ def test_an_unreadable_register_records_none():
     asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
 
     assert rt[INVERTER_RT_REGISTER] is None
+
+
+# --- The enforced rate, in watts, for the calculation engine -------------------
+#
+# The engine's Excess verdict asks what the battery is PERMITTED to take, not what
+# it is rated for: while this control holds the register down, the two are
+# different numbers and counting the rating makes a clipping window look like a
+# site with somewhere left to put its production. The control publishes the
+# permitted rate in watts (INVERTER_RT_ENFORCED_CHARGE_W); None means nothing is
+# being held back, so the nameplate rate stands.
+
+
+def test_watts_from_amps_is_the_inverse_conversion():
+    assert from_target_units(100.0, "A", 51.2) == 5120.0
+    assert from_target_units(5120.0, "W", 51.2) == 5120.0
+
+
+def test_the_enforced_rate_is_the_register_in_watts():
+    hass = _hass_with_target(current=100.0, maximum=100.0)
+    entry = _entry({CONF_BATTERY_NOMINAL_VOLTAGE: 51.2})
+    rt = _arm(hass, entry)
+
+    # First engaged cycle: the write is issued, but the register still reports the
+    # full 100 A, so the battery may still take its full rate. Nothing narrows yet.
+    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 5120.0
+
+    # The inverter has taken the write: 50 A at 51.2 V is the 2560 W the forecast
+    # asked for, and that is now the rate the battery is permitted.
+    hass.states.set(TARGET, 50.0, max=100.0)
+    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 1000.0))
+    assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 2560.0
+
+
+def test_a_watt_register_needs_no_conversion():
+    hass = _hass_with_target(current=6500.0, maximum=10000.0)
+    entry = _entry({CONF_CHARGE_LIMIT_UNIT: "W"})
+    rt = _arm(hass, entry)
+
+    asyncio.run(send_inverter_charge_limit(hass, entry, 6500.0, 0.0))
+
+    assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 6500.0
+
+
+def test_an_unreadable_register_falls_back_to_the_driven_value():
+    """No read-back to trust, so the value we are driving it to stands in."""
+    hass = _Hass()
+    hass.states.set(TARGET, "unavailable")
+    entry = _entry({CONF_BATTERY_NOMINAL_VOLTAGE: 51.2, CONF_CHARGE_LIMIT_NORMAL: 100})
+    rt = _arm(hass, entry)
+
+    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+
+    assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 2560.0
+
+
+def test_the_floor_is_part_of_the_enforced_rate():
+    """The minimum charge limit raises what is actually written, so the battery is
+    permitted more than the advice asked for — and the engine must hear that."""
+    hass = _hass_with_target(current=100.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_LIMIT_MINIMUM: 10,  # 10 A = 512 W
+    })
+    rt = _arm(hass, entry)
+
+    # A 0 W advice writes the 10 A floor instead; once the register holds it, the
+    # enforced rate is that floor, not zero.
+    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+    hass.states.set(TARGET, 10.0, max=100.0)
+    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 1000.0))
+
+    assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 512.0
+
+
+def test_nothing_is_enforced_while_the_switch_is_off():
+    hass = _hass_with_target(current=50.0, maximum=100.0)
+    entry = _entry({CONF_BATTERY_NOMINAL_VOLTAGE: 51.2})
+    rt = _arm(hass, entry, enabled=False)
+
+    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+
+    # The register may well sit at 50 A — but it is the user's own setting, not a
+    # limit we are holding, so the nameplate rate is what the engine should count.
+    assert rt[INVERTER_RT_ENFORCED_CHARGE_W] is None
+
+
+def test_the_release_clears_the_enforced_rate():
+    hass = _hass_with_target(current=100.0, maximum=100.0)
+    entry = _entry({CONF_BATTERY_NOMINAL_VOLTAGE: 51.2})
+    rt = _arm(hass, entry)
+
+    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    hass.states.set(TARGET, 50.0, max=100.0)
+    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 1000.0))
+    assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 2560.0
+
+    # Evening: the advice releases. The restore write happens once, but the
+    # cleared enforcement must hold for every cycle after it.
+    asyncio.run(send_inverter_charge_limit(hass, entry, None, 2000.0))
+    assert rt[INVERTER_RT_ENFORCED_CHARGE_W] is None
+    asyncio.run(send_inverter_charge_limit(hass, entry, None, 3000.0))
+    assert rt[INVERTER_RT_ENFORCED_CHARGE_W] is None
 
 
 # --- Cadence independence -----------------------------------------------------
