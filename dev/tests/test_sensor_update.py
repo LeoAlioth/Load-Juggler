@@ -64,6 +64,8 @@ from custom_components.dynamic_ocpp_evse.const import (
     DEFAULT_BATTERY_SOC_HYSTERESIS,
     DEFAULT_CHARGE_PAUSE_DURATION,
     CONF_GRID_EXPORT_LIMIT,
+    CONF_EXCESS_TRIGGER_MARGIN,
+    CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_BASE_CONSUMPTION,
     CONF_BATTERY_CAPACITY_KWH,
@@ -2364,6 +2366,165 @@ async def test_forecast_charge_limit_latch_round_trips_through_hub_runtime(hass)
         result = run_hub_calculation(hass, hub)
         assert result["forecast_charge_limit_w"] == 5000
         assert hub_runtime["_forecast_charge_limiting"] is False
+
+
+def _anchor_hub(slug, export_limit, trigger_margin):
+    """A forecast hub differing only in its export limit and trigger margin.
+
+    Measured solar (not derived) so the advice is a clean function of the
+    reading; 10 kWh pack, 5 kW charge rating, 300 W base consumption.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title=f"Anchor Hub {slug}",
+        data={
+            CONF_NAME: f"Anchor Hub {slug}",
+            CONF_ENTITY_ID: f"anchor_hub_{slug}",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.an_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.an_solar",
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.an_battery_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.an_battery_power",
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_GRID_EXPORT_LIMIT: export_limit,
+            CONF_EXCESS_TRIGGER_MARGIN: trigger_margin,
+            CONF_BASE_CONSUMPTION: 300,
+            CONF_BATTERY_CAPACITY_KWH: 10,
+            CONF_FORECAST_SOC_FLOOR: 30,
+            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.an_forecast"],
+        },
+    )
+
+
+def _set_anchor_states(hass, solar_w, forecast_w):
+    hass.states.async_set(
+        "sensor.an_phase_a", "2.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.an_solar", str(solar_w),
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    # SOC 88 sits on the engage threshold of the 90 % ceiling below, so the
+    # charge cap is engaged in every one of these cases.
+    hass.states.async_set(
+        "sensor.an_battery_soc", "88",
+        {"device_class": "battery", "unit_of_measurement": "%"},
+    )
+    hass.states.async_set(
+        "sensor.an_battery_power", "-500",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.states.async_set(
+        "sensor.an_forecast",
+        "1.0",
+        {
+            "watts": {
+                "2026-08-14T10:00:00+00:00": forecast_w,
+                "2026-08-14T11:00:00+00:00": 0,
+            }
+        },
+    )
+
+
+async def test_forecast_charge_limit_anchors_a_margin_below_the_export_limit(hass):
+    """The engaged advice is anchored at (export limit − trigger margin), while
+    the clipping INTEGRAL stays on the true (export limit + base) threshold.
+
+    Regression for the masked-site bug: on an inverter that hard-enforces the
+    export limit, measured production can never exceed the limit plus the
+    house plus the battery allowance, so an advice anchored AT the limit
+    reproduces its own previous output and the allowance freezes near its
+    floor while real kilowatts are curtailed (see
+    ``recommended_charge_limit``'s docstring and the replay tests in
+    test_forecast_clipping.py).
+
+    Two hubs identical but for the trigger margin — 0 W (the old, degenerate
+    anchoring, exactly at the limit) and 800 W — decide it: the advice must
+    differ by EXACTLY the margin, and the clipped-energy figure must not move
+    at all.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    at_limit = _anchor_hub("atlimit", 5000, 0)
+    shifted = _anchor_hub("shifted", 5000, 800)
+    hass.data[DOMAIN] = {
+        "hubs": {
+            at_limit.entry_id: {"loads": []},
+            shifted.entry_id: {"loads": []},
+        },
+        "loads": {},
+        "load_allocations": {},
+    }
+    # 6 kW measured production; 1 h at 6300 W is 1 kWh above the true 5300 W
+    # threshold, so the ceiling is 90 % and SOC 88 engages the cap.
+    _set_anchor_states(hass, 6000, 6300)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        at_limit_result = run_hub_calculation(hass, at_limit)
+        shifted_result = run_hub_calculation(hass, shifted)
+
+    # The integral is the ENERGY question and is asked at the true threshold —
+    # the same 1 kWh whatever the trigger margin, so the reserved headroom is
+    # untouched by this anchoring.
+    assert at_limit_result["forecast_clipped_kwh"] == 1.0
+    assert shifted_result["forecast_clipped_kwh"] == 1.0
+    assert at_limit_result["forecast_absorbable_kwh"] == 1.0
+    assert shifted_result["forecast_absorbable_kwh"] == 1.0
+    assert at_limit_result["forecast_battery_max_soc"] == 90
+    assert shifted_result["forecast_battery_max_soc"] == 90
+
+    # The advice is the POWER question and is asked a margin lower:
+    #   6000 − (5000 − 0   + 300) =  700 W
+    #   6000 − (5000 − 800 + 300) = 1500 W
+    assert at_limit_result["forecast_charge_limit_w"] == 700
+    assert shifted_result["forecast_charge_limit_w"] == 1500
+    # The two anchors diverge by exactly the trigger margin.
+    assert (
+        shifted_result["forecast_charge_limit_w"]
+        - at_limit_result["forecast_charge_limit_w"]
+        == 800
+    )
+
+
+async def test_forecast_charge_limit_anchor_never_goes_below_base_consumption(hass):
+    """Edge: a trigger margin larger than the export limit clamps at 0 + base.
+
+    The anchor is ``max(export limit − margin, 0) + base consumption``, so a
+    tiny export limit cannot push it negative and inflate the advice.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _anchor_hub("clamped", 400, 500)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+    }
+    # True threshold 700 W; 1 h at 1700 W is 1 kWh clipped → ceiling 90 %.
+    _set_anchor_states(hass, 1000, 1700)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+
+    assert result["forecast_clipped_kwh"] == 1.0
+    assert result["forecast_battery_max_soc"] == 90
+    # Anchor clamped to 0 + 300 W: 1000 − 300 = 700 W. Unclamped it would have
+    # been (400 − 500) + 300 = 200 W, advising 800 W.
+    assert result["forecast_charge_limit_w"] == 700
 
 
 async def test_grid_phases_in_watts_are_converted_to_amps(

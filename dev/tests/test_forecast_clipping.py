@@ -342,6 +342,127 @@ def test_cap_latch_follows_a_moving_ceiling():
     ) == (10000.0, False)
 
 
+# --- The advice anchor: a hard-limiting inverter must not mask the signal ----
+#
+# The maintainer's live site: a Deye hybrid that HARD-enforces the export limit
+# by curtailing its own PV. Site power balance is
+#     production = house + battery + export
+# so with export clamped at the limit, measured production can never exceed
+#     export_limit + house + battery_allowance.
+# Anchored at the true clipping threshold (limit + base) the advice is then
+# battery_allowance + (house − base) — its own previous output — and freezes.
+# Anchored one Excess trigger margin lower it self-creeps out instead.
+
+_LIMIT = 8700.0        # the site's export limit, W
+_MARGIN = 500.0        # Excess trigger margin (DEFAULT_EXCESS_TRIGGER_MARGIN)
+_BASE = 300.0          # base consumption
+_HOUSE = 300.0         # actual house draw right now
+_FULL_RATE = 10000.0   # battery charge rating
+_POTENTIAL = 15000.0   # what the array could make if nothing curtailed it
+
+_ANCHOR = _LIMIT - _MARGIN + _BASE   # 8500 — the instantaneous advice anchor
+_TRUE_THRESHOLD = _LIMIT + _BASE     # 9000 — what the forecast integral uses
+
+
+def _hard_limited_production(allowance):
+    """What the site MEASURES while the inverter enforces the export limit."""
+    return min(_POTENTIAL, _LIMIT + _HOUSE + allowance)
+
+
+def _next_allowance(allowance, threshold):
+    """One closed-loop cycle: measure, advise, apply as the next allowance.
+
+    SOC pinned at the ceiling and 4 kWh still to clip, so the latch is engaged
+    throughout — this test is about the anchor, not the gate.
+    """
+    limit, limiting = recommended_charge_limit(
+        4.0,
+        100.0,
+        100.0,
+        _FULL_RATE,
+        _hard_limited_production(allowance),
+        threshold,
+        2.0,
+        True,
+    )
+    assert limiting is True
+    return limit
+
+
+def test_masked_site_replay_at_the_true_threshold_is_a_fixed_point():
+    """The bug, as arithmetic: anchored at the true threshold the loop is stuck.
+
+    Every cycle returns exactly what it was handed, so the allowance sits at
+    its floor for ever while the inverter curtails 5 kW of real production.
+    """
+    allowance = 1000.0
+    for _ in range(20):
+        allowance = _next_allowance(allowance, _TRUE_THRESHOLD)
+        assert allowance == 1000.0
+    # And the site is genuinely clipping the whole time: 10 kW measured of
+    # 15 kW available.
+    assert _hard_limited_production(allowance) == 10000.0
+
+
+def test_masked_site_replay_self_creeps_off_the_hard_limit():
+    """The fix, as arithmetic: the shifted anchor escapes the masking.
+
+    Closed-loop replay of the masked site. While export is pinned at the limit
+    each cycle hands back allowance + margin, so the allowance climbs by
+    exactly one margin per step until measured production reaches the array's
+    true potential — then one more step lands on the equilibrium and stays.
+    """
+    allowance = 1000.0
+    trajectory = [allowance]
+    for _ in range(11):
+        allowance = _next_allowance(allowance, _ANCHOR)
+        trajectory.append(allowance)
+
+    # Ten pinned cycles of exactly +500 W, then the equilibrium value.
+    assert trajectory == [
+        1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 3500.0,
+        4000.0, 4500.0, 5000.0, 5500.0, 6000.0, 6500.0,
+    ]
+    # Monotone throughout — the allowance never falls back into the masked state.
+    assert all(b >= a for a, b in zip(trajectory, trajectory[1:]))
+
+    # Export unpinned: measured production is the array's true potential, so
+    # the inverter is no longer curtailing anything.
+    assert _hard_limited_production(allowance) == _POTENTIAL
+
+    # Fixed point, and it is the equilibrium: the battery absorbs
+    # potential − house − (limit − margin) and export rides a margin under the
+    # hard limit instead of on it.
+    for _ in range(10):
+        allowance = _next_allowance(allowance, _ANCHOR)
+        assert allowance == 6500.0
+    assert allowance == _POTENTIAL - _HOUSE - (_LIMIT - _MARGIN)
+    export = _POTENTIAL - _HOUSE - allowance
+    assert export == _LIMIT - _MARGIN == 8200.0
+
+
+def test_unpinned_equilibrium_puts_export_a_margin_under_the_limit():
+    """Regime 1 as a direct assertion, for any house draw.
+
+    Unpinned, the advice is potential − anchor, the battery takes it, and what
+    is left leaves through the meter: export = (limit − margin) + (base −
+    house). At base draw that is exactly a margin below the limit — never on
+    it, which is the whole point.
+    """
+    potential = 14000.0
+    allowance, _ = recommended_charge_limit(
+        4.0, 100.0, 100.0, _FULL_RATE, potential, _ANCHOR, 2.0, True
+    )
+    assert allowance == potential - _ANCHOR
+    for house in (0.0, _BASE, 1200.0):
+        export = potential - house - allowance
+        assert export == (_LIMIT - _MARGIN) + (_BASE - house)
+        # Never at the hard limit, so nothing is curtailed and the measured
+        # production stays honest: the margin is the whole safety distance,
+        # and only a house drawing less than base could eat into it.
+        assert export < _LIMIT
+
+
 def test_unexportable_power_clamps_at_zero():
     assert unexportable_power(4000.0, THRESHOLD) == 0.0
     assert unexportable_power(8000.0, THRESHOLD) == 2000.0
