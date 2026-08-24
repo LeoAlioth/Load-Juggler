@@ -85,6 +85,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     INVERTER_RT_APPLIED,
     INVERTER_RT_CONTROL_ENABLED,
     INVERTER_RT_ENFORCED_CHARGE_W,
+    INVERTER_RT_LAST_WRITE,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     INVERTER_RT_SOC_CONTROL_ENABLED,
@@ -4371,11 +4372,19 @@ async def test_repeated_cycles_write_once_inside_the_interval(
     assert len(_register_writes(mock_call)) == 1
 
 
-async def test_the_cycle_releases_the_limit_exactly_once(
+async def test_the_cycle_ramps_the_release_and_then_stops(
     hass, hub_entry, inverter_entry
 ):
-    """Advice stopping restores the normal value, and only on the first cycle
-    that sees it — a release must not be rewritten every 2 s all night."""
+    """Advice stopping walks the register back UP to the normal value one Excess
+    trigger margin per write, and then stops for good.
+
+    Two failures in one test, because the fix for the first caused the second:
+    the release must not hand the battery full rate in a single step (it would
+    drink the clipping reserve out of exportable power in minutes), and it must
+    not be rewritten every 2 s all night either. The ramp arithmetic itself is
+    pinned in test_inverter_control.py; this is the same contract through the
+    real cycle, with the register accepting every write.
+    """
     sensor = await _add_charge_control(hass, inverter_entry)
 
     with patch(
@@ -4383,21 +4392,64 @@ async def test_the_cycle_releases_the_limit_exactly_once(
     ), _advice_cycle(inverter_entry, 2560.0):
         await _run_site_cycle(hass, hub_entry)
 
+    inverter_rt = hass.data[DOMAIN]["inverters"][inverter_entry.entry_id]
     # The inverter took the 50 A we wrote; now the forecast releases.
     hass.states.async_set(CHARGE_TARGET, "50", {"max": 100})
     with _accepting_register(hass) as mock_call, _advice_cycle(inverter_entry, None):
+        # Four back-to-back cycles inside the 300 s write window: the release is
+        # paced like every other write, so none of them writes anything.
         for _ in range(4):
             await _run_site_cycle(hass, hub_entry)
+        assert _register_writes(mock_call) == []
+        assert inverter_rt[INVERTER_RT_APPLIED] == 50.0
 
-    writes = _register_writes(mock_call)
-    assert len(writes) == 1, writes
-    assert writes[0][0][2]["value"] == 100.0
-    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_IDLE
-    # And the restore is visible in the value the sensor graphs: back up at the
-    # normal limit, read from the register the later cycles saw.
-    assert sensor.native_value == 100.0
-    inverter_rt = hass.data[DOMAIN]["inverters"][inverter_entry.entry_id]
+        # Now open the write window repeatedly — backdating our own pacing marker
+        # rather than patching the clock — and let the ramp run to its end.
+        for _ in range(10):
+            inverter_rt[INVERTER_RT_LAST_WRITE] -= 400
+            await _run_site_cycle(hass, hub_entry)
+            if inverter_rt[INVERTER_RT_APPLIED] is None:
+                break
+
+    # 500 W of margin at 51.2 V is a 9.8 A step. The last 1 A of the climb is
+    # inside the 5 A deadband, so the ramp ends by clearing the marker rather
+    # than by spending a write on it.
+    written = [call[0][2]["value"] for call in _register_writes(mock_call)]
+    assert written == [59.8, 69.6, 79.4, 89.2, 99.0]
     assert inverter_rt[INVERTER_RT_APPLIED] is None
+    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_IDLE
+    # And the climb is visible in the value the sensor graphs, read from the
+    # register the later cycles saw.
+    assert sensor.native_value == 99.0
+
+
+async def test_the_ramp_step_comes_from_the_hubs_trigger_margin(
+    hass, hub_entry, inverter_entry
+):
+    """The slew step is a SITE-level setting, so it has to travel from the hub
+    entry to a control that is handed the inverter's own entry. This is that
+    wiring, end to end: change the hub's Excess trigger margin and the size of
+    the release step changes with it."""
+    hub_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        hub_entry,
+        options={**hub_entry.options, CONF_EXCESS_TRIGGER_MARGIN: 1024},
+    )
+    await _add_charge_control(hass, inverter_entry)
+
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ), _advice_cycle(inverter_entry, 2560.0):
+        await _run_site_cycle(hass, hub_entry)
+
+    inverter_rt = hass.data[DOMAIN]["inverters"][inverter_entry.entry_id]
+    hass.states.async_set(CHARGE_TARGET, "50", {"max": 100})
+    with _accepting_register(hass) as mock_call, _advice_cycle(inverter_entry, None):
+        inverter_rt[INVERTER_RT_LAST_WRITE] -= 400
+        await _run_site_cycle(hass, hub_entry)
+
+    # 1024 W at 51.2 V is a 20 A step, not the 9.8 A the 500 W default gives.
+    assert [c[0][2]["value"] for c in _register_writes(mock_call)] == [70.0]
 
 
 async def test_update_entity_refreshes_the_status_without_writing(

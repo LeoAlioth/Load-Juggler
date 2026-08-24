@@ -301,26 +301,48 @@ def test_write_resumes_after_the_interval():
     assert hass.services.calls[-1][2]["value"] == 20.0
 
 
-def test_release_restores_the_normal_value_once():
+def test_release_ramps_back_to_the_normal_value_and_then_stops():
+    """The release is a ramp, not a step — the section near the bottom of this
+    file is about the ramp itself; this pins the standing it leaves behind.
+
+    Restored exactly once still holds, just at the END of the ramp: the marker
+    clears when full rate is reached, and nothing is written afterwards.
+    """
     hass = _hass_with_target(current=100.0, maximum=100.0)
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
-        CONF_CHARGE_CONTROL_INTERVAL: 0,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
     })
     rt = _arm(hass, entry)
 
     asyncio.run(_send(hass, entry, 2560.0, 0.0))
     hass.states.set(TARGET, 50.0, max=100.0)
-    # Forecast has nothing to say any more (evening, or no clipping ahead)
+    # Forecast has nothing to say any more (evening, or no clipping ahead).
+    # 500 W of margin at 51.2 V is a 9.8 A step, so 50 A does not become 100 A.
     asyncio.run(_send(hass, entry, None, 10.0))
-    hass.states.set(TARGET, 100.0, max=100.0)
-    asyncio.run(_send(hass, entry, None, 20.0))
-
-    assert len(hass.services.calls) == 2  # one limit, one restore
-    assert hass.services.calls[-1][2]["value"] == 100.0
-    assert rt[INVERTER_RT_APPLIED] is None
+    assert hass.services.calls[-1][2]["value"] == 59.8
+    assert rt[INVERTER_RT_APPLIED] == 59.8
     assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_IDLE
     assert rt[INVERTER_RT_RECOMMENDED] is None
+
+    # Let the ramp run to full rate.
+    now = 20.0
+    while rt[INVERTER_RT_APPLIED] is not None:
+        hass.states.set(TARGET, hass.services.calls[-1][2]["value"], max=100.0)
+        asyncio.run(_send(hass, entry, None, now))
+        now += 10.0
+
+    # Within the 5 A deadband of the 100 A normal, which is where the ramp
+    # stops being worth a write (see the ramp section).
+    assert hass.services.calls[-1][2]["value"] == 99.0
+    landed = len(hass.services.calls)
+
+    # And now it is done: no further write, for any number of released cycles.
+    for _ in range(10):
+        asyncio.run(_send(hass, entry, None, now))
+        now += 10.0
+    assert len(hass.services.calls) == landed
+    assert rt[INVERTER_RT_APPLIED] is None
 
 
 def test_release_without_a_prior_write_leaves_the_register_alone():
@@ -451,21 +473,34 @@ def test_an_advice_above_the_floor_is_untouched():
 
 
 def test_the_floor_does_not_apply_to_the_release_write():
-    """A release restores full rate — the floor is a lower bound on how far we
-    hold the battery back, never a cap on handing it back."""
+    """A release climbs back to full rate — the floor is a lower bound on how far
+    we hold the battery back, never a cap on handing it back.
+
+    It climbs there rather than jumping (see the ramp section), so what this pins
+    is that the floor is not the destination: every step is above it, and the
+    ramp ends at the normal value, not at 2 A.
+    """
     hass = _hass_with_target(current=100.0, maximum=100.0)
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
-        CONF_CHARGE_CONTROL_INTERVAL: 0,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
         CONF_CHARGE_LIMIT_MINIMUM: 2,
     })
     rt = _arm(hass, entry)
 
     asyncio.run(_send(hass, entry, 0.0, 0.0))
-    hass.states.set(TARGET, 2.0, max=100.0)
-    asyncio.run(_send(hass, entry, None, 10.0))
+    assert hass.services.calls[-1][2]["value"] == 2.0
 
-    assert hass.services.calls[-1][2]["value"] == 100.0
+    now = 10.0
+    while rt[INVERTER_RT_APPLIED] is not None:
+        hass.states.set(TARGET, hass.services.calls[-1][2]["value"], max=100.0)
+        asyncio.run(_send(hass, entry, None, now))
+        now += 10.0
+
+    released = [call[2]["value"] for call in hass.services.calls[1:]]
+    assert released[0] == 11.8  # 2 A + one 9.8 A step, not 100 A
+    assert all(value > 2.0 for value in released)
+    assert released[-1] == 100.0  # the normal, reached in ten steps from the floor
     assert rt[INVERTER_RT_APPLIED] is None
 
 
@@ -782,7 +817,80 @@ def test_the_ramp_is_measured_from_the_last_value_we_wrote():
     assert ramp_baseline(applied=None, current=None) is None
 
 
-# --- Engaging is never rate-limited ------------------------------------------
+# --- The release ramp ---------------------------------------------------------
+
+
+def test_a_release_ramps_to_full_rate_one_margin_at_a_time():
+    """The bug this exists for, as the fix: 2 A → 187 A takes ~19 minutes of
+    one-a-minute writes instead of one step."""
+    hass, entry, rt = _accepting_site()
+
+    # Engaged: a 0 W advice under the 2 A floor, one instant write down.
+    _cycle(hass, entry, 0.0, 0.0)
+    assert _written(hass) == [2.0]
+
+    now = SITE_INTERVAL
+    while rt[INVERTER_RT_APPLIED] is not None and now < 3600:
+        _cycle(hass, entry, None, now)
+        now += SITE_INTERVAL
+
+    ramp = _written(hass)[1:]
+    # Eighteen writes, one a minute, and the nineteenth minute lands: the last
+    # 8.6 A of the climb is inside the 9.35 A deadband (5 % of 187), so the ramp
+    # ends by clearing the marker rather than by spending a write on it.
+    assert len(ramp) == 18
+    assert now == 19 * SITE_INTERVAL + SITE_INTERVAL
+    assert ramp[0] == 11.8  # 2 A + one 9.77 A margin step
+    assert ramp[-1] == 178.4
+    # Every step is one margin, never more, and always upward.
+    steps = [b - a for a, b in zip([2.0] + ramp, ramp)]
+    assert all(0 < step <= MARGIN_AMPS + 0.05 for step in steps), steps
+    # Restored exactly once still holds — at the END of the ramp.
+    assert rt[INVERTER_RT_APPLIED] is None
+    assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_IDLE
+
+
+def test_the_release_ramp_respects_the_write_interval():
+    """The pacing is not spent faster by the ramp: cycles inside the window
+    write nothing, however many of them there are."""
+    hass, entry, _rt = _accepting_site()
+
+    _cycle(hass, entry, 0.0, 0.0)
+    # 30 site cycles at 2 s — a whole minute of them, inside the 60 s window.
+    now = 2.0
+    while now < SITE_INTERVAL:
+        _cycle(hass, entry, None, now)
+        now += 2.0
+    assert _written(hass) == [2.0]
+
+    _cycle(hass, entry, None, SITE_INTERVAL)
+    assert _written(hass) == [2.0, 11.8]
+
+
+def test_a_release_interrupted_by_re_engagement_writes_down_instantly():
+    """The maintainer's exact day: release at 13:43, SOC hits the new gate at
+    13:53 and the limit re-engages. The ramp had climbed ten minutes' worth, and
+    the downward write is one step from wherever it had reached."""
+    hass, entry, rt = _accepting_site()
+
+    _cycle(hass, entry, 0.0, 0.0)  # engaged at the 2 A floor
+    for minute in range(1, 11):  # ten minutes of release
+        _cycle(hass, entry, None, minute * SITE_INTERVAL)
+
+    ramp = _written(hass)[1:]
+    assert len(ramp) == 10
+    assert ramp[-1] == 100.0  # ten margin steps up from 2 A, not 187 A
+    assert rt[INVERTER_RT_APPLIED] == 100.0  # still ramping, marker held
+
+    # Re-engaged: straight back down to the floor, in ONE write.
+    _cycle(hass, entry, 0.0, 11 * SITE_INTERVAL)
+    assert _written(hass)[-1] == 2.0
+    assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_LIMITING
+
+    # What the reserve actually paid for those ten minutes: the mean of the ramp
+    # rather than the full rate — under a third of the old one-step burst.
+    burst = sum(ramp) / len(ramp)
+    assert burst < SITE_NORMAL / 3
 
 
 def test_engaging_deeper_is_never_rate_limited():
@@ -794,6 +902,26 @@ def test_engaging_deeper_is_never_rate_limited():
     _cycle(hass, entry, 0.0, SITE_INTERVAL)  # straight to the floor
 
     assert _written(hass)[-1] == 2.0
+
+
+def test_the_final_approach_inside_the_deadband_ends_the_release():
+    """Otherwise the marker would never clear and the release would never be
+    finished: the last sliver of the climb is not worth a Modbus write, but it
+    still has to end the ramp."""
+    hass = _hass_with_target(current=96.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: SITE_VOLTAGE,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    rt = _arm(hass, entry)
+    # Pretend we wrote the 96 A the register holds — 4 A short of the normal,
+    # inside the 5 A deadband (5 % of 100).
+    rt[INVERTER_RT_APPLIED] = 96.0
+
+    asyncio.run(_send(hass, entry, None, 100.0))
+
+    assert hass.services.calls == []  # nothing worth writing
+    assert rt[INVERTER_RT_APPLIED] is None  # and the release is over
 
 
 # --- The masked-site self-creep passes through untouched ----------------------

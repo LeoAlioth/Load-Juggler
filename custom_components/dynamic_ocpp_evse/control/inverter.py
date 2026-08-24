@@ -18,10 +18,14 @@ register rather than a software knob:
    Excess trigger margin's worth of watts per write — because a battery handed
    its full rate in a single step drinks the whole clipping reserve out of
    exportable power in minutes, which is the reserve's own purpose reversed.
-4. **Restored exactly once.** When the advice releases — evening, no clipping
-   expected, control switched off — the normal value goes back and the
-   applied-state marker clears, so a released limit is not rewritten every
-   cycle for the rest of the night.
+4. **Restored, once it gets there.** When the advice releases — evening, no
+   clipping expected — the normal value is the ramp's destination rather than
+   its first step: each write climbs by the slew step, and only when the ramp
+   lands does the applied-state marker clear, so a released limit stops being
+   written for the rest of the night. Switching the control OFF is the one
+   restore that is still a single write: while disarmed we are not entitled to
+   go on writing the register at all, so the unwind cannot be spread over a
+   ramp we would have no standing to finish.
 
 One optional clamp sits on top of them: a configured **minimum charge limit**
 (:func:`resolve_minimum_value`) is the lowest value ever written while the
@@ -419,23 +423,76 @@ async def send_inverter_charge_limit(
         inverter_rt[INVERTER_RT_RECOMMENDED] = None
         # Nothing is being held back, so the battery is permitted its full
         # nameplate rate again — which is what None tells the engine. Set on the
-        # way out rather than after the restore write: the write below happens
-        # only once, while this must be true on every released cycle.
+        # way out rather than beside the write, which happens on some released
+        # cycles and not others, while this must be true on all of them. The ramp
+        # below does still hold the register down for a few minutes, and the
+        # engine deliberately does not hear about it: that is a transport detail
+        # of a decision already taken, and feeding it back would let a release we
+        # are in the middle of unwinding steer the very advice that released it.
         inverter_rt[INVERTER_RT_ENFORCED_CHARGE_W] = None
-        # Only ever undo our own limit, and only once. Never having written
-        # (applied is None) means the register is the user's, not ours.
+        # Only ever undo our own limit. Never having written (applied is None)
+        # means the register is the user's, not ours.
         if applied is None or normal is None:
             return
-        await _write(hass, entry, target_entity, normal, unit)
-        inverter_rt[INVERTER_RT_APPLIED] = None
-        inverter_rt[INVERTER_RT_LAST_WRITE] = now_mono
-        _LOGGER.info(
-            "%s: charge limit released — restored %s to %.1f%s",
-            entry.title,
-            target_entity,
-            normal,
-            unit,
-        )
+
+        if not enabled:
+            # Disarmed — a user event, and a terminal one: from the next cycle
+            # this control writes nothing at all, so the unwind cannot be spread
+            # over a ramp it would have no standing to finish. One write, now,
+            # and the register is theirs again.
+            await _write(hass, entry, target_entity, normal, unit)
+            inverter_rt[INVERTER_RT_APPLIED] = None
+            inverter_rt[INVERTER_RT_LAST_WRITE] = now_mono
+            _LOGGER.info(
+                "%s: charge control switched off — restored %s to %.1f%s",
+                entry.title,
+                target_entity,
+                normal,
+                unit,
+            )
+            return
+
+        # Armed, and the forecast has let go: ramp back to full rate rather than
+        # stepping to it. "Less reserve needed, you may refill" must not mean
+        # "refill at maximum, starting now" — the advice self-heals upward as the
+        # clip burns down, and each self-heal used to hand the battery the whole
+        # normal value for one burst of exportable power.
+        target = round(slew_limited(normal, baseline, step), 1)
+        landed = target >= normal
+        if last_write is not None and (now_mono - last_write) < interval:
+            return
+        writing = should_write(current, target, applied, deadband)
+        if not writing and not landed:
+            # A ramp step the deadband swallowed. Hold the marker and try again
+            # next window rather than declaring the release finished here.
+            return
+        if writing:
+            await _write(hass, entry, target_entity, target, unit)
+            inverter_rt[INVERTER_RT_LAST_WRITE] = now_mono
+            _LOGGER.info(
+                "%s: charge limit released — %s %s to %.1f%s of %.1f%s",
+                entry.title,
+                "restored" if landed else "ramping",
+                target_entity,
+                target,
+                unit,
+                normal,
+                unit,
+            )
+        else:
+            _LOGGER.debug(
+                "%s: charge limit released — %s is already within the deadband "
+                "of its %.1f%s normal, nothing left to restore",
+                entry.title,
+                target_entity,
+                normal,
+                unit,
+            )
+        # The marker is what makes a finished release stop writing for the rest
+        # of the night, so it clears only once the ramp has reached full rate —
+        # including the case just above, where the register already sits close
+        # enough to it that a write is not worth making.
+        inverter_rt[INVERTER_RT_APPLIED] = None if landed else target
         return
 
     # The floor applies to the ENGAGED value only, and after the conversion —
