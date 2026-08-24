@@ -24,8 +24,13 @@ for its duration, so the maths is a plain sum over blocks:
 Block width ``h`` comes from consecutive timestamps — never assumed to be one
 hour (Open-Meteo can serve 15-minute data, and DST makes one block two hours
 wide). The block containing ``now`` is prorated, and blocks at or beyond
-``until`` (normally the start of the next local day) are excluded so
-tomorrow's peak is not reserved for twice.
+``until`` are excluded so one day's peak is never reserved for twice.
+
+``until`` is one local day boundary, but not necessarily *tonight's*: the
+reservation is measured against the NEXT clipping window, which is the
+remainder of today while today still has clip left and tomorrow once it does
+not (``select_clipping_window``). The lookahead stops there — see
+``FORECAST_LOOKAHEAD_DAYS``.
 
 ``absorbable_kwh`` — the clipped energy the battery could physically take at
 its charge rate — drives the SOC recommendation. The difference to
@@ -51,6 +56,23 @@ _LOGGER = logging.getLogger(__name__)
 # Assumed width of the last forecast block, which has no successor to
 # subtract, when the series has no earlier block to copy the width from.
 _DEFAULT_BLOCK_HOURS = 1.0
+
+# How many days PAST today the search for the next clipping window may reach.
+# One, deliberately: the reservation exists to keep the battery from arriving
+# full at a peak it cannot absorb, and one night of passive house discharge is
+# all the room a battery can make anyway. Looking further would hold a pack low
+# through intervening clear days for a clip that is still two nights away —
+# reserving early buys nothing and costs the site every kWh it did not store in
+# between. With no clip today and none tomorrow the recommendation simply rests
+# at the battery's destination; the day after tomorrow is never consulted.
+FORECAST_LOOKAHEAD_DAYS = 1
+
+# Below this a window's storable energy is "no clip": it is half of the last
+# digit the kWh sensors publish (two decimals), so a window this small already
+# reads 0.00 kWh to the user, and the SOC ceiling it would buy rounds away too.
+# Without it the tail of a day integrates to a few watt-hours of float dust and
+# the search would never advance to tomorrow.
+FORECAST_WINDOW_EPSILON_KWH = 0.005
 
 
 @dataclass(frozen=True)
@@ -174,6 +196,54 @@ def clipping_forecast(
         result.peak_at,
     )
     return result
+
+
+def select_clipping_window(
+    series,
+    threshold_w,
+    windows,
+    charge_cap_w=None,
+    power_cap_w=None,
+):
+    """Integrate each candidate window in turn; return the first that clips.
+
+    ``windows`` is a list of ``(start, until)`` pairs, nearest first — normally
+    the remainder of today followed by tomorrow (see ``forecast_windows`` in
+    ``engine/forecast_reader.py``, which owns the local-day arithmetic, and
+    ``FORECAST_LOOKAHEAD_DAYS`` for why the list stops there).
+
+    The reservation is a question about the NEXT clip, not about the calendar
+    day. While today still has clip left the answer is the remainder of today
+    and this is byte-for-byte the old single-window behaviour. Once today's
+    clip has integrated away — the peak is past, the sun is setting — the
+    battery's next appointment is tomorrow's peak, and holding the whole
+    evening's reservation against a day that is over reserves nothing.
+
+    Returns ``(index, forecast)``. ``index`` is the position of the chosen
+    window in ``windows``, so 0 means "today, exactly as before" and the caller
+    can tell a clip in progress from one that is still a night away. With no
+    clip anywhere in the horizon the answer is window 0's (empty) integration:
+    nothing to reserve, and the figures published stay the ones about today.
+
+    Pure function — unit-testable.
+    """
+    first = None
+    for index, (start, until) in enumerate(windows or []):
+        fc = clipping_forecast(
+            series,
+            threshold_w,
+            start,
+            until,
+            charge_cap_w=charge_cap_w,
+            power_cap_w=power_cap_w,
+        )
+        if first is None:
+            first = (index, fc)
+        if fc.absorbable_kwh > FORECAST_WINDOW_EPSILON_KWH:
+            return index, fc
+    if first is None:
+        return 0, ClippingForecast(0.0, 0.0, 0.0, 0.0, None)
+    return first
 
 
 def battery_max_soc(

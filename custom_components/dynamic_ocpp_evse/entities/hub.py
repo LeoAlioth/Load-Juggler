@@ -258,6 +258,13 @@ HUB_SENSOR_DEFINITIONS = [
     # "an amount that can both increase and decrease" — which is exactly what
     # a remaining-today advisory figure does. TOTAL keeps them out of the
     # energy dashboard's metered pipeline (no last_reset, nothing accumulates).
+    #
+    # All three describe the NEXT clipping window rather than the calendar day
+    # (``select_clipping_window``): the remainder of today while today still
+    # clips, and from the evening onward TOMORROW's peak. So these do not fall
+    # to zero at dusk and sit there — they roll over to what the site is about
+    # to face, which is the figure the overnight SOC reservation is made from.
+    # A day with no clip today and none tomorrow reads 0.00 on all three.
     {
         "name_suffix": "Forecast Clippable Energy",
         "unique_id_suffix": "forecast_clippable_energy",

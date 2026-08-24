@@ -22,7 +22,7 @@ import logging
 import time
 
 from ..calculations import (
-    clipping_forecast,
+    select_clipping_window,
     battery_max_soc,
     excess_load_draw_power,
     export_trim,
@@ -50,7 +50,7 @@ from ..helpers import get_entry_value
 from . import fleet
 from .forecast_reader import (
     read_forecast_series,
-    forecast_window,
+    forecast_windows,
     configured_forecast_sensors,
 )
 
@@ -164,6 +164,24 @@ def _compute_forecast_advice(
     ratchet only absorbs falls smaller than its band, so lowering the ceiling by
     more than that lowers the recommendation on the very next cycle, and raising
     it lets the recommendation rise freely.
+
+    The window the integral runs over is the NEXT clipping window, not the rest
+    of the calendar day (``select_clipping_window``). While today still has clip
+    left that is the remainder of today and every published figure is exactly
+    what it always was. Once today's clip has integrated away, the window
+    becomes tomorrow's — and one day is as far as the search ever looks
+    (``FORECAST_LOOKAHEAD_DAYS``), so with no clip today and none tomorrow the
+    recommendation rests at the destination. The clippable / storable / deficit
+    figures follow that same window, so from the evening onward they describe
+    TOMORROW's peak: "how much the site will fail to place at the next peak, and
+    how much of that the battery can still make room for".
+
+    The charge-rate advice deliberately does NOT follow the window — it is
+    handed ``absorbable_today``, which is zero the moment the reservation moves
+    to tomorrow. The cap exists to stop the battery eating headroom out from
+    under a clip that is happening; a clip a night away is answered by the SOC
+    ceiling instead, and leaving the cap released overnight is also what keeps
+    this feature from writing to a charge register in the dark.
 
     The energy question and the power question are asked at DIFFERENT
     thresholds — the integral at the true export limit, the instantaneous
@@ -288,15 +306,25 @@ def _compute_forecast_advice(
 
     entity_ids = configured_forecast_sensors(hass, device_ids, legacy_entity_ids)
     series = read_forecast_series(hass, entity_ids, hub_runtime)
-    now, until = forecast_window()
-    fc = clipping_forecast(
+    # The NEXT clipping window, not the rest of the calendar day: the remainder
+    # of today while today still has clip left, tomorrow once it does not (see
+    # ``select_clipping_window``). ``window`` is 0 exactly in the first case.
+    windows = forecast_windows()
+    window, fc = select_clipping_window(
         series,
         clip_threshold,
-        now,
-        until,
+        windows,
         charge_cap_w=fleet_charge_cap,
         power_cap_w=power_cap,
     )
+    until = windows[window][1]
+    # The charge-rate advice protects headroom that is at risk NOW, so it asks
+    # only about today: a clip that is a night away is the SOC ceiling's problem,
+    # and the ceiling is what makes room for it. Identical to ``fc`` whenever the
+    # chosen window IS today; zero once the reservation has moved to tomorrow,
+    # which keeps the cap released, the trim reset and the register untouched all
+    # night — exactly as it was before the window could ever move.
+    absorbable_today = fc.absorbable_kwh if window == 0 else 0.0
 
     # Where the fleet's batteries are HEADING (their own normal-ceiling sources,
     # capacity-weighted; 100 % for every member that configures none). The
@@ -330,7 +358,7 @@ def _compute_forecast_advice(
         )
         hub_runtime["_forecast_soc_yielding"] = yielding
         charge_limit, limiting = recommended_charge_limit(
-            fc.absorbable_kwh,
+            absorbable_today,
             battery_soc,
             proposed,
             fleet_charge_cap,
@@ -377,13 +405,14 @@ def _compute_forecast_advice(
 
     _LOGGER.debug(
         "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW"
-        " (advice anchored at %dW) to %s"
+        " (advice anchored at %dW) in window +%dd to %s"
         " | max SOC %d%% (raw %.1f of destination %.1f%%) deficit %.2f kWh"
         " charge cap %s",
         fc.clipped_kwh,
         fc.absorbable_kwh,
         clip_threshold,
         advice_threshold,
+        window,
         until,
         proposed,
         max_soc,

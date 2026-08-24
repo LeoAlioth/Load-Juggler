@@ -3514,6 +3514,168 @@ async def test_an_unreadable_destination_holds_its_last_known_value(hass):
         assert run_hub_calculation(hass, fresh_hub)["forecast_battery_max_soc"] == 90
 
 
+# ── PV clipping forecast: the NEXT clipping window ────────────────────
+#
+# The reservation is measured against the next clip within the horizon, not the
+# remainder of the calendar day. While today still has clip left that IS the
+# remainder of today, byte for byte; once today's clip has integrated away the
+# window rolls over to tomorrow's peak, and the search never looks further.
+
+# One hour at 7300 W is 2 kWh above the 5300 W threshold — 10 points of the
+# 20 kWh pack, so the reserve below the 95 % destination is 85 %.
+_TODAY_PEAK = {
+    "2026-08-14T10:00:00+00:00": 7300,
+    "2026-08-14T11:00:00+00:00": 0,
+}
+# One hour at 8300 W is 3 kWh — 15 points, so tomorrow's reserve is 80 %.
+_TOMORROW_PEAK = {
+    "2026-08-15T10:00:00+00:00": 8300,
+    "2026-08-15T11:00:00+00:00": 0,
+}
+_DAY_AFTER_PEAK = {
+    "2026-08-16T10:00:00+00:00": 8300,
+    "2026-08-16T11:00:00+00:00": 0,
+}
+
+
+def _set_window_states(hass, soc, watts):
+    """The destination rig, with an explicit forecast series."""
+    _set_destination_states(hass, soc=soc)
+    hass.states.async_set("sensor.dst_forecast", "1.0", {"watts": dict(watts)})
+
+
+async def test_todays_window_is_untouched_while_today_still_clips(hass):
+    """Byte-equivalence: at 08:00 with a peak still ahead, tomorrow's forecast
+    changes nothing at all. Same clip, same storable, same ceiling, same cap."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("windownow")
+    inverter = _destination_inverter(hub, "windownow", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+
+    keys = (
+        "forecast_clipped_kwh",
+        "forecast_absorbable_kwh",
+        "forecast_battery_max_soc",
+        "forecast_headroom_deficit_kwh",
+        "forecast_charge_limit_w",
+    )
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        _set_window_states(hass, soc=78, watts=_TODAY_PEAK)
+        hass.data[DOMAIN]["hubs"][hub.entry_id] = {"loads": []}
+        today_only = run_hub_calculation(hass, hub)
+        today_only = {k: today_only[k] for k in keys}
+
+        _set_window_states(hass, soc=78, watts={**_TODAY_PEAK, **_TOMORROW_PEAK})
+        hass.data[DOMAIN]["hubs"][hub.entry_id] = {"loads": []}
+        with_tomorrow = run_hub_calculation(hass, hub)
+        with_tomorrow = {k: with_tomorrow[k] for k in keys}
+
+    assert today_only == with_tomorrow
+    assert with_tomorrow["forecast_clipped_kwh"] == 2.0
+    assert with_tomorrow["forecast_battery_max_soc"] == 85
+
+
+async def test_the_window_rolls_over_to_tomorrow_once_todays_clip_is_spent(hass):
+    """18:00, today's peak hours past: the reservation, and every published
+    figure with it, is about TOMORROW's peak.
+
+    The charge cap deliberately does not follow — it asks only about today, so
+    it stays released overnight and this feature writes no charge register in
+    the dark. SOC 78 sits exactly on the engage threshold of tomorrow's 80 %
+    ceiling, so a cap that DID follow the window would engage here.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("windownext")
+    inverter = _destination_inverter(hub, "windownext", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    runtime = {"loads": []}
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: runtime},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_window_states(hass, soc=78, watts={**_TODAY_PEAK, **_TOMORROW_PEAK})
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        morning = run_hub_calculation(hass, hub)
+    assert morning["forecast_battery_max_soc"] == 85
+
+    with freeze_time("2026-08-14 18:00:00+00:00"):
+        evening = run_hub_calculation(hass, hub)
+
+    assert evening["forecast_clipped_kwh"] == 3.0
+    assert evening["forecast_absorbable_kwh"] == 3.0
+    # 15 points below the 95 % destination — and the 5-point fall clears the
+    # FORECAST_SOC_HYSTERESIS band, so the ratchet does not fight the handover.
+    assert evening["forecast_battery_max_soc"] == 80
+    assert evening["inverters"][inverter.entry_id]["forecast_battery_max_soc"] == 80
+    # The cap: released, at full rate, nothing latched.
+    assert evening["forecast_charge_limit_w"] == 5000
+    assert runtime["_forecast_charge_limiting"] is False
+    assert "_forecast_export_trim" not in runtime
+
+    # An overnight forecast improvement heals the recommendation upward at once.
+    with freeze_time("2026-08-14 23:00:00+00:00"):
+        _set_window_states(
+            hass,
+            soc=78,
+            watts={**_TODAY_PEAK, "2026-08-15T10:00:00+00:00": 6300,
+                   "2026-08-15T11:00:00+00:00": 0},
+        )
+        healed = run_hub_calculation(hass, hub)
+    assert healed["forecast_absorbable_kwh"] == 1.0
+    assert healed["forecast_battery_max_soc"] == 90
+
+
+async def test_the_window_search_never_looks_past_tomorrow(hass):
+    """A clip the day after tomorrow must not hold the battery low through the
+    clear day in between: with nothing today and nothing tomorrow, the
+    recommendation rests at the destination."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("windowcap")
+    inverter = _destination_inverter(hub, "windowcap", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_window_states(hass, soc=78, watts=_DAY_AFTER_PEAK)
+
+    with freeze_time("2026-08-14 18:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+
+    assert result["forecast_clipped_kwh"] == 0.0
+    assert result["forecast_battery_max_soc"] == 95
+
+    # The same clip one day nearer IS reserved for — the cap is what differs.
+    _set_window_states(hass, soc=78, watts=_TOMORROW_PEAK)
+    hass.data[DOMAIN]["hubs"][hub.entry_id] = {"loads": []}
+    with freeze_time("2026-08-14 18:00:00+00:00"):
+        nearer = run_hub_calculation(hass, hub)
+    assert nearer["forecast_battery_max_soc"] == 80
+
+
 # ── PV clipping forecast: the engaged advice's integral trim ──────────
 #
 # The anchored advice is feedforward, so ``base_consumption`` standing in for the

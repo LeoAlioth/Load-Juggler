@@ -27,6 +27,7 @@ from custom_components.dynamic_ocpp_evse.calculations import (
     headroom_deficit_kwh,
     merge_forecast_series,
     recommended_charge_limit,
+    select_clipping_window,
     unexportable_power,
     yields_to_excess,
 )
@@ -163,6 +164,104 @@ def test_shorter_array_contributes_zero_outside_its_range():
 def test_merge_of_nothing_is_empty():
     assert merge_forecast_series([]) == {}
     assert merge_forecast_series([{}, {}]) == {}
+
+
+# --- The next clipping window -------------------------------------------------
+#
+# The reservation is measured against the NEXT clip, not the rest of the
+# calendar day: the remainder of today while today still clips, tomorrow's peak
+# once it does not, and never further than FORECAST_LOOKAHEAD_DAYS.
+
+# Local midnights around T0 (06:00 on the 14th), as forecast_windows builds them.
+MIDNIGHT_1 = datetime(2026, 8, 15, 0, 0, tzinfo=timezone.utc)
+MIDNIGHT_2 = datetime(2026, 8, 16, 0, 0, tzinfo=timezone.utc)
+MIDNIGHT_3 = datetime(2026, 8, 17, 0, 0, tzinfo=timezone.utc)
+
+
+def _windows(now):
+    """The candidate windows forecast_windows() would build for ``now``."""
+    return [(now, MIDNIGHT_1), (MIDNIGHT_1, MIDNIGHT_2)]
+
+
+def _three_day_series():
+    """8 kW for one hour at 10:00 on each of three consecutive days."""
+    series = {}
+    for day in (14, 15, 16):
+        series[datetime(2026, 8, day, 10, 0, tzinfo=timezone.utc)] = 8000.0
+        series[datetime(2026, 8, day, 11, 0, tzinfo=timezone.utc)] = 0.0
+    return series
+
+
+def test_window_is_the_rest_of_today_while_today_still_clips():
+    # Byte-equivalence with the single-window behaviour: same index, and the
+    # very same integration clipping_forecast would have produced on its own.
+    now = datetime(2026, 8, 14, 8, 0, tzinfo=timezone.utc)
+    series = _three_day_series()
+    index, fc = select_clipping_window(series, THRESHOLD, _windows(now))
+    assert index == 0
+    assert fc == clipping_forecast(series, THRESHOLD, now, MIDNIGHT_1)
+    assert fc.clipped_kwh == 2.0
+
+
+def test_window_becomes_tomorrow_once_todays_clip_has_integrated_away():
+    # 18:00: today's peak is hours past, so today's window holds nothing. The
+    # next appointment is tomorrow's 10:00 peak.
+    now = datetime(2026, 8, 14, 18, 0, tzinfo=timezone.utc)
+    series = _three_day_series()
+    index, fc = select_clipping_window(series, THRESHOLD, _windows(now))
+    assert index == 1
+    assert fc.clipped_kwh == 2.0
+    assert fc.peak_at == datetime(2026, 8, 15, 10, 0, tzinfo=timezone.utc)
+
+
+def test_lookahead_stops_one_day_out():
+    # Nothing today, nothing tomorrow, a clip the day after: not consulted, so
+    # the recommendation rests at the destination (no clip at all).
+    now = datetime(2026, 8, 14, 18, 0, tzinfo=timezone.utc)
+    series = {
+        datetime(2026, 8, 16, 10, 0, tzinfo=timezone.utc): 8000.0,
+        datetime(2026, 8, 16, 11, 0, tzinfo=timezone.utc): 0.0,
+    }
+    index, fc = select_clipping_window(series, THRESHOLD, _windows(now))
+    assert index == 0
+    assert fc.clipped_kwh == 0.0
+    assert fc.absorbable_kwh == 0.0
+    # And the cap really is the reason: hand the same search a third window and
+    # the day-after clip is found.
+    index, fc = select_clipping_window(
+        series, THRESHOLD, _windows(now) + [(MIDNIGHT_2, MIDNIGHT_3)]
+    )
+    assert index == 2
+    assert fc.clipped_kwh == 2.0
+
+
+def test_a_float_dust_tail_does_not_hold_the_window_on_today():
+    # 1 mWh of clip left today — below the epsilon, and below what the kWh
+    # sensors can even show — must not stop the search reaching tomorrow.
+    now = datetime(2026, 8, 14, 18, 0, tzinfo=timezone.utc)
+    series = _three_day_series()
+    series[datetime(2026, 8, 14, 19, 0, tzinfo=timezone.utc)] = THRESHOLD + 0.001
+    series[datetime(2026, 8, 14, 20, 0, tzinfo=timezone.utc)] = 0.0
+    index, fc = select_clipping_window(series, THRESHOLD, _windows(now))
+    assert index == 1
+    assert fc.peak_at == datetime(2026, 8, 15, 10, 0, tzinfo=timezone.utc)
+
+
+def test_window_selection_passes_the_caps_through():
+    now = datetime(2026, 8, 14, 18, 0, tzinfo=timezone.utc)
+    series = _three_day_series()
+    index, fc = select_clipping_window(
+        series, THRESHOLD, _windows(now), charge_cap_w=500, power_cap_w=7000
+    )
+    assert index == 1
+    assert fc.clipped_kwh == 1.0  # 7 kW cap → 1 kW of excess for one hour
+    assert fc.absorbable_kwh == 0.5  # 500 W charge cap binds
+
+
+def test_window_selection_with_no_windows_is_empty():
+    index, fc = select_clipping_window({}, THRESHOLD, [])
+    assert index == 0
+    assert fc.clipped_kwh == 0.0
 
 
 # --- The SOC recommendation ---------------------------------------------------
