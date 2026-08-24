@@ -773,6 +773,19 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     return margin
 
 
+def _excess_verdict(site: SiteContext) -> bool:
+    """Is Excess engaged this cycle? The plain verdict, no pool arithmetic.
+
+    Same test ``_calculate_excess_available()`` gates the pool on, and the same
+    one the engine's latch has already settled: by the time the calculator runs,
+    ``site.excess_hysteresis`` is the widened band while engaged and 0 while not,
+    so reading the margin with it reproduces the latch's answer exactly. Kept
+    separate because the pool is not the verdict — a margin of 0 IS Excess (the
+    saturated case) and yet buys a pool of 0 amps.
+    """
+    return excess_margin(site, site.excess_hysteresis) >= 0
+
+
 def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
     """
     Step 3: Calculate excess available power.
@@ -980,10 +993,26 @@ def _source_limit(
         return base + solar.get_available(mask)
 
     if behavior == BEHAVIOR_EXCESS:
+        # The verdict starts this load, the pool only sizes it. A modulating
+        # load cannot run below its minimum, so while Excess is engaged the
+        # minimum IS the floor — held there while the momentary pool is smaller
+        # than it, and followed upward once the pool exceeds it. That is the
+        # same start edge the binary Excess loads have always had: they engage
+        # on threshold-hit even though their whole rating overshoots the pool.
+        #
+        # Gating the start on the pool instead leaves a modulating load stuck at
+        # 0 forever on the site the pool is smallest at: with our charge control
+        # tracking the export overshoot the standing margin sits AT the trigger
+        # (a pool of 0 amps — saturated, which is Excess by definition), peaking
+        # only between register writes. The pool is checked first because it is
+        # free and, above zero, decides on its own: the pool exists only while
+        # the verdict is on.
+        #
+        # Release is untouched — the latch's hysteresis on the reconstructed
+        # margin (which adds this load's own draw back) is what lets go.
         e_avail = excess.get_available(mask)
-        if e_avail <= 0:
+        if e_avail <= 0 and not _excess_verdict(site):
             return 0
-        # Trigger: once excess exists, guarantee at least min_current
         return max(load.min_current, base + e_avail)
 
     return load.max_current
