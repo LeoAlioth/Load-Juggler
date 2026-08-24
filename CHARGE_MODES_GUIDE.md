@@ -427,7 +427,7 @@ A sink contributes its allowance only while it can actually absorb:
 | Sink | Allowance | Zeroed when |
 | ---- | --------- | ----------- |
 | Grid export | **Grid Export Limit − Excess Trigger Margin** | The site is off-grid — nothing can leave. (No limit configured = infinite allowance: the grid absorbs everything, so grid-side Excess never triggers.) |
-| Battery charging | **Battery Max Charge Power** | No battery is configured, **or** SOC is at/above the **Battery Full SOC** |
+| Battery charging | **Battery Max Charge Power** — or the lower rate the inverter's **Battery Charge Control** is actually enforcing | No battery is configured, **or** SOC is at/above the **Battery Full SOC** |
 
 The margin (default 500 W) exists because an inverter curtails slightly *under*
 the export limit — a trigger exactly at the limit would never fire. Enter your
@@ -437,6 +437,18 @@ The full-battery rule matters: a full battery draws no charge power, so leaving
 its rating in the allowance would make the trigger unreachable exactly when the
 site is dumping the most energy. Zeroing it is the same treatment as a battery
 that isn't there.
+
+**A battery held below its rating** is the same rule one step short of full. When
+an inverter's **Battery Charge Control** is armed and the PV clipping forecast
+has it holding the charge register at, say, 6.5 kW of a 10 kW rating, the missing
+3.5 kW is not a place this site can put production either — so the allowance is
+the rate the battery is *permitted* to take, not its plate rating. Counting the
+plate would put the trigger 3.5 kW out of reach for the whole clipping window,
+which is precisely when the site has surplus it cannot place and Excess loads are
+what it has to put it into. Only actual enforcement narrows the allowance: a
+battery that is merely *advised* a lower rate (the switch off, nothing written to
+the inverter) really does still charge at its plate, and in a multi-inverter fleet
+only the enforcing inverter's share narrows.
 
 **Multiple batteries** (inverter entries): each battery's charge rating counts
 toward the allowance only while *that* battery is below *its own* Full SOC —
