@@ -679,6 +679,19 @@ def _suggested_value(data_schema, key):
     raise AssertionError(f"{key} not present in schema")
 
 
+def _schema_default(data_schema, key):
+    """Read the vol.Optional *default* a form schema carries for a field key.
+
+    The sibling above reads ``suggested_value``; these are the fields that use a
+    plain default instead, which voluptuous stores as a callable.
+    """
+    for marker in data_schema.schema:
+        if getattr(marker, "schema", None) == key:
+            default = getattr(marker, "default", None)
+            return default() if callable(default) else default
+    raise AssertionError(f"{key} not present in schema")
+
+
 def _schema_has(data_schema, key) -> bool:
     """Whether a form schema offers a field at all."""
     return any(
@@ -852,6 +865,75 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
     await hass.async_block_till_done()
 
     assert inverter.options[CONF_SOC_LIMIT_ENTITY_IDS] == []
+
+
+async def test_inverter_options_round_trip_the_minimum_charge_limit(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """The floor under the engaged charge limit is editable from the options
+    page, and stores in the target register's own units.
+
+    It sits beside the normal value on the same form and shares its convention —
+    amps on an amps register, watts on a watts register — so a number field is
+    the whole surface: no entity picker, and therefore no unit contract.
+    """
+    from custom_components.dynamic_ocpp_evse.const import (
+        ENTRY_TYPE_INVERTER,
+        CONF_CHARGE_LIMIT_MINIMUM,
+        CONF_CHARGE_LIMIT_NORMAL,
+        DEFAULT_CHARGE_LIMIT_MINIMUM,
+    )
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    inverter = next(
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+    )
+
+    for ent in (
+        "sensor.inverter_phase_a",
+        "sensor.inverter_phase_b",
+        "sensor.inverter_phase_c",
+    ):
+        hass.states.async_set(
+            ent, "5.0", {"device_class": "current", "unit_of_measurement": "A"}
+        )
+
+    result = await _open_options(hass, inverter.entry_id)
+    assert result["step_id"] == "inverter"
+    schema = result["data_schema"]
+    assert _schema_has(schema, CONF_CHARGE_LIMIT_MINIMUM)
+    # Never negative, and defaulting to 0 — which is "no floor at all", the
+    # behaviour that existed before the field.
+    assert _selector_config(schema, CONF_CHARGE_LIMIT_MINIMUM).get("min") == 0
+    assert DEFAULT_CHARGE_LIMIT_MINIMUM == 0
+
+    submitted = {
+        key: value
+        for key, value in {**inverter.data, **inverter.options}.items()
+        if _schema_has(schema, key) and value is not None
+    }
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            **submitted,
+            CONF_CHARGE_LIMIT_NORMAL: 100,
+            CONF_CHARGE_LIMIT_MINIMUM: 2,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert inverter.options[CONF_CHARGE_LIMIT_MINIMUM] == 2
+
+    # And the stored value comes back as the form's default on the next visit.
+    result = await _open_options(hass, inverter.entry_id)
+    assert _schema_default(result["data_schema"], CONF_CHARGE_LIMIT_MINIMUM) == 2
 
 
 async def test_options_flow_charger_saves_changes(
@@ -1428,6 +1510,7 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
         WIRING_TOPOLOGY_SERIES,
         CONF_CHARGE_LIMIT_ENTITY_ID,
         CONF_CHARGE_LIMIT_UNIT,
+        CONF_CHARGE_LIMIT_MINIMUM,
         CONF_BATTERY_NOMINAL_VOLTAGE,
         CONF_SOC_LIMIT_ENTITY_IDS,
         CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
@@ -1506,12 +1589,18 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
     assert _schema_has(schema, CONF_SOC_LIMIT_ENTITY_IDS)
     assert _schema_has(schema, CONF_SOC_LIMIT_NORMAL_ENTITY_ID)
     assert _selector_config(schema, CONF_SOC_LIMIT_ENTITY_IDS).get("multiple") is True
+    # The floor under the engaged charge limit — a plain number in the target
+    # register's own units, beside the normal value that uses the same
+    # convention, and never an entity picker.
+    assert _schema_has(schema, CONF_CHARGE_LIMIT_MINIMUM)
+    assert _selector_config(schema, CONF_CHARGE_LIMIT_MINIMUM).get("min") == 0
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
             CONF_CHARGE_LIMIT_ENTITY_ID: "number.deye_max_charge_current",
             CONF_CHARGE_LIMIT_UNIT: "A",
+            CONF_CHARGE_LIMIT_MINIMUM: 2,
             CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
             CONF_SOC_LIMIT_ENTITY_IDS: [
                 "number.deye_tou_soc_1",
@@ -1533,6 +1622,7 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
     assert stored[CONF_BATTERY_SOC_ENTITY_ID] == "sensor.deye_battery_soc"
     assert stored[CONF_BATTERY_CAPACITY_KWH] == 15
     assert stored[CONF_CHARGE_LIMIT_ENTITY_ID] == "number.deye_max_charge_current"
+    assert stored[CONF_CHARGE_LIMIT_MINIMUM] == 2
     assert stored[CONF_SOC_LIMIT_ENTITY_IDS] == [
         "number.deye_tou_soc_1",
         "number.deye_tou_soc_2",
