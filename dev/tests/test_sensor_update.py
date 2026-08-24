@@ -1226,6 +1226,184 @@ async def test_hub_status_names_unavailable_sensor(
     )
 
 
+# ── Cold-start grid failsafe: assumed for safety, never published ────
+
+
+def _knock_out_grid_cts(hass):
+    """Every grid CT unreadable, as on a cold start or an entry reload."""
+    for entity_id in (
+        "sensor.inverter_phase_a",
+        "sensor.inverter_phase_b",
+        "sensor.inverter_phase_c",
+    ):
+        hass.states.async_set(
+            entity_id,
+            "unavailable",
+            {"device_class": "current", "unit_of_measurement": "A"},
+        )
+
+
+async def test_cold_start_grid_assumption_is_not_published_as_a_measurement(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """The failsafe drives the allocation; it must not become a reading.
+
+    With the CTs unreadable and no EMA history, _resolve_grid_phases assumes
+    every phase is loaded right up to the main breaker — deliberately, so a
+    blind site hands out no grid headroom. That number is a safety fabrication,
+    and publishing it painted a 3 x 25 A x 230 V = 17,250 W grid spike onto
+    Current Grid Power, the recorder and long-term statistics on every reload.
+    The allocation still runs on the assumption; the published grid
+    MEASUREMENTS report nothing at all.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    _knock_out_grid_cts(hass)
+
+    result = run_hub_calculation(hass, hub_entry)
+
+    # --- The allocation side, unchanged: the worst case still binds. ---
+    # Every phase is taken as loaded to the 25 A breaker, so the only grid
+    # headroom left is the charger's own measured draw, which the feedback loop
+    # hands back: post-feedback import (25-10) + 25 + 25 = 65 A = 14,950 W
+    # against the 17,250 W import limit less the 200 W buffer -> 2,100 W.
+    assert result["available_grid_power"] == 2100
+    # The permit that leaves is well under the charger's 16 A maximum.
+    assert result["load_targets"][charger_entry.entry_id] == 8.0
+    assert result[CONF_TOTAL_ALLOCATED_CURRENT] == 8.0
+
+    # --- The measurement side: None, not the fabrication. ---
+    for key in ("grid_power", "total_export_power", "household_power"):
+        assert result[key] is None, key
+    # The exact spike the maintainer saw on the live site.
+    assert result["grid_power"] != 3 * 25 * 230
+
+    # A real reading resumes publication on the very next cycle.
+    _set_ha_states(hass, hub_entry)
+    recovered = run_hub_calculation(hass, hub_entry)
+    assert recovered["grid_power"] is not None
+    assert recovered["grid_power"] > 0
+    assert recovered["total_export_power"] is not None
+    assert recovered["household_power"] is not None
+
+
+async def test_cold_start_hands_out_no_grid_sourced_permit(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Pin the failsafe's whole purpose: a blind site allocates strictly less.
+
+    The same site, the same sensors, the only difference being whether the CTs
+    can be read. Nulling the published measurements must not loosen the
+    allocation by a single amp.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    _knock_out_grid_cts(hass)
+    blind = run_hub_calculation(hass, hub_entry)
+
+    # Fresh hub runtime (no EMA history carried over) with healthy CTs, for
+    # the comparison: a site that can see itself grants strictly more.
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id].pop("_ema_inputs", None)
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id].pop("grid_stale_since", None)
+    _set_ha_states(hass, hub_entry)
+    seeing = run_hub_calculation(hass, hub_entry)
+
+    assert blind["available_grid_power"] < seeing["available_grid_power"]
+    assert (
+        blind["total_site_available_power"]
+        < seeing["total_site_available_power"]
+    )
+    assert (
+        blind["load_available"][charger_entry.entry_id]
+        < seeing["load_available"][charger_entry.entry_id]
+    )
+    # And the blind cycle is the one publishing no grid measurement, so the
+    # comparison is between a real reading and a deliberate silence.
+    assert blind["grid_power"] is None
+    assert seeing["grid_power"] is not None
+
+
+async def test_a_held_grid_reading_still_publishes_after_a_dropout(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """A held EMA value is an estimate, not a fabrication — so it publishes.
+
+    The distinction the whole fix rests on: the sensor died mid-run, so we know
+    what the phase was doing moments ago and holding it is honest. Blanking the
+    grid sensors through every brief CT dropout would be its own bug.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    healthy = run_hub_calculation(hass, hub_entry)
+    assert healthy["grid_power"] is not None
+
+    # Now the CTs drop out, with EMA history behind them.
+    _knock_out_grid_cts(hass)
+    held = run_hub_calculation(hass, hub_entry)
+
+    assert held["grid_power"] is not None
+    assert held["grid_power"] == pytest.approx(healthy["grid_power"], rel=0.05)
+    assert held["household_power"] is not None
+
+
+async def test_current_grid_power_sensor_reads_unknown_on_a_cold_start(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Entity tier: None in hub_data reaches HA as `unknown`.
+
+    Availability is not the mechanism here — the producer ran, on time, and
+    reported honestly that it has no grid measurement. The state is unknown
+    while the sensor stays available, which is exactly what keeps the fake
+    spike out of the recorder.
+    """
+    _set_ha_states(hass, hub_entry)
+    _knock_out_grid_cts(hass)
+
+    charger_sensor = LoadJugglerDeviceSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
+    )
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await _run_site_cycle(hass, hub_entry, charger_sensor)
+
+    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
+    sensor = DynamicOcppEvseHubDataSensor(
+        hass, hub_entry, "Test Hub", "test_hub", defn
+    )
+    await sensor.async_update()
+
+    assert hass.data[DOMAIN]["hub_data"][hub_entry.entry_id]["grid_power"] is None
+    assert sensor.native_value is None
+    assert sensor.available is True
+
+    # The first healthy cycle gives the sensor its reading.
+    _set_ha_states(hass, hub_entry)
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await _run_site_cycle(hass, hub_entry, charger_sensor)
+    await sensor.async_update()
+    assert sensor.native_value is not None
+
+
 # ── Result dict completeness test ────────────────────────────────────
 
 
