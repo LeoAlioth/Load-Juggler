@@ -23,6 +23,8 @@ import time
 
 from ..calculations import (
     select_clipping_window,
+    first_production_at,
+    reservation_is_due,
     battery_max_soc,
     excess_load_draw_power,
     export_trim,
@@ -176,6 +178,18 @@ def _compute_forecast_advice(
     TOMORROW's peak: "how much the site will fail to place at the next peak, and
     how much of that the battery can still make room for".
 
+    A reservation for a window that is still a night away is not APPLIED the
+    moment today's clip runs out. The published ceiling becomes a discharge
+    floor once the SOC write-control fans it out, so dropping it at dusk parks
+    the pack at the reserve by early evening and the house runs on the grid
+    until dawn; the battery only has to be down there by the time production
+    starts. So the advice holds at the destination and drops just in time,
+    scheduled against ``first_production_at`` with base consumption as the
+    discharge-rate estimator (``reservation_is_due`` for the rule, the latch and
+    the degraded modes). The ratchet does not fight the handover: the hold is a
+    RISE to the destination, which is never resisted, and the drop is normally
+    many points, so it clears the FORECAST_SOC_HYSTERESIS band in one cycle.
+
     The charge-rate advice deliberately does NOT follow the window — it is
     handed ``absorbable_today``, which is zero the moment the reservation moves
     to tomorrow. The cap exists to stop the battery eating headroom out from
@@ -206,6 +220,11 @@ def _compute_forecast_advice(
       Excess latch: it rises freely and falls only past
       FORECAST_SOC_HYSTERESIS. Whole percent — inverter SOC registers are
       integers.
+    * ``_forecast_reservation_due`` — whether the next window's reservation has
+      already been applied for this night, so a pack discharging faster than
+      base consumption cannot make the advice climb back to the destination in
+      the dark (``reservation_is_due``). Self-clearing: nothing is latched while
+      production is under way, so every night starts from a clean state.
     * ``_forecast_charge_limiting`` — whether the charge-rate cap was engaged
       last cycle, which is what makes its SOC gate a two-threshold latch
       instead of one boundary the integer SOC can sit on and flap across (see
@@ -238,6 +257,7 @@ def _compute_forecast_advice(
     )
     if export_limit <= 0 or capacity_kwh <= 0 or not (device_ids or legacy_entity_ids):
         hub_runtime.pop("_forecast_max_soc", None)
+        hub_runtime.pop("_forecast_reservation_due", None)
         hub_runtime.pop("_forecast_charge_limiting", None)
         hub_runtime.pop("_forecast_soc_yielding", None)
         hub_runtime.pop("_forecast_export_trim", None)
@@ -332,8 +352,34 @@ def _compute_forecast_advice(
     # ``fleet.soc_target_weighted`` for the weighting's derivation and
     # ``battery_max_soc`` for why the destination is the right anchor.
     soc_target = fleet.soc_target_weighted(members, DEFAULT_SOC_LIMIT_NORMAL)
-    max_soc = battery_max_soc(
+    reserved_soc = battery_max_soc(
         fc.absorbable_kwh, capacity_kwh, soc_floor, soc_target=soc_target
+    )
+    # Just-in-time: the reserve has to be in place by the time production
+    # starts, not the moment the clip is computed. Until then the advice rests
+    # at the destination, so the evening's house draw comes out of the battery
+    # instead of the grid. Every term is recomputed from live state each cycle —
+    # the only thing carried is the latch that keeps a drop dropped. See
+    # ``reservation_is_due``.
+    production_at = first_production_at(
+        series, base_consumption, windows[0][0], windows[-1][1], power_cap_w=power_cap
+    )
+    due, due_latched = reservation_is_due(
+        windows[0][0],
+        production_at,
+        battery_soc,
+        reserved_soc,
+        capacity_kwh,
+        base_consumption,
+        hub_runtime.get("_forecast_reservation_due", False),
+    )
+    hub_runtime["_forecast_reservation_due"] = due_latched
+    # Holding means the destination itself — battery_max_soc with nothing to
+    # absorb — so the floor and its clamps stay exactly where they always were.
+    max_soc = (
+        reserved_soc
+        if due
+        else battery_max_soc(0.0, capacity_kwh, soc_floor, soc_target=soc_target)
     )
     proposed = round(max_soc)
     prev = hub_runtime.get("_forecast_max_soc")
@@ -407,6 +453,7 @@ def _compute_forecast_advice(
         "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW"
         " (advice anchored at %dW) in window +%dd to %s"
         " | max SOC %d%% (raw %.1f of destination %.1f%%) deficit %.2f kWh"
+        " | reserve %s (reserved %.1f%%, production from %s)"
         " charge cap %s",
         fc.clipped_kwh,
         fc.absorbable_kwh,
@@ -418,6 +465,9 @@ def _compute_forecast_advice(
         max_soc,
         soc_target,
         deficit,
+        "due" if due else "held at the destination",
+        reserved_soc,
+        production_at,
         f"{charge_limit:.0f}W" if charge_limit is not None else "n/a",
     )
 

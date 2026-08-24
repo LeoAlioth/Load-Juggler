@@ -3676,6 +3676,223 @@ async def test_the_window_search_never_looks_past_tomorrow(hass):
     assert nearer["forecast_battery_max_soc"] == 80
 
 
+# ── PV clipping forecast: the just-in-time floor drop ─────────────────
+#
+# The maintainer's worked example, end to end. Destination 95 %, a 20 kWh pack,
+# 300 W base consumption, no clip left today and 2 kWh of it tomorrow — so the
+# reserve is 85 %. Production overtakes the house at 08:30, the shed is
+# 2 kWh / 300 W = 6 h 40 min, and the early-start factor asks for 8 h: the floor
+# drops at 00:30 and the evening's house draw comes out of the battery, not the
+# grid.
+
+# Tomorrow's shape: pre-dawn dribble below the 300 W house draw, the crossing at
+# 08:30, and one hour 2 kW above the 5300 W clipping threshold.
+_TOMORROW_DAWN = {
+    "2026-08-15T06:00:00+00:00": 50,
+    "2026-08-15T07:00:00+00:00": 200,
+    "2026-08-15T08:00:00+00:00": 200,
+    "2026-08-15T08:30:00+00:00": 400,
+    "2026-08-15T09:00:00+00:00": 1000,
+    "2026-08-15T10:00:00+00:00": 7300,
+    "2026-08-15T11:00:00+00:00": 0,
+}
+
+
+def _jit_rig(hass, slug):
+    """The worked example's hub, inverter and runtime."""
+    hub = _destination_hub(slug)
+    inverter = _destination_inverter(hub, slug, "number.dst_normal")
+    inverter.add_to_hass(hass)
+    runtime = {"loads": []}
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: runtime},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    return hub, inverter, runtime
+
+
+def _set_jit_states(hass, soc, watts=None):
+    _set_destination_states(hass, soc=soc)
+    hass.states.async_set(
+        "sensor.dst_forecast", "1.0", {"watts": dict(watts or _TOMORROW_DAWN)}
+    )
+
+
+async def test_the_reserve_is_held_through_the_evening_and_dropped_just_in_time(hass):
+    """The recommendation rests at the 95 % destination all evening, then lands
+    on tomorrow's 85 % reserve at 00:30 — 8 hours before production starts."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, runtime = _jit_rig(hass, "jit")
+    _set_jit_states(hass, soc=95)
+
+    def at(stamp):
+        with freeze_time(stamp):
+            return run_hub_calculation(hass, hub)
+
+    # The evening. The published clip is TOMORROW's 2 kWh — the window has
+    # rolled over — but the reserve it buys is not applied yet.
+    evening = at("2026-08-14 18:00:00+00:00")
+    assert evening["forecast_absorbable_kwh"] == 2.0
+    assert evening["forecast_battery_max_soc"] == 95
+    assert runtime["_forecast_reservation_due"] is False
+    # Nothing from this feature touches a charge register at night: the cap asks
+    # only about today, and today is spent.
+    assert evening["forecast_charge_limit_w"] == 5000
+    assert runtime["_forecast_charge_limiting"] is False
+    assert "_forecast_export_trim" not in runtime
+
+    for stamp in ("2026-08-14 22:00:00+00:00", "2026-08-15 00:00:00+00:00"):
+        held = at(stamp)
+        assert held["forecast_battery_max_soc"] == 95, f"dropped early at {stamp}"
+        assert held["inverters"][inverter.entry_id][
+            "forecast_battery_max_soc"
+        ] == 95
+
+    # 00:29 — one minute short of the 8 hours the shed is given.
+    assert at("2026-08-15 00:29:00+00:00")["forecast_battery_max_soc"] == 95
+
+    # 00:30 — 6 h 40 min of shed × 1.2 = exactly 8 h before 08:30.
+    dropped = at("2026-08-15 00:30:00+00:00")
+    assert dropped["forecast_battery_max_soc"] == 85
+    assert dropped["inverters"][inverter.entry_id]["forecast_battery_max_soc"] == 85
+    assert runtime["_forecast_reservation_due"] is True
+    # A 10-point fall clears the FORECAST_SOC_HYSTERESIS band in one cycle —
+    # the ratchet does not fight the handover.
+
+
+async def test_the_drop_holds_against_a_faster_night_and_an_early_finish(hass):
+    """Once dropped, dropped. A pack emptying faster than base consumption
+    would make the plain arithmetic say "not yet" again; the latch stops the
+    recommendation climbing back to the destination in the dark."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, runtime = _jit_rig(hass, "jitlatch")
+    _set_jit_states(hass, soc=95)
+
+    with freeze_time("2026-08-15 00:30:00+00:00"):
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+    # 01:30, twice base consumption taken: 7 h left against 1.2 × 5 h 20 min.
+    with freeze_time("2026-08-15 01:30:00+00:00"):
+        _set_jit_states(hass, soc=93)
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+    # The shed finishes hours early: the floor holds the pack at the reserve and
+    # the house moves to the grid, which is exactly the intent.
+    with freeze_time("2026-08-15 04:00:00+00:00"):
+        _set_jit_states(hass, soc=85)
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+    # And an SOC dropout afterwards does not re-raise a floor already acted on.
+    with freeze_time("2026-08-15 05:00:00+00:00"):
+        hass.states.async_set("sensor.dst_battery_soc", STATE_UNAVAILABLE)
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+    assert runtime["_forecast_reservation_due"] is True
+
+
+async def test_an_overnight_forecast_improvement_heals_the_reserve_upward(hass):
+    """A dropped reserve still follows the forecast: a smaller clip tomorrow is
+    a rise, and rises are never resisted."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, _runtime = _jit_rig(hass, "jitheal")
+    _set_jit_states(hass, soc=95)
+
+    with freeze_time("2026-08-15 00:30:00+00:00"):
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+    with freeze_time("2026-08-15 01:00:00+00:00"):
+        _set_jit_states(
+            hass, soc=94, watts={**_TOMORROW_DAWN, "2026-08-15T10:00:00+00:00": 6300}
+        )
+        healed = run_hub_calculation(hass, hub)
+    assert healed["forecast_absorbable_kwh"] == 1.0
+    assert healed["forecast_battery_max_soc"] == 90
+
+
+async def test_an_unknown_soc_overnight_holds_at_the_destination(hass):
+    """No SOC is no basis for evicting a battery — hold, and let the next cycle
+    with a reading decide."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, runtime = _jit_rig(hass, "jitnosoc")
+    _set_jit_states(hass, soc=95)
+    hass.states.async_set("sensor.dst_battery_soc", STATE_UNAVAILABLE)
+
+    # 04:00 is well past the 00:30 the drop would otherwise have landed on.
+    with freeze_time("2026-08-15 04:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+    assert result["forecast_battery_max_soc"] == 95
+    assert runtime["_forecast_reservation_due"] is False
+
+
+async def test_a_night_too_short_applies_the_reserve_at_once(hass):
+    """Today's clip zeroes with too little night left to shed in: no schedule to
+    keep, so the reservation lands immediately."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, runtime = _jit_rig(hass, "jitshort")
+    _set_jit_states(hass, soc=95)
+
+    # 04:00: 4½ h to production against the 8 h the shed is given.
+    with freeze_time("2026-08-15 04:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+    assert result["forecast_battery_max_soc"] == 85
+    assert runtime["_forecast_reservation_due"] is True
+
+
+async def test_an_unreadable_base_consumption_falls_back_to_the_plain_drop(hass):
+    """Degraded mode is the pre-scheduling behaviour: apply the reservation as
+    soon as it is known. It can only make the battery arrive early."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    template = _destination_hub("jitnobase")
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title=template.title,
+        data=dict(template.data),
+        options={**template.options, CONF_BASE_CONSUMPTION: 0},
+    )
+    inverter = _destination_inverter(hub, "jitnobase", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_jit_states(hass, soc=95)
+
+    with freeze_time("2026-08-14 18:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+    # Threshold 5000 W without base consumption → 2.3 kWh, so 84 % rather than
+    # 85 — the point is that it is applied at 18:00 rather than held.
+    assert result["forecast_battery_max_soc"] == 84
+
+
 # ── PV clipping forecast: the engaged advice's integral trim ──────────
 #
 # The anchored advice is feedforward, so ``base_consumption`` standing in for the

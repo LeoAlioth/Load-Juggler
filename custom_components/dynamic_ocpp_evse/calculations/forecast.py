@@ -32,6 +32,13 @@ remainder of today while today still has clip left and tomorrow once it does
 not (``select_clipping_window``). The lookahead stops there — see
 ``FORECAST_LOOKAHEAD_DAYS``.
 
+A reservation for a window that is still a night away is not applied the moment
+today's clip runs out: the published ceiling is a discharge FLOOR by the time
+the write-control has fanned it out, so dropping it at dusk parks the battery at
+the reserve and puts the house on the grid until dawn. It is held at the
+destination and dropped just in time instead, against the forecast's own
+``first_production_at`` — see ``reservation_is_due``.
+
 ``absorbable_kwh`` — the clipped energy the battery could physically take at
 its charge rate — drives the SOC recommendation. The difference to
 ``clipped_kwh`` is unavoidable curtailment: energy no SOC ceiling can save,
@@ -48,7 +55,7 @@ take timezone-aware datetimes and never consult a clock.
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,6 +80,16 @@ FORECAST_LOOKAHEAD_DAYS = 1
 # Without it the tail of a day integrates to a few watt-hours of float dust and
 # the search would never advance to tomorrow.
 FORECAST_WINDOW_EPSILON_KWH = 0.005
+
+# How much longer than the estimate the overnight shed is given, so the floor
+# drops that much earlier than the arithmetic strictly requires
+# (``reservation_is_due``). The two errors are not symmetric: arriving at the
+# peak too full costs clipped kilowatt-hours, arriving early costs nothing, so
+# the bias belongs on the early side. 20 % is roughly the estimator's own honest
+# error bar — base consumption is a single number standing in for a whole
+# night's household — and on a typical shed of a few hours it buys an hour or so
+# of slack without giving back much of the evening.
+FORECAST_EARLY_START_FACTOR = 1.2
 
 
 @dataclass(frozen=True)
@@ -244,6 +261,157 @@ def select_clipping_window(
     if first is None:
         return 0, ClippingForecast(0.0, 0.0, 0.0, 0.0, None)
     return first
+
+
+def first_production_at(series, threshold_w, start, until, power_cap_w=None):
+    """When forecast production first exceeds ``threshold_w`` in the horizon.
+
+    Called with ``threshold_w = base_consumption``, this is the moment the
+    battery would STOP discharging — the deadline the overnight floor drop is
+    scheduled against (``reservation_is_due``). That crossing, rather than the
+    first nonzero watt, is the physically meaningful one: at twilight the panels
+    make tens of watts while the house draws hundreds, so the battery is still
+    emptying and the night is not over. Anchoring on first light would move the
+    deadline an hour or more early for no gain, on top of the deliberate early
+    bias ``FORECAST_EARLY_START_FACTOR`` already applies — and pre-dawn dribble
+    is exactly the part of an irradiance forecast least worth trusting.
+
+    It errs the safe way, too. Between the last block below base and the
+    crossing the battery discharges a little SLOWER than base (PV is covering
+    part of the house), so the shed takes marginally longer than the estimate
+    and the drop lands marginally late — inside the factor's margin.
+
+    Returns the block start, or ``start`` itself when the block containing
+    ``start`` is already above the threshold (production is under way, so there
+    is no wait to schedule). None when nothing in ``[start, until)`` gets there.
+
+    Pure function — unit-testable.
+    """
+    if not series or until <= start:
+        return None
+    blocks = sorted(series.items())
+    prev_width = None
+    for i, (block_start, watts) in enumerate(blocks):
+        if i + 1 < len(blocks):
+            width = (blocks[i + 1][0] - block_start).total_seconds() / 3600.0
+        else:
+            width = prev_width if prev_width else _DEFAULT_BLOCK_HOURS
+        if width <= 0:
+            continue  # duplicate or unsorted timestamp — skip defensively
+        prev_width = width
+        if block_start + timedelta(hours=width) <= start:
+            continue
+        if block_start >= until:
+            break
+        power = max(0.0, float(watts))
+        if power_cap_w is not None:
+            power = min(power, power_cap_w)
+        if power > threshold_w:
+            return max(block_start, start)
+    return None
+
+
+def hours_to_shed(battery_soc, reserved_soc, capacity_kwh, base_consumption_w):
+    """Hours of passive house discharge to bring the pack down to the reserve.
+
+    The estimator is base consumption, which is already what this integration
+    means by "what the house draws when nothing managed is running" — and an
+    overnight house with the managed loads idle is exactly that. No new setting,
+    and it is self-correcting: the caller recomputes this every cycle from the
+    LIVE SOC, so a night that discharges faster or slower than base simply moves
+    the answer, and no schedule is ever persisted.
+
+    0.0 when the battery is already at or below the reserve — there is nothing
+    to shed, and no reason to wait. None when the estimate cannot be made at all
+    (no capacity, no base consumption to divide by, no SOC), which the caller
+    treats as its degraded mode.
+
+    Pure function — unit-testable.
+    """
+    if battery_soc is None or capacity_kwh <= 0 or (base_consumption_w or 0) <= 0:
+        return None
+    energy_to_shed = max(0.0, (battery_soc - reserved_soc) / 100.0 * capacity_kwh)
+    return energy_to_shed / (base_consumption_w / 1000.0)
+
+
+def reservation_is_due(
+    now,
+    production_at,
+    battery_soc,
+    reserved_soc,
+    capacity_kwh,
+    base_consumption_w,
+    was_due=False,
+):
+    """Whether the next window's reservation must be applied NOW.
+
+    Once today's clip is spent the reservation belongs to a peak that is a night
+    away, and applying it the moment the clip zeroes throws the evening away.
+    The published ceiling is a DISCHARGE FLOOR once the SOC write-control fans it
+    out, so a reserve applied at dusk empties the pack to the reserve by early
+    evening and then puts the house on the grid until dawn. The battery has to
+    arrive at the reserve, but only by the time production starts — every hour it
+    spends above the reserve before that is an hour it serves the house for free.
+
+    So: hold at the destination, and drop just in time. Each cycle recomputes
+    ``hours_to_shed`` from the live SOC and drops as soon as
+
+        time until production  <=  hours to shed × FORECAST_EARLY_START_FACTOR
+
+    The factor biases the drop EARLY, and deliberately so — the two errors are
+    not symmetric. Arriving too full costs real clipped kilowatt-hours at the
+    peak, which is the whole reason the reserve exists; arriving early costs
+    nothing at all, because the pack simply sits at the reserve for the last
+    stretch of the night exactly as it would have all evening under the naive
+    rule. Note that a factor GREATER than one moves the drop earlier: the shed is
+    given more hours than it needs.
+
+    Four answers are settled before the arithmetic, in this order:
+
+    * **Production is not ahead of us** (``production_at`` is None or already
+      reached) — daylight, or a forecast with nothing to schedule against. Due,
+      and nothing latched: there is no night here to be part-way through.
+    * **Already dropped this night** (``was_due``) — see the latch below.
+    * **No SOC** — HOLD at the destination. The drop is an action taken on a
+      number we do not have; inventing one to evict a battery is the one mistake
+      that cannot be undone by the next cycle.
+    * **No usable estimate** (``hours_to_shed`` is None — no capacity, no base
+      consumption) or **nothing to shed** (the pack is already at or below the
+      reserve): due immediately. That is the plain pre-scheduling behaviour, and
+      it is the safe degraded mode — it can only make the battery arrive early.
+
+    Returns ``(due, latched)``, and the caller carries ``latched`` back in as
+    ``was_due``. They differ in exactly one case, which is what makes the latch
+    self-clearing: while production is under way the answer is "due" but nothing
+    is latched, so the state is clean again by dusk and the next night starts
+    from scratch. No date arithmetic, no persisted schedule.
+
+    The latch is not optional. Once the floor drops the pack discharges, and if
+    it discharges FASTER than base consumption ``hours_to_shed`` shrinks faster
+    than the clock does, so the plain inequality flips back to false and the
+    recommendation would climb back to the destination in the middle of the
+    night — re-raising a floor the inverter has already acted on. Latched, the
+    drop stands until production starts, whatever the pack does in between: it
+    survives the SOC reaching the reserve early (the floor holds it there and the
+    house moves to the grid, exactly as intended), an SOC sensor dropping out
+    afterwards, and the forecast entity going unavailable.
+
+    Pure function — unit-testable.
+    """
+    if production_at is None or production_at <= now:
+        return True, False
+    if was_due:
+        return True, True
+    if battery_soc is None:
+        return False, False
+    hours = hours_to_shed(
+        battery_soc, reserved_soc, capacity_kwh, base_consumption_w
+    )
+    if hours is None or hours <= 0:
+        return True, True
+    hours_until = (production_at - now).total_seconds() / 3600.0
+    due = hours_until <= hours * FORECAST_EARLY_START_FACTOR
+    return due, due
 
 
 def battery_max_soc(

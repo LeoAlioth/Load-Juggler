@@ -18,15 +18,19 @@ clipping — the nonlinearity is site-level.
 from datetime import datetime, timedelta, timezone
 
 from custom_components.dynamic_ocpp_evse.calculations import (
+    FORECAST_EARLY_START_FACTOR,
     FORECAST_TRIM_CLAMP_W,
     FORECAST_TRIM_MAX_STEP_S,
     FORECAST_TRIM_TAU_S,
     battery_max_soc,
     clipping_forecast,
     export_trim,
+    first_production_at,
     headroom_deficit_kwh,
+    hours_to_shed,
     merge_forecast_series,
     recommended_charge_limit,
+    reservation_is_due,
     select_clipping_window,
     unexportable_power,
     yields_to_excess,
@@ -262,6 +266,183 @@ def test_window_selection_with_no_windows_is_empty():
     index, fc = select_clipping_window({}, THRESHOLD, [])
     assert index == 0
     assert fc.clipped_kwh == 0.0
+
+
+# --- When production starts ---------------------------------------------------
+#
+# The deadline the overnight floor drop is scheduled against: the moment
+# forecast production overtakes base consumption, which is when the battery
+# would stop discharging — NOT first light.
+
+BASE_W = 300.0
+
+# A dawn: pre-dawn dribble below the house draw, then the crossing at 08:00.
+DAWN = {
+    datetime(2026, 8, 15, 6, 0, tzinfo=timezone.utc): 50.0,
+    datetime(2026, 8, 15, 7, 0, tzinfo=timezone.utc): 200.0,
+    datetime(2026, 8, 15, 8, 0, tzinfo=timezone.utc): 400.0,
+    datetime(2026, 8, 15, 9, 0, tzinfo=timezone.utc): 3000.0,
+}
+NIGHT = datetime(2026, 8, 15, 0, 0, tzinfo=timezone.utc)
+HORIZON = datetime(2026, 8, 16, 0, 0, tzinfo=timezone.utc)
+
+
+def test_production_starts_where_it_overtakes_the_house_not_at_first_light():
+    # First light is 06:00 at 50 W; the battery is still emptying then, and goes
+    # on emptying through the 200 W block. 08:00 is when it stops.
+    assert first_production_at(DAWN, BASE_W, NIGHT, HORIZON) == datetime(
+        2026, 8, 15, 8, 0, tzinfo=timezone.utc
+    )
+
+
+def test_production_under_way_reports_now():
+    # Mid-morning: the block containing ``start`` is already above base, so
+    # there is no wait to schedule and the answer is ``start`` itself.
+    now = datetime(2026, 8, 15, 9, 30, tzinfo=timezone.utc)
+    assert first_production_at(DAWN, BASE_W, now, HORIZON) == now
+
+
+def test_production_never_reaching_the_house_draw_is_none():
+    overcast = {
+        datetime(2026, 8, 15, h, 0, tzinfo=timezone.utc): 120.0
+        for h in range(6, 18)
+    }
+    assert first_production_at(overcast, BASE_W, NIGHT, HORIZON) is None
+
+
+def test_production_beyond_the_horizon_is_none():
+    assert first_production_at(DAWN, BASE_W, NIGHT, NIGHT) is None
+    assert first_production_at({}, BASE_W, NIGHT, HORIZON) is None
+
+
+def test_production_start_respects_the_power_cap():
+    # A 3 kW-capped site never sees the modelled 400 W block as 400 W... it
+    # does; but a cap BELOW base hides the crossing entirely.
+    assert first_production_at(DAWN, BASE_W, NIGHT, HORIZON, power_cap_w=250) is None
+
+
+# --- The just-in-time floor drop ----------------------------------------------
+#
+# The maintainer's worked example throughout: destination 95 %, tomorrow's clip
+# 2 kWh, a 20 kWh pack, 300 W base consumption, production from 08:30. The
+# reserve is 85 %, so a full pack has 2 kWh to shed at 300 W = 6 h 40 min, and
+# the early-start factor asks for 8 h — putting the drop at 00:30.
+
+PRODUCTION_AT = datetime(2026, 8, 15, 8, 30, tzinfo=timezone.utc)
+RESERVED = 85.0
+CAPACITY = 20.0
+
+
+def _due(now, soc=95.0, was_due=False, reserved=RESERVED, base=BASE_W):
+    return reservation_is_due(
+        now, PRODUCTION_AT, soc, reserved, CAPACITY, base, was_due
+    )
+
+
+def test_the_shed_estimate_is_energy_over_base_consumption():
+    assert hours_to_shed(95.0, 85.0, 20.0, 300.0) == 2.0 / 0.3
+    assert round(hours_to_shed(95.0, 85.0, 20.0, 300.0), 4) == 6.6667
+    # At or below the reserve there is nothing to shed.
+    assert hours_to_shed(85.0, 85.0, 20.0, 300.0) == 0.0
+    assert hours_to_shed(60.0, 85.0, 20.0, 300.0) == 0.0
+    # And no estimate at all without the terms to make one from.
+    assert hours_to_shed(None, 85.0, 20.0, 300.0) is None
+    assert hours_to_shed(95.0, 85.0, 0.0, 300.0) is None
+    assert hours_to_shed(95.0, 85.0, 20.0, 0.0) is None
+
+
+def test_the_worked_example_holds_the_evening_and_drops_at_half_past_midnight():
+    # 20:00, 18:00 the evening before, 00:00: still held.
+    for hour in (18, 20, 22):
+        now = datetime(2026, 8, 14, hour, 0, tzinfo=timezone.utc)
+        assert _due(now) == (False, False), f"dropped early at {hour}:00"
+    assert _due(datetime(2026, 8, 15, 0, 0, tzinfo=timezone.utc)) == (False, False)
+    # 00:29 is 8 h 1 min out — one minute too soon.
+    assert _due(datetime(2026, 8, 15, 0, 29, tzinfo=timezone.utc)) == (False, False)
+    # 00:30 is exactly 8 h = 6 h 40 min × 1.2. The drop lands here.
+    assert _due(datetime(2026, 8, 15, 0, 30, tzinfo=timezone.utc)) == (True, True)
+
+
+def test_the_early_start_factor_is_what_moves_the_drop_before_the_arithmetic():
+    # Without the factor the shed needs 6 h 40 min, putting the drop at 01:50.
+    plain_hours = hours_to_shed(95.0, RESERVED, CAPACITY, BASE_W)
+    assert PRODUCTION_AT - timedelta(hours=plain_hours) == datetime(
+        2026, 8, 15, 1, 50, tzinfo=timezone.utc
+    )
+    # The factor buys 1 h 20 min of slack, and buys it EARLIER — 00:30, not
+    # later. Arriving full costs clipped kWh; arriving early costs nothing.
+    factored = PRODUCTION_AT - timedelta(
+        hours=plain_hours * FORECAST_EARLY_START_FACTOR
+    )
+    assert factored == datetime(2026, 8, 15, 0, 30, tzinfo=timezone.utc)
+    assert factored < PRODUCTION_AT - timedelta(hours=plain_hours)
+
+
+def test_a_night_already_too_short_drops_at_once():
+    # Today's clip zeroes at 04:00 with a full pack and production at 08:30:
+    # 4.5 h left against 8 h needed. Nothing to schedule — drop now.
+    assert _due(datetime(2026, 8, 15, 4, 0, tzinfo=timezone.utc)) == (True, True)
+
+
+def test_the_drop_stays_dropped_when_the_pack_empties_faster_than_base():
+    # Dropped at 00:30. An hour later the house has taken twice base, so the
+    # UNLATCHED arithmetic would say "not yet" — 7.5 h left against 1.2 × 5.33 h
+    # = 6.4 h — and the advice would climb back to the destination in the dark.
+    later = datetime(2026, 8, 15, 1, 30, tzinfo=timezone.utc)
+    assert _due(later, soc=93.4) == (False, False)
+    assert _due(later, soc=93.4, was_due=True) == (True, True)
+
+
+def test_the_shed_completing_early_keeps_the_reservation():
+    # The pack reaches the reserve at 04:00, hours before dawn: the floor holds
+    # it there and the house moves to the grid — the recommendation must not
+    # drift back up.
+    early = datetime(2026, 8, 15, 4, 0, tzinfo=timezone.utc)
+    assert _due(early, soc=85.0, was_due=True) == (True, True)
+    assert _due(early, soc=80.0, was_due=True) == (True, True)
+
+
+def test_a_dropped_reservation_survives_an_soc_sensor_dropout():
+    night = datetime(2026, 8, 15, 3, 0, tzinfo=timezone.utc)
+    assert _due(night, soc=None, was_due=True) == (True, True)
+
+
+def test_an_unknown_soc_holds_at_the_destination():
+    # No SOC and nothing latched: hold. Evicting a battery on a number we do not
+    # have is the one mistake the next cycle cannot undo.
+    night = datetime(2026, 8, 15, 3, 0, tzinfo=timezone.utc)
+    assert _due(night, soc=None) == (False, False)
+
+
+def test_nothing_to_shed_is_due_immediately():
+    # The pack is already below the reserve, so the drop costs nothing — and
+    # holding at the destination would invite the inverter to charge up to it.
+    evening = datetime(2026, 8, 14, 20, 0, tzinfo=timezone.utc)
+    assert _due(evening, soc=70.0) == (True, True)
+
+
+def test_an_unusable_estimate_drops_immediately():
+    # No base consumption to divide by: fall back to the plain behaviour of
+    # applying the reservation as soon as it is known.
+    evening = datetime(2026, 8, 14, 20, 0, tzinfo=timezone.utc)
+    assert _due(evening, base=0.0) == (True, True)
+    assert reservation_is_due(
+        evening, PRODUCTION_AT, 95.0, RESERVED, 0.0, BASE_W
+    ) == (True, True)
+
+
+def test_production_under_way_is_due_and_latches_nothing():
+    # Daylight: no night to be part-way through, so the reservation applies and
+    # the latch is left clean for the coming dusk.
+    noon = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
+    assert reservation_is_due(noon, noon, 95.0, RESERVED, CAPACITY, BASE_W) == (
+        True,
+        False,
+    )
+    # Same for a forecast that offers no crossing to schedule against.
+    assert reservation_is_due(
+        noon, None, 95.0, RESERVED, CAPACITY, BASE_W, was_due=True
+    ) == (True, False)
 
 
 # --- The SOC recommendation ---------------------------------------------------
