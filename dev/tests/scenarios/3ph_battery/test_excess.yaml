@@ -160,3 +160,45 @@ scenarios:
     expected:
       plug_1:
         allocated: 8.7  # 2000 W / 230 V — on, and stays on
+
+  # --- The start edge: the verdict starts the load, the pool only sizes it ----
+
+  - name: "3ph-bat-excess-evse-at-the-trigger-starts-at-min"
+    description: >
+      The live site the start-at-minimum rule is for. 20 A/phase of solar,
+      1 A/phase of household, and the battery pinned at the 4830 W its charge
+      limit permits — everything the site can absorb — leaves 36 A of export
+      against a 36 A allowance. The margin is 0: Excess is on (nothing more can
+      be placed) and yet the pool it hands out is 0 A.
+      The EVSE cannot charge below 6 A, so a pool-sized permit would leave it at
+      0 through the whole window; the floor starts it at its minimum instead,
+      the way the binary Excess loads have always engaged. Its 18 A then comes
+      out of export and the feedback loop hands it back, so the margin reads 0
+      again with the load running and it holds at 6 A for all 30 cycles.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      distribution_mode: priority
+      solar_production: 13800  # 20 A per phase
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
+      excess_export_threshold: 8280  # 36 A — exactly the export
+      battery_soc: 70
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_soc_full: 97
+      battery_max_charge_power: 4830   # 21 A, and the battery is taking all of it
+      battery_max_discharge_power: 4830
+      inverter_max_power: 15000
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      load_1:
+        allocated: 6.0  # Margin 0 → the verdict is on → starts at its minimum

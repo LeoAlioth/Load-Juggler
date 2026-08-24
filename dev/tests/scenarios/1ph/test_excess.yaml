@@ -91,3 +91,42 @@ scenarios:
     expected:
       load_1:
         allocated: 6.0  # Export = 4600W, excess = (4600-3910)/230 = 3A  →  should charge at 6A min otherwise excess is wasted when inveter starts throttling
+
+  - name: "1ph-1c-excess-no-bat-at-the-trigger-starts-at-min"
+    description: >
+      Export sitting EXACTLY on the allowance — the pool is 0 A, and that is
+      Excess by definition: the site cannot place another watt. A modulating
+      load cannot run below its minimum, so the verdict starts it at 6 A, the
+      same threshold-hit engagement a binary Excess plug gets. Gating the start
+      on the pool instead left it at 0 forever here, which is the standing state
+      of a site whose battery charge control tracks the export overshoot.
+      18 A of export, an 18 A allowance: the draw is added back by the feedback
+      loop, so the margin reads 0 with the load running too and it holds at its
+      minimum for all 30 cycles.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600  # 20A
+      phase_a_consumption: 2.0
+      excess_export_threshold: 4140  # 18A — exactly the export
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 6.0  # Export = allowance → margin 0 → starts at its minimum
