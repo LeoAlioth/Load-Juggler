@@ -4,7 +4,7 @@ The clipping forecast says how fast this battery may fill so the midday peak
 still has somewhere to go. This module turns that number into a write to the
 inverter's own charge-limit register (Deye: maximum battery charge current).
 
-Three rules shape it, and all three exist because the target is a Modbus
+Four rules shape it, and all four exist because the target is a Modbus
 register rather than a software knob:
 
 1. **Opt-in.** Nothing is written until the user turns the inverter's Battery
@@ -12,7 +12,13 @@ register rather than a software knob:
 2. **Paced.** A write happens only on a meaningful change (deadband, a
    percentage of the normal value) and never more often than the configured
    interval. Some firmwares commit these registers to EEPROM.
-3. **Restored exactly once.** When the advice releases — evening, no clipping
+3. **Slew-limited upward, instant downward** (:func:`slew_limited`). Lowering
+   the limit is the protection direction and lands in one write. Raising it is
+   a permission to refill, and the written value may climb by at most one
+   Excess trigger margin's worth of watts per write — because a battery handed
+   its full rate in a single step drinks the whole clipping reserve out of
+   exportable power in minutes, which is the reserve's own purpose reversed.
+4. **Restored exactly once.** When the advice releases — evening, no clipping
    expected, control switched off — the normal value goes back and the
    applied-state marker clears, so a released limit is not rewritten every
    cycle for the rest of the night.
@@ -73,6 +79,8 @@ import logging
 
 from ..const import (
     DOMAIN,
+    CONF_EXCESS_TRIGGER_MARGIN,
+    DEFAULT_EXCESS_TRIGGER_MARGIN,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_CHARGE_LIMIT_NORMAL,
@@ -264,11 +272,99 @@ def should_write(current, desired, previous_applied, deadband) -> bool:
     return abs(reference - desired) >= max(deadband, 0)
 
 
-async def send_inverter_charge_limit(hass, entry, advice_w, now_mono) -> None:
+def slew_margin_w(hub_entry) -> float:
+    """How many watts the written value may RISE per write.
+
+    The site's **Excess trigger margin**, read from the HUB entry — these
+    controls are handed the inverter's own entry, and this is a site-level
+    number, so the caller threads its hub alongside it exactly as
+    ``control/ocpp.py`` and ``control/power_station.py`` are given the site
+    voltage.
+
+    Deliberately that setting rather than a knob of its own, and the reason is
+    arithmetic rather than convenience: the engaged advice is anchored one
+    trigger margin below the export limit, so on a site that masks its own
+    production the advice self-creeps upward by about one margin per write (see
+    ``engine/hub_result``'s anchoring comment). A ramp bounded at exactly that
+    number therefore lets the escape-from-masking through untouched, while
+    still refusing the one thing this exists to refuse — a step from a held-down
+    limit to full rate.
+
+    A hub that cannot be resolved falls back to the default, which is the number
+    an unconfigured site would have given anyway.
+    """
+    if hub_entry is None:
+        return float(DEFAULT_EXCESS_TRIGGER_MARGIN)
+    return float(
+        get_entry_value(
+            hub_entry, CONF_EXCESS_TRIGGER_MARGIN, DEFAULT_EXCESS_TRIGGER_MARGIN
+        )
+        or 0
+    )
+
+
+def slew_step(margin_w, unit, voltage, deadband):
+    """The largest upward move allowed per write, in the target's own units.
+
+    None means "no rate limit at all", which is what a site with no Excess
+    trigger margin gets: there is no natural step to borrow, and inventing one
+    would be this module deciding site policy.
+
+    Never smaller than the deadband. A step the deadband would swallow is not a
+    slower ramp, it is *no* ramp — every write suppressed and the register left
+    where it was — so a release would never complete and the battery would stay
+    held down for the rest of the day. The floor makes the ramp's own steps
+    always worth writing.
+    """
+    step = to_target_units(max(float(margin_w), 0.0), unit, voltage)
+    if step <= 0:
+        return None
+    return max(step, abs(deadband or 0))
+
+
+def slew_limited(desired, baseline, step):
+    """``desired``, held to at most ``baseline + step`` on the way UP.
+
+    Asymmetric on purpose, and the asymmetry is the whole feature. Downward is
+    the protection direction: engaging a limit is what this control exists for
+    and it lands in one write. Upward is a permission to refill, and a
+    permission granted all at once has the battery absorb the clipping reserve
+    from exportable power in a few minutes — the reserve spent on precisely the
+    energy it was being kept for.
+
+    No baseline (nothing written yet, unreadable register) or no step means
+    there is no rate to measure a rise against, so the value stands.
+    """
+    if baseline is None or step is None or desired <= baseline:
+        return desired
+    return min(desired, baseline + step)
+
+
+def ramp_baseline(applied, current):
+    """What an upward move is measured from: the last value we WROTE.
+
+    Our own last write rather than the read-back, so the ramp advances on the
+    same wall clock the pacing already runs on instead of on how promptly the
+    inverter's integration happens to re-poll the register. A ramp that stalled
+    waiting for a read-back would leave the battery limited indefinitely, which
+    is the one failure worse than releasing too fast.
+
+    The read-back is the fallback for the case with no memory to use: the first
+    write after a reload, where the register itself is the only record of where
+    the limit stands.
+    """
+    return applied if applied is not None else current
+
+
+async def send_inverter_charge_limit(
+    hass, entry, hub_entry, advice_w, now_mono
+) -> None:
     """Apply (or release) this inverter's battery charge limit.
 
     ``advice_w`` is the forecast's recommended charge limit in watts, or None
     when the forecast has nothing to say — which is also the release signal.
+    ``hub_entry`` is the inverter's hub, carrying the site-level Excess trigger
+    margin that sets the upward slew step (:func:`slew_margin_w`).
     """
     target_entity = get_entry_value(entry, CONF_CHARGE_LIMIT_ENTITY_ID, None)
     if not target_entity:
@@ -308,6 +404,10 @@ async def send_inverter_charge_limit(hass, entry, advice_w, now_mono) -> None:
     deadband = abs((normal or 0) * (deadband_pct or 0) / 100.0)
 
     applied = inverter_rt.get(INVERTER_RT_APPLIED)
+    last_write = inverter_rt.get(INVERTER_RT_LAST_WRITE)
+    # The ramp: how far up one write may go, and where "up" is measured from.
+    step = slew_step(slew_margin_w(hub_entry), unit, voltage, deadband)
+    baseline = ramp_baseline(applied, current)
     releasing = not enabled or advice_w is None
 
     if releasing:
@@ -343,15 +443,21 @@ async def send_inverter_charge_limit(hass, entry, advice_w, now_mono) -> None:
     # watt advice. The release path above is deliberately untouched: restoring
     # full rate is never "too low". Nothing upstream sees this — the advice
     # pipeline and the published forecast_charge_limit_w sensors stay unclamped.
-    desired = round(
-        max(
-            to_target_units(advice_w, unit, voltage),
-            resolve_minimum_value(entry, normal),
-        ),
-        1,
+    desired = max(
+        to_target_units(advice_w, unit, voltage),
+        resolve_minimum_value(entry, normal),
     )
+    # The ramp applies here too, and for the same reason: an engaged limit that
+    # self-heals upward (98 → 99 → 100 % of the ceiling, as the clip burns down)
+    # is the same "you may refill" in smaller words. Rounded AFTER the slew, so a
+    # rise of exactly one margin — the masked-site self-creep — is not shaved by
+    # a hundredth and passes through untouched.
+    target = round(slew_limited(desired, baseline, step), 1)
     inverter_rt[INVERTER_RT_STATUS] = CONTROL_STATE_LIMITING
-    inverter_rt[INVERTER_RT_RECOMMENDED] = desired
+    # The recommendation stays the ADVICE (floored), not the ramp's next step:
+    # the sensor's job is to report what we want the register at, while the ramp
+    # toward it shows up in the register read-back the same sensor graphs.
+    inverter_rt[INVERTER_RT_RECOMMENDED] = round(desired, 1)
     # What the battery is PERMITTED to take right now, in watts, for the
     # calculation engine's Excess verdict (see INVERTER_RT_ENFORCED_CHARGE_W).
     # The register's live value, not our desired one: until the write below
@@ -359,26 +465,29 @@ async def send_inverter_charge_limit(hass, entry, advice_w, now_mono) -> None:
     # battery really may still take the full rate the register still holds, and
     # narrowing the allowance before that would engage Excess against a battery
     # that has not been held back yet. Only when the register cannot be read at
-    # all does the value we are driving it to stand in for it.
+    # all does the value we are driving it to stand in for it — the ramp's next
+    # step, since that is what we are actually driving it to.
     inverter_rt[INVERTER_RT_ENFORCED_CHARGE_W] = from_target_units(
-        desired if current is None else current, unit, voltage
+        target if current is None else current, unit, voltage
     )
 
-    last_write = inverter_rt.get(INVERTER_RT_LAST_WRITE)
     if last_write is not None and (now_mono - last_write) < interval:
         return
-    if not should_write(current, desired, applied, deadband):
+    if not should_write(current, target, applied, deadband):
         return
 
-    await _write(hass, entry, target_entity, desired, unit)
-    inverter_rt[INVERTER_RT_APPLIED] = desired
+    await _write(hass, entry, target_entity, target, unit)
+    inverter_rt[INVERTER_RT_APPLIED] = target
     inverter_rt[INVERTER_RT_LAST_WRITE] = now_mono
     _LOGGER.info(
-        "%s: forecast advises %.0f W — wrote %.1f%s to %s (was %s)",
+        "%s: forecast advises %.0f W — wrote %.1f%s%s to %s (was %s)",
         entry.title,
         advice_w,
-        desired,
+        target,
         unit,
+        # Only when the ramp actually held it back, so a normal write reads the
+        # way it always did.
+        "" if target >= desired else f" (ramping toward {desired:.1f}{unit})",
         target_entity,
         f"{current:.1f}" if current is not None else "unknown",
     )

@@ -45,6 +45,8 @@ load_pure_modules(calc_modules=(), control_modules=("inverter",))
 
 from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     DOMAIN,
+    CONF_EXCESS_TRIGGER_MARGIN,
+    DEFAULT_EXCESS_TRIGGER_MARGIN,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_CHARGE_LIMIT_NORMAL,
@@ -79,12 +81,16 @@ from custom_components.dynamic_ocpp_evse.control.inverter import (  # noqa: E402
     battery_voltage,
     desired_soc,
     from_target_units,
+    ramp_baseline,
     resolve_minimum_value,
     resolve_normal_soc,
     resolve_normal_value,
     send_inverter_charge_limit,
     send_inverter_soc_limit,
     should_write,
+    slew_limited,
+    slew_margin_w,
+    slew_step,
     soc_targets,
     to_target_units,
 )
@@ -128,6 +134,32 @@ def _entry(options=None):
         title="Deye Hybrid",
         data={},
         options={CONF_CHARGE_LIMIT_ENTITY_ID: TARGET, **(options or {})},
+    )
+
+
+def _hub(margin=None):
+    """The inverter's hub entry — it carries the site's Excess trigger margin.
+
+    That margin is the upward slew step, so every call into the charge-limit
+    control needs a hub beside the inverter entry. None leaves it unconfigured,
+    which is the 500 W default.
+    """
+    return SimpleNamespace(
+        entry_id="hub1",
+        title="Site",
+        data={},
+        options={} if margin is None else {CONF_EXCESS_TRIGGER_MARGIN: margin},
+    )
+
+
+def _send(hass, entry, advice_w, now_mono, hub_entry=None):
+    """Drive the charge-limit control for one cycle.
+
+    Wraps the hub entry the control needs for its slew step; tests that are not
+    about the slew get an unconfigured hub and therefore the default margin.
+    """
+    return send_inverter_charge_limit(
+        hass, entry, _hub() if hub_entry is None else hub_entry, advice_w, now_mono
     )
 
 
@@ -213,7 +245,7 @@ def test_nothing_written_while_the_switch_is_off():
     entry = _entry()
     rt = _arm(hass, entry, enabled=False)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 3000.0, 0.0))
+    asyncio.run(_send(hass, entry, 3000.0, 0.0))
 
     assert hass.services.calls == []
     assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_OFF
@@ -225,7 +257,7 @@ def test_armed_control_writes_the_converted_limit():
     rt = _arm(hass, entry)
 
     # 2560 W at 51.2 V = 50 A, half the register's current 100 A
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
 
     assert hass.services.calls == [
         ("number", "set_value", {"entity_id": TARGET, "value": 50.0})
@@ -245,10 +277,10 @@ def test_second_cycle_inside_the_interval_does_not_write():
     })
     _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 1000.0))
+    asyncio.run(_send(hass, entry, 2560.0, 1000.0))
     hass.states.set(TARGET, 50.0, max=100.0)
     # A much lower advice, but only 60 s later
-    asyncio.run(send_inverter_charge_limit(hass, entry, 1024.0, 1060.0))
+    asyncio.run(_send(hass, entry, 1024.0, 1060.0))
 
     assert len(hass.services.calls) == 1
 
@@ -261,9 +293,9 @@ def test_write_resumes_after_the_interval():
     })
     _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 1000.0))
+    asyncio.run(_send(hass, entry, 2560.0, 1000.0))
     hass.states.set(TARGET, 50.0, max=100.0)
-    asyncio.run(send_inverter_charge_limit(hass, entry, 1024.0, 1400.0))
+    asyncio.run(_send(hass, entry, 1024.0, 1400.0))
 
     assert len(hass.services.calls) == 2
     assert hass.services.calls[-1][2]["value"] == 20.0
@@ -277,12 +309,12 @@ def test_release_restores_the_normal_value_once():
     })
     rt = _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
     hass.states.set(TARGET, 50.0, max=100.0)
     # Forecast has nothing to say any more (evening, or no clipping ahead)
-    asyncio.run(send_inverter_charge_limit(hass, entry, None, 10.0))
+    asyncio.run(_send(hass, entry, None, 10.0))
     hass.states.set(TARGET, 100.0, max=100.0)
-    asyncio.run(send_inverter_charge_limit(hass, entry, None, 20.0))
+    asyncio.run(_send(hass, entry, None, 20.0))
 
     assert len(hass.services.calls) == 2  # one limit, one restore
     assert hass.services.calls[-1][2]["value"] == 100.0
@@ -297,7 +329,7 @@ def test_release_without_a_prior_write_leaves_the_register_alone():
     entry = _entry()
     rt = _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, None, 0.0))
+    asyncio.run(_send(hass, entry, None, 0.0))
 
     assert hass.services.calls == []
     assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_IDLE
@@ -310,10 +342,10 @@ def test_disarming_restores_the_normal_value():
         CONF_CHARGE_CONTROL_INTERVAL: 0,
     })
     rt = _arm(hass, entry)
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
 
     rt[INVERTER_RT_CONTROL_ENABLED] = False
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 10.0))
+    asyncio.run(_send(hass, entry, 2560.0, 10.0))
 
     assert hass.services.calls[-1][2]["value"] == 100.0
     assert rt[INVERTER_RT_APPLIED] is None
@@ -323,7 +355,7 @@ def test_no_target_entity_is_a_no_op():
     hass = _Hass()
     entry = SimpleNamespace(entry_id="inv1", title="Advisory", data={}, options={})
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
 
     assert hass.services.calls == []
 
@@ -339,11 +371,11 @@ def test_deadband_is_a_percentage_of_the_normal_value():
     _arm(hass, entry)
 
     # 5017.6 W = 98 A, 2 A below the register's 100 A
-    asyncio.run(send_inverter_charge_limit(hass, entry, 5017.6, 0.0))
+    asyncio.run(_send(hass, entry, 5017.6, 0.0))
     assert hass.services.calls == []
 
     # 4608 W = 90 A, a 10 A move
-    asyncio.run(send_inverter_charge_limit(hass, entry, 4608.0, 10.0))
+    asyncio.run(_send(hass, entry, 4608.0, 10.0))
     assert len(hass.services.calls) == 1
 
 
@@ -381,7 +413,7 @@ def test_a_zero_advice_writes_the_floor_instead_of_zero():
     })
     rt = _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+    asyncio.run(_send(hass, entry, 0.0, 0.0))
 
     assert hass.services.calls == [
         ("number", "set_value", {"entity_id": TARGET, "value": 2.0})
@@ -397,7 +429,7 @@ def test_the_default_floor_of_zero_writes_the_advice_as_is():
     entry = _entry({CONF_BATTERY_NOMINAL_VOLTAGE: 51.2})
     _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+    asyncio.run(_send(hass, entry, 0.0, 0.0))
 
     assert hass.services.calls == [
         ("number", "set_value", {"entity_id": TARGET, "value": 0.0})
@@ -413,7 +445,7 @@ def test_an_advice_above_the_floor_is_untouched():
     _arm(hass, entry)
 
     # 2560 W at 51.2 V = 50 A, far above the 2 A floor
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
 
     assert hass.services.calls[-1][2]["value"] == 50.0
 
@@ -429,9 +461,9 @@ def test_the_floor_does_not_apply_to_the_release_write():
     })
     rt = _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+    asyncio.run(_send(hass, entry, 0.0, 0.0))
     hass.states.set(TARGET, 2.0, max=100.0)
-    asyncio.run(send_inverter_charge_limit(hass, entry, None, 10.0))
+    asyncio.run(_send(hass, entry, None, 10.0))
 
     assert hass.services.calls[-1][2]["value"] == 100.0
     assert rt[INVERTER_RT_APPLIED] is None
@@ -448,7 +480,7 @@ def test_a_floor_above_the_normal_value_is_clamped_to_it():
     })
     _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+    asyncio.run(_send(hass, entry, 0.0, 0.0))
 
     # 60, the normal — never the 90 the user asked for, which would hold the
     # battery HIGHER than a release would.
@@ -466,12 +498,14 @@ def test_the_floor_is_in_the_registers_own_units_on_a_watt_register():
     })
     _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+    asyncio.run(_send(hass, entry, 0.0, 0.0))
     assert hass.services.calls[-1][2]["value"] == 100.0
 
-    # And a real advice above it still passes through in watts.
+    # And a real advice above it still passes through in watts. A 2 kW margin
+    # keeps the upward slew out of the way — this test is about the units, and
+    # the ramp has its own section.
     hass.states.set(TARGET, 100.0, max=6000.0)
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2000.0, 10.0))
+    asyncio.run(_send(hass, entry, 2000.0, 10.0, hub_entry=_hub(margin=2000)))
     assert hass.services.calls[-1][2]["value"] == 2000.0
 
 
@@ -488,7 +522,7 @@ def test_the_register_read_back_is_recorded_for_the_sensor():
     entry = _entry({CONF_BATTERY_NOMINAL_VOLTAGE: 51.2})
     rt = _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
 
     # Read BEFORE the write, so it is the register's value as the inverter last
     # reported it — not an optimistic echo of what we just asked for.
@@ -498,7 +532,7 @@ def test_the_register_read_back_is_recorded_for_the_sensor():
     # The inverter takes the write; a paced-out call still refreshes the read-back
     # even though it writes nothing.
     hass.states.set(TARGET, 50.0, max=100.0)
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 1.0))
+    asyncio.run(_send(hass, entry, 2560.0, 1.0))
 
     assert len(hass.services.calls) == 1
     assert rt[INVERTER_RT_REGISTER] == 50.0
@@ -511,7 +545,7 @@ def test_the_read_back_is_refreshed_while_the_switch_is_off():
     entry = _entry()
     rt = _arm(hass, entry, enabled=False)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
 
     assert hass.services.calls == []
     assert rt[INVERTER_RT_REGISTER] == 80.0
@@ -526,7 +560,7 @@ def test_an_unreadable_register_records_none():
     entry = _entry()
     rt = _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
 
     assert rt[INVERTER_RT_REGISTER] is None
 
@@ -553,13 +587,13 @@ def test_the_enforced_rate_is_the_register_in_watts():
 
     # First engaged cycle: the write is issued, but the register still reports the
     # full 100 A, so the battery may still take its full rate. Nothing narrows yet.
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
     assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 5120.0
 
     # The inverter has taken the write: 50 A at 51.2 V is the 2560 W the forecast
     # asked for, and that is now the rate the battery is permitted.
     hass.states.set(TARGET, 50.0, max=100.0)
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 1000.0))
+    asyncio.run(_send(hass, entry, 2560.0, 1000.0))
     assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 2560.0
 
 
@@ -568,7 +602,7 @@ def test_a_watt_register_needs_no_conversion():
     entry = _entry({CONF_CHARGE_LIMIT_UNIT: "W"})
     rt = _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 6500.0, 0.0))
+    asyncio.run(_send(hass, entry, 6500.0, 0.0))
 
     assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 6500.0
 
@@ -580,7 +614,7 @@ def test_an_unreadable_register_falls_back_to_the_driven_value():
     entry = _entry({CONF_BATTERY_NOMINAL_VOLTAGE: 51.2, CONF_CHARGE_LIMIT_NORMAL: 100})
     rt = _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
 
     assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 2560.0
 
@@ -597,9 +631,9 @@ def test_the_floor_is_part_of_the_enforced_rate():
 
     # A 0 W advice writes the 10 A floor instead; once the register holds it, the
     # enforced rate is that floor, not zero.
-    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 0.0))
+    asyncio.run(_send(hass, entry, 0.0, 0.0))
     hass.states.set(TARGET, 10.0, max=100.0)
-    asyncio.run(send_inverter_charge_limit(hass, entry, 0.0, 1000.0))
+    asyncio.run(_send(hass, entry, 0.0, 1000.0))
 
     assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 512.0
 
@@ -609,7 +643,7 @@ def test_nothing_is_enforced_while_the_switch_is_off():
     entry = _entry({CONF_BATTERY_NOMINAL_VOLTAGE: 51.2})
     rt = _arm(hass, entry, enabled=False)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
 
     # The register may well sit at 50 A — but it is the user's own setting, not a
     # limit we are holding, so the nameplate rate is what the engine should count.
@@ -621,17 +655,271 @@ def test_the_release_clears_the_enforced_rate():
     entry = _entry({CONF_BATTERY_NOMINAL_VOLTAGE: 51.2})
     rt = _arm(hass, entry)
 
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 0.0))
+    asyncio.run(_send(hass, entry, 2560.0, 0.0))
     hass.states.set(TARGET, 50.0, max=100.0)
-    asyncio.run(send_inverter_charge_limit(hass, entry, 2560.0, 1000.0))
+    asyncio.run(_send(hass, entry, 2560.0, 1000.0))
     assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 2560.0
 
     # Evening: the advice releases. The restore write happens once, but the
     # cleared enforcement must hold for every cycle after it.
-    asyncio.run(send_inverter_charge_limit(hass, entry, None, 2000.0))
+    asyncio.run(_send(hass, entry, None, 2000.0))
     assert rt[INVERTER_RT_ENFORCED_CHARGE_W] is None
-    asyncio.run(send_inverter_charge_limit(hass, entry, None, 3000.0))
+    asyncio.run(_send(hass, entry, None, 3000.0))
     assert rt[INVERTER_RT_ENFORCED_CHARGE_W] is None
+
+
+# --- The asymmetric slew limit (the ramp) -------------------------------------
+#
+# Why it exists, from the maintainer's live site on 2026-08-24: every time the
+# forecast ceiling self-healed upward (98 → 99 → 100 % as the clip burned down)
+# the latch disarmed, the release wrote the full normal value in ONE step, and
+# the battery drank ~10 kW out of exportable power for ten minutes — the
+# clipping reserve spent on exactly the energy it was being kept for, ahead of
+# the peak it was kept for.
+#
+# The release SEMANTICS were right ("less reserve needed, you may refill"); the
+# step response was the defect. So the written value may climb by at most one
+# Excess trigger margin's worth of watts per write, converted into the target
+# register's own units, while a DOWNWARD move — engaging the limit, the
+# protection direction — still lands in a single write.
+#
+# The bound is the trigger margin and not a knob of its own by construction: the
+# engaged advice is anchored one margin below the export limit, so a masked site
+# self-creeps upward by about one margin per write (commit 91aa5ed). A ramp
+# bounded at exactly that lets the creep through untouched — proved below rather
+# than argued.
+
+SITE_NORMAL = 187.0  # A — the maintainer's register at full rate, ~9.6 kW
+SITE_VOLTAGE = 51.2
+SITE_INTERVAL = 60.0  # s between writes, as that site is configured
+MARGIN_AMPS = DEFAULT_EXCESS_TRIGGER_MARGIN / SITE_VOLTAGE  # 9.77 A per write
+
+
+def _site_entry(options=None):
+    """The maintainer's inverter: 187 A normal, 2 A floor, one write a minute."""
+    return _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: SITE_VOLTAGE,
+        CONF_CHARGE_LIMIT_NORMAL: SITE_NORMAL,
+        CONF_CHARGE_LIMIT_MINIMUM: 2,
+        CONF_CHARGE_CONTROL_INTERVAL: SITE_INTERVAL,
+        **(options or {}),
+    })
+
+
+def _accepting_site():
+    """A hass whose register starts at full rate, plus that entry."""
+    hass = _hass_with_target(current=SITE_NORMAL, maximum=SITE_NORMAL)
+    entry = _site_entry()
+    return hass, entry, _arm(hass, entry)
+
+
+def _cycle(hass, entry, advice_w, now, hub_entry=None):
+    """One cycle with the inverter APPLYING whatever we last wrote.
+
+    The register following our writes is what the ramp is measured against in
+    real life — the read-back feeds the deadband — so these tests apply it
+    rather than leaving the register frozen.
+    """
+    if hass.services.calls:
+        hass.states.set(
+            TARGET, hass.services.calls[-1][2]["value"], max=SITE_NORMAL
+        )
+    asyncio.run(_send(hass, entry, advice_w, now, hub_entry=hub_entry))
+
+
+def _written(hass):
+    return [call[2]["value"] for call in hass.services.calls]
+
+
+# --- The step, as arithmetic ---------------------------------------------------
+
+
+def test_the_slew_step_is_the_trigger_margin_in_the_registers_units():
+    """One margin of WATTS per write, converted like everything else here."""
+    assert slew_margin_w(_hub()) == DEFAULT_EXCESS_TRIGGER_MARGIN == 500
+    assert slew_margin_w(_hub(margin=800)) == 800.0
+    # An amp register divides by the battery voltage; a watt register does not.
+    assert slew_step(500.0, "A", 51.2, deadband=0) == 500.0 / 51.2
+    assert slew_step(500.0, "W", 51.2, deadband=0) == 500.0
+
+
+def test_an_unresolvable_hub_falls_back_to_the_default_margin():
+    """A hub mid-reload must not read as a site with no rate limit at all."""
+    assert slew_margin_w(None) == DEFAULT_EXCESS_TRIGGER_MARGIN
+
+
+def test_no_trigger_margin_at_all_means_no_rate_limit():
+    """A site with no margin has no natural step to borrow, and this module does
+    not get to invent one — None is 'the value stands'."""
+    assert slew_step(0.0, "A", 51.2, deadband=5) is None
+    assert slew_step(-100.0, "W", 51.2, deadband=5) is None
+    assert slew_limited(100.0, 10.0, None) == 100.0
+
+
+def test_the_step_is_never_smaller_than_the_deadband():
+    """A step the deadband would swallow is not a slower ramp — it is no ramp,
+    every write suppressed and the register left held down for the day."""
+    assert slew_step(500.0, "W", 51.2, deadband=800) == 800.0
+    assert slew_step(500.0, "W", 51.2, deadband=100) == 500.0
+
+
+def test_only_upward_moves_are_limited():
+    """The asymmetry itself, in one place."""
+    assert slew_limited(desired=100.0, baseline=50.0, step=10.0) == 60.0
+    assert slew_limited(desired=55.0, baseline=50.0, step=10.0) == 55.0  # short hop
+    # Downward is the protection direction: any distance, one write.
+    assert slew_limited(desired=2.0, baseline=187.0, step=10.0) == 2.0
+    # Nothing to measure a rise against.
+    assert slew_limited(desired=100.0, baseline=None, step=10.0) == 100.0
+
+
+def test_the_ramp_is_measured_from_the_last_value_we_wrote():
+    """Our own write, not the read-back: a ramp that waited for the register to
+    catch up would stall on a slow poll and leave the battery limited."""
+    assert ramp_baseline(applied=50.0, current=187.0) == 50.0
+    # Except when there is no memory to use — the first write after a reload.
+    assert ramp_baseline(applied=None, current=187.0) == 187.0
+    assert ramp_baseline(applied=None, current=None) is None
+
+
+# --- Engaging is never rate-limited ------------------------------------------
+
+
+def test_engaging_deeper_is_never_rate_limited():
+    """Downward from anywhere, at any depth, in one write — the slew must not be
+    able to delay protection."""
+    hass, entry, _rt = _accepting_site()
+
+    _cycle(hass, entry, 9574.0, 0.0)  # 187 A: full rate, engaged
+    _cycle(hass, entry, 0.0, SITE_INTERVAL)  # straight to the floor
+
+    assert _written(hass)[-1] == 2.0
+
+
+# --- The masked-site self-creep passes through untouched ----------------------
+
+
+def test_the_engaged_self_creep_passes_the_slew_without_delay():
+    """The construction argument, as a replay.
+
+    The masked-site trajectory from commit 91aa5ed's own tests — the advice
+    climbing by exactly one Excess trigger margin per write while export is
+    pinned at the limit — driven through the control layer. Every advice is
+    written in full on the cycle it arrives: the ramp bound IS that step, so the
+    escape from masking is not slowed by a single write.
+    """
+    hass = _hass_with_target(current=187.0, maximum=SITE_NORMAL)
+    entry = _site_entry()
+    _arm(hass, entry)
+
+    # 1000 W → 6500 W in 500 W steps: test_masked_site_replay_self_creeps_off_
+    # the_hard_limit's trajectory, in watts.
+    trajectory = [1000.0 + 500.0 * n for n in range(12)]
+    for minute, advice_w in enumerate(trajectory):
+        _cycle(hass, entry, advice_w, minute * SITE_INTERVAL)
+
+    written = _written(hass)
+    assert len(written) == len(trajectory)
+    # Each write is the advice itself, converted — never a shaved-down step.
+    assert written == [round(w / SITE_VOLTAGE, 1) for w in trajectory]
+
+
+def test_a_creep_faster_than_one_margin_is_the_one_that_gets_held():
+    """The bound bites exactly where it should: double the margin per cycle and
+    half of it is deferred to the next write."""
+    hass = _hass_with_target(current=187.0, maximum=SITE_NORMAL)
+    entry = _site_entry()
+    _arm(hass, entry)
+
+    _cycle(hass, entry, 1000.0, 0.0)
+    _cycle(hass, entry, 2000.0, SITE_INTERVAL)  # +1000 W, two margins
+
+    written = _written(hass)
+    assert written[0] == round(1000.0 / SITE_VOLTAGE, 1)  # 19.5 A
+    assert written[1] == round(written[0] + MARGIN_AMPS, 1)  # 29.3, not 39.1
+
+
+# --- Register units and the reload baseline ----------------------------------
+
+
+def test_a_watt_register_ramps_in_watts_with_no_conversion():
+    """Step = the margin itself, straight from the setting."""
+    hass = _hass_with_target(current=200.0, maximum=10000.0)
+    entry = _entry({
+        CONF_CHARGE_LIMIT_UNIT: "W",
+        CONF_CHARGE_LIMIT_NORMAL: 10000,
+        CONF_CHARGE_CONTROL_INTERVAL: 60,
+    })
+    rt = _arm(hass, entry)
+    rt[INVERTER_RT_APPLIED] = 200.0
+
+    # The deadband is 5 % of 10 kW = 500 W, the same as the margin here, so the
+    # step is exactly one margin.
+    asyncio.run(_send(hass, entry, 9000.0, 100.0))
+    assert hass.services.calls[-1][2]["value"] == 700.0
+
+    hass.states.set(TARGET, 700.0, max=10000.0)
+    asyncio.run(_send(hass, entry, 9000.0, 160.0))
+    assert hass.services.calls[-1][2]["value"] == 1200.0
+
+
+def test_the_first_write_after_a_reload_ramps_from_the_register():
+    """No applied marker survives a reload, so the register's own read-back is
+    the baseline — otherwise the very cycle after a restart would be the
+    full-rate step this whole thing exists to prevent."""
+    hass = _hass_with_target(current=20.0, maximum=SITE_NORMAL)
+    entry = _site_entry()
+    rt = _arm(hass, entry)
+    assert rt.get(INVERTER_RT_APPLIED) is None
+
+    asyncio.run(_send(hass, entry, 9574.0, 0.0))  # advice at full rate
+
+    assert hass.services.calls[-1][2]["value"] == round(20.0 + MARGIN_AMPS, 1)
+
+
+def test_an_unreadable_register_and_no_marker_writes_the_advice():
+    """Nothing to ramp from at all — a guessed baseline would be worse than
+    none, so the value stands (and the deadband has nothing to compare either)."""
+    hass = _Hass()
+    hass.states.set(TARGET, "unavailable")
+    entry = _site_entry()
+    _arm(hass, entry)
+
+    asyncio.run(_send(hass, entry, 9574.0, 0.0))
+
+    assert hass.services.calls[-1][2]["value"] == SITE_NORMAL
+
+
+# --- Where the step comes from ------------------------------------------------
+
+
+def test_the_margin_is_read_from_the_hub_not_the_inverter_entry():
+    """The slew step is a SITE-level number, so it is threaded in from the hub
+    beside the inverter entry — the same way the site voltage reaches
+    control/ocpp.py. A margin stored on the inverter entry is not a setting at
+    all and must not be picked up as one.
+    """
+    hass = _hass_with_target(current=20.0, maximum=SITE_NORMAL)
+    entry = _site_entry({CONF_EXCESS_TRIGGER_MARGIN: 5000})  # not a real setting
+    _arm(hass, entry)
+
+    asyncio.run(_send(hass, entry, 9574.0, 0.0, hub_entry=_hub(margin=1024)))
+
+    # 1024 W at 51.2 V is a 20 A step from the register's 20 A — the hub's
+    # number, not the inverter's 5000 W and not the 500 W default.
+    assert hass.services.calls[-1][2]["value"] == 40.0
+
+
+def test_a_hub_with_the_margin_switched_off_writes_in_one_step():
+    """No margin, no ramp: the site has no natural step, and this module does not
+    invent one behind the user's back."""
+    hass = _hass_with_target(current=20.0, maximum=SITE_NORMAL)
+    entry = _site_entry()
+    _arm(hass, entry)
+
+    asyncio.run(_send(hass, entry, 9574.0, 0.0, hub_entry=_hub(margin=0)))
+
+    assert hass.services.calls[-1][2]["value"] == SITE_NORMAL
 
 
 # --- Cadence independence -----------------------------------------------------
@@ -666,7 +954,7 @@ def _write_times(cadence_s, duration_s, interval=WRITE_INTERVAL, advice_w=2560.0
     seen = 0
     now = 0.0
     while now <= duration_s:
-        asyncio.run(send_inverter_charge_limit(hass, entry, advice_w, now))
+        asyncio.run(_send(hass, entry, advice_w, now))
         if len(hass.services.calls) > seen:
             seen = len(hass.services.calls)
             times.append(now)

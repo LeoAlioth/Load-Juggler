@@ -511,6 +511,21 @@ class InverterEntityMixin(LoadJugglerEntity):
     def _site_hub_entry_id(self):
         return self.config_entry.data.get(CONF_HUB_ENTRY_ID)
 
+    @property
+    def _hub_entry(self):
+        """This inverter's hub ConfigEntry, or None if it has no resolvable hub.
+
+        The same idea as ``LoadEntityMixin._hub_entry``, resolved from the config
+        entries rather than from the hub's runtime bucket: an inverter's write
+        controls need site-level settings (the Excess trigger margin that bounds
+        their slew), and config is config — a hub mid-reload must not read as a
+        site with no settings.
+        """
+        hub_entry_id = self._site_hub_entry_id
+        if not hub_entry_id:
+            return None
+        return self.hass.config_entries.async_get_entry(hub_entry_id)
+
     def _inverter_runtime(self) -> dict:
         """This inverter's runtime dict in ``hass.data[DOMAIN]["inverters"]``."""
         return (
