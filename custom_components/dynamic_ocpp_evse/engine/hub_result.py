@@ -259,6 +259,35 @@ def _compute_forecast_advice(
     }, per_inverter
 
 
+def _draw_is_unknown(load, booked):
+    """Whether this load's published draw would be a fabrication.
+
+    Two conditions, and both are needed:
+
+    * its monitor produced no reading (``draw_assumed`` — configured, but
+      unreadable with nothing held), and
+    * we have reason to believe it could be drawing: the engine booked
+      footprint for it this cycle (``load_targets``, which for an unmetered
+      EVSE is its whole permit), or it reports itself active — a car connected,
+      a thermostat calling for heat, a switch that is on.
+
+    The second half is what keeps this from blanking Current Managed Power
+    across a whole site because one idle charger is offline — by far the common
+    case, since an offline OCPP charger takes every one of its sensors with it.
+    For a load the engine booked nothing for and that says it is not running,
+    0 W is not a guess: our own allocation and its own status are facts we hold
+    without any meter. Once either says otherwise, the 0 is an invention about a
+    load that may be pulling kilowatts, and no honest total can contain it.
+
+    The booked figure is deliberately ``load_targets`` and not
+    ``load_available``: an inactive load still gets an available current (so the
+    HA layer can switch it back on), so the permit alone would call every
+    offline charger engaged — the exact false positive this rule exists to
+    avoid.
+    """
+    return bool(load.draw_assumed) and ((booked or 0) > 0 or not load.reports_idle)
+
+
 def _build_hub_result(
     site,
     raw_phases,
@@ -320,7 +349,30 @@ def _build_hub_result(
     its solar is derived from the inverter output or grid export, and nothing
     there is invented. Per-inverter figures are handled one member at a time in
     hub_calculation.py, where each member has a published sensor of its own.
+
+    The third case is the managed draws (``LoadContext.draw_assumed``, resolved
+    per load by ``_draw_is_unknown`` below): an unreadable current or power
+    monitor leaves its load carrying 0 A, so a charging car could publish 0 W
+    of ``total_evse_power``. The internal 0 stays — it is the conservative
+    figure for the feedback loop, which subtracts managed draws from the grid
+    CTs — while ``total_evse_power``, that load's ``load_draw`` entry and
+    ``household_power`` publish None. Household joins them because EVERY form
+    of it nets the managed draw out (the identity subtracts it; the per-phase
+    form is built on post-feedback consumption), so a fabricated 0 leaves the
+    car's kilowatts sitting inside the household figure. ``total_export_power``
+    does NOT: with the draw at 0 the feedback loop subtracts nothing, so the
+    published export degrades to the CT's own reading rather than to an
+    invented number.
     """
+    # Which loads carry an invented 0 draw this cycle (see _draw_is_unknown).
+    # Resolved once, here, because both the per-load figure and the total need
+    # the same answer, and it needs this cycle's permits.
+    draw_unknown = {
+        c.load_id: _draw_is_unknown(c, load_targets.get(c.load_id))
+        for c in site.loads
+    }
+    managed_draw_assumed = any(draw_unknown.values())
+
     # Grid available power (based on consumption after feedback loop).
     # Off-grid there is no grid feed at all — headroom is 0 by definition.
     if site.is_off_grid:
@@ -537,9 +589,15 @@ def _build_hub_result(
     )
     published_household_power = (
         None
-        if grid_assumed or (solar_assumed and household_from_solar)
+        if grid_assumed
+        or (solar_assumed and household_from_solar)
+        or managed_draw_assumed
         else household_power
     )
+    # The managed draw: the total while every engaged load's contribution is a
+    # reading, and each load's own figure the same way. Per load because each
+    # has a published figure of its own, exactly like the per-inverter solar.
+    published_evse_power = None if managed_draw_assumed else total_evse_power
 
     # Build per-load operating modes dict
     load_modes = {c.load_id: c.operating_mode for c in site.loads}
@@ -560,7 +618,11 @@ def _build_hub_result(
     # device draws right now, which can be far below its reserved allocation
     # (e.g. a metered plug switched on but its appliance idle).
     load_draw = {
-        c.load_id: round(c.l1_current + c.l2_current + c.l3_current, 1)
+        c.load_id: (
+            None
+            if draw_unknown[c.load_id]
+            else round(c.l1_current + c.l2_current + c.l3_current, 1)
+        )
         for c in site.loads
     }
 
@@ -599,7 +661,7 @@ def _build_hub_result(
         "grid_power": published_grid_power,
         "available_grid_power": round(grid_headroom, 0),
         "available_battery_power": battery_remaining,
-        "total_evse_power": total_evse_power,
+        "total_evse_power": published_evse_power,
         "household_power": published_household_power,
         "solar_power": published_solar_power,
         "available_solar_power": round(solar_available, 0),

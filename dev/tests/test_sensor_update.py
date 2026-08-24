@@ -28,6 +28,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_CHARGER_ID,
     CONF_OCPP_DEVICE_ID,
     CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
+    CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID,
+    CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID,
+    CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID,
     CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
     CONF_EVSE_POWER_OFFERED_ENTITY_ID,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
@@ -1702,6 +1705,244 @@ async def test_current_solar_power_clears_when_the_sensor_dies_mid_run(hass):
     await sensor.async_update()
     assert sensor.native_value is not None
     assert sensor.native_value > 0
+
+
+# ── Unreadable load monitor: 0 A for the loop, nothing published ─────
+
+
+def _set_charger_import(hass, state, attrs=None):
+    """Whatever the charger's Current Import sensor is doing this cycle."""
+    hass.states.async_set(
+        "sensor.test_charger_current_import",
+        state,
+        {
+            "device_class": "current",
+            "unit_of_measurement": "A",
+            **(attrs or {}),
+        },
+    )
+
+
+async def test_a_charging_car_with_a_dead_monitor_publishes_no_managed_power(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """The defect: a charging car could publish 0 W of Current Managed Power.
+
+    Its Current Import sensor is unreadable, so the load carries 0 A into the
+    cycle. That 0 is deliberately conservative for the feedback loop — which
+    subtracts managed draws from the grid CTs, and must never subtract more
+    than it can see — so it stays. What must not happen is publishing it: a car
+    pulling 7 kW reported as 0 W, in the sensor and in long-term statistics.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    _set_charger_import(hass, STATE_UNAVAILABLE)  # the car is still "Charging"
+
+    result = run_hub_calculation(hass, hub_entry)
+
+    # --- The measurement side: nothing at all. ---
+    assert result["total_evse_power"] is None
+    assert result["load_draw"][charger_entry.entry_id] is None
+    # Every household form nets the managed draw out, so it carries the same
+    # fabrication — the car's kilowatts would sit inside the household figure.
+    assert result["household_power"] is None
+
+    # --- The allocation side keeps publishing, exactly as before. ---
+    assert result["load_targets"][charger_entry.entry_id] > 0
+    assert result["load_available"][charger_entry.entry_id] > 0
+    assert result[CONF_TOTAL_ALLOCATED_CURRENT] > 0
+    # The grid measurement is the raw CT reading and is untouched by any of it.
+    assert result["grid_power"] is not None
+
+    # --- The feedback loop's view: still the conservative 0 A. ---
+    # A genuine 0 A reading gives byte-identical grid headroom, which is what
+    # "the internal zero stays" means — nothing was handed back to the pools.
+    _set_charger_import(
+        hass, "0.0", {"l1_current": 0.0, "l2_current": 0.0, "l3_current": 0.0}
+    )
+    measured_zero = run_hub_calculation(hass, hub_entry)
+    assert measured_zero["available_grid_power"] == result["available_grid_power"]
+    # ...and a MEASURED 0 W publishes. Only the invented one is the bug.
+    assert measured_zero["total_evse_power"] == 0
+    assert measured_zero["household_power"] is not None
+
+
+async def test_an_idle_charger_with_a_dead_monitor_still_publishes_zero(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """No car connected: 0 W is a fact, not a guess.
+
+    An offline OCPP charger takes all of its sensors with it — status included
+    — so this is the common case, and blanking Current Managed Power for every
+    site with an idle charger would be a worse bug than the one being fixed.
+    The engine books nothing for it and it reports itself inactive; both are
+    things we know without a meter.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    _set_charger_import(hass, STATE_UNAVAILABLE)
+    hass.states.async_set("sensor.test_charger_status_connector", "Available")
+
+    result = run_hub_calculation(hass, hub_entry)
+
+    assert result["load_targets"][charger_entry.entry_id] == 0
+    assert result["total_evse_power"] == 0
+    assert result["load_draw"][charger_entry.entry_id] == 0
+    assert result["household_power"] is not None
+
+
+async def test_a_healthy_monitor_resumes_managed_power_publication(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """The silence lasts exactly as long as the monitor is unreadable."""
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    _set_charger_import(hass, STATE_UNAVAILABLE)
+    assert run_hub_calculation(hass, hub_entry)["total_evse_power"] is None
+
+    _set_ha_states(hass, hub_entry)  # 10 A on L1 again
+    recovered = run_hub_calculation(hass, hub_entry)
+    assert recovered["total_evse_power"] == round(10.0 * 230, 0)
+    assert recovered["load_draw"][charger_entry.entry_id] == 10.0
+    assert recovered["household_power"] is not None
+
+
+async def test_one_dead_phase_sensor_fabricates_the_whole_draw(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Per-phase monitors: a partly-read draw is still a fabricated total.
+
+    Two of three phase sensors read, the third is unreadable and silently
+    contributes 0 A — which makes the sum look measured while it is short by
+    whatever that phase is really pulling. There is no per-phase managed-power
+    figure published to partial it out into, so the total goes.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    per_phase = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Per-phase Charger",
+        data={
+            CONF_ENTITY_ID: "pp_charger",
+            CONF_NAME: "Per-phase Charger",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_CHARGER_ID: "pp_charger",
+            CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID: "sensor.pp_l1",
+            CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID: "sensor.pp_l2",
+            CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID: "sensor.pp_l3",
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={
+            CONF_LOAD_PRIORITY: 1,
+            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+        },
+    )
+    _set_ha_states(hass, hub_entry)
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["loads"] = [per_phase.entry_id]
+    hass.data[DOMAIN]["loads"] = {
+        per_phase.entry_id: {
+            "entry": per_phase,
+            "hub_entry_id": hub_entry.entry_id,
+            "dynamic_control": True,
+        }
+    }
+    hass.states.async_set("sensor.pp_charger_status_connector", "Charging")
+    for entity, value in (
+        ("sensor.pp_l1", "10.0"),
+        ("sensor.pp_l2", "10.0"),
+        ("sensor.pp_l3", STATE_UNAVAILABLE),
+    ):
+        hass.states.async_set(
+            entity, value,
+            {"device_class": "current", "unit_of_measurement": "A"},
+        )
+
+    result = run_hub_calculation(hass, hub_entry, load_entries=[per_phase])
+
+    assert result["total_evse_power"] is None
+    assert result["load_draw"][per_phase.entry_id] is None
+    # The engine still saw the two phases it could read — the internal draw is
+    # untouched, so allocation and the feedback loop behave exactly as before.
+    assert result["load_targets"][per_phase.entry_id] > 0
+
+    # All three readable: the total publishes again.
+    hass.states.async_set(
+        "sensor.pp_l3", "10.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    healthy = run_hub_calculation(hass, hub_entry, load_entries=[per_phase])
+    assert healthy["total_evse_power"] == round(30.0 * 230, 0)
+
+
+async def test_current_managed_power_sensor_reads_unknown_mid_charge(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Entity tier, and the mid-run hold: a monitor can die at any moment.
+
+    Unlike the grid failsafe, this None is reachable mid-run — the car is
+    charging and its meter simply stops answering. A sensor that HELD its last
+    value would keep graphing 2.3 kW of managed power against a car whose draw
+    is unknown, so the hub data sensors clear instead (entities/hub.py).
+    """
+    from custom_components.dynamic_ocpp_evse.entities.hub import publish_hub_data
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    defn = next(
+        d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "total_evse_power"
+    )
+    sensor = DynamicOcppEvseHubDataSensor(
+        hass, hub_entry, "Test Hub", "test_hub", defn
+    )
+
+    publish_hub_data(hass, hub_entry.entry_id, run_hub_calculation(hass, hub_entry))
+    await sensor.async_update()
+    assert sensor.native_value == round(10.0 * 230, 0)
+
+    _set_charger_import(hass, STATE_UNAVAILABLE)
+    published = publish_hub_data(
+        hass, hub_entry.entry_id, run_hub_calculation(hass, hub_entry)
+    )
+    assert published["total_evse_power"] is None
+    await sensor.async_update()
+    assert sensor.native_value is None
+    assert sensor.available is True
+
+    _set_ha_states(hass, hub_entry)
+    publish_hub_data(hass, hub_entry.entry_id, run_hub_calculation(hass, hub_entry))
+    await sensor.async_update()
+    assert sensor.native_value == round(10.0 * 230, 0)
 
 
 # ── Result dict completeness test ────────────────────────────────────

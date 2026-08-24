@@ -13,7 +13,13 @@ Clear architecture:
 
 import logging
 
-from .models import SiteContext, LoadContext, PhaseConstraints, CircuitGroup
+from .models import (
+    INACTIVE_STATUSES,
+    SiteContext,
+    LoadContext,
+    PhaseConstraints,
+    CircuitGroup,
+)
 from ..const import (
     BEHAVIOR_FULL_POWER,
     BEHAVIOR_SOLAR_PRIORITY,
@@ -90,17 +96,21 @@ def calculate_all_load_targets(site: SiteContext) -> None:
     # current so the HA layer can permit them to switch back on. A plug has no
     # connector and is always active: an off plug reports "Available", and
     # treating that as inactive would leave it stuck off forever.
-    _INACTIVE_STATUSES = {"Available", "Unknown", "Unavailable", "Finishing", "Faulted"}
+    #
+    # The membership itself lives in models.INACTIVE_STATUSES, because the
+    # publisher asks the same question of a load whose power monitor cannot be
+    # read (engine/hub_result.py) — without the plug carve-out, which is a
+    # distribution rule rather than a statement about drawing power.
     all_loads = site.loads
     active_loads = [
         c for c in all_loads
         if c.device_type == DEVICE_TYPE_PLUG
-        or c.connector_status not in _INACTIVE_STATUSES
+        or c.connector_status not in INACTIVE_STATUSES
     ]
     inactive_loads = [
         c for c in all_loads
         if c.device_type != DEVICE_TYPE_PLUG
-        and c.connector_status in _INACTIVE_STATUSES
+        and c.connector_status in INACTIVE_STATUSES
     ]
 
     _mode_summary = ", ".join(
