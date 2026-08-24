@@ -807,7 +807,13 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS
     )
     # Charge capacity sums only members whose own battery is below its own
-    # full-SOC; discharge is summed after the SOC-min hysteresis latch below.
+    # full-SOC, and sums what each one is PERMITTED to take rather than its
+    # nameplate rate: while our own Battery Charge Control holds a member's
+    # register below that rate, the difference is not somewhere this site can
+    # place production (see fleet.charge_power_total). This scalar has exactly
+    # one consumer, the Excess verdict — calculations.excess_margin — so the
+    # narrowing reaches nothing else. Discharge is summed after the SOC-min
+    # hysteresis latch below.
     battery_max_charge_power = fleet.charge_power_total(members)
 
     max_grid_import_power = _read_max_import_power(hass, hub_entry)

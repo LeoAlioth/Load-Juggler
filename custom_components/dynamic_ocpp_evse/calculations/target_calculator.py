@@ -637,6 +637,17 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
       allowance is 0. A full battery draws no charge power, so leaving its rating
       in the allowance would make the sum unreachable exactly when the site is
       dumping the most energy.
+    - **A battery being held below its rating**: the allowance is the rate it is
+      PERMITTED to take, which is what ``site.battery_max_charge_power`` carries.
+      Same principle as the full battery, one step short of it: while our own
+      charge control holds an inverter's register at, say, 6.5 kW of a 10 kW
+      rating — the PV clipping forecast reserving room for the afternoon — the
+      missing 3.5 kW is not a place this site can put production either, and
+      counting it would make the sum unreachable for the whole clipping window,
+      which is precisely when the surplus Excess loads exist to soak up appears.
+      Only actual enforcement narrows it; a battery merely *advised* a lower rate
+      still charges at its rating. The engine assembles the number
+      (``engine/fleet.charge_power_total``) — this stays one figure in watts.
 
     Zero counts as on, because it is the saturated case — export sitting at the
     allowance *and* the battery pulling its maximum charge rate is precisely
@@ -675,6 +686,11 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     if not battery_present or battery_full:
         charge_allowance = 0.0
     else:
+        # The rate the battery is PERMITTED to take, not its nameplate rating —
+        # the engine narrows this scalar to whatever our charge control is
+        # actually enforcing (see the docstring). Everything below is unchanged
+        # by that: a narrower allowance is a smaller headroom in exactly the same
+        # way a partly-charged battery is, so the draw add-back keeps cancelling.
         charge_allowance = site.battery_max_charge_power or 0
 
     if site.is_off_grid:
@@ -703,7 +719,12 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
         # and restore the per-phase demand that charging represents. Whatever
         # the battery cannot take stays where the feedback loop put it, on the
         # export side. A saturated (or full, or absent) battery has no headroom,
-        # so nothing moves and this is exactly the plain gross reading.
+        # so nothing moves and this is exactly the plain gross reading — and a
+        # battery sitting on an enforced charge limit is saturated in precisely
+        # that sense, which is why narrowing the allowance to the enforced rate
+        # cannot make the verdict move when a load starts: the load's draw was
+        # taken off the grid readings, the battery has no room to be handed it
+        # back, so it stays on the export side and the margin is unchanged.
         headroom = (
             max(0.0, charge_allowance - charge_power)
             if (site.battery_power or 0) <= 0

@@ -80,6 +80,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CHARGE_LIMIT_UNIT_WATTS,
     INVERTER_RT_APPLIED,
     INVERTER_RT_CONTROL_ENABLED,
+    INVERTER_RT_ENFORCED_CHARGE_W,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     INVERTER_RT_SOC_CONTROL_ENABLED,
@@ -3527,3 +3528,208 @@ async def test_composed_status_name_still_used_without_a_registry_entry(
     load = _build_evse_load(hass, charger_entry, 230, "test_charger", 1)
 
     assert load.connector_status == "SuspendedEV"
+
+
+# ── The Excess verdict counts only the rate the battery MAY take ───────
+#
+# The engine half of the narrowing. The charge control publishes what it is
+# holding a member's register at (INVERTER_RT_ENFORCED_CHARGE_W, written by
+# control/inverter.py and covered in dev/tests/test_inverter_control.py); the
+# fleet read picks it up per member, and the Excess verdict's battery allowance
+# becomes the sum of the PERMITTED rates instead of the nameplate ones.
+#
+# One cycle behind by nature: the register write is a site-cycle worker that runs
+# after the result is published, so a cycle can only know what the previous
+# cycle's write enforced. That is what these drive — the runtime dict as the
+# hand-off, and the published excess_margin_power as the visible consequence.
+
+CLIP_EXPORT_LIMIT = 9200.0  # W — the site's hard export limit
+CLIP_EXPORT_A = 40.0  # A on phase A = 9200 W leaving the site
+CLIP_THRESHOLD = CLIP_EXPORT_LIMIT - 500.0  # the default trigger margin below it
+ENFORCING_NAMEPLATE = 10000.0
+ADVICE_ONLY_NAMEPLATE = 4000.0
+ENFORCED_RATE = 6500.0
+
+
+@pytest.fixture
+def clipping_hub() -> MockConfigEntry:
+    """A one-phase hub with an export limit and no battery of its own.
+
+    No hub-level battery fields on purpose: every battery belongs to an inverter
+    entry here, so the fleet is exactly the two members below and each one's
+    share of the allowance is attributable.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Clipping Hub",
+        data={
+            CONF_NAME: "Clipping Hub",
+            CONF_ENTITY_ID: "clipping_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.clip_phase_a",
+            CONF_MAIN_BREAKER_RATING: 63,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_GRID_EXPORT_LIMIT: CLIP_EXPORT_LIMIT,
+        },
+    )
+
+
+def _battery_inverter(hub, title, entity_id, charge_cap):
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title=title,
+        data={
+            CONF_NAME: title,
+            CONF_ENTITY_ID: entity_id,
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options={
+            CONF_BATTERY_SOC_ENTITY_ID: f"sensor.{entity_id}_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: f"sensor.{entity_id}_power",
+            CONF_BATTERY_MAX_CHARGE_POWER: charge_cap,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: charge_cap,
+        },
+    )
+
+
+def _clipping_site_states(hass, enforcing, advice_only):
+    """Midday: 9.2 kW leaving the site, both batteries pinned at their own rate.
+
+    The enforcing member is charging at the 6.5 kW its register is being held to,
+    the advice-only one at its full 4 kW plate — so the site is placing every watt
+    it can, which is exactly the state the verdict has to recognise.
+    """
+    hass.states.async_set(
+        "sensor.clip_phase_a", str(-CLIP_EXPORT_A),
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    for entry, power in ((enforcing, -ENFORCED_RATE), (advice_only, -ADVICE_ONLY_NAMEPLATE)):
+        name = entry.data[CONF_ENTITY_ID]
+        hass.states.async_set(
+            f"sensor.{name}_soc", "70",
+            {"device_class": "battery", "unit_of_measurement": "%"},
+        )
+        hass.states.async_set(
+            f"sensor.{name}_power", str(power),
+            {"device_class": "power", "unit_of_measurement": "W"},
+        )
+
+
+@pytest.fixture
+def clipping_fleet(hass, clipping_hub):
+    """The hub, its two battery inverters and the runtime buckets, wired up."""
+    enforcing = _battery_inverter(
+        clipping_hub, "Enforcing Hybrid", "enforcing", ENFORCING_NAMEPLATE
+    )
+    advice_only = _battery_inverter(
+        clipping_hub, "Advice Only Hybrid", "advice_only", ADVICE_ONLY_NAMEPLATE
+    )
+    for entry in (clipping_hub, enforcing, advice_only):
+        entry.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {clipping_hub.entry_id: {"entry": clipping_hub, "loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {enforcing.entry_id: {}, advice_only.entry_id: {}},
+    }
+    _clipping_site_states(hass, enforcing, advice_only)
+    return clipping_hub, enforcing, advice_only
+
+
+async def test_the_enforced_rate_round_trips_from_the_runtime_into_the_verdict(
+    hass, clipping_fleet
+):
+    """The hand-off, end to end.
+
+    Cycle one: nothing is being held back, so the allowance is the two nameplate
+    rates (14 kW) and the site — placing 9.2 kW of export plus 10.5 kW of
+    charging — reads 3 kW short of Excess. That is the bug: a clipping window
+    reported as a site with room to spare.
+
+    Cycle two: the charge control has written its limit and recorded the 6.5 kW
+    it is holding the enforcing member to. The allowance becomes the 10.5 kW the
+    two batteries may actually take, and the same readings read +500 W — the
+    watts the site is genuinely placing beyond the Excess threshold.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, enforcing, _advice_only = clipping_fleet
+
+    nameplate = run_hub_calculation(hass, hub)["excess_margin_power"]
+    assert nameplate == pytest.approx(
+        CLIP_EXPORT_LIMIT
+        + ENFORCED_RATE
+        + ADVICE_ONLY_NAMEPLATE
+        - (CLIP_THRESHOLD + ENFORCING_NAMEPLATE + ADVICE_ONLY_NAMEPLATE),
+        abs=1.0,
+    )
+    assert nameplate < 0
+
+    hass.data[DOMAIN]["inverters"][enforcing.entry_id][
+        INVERTER_RT_ENFORCED_CHARGE_W
+    ] = ENFORCED_RATE
+
+    enforced = run_hub_calculation(hass, hub)["excess_margin_power"]
+
+    # Only the enforcing member's share narrowed: the whole difference is the
+    # 3.5 kW its register is forbidding, and the advice-only member's 4 kW plate
+    # is still counted in full.
+    assert enforced - nameplate == pytest.approx(
+        ENFORCING_NAMEPLATE - ENFORCED_RATE, abs=1.0
+    )
+    assert enforced == pytest.approx(500.0, abs=1.0)
+    assert enforced > 0
+
+
+async def test_an_advice_only_fleet_keeps_its_nameplate_allowance(
+    hass, clipping_fleet
+):
+    """Neither switch armed: nothing is written to either inverter, so both
+    batteries really do still charge at their plate rate. Narrowing on the mere
+    existence of a forecast advice would report an allowance the site does not
+    have and engage Excess against a battery still free to absorb."""
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, enforcing, advice_only = clipping_fleet
+    # What an unarmed control leaves behind: the runtime bucket exists (its
+    # sensor is running) and says nothing is being held back.
+    for entry in (enforcing, advice_only):
+        hass.data[DOMAIN]["inverters"][entry.entry_id][
+            INVERTER_RT_ENFORCED_CHARGE_W
+        ] = None
+
+    result = run_hub_calculation(hass, hub)
+
+    assert result["excess_margin_power"] == pytest.approx(-3000.0, abs=1.0)
+
+
+async def test_a_released_limit_hands_the_nameplate_allowance_back(
+    hass, clipping_fleet
+):
+    """Evening: the forecast releases, the control restores full rate and clears
+    what it was enforcing. The allowance must widen again in the same cycle the
+    battery is free — a narrowing that outlived the limit would hold Excess on
+    against a battery with real headroom."""
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, enforcing, _advice_only = clipping_fleet
+    rt = hass.data[DOMAIN]["inverters"][enforcing.entry_id]
+
+    rt[INVERTER_RT_ENFORCED_CHARGE_W] = ENFORCED_RATE
+    assert run_hub_calculation(hass, hub)["excess_margin_power"] > 0
+
+    rt[INVERTER_RT_ENFORCED_CHARGE_W] = None
+    assert run_hub_calculation(hass, hub)["excess_margin_power"] < 0

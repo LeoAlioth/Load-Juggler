@@ -8,7 +8,10 @@ those scalars, applying the per-member gating that the scalar form cannot
 express:
 
 - **Charge power** sums only members whose OWN battery is below its OWN
-  full-SOC. The fleet passes ``battery_soc_full=None`` to SiteContext when
+  full-SOC, and sums the rate each one is PERMITTED to take rather than its
+  nameplate rate — our own charge control may be holding that member's register
+  below it (see ``charge_power_total``). The fleet passes
+  ``battery_soc_full=None`` to SiteContext when
   more than one battery exists, so the calculations-level full gate (which
   only knows the fleet SOC) can never falsely re-zero a partially-full fleet;
   with a single battery the member's real full-SOC is passed through and the
@@ -64,7 +67,13 @@ class FleetMember:
     has_battery_power_entity: bool = False
     battery_soc: Optional[float] = None
     battery_power: Optional[float] = None  # W, + discharging / − charging
-    charge_cap: Optional[float] = None  # W
+    charge_cap: Optional[float] = None  # W — nameplate (configured) charge rate
+    # W — the rate this member's battery is actually PERMITTED to take right
+    # now, when our own Battery Charge Control is holding its charge register
+    # down (INVERTER_RT_ENFORCED_CHARGE_W, read in engine/readers.py). None
+    # whenever nothing is being held back, which includes an advice-only member
+    # — see charge_power_total().
+    enforced_charge_limit: Optional[float] = None
     discharge_cap: Optional[float] = None  # W
     soc_full: Optional[float] = None  # %
     capacity_kwh: Optional[float] = None
@@ -103,11 +112,39 @@ def battery_power_total(members) -> Optional[float]:
 
 
 def charge_power_total(members) -> Optional[float]:
-    """Σ charge caps of members whose OWN battery is below its OWN full-SOC.
+    """Σ PERMITTED charge rates of members whose OWN battery is below its OWN
+    full-SOC.
 
     A member with no SOC reading (or no full-SOC configured) counts as "not
     full" — the classic single-battery engine behaves the same way, gating
     only when both values are known.
+
+    "Permitted" rather than "rated", per member:
+    ``min(charge_cap, enforced_charge_limit)`` while our own Battery Charge
+    Control is holding that member's charge register below its nameplate rate,
+    and the plain ``charge_cap`` otherwise. This is the allowance the Excess
+    verdict compares the site's placed power against
+    (``calculations.excess_margin`` — the only consumer of
+    ``SiteContext.battery_max_charge_power``), and the whole point of the
+    distinction is the clipping window: while the forecast holds the battery at,
+    say, 6.5 kW of a 10 kW rating, the missing 3.5 kW is not somewhere the site
+    can put its production, so counting it would read the site as having room
+    left exactly when it has surplus it cannot place, and Excess loads —
+    which exist to soak that surplus up — could never engage.
+
+    Only ENFORCEMENT narrows. An advice-only member (its switch off, so nothing
+    is written to the inverter) really does still charge at its nameplate rate,
+    so narrowing on the mere existence of an advice would under-report the
+    allowance and over-trigger Excess. That distinction arrives already made:
+    the control publishes a rate only while it is actually holding one, and
+    None otherwise.
+
+    One cycle behind by nature: the register write is performed by a site-cycle
+    worker AFTER the result that carries the advice is published, so what any
+    cycle can know is what the previous cycle's write enforced. At seconds-scale
+    cycles against a forecast that moves over hours, that lag is invisible; and
+    the value is the register's own read-back, so it reports what the battery is
+    permitted rather than what we intend it to be permitted.
     """
     caps = []
     for m in members:
@@ -119,7 +156,10 @@ def charge_power_total(members) -> Optional[float]:
             and m.battery_soc >= m.soc_full
         ):
             continue
-        caps.append(m.charge_cap)
+        cap = m.charge_cap
+        if m.enforced_charge_limit is not None:
+            cap = min(cap, max(0.0, m.enforced_charge_limit))
+        caps.append(cap)
     return sum(caps) if caps else None
 
 

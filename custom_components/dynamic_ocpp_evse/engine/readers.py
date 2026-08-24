@@ -54,8 +54,10 @@ from ..const import (
     DEFAULT_CHARGE_RATE_UNIT,
     DEFAULT_PHASE_VOLTAGE,
     DEFAULT_WIRING_TOPOLOGY,
+    DOMAIN,
     EMA_ALPHA,
     INPUT_STALE_TIMEOUT,
+    INVERTER_RT_ENFORCED_CHARGE_W,
 )
 from ..calculations.utils import is_number
 from ..helpers import get_entry_value
@@ -552,6 +554,29 @@ def _smooth_member_output(output_pv, hub_runtime, ema_inputs, key_prefix):
     return PhaseValues(*smoothed)
 
 
+def _read_enforced_charge_limit(hass, entry):
+    """The charge rate our own control is currently holding this member to, in W.
+
+    Not an entity read: the inverter's charge control records it in that entry's
+    runtime dict (``INVERTER_RT_ENFORCED_CHARGE_W``) as it drives the register,
+    because it is the only place that knows whether the switch is armed, what the
+    register actually reads back, and what unit that register counts in.
+
+    None whenever nothing is being held back — switch off, no advice, released,
+    no register configured at all, or simply before the first write pass of a
+    fresh start — and None is exactly what leaves the member at its nameplate
+    charge rate in ``fleet.charge_power_total()``. The legacy hub member has no
+    charge control of its own (it is a per-inverter-entry feature), so it lands
+    on None through the same lookup rather than through a special case.
+    """
+    entry_id = getattr(entry, "entry_id", None)
+    if not entry_id:
+        return None
+    inverter_rt = hass.data.get(DOMAIN, {}).get("inverters", {}).get(entry_id) or {}
+    value = inverter_rt.get(INVERTER_RT_ENFORCED_CHARGE_W)
+    return float(value) if is_number(value) else None
+
+
 def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy):
     """Read one inverter (an inverter entry, or the hub's legacy fields) into
     a FleetMember. ``legacy`` selects the historic EMA key namespace."""
@@ -618,6 +643,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         battery_soc=float(battery_soc) if battery_soc is not None else None,
         battery_power=float(battery_power) if battery_power is not None else None,
         charge_cap=get_entry_value(entry, CONF_BATTERY_MAX_CHARGE_POWER, None),
+        enforced_charge_limit=_read_enforced_charge_limit(hass, entry),
         discharge_cap=get_entry_value(entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None),
         soc_full=get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL),
         capacity_kwh=get_entry_value(

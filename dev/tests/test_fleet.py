@@ -129,6 +129,59 @@ def test_single_member_charge_cap_passthrough_below_full():
     assert charge_power_total([_battery(soc=80, charge=5000)]) == 5000
 
 
+# --- Charge capacity: what the battery is PERMITTED to take ---------------------
+#
+# The sum is the allowance the Excess verdict compares the site's placed power
+# against, so it must be the rate each battery MAY take. While our own charge
+# control holds a member's register below its nameplate rate — the PV clipping
+# forecast reserving room for the afternoon — the difference is not a place the
+# site can put production. Only enforcement narrows: a member that is merely
+# advised a lower rate (its switch off) still charges at its rating.
+
+def test_an_enforced_limit_narrows_that_members_share():
+    # 10 kW rated, held at 6.5 kW by the forecast: 6.5 kW is what it may take.
+    members = [_battery(soc=70, charge=10000, enforced_charge_limit=6500)]
+    assert charge_power_total(members) == 6500
+
+
+def test_an_advice_only_member_keeps_its_nameplate_rate():
+    # Nothing is written to this inverter, so it really does still charge at its
+    # rating — narrowing here would under-report the allowance and over-trigger.
+    members = [_battery(soc=70, charge=10000, enforced_charge_limit=None)]
+    assert charge_power_total(members) == 10000
+
+
+def test_only_the_enforcing_member_of_a_mixed_fleet_narrows():
+    members = [
+        _battery("enforcing", soc=70, charge=10000, enforced_charge_limit=6500),
+        _battery("advice_only", soc=70, charge=4000),
+    ]
+    assert charge_power_total(members) == 10500
+
+
+def test_an_enforced_limit_above_the_rating_is_not_a_lift():
+    # min(), never max(): a register held at more than the inverter is rated for
+    # does not make the battery take more than its plate.
+    members = [_battery(soc=70, charge=5000, enforced_charge_limit=9000)]
+    assert charge_power_total(members) == 5000
+
+
+def test_an_enforced_zero_leaves_no_allowance_at_all():
+    # A hard 0 A charge limit: the battery is not a sink, so the export
+    # allowance alone stands between the site and Excess. Not None — the member
+    # is still there with a configured cap, it is just permitted nothing.
+    members = [_battery(soc=70, charge=10000, enforced_charge_limit=0)]
+    assert charge_power_total(members) == 0
+
+
+def test_a_full_member_stays_excluded_whatever_is_enforced():
+    members = [
+        _battery("full", soc=98, full=97, charge=10000, enforced_charge_limit=6500),
+        _battery("empty", soc=30, full=97, charge=3000),
+    ]
+    assert charge_power_total(members) == 3000
+
+
 # --- Discharge capacity: per-member below-min exclusion -------------------------
 
 def test_discharge_excludes_member_below_min():

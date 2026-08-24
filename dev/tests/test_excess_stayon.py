@@ -340,6 +340,80 @@ def test_a_saturated_battery_gives_the_plain_gross_reading():
 
 
 # ---------------------------------------------------------------------------
+# The clipping window: the allowance is what the battery is PERMITTED to take
+# ---------------------------------------------------------------------------
+#
+# ``battery_max_charge_power`` is the rate the battery may take, which is the
+# NAMEPLATE rate only while nothing is holding it back. When the PV clipping
+# forecast has our charge control holding the register at 6.5 kW of a 10 kW
+# rating, the missing 3.5 kW is not somewhere the site can put production, and
+# an allowance that still counts it reads a clipping window — the one moment the
+# site has surplus it cannot place — as a site with room to spare.
+#
+# The numbers are a real site's: 8.7 kW export limit, 500 W trigger margin (so
+# the Excess threshold is 8.2 kW), a 10 kW battery rating and the 6.5 kW the
+# forecast settles the charge limit at.
+
+LIVE_EXPORT_LIMIT = 8700.0
+LIVE_THRESHOLD = LIVE_EXPORT_LIMIT - 500.0  # export limit − trigger margin
+NAMEPLATE = 10000.0
+ENFORCED = 6500.0
+
+
+def _clipping_site(charge_max, battery_w=-ENFORCED, export=LIVE_EXPORT_LIMIT, loads=()):
+    """Midday, export pinned at the hard limit, the array able to give more."""
+    return _site(-export / V, battery_w=battery_w, soc=70.0,
+                 charge_max=charge_max, threshold=LIVE_THRESHOLD, loads=list(loads))
+
+
+def test_the_nameplate_allowance_reads_a_clipping_window_as_no_surplus():
+    """The bug, kept as the contrast. 8.7 kW is leaving the site and 6.5 kW is
+    going into the battery, every watt the site can place — and against an
+    allowance built from the 10 kW rating the control is actively forbidding
+    that reads as 3 kW short of Excess, for the whole window."""
+    assert _close(_margin(_clipping_site(NAMEPLATE)), -3000.0)
+
+
+def test_the_enforced_allowance_engages_excess_in_the_clipping_window():
+    """The same site, the same instant, the allowance the battery is permitted:
+    the margin is the 500 W the site is genuinely placing beyond the threshold,
+    Excess is on, and the surplus goes into a load instead of being curtailed."""
+    assert _close(_margin(_clipping_site(ENFORCED)), 500.0)
+
+
+def test_an_engaged_load_is_not_dropped_when_the_cap_engages():
+    """The drop-on-engage case, reversed.
+
+    A 2 kW plug is running on displaced export, Excess engaged. Then the forecast
+    cap engages under it: the battery goes from its 10 kW rating to 6.5 kW, and
+    since export is already pinned at the hard limit the 3.5 kW it stops taking is
+    curtailed rather than exported — the readings do not move at all. Nothing
+    about the site got worse, so the verdict must not move either.
+    """
+    displaced = -(LIVE_EXPORT_LIMIT - 2000) / V
+    running = dict(soc=70.0, threshold=LIVE_THRESHOLD, loads=[_plug(2000)])
+    before = _site(displaced, battery_w=-NAMEPLATE, charge_max=NAMEPLATE, **running)
+    after = _site(displaced, battery_w=-ENFORCED, charge_max=ENFORCED, **running)
+    # Counting the forbidden 3.5 kW is what used to drop the load mid-window.
+    stuck = _site(displaced, battery_w=-ENFORCED, charge_max=NAMEPLATE, **running)
+
+    assert _close(_margin(before, DEFAULT_EXCESS_HYSTERESIS), 1000.0)
+    assert _close(_margin(after, DEFAULT_EXCESS_HYSTERESIS), 1000.0)
+    assert _margin(stuck, DEFAULT_EXCESS_HYSTERESIS) < 0
+
+
+def test_the_enforced_allowance_keeps_the_load_off_identity():
+    """The stay-on identity is what makes the narrowed allowance safe: a battery
+    sitting on an enforced limit has no headroom, so the load's draw stays on the
+    export side of the reconstruction and the running site reads exactly the
+    margin the idle one does. No new flapping can come out of this."""
+    idle = _clipping_site(ENFORCED)
+    running = _clipping_site(ENFORCED, export=LIVE_EXPORT_LIMIT - 2000,
+                             loads=[_plug(2000)])
+    assert _close(_margin(running), _margin(idle))
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
