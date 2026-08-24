@@ -71,6 +71,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     ENTRY_TYPE_INVERTER,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
+    CONF_CHARGE_LIMIT_MINIMUM,
     CONF_CHARGE_CONTROL_INTERVAL,
     CONF_BATTERY_NOMINAL_VOLTAGE,
     CHARGE_LIMIT_UNIT_AMPS,
@@ -2477,6 +2478,29 @@ def inverter_entry(hub_entry: MockConfigEntry) -> MockConfigEntry:
 
 
 @pytest.fixture
+def inverter_entry_floored(hub_entry: MockConfigEntry) -> MockConfigEntry:
+    """The same inverter, with a 2 A floor under the engaged limit."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Deye Hybrid",
+        data={
+            CONF_NAME: "Deye Hybrid",
+            CONF_ENTITY_ID: "deye_hybrid",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={
+            CONF_CHARGE_LIMIT_ENTITY_ID: CHARGE_TARGET,
+            CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+            CONF_CHARGE_CONTROL_INTERVAL: 300,
+            CONF_CHARGE_LIMIT_MINIMUM: 2,
+        },
+    )
+
+
+@pytest.fixture
 def inverter_entry_watts(hub_entry: MockConfigEntry) -> MockConfigEntry:
     """The same, on an inverter whose register counts watts instead of DC amps."""
     return MockConfigEntry(
@@ -2634,6 +2658,37 @@ async def test_the_site_cycle_performs_the_charge_limit_write(
 
     inverter_rt = hass.data[DOMAIN]["inverters"][inverter_entry.entry_id]
     assert inverter_rt[INVERTER_RT_APPLIED] == 50.0
+
+
+async def test_the_sensor_reports_the_floor_the_cycle_wrote(
+    hass, hub_entry, inverter_entry_floored
+):
+    """A 0 W advice under a 2 A floor: the register goes to 2 A, and the sensor
+    reports 2 A because it measures the register rather than the advice.
+
+    This is the sensor half of the floor — no separate publication and no extra
+    attribute, just the read-back moving to where we actually put it.
+    """
+    sensor = await _add_charge_control(hass, inverter_entry_floored)
+
+    with _accepting_register(hass) as mock_call, _advice_cycle(
+        inverter_entry_floored, 0.0
+    ):
+        await _run_site_cycle(hass, hub_entry)
+
+        writes = _register_writes(mock_call)
+        assert len(writes) == 1, writes
+        assert writes[0][0][2] == {"entity_id": CHARGE_TARGET, "value": 2.0}
+        # The read-back still precedes the write, so this cycle reports the 100 A
+        # the inverter held; the next one reports what we wrote.
+        assert sensor.native_value == 100.0
+        assert sensor.extra_state_attributes["recommended_value"] == 2.0
+
+        await _run_site_cycle(hass, hub_entry)
+
+        assert len(_register_writes(mock_call)) == 1
+        assert sensor.native_value == 2.0
+        assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_LIMITING
 
 
 async def test_nothing_is_written_while_the_switch_is_off(
