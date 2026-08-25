@@ -87,6 +87,16 @@ def _advance_export_trim(
       production collapses the advice falls to 0 on the feedforward alone and the
       trim simply stops, keeping the value it had earned in the sun instead of
       running away and having to re-converge afterwards.
+    * **FREEZE** — engaged, but the fleet battery is net DISCHARGING. Same rule,
+      second reason the actuator cannot act: a CHARGE limit only moves export by
+      changing what the battery takes, and a battery that is giving power back
+      is taking nothing for the limit to trim. Whatever the export error is
+      while the pack discharges — the house outrunning production, or a work
+      mode selling stored energy to the meter — it is not correctable from here,
+      and integrating it would wind the clamp with a correction earned under a
+      plant that no longer exists, to be kicked into the register the moment
+      charging resumes. Freezing holds the value the trim earned while the
+      battery really was absorbing, which is the state it will return to.
     * **INTEGRATE** — engaged, advice free to move: one ``export_trim`` step on
       reconstructed export against ``setpoint_w`` (``limit − margin``).
 
@@ -106,6 +116,13 @@ def _advance_export_trim(
     if last is None:
         return
     if advice_w is None or advice_w <= 0 or advice_w >= full_rate_w:
+        return
+    # ``site.battery_power`` is the FLEET sum, positive discharging (see
+    # ``fleet.battery_power_total``). Net discharge means the charge limit has
+    # nothing to trim — freeze rather than integrate a correction we cannot
+    # apply. Note this reads the LIVE figure while the export it is compared
+    # against is the reconstruction; both come from the same cycle.
+    if (site.battery_power or 0) > 0:
         return
 
     export_w = reconstructed_export_power(site)

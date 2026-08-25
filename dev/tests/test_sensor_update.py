@@ -4169,6 +4169,75 @@ async def test_the_advice_trim_freezes_while_the_advice_sits_on_its_floor(hass):
         assert abs(pinned - earned) < 30.0
 
 
+async def test_the_advice_trim_freezes_while_the_battery_discharges(hass):
+    """A CHARGE limit cannot correct an export error the battery is causing.
+
+    The same conditional integration as the floor, for the second reason the
+    actuator cannot act: while the pack gives power back it is taking nothing
+    for a charge limit to trim. Here it SELLS 2 kW to the meter — the mode this
+    freeze exists for — so export stands 2 kW above the setpoint for good. Chase
+    that and the trim winds toward its clamp on a plant that no longer exists,
+    and kicks the register the moment charging resumes.
+
+    The advice stays mid-band throughout, so the floor / full-rate freeze is
+    provably not what is holding the trim still.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, runtime = _trim_rig(hass, "selling")
+
+    with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
+        advice = _TRIM_SOLAR_W - (_TRIM_SETPOINT_W + 300)
+        for _ in range(30):
+            frozen.tick(10)
+            _trim_site(hass, inverter, advice)
+            advice = run_hub_calculation(hass, hub)["forecast_charge_limit_w"]
+        earned = runtime["_forecast_export_trim"]
+        assert earned < 0.0
+
+        # The pack flips to selling 2 kW: the meter now reads 2 kW MORE export
+        # than the array is making. Let the input EMA cross into discharge with
+        # the clock STILL, so nothing can be integrated while it does — the
+        # freeze below is then the only thing holding the value.
+        def _selling():
+            hass.states.async_set(
+                "sensor.dst_battery_power", "2000",
+                {"device_class": "power", "unit_of_measurement": "W"},
+            )
+            hass.states.async_set(
+                "sensor.dst_phase_a",
+                str(-(_TRIM_SETPOINT_W + 2000.0) / 230.0),
+                {"device_class": "current", "unit_of_measurement": "A"},
+            )
+
+        for _ in range(8):
+            _selling()
+            run_hub_calculation(hass, hub)
+        assert runtime["_forecast_export_trim"] == earned
+
+        # Ten minutes — a full time constant — of a standing +2 kW error.
+        for _ in range(60):
+            frozen.tick(10)
+            _selling()
+            result = run_hub_calculation(hass, hub)
+            assert runtime["_forecast_charge_limiting"] is True
+            # Free to move: not on its floor, not at full rate.
+            assert 0 < result["forecast_charge_limit_w"] < 5000
+            # Byte-identical, not merely close.
+            assert runtime["_forecast_export_trim"] == earned
+
+        # Charging resumes, and integration resumes with it — from the value the
+        # trim earned while the battery really was absorbing.
+        for _ in range(8):
+            frozen.tick(10)
+            _trim_site(hass, inverter, result["forecast_charge_limit_w"])
+            result = run_hub_calculation(hass, hub)
+        assert runtime["_forecast_export_trim"] != earned
+
+
 async def test_a_kettle_cannot_move_the_written_register(hass):
     """The guard the trim's time constant exists for, at the register itself.
 
