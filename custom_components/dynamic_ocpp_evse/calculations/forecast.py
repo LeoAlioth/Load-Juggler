@@ -585,18 +585,39 @@ def recommended_charge_limit(
     was_limiting=False,
     trim_w=0.0,
     excess_draw_w=0.0,
+    at_destination=False,
 ):
-    """Battery charge-rate cap that protects the reserved headroom.
+    """Battery charge-rate cap that protects the destination and the reserve.
 
     ``max(0, solar_now − T)`` alone would be catastrophic as unconditional
     advice — on a cloudy day it reads 0 W all day and the house ends the
-    evening with no reserve — so the cap engages only while the headroom is
-    actually at risk:
+    evening with no reserve — so the cap engages only where charging would
+    actually cost something. Three cases, tested in this order:
 
-    - nothing left to clip today (``absorbable_kwh <= 0``) → full rate, and the
-      latch drops immediately: there is nothing left to protect
-    - SOC below the SOC band (see below) → full rate
-    - otherwise → charge only with power that could not have been exported
+    - **at or above the destination** (``at_destination`` — the caller's
+      ``yields_to_excess`` latch) → engaged, whatever the forecast says. The
+      destination is where the pack's owner sends it, and everything above it is
+      the buffer that catches a day the forecast under-read; a battery allowed
+      to run past it at the BMS's own rate has spent that buffer before the sun
+      could ask for it. This is a STANDING ceiling, so it does not depend on a
+      clip being forecast — on a day whose production never reaches the export
+      limit the overshoot is 0 and the pack simply parks at the destination on
+      the configured minimum floor, while a day that genuinely beats the anchor
+      lets it climb on that overshoot alone (and an engaged Excess load displaces
+      it watt for watt, see ``excess_draw_w``).
+    - **below the destination with nothing left to clip** (``absorbable_kwh <=
+      0``) → full rate, and the latch drops immediately: under the ceiling, with
+      no reserve to protect, refilling is exactly what should happen.
+    - **below the destination with a clip forecast** → the reservation's SOC band
+      (see below): full rate under it, and inside it charge only with power that
+      could not have been exported.
+
+    The order is load-bearing, and getting it wrong was the live bug of
+    2026-08-25: with ``absorbable_kwh <= 0`` tested FIRST, a site whose day was
+    forecast to clip nothing ran clean through its 95 % destination to 98 % at
+    the BMS's full rate. That early return was correct when this function's
+    ceiling was always 100 % — there was no destination to cross — and became
+    wrong the moment the reserve was anchored at where the battery is heading.
 
     ``threshold_w`` here is the instantaneous ADVICE ANCHOR, and the caller
     deliberately hands in a value one Excess trigger margin BELOW the true
@@ -617,8 +638,8 @@ def recommended_charge_limit(
     settles a margin under the limit, where production is measured honestly
     and this plain formula tracks the sun.
 
-    The SOC test is a two-threshold LATCH, not one boundary, which is why the
-    caller must hand the previous state back in as ``was_limiting``:
+    The reservation's SOC test is a two-threshold LATCH, not one boundary, which
+    is why the caller must hand the previous state back in as ``was_limiting``:
 
     - disarmed → engage at ``battery_soc >= max_soc − hysteresis_pct``
     - engaged  → release only below ``max_soc − 2 × hysteresis_pct``
@@ -631,6 +652,23 @@ def recommended_charge_limit(
     the gate. ``max_soc`` moving (a forecast refresh) needs no special case —
     the same rule is applied against the new ceiling.
 
+    ``at_destination`` is a latch of the same shape at a different boundary
+    (``yields_to_excess``: engage exactly at the destination, release a full
+    ``hysteresis_pct`` below it), and the two engagement sources compose into the
+    ONE ``limiting`` state this returns. That is deliberate rather than
+    convenient: whenever a clip IS forecast the reserved ceiling sits at or below
+    the destination, so a battery at the destination is inside the reservation's
+    band too and both sources agree — and when the destination hold lets go a
+    band lower, ``was_limiting`` is exactly the state the reservation's own
+    release threshold wants to be judged against, so a clip that appeared while
+    the pack was parked takes over the hold without a step in the advice.
+
+    Unknown SOC is left where it always sat, at the reservation: no reading is no
+    destination crossing to detect either (``yields_to_excess`` is False without
+    an SOC), so nothing-to-clip plus no SOC is still full rate. A dead SOC sensor
+    must not strand the pack on the floor for the rest of the day, and a
+    reservation that IS at risk still protects itself the way it did before.
+
     Two engaged-only adjustments ride on top of the anchored overshoot, and
     neither exists while the gate is released (full rate is full rate):
 
@@ -639,8 +677,9 @@ def recommended_charge_limit(
       caller owns its state and its anti-windup, this just adds it.
     * ``excess_draw_w`` — what the site's engaged Excess loads are already
       drawing, subtracted only when the caller says the battery is above its
-      destination and therefore the absorber of last resort (see
-      ``yields_to_excess``). An Excess EVSE then displaces battery charging
+      destination and therefore the absorber of last resort (the same
+      ``yields_to_excess`` latch that arrives here as ``at_destination``; the
+      caller passes 0 below it). An Excess EVSE then displaces battery charging
       watt for watt; with nothing engaged, or nothing able to absorb, the
       battery goes on taking the whole overshoot toward 100 % exactly as
       before. 0 below the destination, where the battery is served first.
@@ -662,6 +701,10 @@ def recommended_charge_limit(
         )
         return min(full_rate, max(0.0, advice))
 
+    if at_destination:
+        # The standing ceiling: the pack has arrived where its owner sends it,
+        # and the buffer above is not the forecast's to spend.
+        return engaged_limit(), True
     if absorbable_kwh <= 0:
         return full_rate, False
     if battery_soc is None:

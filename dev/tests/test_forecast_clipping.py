@@ -583,15 +583,18 @@ def test_deficit_unknown_soc_is_zero():
 # --- The charge-rate cap and its release rules ---------------------------------
 
 def test_cap_released_when_nothing_to_clip():
+    # BELOW the destination (at_destination False, the default) — above it the
+    # standing ceiling holds whatever the forecast says.
     assert recommended_charge_limit(
-        0.0, 90.0, 100.0, 5000.0, 0.0, THRESHOLD, 2.0
+        0.0, 90.0, 100.0, 5000.0, 0.0, THRESHOLD, 2.0, at_destination=False
     ) == (5000.0, False)
 
 
 def test_cap_released_immediately_when_nothing_left_to_clip():
-    # Even while engaged: with nothing left to protect the latch drops at once.
+    # Even while engaged: below the destination, with nothing left to protect,
+    # the latch drops at once.
     assert recommended_charge_limit(
-        0.0, 100.0, 100.0, 5000.0, 0.0, THRESHOLD, 2.0, True
+        0.0, 100.0, 100.0, 5000.0, 0.0, THRESHOLD, 2.0, True, at_destination=False
     ) == (5000.0, False)
 
 
@@ -1054,14 +1057,14 @@ def test_an_engaged_excess_load_displaces_the_battery_above_the_destination():
     # 2500 W the car cannot, watt for watt.
     advice, limiting = recommended_charge_limit(
         4.0, 96.0, 90.0, _FULL_RATE, _POTENTIAL, _ANCHOR, 2.0, True,
-        excess_draw_w=3000.0,
+        excess_draw_w=3000.0, at_destination=True,
     )
     assert (advice, limiting) == (_POTENTIAL - _ANCHOR - 3000.0, True)
     # A load drawing more than the overshoot floors the advice rather than
     # going negative.
     assert recommended_charge_limit(
         4.0, 96.0, 90.0, _FULL_RATE, _POTENTIAL, _ANCHOR, 2.0, True,
-        excess_draw_w=9000.0,
+        excess_draw_w=9000.0, at_destination=True,
     ) == (0.0, True)
 
 
@@ -1070,7 +1073,7 @@ def test_with_nothing_engaged_the_battery_takes_the_whole_overshoot():
     # before this rule — the battery keeps buffering toward 100 %.
     assert recommended_charge_limit(
         4.0, 96.0, 90.0, _FULL_RATE, _POTENTIAL, _ANCHOR, 2.0, True,
-        excess_draw_w=0.0,
+        excess_draw_w=0.0, at_destination=True,
     ) == (_POTENTIAL - _ANCHOR, True)
 
 
@@ -1080,8 +1083,187 @@ def test_below_the_destination_the_battery_is_served_first():
     assert yields_to_excess(88.0, 95.0, 2.0, False) is False
     assert recommended_charge_limit(
         4.0, 88.0, 90.0, _FULL_RATE, _POTENTIAL, _ANCHOR, 2.0, True,
-        excess_draw_w=0.0,
+        excess_draw_w=0.0, at_destination=False,
     ) == (_POTENTIAL - _ANCHOR, True)
+
+
+# --- The destination as a STANDING ceiling, clip or no clip -------------------
+#
+# The live bug of 2026-08-25: ``absorbable_kwh <= 0`` was tested FIRST, so on a
+# site with a 95 % destination and nothing forecast to clip the battery crossed
+# 95 at 08:55 UTC and ran to 98 at the BMS's own 80 A with the advice at full
+# rate. The destination gate now applies regardless of the clip.
+
+_DEST = 95.0            # the site's normal SOC ceiling — where the pack heads
+_HYST = 2.0             # FORECAST_SOC_HYSTERESIS
+_BMS_RATE = 4096.0      # 80 A × 51.2 V — what the pack takes when unmanaged
+
+
+def test_the_destination_holds_with_nothing_forecast_to_clip():
+    """The bug's own case: absorbable 0, production under the anchor, SOC at the
+    destination. Engaged, and the advice is the floor — 0 W of overshoot."""
+    assert recommended_charge_limit(
+        0.0, _DEST, _DEST, _BMS_RATE, 3000.0, _ANCHOR, _HYST, False,
+        at_destination=True,
+    ) == (0.0, True)
+
+
+def test_the_hold_admits_the_overshoot_a_better_day_actually_makes():
+    """The very case the buffer exists for: the forecast under-read the day.
+
+    Nothing was reserved (absorbable 0), the pack is parked at 95 — and
+    production beats the anchor anyway. Those watts cannot be exported, so the
+    battery climbs above the destination on the overshoot alone.
+    """
+    assert recommended_charge_limit(
+        0.0, _DEST, _DEST, _BMS_RATE, _ANCHOR + 1500.0, _ANCHOR, _HYST, True,
+        at_destination=True,
+    ) == (1500.0, True)
+    # And it is still only the overshoot: never the full rate the bug handed it.
+    assert recommended_charge_limit(
+        0.0, _DEST, _DEST, _BMS_RATE, _ANCHOR + 99000.0, _ANCHOR, _HYST, True,
+        at_destination=True,
+    ) == (_BMS_RATE, True)
+
+
+def test_an_excess_load_displaces_the_parked_battery_with_no_clip_either():
+    # The engaged formula is the SAME one, so the watt-for-watt displacement
+    # holds on a day that reserves nothing.
+    assert recommended_charge_limit(
+        0.0, 96.0, _DEST, _BMS_RATE, _ANCHOR + 2500.0, _ANCHOR, _HYST, True,
+        excess_draw_w=2300.0, at_destination=True,
+    ) == (200.0, True)
+
+
+def test_below_the_destination_nothing_to_clip_is_still_full_rate():
+    """The cloudy-day protection, preserved exactly where it is correct: under
+    the ceiling with no reserve to keep, the pack refills at full rate."""
+    for soc in (0.0, 50.0, _DEST - _HYST, _DEST - 0.5):
+        assert recommended_charge_limit(
+            0.0, soc, _DEST, _BMS_RATE, 3000.0, _ANCHOR, _HYST, False,
+            at_destination=False,
+        ) == (_BMS_RATE, False), f"held at SOC {soc}"
+
+
+def test_the_live_event_replay_holds_at_the_destination_and_releases_below_it():
+    """Destination 95, a 20 kWh pack, nothing forecast to clip, production under
+    the export limit — the maintainer's morning, replayed.
+
+    Full rate up to the crossing, the floor from 95 on with the latch engaged,
+    and a release only a full hysteresis band below the destination — where full
+    rate is right again, because that is under the ceiling.
+    """
+    yielding = False
+    limiting = False
+    seen = []
+    for soc in (93.0, 94.0, 95.0, 96.0, 97.0):
+        yielding = yields_to_excess(soc, _DEST, _HYST, yielding)
+        limit, limiting = recommended_charge_limit(
+            0.0, soc, _DEST, _BMS_RATE, 3000.0, _ANCHOR, _HYST, limiting,
+            excess_draw_w=0.0, at_destination=yielding,
+        )
+        seen.append((soc, limit, limiting))
+
+    assert seen == [
+        (93.0, _BMS_RATE, False),   # below the destination: refill
+        (94.0, _BMS_RATE, False),
+        (95.0, 0.0, True),          # the crossing — this is what ran to 98 %
+        (96.0, 0.0, True),
+        (97.0, 0.0, True),
+    ]
+
+    # The evening: the house takes the pack back down. A tick inside the band
+    # still holds (the latch is the whole point), a full band below releases.
+    for soc, expected in ((94.0, 0.0), (93.0, 0.0), (92.0, _BMS_RATE)):
+        yielding = yields_to_excess(soc, _DEST, _HYST, yielding)
+        limit, limiting = recommended_charge_limit(
+            0.0, soc, _DEST, _BMS_RATE, 3000.0, _ANCHOR, _HYST, limiting,
+            at_destination=yielding,
+        )
+        assert limit == expected, f"SOC {soc} gave {limit} W"
+    assert limiting is False
+
+
+def test_a_clip_appearing_while_parked_hands_over_to_the_reservation():
+    """Two engagement sources, one latch state, no step in the advice.
+
+    Parked at the destination with nothing to clip, then a forecast refresh
+    reserves 2 kWh of a 20 kWh pack — the ceiling drops to 85. The hold was
+    already engaged, so the reservation simply takes over: same formula, same
+    latch, and the release the pack then falls to is the reservation's own
+    (85 − 2 × 2 = 81), not the destination's.
+    """
+    held = recommended_charge_limit(
+        0.0, _DEST, _DEST, _BMS_RATE, 3000.0, _ANCHOR, _HYST, False,
+        at_destination=True,
+    )
+    assert held == (0.0, True)
+
+    # The clip appears while the pack sits at 95 — still at the destination, so
+    # nothing moves.
+    limit, limiting = recommended_charge_limit(
+        2.0, _DEST, 85.0, _BMS_RATE, 3000.0, _ANCHOR, _HYST, held[1],
+        at_destination=True,
+    )
+    assert (limit, limiting) == (0.0, True)
+
+    # The pack is discharged toward the reserve: the destination hold lets go at
+    # 93, and the reservation holds it there instead of releasing to full rate.
+    yielding = yields_to_excess(92.0, _DEST, _HYST, True)
+    assert yielding is False
+    limit, limiting = recommended_charge_limit(
+        2.0, 92.0, 85.0, _BMS_RATE, 3000.0, _ANCHOR, _HYST, limiting,
+        at_destination=yielding,
+    )
+    assert (limit, limiting) == (0.0, True), "the handover stepped to full rate"
+
+    # It releases where the reservation says, a full band below its own ceiling.
+    assert recommended_charge_limit(
+        2.0, 80.0, 85.0, _BMS_RATE, 3000.0, _ANCHOR, _HYST, limiting,
+        at_destination=False,
+    ) == (_BMS_RATE, False)
+
+
+def test_an_unknown_soc_keeps_the_reservations_ordering():
+    """No reading is no destination crossing to detect — ``yields_to_excess`` is
+    False without an SOC — so the unknown case sits where it always sat.
+
+    Nothing to clip: full rate, because a dead SOC sensor must not strand the
+    pack on the floor for the rest of the day. A reservation at risk: protected,
+    exactly as before.
+    """
+    assert yields_to_excess(None, _DEST, _HYST, True) is False
+    assert recommended_charge_limit(
+        0.0, None, _DEST, _BMS_RATE, 3000.0, _ANCHOR, _HYST, True,
+        at_destination=False,
+    ) == (_BMS_RATE, False)
+    assert recommended_charge_limit(
+        4.0, None, 85.0, _BMS_RATE, _ANCHOR + 1000.0, _ANCHOR, _HYST, False,
+        at_destination=False,
+    ) == (1000.0, True)
+
+
+def test_a_site_with_no_ceiling_source_is_unchanged():
+    """Destination 100 (no ceiling source configured anywhere): the gate can
+    only engage at SOC 100, so nothing below it moves at all.
+
+    Byte-equivalence against the old early return across the SOC range, with
+    nothing to clip — the one case the reorder could have disturbed.
+    """
+    for soc in range(0, 100):
+        yielding = yields_to_excess(float(soc), 100.0, _HYST, False)
+        assert yielding is False, f"SOC {soc} yielded against a 100 % ceiling"
+        assert recommended_charge_limit(
+            0.0, float(soc), 100.0, _BMS_RATE, 3000.0, _ANCHOR, _HYST, False,
+            at_destination=yielding,
+        ) == (_BMS_RATE, False), f"SOC {soc} was held"
+    # At 100 the pack IS at its destination, and holding a full battery on the
+    # floor is what "standing ceiling" means — it cannot charge either way.
+    assert yields_to_excess(100.0, 100.0, _HYST, False) is True
+    assert recommended_charge_limit(
+        0.0, 100.0, 100.0, _BMS_RATE, 3000.0, _ANCHOR, _HYST, False,
+        at_destination=True,
+    ) == (0.0, True)
 
 
 def test_unexportable_power_clamps_at_zero():
