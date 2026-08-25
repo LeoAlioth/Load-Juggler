@@ -36,9 +36,9 @@ CONF_BATTERY_VOLTAGE_ENTITY_ID = "battery_voltage_entity_id"
 CONF_BATTERY_NOMINAL_VOLTAGE = "battery_nominal_voltage"
 DEFAULT_BATTERY_NOMINAL_VOLTAGE = 51.2  # V — 16S LFP, the common hybrid pack
 
-# What to write back when the forecast releases the limit (evening, no
-# clipping expected, control switched off). 0 = restore the target entity's
-# own maximum, which is what an unmanaged inverter would sit at.
+# What to write back when the forecast releases the limit (below the battery's
+# destination with no clipping expected, control switched off). 0 = restore the
+# target entity's own maximum, which is what an unmanaged inverter would sit at.
 CONF_CHARGE_LIMIT_NORMAL = "inverter_charge_limit_normal"
 DEFAULT_CHARGE_LIMIT_NORMAL = 0
 
@@ -46,7 +46,8 @@ DEFAULT_CHARGE_LIMIT_NORMAL = 0
 # in the target register's own units — the same convention as the normal above.
 #
 # A recommendation of 0 is legitimate: solar below the export threshold with the
-# battery already at the reserved ceiling means "do not add any more". Written as
+# battery already at the reserved ceiling — or simply parked at its destination
+# on a day that reserves nothing — means "do not add any more". Written as
 # a hard 0 the battery stops charging entirely, so it keeps serving the house
 # instead and the SOC sags — until the latch releases and the inverter recharges
 # at full rate, which is a sawtooth rather than a hold. A couple of amps is
