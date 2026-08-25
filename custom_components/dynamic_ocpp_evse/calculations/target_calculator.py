@@ -682,6 +682,15 @@ def _reconstruct_placement(site: SiteContext):
     while pulling 10 A in on the third is exporting 30 A, not 20 A. Import on
     one phase never buys export headroom on another.
 
+    It is also the PHYSICAL export — every watt at the meter, whatever produced
+    it. The Excess verdict wants only the SOLAR share and nets the battery's
+    discharge off this figure itself (see ``excess_margin``); the charge-limit
+    trim wants the physical number, because the meter is the plant it steers,
+    and it simply stops integrating while the battery discharges (see
+    ``engine/hub_result._advance_export_trim``). Two consumers, one
+    reconstruction, and the mode-dependent part stays with the consumer that
+    cares.
+
     Pure function — unit-testable.
     """
     # battery_power is positive discharging, negative charging.
@@ -764,13 +773,20 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     the grid export allowance is used up AND the battery is taking all it can.
     Both sinks are summed, so one number decides Excess for every load —
 
-        margin = (grid export + battery charge power + our own managed draws)
+        margin = (SOLAR export + battery charge power + our own managed draws)
                - (export allowance + battery charge allowance - hysteresis)
 
     The export term is GROSS and clamped per phase: an export limit is physical
     and contractual per exported flow, so a site pushing 30 A out on two phases
     while pulling 10 A in on the third is exporting 30 A, not 20 A. Import on one
     phase never buys export headroom on another.
+
+    And it is SOLAR-ONLY: the battery's discharge is netted off it, so only the
+    site's own production can trigger Excess. Stored energy on its way out of the
+    meter is not surplus — it is yesterday's surplus being sold, and an Excess
+    load engaging on it would be charging a car from the house battery. See the
+    term itself for the conservation identity that makes one subtraction cover
+    every inverter work mode.
 
     Every figure is read as the site would read it *with our own loads off* —
     that is what makes the number stable enough to decide with: a load that is
@@ -824,7 +840,9 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     The reconstruction itself — the export the site would read with our loads
     off, and the share of their freed power the battery would take — lives in
     ``_reconstruct_placement``, because the forecast's charge-limit trim steers
-    on the same figures.
+    on the same figures. The solar-only subtraction stays HERE rather than there:
+    the trim steers the meter, so it wants the physical export and handles a
+    discharging battery by not integrating at all.
 
     Pure function — unit-testable.
     """
@@ -843,17 +861,58 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     charge_allowance = _charge_allowance(site)
     export, battery_restored = _reconstruct_placement(site)
 
+    # SOLAR-ONLY EXPORT. Only the site's own production can be surplus; stored
+    # energy leaving the meter never is. The subtraction is exactly power
+    # conservation, which is why ONE term covers every inverter work mode:
+    #
+    #     export - battery_discharge == production - consumption
+    #
+    # so subtracting the discharge from the export reading yields the export the
+    # site's PV alone accounts for. The three cases fall out of it:
+    #
+    # * battery serving the HOUSE — its discharge is consumed, not exported, so
+    #   the site is not exporting it and there is nothing here to take away;
+    # * battery SELLING to the grid (Deye "Selling First", a slot with sell
+    #   semantics, a scheduled sell-down) — subtracted in full, so a pack
+    #   emptying itself into the meter can never trigger Excess;
+    # * real PV surplus — a charging or idle battery subtracts nothing, so every
+    #   figure on a Zero-Export-to-CT site is byte-identical to before.
+    #
+    # Where it lands, and why the per-phase semantics survive: at the site-level
+    # AGGREGATION POINT, on the watts ``_reconstruct_placement`` returns, never
+    # on the phase figures. Those are gross and clamped per phase because an
+    # export limit is per exported flow; battery power is a SITE quantity (one
+    # pack behind one inverter, no per-phase reading exists), so it can only be
+    # netted against the site total — the same shape as ``battery_restored``,
+    # which is likewise a site figure. Subtracting it phase by phase would let
+    # one phase's import cancel another's export, the exact semantics the gross
+    # clamp exists to prevent. On an unbalanced site the gross sum can exceed
+    # the net export, so part of a house-served discharge is still netted off;
+    # that errs on the side of reading LESS solar export, which is the safe
+    # direction for a verdict that must fire only on production.
+    #
+    # ``site.battery_power`` is positive discharging, negative charging — the
+    # raw sensor value, uninverted, summed across the fleet
+    # (``engine/readers`` → ``fleet.battery_power_total``), so the clamp below
+    # keeps a charging pack out of this term entirely. The charge-allowance side
+    # is untouched: a discharging battery still absorbs nothing.
+    discharge = max(0.0, site.battery_power or 0)
+    solar_export = max(0.0, export - discharge)
+
     allowance = max(0.0, export_allowance + charge_allowance - hysteresis)
-    absorbed = export + charge_power + battery_restored
+    absorbed = solar_export + charge_power + battery_restored
     margin = absorbed - allowance
 
     _LOGGER.debug(
-        "Excess margin %+.0fW: placing %.0fW (export %.0fW + battery charge %.0fW"
+        "Excess margin %+.0fW: placing %.0fW (solar export %.0fW of %.0fW metered"
+        " less %.0fW battery discharge + battery charge %.0fW"
         " + freed to battery %.0fW of %.0fW managed draw) vs allowance %.0fW"
         " (export %.0fW + battery %.0fW - hysteresis %.0fW)",
         margin,
         absorbed,
+        solar_export,
         export,
+        discharge,
         charge_power,
         battery_restored,
         managed_draw,

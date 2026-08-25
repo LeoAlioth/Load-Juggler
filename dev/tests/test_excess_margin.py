@@ -111,8 +111,12 @@ def test_battery_charging_at_max_but_low_export_is_negative():
 
 
 def test_discharging_battery_absorbs_nothing():
-    # Positive battery_power is discharging — it adds nothing to the absorbed side.
-    assert excess_margin(_site(export=13000, battery_power=3000, soc=60)) == -5000
+    # Positive battery_power is discharging — it adds nothing to the absorbed
+    # side, and it comes off the export term as well: only SOLAR export triggers
+    # Excess, and export − discharge is production − consumption, so 10 kW of
+    # the 13 kW at the meter is the array's. 10 kW absorbed against an 18 kW
+    # allowance is 8 kW short.
+    assert excess_margin(_site(export=13000, battery_power=3000, soc=60)) == -8000
 
 
 # --- Full battery: its allowance drops out ----------------------------------
