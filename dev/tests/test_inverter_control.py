@@ -967,6 +967,54 @@ def test_a_creep_faster_than_one_margin_is_the_one_that_gets_held():
     assert written[1] == round(written[0] + MARGIN_AMPS, 1)  # 29.3, not 39.1
 
 
+# --- The standing destination hold, at the register --------------------------
+#
+# Since the destination became a standing ceiling, an advice of "the floor" is
+# reached on days that reserve nothing at all: the pack parks at its destination
+# and waits. This is the regime that hold operates in, and none of the mechanics
+# below are new — the point is that the parked case is served by exactly the same
+# LIMITING branch, ramp and enforcement publication as a reserved one.
+
+
+def test_a_parked_battery_ramps_up_when_a_better_day_appears():
+    """Parked on the floor, then production beats the forecast's anchor.
+
+    Upward is still a permission to refill, so the overshoot arrives over
+    several writes rather than in one burst — and the moment it goes (a cloud)
+    the register is back on the floor in a single write.
+    """
+    hass, entry, rt = _accepting_site()
+
+    # The hold: nothing to clip, no overshoot, the pack sitting at its
+    # destination. One instant write down to the 2 A floor.
+    _cycle(hass, entry, 0.0, 0.0)
+    assert _written(hass) == [2.0]
+    assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_LIMITING
+    # The enforcement the Excess verdict reads is the register's own value, so it
+    # is one cycle behind the write by design — the battery really may still take
+    # what the register still holds. It lands on the floor once the register has
+    # followed us there.
+    assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == SITE_NORMAL * SITE_VOLTAGE
+    _cycle(hass, entry, 0.0, SITE_INTERVAL)
+    assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == 2.0 * SITE_VOLTAGE
+    assert _written(hass) == [2.0]  # nothing more to write while parked
+
+    # The day turns out better than forecast: 4 kW the site cannot export.
+    for minute in range(2, 6):
+        _cycle(hass, entry, 4000.0, minute * SITE_INTERVAL)
+
+    written = _written(hass)
+    assert written[1] == round(2.0 + MARGIN_AMPS, 1)
+    for previous, nxt in zip(written[1:], written[2:]):
+        assert round(nxt - previous, 1) == round(MARGIN_AMPS, 1)
+    # Still climbing — 4 kW is 78 A, and one margin is 9.8 A a minute.
+    assert written[-1] < 4000.0 / SITE_VOLTAGE
+
+    # The cloud: the overshoot is gone and the floor lands in one write.
+    _cycle(hass, entry, 0.0, 6 * SITE_INTERVAL)
+    assert _written(hass)[-1] == 2.0
+
+
 # --- Register units and the reload baseline ----------------------------------
 
 

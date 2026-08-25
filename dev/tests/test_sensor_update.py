@@ -4527,6 +4527,33 @@ async def test_the_destination_stops_the_charge_with_nothing_forecast_to_clip(ha
     assert runtime["_forecast_soc_yielding"] is False
 
 
+async def test_the_trim_does_not_wind_up_while_the_battery_is_parked(hass):
+    """The freeze-at-floor rule, in the regime the hold created.
+
+    A parked pack reports ``limiting``, so the trim is armed — and its advice is
+    pinned at 0, so there is no actuator movement the standing error could be
+    ours to correct. Without the freeze, an afternoon of parked cycles would
+    integrate to the clamp and the first real overshoot would arrive with a
+    kilowatt of stale correction on top of it.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    # Production far below the 4800 W anchor and the site importing, so the
+    # export error the trim measures is the biggest it ever gets.
+    hub, _inverter, runtime = _no_clip_rig(hass, "parkedtrim", soc=95, solar_w=1000.0)
+
+    with freeze_time("2026-08-25 09:00:00+00:00") as frozen:
+        for _ in range(30):  # five minutes at the 10 s cycle
+            frozen.tick(10)
+            result = run_hub_calculation(hass, hub)
+            assert result["forecast_charge_limit_w"] == 0
+            assert runtime["_forecast_charge_limiting"] is True
+            assert runtime["_forecast_export_trim"] == 0.0
+
+
 async def test_a_site_with_no_ceiling_source_is_untouched_by_the_hold(hass):
     """No ceiling source anywhere: the destination is 100 %, so the gate cannot
     engage below it and such a site behaves exactly as it did before.
