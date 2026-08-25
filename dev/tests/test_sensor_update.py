@@ -3741,11 +3741,17 @@ async def test_the_reserve_is_held_through_the_evening_and_dropped_just_in_time(
     assert evening["forecast_absorbable_kwh"] == 2.0
     assert evening["forecast_battery_max_soc"] == 95
     assert runtime["_forecast_reservation_due"] is False
-    # Nothing from this feature touches a charge register at night: the cap asks
-    # only about today, and today is spent.
-    assert evening["forecast_charge_limit_w"] == 5000
-    assert runtime["_forecast_charge_limiting"] is False
-    assert "_forecast_export_trim" not in runtime
+    # The RESERVATION half of the cap asks only about today, and today is spent
+    # — so nothing here is reserving for tomorrow's clip. What holds the pack is
+    # the destination it is sitting on: 95 of 95, so the standing ceiling engages
+    # and the advice is the floor rather than the BMS's own rate (the live bug of
+    # 2026-08-25, where a day with no clip forecast ran the pack to 98 %).
+    assert runtime["_forecast_soc_yielding"] is True
+    assert evening["forecast_charge_limit_w"] == 0
+    assert runtime["_forecast_charge_limiting"] is True
+    # Engaged with the advice pinned at the floor: the trim FREEZES rather than
+    # integrating — an actuator that cannot move is not ours to correct.
+    assert runtime["_forecast_export_trim"] == 0.0
 
     for stamp in ("2026-08-14 22:00:00+00:00", "2026-08-15 00:00:00+00:00"):
         held = at(stamp)
@@ -3764,6 +3770,37 @@ async def test_the_reserve_is_held_through_the_evening_and_dropped_just_in_time(
     assert runtime["_forecast_reservation_due"] is True
     # A 10-point fall clears the FORECAST_SOC_HYSTERESIS band in one cycle —
     # the ratchet does not fight the handover.
+
+
+async def test_nothing_touches_the_charge_register_overnight_below_the_destination(
+    hass,
+):
+    """The same evening with the pack a band below its destination.
+
+    This is where "the cap asks only about today, and today is spent" still
+    holds, and it is the half of the old behaviour worth keeping: under the
+    ceiling, with tomorrow's clip a night away, the pack is left at full rate and
+    this feature writes no charge register in the dark.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, runtime = _jit_rig(hass, "jitbelow")
+    # 92 is a full FORECAST_SOC_HYSTERESIS band below the 95 % destination, so
+    # the yield latch cannot be engaged there in either direction.
+    _set_jit_states(hass, soc=92)
+
+    with freeze_time("2026-08-14 18:00:00+00:00"):
+        evening = run_hub_calculation(hass, hub)
+
+    assert evening["forecast_absorbable_kwh"] == 2.0
+    assert evening["forecast_battery_max_soc"] == 95
+    assert runtime["_forecast_soc_yielding"] is False
+    assert evening["forecast_charge_limit_w"] == 5000
+    assert runtime["_forecast_charge_limiting"] is False
+    assert "_forecast_export_trim" not in runtime
 
 
 async def test_the_drop_holds_against_a_faster_night_and_an_early_finish(hass):
@@ -4386,6 +4423,205 @@ async def test_the_verdict_does_not_flap_while_the_battery_yields_above_target(h
         assert yielded["excess_available"] is True
         assert yielded["excess_margin_power"] > engaged["excess_margin_power"]
         assert yielded["forecast_charge_limit_w"] == 3000 - 2300
+
+
+# ── PV clipping forecast: the destination is a STANDING ceiling ────────
+#
+# The live event of 2026-08-25. Destination 95 %, a 20 kWh pack, and a day the
+# forecast said would clip NOTHING: the charge advice's first test was
+# "absorbable_kwh <= 0 → full rate", so the pack crossed 95 % at 08:55 UTC and
+# ran to 98 % at the BMS's own 80 A while the maintainer watched. The 5 % above
+# the destination is the buffer for a day that beats the forecast, and it must
+# not be spent by a forecast that under-read the day.
+
+# A clear day whose every block is far below the 5300 W clipping threshold:
+# nothing to reserve for, all day, which is the state the bug needed.
+_NO_CLIP_DAY = {
+    "2026-08-25T08:00:00+00:00": 3000,
+    "2026-08-25T09:00:00+00:00": 4000,
+    "2026-08-25T10:00:00+00:00": 4000,
+    "2026-08-25T11:00:00+00:00": 0,
+}
+
+
+def _no_clip_rig(hass, slug, soc, solar_w=4000.0, normal_entity="number.dst_normal"):
+    """The destination rig on a day with nothing forecast to clip."""
+    hub = _destination_hub(slug)
+    inverter = _destination_inverter(
+        hub, slug, normal_entity, solar_entity="sensor.dst_solar"
+    )
+    inverter.add_to_hass(hass)
+    runtime = {"loads": []}
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: runtime},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=soc)
+    hass.states.async_set("sensor.dst_forecast", "1.0", {"watts": dict(_NO_CLIP_DAY)})
+    hass.states.async_set(
+        "sensor.dst_solar", str(solar_w),
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    return hub, inverter, runtime
+
+
+async def test_the_destination_stops_the_charge_with_nothing_forecast_to_clip(hass):
+    """The live event, replayed: SOC 93 → 94 → 95 → 96 → 97, then back down.
+
+    Full rate below the destination — under the ceiling, with nothing reserved,
+    refilling is right — and the floor from 95 on, with the latch engaged. Before
+    the reorder every one of these cycles published the full 5 kW.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, runtime = _no_clip_rig(hass, "standing", soc=93)
+
+    def at_soc(soc):
+        hass.states.async_set(
+            "sensor.dst_battery_soc", str(soc),
+            {"device_class": "battery", "unit_of_measurement": "%"},
+        )
+        with freeze_time("2026-08-25 09:00:00+00:00"):
+            return run_hub_calculation(hass, hub)
+
+    # Nothing is reserved anywhere: the ceiling IS the destination all morning.
+    first = at_soc(93)
+    assert first["forecast_absorbable_kwh"] == 0.0
+    assert first["forecast_battery_max_soc"] == 95
+
+    for soc in (93, 94):
+        result = at_soc(soc)
+        assert result["forecast_charge_limit_w"] == 5000, f"held at SOC {soc}"
+        assert runtime["_forecast_charge_limiting"] is False
+        assert runtime["_forecast_soc_yielding"] is False
+
+    # 08:55 UTC on the maintainer's site: the crossing. Production is under the
+    # export limit, so there is no overshoot to charge with and the advice is the
+    # floor — the pack parks at its destination instead of running to 98 %.
+    for soc in (95, 96, 97):
+        result = at_soc(soc)
+        assert result["forecast_charge_limit_w"] == 0, f"ran on at SOC {soc}"
+        assert runtime["_forecast_charge_limiting"] is True
+        assert runtime["_forecast_soc_yielding"] is True
+        # The per-inverter advice the charge control actually drives.
+        assert result["inverters"][inverter.entry_id]["forecast_charge_limit_w"] == 0
+        # And the ceiling is still the destination — this is a POWER hold, not a
+        # reservation: nothing was carved out below 95.
+        assert result["forecast_battery_max_soc"] == 95
+
+    # A tick back inside the band still holds (the yield latch releases a full
+    # FORECAST_SOC_HYSTERESIS below the destination, not on the first tick).
+    for soc in (94, 93):
+        assert at_soc(soc)["forecast_charge_limit_w"] == 0, f"released at SOC {soc}"
+
+    # The evening: the house takes the pack down a full band and the hold lets
+    # go. Below the ceiling, full rate is the right answer again.
+    released = at_soc(92)
+    assert released["forecast_charge_limit_w"] == 5000
+    assert runtime["_forecast_charge_limiting"] is False
+    assert runtime["_forecast_soc_yielding"] is False
+
+
+async def test_a_site_with_no_ceiling_source_is_untouched_by_the_hold(hass):
+    """No ceiling source anywhere: the destination is 100 %, so the gate cannot
+    engage below it and such a site behaves exactly as it did before.
+
+    The whole SOC range on the same clear day, against the old rule's answer.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, runtime = _no_clip_rig(
+        hass, "nosource", soc=90, normal_entity=None
+    )
+
+    def at_soc(soc):
+        hass.states.async_set(
+            "sensor.dst_battery_soc", str(soc),
+            {"device_class": "battery", "unit_of_measurement": "%"},
+        )
+        with freeze_time("2026-08-25 09:00:00+00:00"):
+            return run_hub_calculation(hass, hub)
+
+    assert at_soc(90)["forecast_battery_max_soc"] == 100
+    for soc in range(0, 100, 7):
+        result = at_soc(soc)
+        assert result["forecast_charge_limit_w"] == 5000, f"held at SOC {soc}"
+        assert runtime["_forecast_charge_limiting"] is False
+        assert runtime["_forecast_soc_yielding"] is False
+    for soc in (96, 97, 98, 99):
+        assert at_soc(soc)["forecast_charge_limit_w"] == 5000, f"held at SOC {soc}"
+
+    # At 100 the pack IS at its destination, and a full battery held on the
+    # floor is what a standing ceiling means — it cannot charge either way.
+    assert at_soc(100)["forecast_charge_limit_w"] == 0
+    assert runtime["_forecast_soc_yielding"] is True
+
+
+async def test_the_parked_battery_hands_the_surplus_to_the_excess_verdict(hass):
+    """Why the hold must report ``limiting`` — the other half of the fix.
+
+    A held advice sends the control down its LIMITING branch, which publishes
+    what the register really permits (INVERTER_RT_ENFORCED_CHARGE_W). That is
+    what narrows the Excess verdict's battery allowance to the floor, and it is
+    load-bearing: it is how the surplus a parked battery refuses reaches the
+    Excess loads that exist to soak it up.
+
+    The plant: 4800 W produced (exactly the advice anchor, so no overshoot), a
+    300 W house, the battery parked and taking nothing, and 4500 W leaving — the
+    export limit less the trigger margin, saturated.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, runtime = _no_clip_rig(hass, "parked", soc=95, solar_w=4800.0)
+
+    def cycle(enforced_w, repeats=6):
+        """Hold one physical state until the EMAs have followed it."""
+        hass.data[DOMAIN]["inverters"][inverter.entry_id] = {
+            INVERTER_RT_ENFORCED_CHARGE_W: enforced_w
+        }
+        for _ in range(repeats):
+            hass.states.async_set(
+                "sensor.dst_phase_a", str(-4500.0 / 230.0),
+                {"device_class": "current", "unit_of_measurement": "A"},
+            )
+            hass.states.async_set(
+                "sensor.dst_battery_power", "0",
+                {"device_class": "power", "unit_of_measurement": "W"},
+            )
+            result = run_hub_calculation(hass, hub)
+        return result
+
+    with freeze_time("2026-08-25 09:00:00+00:00"):
+        # What the control has written: the floor, because the pack is parked at
+        # its destination with no overshoot to admit.
+        parked = cycle(0.0)
+        assert parked["forecast_charge_limit_w"] == 0
+        assert runtime["_forecast_charge_limiting"] is True
+        # Allowance = the export limit less the trigger margin, and nothing at
+        # all for a battery that may take nothing — so the 4500 W leaving the
+        # site sits exactly on it and Excess fires. The reading is +500 rather
+        # than 0 because the verdict has latched on and its release band
+        # (DEFAULT_EXCESS_HYSTERESIS) widens the margin from the second cycle.
+        assert parked["excess_available"] is True
+        assert parked["excess_margin_power"] == pytest.approx(500.0, abs=1.0)
+
+        # The bite: without the narrowing the same site reads 5 kW short of
+        # Excess, because the nameplate rate counts as somewhere to put power
+        # the battery is in fact refusing.
+        unnarrowed = cycle(None)
+        assert unnarrowed["excess_margin_power"] == pytest.approx(-5000.0, abs=1.0)
+        assert unnarrowed["excess_available"] is False
 
 
 async def test_grid_phases_in_watts_are_converted_to_amps(

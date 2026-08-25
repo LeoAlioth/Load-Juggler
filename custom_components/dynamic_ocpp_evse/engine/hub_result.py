@@ -190,12 +190,21 @@ def _compute_forecast_advice(
     RISE to the destination, which is never resisted, and the drop is normally
     many points, so it clears the FORECAST_SOC_HYSTERESIS band in one cycle.
 
-    The charge-rate advice deliberately does NOT follow the window — it is
-    handed ``absorbable_today``, which is zero the moment the reservation moves
-    to tomorrow. The cap exists to stop the battery eating headroom out from
-    under a clip that is happening; a clip a night away is answered by the SOC
-    ceiling instead, and leaving the cap released overnight is also what keeps
-    this feature from writing to a charge register in the dark.
+    The RESERVATION half of the charge-rate advice deliberately does NOT follow
+    the window — it is handed ``absorbable_today``, which is zero the moment the
+    reservation moves to tomorrow. That half exists to stop the battery eating
+    headroom out from under a clip that is happening; a clip a night away is
+    answered by the SOC ceiling instead, and leaving it released overnight is
+    what keeps a clip in the dark from writing to a charge register.
+
+    The DESTINATION half does not ask about the window at all: a battery at or
+    above where its owner sends it is held there whatever the forecast says, and
+    the room above the destination stays the buffer for a day the forecast
+    under-read (see ``recommended_charge_limit``). It costs no register traffic
+    to speak of — with no overshoot the advice is a single flat value, so the
+    control writes the floor once and the deadband swallows every cycle after
+    it — and a pack that spends the evening serving the house falls a
+    hysteresis band below the destination and releases on its own.
 
     The energy question and the power question are asked at DIFFERENT
     thresholds — the integral at the true export limit, the instantaneous
@@ -226,13 +235,19 @@ def _compute_forecast_advice(
       the dark (``reservation_is_due``). Self-clearing: nothing is latched while
       production is under way, so every night starts from a clean state.
     * ``_forecast_charge_limiting`` — whether the charge-rate cap was engaged
-      last cycle, which is what makes its SOC gate a two-threshold latch
+      last cycle, which is what makes its RESERVATION gate a two-threshold latch
       instead of one boundary the integer SOC can sit on and flap across (see
-      ``recommended_charge_limit``). The engine owns the persistence; the
-      calculation stays a pure function of state in, state out.
-    * ``_forecast_soc_yielding`` — whether the battery was already yielding to
-      the Excess loads above its destination, the latch of the same shape at
-      that crossing (``yields_to_excess``).
+      ``recommended_charge_limit``). One state for both engagement sources, the
+      destination hold included: at the destination the reserved ceiling is at or
+      below the SOC anyway, so the two always agree, and carrying the hold in it
+      is what lets a clip appearing while the pack is parked take over without a
+      step. The engine owns the persistence; the calculation stays a pure
+      function of state in, state out.
+    * ``_forecast_soc_yielding`` — whether the battery was already at or above
+      its destination, the latch of the same shape at that crossing
+      (``yields_to_excess``). It decides two things at once: that the Excess
+      loads are served first (``excess_draw_w``) and that the destination is held
+      as a standing ceiling (``at_destination``).
     * ``_forecast_export_trim`` / ``_forecast_trim_at`` — the engaged advice's
       slow integral trim and the monotonic stamp its steps are measured from
       (``_advance_export_trim``, and ``export_trim`` for the arithmetic).
@@ -396,6 +411,12 @@ def _compute_forecast_advice(
         # ever. Latched at the crossing (see ``yields_to_excess``) because this
         # moves the advice by whole kilowatts and an integer SOC register would
         # otherwise sit on the boundary and flip it.
+        #
+        # The same crossing is also the STANDING CEILING: at or above the
+        # destination the charge cap engages whether or not anything is forecast
+        # to clip, because the room above the destination is the buffer for a day
+        # the forecast under-read and not the forecast's to spend (see
+        # ``recommended_charge_limit`` — that gate is tested before the clip).
         yielding = yields_to_excess(
             battery_soc,
             soc_target,
@@ -415,6 +436,7 @@ def _compute_forecast_advice(
             hub_runtime.get("_forecast_charge_limiting", False),
             trim_w=hub_runtime.get("_forecast_export_trim", 0.0),
             excess_draw_w=excess_load_draw_power(site) if yielding else 0.0,
+            at_destination=yielding,
         )
         hub_runtime["_forecast_charge_limiting"] = limiting
         _advance_export_trim(
