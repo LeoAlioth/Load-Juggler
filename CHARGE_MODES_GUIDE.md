@@ -428,7 +428,7 @@ battery is a second sink alongside grid export, so both are summed into a single
 comparison — one number decides Excess for every load:
 
 ```
-margin = (grid export + battery charge power + our own managed load draws)
+margin = (solar export + battery charge power + our own managed load draws)
        - (export allowance + battery charge allowance)
 
 Excess is on when  margin >= 0   — and the margin IS the excess pool, in watts
@@ -444,6 +444,19 @@ A sink contributes its allowance only while it can actually absorb:
 The margin (default 500 W) exists because an inverter curtails slightly *under*
 the export limit — a trigger exactly at the limit would never fire. Enter your
 real physical/contract limit; the trigger takes care of itself.
+
+**Only solar export counts.** The export in that sum is the site's own
+*production* leaving the meter, so the battery's discharge is subtracted from
+what the CT reads. `export − battery discharge` is `production − consumption` in
+every case, which is why one subtraction covers every inverter work mode: a
+battery serving the **house** has nothing at the meter to take away, a battery
+**selling** to the grid is taken away in full, and a **charging or idle** battery
+changes nothing at all. Without it, an inverter in a sell mode (Deye "Selling
+First", a time-of-use slot with sell semantics) would push the meter past the
+trigger on stored energy and start an Excess load on the house battery — charging
+the car from the battery, at a loss. On a site whose work mode keeps the battery
+off the meter (Zero-Export-to-CT and every equivalent self-consumption mode) this
+changes nothing at all.
 
 The full-battery rule matters: a full battery draws no charge power, so leaving
 its rating in the allowance would make the trigger unreachable exactly when the
@@ -512,9 +525,10 @@ using. A 2 kW load on an array with 3 kW curtailed lifts the margin to 2 kW; on 
 array with only 1 kW spare it settles at 1 kW, the amount that was genuinely free.
 
 No SOC floor guards this, and none is needed. A **discharging** battery
-contributes nothing to the absorbed side, so the moment a load pushes the battery
-past charging and into discharge, the margin collapses and Excess clears on its
-own. While the margin does hold, the worst a load can do is make the battery
+contributes nothing to the absorbed side — and grid-tied its discharge comes off
+the export term as well (see *Only solar export counts* above) — so the moment a
+load pushes the battery past charging and into discharge, the margin collapses
+and Excess clears on its own. While the margin does hold, the worst a load can do is make the battery
 charge more slowly — it can never drain it. Beyond the full-battery rule, SOC
 plays no part in the Excess decision on any site.
 
@@ -570,6 +584,16 @@ Production can no longer cover household + our 2000W load, so the battery is
 discharging 1000W to help. Discharge counts as absorbing nothing.
 margin = 0 (charge) + 2000 (our load) - 5000 = -3000W
 Result: Excess clears — no SOC floor needed, the formula self-corrects
+```
+
+*Scenario 7: Grid-tied, the battery is selling to the grid*
+```
+Battery SOC: 98% — full, so its charge allowance drops out
+Battery discharging 3000W, which leaves the site through the meter
+Export at the CT: 14000W, of which only 11000W is the array's
+absorbed = 14000 - 3000 = 11000W   capacity = 13000W
+Result: No charging — stored energy is not surplus, whatever the meter reads.
+        Counting it would start a load on the house battery
 ```
 
 ---
