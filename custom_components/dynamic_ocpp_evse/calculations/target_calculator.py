@@ -643,7 +643,7 @@ def _reconstruct_placement(site: SiteContext):
     enough to decide with, since a load that is running must not suppress the
     verdict that engaged it. This is the part of that reconstruction that
     depends on the grid readings, split out because ``excess_margin`` is no
-    longer its only consumer: the forecast's charge-limit trim steers on the
+    longer its only consumer: the forecast's charge-limit advice steers on the
     same reconstructed export (see ``engine/hub_result._compute_forecast_advice``).
 
     Off-grid there are no readings at all, so nothing is reconstructed from
@@ -685,9 +685,10 @@ def _reconstruct_placement(site: SiteContext):
     It is also the PHYSICAL export — every watt at the meter, whatever produced
     it. The Excess verdict wants only the SOLAR share and nets the battery's
     discharge off this figure itself (see ``excess_margin``); the charge-limit
-    trim wants the physical number, because the meter is the plant it steers,
-    and it simply stops integrating while the battery discharges (see
-    ``engine/hub_result._advance_export_trim``). Two consumers, one
+    advice wants the physical number, because the meter is the plant it steers,
+    and it handles a discharging pack in its own arithmetic instead (the
+    battery term goes negative, and a charge cap cannot force a discharge — see
+    ``calculations.recommended_charge_limit``). Two consumers, one
     reconstruction, and the mode-dependent part stays with the consumer that
     cares.
 
@@ -732,12 +733,14 @@ def _reconstruct_placement(site: SiteContext):
 def reconstructed_export_power(site: SiteContext) -> float:
     """Export in watts as the site would read it with our managed loads off.
 
-    The steering signal for the forecast's charge-limit trim, and the same
+    The steering signal for the forecast's charge-limit advice, and the same
     number the Excess verdict places against its allowance — see
     ``_reconstruct_placement`` for why it is not simply the CT reading. Its
-    load-invariance is the property the trim needs: an engaged Excess load
-    drawing kilowatts must not look like an export shortfall, or the trim would
-    be steering on our own loads instead of on the site's standing error.
+    load-invariance is the property the advice needs: an engaged Excess load
+    drawing kilowatts must not look like an export shortfall, or the advice
+    would be steering on our own loads instead of on the site's real surplus.
+    (Above the destination those loads ARE subtracted, deliberately and once,
+    as ``excess_draw_w`` — see ``calculations.recommended_charge_limit``.)
 
     Pure function — unit-testable.
     """
@@ -839,10 +842,10 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
 
     The reconstruction itself — the export the site would read with our loads
     off, and the share of their freed power the battery would take — lives in
-    ``_reconstruct_placement``, because the forecast's charge-limit trim steers
-    on the same figures. The solar-only subtraction stays HERE rather than there:
-    the trim steers the meter, so it wants the physical export and handles a
-    discharging battery by not integrating at all.
+    ``_reconstruct_placement``, because the forecast's charge-limit advice
+    steers on the same figures. The solar-only subtraction stays HERE rather
+    than there: the advice steers the meter, so it wants the physical export,
+    and a discharging pack is handled inside its own arithmetic.
 
     Pure function — unit-testable.
     """

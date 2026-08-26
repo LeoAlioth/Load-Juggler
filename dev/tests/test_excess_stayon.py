@@ -511,12 +511,12 @@ def test_the_draw_still_cancels_while_the_battery_discharges():
 # The same reconstruction, read as a steering signal
 # ---------------------------------------------------------------------------
 #
-# The forecast's charge-limit advice carries a slow integral trim steered by
-# RECONSTRUCTED export against (export limit − trigger margin). That is only
-# safe to close a loop on because of the identity above: our own loads' draw is
-# credited back, so a car charging on the surplus is not read as an export
-# shortfall and cannot steer the battery's charge limit. These pin that
-# invariance on the same geometries, through the same reconstruction.
+# The forecast's charge-limit advice is direct feedback on RECONSTRUCTED export
+# against (export limit − trigger margin). That is only safe to close a loop on
+# because of the identity above: our own loads' draw is credited back, so a car
+# charging on the surplus is not read as an export shortfall and cannot steer
+# the battery's charge limit. These pin that invariance on the same geometries,
+# through the same reconstruction.
 
 
 def _reconstructed(site):
@@ -546,7 +546,7 @@ def test_reconstructed_export_ignores_a_battery_displaced_load():
 
 def test_reconstructed_export_ignores_a_load_on_the_importing_phase_geometry():
     # The geometry that cycled in the field, and the one a naive export reading
-    # would have handed the trim as a 2 kW error.
+    # would have handed the charge advice as a 2 kW error.
     off = _reconstructed(
         _site(6.667, -3.333, -3.333, battery_w=-4600.0, threshold=1000.0)
     )
@@ -558,7 +558,7 @@ def test_reconstructed_export_ignores_a_load_on_the_importing_phase_geometry():
 
 
 def test_reconstructed_export_ignores_an_engaged_load_in_a_clipping_window():
-    # The trim's own operating point: the charge cap engaged, export pinned at
+    # The advice's own operating point: the charge cap engaged, export pinned at
     # the limit, an Excess load running on the surplus.
     idle = _reconstructed(_clipping_site(ENFORCED))
     running = _reconstructed(
@@ -570,18 +570,20 @@ def test_reconstructed_export_ignores_an_engaged_load_in_a_clipping_window():
 
 
 def test_reconstructed_export_stays_the_physical_meter_figure():
-    # The verdict nets the battery's discharge off this number; the trim does
-    # not, because the meter IS the plant it steers. It handles a discharging
-    # battery by not integrating at all — see
-    # engine/hub_result._advance_export_trim.
+    # The verdict nets the battery's discharge off this number; the charge
+    # advice does not, because the meter IS the plant it steers. It handles a
+    # discharging battery inside its own arithmetic — the battery term goes
+    # negative and the value clamps at 0, since a charge cap cannot force a
+    # discharge. See calculations.recommended_charge_limit.
     site = _site(-15500 / V, battery_w=2000.0, soc=98.0)
     assert _close(_reconstructed(site), 15500.0)
 
 
 def test_reconstructed_export_still_sees_the_household():
     # The other half of the property: unmanaged draw is NOT credited back, so a
-    # real house step is a real error — the trim's slowness is what keeps a
-    # kettle off the register, not blindness to it.
+    # real house step is a real error — the register's downward persistence
+    # window is what keeps a kettle off the register, not blindness to it
+    # (control/inverter.py).
     quiet = _reconstructed(_site(-13500 / V, battery_w=-CHARGE_MAX))
     kettle = _reconstructed(_site(-11500 / V, battery_w=-CHARGE_MAX))
     assert _close(quiet - kettle, 2000.0)

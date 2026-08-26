@@ -19,7 +19,6 @@ them.
 from __future__ import annotations
 
 import logging
-import time
 
 from ..calculations import (
     select_clipping_window,
@@ -27,7 +26,6 @@ from ..calculations import (
     reservation_is_due,
     battery_max_soc,
     excess_load_draw_power,
-    export_trim,
     headroom_deficit_kwh,
     reconstructed_export_power,
     recommended_charge_limit,
@@ -57,87 +55,6 @@ from .forecast_reader import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _advance_export_trim(
-    hub_runtime, site, setpoint_w, advice_w, full_rate_w, limiting
-):
-    """Carry the engaged advice's integral trim into the next cycle.
-
-    The seam: ``recommended_charge_limit`` stays a pure formula that is HANDED a
-    trim, and the state — the value and the monotonic stamp the step is measured
-    against — lives here in ``hub_runtime`` beside ``_forecast_charge_limiting``,
-    for the same reason that latch does. Wall-clock seconds, never cycles, so a
-    site polling every 5 s and one polling every 60 s converge at the same rate
-    (the cadence changes how often the trim is *nudged*, not how fast it moves).
-
-    Three regimes:
-
-    * **RESET** — on release, on disengage, and off-grid. The trim corrects the
-      standing error of the ENGAGED tracking equilibrium; while nothing is being
-      held back, observed export says nothing about that error, so a frozen
-      value would only be yesterday's correction waiting to kick the register
-      the moment the gate re-engaged. Off-grid there is no export to steer on at
-      all. A reload resets it too, because ``hub_runtime`` is fresh — the trim is
-      re-earned in ten to twenty minutes, and being wrong on the safe side for
-      that long is exactly what the feedforward is for.
-    * **FREEZE** — engaged but the advice is pinned at 0 or at full rate. The
-      actuator cannot move, so the error is not ours to correct: this is textbook
-      conditional integration, and it is what makes a cloud a non-event. As
-      production collapses the advice falls to 0 on the feedforward alone and the
-      trim simply stops, keeping the value it had earned in the sun instead of
-      running away and having to re-converge afterwards.
-    * **FREEZE** — engaged, but the fleet battery is net DISCHARGING. Same rule,
-      second reason the actuator cannot act: a CHARGE limit only moves export by
-      changing what the battery takes, and a battery that is giving power back
-      is taking nothing for the limit to trim. Whatever the export error is
-      while the pack discharges — the house outrunning production, or a work
-      mode selling stored energy to the meter — it is not correctable from here,
-      and integrating it would wind the clamp with a correction earned under a
-      plant that no longer exists, to be kicked into the register the moment
-      charging resumes. Freezing holds the value the trim earned while the
-      battery really was absorbing, which is the state it will return to.
-    * **INTEGRATE** — engaged, advice free to move: one ``export_trim`` step on
-      reconstructed export against ``setpoint_w`` (``limit − margin``).
-
-    The first engaged cycle after a reset only stamps the clock; there is no
-    elapsed interval to integrate over yet.
-    """
-    if not limiting or site.is_off_grid:
-        hub_runtime.pop("_forecast_export_trim", None)
-        hub_runtime.pop("_forecast_trim_at", None)
-        return
-
-    now = time.monotonic()
-    last = hub_runtime.get("_forecast_trim_at")
-    hub_runtime["_forecast_trim_at"] = now
-    trim = hub_runtime.get("_forecast_export_trim", 0.0)
-    hub_runtime["_forecast_export_trim"] = trim
-    if last is None:
-        return
-    if advice_w is None or advice_w <= 0 or advice_w >= full_rate_w:
-        return
-    # ``site.battery_power`` is the FLEET sum, positive discharging (see
-    # ``fleet.battery_power_total``). Net discharge means the charge limit has
-    # nothing to trim — freeze rather than integrate a correction we cannot
-    # apply. Note this reads the LIVE figure while the export it is compared
-    # against is the reconstruction; both come from the same cycle.
-    if (site.battery_power or 0) > 0:
-        return
-
-    export_w = reconstructed_export_power(site)
-    hub_runtime["_forecast_export_trim"] = export_trim(
-        trim, export_w, setpoint_w, now - last
-    )
-    _LOGGER.debug(
-        "Forecast advice trim: reconstructed export %.0fW vs setpoint %.0fW"
-        " over %.1fs → trim %.0fW (was %.0fW)",
-        export_w,
-        setpoint_w,
-        now - last,
-        hub_runtime["_forecast_export_trim"],
-        trim,
-    )
 
 
 def _compute_forecast_advice(
@@ -223,20 +140,17 @@ def _compute_forecast_advice(
     it — and a pack that spends the evening serving the house falls a
     hysteresis band below the destination and releases on its own.
 
-    The energy question and the power question are asked at DIFFERENT
-    thresholds — the integral at the true export limit, the instantaneous
-    charge-limit advice one Excess trigger margin below it, so a
-    hard-limiting inverter cannot mask the signal. The derivation below
-    spells out why.
-
-    That anchored advice is FEEDFORWARD (it reads production, not the meter,
-    which is what makes it immune to kettles and correct through clouds), and
-    its one standing error is that ``base_consumption`` stands in for the real
-    house draw. A slow, bounded integral trim on RECONSTRUCTED export closes
-    that gap without giving up the feedforward's immunity — see
-    ``_advance_export_trim`` for the state and ``export_trim`` for the
-    arithmetic. base_consumption remains exact where it belongs: in the
-    clipping integral, which is an energy question about the whole day.
+    The energy question and the power question are asked in DIFFERENT terms.
+    The integral is an energy question about a whole day, asked at the true
+    clipping threshold (``export limit + base consumption``). The instantaneous
+    charge-limit advice is a power question about this cycle, and it is
+    MEMORYLESS DIRECT FEEDBACK on two live figures — what the fleet battery is
+    absorbing and what the meter is exporting — against an export SETPOINT one
+    Excess trigger margin under the limit. It never consults base consumption at
+    all: base is a guess about the house, and a guess in the instantaneous path
+    was what the deleted integral trim existed to correct. See
+    ``recommended_charge_limit`` for the derivation, including why a
+    hard-limiting inverter cannot mask this form either.
 
     The fleet-level carried state, all of it in ``hub_runtime`` and none of it
     ever per-member (the advice is uniform by construction, so per-member state
@@ -265,12 +179,11 @@ def _compute_forecast_advice(
       (``yields_to_excess``). It decides two things at once: that the Excess
       loads are served first (``excess_draw_w``) and that the destination is held
       as a standing ceiling (``at_destination``).
-    * ``_forecast_export_trim`` / ``_forecast_trim_at`` — the engaged advice's
-      slow integral trim and the monotonic stamp its steps are measured from
-      (``_advance_export_trim``, and ``export_trim`` for the arithmetic).
-
     Every one of them is dropped the moment the feature is not configured, so a
-    site that turns it off leaves nothing behind.
+    site that turns it off leaves nothing behind. There is deliberately no state
+    for the engaged VALUE any more: it is recomputed from this cycle's
+    measurements, so a reload, a cloud or an hour of release leaves nothing
+    stale to carry back in.
     """
     export_limit = (
         get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT)
@@ -292,8 +205,6 @@ def _compute_forecast_advice(
         hub_runtime.pop("_forecast_reservation_due", None)
         hub_runtime.pop("_forecast_charge_limiting", None)
         hub_runtime.pop("_forecast_soc_yielding", None)
-        hub_runtime.pop("_forecast_export_trim", None)
-        hub_runtime.pop("_forecast_trim_at", None)
         hub_runtime.pop("_forecast_parse_memo", None)
         return None, {}
 
@@ -303,39 +214,28 @@ def _compute_forecast_advice(
     soc_floor = get_entry_value(
         hub_entry, CONF_FORECAST_SOC_FLOOR, DEFAULT_FORECAST_SOC_FLOOR
     )
-    # TWO thresholds, and they are deliberately different numbers.
+    # TWO numbers, in two different currencies, and deliberately so.
     #
-    # ``clip_threshold`` is the TRUE one — power the site can place without
-    # curtailment — and it is what the forecast INTEGRAL must use: the energy
-    # question ("how many kWh will this day produce above what we can place?")
-    # is answered at the real export limit, or the reserved headroom would be
-    # systematically too large.
+    # ``clip_threshold`` is POWER THE SITE CAN PLACE — export limit plus the
+    # house — and it is what the forecast INTEGRAL must use: the energy question
+    # ("how many kWh will this day produce above what we can place?") is
+    # answered at the real export limit, or the reserved headroom would be
+    # systematically too large. base_consumption belongs here, where it is a
+    # day-scale average of a real quantity.
     #
-    # ``advice_threshold`` is the anchor for the INSTANTANEOUS charge-limit
-    # advice, and it sits one Excess trigger margin lower. The reason is the
-    # same one that already puts the Excess trigger below the limit: a signal
-    # anchored exactly AT a hard limit can never be observed. An inverter that
-    # hard-enforces the export limit curtails its own PV to hold it, so
-    # measured production can never exceed
-    #     export_limit + house + battery_allowance
-    # and an advice anchored at the limit degenerates into
-    #     battery_allowance + (house − base)
-    # — a formula that reproduces its own previous output. The allowance then
-    # freezes near its floor while real kilowatts are curtailed: the masking
-    # hides the very overshoot signal the advice is computed from.
-    #
-    # Anchoring a margin below the limit breaks that fixed point without any
-    # probe state, in two regimes:
-    #  1. Unpinned: the battery absorbs production − house − (limit − margin),
-    #     so export settles at (limit − margin) — comfortably under the hard
-    #     limit, nothing is curtailed, measured production is honest and the
-    #     plain formula tracks the sun.
-    #  2. Pinned (export clamped at the limit, production masked): measured
-    #     production is limit + house + allowance, so the next advice is
-    #     allowance + margin + (house − base) — the allowance SELF-CREEPS by
-    #     about one margin per cycle until export falls off the limit and
-    #     regime 1 takes over. The escape from masking falls out of the
-    #     arithmetic.
+    # ``export_setpoint`` is WATTS AT THE METER — where the instantaneous
+    # charge-limit advice steers export to — and it carries no house term at
+    # all: the advice measures what the house is doing this cycle instead of
+    # assuming it (see ``recommended_charge_limit``). It sits one Excess trigger
+    # margin under the limit for the same reason the Excess trigger does: a
+    # signal anchored exactly AT a hard limit can never be observed. An inverter
+    # that hard-enforces the export limit curtails its own PV to hold it, so
+    # with export pinned at the wall the feedback value is
+    #     battery + (limit − setpoint) = battery + margin
+    # and the permit SELF-CREEPS by one margin per cycle until export falls off
+    # the limit; from there the plain feedback tracks the sun and export settles
+    # a margin under the limit, where nothing is curtailed and every reading is
+    # honest.
     excess_trigger_margin = (
         get_entry_value(
             hub_entry, CONF_EXCESS_TRIGGER_MARGIN, DEFAULT_EXCESS_TRIGGER_MARGIN
@@ -343,7 +243,7 @@ def _compute_forecast_advice(
         or 0
     )
     clip_threshold = export_limit + base_consumption
-    advice_threshold = max(0.0, export_limit - excess_trigger_margin) + base_consumption
+    export_setpoint = max(0.0, export_limit - excess_trigger_margin)
 
     # UNGATED fleet charge rate (see docstring) and total inverter capacity.
     fleet_charge_cap = sum(m.charge_cap or 0 for m in members) or None
@@ -374,8 +274,8 @@ def _compute_forecast_advice(
     # only about today: a clip that is a night away is the SOC ceiling's problem,
     # and the ceiling is what makes room for it. Identical to ``fc`` whenever the
     # chosen window IS today; zero once the reservation has moved to tomorrow,
-    # which keeps the cap released, the trim reset and the register untouched all
-    # night — exactly as it was before the window could ever move.
+    # which keeps the cap released and the register untouched all night —
+    # exactly as it was before the window could ever move.
     absorbable_today = fc.absorbable_kwh if window == 0 else 0.0
 
     # Where the fleet's batteries are HEADING (their own normal-ceiling sources,
@@ -420,7 +320,11 @@ def _compute_forecast_advice(
     hub_runtime["_forecast_max_soc"] = proposed
 
     deficit = headroom_deficit_kwh(fc.absorbable_kwh, capacity_kwh, battery_soc)
+    # The two live plant figures the engaged advice is computed from, read once.
+    battery_charge_w = -(site.battery_power or 0.0)
+    export_now_w = reconstructed_export_power(site)
     charge_limit = None
+    limiting = False
     if fleet_charge_cap:
         # Above the destination the battery is the absorber of LAST RESORT: the
         # Excess loads that exist to soak up surplus get it first, and the
@@ -441,34 +345,36 @@ def _compute_forecast_advice(
             hub_runtime.get("_forecast_soc_yielding", False),
         )
         hub_runtime["_forecast_soc_yielding"] = yielding
+        # The engaged value's two live inputs, both from THIS cycle:
+        #
+        # * what the fleet battery is absorbing, positive charging —
+        #   ``site.battery_power`` is positive DISCHARGING (see
+        #   ``fleet.battery_power_total``), so it is negated here and a pack that
+        #   is giving power back arrives as a negative term, which the pure
+        #   function's clamp at 0 turns into "a charge cap cannot force a
+        #   discharge". No sensor at all reads 0, the conservative degradation.
+        # * RECONSTRUCTED export — the draws-credited-back figure the Excess
+        #   verdict decides on, and the reason this loop is safe to close: an
+        #   engaged Excess load's kilowatts are not read as an export shortfall,
+        #   so our own loads cannot steer the battery's limit (they are
+        #   subtracted deliberately instead, as ``excess_draw_w``).
         charge_limit, limiting = recommended_charge_limit(
             absorbable_today,
             battery_soc,
             proposed,
             fleet_charge_cap,
-            site.solar_production_total or 0,
-            # The shifted anchor, never clip_threshold — see above.
-            advice_threshold,
+            battery_charge_w,
+            export_now_w,
+            export_setpoint,
             FORECAST_SOC_HYSTERESIS,
             hub_runtime.get("_forecast_charge_limiting", False),
-            trim_w=hub_runtime.get("_forecast_export_trim", 0.0),
             excess_draw_w=excess_load_draw_power(site) if yielding else 0.0,
             at_destination=yielding,
         )
         hub_runtime["_forecast_charge_limiting"] = limiting
-        _advance_export_trim(
-            hub_runtime,
-            site,
-            max(0.0, export_limit - excess_trigger_margin),
-            charge_limit,
-            fleet_charge_cap,
-            limiting,
-        )
     else:
         hub_runtime.pop("_forecast_charge_limiting", None)
         hub_runtime.pop("_forecast_soc_yielding", None)
-        hub_runtime.pop("_forecast_export_trim", None)
-        hub_runtime.pop("_forecast_trim_at", None)
 
     # Per-inverter advice: the uniform ceiling for every battery member, and
     # the fleet charge limit split proportionally to each member's charge cap,
@@ -490,14 +396,14 @@ def _compute_forecast_advice(
 
     _LOGGER.debug(
         "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW"
-        " (advice anchored at %dW) in window +%dd to %s"
+        " (export setpoint %dW) in window +%dd to %s"
         " | max SOC %d%% (raw %.1f of destination %.1f%%) deficit %.2f kWh"
         " | reserve %s (reserved %.1f%%, production from %s)"
-        " charge cap %s",
+        " charge cap %s (battery %+.0fW, export %.0fW)",
         fc.clipped_kwh,
         fc.absorbable_kwh,
         clip_threshold,
-        advice_threshold,
+        export_setpoint,
         window,
         until,
         proposed,
@@ -508,6 +414,8 @@ def _compute_forecast_advice(
         reserved_soc,
         production_at,
         f"{charge_limit:.0f}W" if charge_limit is not None else "n/a",
+        battery_charge_w,
+        export_now_w,
     )
 
     return {

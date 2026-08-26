@@ -3124,9 +3124,16 @@ def _anchor_hub(slug, export_limit, trigger_margin):
     )
 
 
-def _set_anchor_states(hass, solar_w, forecast_w):
+def _set_anchor_states(hass, solar_w, forecast_w, export_w=0.0, battery_w=500.0):
+    """The plant this rig reads: measured export, and what the pack is taking.
+
+    ``export_w`` is watts leaving the meter (so the CT reading is negative) and
+    ``battery_w`` is watts the pack is absorbing (so the power sensor is
+    negative — positive is discharging). Those two figures ARE the engaged
+    advice's inputs; the solar reading no longer enters it at all.
+    """
     hass.states.async_set(
-        "sensor.an_phase_a", "2.0",
+        "sensor.an_phase_a", str(-export_w / 230.0),
         {"device_class": "current", "unit_of_measurement": "A"},
     )
     hass.states.async_set(
@@ -3140,7 +3147,7 @@ def _set_anchor_states(hass, solar_w, forecast_w):
         {"device_class": "battery", "unit_of_measurement": "%"},
     )
     hass.states.async_set(
-        "sensor.an_battery_power", "-500",
+        "sensor.an_battery_power", str(-battery_w),
         {"device_class": "power", "unit_of_measurement": "W"},
     )
     hass.states.async_set(
@@ -3155,22 +3162,22 @@ def _set_anchor_states(hass, solar_w, forecast_w):
     )
 
 
-async def test_forecast_charge_limit_anchors_a_margin_below_the_export_limit(hass):
-    """The engaged advice is anchored at (export limit − trigger margin), while
-    the clipping INTEGRAL stays on the true (export limit + base) threshold.
+async def test_forecast_charge_limit_steers_to_a_setpoint_a_margin_under_the_limit(hass):
+    """The engaged advice steers export to (export limit − trigger margin),
+    while the clipping INTEGRAL stays on the true (export limit + base) energy
+    threshold.
 
     Regression for the masked-site bug: on an inverter that hard-enforces the
-    export limit, measured production can never exceed the limit plus the
-    house plus the battery allowance, so an advice anchored AT the limit
-    reproduces its own previous output and the allowance freezes near its
-    floor while real kilowatts are curtailed (see
-    ``recommended_charge_limit``'s docstring and the replay tests in
-    test_forecast_clipping.py).
+    export limit, a controller whose setpoint IS the limit can never see an
+    error, so its permit freezes while real kilowatts are curtailed (see
+    ``recommended_charge_limit``'s docstring and the closed-loop replays in
+    test_forecast_clipping.py). A margin under the limit, the pinned error is
+    exactly that margin and the permit creeps out.
 
-    Two hubs identical but for the trigger margin — 0 W (the old, degenerate
-    anchoring, exactly at the limit) and 800 W — decide it: the advice must
-    differ by EXACTLY the margin, and the clipped-energy figure must not move
-    at all.
+    Two hubs identical but for the trigger margin — 0 W (the degenerate
+    setpoint, exactly at the limit) and 800 W — decide it, with the meter pinned
+    at the 5 kW limit and the pack taking 500 W: the advice must differ by
+    EXACTLY the margin, and the clipped-energy figure must not move at all.
     """
     from freezegun import freeze_time
     from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
@@ -3187,9 +3194,9 @@ async def test_forecast_charge_limit_anchors_a_margin_below_the_export_limit(has
         "loads": {},
         "load_allocations": {},
     }
-    # 6 kW measured production; 1 h at 6300 W is 1 kWh above the true 5300 W
-    # threshold, so the ceiling is 90 % and SOC 88 engages the cap.
-    _set_anchor_states(hass, 6000, 6300)
+    # 1 h at 6300 W is 1 kWh above the true 5300 W threshold, so the ceiling is
+    # 90 % and SOC 88 engages the cap. Export pinned at the 5 kW wall.
+    _set_anchor_states(hass, 6000, 6300, export_w=5000.0, battery_w=500.0)
 
     with freeze_time("2026-08-14 08:00:00+00:00"):
         at_limit_result = run_hub_calculation(hass, at_limit)
@@ -3197,7 +3204,7 @@ async def test_forecast_charge_limit_anchors_a_margin_below_the_export_limit(has
 
     # The integral is the ENERGY question and is asked at the true threshold —
     # the same 1 kWh whatever the trigger margin, so the reserved headroom is
-    # untouched by this anchoring.
+    # untouched by this setpoint.
     assert at_limit_result["forecast_clipped_kwh"] == 1.0
     assert shifted_result["forecast_clipped_kwh"] == 1.0
     assert at_limit_result["forecast_absorbable_kwh"] == 1.0
@@ -3205,12 +3212,12 @@ async def test_forecast_charge_limit_anchors_a_margin_below_the_export_limit(has
     assert at_limit_result["forecast_battery_max_soc"] == 90
     assert shifted_result["forecast_battery_max_soc"] == 90
 
-    # The advice is the POWER question and is asked a margin lower:
-    #   6000 − (5000 − 0   + 300) =  700 W
-    #   6000 − (5000 − 800 + 300) = 1500 W
-    assert at_limit_result["forecast_charge_limit_w"] == 700
-    assert shifted_result["forecast_charge_limit_w"] == 1500
-    # The two anchors diverge by exactly the trigger margin.
+    # The advice is the POWER question, and it is battery + (export − setpoint):
+    #   500 + (5000 − (5000 − 0))   =  500 W — the degenerate case, frozen
+    #   500 + (5000 − (5000 − 800)) = 1300 W — one margin of escape per cycle
+    assert at_limit_result["forecast_charge_limit_w"] == 500
+    assert shifted_result["forecast_charge_limit_w"] == 1300
+    # The two setpoints diverge by exactly the trigger margin.
     assert (
         shifted_result["forecast_charge_limit_w"]
         - at_limit_result["forecast_charge_limit_w"]
@@ -3218,11 +3225,12 @@ async def test_forecast_charge_limit_anchors_a_margin_below_the_export_limit(has
     )
 
 
-async def test_forecast_charge_limit_anchor_never_goes_below_base_consumption(hass):
-    """Edge: a trigger margin larger than the export limit clamps at 0 + base.
+async def test_the_export_setpoint_never_goes_below_zero(hass):
+    """Edge: a trigger margin larger than the export limit clamps at 0 W.
 
-    The anchor is ``max(export limit − margin, 0) + base consumption``, so a
-    tiny export limit cannot push it negative and inflate the advice.
+    The setpoint is ``max(export limit − margin, 0)`` — watts at the meter — so
+    a tiny export limit cannot push it negative and inflate the advice by the
+    difference. Base consumption is not in this path at all any more.
     """
     from freezegun import freeze_time
     from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
@@ -3236,16 +3244,16 @@ async def test_forecast_charge_limit_anchor_never_goes_below_base_consumption(ha
         "load_allocations": {},
     }
     # True threshold 700 W; 1 h at 1700 W is 1 kWh clipped → ceiling 90 %.
-    _set_anchor_states(hass, 1000, 1700)
+    _set_anchor_states(hass, 1000, 1700, export_w=400.0, battery_w=500.0)
 
     with freeze_time("2026-08-14 08:00:00+00:00"):
         result = run_hub_calculation(hass, hub)
 
     assert result["forecast_clipped_kwh"] == 1.0
     assert result["forecast_battery_max_soc"] == 90
-    # Anchor clamped to 0 + 300 W: 1000 − 300 = 700 W. Unclamped it would have
-    # been (400 − 500) + 300 = 200 W, advising 800 W.
-    assert result["forecast_charge_limit_w"] == 700
+    # Setpoint clamped to 0: 500 + (400 − 0) = 900 W. Unclamped the setpoint
+    # would be −100 W and the advice 1000 W.
+    assert result["forecast_charge_limit_w"] == 900
 
 
 # ── PV clipping forecast: the reserve is carved below the destination ──
@@ -3257,7 +3265,7 @@ async def test_forecast_charge_limit_anchor_never_goes_below_base_consumption(ha
 # reserve. A site that configures no ceiling source anchors at 100 as before.
 
 
-def _destination_hub(slug):
+def _destination_hub(slug, base=300):
     """A forecast hub whose battery (and its ceiling source) is an inverter entry.
 
     Hub-level: the grid CT, the export limit and base consumption — clipping
@@ -3280,7 +3288,7 @@ def _destination_hub(slug):
             CONF_MAIN_BREAKER_RATING: 25,
             CONF_PHASE_VOLTAGE: 230,
             CONF_GRID_EXPORT_LIMIT: 5000,
-            CONF_BASE_CONSUMPTION: 300,
+            CONF_BASE_CONSUMPTION: base,
             CONF_FORECAST_SOC_FLOOR: 30,
             CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.dst_forecast"],
         },
@@ -3627,7 +3635,6 @@ async def test_the_window_rolls_over_to_tomorrow_once_todays_clip_is_spent(hass)
     # The cap: released, at full rate, nothing latched.
     assert evening["forecast_charge_limit_w"] == 5000
     assert runtime["_forecast_charge_limiting"] is False
-    assert "_forecast_export_trim" not in runtime
 
     # An overnight forecast improvement heals the recommendation upward at once.
     with freeze_time("2026-08-14 23:00:00+00:00"):
@@ -3749,9 +3756,10 @@ async def test_the_reserve_is_held_through_the_evening_and_dropped_just_in_time(
     assert runtime["_forecast_soc_yielding"] is True
     assert evening["forecast_charge_limit_w"] == 0
     assert runtime["_forecast_charge_limiting"] is True
-    # Engaged with the advice pinned at the floor: the trim FREEZES rather than
-    # integrating — an actuator that cannot move is not ours to correct.
-    assert runtime["_forecast_export_trim"] == 0.0
+    # And it is the floor for the honest reason: the meter is nowhere near the
+    # export setpoint at 18:00, so there is no surplus to permit. Nothing is
+    # carried between cycles for a stale correction to live in.
+    assert not [k for k in runtime if "trim" in k]
 
     for stamp in ("2026-08-14 22:00:00+00:00", "2026-08-15 00:00:00+00:00"):
         held = at(stamp)
@@ -3800,7 +3808,6 @@ async def test_nothing_touches_the_charge_register_overnight_below_the_destinati
     assert runtime["_forecast_soc_yielding"] is False
     assert evening["forecast_charge_limit_w"] == 5000
     assert runtime["_forecast_charge_limiting"] is False
-    assert "_forecast_export_trim" not in runtime
 
 
 async def test_the_drop_holds_against_a_faster_night_and_an_early_finish(hass):
@@ -3930,20 +3937,24 @@ async def test_an_unreadable_base_consumption_falls_back_to_the_plain_drop(hass)
     assert result["forecast_battery_max_soc"] == 84
 
 
-# ── PV clipping forecast: the engaged advice's integral trim ──────────
+# ── PV clipping forecast: the engaged advice, through the real cycle ───
 #
-# The anchored advice is feedforward, so ``base_consumption`` standing in for the
-# house leaves the export equilibrium (base − house) short of the Excess trigger
-# for ever. The trim integrates RECONSTRUCTED export against (limit − margin) —
-# slowly, hard-clamped, and only while the gate is engaged and the advice is free
-# to move. State: _forecast_export_trim / _forecast_trim_at in hub_runtime.
+# The engaged value is memoryless direct feedback — what the pack is absorbing
+# plus (RECONSTRUCTED export − the export setpoint) — so these run the real hub
+# cycle with a plant on the other side of it and read the loop's own behaviour.
+# The site deliberately draws 500 W against a 300 W configured base: under the
+# old feedforward + integral-trim design that 200 W error parked export short of
+# the Excess trigger until a slow trim walked it back, and here base does not
+# enter the instantaneous path at all.
 
-_TRIM_SOLAR_W = 8000.0    # measured production, honestly under the hard limit
-_TRIM_HOUSE_W = 500.0     # what the house really draws (the hub says 300)
-_TRIM_SETPOINT_W = 4500.0  # export limit 5000 − trigger margin 500
+_FB_SOLAR_W = 8000.0     # measured production, honestly under the hard limit
+_FB_HOUSE_W = 500.0      # what the house really draws (the hub says 300)
+_FB_SETPOINT_W = 4500.0  # export limit 5000 − trigger margin 500
+# Where this plant's feedback equilibrium is: production − house − setpoint.
+_FB_EQUILIBRIUM_W = _FB_SOLAR_W - _FB_HOUSE_W - _FB_SETPOINT_W  # 3000 W
 
 
-def _trim_site(hass, inverter, advice_w):
+def _fb_site(hass, inverter, advice_w):
     """Apply an advice to the plant: the battery takes it, the rest exports.
 
     Also republishes the enforcement the charge control would have written
@@ -3951,7 +3962,7 @@ def _trim_site(hass, inverter, advice_w):
     to the rate the battery is really permitted — one cycle behind, exactly as
     in production.
     """
-    export_w = _TRIM_SOLAR_W - _TRIM_HOUSE_W - advice_w
+    export_w = _FB_SOLAR_W - _FB_HOUSE_W - advice_w
     hass.states.async_set(
         "sensor.dst_phase_a", str(-export_w / 230.0),
         {"device_class": "current", "unit_of_measurement": "A"},
@@ -3965,179 +3976,161 @@ def _trim_site(hass, inverter, advice_w):
     }
 
 
-def _trim_rig(hass, slug, soc=88):
+def _fb_rig(hass, slug, soc=88, base=None):
     """A destination hub whose production is measured, ready for a plant loop.
 
-    The plant starts AT the feedforward's own equilibrium (the battery already
-    taking production − anchor), so nothing below is an artefact of a cold
-    start: the Excess latch never sees the transient of a battery that is not
-    charging yet, and the first trim step measures the real standing error.
+    ``base`` overrides the hub's base consumption, which is what pins that the
+    instantaneous path does not read it.
     """
-    hub = _destination_hub(slug)
+    hub = _destination_hub(slug, base=300 if base is None else base)
     inverter = _destination_inverter(
         hub, slug, "number.dst_normal", solar_entity="sensor.dst_solar"
     )
     inverter.add_to_hass(hass)
     runtime = {"loads": []}
-    hass.data[DOMAIN] = {
-        "hubs": {hub.entry_id: runtime},
-        "loads": {},
-        "load_allocations": {},
-        "inverters": {},
-    }
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN].setdefault("hubs", {})[hub.entry_id] = runtime
+    hass.data[DOMAIN].setdefault("loads", {})
+    hass.data[DOMAIN].setdefault("load_allocations", {})
+    hass.data[DOMAIN].setdefault("inverters", {})
     _set_destination_states(hass, soc=soc)
     hass.states.async_set(
-        "sensor.dst_solar", str(_TRIM_SOLAR_W),
+        "sensor.dst_solar", str(_FB_SOLAR_W),
         {"device_class": "power", "unit_of_measurement": "W"},
     )
-    _trim_site(hass, inverter, _TRIM_SOLAR_W - (_TRIM_SETPOINT_W + 300))
+    # Start the plant at the OLD design's equilibrium (production − anchor,
+    # anchor = limit − margin + base), which is 200 W of battery too much and
+    # 200 W of export too little. One cycle of the new controller corrects it.
+    _fb_site(hass, inverter, _FB_SOLAR_W - (_FB_SETPOINT_W + 300))
     return hub, inverter, runtime
 
 
-async def test_the_advice_trim_walks_the_site_onto_the_excess_trigger(hass):
-    """The trim end to end, through the real cycle and the real reconstruction.
+async def test_the_advice_puts_the_site_on_the_excess_trigger_at_once(hass):
+    """The loop end to end, through the real cycle and the real reconstruction.
 
     Closed loop: each cycle's published advice becomes the next cycle's battery
-    power and CT reading, and the charge control's enforcement narrows the
-    Excess allowance as it does in production. The house draws 500 W against the
-    hub's 300 W base, so the feedforward parks export 200 W under the trigger —
-    and the Excess margin the whole site decides on sits at −200 W, a load's
-    width from firing, for the rest of the day.
+    power and CT reading, and the charge control's enforcement narrows the Excess
+    allowance as it does in production. The house draws 500 W against the hub's
+    300 W base, which under the feedforward + trim design parked export 200 W
+    under the trigger and left the site's Excess margin at −200 W — a load's
+    width from firing — until twenty minutes of integration had walked it back.
 
-    The trim recovers those 200 W: the battery gives them up, export rises onto
-    (limit − margin), and within the hour the margin has closed onto the trigger
-    and Excess engages. base_consumption is never touched — it goes on being
-    exact where it belongs, in the clipping integral.
+    Direct feedback closes it on the FIRST cycle: the meter says export is
+    200 W short, so the battery gives exactly 200 W back, export lands on
+    (limit − margin) and the margin closes onto the trigger. base_consumption is
+    never consulted here — it goes on being exact where it belongs, in the
+    clipping integral.
     """
     from freezegun import freeze_time
     from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
-    hub, inverter, runtime = _trim_rig(hass, "trim")
+    hub, inverter, runtime = _fb_rig(hass, "feedback")
+    old_design = _FB_SOLAR_W - (_FB_SETPOINT_W + 300)   # 3200 W
 
     with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
-        # A few cycles with the clock still: no elapsed time, so no trim at all.
-        # The plant is already at the feedforward equilibrium, so this only
-        # proves the loop sits there.
-        advice = _TRIM_SOLAR_W - (_TRIM_SETPOINT_W + 300)
-        for _ in range(5):
-            _trim_site(hass, inverter, advice)
-            result = run_hub_calculation(hass, hub)
-            advice = result["forecast_charge_limit_w"]
-        untrimmed = advice
-        untrimmed_export = _TRIM_SOLAR_W - _TRIM_HOUSE_W - untrimmed
+        # One cycle, and the clock has not even moved: there is no time constant
+        # to elapse, because there is no integrator.
+        result = run_hub_calculation(hass, hub)
+        advice = result["forecast_charge_limit_w"]
+        assert runtime["_forecast_charge_limiting"] is True
+        assert advice == _FB_EQUILIBRIUM_W == old_design - 200
 
-        # The feedforward's equilibrium: production − anchor, which leaves export
-        # exactly (base − house) short of the trigger, so Excess stays off.
-        assert untrimmed == _TRIM_SOLAR_W - (_TRIM_SETPOINT_W + 300)
-        assert untrimmed_export == _TRIM_SETPOINT_W - 200
-        # The cost of the misconfigured base, in the one number that decides
-        # Excess for every load on the site.
-        assert result["excess_margin_power"] == pytest.approx(-200, abs=2)
-        assert result["excess_available"] is False
-        assert runtime["_forecast_export_trim"] == 0.0
-
-        # Now let time pass: 20 minutes of 10 s cycles.
-        for _ in range(120):
+        # Applied, the site sits ON the trigger — export exactly (limit − margin)
+        # — and it is a fixed point: zero error means "permit what you already
+        # take", so the value repeats for as long as the plant holds still.
+        for _ in range(20):
             frozen.tick(10)
-            _trim_site(hass, inverter, advice)
+            _fb_site(hass, inverter, advice)
             result = run_hub_calculation(hass, hub)
             advice = result["forecast_charge_limit_w"]
+            # Within the amps↔watts round trip of the CT reading.
+            assert advice == pytest.approx(_FB_EQUILIBRIUM_W, abs=2)
 
-        export = _TRIM_SOLAR_W - _TRIM_HOUSE_W - advice
-        # Two time constants: ~86 % of the 200 W offset is gone.
-        assert -200 < runtime["_forecast_export_trim"] < -150
-        assert abs(export - _TRIM_SETPOINT_W) < 50
-        assert advice < untrimmed
-        assert -50 < result["excess_margin_power"] < 0
-
-        # Forty more minutes: the offset is gone and the site sits ON the
-        # trigger, where any genuine surplus fires the verdict.
-        for _ in range(240):
-            frozen.tick(10)
-            _trim_site(hass, inverter, advice)
-            result = run_hub_calculation(hass, hub)
-            advice = result["forecast_charge_limit_w"]
-
-        assert abs(runtime["_forecast_export_trim"] + 200.0) < 5.0
-        assert abs(_TRIM_SOLAR_W - _TRIM_HOUSE_W - advice - _TRIM_SETPOINT_W) < 5.0
-        # And the verdict the whole exercise is about fires: export is back on
+        assert _FB_SOLAR_W - _FB_HOUSE_W - advice == pytest.approx(
+            _FB_SETPOINT_W, abs=2
+        )
+        # And the verdict the whole exercise is about fires: export is on
         # (limit − margin), a margin of 0 IS Excess, and the engaged latch then
         # widens the band by the Excess hysteresis — which is what the published
         # margin shows once it has engaged.
         assert result["excess_available"] is True
         assert result["excess_margin_power"] > 0
+        # Nothing accumulated anywhere: no trim state to reset, and no stamp.
+        assert not [key for key in runtime if "trim" in key]
 
 
-async def test_the_advice_trim_resets_when_the_gate_releases(hass):
-    """Release, disengage, reload: the trim is earned again, never carried.
+async def test_a_misconfigured_base_changes_nothing_in_the_instantaneous_path(hass):
+    """base_consumption lives in the INTEGRAL only, and this proves the split.
 
-    While nothing is being held back, observed export says nothing about the
-    engaged equilibrium's error — a kept value would only be yesterday's
-    correction waiting to kick the register when the gate re-engages.
+    Two hubs on the same plant, one with a base of 300 W and one with 5000 W —
+    wildly wrong, sixteen times the house draw. The clipping integral must
+    disagree (it is a different threshold, so a different reserve), and the
+    engaged charge advice must be byte-identical, because it is computed from
+    the meter and the pack alone.
     """
     from freezegun import freeze_time
     from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
-    hub, inverter, runtime = _trim_rig(hass, "release")
+    # SOC 96 so the DESTINATION hold is what engages the gate in both: that
+    # boundary is base-independent, while the reservation's ceiling is not (a
+    # 5 kW base really does mean less of the day clips, which is the integral
+    # doing its job).
+    honest_hub, _honest_inv, _ = _fb_rig(hass, "basehonest", soc=96, base=300)
+    wrong_hub, _wrong_inv, _ = _fb_rig(hass, "basewrong", soc=96, base=5000)
 
-    with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
-        advice = _TRIM_SOLAR_W - (_TRIM_SETPOINT_W + 300)
-        for _ in range(20):
-            frozen.tick(10)
-            _trim_site(hass, inverter, advice)
-            advice = run_hub_calculation(hass, hub)["forecast_charge_limit_w"]
-        assert runtime["_forecast_charge_limiting"] is True
-        assert runtime["_forecast_export_trim"] < 0.0
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        honest = run_hub_calculation(hass, honest_hub)
+        wrong = run_hub_calculation(hass, wrong_hub)
 
-        # SOC falls a full band below the engage threshold: the gate releases.
-        hass.states.async_set(
-            "sensor.dst_battery_soc", "70",
-            {"device_class": "battery", "unit_of_measurement": "%"},
-        )
-        frozen.tick(10)
-        result = run_hub_calculation(hass, hub)
-        assert result["forecast_charge_limit_w"] == 5000
-        assert runtime["_forecast_charge_limiting"] is False
-        assert "_forecast_export_trim" not in runtime
-        assert "_forecast_trim_at" not in runtime
+    # The energy question DOES move — a 5 kW base means the site can place 5 kW
+    # more, so less of the forecast peak clips.
+    assert honest["forecast_clipped_kwh"] > wrong["forecast_clipped_kwh"] == 0.0
+    assert honest["forecast_battery_max_soc"] < wrong["forecast_battery_max_soc"]
+    # Both gates are engaged, on the destination the pack is sitting at.
+    assert honest["forecast_charge_limit_w"] is not None
+    # The power question does not move at all.
+    assert honest["forecast_charge_limit_w"] == pytest.approx(
+        _FB_EQUILIBRIUM_W, abs=2
+    )
+    assert wrong["forecast_charge_limit_w"] == honest["forecast_charge_limit_w"]
 
 
-async def test_the_advice_trim_freezes_while_the_advice_sits_on_its_floor(hass):
-    """A cloud is a non-event: the advice falls on the feedforward alone and the
-    trim stops rather than winding up against an actuator that cannot move.
+async def test_the_advice_carries_nothing_out_of_a_cloud(hass):
+    """A cloud is two different cycles, and that is the whole handling.
 
-    Conditional integration, and the reason a cloudy hour costs nothing: when
-    the sun returns the trim is still the value it earned in the sun.
+    The integral trim needed a conditional-integration rule here (the advice is
+    pinned at its floor, the actuator cannot move, so do not integrate) and its
+    correctness rested on that rule firing. Memoryless, the collapse is simply
+    what the meter says now, and the recovery is what it says next — with no
+    earned value to hold, freeze, or re-converge.
     """
     from freezegun import freeze_time
     from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
-    hub, inverter, runtime = _trim_rig(hass, "cloud")
+    hub, inverter, runtime = _fb_rig(hass, "cloud")
 
     with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
-        advice = _TRIM_SOLAR_W - (_TRIM_SETPOINT_W + 300)
-        for _ in range(30):
+        advice = None
+        for _ in range(10):
             frozen.tick(10)
-            _trim_site(hass, inverter, advice)
+            _fb_site(hass, inverter, advice or _FB_EQUILIBRIUM_W)
             advice = run_hub_calculation(hass, hub)["forecast_charge_limit_w"]
-        earned = runtime["_forecast_export_trim"]
-        assert earned < 0.0
+        assert advice == pytest.approx(_FB_EQUILIBRIUM_W, abs=2)
 
         # The cloud: production collapses below the house draw, so the battery
-        # stops charging and the site imports — reconstructed export is 0, a
-        # 4.5 kW error the trim must NOT chase.
+        # stops charging and the site imports. A 4.5 kW error, and the honest
+        # answer to it is "charge nothing".
         hass.states.async_set(
             "sensor.dst_solar", "300",
             {"device_class": "power", "unit_of_measurement": "W"},
         )
-        pinned = None
-        for cycle in range(30):  # five minutes of cloud
+        for cycle in range(60):  # ten minutes of cloud
             frozen.tick(10)
             hass.states.async_set(
                 "sensor.dst_phase_a", str(200.0 / 230.0),
@@ -4152,56 +4145,54 @@ async def test_the_advice_trim_freezes_while_the_advice_sits_on_its_floor(hass):
             }
             result = run_hub_calculation(hass, hub)
             assert runtime["_forecast_charge_limiting"] is True
-            if cycle < 3:
-                # The EMA takes a couple of cycles to follow the sun down, and
-                # while the advice is still above its floor the trim is entitled
-                # to move: the actuator really can act on the error.
-                continue
+            if cycle < 20:
+                continue  # the input EMAs are still following the sun down
             assert result["forecast_charge_limit_w"] == 0
-            if pinned is None:
-                pinned = runtime["_forecast_export_trim"]
-            # Frozen from the moment the advice hits its floor — no windup in
-            # either direction. Without the freeze rule these 26 cycles of a
-            # 4.5 kW error would have reached the clamp inside a minute.
-            assert runtime["_forecast_export_trim"] == pinned
 
-        assert pinned is not None
-        assert abs(pinned - earned) < 30.0
+        # The sun returns to the same plant, and the value comes back to the same
+        # equilibrium — no overshoot on the way, which is what a stale positive
+        # correction would have shown up as.
+        hass.states.async_set(
+            "sensor.dst_solar", str(_FB_SOLAR_W),
+            {"device_class": "power", "unit_of_measurement": "W"},
+        )
+        for _ in range(30):
+            frozen.tick(10)
+            _fb_site(hass, inverter, _FB_EQUILIBRIUM_W)
+            after = run_hub_calculation(hass, hub)
+            assert after["forecast_charge_limit_w"] <= _FB_EQUILIBRIUM_W + 2
+        assert after["forecast_charge_limit_w"] == pytest.approx(
+            _FB_EQUILIBRIUM_W, abs=2
+        )
+        assert not [key for key in runtime if "trim" in key]
 
 
-async def test_the_advice_trim_freezes_while_the_battery_discharges(hass):
+async def test_a_selling_pack_needs_no_freeze_rule(hass):
     """A CHARGE limit cannot correct an export error the battery is causing.
 
-    The same conditional integration as the floor, for the second reason the
-    actuator cannot act: while the pack gives power back it is taking nothing
-    for a charge limit to trim. Here it SELLS 2 kW to the meter — the mode this
-    freeze exists for — so export stands 2 kW above the setpoint for good. Chase
-    that and the trim winds toward its clamp on a plant that no longer exists,
-    and kicks the register the moment charging resumes.
-
-    The advice stays mid-band throughout, so the floor / full-rate freeze is
-    provably not what is holding the trim still.
+    The integral trim froze for this (a discharging pack is taking nothing for a
+    charge limit to trim, and integrating it would wind a correction earned
+    under a plant that no longer exists). Here the discharge is simply a negative
+    term: the pack SELLS 2 kW, so the arithmetic asks for a discharge, and the
+    clamp at 0 is the honest answer — for as long as it lasts, and not one cycle
+    longer.
     """
     from freezegun import freeze_time
     from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
-    hub, inverter, runtime = _trim_rig(hass, "selling")
+    hub, inverter, runtime = _fb_rig(hass, "selling")
 
     with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
-        advice = _TRIM_SOLAR_W - (_TRIM_SETPOINT_W + 300)
-        for _ in range(30):
+        for _ in range(10):
             frozen.tick(10)
-            _trim_site(hass, inverter, advice)
+            _fb_site(hass, inverter, _FB_EQUILIBRIUM_W)
             advice = run_hub_calculation(hass, hub)["forecast_charge_limit_w"]
-        earned = runtime["_forecast_export_trim"]
-        assert earned < 0.0
+        assert advice == pytest.approx(_FB_EQUILIBRIUM_W, abs=2)
 
-        # The pack flips to selling 2 kW: the meter now reads 2 kW MORE export
-        # than the array is making. Let the input EMA cross into discharge with
-        # the clock STILL, so nothing can be integrated while it does — the
-        # freeze below is then the only thing holding the value.
+        # The pack flips to selling 2 kW: the meter reads 2 kW MORE export than
+        # the array is making, and the pack is absorbing nothing.
         def _selling():
             hass.states.async_set(
                 "sensor.dst_battery_power", "2000",
@@ -4209,87 +4200,35 @@ async def test_the_advice_trim_freezes_while_the_battery_discharges(hass):
             )
             hass.states.async_set(
                 "sensor.dst_phase_a",
-                str(-(_TRIM_SETPOINT_W + 2000.0) / 230.0),
+                str(-(_FB_SETPOINT_W + 2000.0) / 230.0),
                 {"device_class": "current", "unit_of_measurement": "A"},
             )
 
-        for _ in range(8):
-            _selling()
-            run_hub_calculation(hass, hub)
-        assert runtime["_forecast_export_trim"] == earned
-
-        # Ten minutes — a full time constant — of a standing +2 kW error.
-        for _ in range(60):
+        for cycle in range(60):
             frozen.tick(10)
             _selling()
             result = run_hub_calculation(hass, hub)
             assert runtime["_forecast_charge_limiting"] is True
-            # Free to move: not on its floor, not at full rate.
-            assert 0 < result["forecast_charge_limit_w"] < 5000
-            # Byte-identical, not merely close.
-            assert runtime["_forecast_export_trim"] == earned
+            if cycle < 20:
+                continue  # the input EMAs are still crossing into discharge
+            # −2000 + 2000 = 0: the two terms cancel, which is exactly right —
+            # stopping the sale would put those watts back on the meter, so
+            # there is nothing here for the battery to be permitted. And it
+            # stays 0 for as long as the sale lasts, with nothing winding up
+            # behind it.
+            assert result["forecast_charge_limit_w"] == pytest.approx(0, abs=5)
 
-        # Charging resumes, and integration resumes with it — from the value the
-        # trim earned while the battery really was absorbing.
-        for _ in range(8):
+        # Charging resumes, and so does the permit — from the plant, not from a
+        # value earned before the sale, and never past the equilibrium on the
+        # way (which is what carried state would have looked like).
+        for _ in range(30):
             frozen.tick(10)
-            _trim_site(hass, inverter, result["forecast_charge_limit_w"])
+            _fb_site(hass, inverter, _FB_EQUILIBRIUM_W)
             result = run_hub_calculation(hass, hub)
-        assert runtime["_forecast_export_trim"] != earned
-
-
-async def test_a_kettle_cannot_move_the_written_register(hass):
-    """The guard the trim's time constant exists for, at the register itself.
-
-    Someone boils a kettle: 2 kW of unmanaged household draw for a minute, which
-    IS a real export shortfall (the reconstruction credits back our own loads,
-    not the house). At one 600 s time constant that earns ~200 W of trim, and on
-    a Deye register — 100 A of DC amps at 51.2 V, 5 % deadband = 5 A — 200 W is
-    3.9 A: inside the deadband, so control/inverter.py writes nothing.
-    """
-    from freezegun import freeze_time
-    from custom_components.dynamic_ocpp_evse.control.inverter import should_write
-    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
-        run_hub_calculation,
-    )
-
-    hub, inverter, runtime = _trim_rig(hass, "kettle")
-
-    with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
-        advice = _TRIM_SOLAR_W - (_TRIM_SETPOINT_W + 300)
-        for _ in range(5):
-            _trim_site(hass, inverter, advice)
-            advice = run_hub_calculation(hass, hub)["forecast_charge_limit_w"]
-        steady = advice
-        assert runtime["_forecast_export_trim"] == 0.0
-
-        # The kettle: 2 kW more house draw for six 10 s cycles. The advice's
-        # feedforward term cannot see it at all (production has not moved), so
-        # every watt of movement below is the trim's.
-        for _ in range(6):
-            frozen.tick(10)
-            export_w = _TRIM_SOLAR_W - _TRIM_HOUSE_W - 2000.0 - steady
-            hass.states.async_set(
-                "sensor.dst_phase_a", str(-export_w / 230.0),
-                {"device_class": "current", "unit_of_measurement": "A"},
-            )
-            hass.states.async_set(
-                "sensor.dst_battery_power", str(-steady),
-                {"device_class": "power", "unit_of_measurement": "W"},
-            )
-            kettled = run_hub_calculation(hass, hub)["forecast_charge_limit_w"]
-
-        drift = steady - kettled
-        assert 0 < drift < 256, f"the kettle moved the advice by {drift} W"
-
-        # At the register: 100 A normal, 5 % deadband, DC amps at 51.2 V.
-        volts, normal, deadband = 51.2, 100.0, 5.0
-        assert not should_write(
-            steady / volts, kettled / volts, None, deadband
-        ), "the kettle would have been written to the register"
-        # Bite: the clamp's full excursion WOULD clear the deadband, so it is
-        # the time constant doing the work here, not the clamp.
-        assert should_write(steady / volts, (steady - 400.0) / volts, None, deadband)
+            assert result["forecast_charge_limit_w"] <= _FB_EQUILIBRIUM_W + 2
+        assert result["forecast_charge_limit_w"] == pytest.approx(
+            _FB_EQUILIBRIUM_W, abs=2
+        )
 
 
 async def test_the_battery_yields_to_an_engaged_excess_load_above_its_destination(hass):
@@ -4349,25 +4288,47 @@ async def test_the_battery_yields_to_an_engaged_excess_load_above_its_destinatio
         "sensor.dst_solar", "8000",
         {"device_class": "power", "unit_of_measurement": "W"},
     )
+    # The pack is absorbing 3 kW and the meter is pinned at the 5 kW wall, so
+    # the engaged value is 3000 + (5000 − 4500) = 3500 W of permit.
     hass.states.async_set(
-        "sensor.dst_phase_a", "-10.0",
-        {"device_class": "current", "unit_of_measurement": "A"},
+        "sensor.dst_battery_power", "-3000",
+        {"device_class": "power", "unit_of_measurement": "W"},
     )
 
-    def cycle(evse_amps):
-        hass.states.async_set(
-            "sensor.dst_evse_current", str(evse_amps),
-            {"device_class": "current", "unit_of_measurement": "A"},
-        )
-        return run_hub_calculation(hass, hub)
+    def cycle(evse_amps, repeats=20):
+        """Hold one physical state until the EMAs have followed it, then read."""
+        draw_w = evse_amps * 230.0
+        # What the charge control is enforcing, which production always
+        # publishes while the cap is engaged: with the pack sitting ON its
+        # enforced rate it has no headroom, so the reconstruction leaves the
+        # car's freed power on the EXPORT side instead of handing it to the
+        # battery — see ``_reconstruct_placement``.
+        hass.data[DOMAIN]["inverters"][inverter.entry_id] = {
+            INVERTER_RT_ENFORCED_CHARGE_W: 3000.0
+        }
+        for _ in range(repeats):
+            # Physics: the car's draw comes off the meter, and the engine's
+            # feedback loop plus reconstruction put it back — which is what
+            # makes the reconstruction safe to steer on.
+            hass.states.async_set(
+                "sensor.dst_phase_a", str(-(5000.0 - draw_w) / 230.0),
+                {"device_class": "current", "unit_of_measurement": "A"},
+            )
+            hass.states.async_set(
+                "sensor.dst_evse_current", str(evse_amps),
+                {"device_class": "current", "unit_of_measurement": "A"},
+            )
+            result = run_hub_calculation(hass, hub)
+        return result
 
-    # Anchor 4800 W (5000 − 500 + 300) against 8000 W measured: overshoot 3200.
     with freeze_time("2026-08-14 08:00:00+00:00"):
         idle = cycle(0.0)
-        assert idle["forecast_charge_limit_w"] == 3200
+        assert idle["forecast_charge_limit_w"] == pytest.approx(3500, abs=2)
 
         drawing = cycle(10.0)  # 10 A on one phase = 2300 W
-        assert drawing["forecast_charge_limit_w"] == 3200 - 2300
+        assert drawing["forecast_charge_limit_w"] == pytest.approx(
+            3500 - 2300, abs=2
+        )
         # Draw-invariant verdict: the same answer with the car running as
         # without it — the reconstruction is what makes the yield safe.
         assert drawing["excess_available"] == idle["excess_available"]
@@ -4378,7 +4339,7 @@ async def test_the_battery_yields_to_an_engaged_excess_load_above_its_destinatio
             {"device_class": "battery", "unit_of_measurement": "%"},
         )
         below = cycle(10.0)
-        assert below["forecast_charge_limit_w"] == 3200
+        assert below["forecast_charge_limit_w"] == pytest.approx(3500, abs=2)
 
 
 async def test_the_verdict_does_not_flap_while_the_battery_yields_above_target(hass):
@@ -4443,12 +4404,7 @@ async def test_the_verdict_does_not_flap_while_the_battery_yields_above_target(h
         "sensor.dst_solar", "8000",
         {"device_class": "power", "unit_of_measurement": "W"},
     )
-    # The realistic operating point: the trim has already converged on this
-    # site's 200 W base error, so export sits ON the trigger rather than under
-    # it — which is exactly the state an Excess load engages in.
-    runtime["_forecast_export_trim"] = -200.0
-
-    def stage(export_w, battery_w, enforced_w, evse_amps, repeats=6):
+    def stage(export_w, battery_w, enforced_w, evse_amps, repeats=20):
         """Hold one physical state until the EMAs have followed it, then read."""
         hass.data[DOMAIN]["inverters"][inverter.entry_id] = {
             INVERTER_RT_ENFORCED_CHARGE_W: enforced_w
@@ -4476,14 +4432,18 @@ async def test_the_verdict_does_not_flap_while_the_battery_yields_above_target(h
         #    enforced rate rather than the 5 kW nameplate.
         idle = stage(4500.0, 3000.0, 3000.0, 0.0)
         assert idle["excess_available"] is True
-        assert idle["forecast_charge_limit_w"] == 3000
+        # Export ON the setpoint: zero error, so the permit is what the pack
+        # already takes.
+        assert idle["forecast_charge_limit_w"] == pytest.approx(3000, abs=2)
 
         # 2. The car engages on the surplus, taking 2300 W of what was being
         #    exported. The verdict must not move — and the battery yields.
         engaged = stage(2200.0, 3000.0, 3000.0, 10.0)
         assert engaged["excess_available"] is True
         assert engaged["excess_margin_power"] >= idle["excess_margin_power"]
-        assert engaged["forecast_charge_limit_w"] == 3000 - 2300
+        assert engaged["forecast_charge_limit_w"] == pytest.approx(
+            3000 - 2300, abs=2
+        )
 
         # 3. The control writes that lower rate, so the battery really does take
         #    700 W and the allowance narrows with it. The margin only widens:
@@ -4491,7 +4451,9 @@ async def test_the_verdict_does_not_flap_while_the_battery_yields_above_target(h
         yielded = stage(4500.0, 700.0, 700.0, 10.0)
         assert yielded["excess_available"] is True
         assert yielded["excess_margin_power"] > engaged["excess_margin_power"]
-        assert yielded["forecast_charge_limit_w"] == 3000 - 2300
+        assert yielded["forecast_charge_limit_w"] == pytest.approx(
+            3000 - 2300, abs=2
+        )
 
 
 # ── PV clipping forecast: the destination is a STANDING ceiling ────────
@@ -4596,31 +4558,41 @@ async def test_the_destination_stops_the_charge_with_nothing_forecast_to_clip(ha
     assert runtime["_forecast_soc_yielding"] is False
 
 
-async def test_the_trim_does_not_wind_up_while_the_battery_is_parked(hass):
-    """The freeze-at-floor rule, in the regime the hold created.
+async def test_a_parked_pack_accumulates_nothing_at_all(hass):
+    """An afternoon parked on the floor leaves nothing behind to kick.
 
-    A parked pack reports ``limiting``, so the trim is armed — and its advice is
-    pinned at 0, so there is no actuator movement the standing error could be
-    ours to correct. Without the freeze, an afternoon of parked cycles would
-    integrate to the clamp and the first real overshoot would arrive with a
-    kilowatt of stale correction on top of it.
+    A parked pack reports ``limiting`` with its advice pinned at 0 against a
+    standing 4.5 kW export error — the regime the deleted integral trim needed
+    its freeze-at-floor rule for, because without it an afternoon of these
+    cycles integrated to the clamp and the first real surplus arrived with a
+    kilowatt of stale correction on top of it. Memoryless, there is nothing to
+    freeze and nothing carried: every cycle is the same recomputation, and the
+    hub runtime never grows a value for it.
     """
     from freezegun import freeze_time
     from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
     )
 
-    # Production far below the 4800 W anchor and the site importing, so the
-    # export error the trim measures is the biggest it ever gets.
+    # Production far below the export setpoint and the site importing, so the
+    # standing error is the biggest it ever gets.
     hub, _inverter, runtime = _no_clip_rig(hass, "parkedtrim", soc=95, solar_w=1000.0)
 
     with freeze_time("2026-08-25 09:00:00+00:00") as frozen:
-        for _ in range(30):  # five minutes at the 10 s cycle
+        for _ in range(180):  # half an hour at the 10 s cycle
             frozen.tick(10)
             result = run_hub_calculation(hass, hub)
             assert result["forecast_charge_limit_w"] == 0
             assert runtime["_forecast_charge_limiting"] is True
-            assert runtime["_forecast_export_trim"] == 0.0
+        # No integrator, no stamp, no accumulated correction — the only forecast
+        # state carried is the three latches and the ceiling ratchet.
+        assert sorted(k for k in runtime if k.startswith("_forecast")) == [
+            "_forecast_charge_limiting",
+            "_forecast_max_soc",
+            "_forecast_parse_memo",
+            "_forecast_reservation_due",
+            "_forecast_soc_yielding",
+        ]
 
 
 async def test_a_site_with_no_ceiling_source_is_untouched_by_the_hold(hass):
@@ -4702,7 +4674,7 @@ async def test_the_parked_battery_hands_the_surplus_to_the_excess_verdict(hass):
         # What the control has written: the floor, because the pack is parked at
         # its destination with no overshoot to admit.
         parked = cycle(0.0)
-        assert parked["forecast_charge_limit_w"] == 0
+        assert parked["forecast_charge_limit_w"] == pytest.approx(0, abs=2)
         assert runtime["_forecast_charge_limiting"] is True
         # Allowance = the export limit less the trigger margin, and nothing at
         # all for a battery that may take nothing — so the 4500 W leaving the
