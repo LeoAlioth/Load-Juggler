@@ -61,9 +61,22 @@ DEFAULT_CHARGE_LIMIT_MINIMUM = 0
 
 # Write pacing. These registers go over Modbus and some firmwares commit them
 # to EEPROM, so a value that moves a few watts every cycle is genuinely
-# harmful — write only on a real change, and not more often than this.
+# harmful — write only on a real change, and only when it has lasted.
+#
+# The interval is DIRECTIONAL for the charge rate (see ``control/inverter.py``):
+# it is how long a REDUCTION must hold before it is written, since the engaged
+# advice is direct feedback on a live meter and a reduction that lasts less than
+# this — a kettle, a passing cloud, a car plugging in — is not one the register
+# should follow. A rise is not paced by it at all (it is bounded to one Excess
+# trigger margin per write instead), and the cap engaging bypasses it as the
+# protective transition it is. For the RELEASE ramp, and for the SOC ceiling
+# control, it stays a plain minimum time between writes.
+#
+# The key is unchanged from when this was a symmetric write interval, so no
+# stored value migrates: 300 s means the same 300 s, applied to the direction
+# where waiting is free.
 CONF_CHARGE_CONTROL_INTERVAL = "inverter_charge_control_interval"
-DEFAULT_CHARGE_CONTROL_INTERVAL = 300  # s between writes
+DEFAULT_CHARGE_CONTROL_INTERVAL = 300  # s a reduction must hold (and pace a release)
 CONF_CHARGE_CONTROL_DEADBAND = "inverter_charge_control_deadband"
 DEFAULT_CHARGE_CONTROL_DEADBAND = 5  # % of the normal value
 
