@@ -77,10 +77,13 @@ from custom_components.dynamic_ocpp_evse.control.inverter import (  # noqa: E402
     INVERTER_RT_SOC_DESIRED,
     INVERTER_RT_SOC_NORMAL,
     INVERTER_RT_SOC_RECOMMENDED,
+    INVERTER_RT_DOWN_SAMPLES,
     INVERTER_RT_SOC_SLOTS,
     battery_voltage,
     desired_soc,
+    down_window_value,
     from_target_units,
+    note_reduction,
     ramp_baseline,
     resolve_minimum_value,
     resolve_normal_soc,
@@ -1013,6 +1016,274 @@ def test_a_parked_battery_ramps_up_when_a_better_day_appears():
     # The cloud: the overshoot is gone and the floor lands in one write.
     _cycle(hass, entry, 0.0, 6 * SITE_INTERVAL)
     assert _written(hass)[-1] == 2.0
+
+
+# --- Directional pacing: the downward persistence window ----------------------
+#
+# The advice is memoryless direct feedback now (see calculations/forecast.py), so
+# it moves with the plant on every site cycle and this layer is where the
+# volatility is absorbed. Asymmetrically:
+#
+#   * upward — eligible every cycle, already bounded to one margin per write;
+#   * downward — written only once EVERY sample in a full window agrees, and
+#     then only by the amount they all agree on (the window's maximum);
+#   * the gate ENGAGING — written at once, because that is a protective regime
+#     transition and not a steady-state correction.
+#
+# The window is CONF_CHARGE_CONTROL_INTERVAL, whose meaning is exactly that:
+# how long a reduction must hold. At the 300 s default a kettle, a passing cloud
+# and a car plugging in all cost nothing at the register.
+
+DEEP_W = 5000.0        # 97.7 A — a reduction well past the 9.35 A deadband
+SHALLOW_W = 2000.0     # 39.1 A — a deeper dip, to be swallowed by the maximum
+FULL_W = SITE_NORMAL * SITE_VOLTAGE  # the advice that asks for full rate
+
+
+def _gated(hass, entry, advice_w, now, limiting=True):
+    """One cycle with the gate state the forecast would have published."""
+    if hass.services.calls:
+        hass.states.set(
+            TARGET, hass.services.calls[-1][2]["value"], max=SITE_NORMAL
+        )
+    asyncio.run(
+        send_inverter_charge_limit(hass, entry, _hub(), advice_w, now, limiting)
+    )
+
+
+def _engaged_site():
+    """An armed site whose gate is already engaged and settled at full rate.
+
+    The first cycle is the engagement, and it is deliberately handed an advice
+    that asks for full rate so the exemption has nothing to write — what it
+    leaves behind is the gate marker, which is the state the window rules need.
+    """
+    hass, entry, rt = _accepting_site()
+    _gated(hass, entry, FULL_W, 0.0)
+    assert _written(hass) == []
+    return hass, entry, rt
+
+
+# --- The window, as arithmetic ------------------------------------------------
+
+
+def test_the_window_is_full_only_after_a_whole_interval_of_samples():
+    samples = []
+    for n in range(6):  # 10 s apart, a 60 s window
+        samples = note_reduction(samples, n * 10.0, 100.0, 60.0)
+        assert down_window_value(samples, n * 10.0, 60.0) is None
+    samples = note_reduction(samples, 60.0, 100.0, 60.0)
+    assert down_window_value(samples, 60.0, 60.0) == 100.0
+
+
+def test_the_window_hands_back_the_maximum_its_samples_agreed_on():
+    """The least reduction all of them agree on — never a momentary deep dip."""
+    samples = []
+    for stamp, value in ((0.0, 100.0), (20.0, 40.0), (40.0, 90.0), (60.0, 50.0)):
+        samples = note_reduction(samples, stamp, value, 60.0)
+    assert down_window_value(samples, 60.0, 60.0) == 100.0
+
+
+def test_the_sample_list_is_bounded_by_the_window():
+    """A 2 s site cycle against a 300 s window keeps ~150 samples, not an hour's.
+
+    Pruning keeps the shortest run that still spans the window, so the oldest
+    retained stamp is still what the window is measured against.
+    """
+    samples = []
+    for n in range(3000):  # 100 minutes of a 2 s cycle
+        samples = note_reduction(samples, n * 2.0, 100.0, 300.0)
+    assert len(samples) <= 300 / 2 + 2
+    assert down_window_value(samples, 3000 * 2.0, 300.0) == 100.0
+    # And it never prunes away the coverage it needs.
+    assert (3000 * 2.0 - samples[0][0]) >= 300.0
+
+
+# --- Downward: a reduction has to persist ------------------------------------
+
+
+def test_a_reduction_is_not_written_until_it_has_held_for_the_window():
+    hass, entry, _rt = _engaged_site()
+
+    now = 10.0
+    while now < SITE_INTERVAL + 10.0:
+        _gated(hass, entry, DEEP_W, now)
+        assert _written(hass) == [], f"wrote at {now}s"
+        now += 10.0
+
+    # The window filled: one write, and it is the reduction itself.
+    _gated(hass, entry, DEEP_W, now)
+    assert _written(hass) == [round(DEEP_W / SITE_VOLTAGE, 1)]
+
+
+def test_the_written_reduction_is_the_windows_maximum_not_its_dip():
+    """A deep dip inside the window cannot drag the register down with it."""
+    hass, entry, _rt = _engaged_site()
+
+    _gated(hass, entry, DEEP_W, 10.0)
+    _gated(hass, entry, SHALLOW_W, 20.0)   # the dip
+    now = 30.0
+    while now <= SITE_INTERVAL + 10.0:
+        _gated(hass, entry, DEEP_W, now)
+        now += 10.0
+
+    # 97.7 A (the 5 kW samples), never 39.1 A (the 2 kW dip).
+    assert _written(hass) == [round(DEEP_W / SITE_VOLTAGE, 1)]
+
+
+def test_a_sample_back_at_the_register_clears_the_window():
+    """The kettle case at the register: a 40 s dip inside a 60 s window is not a
+    reduction that persisted, and it costs no write at all."""
+    hass, entry, rt = _engaged_site()
+
+    for n in range(1, 5):  # 40 s of the dip
+        _gated(hass, entry, DEEP_W, n * 10.0)
+    assert _written(hass) == []
+
+    # The plant recovers: the advice is back at full rate, so the window clears.
+    _gated(hass, entry, FULL_W, 50.0)
+    assert rt[INVERTER_RT_DOWN_SAMPLES] == []
+
+    # A whole interval later there is still nothing written — the old samples
+    # cannot combine with new ones to reach a window's worth.
+    for n in range(6, 12):
+        _gated(hass, entry, DEEP_W, n * 10.0)
+    assert _written(hass) == []
+
+
+def test_the_window_starts_again_after_a_write():
+    hass, entry, rt = _engaged_site()
+
+    now = 10.0
+    while not _written(hass):
+        _gated(hass, entry, DEEP_W, now)
+        now += 10.0
+    assert rt[INVERTER_RT_DOWN_SAMPLES] == []
+
+    # A second, deeper reduction has to earn its own window.
+    deeper = 2000.0
+    for _ in range(5):
+        _gated(hass, entry, deeper, now)
+        now += 10.0
+    assert len(_written(hass)) == 1
+    _gated(hass, entry, deeper, now + SITE_INTERVAL)
+    assert _written(hass)[-1] == round(deeper / SITE_VOLTAGE, 1)
+
+
+# --- The engagement exemption -------------------------------------------------
+
+
+def test_the_gate_engaging_writes_the_protective_reduction_at_once():
+    """The destination hold or the reservation taking hold is a regime
+    transition, and it must not wait out a persistence window with the pack
+    already above where it was sent."""
+    hass, entry, rt = _accepting_site()
+
+    # Released: full rate, gate False, nothing to write.
+    _gated(hass, entry, FULL_W, 0.0, limiting=False)
+    assert _written(hass) == []
+
+    # Engaged on the next cycle, and the write lands on that cycle.
+    _gated(hass, entry, 0.0, 10.0, limiting=True)
+    assert _written(hass) == [2.0]  # the configured floor
+    assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_LIMITING
+
+
+def test_only_the_engaging_cycle_is_exempt():
+    """The bite: the very same reduction, one cycle later, waits for its window.
+
+    Without this the exemption would be a hole in the pacing rather than a
+    regime-transition rule.
+    """
+    hass, entry, _rt = _accepting_site()
+
+    _gated(hass, entry, FULL_W, 0.0, limiting=False)
+    _gated(hass, entry, FULL_W, 10.0, limiting=True)   # engages, nothing to write
+    _gated(hass, entry, 0.0, 20.0, limiting=True)      # a reduction, not exempt
+    assert _written(hass) == []
+    _gated(hass, entry, 0.0, 20.0 + SITE_INTERVAL, limiting=True)
+    assert _written(hass) == [2.0]
+
+
+def test_a_reload_treats_the_first_engaged_cycle_as_an_engagement():
+    """Fresh runtime: the gate marker is gone, so the first engaged cycle is an
+    edge and the protective write lands rather than waiting out a window on a
+    register whose standing we no longer know."""
+    hass, entry, _rt = _accepting_site()
+
+    _gated(hass, entry, 0.0, 1000.0, limiting=True)
+    assert _written(hass) == [2.0]
+
+
+# --- Upward: eligible every cycle --------------------------------------------
+
+
+def test_a_rise_is_written_on_the_cycle_it_arrives():
+    """Three consecutive rises inside ONE interval, each one written.
+
+    The rise is already bounded to a margin per write, and this is the direction
+    the masked-site self-creep escapes in — one margin per CYCLE, not per
+    interval.
+    """
+    hass, entry, _rt = _accepting_site()
+
+    _gated(hass, entry, 0.0, 0.0)          # engaging: down to the floor
+    assert _written(hass) == [2.0]
+    for n in range(1, 4):
+        _gated(hass, entry, 4000.0, n * 10.0)
+
+    written = _written(hass)
+    assert len(written) == 4
+    steps = [round(b - a, 1) for a, b in zip(written, written[1:])]
+    assert steps == [round(MARGIN_AMPS, 1)] * 3
+
+
+def test_a_steady_plant_writes_once_and_never_reverses():
+    """No deadband limit cycle: the reduction lands once and the register sits.
+
+    A controller that moved with every sample would chatter around the deadband;
+    with the window on the way down and the deadband on the way up, a plant that
+    holds still produces exactly one write and no reversal at all.
+    """
+    hass, entry, _rt = _accepting_site()
+
+    _gated(hass, entry, DEEP_W, 0.0)   # the engagement writes the reduction
+    for n in range(1, 200):            # half an hour of the same plant
+        _gated(hass, entry, DEEP_W, n * 10.0)
+
+    written = _written(hass)
+    assert written == [round(DEEP_W / SITE_VOLTAGE, 1)]
+    moves = [b - a for a, b in zip(written, written[1:])]
+    assert not [1 for a, b in zip(moves, moves[1:]) if a * b < 0]
+
+
+def test_no_gate_state_keeps_the_pre_window_contract():
+    """A caller with no gate to offer gets the old rules: reductions instant,
+    one write per interval. Degraded, and on the side of writing."""
+    hass, entry, rt = _accepting_site()
+
+    _gated(hass, entry, DEEP_W, 0.0, limiting=None)
+    assert _written(hass) == [round(DEEP_W / SITE_VOLTAGE, 1)]
+    assert rt[INVERTER_RT_DOWN_SAMPLES] == []
+    # And still paced by the interval, in both directions.
+    _gated(hass, entry, 2000.0, 10.0, limiting=None)
+    assert len(_written(hass)) == 1
+    _gated(hass, entry, 2000.0, SITE_INTERVAL, limiting=None)
+    assert len(_written(hass)) == 2
+
+
+def test_the_enforced_rate_is_published_on_every_deferred_cycle():
+    """The Excess verdict must not go blind while a reduction is pending.
+
+    The publication is the register's own read-back and happens before any of
+    the pacing rules, so a cycle that writes nothing still reports what the
+    battery is really permitted.
+    """
+    hass, entry, rt = _engaged_site()
+
+    for n in range(1, 5):
+        _gated(hass, entry, DEEP_W, n * 10.0)
+        assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == SITE_NORMAL * SITE_VOLTAGE
+        assert rt[INVERTER_RT_RECOMMENDED] == round(DEEP_W / SITE_VOLTAGE, 1)
 
 
 # --- Register units and the reload baseline ----------------------------------

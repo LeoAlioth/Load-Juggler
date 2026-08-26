@@ -275,9 +275,10 @@ class LoadJugglerInverterChargeControlSensor(
 
         Called by the hub coordinator once per site cycle, after the result has
         been published — the advice this consumes is part of that publication.
-        The pacing, deadband and the upward slew limit all live in
+        The directional pacing, deadband and the upward slew limit all live in
         ``control/inverter.py`` and are wall-clock based, so they are unaffected
-        by how often this runs.
+        by how often this runs: a faster cadence feeds the downward persistence
+        window more samples of the same wall-clock window, not a shorter one.
 
         The hub entry rides along because the slew step is a site-level number
         (the Excess trigger margin), the way ``control/ocpp.py`` and
@@ -285,13 +286,20 @@ class LoadJugglerInverterChargeControlSensor(
         """
         # None both when the forecast is off and when it has released the
         # limit — the control treats them the same way, as "restore".
-        advice_w = self._inverter_section(hub_data).get("forecast_charge_limit_w")
+        section = self._inverter_section(hub_data)
+        advice_w = section.get("forecast_charge_limit_w")
+        # The forecast's charge GATE, which the control's downward persistence
+        # window needs in order to tell the cap ENGAGING (protective, written at
+        # once) from a steady-state correction (paced). Missing means a hub that
+        # published no gate state, and the control degrades to writing
+        # reductions immediately — see ``send_inverter_charge_limit``.
         await send_inverter_charge_limit(
             self.hass,
             self.config_entry,
             self._hub_entry,
             advice_w,
             time.monotonic(),
+            section.get("forecast_charge_limiting"),
         )
         self._read_control_status()
 

@@ -392,6 +392,12 @@ def _compute_forecast_advice(
         per_inverter[m.entry_id] = {
             "forecast_battery_max_soc": proposed,
             "forecast_charge_limit_w": member_limit,
+            # The GATE, not the value: the charge control needs to know a
+            # protective regime transition (the cap engaging) from a
+            # steady-state correction, because only the latter is paced by the
+            # persistence window (see ``control/inverter.py``). Fleet-wide by
+            # construction — one latch decides for every member.
+            "forecast_charge_limiting": bool(limiting),
         }
 
     _LOGGER.debug(
