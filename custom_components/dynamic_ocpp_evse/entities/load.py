@@ -9,7 +9,6 @@ from homeassistant.components.sensor import (
 from homeassistant.core import callback
 from datetime import datetime, timezone
 from ..const import (
-    CONF_CHARGER_ID,
     CONF_LOAD_PRIORITY,
     CONF_CHARGE_PAUSE_DURATION,
     CONF_CONNECTED_TO_PHASE,
@@ -40,7 +39,7 @@ from ..const import (
     EVSE_MODE_SOLAR_ONLY,
 )
 from ..helpers import get_entry_value
-from ..ocpp_discovery import ocpp_connector_status_entity
+from ..ocpp_discovery import ocpp_charge_control_entity, ocpp_connector_status_entity
 from .. import units
 from .mixins import LoadEntityMixin, SiteFreshnessMixin
 from ..registry import get_hub_for_load
@@ -86,13 +85,12 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         )
         self.hub_entry = hub_entry
         load_entity_id = config_entry.data.get(CONF_ENTITY_ID)
-        ocpp_device_id = config_entry.data.get(CONF_CHARGER_ID, load_entity_id)
         # Classified out of the registries, shared with the engine (same cache),
         # so a renamed status entity and a multi-connector charger both resolve.
         self._connector_status_entity = ocpp_connector_status_entity(
             hass, config_entry
         )
-        self._charge_control_entity = f"switch.{ocpp_device_id}_charge_control"
+        self._charge_control_entity = ocpp_charge_control_entity(hass, config_entry)
         self._state = None
         self._phases = None
         # Phase count actually seen drawing, from the engine's live per-load
