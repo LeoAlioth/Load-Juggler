@@ -11,9 +11,10 @@ number decides it for every Excess-mode load:
 ``margin >= 0`` means Excess is on, and the value is the excess pool in watts. A
 sink contributes its allowance only while it can actually absorb — no grid means
 no export allowance, and no battery (or a full one) means no charge allowance.
-Off-grid the measured battery discharge counts against the absorbed side (there
-is no export reading for the solar-only netting to land on), so a draw served
-by stored energy can never hold the verdict it engaged on.
+The measured battery discharge counts against the absorbed side, unclamped and
+identically on every site, so a draw served by stored energy can never hold the
+verdict it engaged on — off-grid, where export is always 0, that makes the
+margin the load-off surplus by conservation.
 """
 
 from custom_components.dynamic_ocpp_evse.calculations import excess_margin
@@ -120,6 +121,22 @@ def test_discharging_battery_absorbs_nothing():
     # the 13 kW at the meter is the array's. 10 kW absorbed against an 18 kW
     # allowance is 8 kW short.
     assert excess_margin(_site(export=13000, battery_power=3000, soc=60)) == -8000
+
+
+def test_discharge_beyond_the_meter_counts_against_the_margin():
+    # Night: nothing at the meter, the pack serving the house 500 W. The signed
+    # term is unclamped, so the absorbed side reads −500 — the site is placing
+    # less than nothing, and the margin says so.
+    assert excess_margin(_site(export=0, battery_power=500, soc=60)) == -18500
+
+
+def test_zero_allowance_site_reads_off_while_the_pack_serves_the_house():
+    # The corner the old clamp got wrong: a zero-export site (allowance 0) with
+    # a full battery at night read a margin of exactly 0 — Excess ON while the
+    # pack discharged into the house. Stored energy serving the house is not
+    # surplus; the signed term reads it off.
+    site = _site(export=0, battery_power=500, soc=98, export_limit=0)
+    assert excess_margin(site) == -500
 
 
 # --- Full battery: its allowance drops out ----------------------------------
@@ -248,11 +265,11 @@ def test_grid_tied_does_not_double_count_managed_draws():
 # --- Off-grid: a discharging battery self-corrects --------------------------
 #
 # No SOC floor guards the off-grid case, and none is needed: the measured
-# discharge counts AGAINST the margin (netted at the aggregation point, since
-# off-grid there is no export reading for the solar-only subtraction to land
-# on), so the moment a load's draw lands on stored energy instead of production
-# the margin collapses by exactly that much and Excess clears on its own —
-# whatever the combined draw is. By conservation the off-grid margin is
+# discharge counts AGAINST the margin — the same signed term every site uses,
+# which off-grid (export always 0) is all that remains of the export side. The
+# moment a load's draw lands on stored energy instead of production the margin
+# collapses by exactly that much and Excess clears on its own — whatever the
+# combined draw is. By conservation the off-grid margin is
 #
 #     charge - discharge + managed draws == production - unmanaged household
 #

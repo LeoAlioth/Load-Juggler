@@ -466,18 +466,22 @@ def test_a_battery_selling_to_grid_cannot_trigger_excess():
     assert _margin(selling, DEFAULT_EXCESS_HYSTERESIS) < 0
 
 
-def test_only_the_exported_share_of_a_discharge_is_subtracted():
+def test_the_whole_discharge_is_subtracted_deficit_share_included():
     """Mixed: the house draws 2 kW more than the array makes and the pack
     discharges 5 kW, so 2 kW covers the deficit and 3 kW leaves the meter.
 
-    Only that exported 3 kW can come off the export term — the clamp is what
-    stops the other 2 kW from becoming negative export and eating a future
-    surplus. The site reads exactly as one with no export and no battery power.
+    The signed term is unclamped, so the whole 5 kW comes off: the exported
+    3 kW cancels the meter reading and the deficit 2 kW pushes the margin
+    BELOW the quiet site's. By conservation the margin is production −
+    consumption against the allowance, and a site that cannot even cover its
+    own house is 2 kW further from Excess than a balanced one. No verdict can
+    flip on the difference — while any allowance stands, both readings are
+    negative; the value is simply the honest one now.
     """
     mixed = _site(-3000 / V, battery_w=5000.0, soc=98.0)
     quiet = _site(0.0, battery_w=0.0, soc=98.0)
-    assert _close(_margin(mixed), -THRESHOLD)
-    assert _close(_margin(mixed), _margin(quiet))
+    assert _close(_margin(mixed), -THRESHOLD - 2000.0)
+    assert _margin(mixed) < _margin(quiet)
 
 
 def test_a_charging_or_absent_battery_reads_the_unchanged_margin():
