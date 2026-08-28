@@ -11,6 +11,9 @@ number decides it for every Excess-mode load:
 ``margin >= 0`` means Excess is on, and the value is the excess pool in watts. A
 sink contributes its allowance only while it can actually absorb — no grid means
 no export allowance, and no battery (or a full one) means no charge allowance.
+Off-grid the measured battery discharge counts against the absorbed side (there
+is no export reading for the solar-only netting to land on), so a draw served
+by stored energy can never hold the verdict it engaged on.
 """
 
 from custom_components.dynamic_ocpp_evse.calculations import excess_margin
@@ -170,10 +173,11 @@ def test_off_grid_full_battery_sits_exactly_at_the_trigger():
 
 def test_off_grid_discharging_battery_below_full_is_negative():
     # Night, battery working: SOC has fallen below full, so its charge allowance
-    # is back and holds the verdict off.
+    # is back — and the discharge itself counts against the margin, so the
+    # verdict is held off by both.
     assert (
         excess_margin(_site(export=0, battery_power=4000, soc=50, off_grid=True))
-        == -5000
+        == -9000
     )
 
 
@@ -243,17 +247,25 @@ def test_grid_tied_does_not_double_count_managed_draws():
 
 # --- Off-grid: a discharging battery self-corrects --------------------------
 #
-# No SOC floor guards the off-grid case, and none is needed: a discharging battery
-# contributes nothing to the absorbed side, so the moment a load pushes the battery
-# past charging into discharge the margin collapses and Excess clears on its own.
-# The worst a load can do while the margin holds is make the battery charge slower.
+# No SOC floor guards the off-grid case, and none is needed: the measured
+# discharge counts AGAINST the margin (netted at the aggregation point, since
+# off-grid there is no export reading for the solar-only subtraction to land
+# on), so the moment a load's draw lands on stored energy instead of production
+# the margin collapses by exactly that much and Excess clears on its own —
+# whatever the combined draw is. By conservation the off-grid margin is
+#
+#     charge - discharge + managed draws == production - unmanaged household
+#
+# against the allowance: the load-off surplus, which no engaged load can
+# inflate. The worst a load can do while the margin holds is make the battery
+# charge slower.
 
 def test_off_grid_load_pushing_the_battery_into_discharge_clears_excess():
     # Production can no longer cover household + our load, so the battery is
-    # discharging 1 kW to help. Its charging contributes 0, and the load's 2 kW
-    # cannot reach the 5 kW allowance on its own.
+    # discharging 1 kW to help. Its charging contributes 0, the discharge
+    # subtracts, and the load's 2 kW cannot reach the 5 kW allowance on its own.
     site = _site(battery_power=1000, soc=90, off_grid=True, loads=[_load(2000)])
-    assert excess_margin(site) == -3000
+    assert excess_margin(site) == -4000
 
 
 def test_off_grid_below_target_is_no_special_case():
@@ -270,6 +282,46 @@ def test_off_grid_slower_charging_is_the_worst_a_load_can_do():
     # never draining.
     site = _site(battery_power=-3000, soc=70, off_grid=True, loads=[_load(2000)])
     assert excess_margin(site) == 0
+
+
+# --- Off-grid: draws beyond the charge allowance release ---------------------
+#
+# The correction above used to be capped at the charge rate: the allowance
+# returning could absolve at most its own watts of draw, so any COMBINED
+# engaged draw beyond it kept vouching for itself — evening, production gone,
+# four loads riding the pack to the floor with the margin pinned positive.
+# The discharge term removes the cap: stored energy serving the draws counts
+# against them watt for watt.
+
+def test_off_grid_engaged_loads_release_when_the_pack_drains():
+    # Evening. Four loads (3.7 + 2.3 + 1 + 2 kW) engaged from the sunny
+    # afternoon, production gone, the pack serving all 9 kW. The old
+    # arithmetic read +4000 here — engaged forever, allowance maxed out,
+    # falling SOC changing nothing. The discharge nets it to the truth.
+    loads = [_load(3700), _load(2300), _load(1000), _load(2000)]
+    site = _site(battery_power=9000, soc=50, off_grid=True, loads=loads)
+    assert excess_margin(site) == -5000
+
+
+def test_off_grid_partial_surplus_reads_the_true_pool():
+    # Production 6 kW against the 5 kW allowance: 1 kW of genuine surplus.
+    # The same four loads draw 9 kW, so the pack covers 3 kW of it — and the
+    # margin still reads exactly the 1 kW that is real, not the 4 kW the
+    # draws alone would claim. The allocation layer's pool deduction then
+    # keeps only what fits.
+    loads = [_load(3700), _load(2300), _load(1000), _load(2000)]
+    site = _site(battery_power=3000, soc=90, off_grid=True, loads=loads)
+    assert excess_margin(site) == 1000
+
+
+def test_off_grid_no_battery_reading_degrades_to_the_old_arithmetic():
+    # Without a battery power sensor the discharge term is 0 and the margin
+    # is the pre-fix number. Deliberate: the degraded mode can only fail to
+    # release, never refuse to engage — same shape as every other missing
+    # reading in this module.
+    loads = [_load(3700), _load(2300), _load(1000), _load(2000)]
+    site = _site(battery_power=None, soc=50, off_grid=True, loads=loads)
+    assert excess_margin(site) == 4000
 
 
 # --- Grid-tied is unaffected by SOC ----------------------------------------

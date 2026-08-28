@@ -789,7 +789,11 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     meter is not surplus — it is yesterday's surplus being sold, and an Excess
     load engaging on it would be charging a car from the house battery. See the
     term itself for the conservation identity that makes one subtraction cover
-    every inverter work mode.
+    every inverter work mode. OFF-GRID the same netting lands on the absorbed
+    sum directly (there is no export reading to net it off), for the same
+    reason: a draw served by the pack discharging is stored energy, not
+    surplus, and it must count against the margin or an engaged load out-drawing
+    the charge allowance vouches for itself forever while the battery drains.
 
     Every figure is read as the site would read it *with our own loads off* —
     that is what makes the number stable enough to decide with: a load that is
@@ -838,7 +842,11 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     current (a margin of 0 is a pool of 0, and the minimum is a floor while the
     verdict holds — see _source_limit). It self-corrects rather than self-limits:
     if production cannot cover them, the battery discharges, SOC falls below full,
-    its charge allowance returns and the verdict clears.
+    its charge allowance returns — and the discharge itself now counts against
+    the margin (see the off-grid netting below), so the verdict clears even when
+    the engaged draws exceed the returned allowance. Without that term the
+    correction was capped at the charge rate: any combined draw above it kept
+    vouching for itself while the pack drained, and falling SOC never let go.
 
     The reconstruction itself — the export the site would read with our loads
     off, and the share of their freed power the battery would take — lives in
@@ -902,14 +910,34 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     discharge = max(0.0, site.battery_power or 0)
     solar_export = max(0.0, export - discharge)
 
+    # OFF-GRID, the same subtraction has nowhere to land: the export reading is
+    # 0, so the clamp above throws the discharge away — and the wholesale draw
+    # add-back has no headroom cap off-grid, so an engaged load whose draw
+    # exceeded the charge allowance vouched for itself indefinitely while the
+    # pack drained (evening, clouds — nothing ever released it). Netting the
+    # discharge at the aggregation point instead is the SAME conservation
+    # identity: off-grid,
+    #
+    #     charge - discharge + managed draws == production - unmanaged household
+    #
+    # so the margin becomes the load-off surplus against the allowance —
+    # load-invariant, the #41 stay-on identity, restored rather than broken.
+    # The probe survives intact: a curtailing inverter ramps production to
+    # serve the draw, the discharge stays 0 and the margin holds; a draw that
+    # lands on stored energy instead shows up as discharge and releases. With
+    # no battery power reading the term is 0 and this is the old arithmetic —
+    # the degraded mode can only fail to release, never refuse to engage.
+    offgrid_discharge = discharge if site.is_off_grid else 0.0
+
     allowance = max(0.0, export_allowance + charge_allowance - hysteresis)
-    absorbed = solar_export + charge_power + battery_restored
+    absorbed = solar_export + charge_power + battery_restored - offgrid_discharge
     margin = absorbed - allowance
 
     _LOGGER.debug(
         "Excess margin %+.0fW: placing %.0fW (solar export %.0fW of %.0fW metered"
         " less %.0fW battery discharge + battery charge %.0fW"
-        " + freed to battery %.0fW of %.0fW managed draw) vs allowance %.0fW"
+        " + freed to battery %.0fW of %.0fW managed draw"
+        " - off-grid discharge %.0fW) vs allowance %.0fW"
         " (export %.0fW + battery %.0fW - hysteresis %.0fW)",
         margin,
         absorbed,
@@ -919,6 +947,7 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
         charge_power,
         battery_restored,
         managed_draw,
+        offgrid_discharge,
         allowance,
         export_allowance,
         charge_allowance,
