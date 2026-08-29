@@ -37,6 +37,7 @@ from ..const import (
     DOMAIN,
     EVSE_MODE_EXCESS,
     EVSE_MODE_SOLAR_ONLY,
+    EVSE_MODE_SOLAR_PRIORITY,
 )
 from ..helpers import get_entry_value
 from ..ocpp_discovery import ocpp_charge_control_entity, ocpp_connector_status_entity
@@ -52,6 +53,49 @@ from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def soc_floor_reached(hub_data) -> bool:
+    """Is the battery sitting at (or under) the floor the engine gated on?
+
+    ``battery_soc_min`` in ``hub_data`` is the HYSTERESIS-WIDENED floor — the
+    very number ``_source_limit`` compared against this cycle — so this answers
+    "was the minimum SOC the reason the permit collapsed?" without the load
+    layer having to know anything else about why.
+
+    Unreadable either way counts as reached: an unknown SOC must not buy a
+    ride-through that the protective case would refuse.
+    """
+    live_soc = hub_data.get("battery_soc")
+    gated_floor = hub_data.get("battery_soc_min")
+    if live_soc is None or gated_floor is None:
+        return True
+    return live_soc <= gated_floor
+
+
+def grace_modes(binary_load, hub_data) -> tuple:
+    """Which operating modes may hold a collapsed permit through the grace window.
+
+    Solar Only and Excess always may. Solar Priority was excluded outright
+    (decided 2026-08-17) because a grace hold cannot tell WHY the permit
+    collapsed and would therefore also bridge a minimum-SOC shed, and that floor
+    is protective — it has to act on the cycle it happens.
+
+    That reason is answerable rather than fundamental for a BINARY load: the
+    live SOC and the gated floor are both published, so the one cause that must
+    never be bridged can be named here (``soc_floor_reached``). Above the floor
+    a Solar Priority plug or tank now rides out the other causes — a brief
+    inverter saturation, a cloud — instead of cycling its relay; at the floor it
+    sheds exactly as before. Nothing holds a load on below its floor.
+
+    Modulating loads are unchanged: in Solar Priority they fall back to a
+    grid-backed minimum rather than to zero, so there is no collapse to bridge.
+    """
+    modes = (EVSE_MODE_SOLAR_ONLY.key, EVSE_MODE_EXCESS.key)
+    if binary_load and not soc_floor_reached(hub_data):
+        modes = (*modes, EVSE_MODE_SOLAR_PRIORITY.key)
+    return modes
+
 
 
 class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity):
@@ -450,14 +494,21 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 )
                 self._grace_started_at = None
 
-        # Solar Priority is deliberately NOT in this list (decided 2026-08-17):
-        # a grace hold here cannot tell WHY the permit collapsed, so it would
-        # also bridge minimum-SOC sheds — and the minimum SOC is a protective
-        # floor that must act immediately. Consequence: a Solar Priority binary
-        # load sheds at once on inverter saturation, with no ride-through.
+        # Solar Priority was excluded from this list (decided 2026-08-17) on the
+        # grounds that a grace hold cannot tell WHY the permit collapsed, so it
+        # would also bridge minimum-SOC sheds — and the minimum SOC is a
+        # protective floor that must act immediately.
+        #
+        # That reason turns out to be answerable rather than fundamental: the
+        # live SOC and the floor the engine actually gated on are both published
+        # in hub_data, and that floor is already the hysteresis-widened one, so
+        # this layer CAN name the one cause it must never bridge. A Solar
+        # Priority binary load therefore rides out every other collapse — a
+        # brief inverter saturation, a cloud — while an SOC shed still acts on
+        # the cycle it happens, exactly as before. Nothing holds a load on below
+        # its floor; the hold is simply no longer forbidden above it.
         if (
-            self._operating_mode
-            in (EVSE_MODE_SOLAR_ONLY.key, EVSE_MODE_EXCESS.key)
+            self._operating_mode in grace_modes(binary_load, hub_data)
             and grace_period_seconds > 0
         ):
             if self._available_current < min_charge_current:

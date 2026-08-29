@@ -373,9 +373,21 @@ def _apply_soc_hysteresis(
         # above it (floor 20, hysteresis 3 → stop at 20, resume at 23). The
         # target's band sits below its setting for the same reason in reverse —
         # charging never overshoots the configured ceiling.
+        #
+        # STRICTLY above, because "stop AT the floor" is what the consumers
+        # mean by it: the SOC-gated binary modes run while ``soc > soc_min``
+        # (calculations.target_calculator._source_limit). Latching on ``>=``
+        # here disagreed with them at exactly the floor — the latch read "still
+        # above", so it never widened the threshold, while the gate read "not
+        # above" and shed the load. The band was then unreachable: the load
+        # switched off AT the floor, the battery recovered one percent, the load
+        # switched back on and pulled it down again, cycling in a 1% window for
+        # as long as production held. Nothing on the target side needs this:
+        # there the latch DOES adjust its threshold while above, so the gate
+        # cannot chatter against it.
         was_above_min = hub_runtime.get("_soc_above_min", False)
         if was_above_min:
-            now_above_min = battery_soc >= battery_soc_min
+            now_above_min = battery_soc > battery_soc_min
         else:
             now_above_min = battery_soc >= battery_soc_min + battery_soc_hysteresis
         hub_runtime["_soc_above_min"] = now_above_min
