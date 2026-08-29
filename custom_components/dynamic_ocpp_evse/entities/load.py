@@ -10,6 +10,7 @@ from homeassistant.core import callback
 from datetime import datetime, timezone
 from ..const import (
     CONF_LOAD_PRIORITY,
+    CONF_BINARY_MIN_OFF_TIME,
     CONF_CHARGE_PAUSE_DURATION,
     CONF_CONNECTED_TO_PHASE,
     CONF_DEVICE_TYPE,
@@ -23,6 +24,7 @@ from ..const import (
     CONF_STATION_MIN_CHARGE_POWER,
     CONF_UPDATE_FREQUENCY,
     DEFAULT_LOAD_PRIORITY,
+    DEFAULT_BINARY_MIN_OFF_TIME,
     DEFAULT_CHARGE_PAUSE_DURATION,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_MIN_CHARGE_CURRENT,
@@ -53,6 +55,32 @@ from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
 
 _LOGGER = logging.getLogger(__name__)
+
+
+
+def min_off_hold(permit, off_since, now, min_off_seconds):
+    """Withhold a binary load's permit until it has been off long enough.
+
+    Returns ``(permit, off_since, held)``. ``held`` is the dwell in seconds when
+    this call decided one — the value the caller logs — and None otherwise.
+
+    One-directional by construction: the only thing it can do to a permit is
+    take it away, so it can never keep a load running past a protective shed.
+    That is what lets it apply to every cause at once, unlike the grace hold,
+    which has to know WHICH cause it is bridging (see ``grace_modes``).
+
+    ``off_since`` is the caller's stored stamp, returned updated: set on the
+    cycle the permit first goes to zero, cleared once the dwell is served, so
+    the dwell measures from the shed rather than from the recovery.
+    """
+    if permit <= 0:
+        return permit, off_since if off_since is not None else now, None
+    if off_since is None:
+        return permit, None, None
+    held = now - off_since
+    if held < min_off_seconds:
+        return 0.0, off_since, held
+    return permit, None, held
 
 
 def soc_floor_reached(hub_data) -> bool:
@@ -156,6 +184,9 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # re-arm on the next cycle and duty-cycle the load forever.
         self._binary_last_permit = 0.0
         self._grace_exhausted = False
+        # Monotonic stamp of the cycle a binary load's permit went to zero; the
+        # minimum-off-time dwell measures from it. None while the load is on.
+        self._binary_off_since = None
         self._prev_operating_mode = None
         self._prev_distribution_mode = None
         self._last_set_current = 0
@@ -337,6 +368,10 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 self._grace_started_at = None
             # A spent grace window belongs to the mode that spent it.
             self._grace_exhausted = False
+            # So does a minimum-off-time dwell: picking a mode is an explicit
+            # instruction, and making it wait out a dwell begun under the
+            # previous mode would read as the switch simply ignoring the user.
+            self._binary_off_since = None
 
         self._prev_operating_mode = self._operating_mode
         self._prev_distribution_mode = current_distribution_mode
@@ -583,6 +618,54 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         else:
             if self._grace_started_at is not None:
                 self._grace_started_at = None
+
+        # MINIMUM OFF TIME — the last word on a binary load's permit, applied
+        # after grace has had its say. Once the engine sheds the load it stays
+        # shed for the configured span whatever recovers in the meantime.
+        #
+        # Deliberately one-directional: it can only withhold a permit, never
+        # hold one, so it cannot keep a load running below the minimum SOC or
+        # past any other protective shed. That is what lets it apply to every
+        # cause at once, where the grace hold has to reason about which cause
+        # it is bridging.
+        #
+        # It bounds cycle FREQUENCY, which is what damages the appliance behind
+        # the relay rather than the relay itself: an EV cut mid-negotiation
+        # retries, and enough retries lock its onboard charger out until it is
+        # unplugged. Cleared on a mode change, since choosing a mode is an
+        # explicit instruction and should not wait out a dwell it predates.
+        if binary_load:
+            min_off_seconds = (
+                float(
+                    get_entry_value(
+                        self.config_entry,
+                        CONF_BINARY_MIN_OFF_TIME,
+                        DEFAULT_BINARY_MIN_OFF_TIME,
+                    )
+                    or 0
+                )
+                * 60
+            )
+            permit, self._binary_off_since, held = min_off_hold(
+                self._available_current,
+                self._binary_off_since,
+                time.monotonic(),
+                min_off_seconds,
+            )
+            if permit != self._available_current:
+                _LOGGER.debug(
+                    "Minimum off time holding %s off for another %.0fs",
+                    self._attr_name,
+                    min_off_seconds - held,
+                )
+                self._available_current = permit
+            elif held is not None and min_off_seconds > 0:
+                _LOGGER.info(
+                    "Minimum off time satisfied for %s after %.0fs —"
+                    " switching back on",
+                    self._attr_name,
+                    held,
+                )
 
         if DOMAIN not in self.hass.data:
             self.hass.data[DOMAIN] = {}

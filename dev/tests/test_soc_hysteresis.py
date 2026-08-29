@@ -171,3 +171,80 @@ def test_modulating_loads_are_untouched():
     than to zero, so it has no collapse to bridge and gains no new mode."""
     modes = grace_modes(False, {"battery_soc": 40.0, "battery_soc_min": 10.0})
     assert modes == (SOLAR_ONLY, EXCESS)
+
+
+# --- Minimum off time ------------------------------------------------------
+#
+# The dwell that bounds how OFTEN a binary load may cycle. It can only ever
+# withhold a permit, never grant or hold one, so it cannot keep a load running
+# past a protective shed — which is why it needs no notion of cause at all.
+
+from custom_components.dynamic_ocpp_evse.entities.load import (  # noqa: E402
+    min_off_hold,
+)
+
+TEN_MIN = 600.0
+
+
+def test_the_shed_itself_is_never_delayed():
+    """Nothing may make a load switch off later than the engine says."""
+    permit, off_since, held = min_off_hold(0.0, None, 1000.0, TEN_MIN)
+    assert permit == 0.0
+    assert off_since == 1000.0  # stamped, so the dwell runs from the shed
+    assert held is None
+
+
+def test_an_early_recovery_is_withheld():
+    permit, off_since, held = min_off_hold(16.0, 1000.0, 1100.0, TEN_MIN)
+    assert permit == 0.0
+    assert off_since == 1000.0  # still counting from the original shed
+    assert held == 100.0
+
+
+def test_the_permit_returns_once_the_dwell_is_served():
+    permit, off_since, held = min_off_hold(16.0, 1000.0, 1600.0, TEN_MIN)
+    assert permit == 16.0
+    assert off_since is None
+    assert held == 600.0
+
+
+def test_a_load_already_running_is_untouched():
+    assert min_off_hold(16.0, None, 1000.0, TEN_MIN) == (16.0, None, None)
+
+
+def test_zero_disables_it():
+    """0 restores the previous behaviour exactly — permit honoured at once."""
+    permit, off_since, _held = min_off_hold(16.0, 1000.0, 1000.5, 0)
+    assert permit == 16.0
+    assert off_since is None
+
+
+def test_the_dwell_runs_from_the_shed_not_from_the_last_attempt():
+    """The chatter case: repeated recoveries inside the window must not each
+    restart the clock, or the load would never come back at all."""
+    off_since = None
+    _p, off_since, _h = min_off_hold(0.0, off_since, 0.0, TEN_MIN)
+    for now in (60.0, 120.0, 300.0):
+        permit, off_since, _h = min_off_hold(16.0, off_since, now, TEN_MIN)
+        assert permit == 0.0
+    permit, off_since, held = min_off_hold(16.0, off_since, 600.0, TEN_MIN)
+    assert permit == 16.0 and held == 600.0
+
+
+def test_the_live_case_would_have_collapsed_to_one_cycle():
+    """The 2026-08-29 trace: a permit that recovered roughly every 45 s. Over a
+    quarter of an hour that is ten switch-ons; with a ten-minute dwell it is
+    one — long enough for the car to finish negotiating."""
+    off_since = None
+    switch_ons = 0
+    raw_ons = 0
+    for tick in range(0, 901, 45):
+        permit_in = 0.0 if (tick // 45) % 2 else 16.0
+        was_off = off_since is not None
+        permit, off_since, _h = min_off_hold(permit_in, off_since, float(tick), TEN_MIN)
+        if permit_in > 0 and tick > 0:
+            raw_ons += 1
+        if permit > 0 and was_off:
+            switch_ons += 1
+    assert raw_ons == 10
+    assert switch_ons == 1

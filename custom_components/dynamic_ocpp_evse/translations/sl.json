@@ -223,7 +223,8 @@
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
-                    "solar_grace_period": "Odlog za način Solar/Excess"
+                    "solar_grace_period": "Odlog za način Solar/Excess",
+                    "binary_min_off_time": "Najkrajši čas izklopa"
                 },
                 "data_description": {
                     "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power).",
@@ -233,7 +234,8 @@
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
-                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop."
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
+                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem — električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                 }
             },
             "power_station_config": {
@@ -289,7 +291,8 @@
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
                     "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
-                    "solar_grace_period": "Odlog za način Solar/Excess"
+                    "solar_grace_period": "Odlog za način Solar/Excess",
+                    "binary_min_off_time": "Najkrajši čas izklopa"
                 },
                 "data_description": {
                     "entity_id": "Uporabljeno kot predpona za entitete, ki jih ustvari ta integracija.",
@@ -303,7 +306,8 @@
                     "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa — uporabljen namesto fiksne moči, kadar je prisoten.",
                     "tank_power_device_id": "Lahko izberete pametni rele/vtičnico, ki napaja grelnik; njen senzor moči se poišče samodejno.",
                     "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
-                    "solar_grace_period": "V načinu Prednost sonca, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi."
+                    "solar_grace_period": "V načinu Prednost sonca, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
+                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem — električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                 }
             },
             "discover_chargers": {
@@ -596,7 +600,8 @@
                     "charger_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
-                    "solar_grace_period": "Odlog za način Solar/Excess"
+                    "solar_grace_period": "Odlog za način Solar/Excess",
+                    "binary_min_off_time": "Najkrajši čas izklopa"
                 },
                 "data_description": {
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči.",
@@ -605,7 +610,8 @@
                     "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
-                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop."
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
+                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem — električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                 }
             },
             "power_station": {
@@ -656,7 +662,8 @@
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
                     "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
-                    "solar_grace_period": "Odlog za način Solar/Excess"
+                    "solar_grace_period": "Odlog za način Solar/Excess",
+                    "binary_min_off_time": "Najkrajši čas izklopa"
                 }
             },
             "charger": {
