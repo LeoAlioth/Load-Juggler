@@ -298,6 +298,21 @@ HUB_SENSOR_DEFINITIONS = [
         "decimals": 2,
         "requires_forecast": True,
     },
+    # OBSERVE-ONLY: how much the site ACTUALLY clipped today against what a
+    # 15-minute average predicted it would. 100% means the block average told
+    # the whole truth; above it is the Jensen gap — clipping is convex and
+    # one-sided, so a block average can never overstate it. Measured from the
+    # site's own production samples, no cloud model involved. Nothing acts on
+    # it (see calculations/calibration.py and dev/TODO.md).
+    {
+        "name_suffix": "Forecast Peakiness",
+        "unique_id_suffix": "forecast_peakiness",
+        "hub_data_key": "forecast_peakiness_pct",
+        "unit": "%",
+        "icon": "mdi:chart-bell-curve",
+        "decimals": 1,
+        "requires_forecast": True,
+    },
     # The recommended max-SOC and charge-limit sensors live on the inverter
     # entries (entities/inverter.py) — the advice is per battery, and that is
     # where the future write-control will act. The fleet values remain in
@@ -371,7 +386,9 @@ class LoadJugglerHubDataSensor(
         )
         self._defn = defn
         self._attr_native_unit_of_measurement = defn["unit"]
-        self._attr_device_class = defn["device_class"]
+        # Optional: a ratio in percent has no fitting HA device class, and
+        # borrowing one (BATTERY, POWER_FACTOR) would mislabel it everywhere.
+        self._attr_device_class = defn.get("device_class")
         self._attr_state_class = defn.get(
             "state_class", SensorStateClass.MEASUREMENT
         )

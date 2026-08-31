@@ -106,6 +106,21 @@ INVERTER_SENSOR_DEFINITIONS = [
         "decimals": 0,
         "requires_forecast": True,
     },
+    # OBSERVE-ONLY: how this array's forecast is actually performing, as
+    # measured actual ÷ forecast energy over today's unconstrained intervals.
+    # 100% means the forecast is exactly right. Nothing acts on it — it exists
+    # so a season of evidence can decide whether a learned gain is worth
+    # applying (see calculations/calibration.py and dev/TODO.md). No
+    # device_class: this is a ratio in percent, not a battery level, and
+    # SensorDeviceClass.BATTERY would put a battery icon on it everywhere.
+    {
+        "unique_id_suffix": "forecast_accuracy",
+        "data_key": "forecast_accuracy_pct",
+        "unit": "%",
+        "icon": "mdi:target-variant",
+        "decimals": 1,
+        "requires_forecast": True,
+    },
 ]
 
 
@@ -138,7 +153,9 @@ class LoadJugglerInverterDataSensor(
         self._attr_translation_key = defn["unique_id_suffix"]
         self._defn = defn
         self._attr_native_unit_of_measurement = defn["unit"]
-        self._attr_device_class = defn["device_class"]
+        # Optional: a ratio in percent has no fitting HA device class, and
+        # borrowing one (BATTERY, POWER_FACTOR) would mislabel it everywhere.
+        self._attr_device_class = defn.get("device_class")
         self._attr_icon = defn["icon"]
         self._attr_native_value = None
 

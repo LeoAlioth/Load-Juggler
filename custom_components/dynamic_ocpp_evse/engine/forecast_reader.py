@@ -163,11 +163,11 @@ def read_forecast_series(hass, entity_ids, hub_runtime):
 
 
 def read_forecast_series_pair(hass, entity_ids, hub_runtime, inflation_by_entity=None):
-    '''Both site series: ``(raw, inflated)``.
+    '''``(raw, inflated, by_entity)`` — both site series, and their parts.
 
     Two series out of ONE read, because the two consumers want different
     numbers from the same forecast. The clip integral may be biased optimistic
-    per array (``CONF_FORECAST_INFLATION``); the overnight drop's deadline
+    per array (a learned gain, once the observers earn one); the deadline
     (``first_production_at``) must not be, since it already carries its own
     early bias. Reading twice would double the parse and could straddle a
     forecast update, so the per-array series are kept and merged twice instead.
@@ -175,6 +175,11 @@ def read_forecast_series_pair(hass, entity_ids, hub_runtime, inflation_by_entity
     ``inflation_by_entity`` maps a forecast entity to its inverter's percent.
     Falsy, or all zeros, returns the SAME object for both — so a site with
     nothing configured takes exactly the path it took before this existed.
+
+    The third element is the per-entity map the merges were built from. The
+    gain observer needs it to split the site forecast back out per inverter
+    (each array belongs to one), and rebuilding it there would parse every
+    entity a second time.
     '''
     memo = hub_runtime.setdefault("_forecast_parse_memo", {})
     for stale_id in set(memo) - set(entity_ids):
@@ -201,9 +206,9 @@ def read_forecast_series_pair(hass, entity_ids, hub_runtime, inflation_by_entity
 
     raw = merge_forecast_series(list(by_entity.values()))
     if not any((inflation_by_entity or {}).get(e) for e in by_entity):
-        return raw, raw
+        return raw, raw, by_entity
     inflated = merge_forecast_series([
         scale_forecast_series(series, (inflation_by_entity or {}).get(entity_id) or 0)
         for entity_id, series in by_entity.items()
     ])
-    return raw, inflated
+    return raw, inflated, by_entity

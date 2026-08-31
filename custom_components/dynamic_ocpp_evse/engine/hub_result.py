@@ -19,7 +19,13 @@ them.
 from __future__ import annotations
 
 import logging
+import time
 
+from .forecast_observers import (
+    observe_gain,
+    observe_peakiness,
+)
+from ..calculations.calibration import block_power_at
 from ..calculations import (
     select_clipping_window,
     first_production_at,
@@ -266,7 +272,7 @@ def _compute_forecast_advice(
     for device_id, pct in inflation_by_device.items():
         for entity_id in configured_forecast_sensors(hass, [device_id], None):
             inflation_by_entity.setdefault(entity_id, pct)
-    series, clip_series = read_forecast_series_pair(
+    series, clip_series, by_entity = read_forecast_series_pair(
         hass, entity_ids, hub_runtime, inflation_by_entity
     )
     # The NEXT clipping window, not the rest of the calendar day: the remainder
@@ -411,6 +417,61 @@ def _compute_forecast_advice(
             "forecast_charge_limiting": bool(limiting),
         }
 
+    # --- Observers (measure only; the advice above is untouched) -----------
+    #
+    # Two forecast errors, watched separately because neither correction fixes
+    # the other: this inverter's LEVEL bias (actual ÷ forecast energy) and the
+    # site's PEAKINESS (how much a 15-minute average understates the clip).
+    # Both publish what they would have corrected and correct nothing — a
+    # season of evidence decides whether either is worth applying.
+    #
+    # dt comes off the monotonic clock and is capped: after a stall or a
+    # suspend, one cycle must not book an hour of made-up energy.
+    now_mono = time.monotonic()
+    last_mono = hub_runtime.get("_forecast_obs_mono")
+    hub_runtime["_forecast_obs_mono"] = now_mono
+    dt_hours = 0.0
+    if last_mono is not None:
+        dt_hours = max(0.0, min(now_mono - last_mono, 60.0)) / 3600.0
+
+    now_local = windows[0][0]
+    local_day = now_local.date()
+    # Curtailing is the one regime the gain must not learn from: while export
+    # sits at the trigger the inverter is throttling its own array, so measured
+    # production is suppressed by the very thing being forecast. Excluded per
+    # INTERVAL, so a clipping day still contributes its honest morning and
+    # evening (see calibration.note_gain_sample).
+    constrained = export_now_w >= export_setpoint > 0
+
+    for m in members:
+        if not m.forecast_device_ids:
+            continue
+        member_entities = configured_forecast_sensors(
+            hass, list(m.forecast_device_ids), None
+        )
+        member_series = merge_forecast_series(
+            [by_entity[e] for e in member_entities if e in by_entity]
+        )
+        observed = observe_gain(
+            hub_runtime,
+            m.entry_id,
+            local_day,
+            block_power_at(member_series, now_local),
+            fleet.member_solar_production(m, site.voltage),
+            dt_hours,
+            constrained,
+        )
+        per_inverter.setdefault(m.entry_id, {}).update(observed)
+
+    peakiness = observe_peakiness(
+        hub_runtime,
+        now_local,
+        local_day,
+        clip_threshold,
+        fleet.solar_total(members, site.voltage),
+        dt_hours,
+    )
+
     _LOGGER.debug(
         "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW"
         " (export setpoint %dW) in window +%dd to %s"
@@ -436,6 +497,7 @@ def _compute_forecast_advice(
     )
 
     return {
+        **peakiness,
         "forecast_clipped_kwh": round(fc.clipped_kwh, 2),
         "forecast_absorbable_kwh": round(fc.absorbable_kwh, 2),
         "forecast_battery_max_soc": proposed,

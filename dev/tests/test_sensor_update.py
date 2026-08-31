@@ -355,7 +355,7 @@ async def test_hub_data_sensors_initialize(hass, hub_entry):
         assert sensor._attr_unique_id == f"test_hub_{defn['unique_id_suffix']}"
         assert sensor.native_value is None  # No data yet
         assert sensor.native_unit_of_measurement == defn["unit"]
-        assert sensor.device_class == defn["device_class"]
+        assert sensor.device_class == defn.get("device_class")
         # W/A/% sensors are instantaneous readings (MEASUREMENT); the advisory
         # kWh forecast sensors override to ENERGY + TOTAL per their definitions
         # (HA rejects ENERGY + MEASUREMENT; TOTAL fits a rises-and-falls amount).
@@ -4584,15 +4584,32 @@ async def test_a_parked_pack_accumulates_nothing_at_all(hass):
             result = run_hub_calculation(hass, hub)
             assert result["forecast_charge_limit_w"] == 0
             assert runtime["_forecast_charge_limiting"] is True
-        # No integrator, no stamp, no accumulated correction — the only forecast
-        # state carried is the three latches and the ceiling ratchet.
-        assert sorted(k for k in runtime if k.startswith("_forecast")) == [
+        # No integrator, no stamp, no accumulated correction — the only state
+        # the ADVICE carries is the three latches and the ceiling ratchet.
+        advice_state = [
             "_forecast_charge_limiting",
             "_forecast_max_soc",
             "_forecast_parse_memo",
             "_forecast_reservation_due",
             "_forecast_soc_yielding",
         ]
+        # The observers DO accumulate, and deliberately: measuring forecast
+        # accuracy and peakiness is what they are for. Excluded by name rather
+        # than folded into the list above, so the ADVICE's statelessness stays
+        # exactly the assertion it was — an integrator sneaking back into the
+        # advice still fails here — and so the list does not depend on whether
+        # a given rig configures its forecast per inverter or hub-wide (the
+        # gain observer is per inverter, and only runs where devices are).
+        observer_state = {
+            "_forecast_gain_observer",
+            "_forecast_obs_mono",
+            "_forecast_peak_observer",
+        }
+        assert sorted(
+            k
+            for k in runtime
+            if k.startswith("_forecast") and k not in observer_state
+        ) == advice_state
 
 
 async def test_a_site_with_no_ceiling_source_is_untouched_by_the_hold(hass):
