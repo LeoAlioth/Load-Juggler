@@ -23,9 +23,9 @@ scenarios:
       circuit_groups:
         - name: "garage"
           current_limit: 20
-          members: ["charger_1", "charger_2"]
-    chargers:
-      - entity_id: "charger_1"
+          members: ["load_1", "load_2"]
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -34,7 +34,7 @@ scenarios:
         l1_phase: "A"
         l2_phase: "B"
         l3_phase: "C"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -44,9 +44,9 @@ scenarios:
         l2_phase: "B"
         l3_phase: "C"
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # Priority 1 gets full 16A first
-      charger_2:
+      load_2:
         allocated: 0.0   # 20A - 16A = 4A remaining < 6A min → 0
 
   - name: "group-3ph-two-chargers-both-fit"
@@ -66,9 +66,9 @@ scenarios:
       circuit_groups:
         - name: "garage"
           current_limit: 24
-          members: ["charger_1", "charger_2"]
-    chargers:
-      - entity_id: "charger_1"
+          members: ["load_1", "load_2"]
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -77,7 +77,7 @@ scenarios:
         l1_phase: "A"
         l2_phase: "B"
         l3_phase: "C"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -87,9 +87,9 @@ scenarios:
         l2_phase: "B"
         l3_phase: "C"
     expected:
-      charger_1:
-        allocated: 15.0  # Shared: each gets (32-2)/2 = 15A, then group cap 24A → 15+9=24 → charger_1 keeps 15
-      charger_2:
+      load_1:
+        allocated: 15.0  # Shared: each gets (32-2)/2 = 15A, then group cap 24A → 15+9=24 → load_1 keeps 15
+      load_2:
         allocated: 9.0   # 24 - 15 = 9A remaining ≥ 6A min → 9A
 
   - name: "group-3ph-one-inactive"
@@ -109,9 +109,9 @@ scenarios:
       circuit_groups:
         - name: "garage"
           current_limit: 20
-          members: ["charger_1", "charger_2"]
-    chargers:
-      - entity_id: "charger_1"
+          members: ["load_1", "load_2"]
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -120,7 +120,7 @@ scenarios:
         l1_phase: "A"
         l2_phase: "B"
         l3_phase: "C"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -131,9 +131,9 @@ scenarios:
         l3_phase: "C"
         active: false
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # Only active charger, 16A < 20A group limit → uncapped
-      charger_2:
+      load_2:
         allocated: 0.0   # Inactive
 
   # --- Phase-aware capping ---
@@ -153,16 +153,16 @@ scenarios:
       circuit_groups:
         - name: "kitchen"
           current_limit: 16
-          members: ["charger_1", "charger_2"]
-    chargers:
-      - entity_id: "charger_1"
+          members: ["load_1", "load_2"]
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
         l1_phase: "A"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -170,9 +170,9 @@ scenarios:
         priority: 2
         l1_phase: "A"
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # Priority 1 gets full 16A
-      charger_2:
+      load_2:
         allocated: 0.0   # 16 - 16 = 0A remaining < 6A min → 0
 
   - name: "group-1ph-different-phases-no-conflict"
@@ -192,16 +192,16 @@ scenarios:
       circuit_groups:
         - name: "garage"
           current_limit: 16
-          members: ["charger_1", "charger_2"]
-    chargers:
-      - entity_id: "charger_1"
+          members: ["load_1", "load_2"]
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
         l1_phase: "A"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -209,9 +209,9 @@ scenarios:
         priority: 2
         l1_phase: "B"
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # Phase A: 16A ≤ 16A group limit → OK
-      charger_2:
+      load_2:
         allocated: 16.0  # Phase B: 16A ≤ 16A group limit → OK (different phase)
 
   # --- Priority and mode ordering ---
@@ -233,9 +233,9 @@ scenarios:
       circuit_groups:
         - name: "garage"
           current_limit: 20
-          members: ["charger_1", "charger_2"]
-    chargers:
-      - entity_id: "charger_1"
+          members: ["load_1", "load_2"]
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -244,7 +244,7 @@ scenarios:
         l1_phase: "A"
         l2_phase: "B"
         l3_phase: "C"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -254,9 +254,9 @@ scenarios:
         l2_phase: "B"
         l3_phase: "C"
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # Priority 1 gets full allocation
-      charger_2:
+      load_2:
         allocated: 0.0   # 20 - 16 = 4A < 6A min → 0
 
   - name: "group-mixed-modes-urgency"
@@ -279,9 +279,9 @@ scenarios:
       circuit_groups:
         - name: "garage"
           current_limit: 14
-          members: ["charger_1", "charger_2"]
-    chargers:
-      - entity_id: "charger_1"
+          members: ["load_1", "load_2"]
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -290,7 +290,7 @@ scenarios:
         l1_phase: "A"
         l2_phase: "B"
         l3_phase: "C"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
@@ -300,9 +300,9 @@ scenarios:
         l2_phase: "B"
         l3_phase: "C"
     expected:
-      charger_1:
+      load_1:
         allocated: 14.0  # Standard (urgency 0) > Solar Only (urgency 2), gets group limit first
-      charger_2:
+      load_2:
         allocated: 0.0   # 14 - 14 = 0A < 6A min → 0
 
   # --- No group / unconstrained ---
@@ -324,9 +324,9 @@ scenarios:
       circuit_groups:
         - name: "garage"
           current_limit: 40
-          members: ["charger_1", "charger_2"]
-    chargers:
-      - entity_id: "charger_1"
+          members: ["load_1", "load_2"]
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -335,7 +335,7 @@ scenarios:
         l1_phase: "A"
         l2_phase: "B"
         l3_phase: "C"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -345,9 +345,9 @@ scenarios:
         l2_phase: "B"
         l3_phase: "C"
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # 16 + 16 = 32 < 40 group limit → no capping
-      charger_2:
+      load_2:
         allocated: 16.0
 
   - name: "group-not-member-unaffected"
@@ -367,9 +367,9 @@ scenarios:
       circuit_groups:
         - name: "garage"
           current_limit: 20
-          members: ["charger_1"]
-    chargers:
-      - entity_id: "charger_1"
+          members: ["load_1"]
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -378,7 +378,7 @@ scenarios:
         l1_phase: "A"
         l2_phase: "B"
         l3_phase: "C"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: Standard
         min_current: 6
         max_current: 16
@@ -388,7 +388,7 @@ scenarios:
         l2_phase: "B"
         l3_phase: "C"
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # In group but under limit
-      charger_2:
+      load_2:
         allocated: 14.0  # Not in group, gets remaining site capacity (32-2-16=14)

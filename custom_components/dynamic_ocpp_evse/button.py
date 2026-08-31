@@ -4,8 +4,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
-from .entity_mixins import ChargerEntityMixin
-from .const import DOMAIN, ENTRY_TYPE, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID
+from .entities.mixins import LoadEntityMixin
+from .const import (
+    DOMAIN,
+    ENTRY_TYPE,
+    ENTRY_TYPE_LOAD,
+    CONF_NAME,
+    CONF_ENTITY_ID,
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_EVSE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -13,19 +21,24 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
     """Set up the button entity."""
     entry_type = entry.data.get(ENTRY_TYPE)
-    if entry_type != ENTRY_TYPE_CHARGER:
-        _LOGGER.debug("Skipping button setup for non-charger entry: %s", entry.title)
+    if entry_type != ENTRY_TYPE_LOAD:
+        _LOGGER.debug("Skipping button setup for non-load entry: %s", entry.title)
+        return
+
+    # The reset button performs an OCPP reset — only meaningful for EVSEs.
+    if entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE) != DEVICE_TYPE_EVSE:
+        _LOGGER.debug("Skipping OCPP reset button for non-EVSE device: %s", entry.title)
         return
 
     name = entry.data.get(CONF_NAME, "OCPP Charger")
-    entity_id = entry.data.get(CONF_ENTITY_ID, "charger")
+    entity_id = entry.data.get(CONF_ENTITY_ID, "load")
 
     async_add_entities([ResetButton(hass, entry, name, entity_id)])
-    _LOGGER.info(f"Setting up charger reset button for: {name}")
+    _LOGGER.info(f"Setting up load reset button for: {name}")
 
 
-class ResetButton(ChargerEntityMixin, ButtonEntity):
-    """Representation of a reset button for a charger."""
+class ResetButton(LoadEntityMixin, ButtonEntity):
+    """Representation of a reset button for a load."""
 
     _attr_entity_category = EntityCategory.CONFIG
 
@@ -37,7 +50,7 @@ class ResetButton(ChargerEntityMixin, ButtonEntity):
         self._attr_icon = "mdi:restart"
 
     async def async_press(self) -> None:
-        _LOGGER.info(f"Reset button pressed for charger: {self.config_entry.title}")
+        _LOGGER.info(f"Reset button pressed for load: {self.config_entry.title}")
         await self.hass.services.async_call(
             DOMAIN,
             "reset_ocpp_evse",

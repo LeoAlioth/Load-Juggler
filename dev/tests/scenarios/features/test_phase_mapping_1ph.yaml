@@ -28,14 +28,14 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # 35A - 5A = 30A available, capped at max 16A
 
   # Real-world working case: phases=3 but all mappings set to "A"
@@ -60,8 +60,8 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
@@ -70,7 +70,7 @@ scenarios:
         l2_phase: "A"
         l3_phase: "A"
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # mask="A" (all mapped to same phase), works like 1-phase
 
   # BUG SCENARIO: 3-phase charger on 1-phase site
@@ -96,8 +96,8 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
@@ -106,7 +106,7 @@ scenarios:
         l2_phase: "B"
         l3_phase: "C"
     expected:
-      charger_1:
+      load_1:
         allocated: 0  # min(A=30, B=0, C=0) = 0 — cannot charge!
 
   # Same scenario with non-default phase mapping — still broken
@@ -129,8 +129,8 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 3
@@ -139,7 +139,7 @@ scenarios:
         l2_phase: "C"
         l3_phase: "A"
     expected:
-      charger_1:
+      load_1:
         allocated: 0  # sorted({'B','C','A'}) = "ABC", still min(A=30, B=0, C=0) = 0
 
   # 2-phase charger on 1-phase site — also broken
@@ -162,8 +162,8 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         min_current: 6
         max_current: 16
         phases: 2
@@ -171,5 +171,5 @@ scenarios:
         l1_phase: "A"
         l2_phase: "B"
     expected:
-      charger_1:
+      load_1:
         allocated: 0  # mask="AB", min(A=30, B=0, AB/2=15) = 0

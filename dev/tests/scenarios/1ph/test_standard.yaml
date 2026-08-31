@@ -20,15 +20,15 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # 35A breaker - 5A consumption = 30A available, capped at max 16A
 
   - name: "1ph-1c-standard-no-bat-breaker-limited"
@@ -49,15 +49,15 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 11.0  # 16A breaker - 5A consumption = 11A available
 
   - name: "1ph-2c-standard-no-bat-prio"
@@ -78,21 +78,21 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 1
         priority: 2
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # 27A - 3A = 24A total. Both fit minimums (12A). Prio 1 gets max 16A.
-      charger_2:
+      load_2:
         allocated: 8.0  # 24A - 16A = 8A remaining, exactly at minimum

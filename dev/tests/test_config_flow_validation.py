@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""Validation tests for Dynamic OCPP EVSE config flow."""
+"""Validation tests for the shipped charger-settings validator.
 
-# Pure Python - no HA dependencies
+This exercises the REAL helpers.validate_charger_settings. It used to define a
+local copy of the function and assert against that — which passes no matter what
+the integration actually does. (The equally tautological twin,
+test_validation.py, was deleted rather than kept in sync.)
 
-def validate_charger_settings(data: dict[str, any], errors: dict[str, str]) -> None:
-    """Validate charger settings (pure Python, no HA dependencies)."""
-    min_current = data.get("evse_minimum_charge_current")
-    max_current = data.get("evse_maximum_charge_current")
+helpers.py imports homeassistant.config_entries, so this file needs the pytest
+tier (Docker / WSL) — it is no longer runnable under a bare python3.
+"""
 
-    if min_current is not None and max_current is not None:
-        if min_current <= 0 or max_current <= 0:
-            errors["base"] = "invalid_current"
-        elif min_current > max_current:
-            errors["base"] = "min_exceeds_max"
+from custom_components.dynamic_ocpp_evse.helpers import validate_charger_settings
 
 
 def test_validate_min_max_current_valid():
@@ -73,6 +71,7 @@ def test_validate_negative_current():
 
 
 if __name__ == "__main__":
+    # Requires an environment with Home Assistant installed (see module docstring).
     test_validate_min_max_current_valid()
     test_validate_min_exceeds_max()
     test_validate_zero_current()

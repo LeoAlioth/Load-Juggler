@@ -21,13 +21,19 @@ set_operating_mode:
         text:
     mode:
       name: Operating Mode
-      description: The operating mode to set.
+      description: >-
+        The operating mode to set. Only the modes offered by the target device
+        type are accepted (EVSE / power station: Standard, Solar Priority,
+        Solar Only, Excess; smart load: Continuous, Solar Priority, Solar Only,
+        Excess; hot water tank: Freeze Protection, Normal, Solar Priority).
       required: true
       selector:
         select:
           options:
             - "Standard"
             - "Continuous"
+            - "Freeze Protection"
+            - "Normal"
             - "Solar Priority"
             - "Solar Only"
             - "Excess"

@@ -4,24 +4,26 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
-from .entity_mixins import HubEntityMixin, ChargerEntityMixin
+from .entities.mixins import HubEntityMixin, LoadEntityMixin
+from . import consume_plug_mode_migration
 from .const import (
-    DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_CHARGER, CONF_NAME, CONF_ENTITY_ID,
-    CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG,
+    DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, CONF_NAME, CONF_ENTITY_ID,
+    CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK,
+    DEVICE_TYPE_POWER_STATION,
     DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
     DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
     DEFAULT_DISTRIBUTION_MODE,
-    OPERATING_MODE_STANDARD, OPERATING_MODE_CONTINUOUS,
-    OPERATING_MODE_SOLAR_PRIORITY, OPERATING_MODE_SOLAR_ONLY, OPERATING_MODE_EXCESS,
-    OPERATING_MODES_EVSE, OPERATING_MODES_PLUG,
+    OPERATING_MODES_EVSE, OPERATING_MODES_PLUG, OPERATING_MODES_HOT_WATER_TANK,
+    OPERATING_MODES_POWER_STATION,
     DEFAULT_OPERATING_MODE_EVSE, DEFAULT_OPERATING_MODE_PLUG,
+    DEFAULT_OPERATING_MODE_HOT_WATER_TANK, DEFAULT_OPERATING_MODE_POWER_STATION,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
-    """Set up the Dynamic OCPP EVSE Select from a config entry."""
+    """Set up the Load Juggler Select from a config entry."""
     entry_type = config_entry.data.get(ENTRY_TYPE)
 
     # Hub entries get distribution_mode selector only
@@ -30,29 +32,39 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "site_load_management")
 
         entities = [
-            DynamicOcppEvseDistributionModeSelect(hass, config_entry, name, entity_id)
+            LoadJugglerDistributionModeSelect(hass, config_entry, name, entity_id)
         ]
         _LOGGER.info(f"Setting up hub select entities: {[entity.unique_id for entity in entities]}")
         async_add_entities(entities)
         return
 
-    # Charger entries get per-charger operating mode selector
-    if entry_type == ENTRY_TYPE_CHARGER:
-        name = config_entry.data.get(CONF_NAME, "Charger")
-        entity_id = config_entry.data.get(CONF_ENTITY_ID, "charger")
+    # Load entries get per-load operating mode selector
+    if entry_type == ENTRY_TYPE_LOAD:
+        name = config_entry.data.get(CONF_NAME, "Load")
+        entity_id = config_entry.data.get(CONF_ENTITY_ID, "load")
 
         entities = [
             OperatingModeSelect(hass, config_entry, name, entity_id)
         ]
-        _LOGGER.info(f"Setting up charger select entities: {[entity.unique_id for entity in entities]}")
+        _LOGGER.info(f"Setting up load select entities: {[entity.unique_id for entity in entities]}")
         async_add_entities(entities)
         return
 
 
-class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
-    """Per-charger operating mode selector (EVSE or Smart Load)."""
+class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
+    """Per-load operating mode selector (EVSE / Smart Load / Hot Water Tank).
 
-    _charger_data_key = "operating_mode"
+    Each device type has its own independent list of OperatingMode objects;
+    the select exposes their keys as options.
+    """
+
+    _load_data_key = "operating_mode"
+
+    # Mode keys renamed across versions — a restored value is migrated before
+    # use so existing installs keep a valid selection.
+    _RENAMED_MODE_KEYS = {
+        DEVICE_TYPE_HOT_WATER_TANK: {"Solar Only": "Solar Priority"},
+    }
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -60,45 +72,64 @@ class OperatingModeSelect(ChargerEntityMixin, SelectEntity, RestoreEntity):
         self._attr_name = f"{name} Operating Mode"
         self._attr_unique_id = f"{entity_id}_operating_mode"
 
-        device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        if device_type == DEVICE_TYPE_PLUG:
-            self._attr_options = list(OPERATING_MODES_PLUG)
-            self._attr_current_option = DEFAULT_OPERATING_MODE_PLUG
+        self._device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        if self._device_type == DEVICE_TYPE_PLUG:
+            modes, default = OPERATING_MODES_PLUG, DEFAULT_OPERATING_MODE_PLUG
+        elif self._device_type == DEVICE_TYPE_HOT_WATER_TANK:
+            modes, default = OPERATING_MODES_HOT_WATER_TANK, DEFAULT_OPERATING_MODE_HOT_WATER_TANK
+        elif self._device_type == DEVICE_TYPE_POWER_STATION:
+            modes, default = OPERATING_MODES_POWER_STATION, DEFAULT_OPERATING_MODE_POWER_STATION
         else:
-            self._attr_options = list(OPERATING_MODES_EVSE)
-            self._attr_current_option = DEFAULT_OPERATING_MODE_EVSE
+            modes, default = OPERATING_MODES_EVSE, DEFAULT_OPERATING_MODE_EVSE
+        self._modes = modes
+        self._attr_options = [m.key for m in modes]
+        self._attr_current_option = default.key
 
     @property
     def icon(self):
-        icons = {
-            OPERATING_MODE_STANDARD: "mdi:flash",
-            OPERATING_MODE_CONTINUOUS: "mdi:flash",
-            OPERATING_MODE_SOLAR_PRIORITY: "mdi:leaf",
-            OPERATING_MODE_SOLAR_ONLY: "mdi:solar-power",
-            OPERATING_MODE_EXCESS: "mdi:solar-power-variant",
-        }
+        icons = {m.key: m.icon for m in self._modes}
         return icons.get(self._attr_current_option, "mdi:flash")
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        # One-time plug migration (2.2 → 2.3): the old "Solar Only" plug mode
+        # was renamed to "Solar Priority"; the key "Solar Only" now denotes a
+        # different, target-gated mode. async_migrate_entry flags the entry and
+        # async_setup_entry turns that into a one-shot runtime marker, claimed
+        # here. The claim MUST NOT write to the config entry — that fires the
+        # update listener and reloads an entry that may still be
+        # SETUP_IN_PROGRESS (issue #34); async_setup_entry clears the persisted
+        # flag itself, at a point where no update listener is registered.
+        migrate_plug_solar_only = consume_plug_mode_migration(
+            self.hass, self.config_entry.entry_id
+        )
         last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state in self._attr_options:
-            self._attr_current_option = last_state.state
+        if last_state is not None:
+            restored = last_state.state
+            if migrate_plug_solar_only and restored == "Solar Only":
+                restored = "Solar Priority"
+            # Tank: "Solar Only" was renamed to "Solar Priority" (no key reuse,
+            # so this remap is unconditional and safe).
+            restored = self._RENAMED_MODE_KEYS.get(self._device_type, {}).get(
+                restored, restored
+            )
+            if restored in self._attr_options:
+                self._attr_current_option = restored
         self.async_write_ha_state()
-        self._write_to_charger_data(self._attr_current_option)
+        self._write_to_load_data(self._attr_current_option)
 
     async def async_select_option(self, option: str) -> None:
         if option in self._attr_options:
             self._attr_current_option = option
             self.async_write_ha_state()
-            self._write_to_charger_data(option)
+            self._write_to_load_data(option)
             _LOGGER.info(f"Operating mode changed to: {option}")
         else:
             _LOGGER.error(f"Invalid option selected: {option}")
 
 
-class DynamicOcppEvseDistributionModeSelect(HubEntityMixin, SelectEntity, RestoreEntity):
-    """Representation of a Dynamic OCPP EVSE Distribution Mode Select (Hub-level)."""
+class LoadJugglerDistributionModeSelect(HubEntityMixin, SelectEntity, RestoreEntity):
+    """Representation of a Load Juggler Distribution Mode Select (Hub-level)."""
 
     _hub_data_key = "distribution_mode"
 

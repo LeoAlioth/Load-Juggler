@@ -29,6 +29,8 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 - **Off-grid support** — grid CTs optional, infers phases from inverter output
 - **Auto-detection** of sensors, phase mapping, and charger settings
 - **OCPP 1.6J** control for EV chargers (Amps or Watts, auto-detected)
+- **Hot water tank control** — climate-entity-driven binary heating loads with away/normal/boost setpoints
+- **Portable power station control** — modulated charge rate plus a managed backup reserve, so a station soaks up surplus and spends it again
 - **Relative and absolute OCPP profile modes** for different charger compatibility
 - **Current rate limiting** (ramp up/down) for stable operation
 - **Failsafe operation** — loads revert to safe defaults if sensors become unavailable (EMA holdover, grid stale detection)
@@ -38,8 +40,9 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 | Type | Control Method | Available Modes | Description |
 |------|---------------|-----------------|-------------|
 | **EVSE** | OCPP 1.6J current/power profiles | Standard, Solar Priority, Solar Only, Excess | EV chargers with variable current control |
-| **Smart Plug** | On/off switch | Continuous, Solar Only, Excess | Any device behind a smart plug (heaters, pumps, etc.) |
-| **Hot Water Tank** | *Planned* | Solar Only, Excess | Thermostat control with Normal/Boost |
+| **Smart Plug** | On/off switch | Continuous, Solar Priority, Solar Only, Excess | Any device behind a smart plug (heaters, pumps, etc.) |
+| **Hot Water Tank** | Climate entity (on/off + setpoint) | Freeze Protection, Normal, Solar Priority | Tank with a thermostat (e.g. Generic Thermostat); the mode picks an away/normal/boost setpoint |
+| **Power Station** | Charge-speed + backup-reserve numbers | Standard, Solar Priority, Solar Only, Excess | Portable station (EcoFlow Delta and similar); modulates its charge rate, and its reserve is the on/off gate |
 | **SG Ready** | *Planned* | Automatic | 2-relay site-state mapping (Block/Normal/Recommend/Force) |
 
 ## Operating Modes
@@ -51,13 +54,36 @@ Each load has its own operating mode, set independently. This allows mixing mode
 - **Standard**: Charges as fast as possible from all available power sources (grid + solar + battery). Ideal for maximum charging speed.
 - **Solar Priority**: Charges at minimum current, increases with solar production. Prevents grid export while maintaining minimum charge rate. With battery: graduates charging based on SOC thresholds.
 - **Solar Only**: Only charges when sufficient solar power is available. Zero grid import — stops if import would be required.
-- **Excess**: Starts charging only when solar export exceeds a configurable threshold. Designed for large solar systems to utilize excess power.
+- **Excess**: Starts charging only once the site can no longer absorb its own production — grid export has reached the configured threshold *and* the home battery is charging at its maximum (or is full). Designed for large solar systems to soak up power that would otherwise be curtailed.
 
 ### Smart Plug Modes
 
-- **Continuous**: Always on (when connected).
-- **Solar Only**: Turns on only when solar surplus is available.
-- **Excess**: Turns on only when export exceeds the configured threshold.
+- **Continuous**: Always on (when connected) — uses the grid if needed.
+- **Solar Priority**: On while the battery is above its minimum SOC (drains stored solar down to the minimum; no grid). Without a battery, on when live solar surplus covers the plug.
+- **Solar Only**: On while the battery is above its target SOC (uses only the surplus stored above target). Without a battery, on when live solar surplus covers the plug.
+- **Excess**: Turns on only when the battery is near-full, or the site has run out of places to put its production — grid export at its allowance *and* the battery already charging as fast as it can.
+
+### Hot Water Tank Modes
+
+A hot water tank is driven through a `climate` entity (e.g. a Generic Thermostat) — the climate entity handles temperature regulation, while Load Juggler picks one of three setpoints (**Away**, **Normal**, **Boost**) based on the mode and conditions.
+
+- **Freeze Protection**: Targets the Away setpoint (minimal / frost protection), raised to Boost when there is surplus energy — the hub reports Excess (see Excess mode above), or the home battery is above its target SOC.
+- **Normal**: Targets the Normal setpoint, raised to Boost on the same surplus test.
+- **Solar Priority**: Targets Away below the battery minimum SOC, Normal up to the battery target SOC, and Boost at/above the target — heats from solar surplus only. Without a battery there is no SOC band to follow, so it stays at Normal.
+
+While a tank is aiming at its **Boost** setpoint it is heating past what its mode asks for, on energy the site would otherwise dump — so it competes at the Excess urgency tier instead of its own, and yields power to every must-run load. A Solar Priority tank that has dropped below its Normal temperature keeps its promoted tier: needing heat outranks having free energy.
+
+### Power Station Modes
+
+A portable power station (EcoFlow Delta and similar, via a local integration such as [ha-ef-ble](https://github.com/rabits/ha-ef-ble)) charges at a rate Load Juggler sets, so it uses the same four modes as an EVSE — **Excess** by default, since absorbing surplus is the point.
+
+Its second knob does the gating. The charge-speed control has no zero (200 W is typically the floor), so "don't charge" is expressed through the **backup reserve** instead: below the station's current battery level it draws nothing from the wall and runs its own loads from its battery.
+
+- **Nothing to absorb**: reserve drops to the **Normal Reserve** (default 30%) — the station discharges into its own loads down to that floor.
+- **Power allocated**: reserve rises to the station's own Max Charge Limit and it charges at the allocated rate.
+- **Storm Reserve switch on**: reserve holds at the **Storm Reserve** (default 80%), charged from any source at full rate and not discharged below — this overrides the operating mode.
+
+Whatever is plugged into the station passes through to its outputs and counts as household consumption; only the charging component (`AC input − AC output`) is treated as this load's draw. Minimum and maximum charge power are configured rather than read from the device, so a station can be held below what its hardware allows.
 
 ### Mode Urgency
 
@@ -93,7 +119,19 @@ Load Juggler works on off-grid installations. When no grid CT entities are confi
 - Grid current is treated as 0A (same calculation engine, no separate code paths)
 - Solar production is derived from inverter output (series: `solar = inverter - battery`, parallel: `solar = inverter`)
 
-Configure inverter output entities in the hub settings. The hub status sensor shows "Off-grid mode" when no grid CTs are present.
+Configure inverter output entities on the inverter entry. The hub status sensor shows "Off-grid mode" when no grid CTs are present.
+
+## Multiple Inverters
+
+A site can have several inverters — typically an older AC-coupled string inverter plus a newer hybrid with a battery. Each is added as its own **Inverter** entry linked to the hub (*Add Inverter / Home Battery* in the setup menu), carrying everything physically attached to it: capacity, per-phase limit, wiring topology, output sensors, its PV array (production sensor and solar forecast device) and optionally its battery (SOC/power sensors, charge/discharge limits, full-SOC, capacity).
+
+The hub keeps only what is site-wide — the grid connection, export limit, base consumption, SOC hysteresis and forecast SOC floor — on a single **Hub Settings** page.
+
+The hub aggregates the whole fleet: capacities and outputs sum, solar production is each inverter's own sensor when it has one and derived from its output otherwise (a series inverter's output minus its own battery flow), and the hub's battery sensors are fleet aggregates — SOC is capacity-weighted across all batteries. Forecast devices from every inverter merge into one site forecast, because clipping is decided by the site-wide export limit that all arrays share. Excess mode counts each battery's charge capacity only while *that* battery is below *its* full SOC, and discharge capacity only for batteries above the site minimum. The SOC Target / SOC Min sliders and Allow Grid Charging switch remain hub-level site policy applied to the fleet.
+
+Each inverter device gets its own sensors: Solar Production, Battery SOC/Power, and — with the PV clipping forecast enabled — the **Recommended Battery Max SOC** and **Recommended Battery Charge Limit** for *its* battery (the fleet reservation split by capacity and charge rate).
+
+**Upgrading:** a hub configured the classic way (inverter/battery/solar fields on the hub itself) is migrated automatically on startup — those fields move onto an inverter entry, and the hub's sensors keep their entity IDs as fleet aggregates. No manual steps.
 
 ## Battery System Support
 
@@ -105,6 +143,26 @@ Configure inverter output entities in the hub settings. The hub status sensor sh
 - **SOC hysteresis** — prevents oscillation when battery SOC hovers near thresholds
 
 Battery entities (SOC Target, SOC Min, Allow Grid Charging) are only shown when a battery sensor is configured.
+
+### PV Clipping Forecast (export-limited sites)
+
+Sites with more PV than they may export (e.g. 15 kWp behind a 5 kW export limit) curtail the midday peak if the home battery fills up on morning production — energy that could have been exported instead. When a **grid export limit**, a **battery capacity** and one or more **solar forecast devices** (from the [Open-Meteo Solar Forecast](https://github.com/rany2/ha-open-meteo-solar-forecast) integration, which creates one device per PV array — select each array's device) are configured, the hub computes how much of the forecast production cannot be exported or consumed, and publishes **advisory sensors** — Load Juggler never commands the house battery itself:
+
+| Sensor | Meaning |
+|---|---|
+| Forecast Clippable Energy (kWh) | Production above the export limit + base consumption for the rest of the day |
+| Forecast Storable Energy (kWh) | The part of that the battery could physically absorb at its charge rate |
+| Recommended Battery Max SOC (%) | SOC ceiling that leaves exactly that much headroom; rises to 100% as the peak passes, so the battery still ends the day full |
+| Battery Headroom Deficit (kWh) | Non-zero when the battery already holds more than the recommendation allows |
+| Recommended Battery Charge Limit (W) | Charge-rate cap protecting the reserved headroom; released (full rate) whenever there is nothing left to clip or SOC is comfortably below the ceiling |
+
+#### Writing the limit to the inverter
+
+By default this is advice only — feed it to your inverter with an automation if you like. An inverter entry can also apply it itself: on its **Battery Charge Management** page, point *Battery charge limit entity* at the inverter's own maximum-charge-current number (Deye: `Battery Max Charge Current`), pick whether that register takes DC amps or watts, and give it a battery voltage source for the conversion. That adds a **Battery Charge Control** switch to the inverter device.
+
+Nothing is written until you turn that switch on. While it is on, the recommended charge limit is written to the register and the normal value (a value you configure, or the register's own maximum) is restored as soon as the advice releases. Writes are paced — at most one per *Minimum time between writes* (default 5 min) and only when the value moves further than the *Write deadband* (default 5% of the normal limit) — because these registers go over Modbus and some firmwares commit them to EEPROM. A **Charge Control** sensor on the inverter measures the register itself in its own unit (amps or watts), so it graphs and earns long-term statistics, with the control's standing (`off` / `idle` / `limiting`) as a `control_state` attribute beside it.
+
+The charge *rate* is the register every hybrid exposes, and slowing the fill leaves the battery charging all day rather than stopping it dead. Where a real SOC ceiling exists, the same page can write that instead — or as well. On a Deye the ceiling is not one register but one per **time-of-use slot**, so *Battery SOC ceiling entities* takes a list: select every slot the battery may charge in and the recommended max SOC is written to all of them together. *Normal SOC ceiling source* names the entity your everyday ceiling lives in (an `input_number`, a template sensor, whatever your automations already set); Load Juggler writes the **lower** of that and the recommendation, so it can only ever hold the battery below what you asked for, and changes you make there propagate to the slots on the next cycle. Without that entity the everyday ceiling is 100%; if it is configured but unavailable, nothing is written that cycle rather than a ceiling being guessed. A separate **Battery SOC Control** switch arms it (default off), writes are paced by the same *Minimum time between writes* with a fixed 1-point deadband applied per slot, and no release write is needed — the recommendation climbing back to 100% as the peak passes hands the slots back by itself. A **SOC Control** sensor reports the ceiling being enforced, with each slot's read-back as an attribute.
 
 ## Installation
 
@@ -155,18 +213,39 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
 | Main breaker rating | Maximum current per phase (A) | 25A |
 | Phase voltage | Voltage per phase (V) | 230V |
 | Max import power entity | Template sensor for grid import limit (W) | — |
-| Excess export threshold | Solar export threshold for Excess mode (W) | 13000W |
+| Grid export limit | Physical/contract export ceiling — Excess triggers at limit − margin, and it enables the PV clipping forecast (0 = unlimited, both off) | 0 |
+| Excess trigger margin | How far below the export limit Excess mode engages (W) | 500W |
 | Invert phases | Flip CT polarity if installed backwards | Off |
 | Distribution mode | How to allocate power between loads | Priority |
-| Battery SOC entity | Battery state of charge sensor | — |
-| Battery power entity | Battery charge/discharge power sensor (W) | — |
-| Battery max charge/discharge power | Battery power limits (W) | 5000W |
-| Battery SOC hysteresis | SOC change before triggering mode switches (%) | 5% |
-| Solar production entity | Dedicated solar power sensor (optional) | — |
+| Solar/Excess grace period | How long Solar/Excess loads keep running at minimum when conditions lapse (min) | 5 |
+| Battery SOC hysteresis | SOC change before triggering mode switches (%) | 3% |
+| Base house consumption | Typical daytime minimum draw (PV clipping forecast) (W) | 300W |
+| Forecast SOC floor | Lowest max-SOC the forecast may recommend (%) | 30% |
+
+#### Inverter Settings
+
+One entry per inverter — everything physically attached to it, including its PV array and battery.
+
+| Field | Description | Default |
+|---|---|---|
 | Inverter max power | Total inverter capacity (W) | — |
 | Inverter max power per phase | Per-phase inverter limit (W) | — |
 | Inverter supports asymmetric | Can inverter balance power across phases | Off |
 | Inverter output phase A/B/C entity | Per-phase inverter output sensors (optional) | — |
+| Wiring topology | Parallel (AC-coupled) or Series (hybrid with DC battery) | Parallel |
+| Solar production entity | This inverter's PV power sensor (optional — derived from its output otherwise) | — |
+| Solar forecast | Open-Meteo Solar Forecast device(s) for this inverter's array(s) | — |
+| Battery SOC entity | Battery state of charge sensor | — |
+| Battery power entity | Battery charge/discharge power sensor (W) | — |
+| Battery max charge/discharge power | Battery power limits (W) | 5000W |
+| Battery full SOC | SOC at/above which this battery counts as full (%) | 97% |
+| Battery capacity | kWh this battery's SOC spans (PV clipping forecast, 0 = off) | 0 |
+| Battery charge limit entity | Inverter register to write the forecast's charge limit to (optional) | — |
+| Charge limit unit | What that register expects — DC amps or watts | A |
+| Battery voltage entity / nominal voltage | Source for the watts↔amps conversion | — / 51.2V |
+| Normal charge limit | Value restored when the limit releases (0 = the register's own max) | 0 |
+| Minimum time between writes | Write pacing for Modbus/EEPROM registers (s) | 300 |
+| Write deadband | Minimum change worth a write, as % of the normal limit | 5% |
 
 #### EVSE Load Settings
 

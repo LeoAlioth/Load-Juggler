@@ -26,7 +26,6 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
           pip install -r requirements_dev.txt
 
       - name: Run test suite
@@ -194,3 +193,40 @@ jobs:
             "https://uploads.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
 
           echo "GitHub release created successfully!"
+
+      - name: Tell Home Assistant to download the new build
+        # Optional — skipped unless a webhook is configured. Fires a webhook per
+        # instance so HACS downloads this exact tag instead of waiting for its own
+        # update check. See dev/HA_AUTO_UPDATE.md for the receiving automation.
+        #
+        # HA_WEBHOOK_URLS holds one URL per line (or space-separated) so several
+        # test systems can be notified; HA_WEBHOOK_URL is still honoured for a
+        # single instance.
+        env:
+          HA_WEBHOOK_URLS: ${{ secrets.HA_WEBHOOK_URLS }}
+          HA_WEBHOOK_URL: ${{ secrets.HA_WEBHOOK_URL }}
+        run: |
+          URLS="${HA_WEBHOOK_URLS:-$HA_WEBHOOK_URL}"
+          if [ -z "$URLS" ]; then
+            echo "No HA webhook secret set — skipping."
+            exit 0
+          fi
+
+          # The release asset was uploaded a moment ago; give GitHub a beat to
+          # start serving it before HACS asks for it.
+          sleep 5
+
+          # Word-splitting on whitespace/newlines is what lets one secret carry
+          # several URLs. Never fail the release over an unreachable instance
+          # (it may be restarting, or off) — the build itself succeeded.
+          for url in $URLS; do
+            case "$url" in ''|\#*) continue ;; esac
+            host=$(printf '%s' "$url" | sed -E 's#^[a-z]+://([^/]+).*#\1#')
+            if curl -fsS -X POST "$url" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"version\": \"$TAG_NAME\"}"; then
+              echo "Notified $host: $TAG_NAME"
+            else
+              echo "Notify failed for $host — download $TAG_NAME manually in HACS"
+            fi
+          done

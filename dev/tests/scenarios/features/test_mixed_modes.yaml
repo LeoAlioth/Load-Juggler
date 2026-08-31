@@ -27,23 +27,23 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 8000
       inverter_max_power: 20000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Continuous"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 2
     expected:
-      charger_1:
+      load_1:
         allocated: 16  # Continuous: any source, gets max
-      charger_2:
+      load_2:
         allocated: 6   # Solar Only: just enough solar remaining for minimum
 
   - name: "mixed-continuous-solar-only-shared"
@@ -66,24 +66,39 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 8000
       inverter_max_power: 20000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Continuous"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 2
     expected:
-      charger_1:
-        allocated: 7.5  # Shared: Continuous gets equal split (not source-limited)
-      charger_2:
-        allocated: 6.3  # Shared: Solar Only capped by solar pool
+      load_1:
+        allocated: 16.0  # Shared: Continuous (no source limit) fills to its
+                         # max once the Solar-Only charger caps at its solar
+                         # share — equal-split among unconstrained.
+      load_2:
+        allocated: 7.8   # Shared: Solar Only capped by the solar pool left
+                         # after both minimums. Solar pool 41.4 A total
+                         # (13.8 A per phase for a 3-phase load); pass 1
+                         # reserves 6 A per phase for each load, i.e. 36 A,
+                         # leaving 5.4 A total = 1.8 A per phase, so
+                         # 6 + 1.8 = 7.8 A. At that point the Solar Only load
+                         # draws 3 x 7.8 = 23.4 A = 5382 W against the site's
+                         # real surplus of 6900 W solar - 1380 W household =
+                         # 5520 W — inside it.
+                         # Was 6.3 A: the old batch check scaled EVERY
+                         # increment by min_solar/total, so the grid-backed
+                         # load's fill-up crawled in solar-sized steps and
+                         # dragged the Solar Only load's own increments down
+                         # with it, leaving ~1.1 kW of surplus solar unused.
 
   # ===== SOLAR PRIORITY + SOLAR ONLY =====
 
@@ -107,23 +122,23 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 8000
       inverter_max_power: 20000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Priority"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 2
     expected:
-      charger_1:
+      load_1:
         allocated: 16   # Solar Priority: filled to max from solar pool
-      charger_2:
+      load_2:
         allocated: 7.8  # Solar Only: gets remaining solar after ch1
 
   - name: "mixed-solar-prio-solar-only-low-soc"
@@ -146,23 +161,23 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 8000
       inverter_max_power: 20000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Priority"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 2
     expected:
-      charger_1:
+      load_1:
         allocated: 6  # Solar Priority: SOC < target → min only (grid guarantee)
-      charger_2:
+      load_2:
         allocated: 0  # Solar Only: SOC < target → no charging
 
   # ===== SOLAR PRIORITY + EXCESS =====
@@ -186,15 +201,15 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Priority"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
         l1_phase: "A"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: "Excess"
         min_current: 6
         max_current: 16
@@ -202,9 +217,9 @@ scenarios:
         priority: 2
         l1_phase: "A"
     expected:
-      charger_1:
+      load_1:
         allocated: 16  # Solar Priority: fills to max from solar
-      charger_2:
+      load_2:
         allocated: 12.4  # Excess: 25.5A export remaining - 13.04A threshold = 12.4A
 
   - name: "mixed-solar-prio-excess-below-threshold"
@@ -226,15 +241,15 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Solar Priority"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
         l1_phase: "A"
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: "Excess"
         min_current: 6
         max_current: 16
@@ -242,9 +257,9 @@ scenarios:
         priority: 2
         l1_phase: "A"
     expected:
-      charger_1:
+      load_1:
         allocated: 10  # placeholder — Solar Priority: solar available
-      charger_2:
+      load_2:
         allocated: 0   # Excess: export below 3000W threshold → off
 
   # ===== THREE MODES MIXED =====
@@ -269,31 +284,31 @@ scenarios:
       inverter_supports_asymmetric: true
       inverter_max_power_per_phase: 8000
       inverter_max_power: 20000
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: "Continuous"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: "Solar Priority"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 2
-      - entity_id: "charger_3"
+      - entity_id: "load_3"
         operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 3
     expected:
-      charger_1:
+      load_1:
         allocated: 16  # placeholder
-      charger_2:
+      load_2:
         allocated: 6   # placeholder
-      charger_3:
+      load_3:
         allocated: 0   # placeholder
 
   # ===== PLUG IN SOLAR ONLY =====
@@ -316,7 +331,7 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 12000
       inverter_max_power: 12000
-    chargers:
+    loads:
       - entity_id: "evse_1"
         operating_mode: "Continuous"
         min_current: 6

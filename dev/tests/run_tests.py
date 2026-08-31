@@ -5,7 +5,7 @@ Uses ACTUAL production code - no duplicates!
 
 Every scenario runs a 30-cycle simulation:
   - Cycles 0-4:   Ramp-up (site values interpolate from 0 to target)
-  - Cycles 5-24:  Warmup (full site values, ramp rate limiting on charger output)
+  - Cycles 5-24:  Warmup (full site values, ramp rate limiting on load output)
   - Cycles 25-29: Stability check (verify convergence)
 """
 
@@ -14,55 +14,29 @@ import yaml
 from pathlib import Path
 from datetime import datetime
 
-# Load calculation modules directly from files to avoid importing Home Assistant-dependent
-# package __init__.py which imports 'homeassistant'.
-import importlib.util
-import types
-import sys
+# Load the pure calculation modules directly from their files (the component's
+# package __init__.py imports 'homeassistant') via the shared stub loader.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from standalone_loader import load_pure_modules
 
-repo_root = Path(__file__).parents[2]
-_comp_dir = repo_root / "custom_components" / "dynamic_ocpp_evse"
-_calc_dir = _comp_dir / "calculations"
-
-# Build proper package hierarchy so relative imports in target_calculator.py work.
-_PKG_ROOT = "custom_components"
-_PKG_COMP = "custom_components.dynamic_ocpp_evse"
-_PKG_CALC = "custom_components.dynamic_ocpp_evse.calculations"
-
-# Create stub namespace packages
-for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC):
-    if _pkg_name not in sys.modules:
-        _pkg = types.ModuleType(_pkg_name)
-        _pkg.__path__ = []  # make it a package
-        _pkg.__package__ = _pkg_name
-        sys.modules[_pkg_name] = _pkg
-
-
-def _load_module_as(fqn, path):
-    """Load a module with its fully-qualified name so relative imports resolve."""
-    spec = importlib.util.spec_from_file_location(fqn, str(path))
-    module = importlib.util.module_from_spec(spec)
-    # Set __package__ to the parent package so `from .x` and `from ..x` work
-    module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
-    sys.modules[fqn] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-# 1) Load const (needed by target_calculator's `from ..const import ...`)
-_load_module_as(f"{_PKG_COMP}.const", _comp_dir / "const.py")
-
-# 2) Load models and utils (no relative imports of their own)
-_load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
-_load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
-
-# 3) Load target_calculator (has relative imports: .models, .utils, ..const)
-_load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
+load_pure_modules()
 
 # Convenience aliases for the rest of this file
 from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues, CircuitGroup
-from custom_components.dynamic_ocpp_evse.calculations.target_calculator import calculate_all_charger_targets
-from custom_components.dynamic_ocpp_evse.calculations.utils import compute_household_per_phase
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
+    calculate_all_load_targets,
+    excess_margin,
+)
+from custom_components.dynamic_ocpp_evse.calculations.utils import (
+    compute_household_per_phase,
+    grid_without_managed_draws,
+)
+from custom_components.dynamic_ocpp_evse.const.modes import resolve_operating_mode, behavior_for
+from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
+    resolve_tank_mode_priority,
+    DEFAULT_TANK_NORMAL_TEMPERATURE,
+)
+from custom_components.dynamic_ocpp_evse.const import DEFAULT_BATTERY_SOC_FULL, DEFAULT_PLUG_MAX_CURRENT
 
 # ---------------------------------------------------------------------------
 # Mode name migration (old YAML → new operating modes)
@@ -83,6 +57,18 @@ TOTAL_CYCLES = RAMP_UP_CYCLES + WARMUP_CYCLES + STABILITY_CYCLES  # 30
 UPDATE_FREQ = 15        # seconds per cycle
 RAMP_UP_PER_CYCLE = 1.5   # 0.1 A/s * 15s
 RAMP_DOWN_PER_CYCLE = 3.0  # 0.2 A/s * 15s
+
+# EVSE draw-settle detection: the measured draw counts as "settled" once it
+# has held within SETTLE_TOLERANCE for SETTLE_CYCLES consecutive cycles — the
+# car has reached a ceiling rather than still tracking a ramping permit.
+SETTLE_TOLERANCE = 0.5  # A
+SETTLE_CYCLES = 3
+# An EVSE only counts as settled-and-under-drawing — the case the footprint
+# model frees to lower-priority loads — when its measured draw is also
+# measurably below the permit we offered it last cycle. A car at util ≈ 1.0
+# draws what it is offered; treating that as "capped" would let the engine
+# repeatedly over-allocate and oscillate.
+SETTLE_PERMIT_MARGIN = 1.0  # A
 
 
 # ---------------------------------------------------------------------------
@@ -127,36 +113,33 @@ def _fmt_phase(value):
     return f"{value:.1f}A" if value is not None else "-"
 
 
-def set_charger_phase_currents(charger, commanded_limit):
-    """Set charger l1/l2/l3_current from commanded limit based on phase mapping.
+def set_load_phase_currents(load, commanded_limit):
+    """Set load l1/l2/l3_current from commanded limit based on phase mapping.
 
-    Uses the charger's L1/L2/L3 → site phase mapping (l1_phase, l2_phase, l3_phase)
+    Uses the load's L1/L2/L3 → site phase mapping (l1_phase, l2_phase, l3_phase)
     to determine which OCPP phases are active. L1 is always used; L2/L3 depend on
-    the charger's active_phases_mask containing the corresponding site phases.
+    the load's active_phases_mask containing the corresponding site phases.
     """
-    charger.l1_current = 0
-    charger.l2_current = 0
-    charger.l3_current = 0
+    load.l1_current = 0
+    load.l2_current = 0
+    load.l3_current = 0
     if commanded_limit <= 0:
         return
-    mask = (charger.active_phases_mask or "").upper()
+    mask = (load.active_phases_mask or "").upper()
     # L1 is always active if its mapped site phase is in the mask
-    if charger.l1_phase in mask:
-        charger.l1_current = commanded_limit
-    if charger.l2_phase in mask:
-        charger.l2_current = commanded_limit
-    if charger.l3_phase in mask:
-        charger.l3_current = commanded_limit
+    if load.l1_phase in mask:
+        load.l1_current = commanded_limit
+    if load.l2_phase in mask:
+        load.l2_current = commanded_limit
+    if load.l3_phase in mask:
+        load.l3_current = commanded_limit
 
 
-BATTERY_FULL_SOC = 97  # Battery considered full above this SOC
-
-
-def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
+def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     """Compute grid CT readings using self-consumption battery model.
 
     Physical model:
-    1. Raw demand per phase = household - solar + charger_draw
+    1. Raw demand per phase = household - solar + load_draw
     2. Battery responds to minimize grid flow (self-consumption):
        - Deficit (raw > 0): discharges min(deficit, max_discharge) if SOC > min_soc
        - Surplus (raw < 0): charges min(surplus, max_charge) if SOC < 97%
@@ -177,9 +160,9 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
     def _raw(h, draw):
         return (h - solar_per_phase + draw) if h is not None else None
 
-    raw_a = _raw(household.a, charger_l1)
-    raw_b = _raw(household.b, charger_l2)
-    raw_c = _raw(household.c, charger_l3)
+    raw_a = _raw(household.a, load_l1)
+    raw_b = _raw(household.b, load_l2)
+    raw_c = _raw(household.c, load_l3)
 
     # Total raw demand across active phases
     total_raw = sum(v for v in [raw_a, raw_b, raw_c] if v is not None)
@@ -192,13 +175,16 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
             max_discharge = (site.battery_max_discharge_power or 0) / site.voltage
             # Inverter output cap: battery discharge goes through the inverter.
             # If solar already uses all inverter capacity, battery can't discharge.
-            if site.inverter_max_power:
+            # Off-grid the battery covers the whole deficit regardless — the
+            # inverter physically overloads past its rating (observed in the
+            # field), which is exactly the state the engine must correct.
+            if site.inverter_max_power and not site.is_off_grid:
                 inverter_max_current = site.inverter_max_power / site.voltage
                 inverter_headroom = max(0, inverter_max_current - solar_total)
                 max_discharge = min(max_discharge, inverter_headroom)
             discharge = min(total_raw, max_discharge)
             battery_per_phase = -(discharge / num_phases)
-        elif total_raw < 0 and site.battery_soc < BATTERY_FULL_SOC:
+        elif total_raw < 0 and site.battery_soc < (site.battery_soc_full or DEFAULT_BATTERY_SOC_FULL):
             # Surplus: battery charges from it
             max_charge = (site.battery_max_charge_power or 0) / site.voltage
             charge = min(abs(total_raw), max_charge)
@@ -218,6 +204,14 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
     site.consumption = PhaseValues(ct_a_cons, ct_b_cons, ct_c_cons)
     site.export_current = PhaseValues(ct_a_exp, ct_b_exp, ct_c_exp)
 
+    # Off-grid: there are no grid CTs — production injects 0 A for phases that
+    # have inverter output sensors, so the engine always sees zero grid flow.
+    if site.is_off_grid:
+        def _zero(h):
+            return 0.0 if h is not None else None
+        site.consumption = PhaseValues(_zero(household.a), _zero(household.b), _zero(household.c))
+        site.export_current = PhaseValues(_zero(household.a), _zero(household.b), _zero(household.c))
+
     # Set battery_power for engine battery awareness in derived mode.
     # Convention: positive = discharging, negative = charging.
     # battery_per_phase: positive = charging (adds demand), negative = discharging.
@@ -226,7 +220,7 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
 
     # Update per-phase inverter output to reflect actual physical state.
     # Parallel: inverter output = solar per phase (inverter only carries solar)
-    # Series: inverter output = household + charger draws per phase (all loads go through inverter)
+    # Series: inverter output = household + load draws per phase (all loads go through inverter)
     if site.inverter_output_per_phase is not None:
         if site.wiring_topology == 'parallel':
             site.inverter_output_per_phase = PhaseValues(
@@ -237,26 +231,44 @@ def simulate_grid_ct(site, household, charger_l1, charger_l2, charger_l3):
         else:
             # Series: everything downstream goes through inverter
             site.inverter_output_per_phase = PhaseValues(
-                ((household.a or 0) + charger_l1) if household.a is not None else None,
-                ((household.b or 0) + charger_l2) if household.b is not None else None,
-                ((household.c or 0) + charger_l3) if household.c is not None else None,
+                ((household.a or 0) + load_l1) if household.a is not None else None,
+                ((household.b or 0) + load_l2) if household.b is not None else None,
+                ((household.c or 0) + load_l3) if household.c is not None else None,
             )
 
     return ct_a_net, ct_b_net, ct_c_net, solar_per_phase, battery_per_phase
 
 
+def simulate_inverter_output(site):
+    """Fleet AC output in watts — the sim's stand-in for output_power_total().
+
+    Mirrors engine/fleet.py's two tiers: the measured per-phase output when the
+    scenario models output sensors, else the topology-aware estimate (solar plus
+    the battery term — signed in series, discharge-only in parallel).
+
+    Called BEFORE apply_feedback_adjustment() for the same reason production
+    reads it before its feedback loop: afterwards the derived solar contains the
+    managed draws and the estimate is inflated by them.
+    """
+    if site.inverter_output_per_phase is not None:
+        return site.inverter_output_per_phase.total * site.voltage
+    bp = site.battery_power or 0.0
+    battery_term = bp if site.wiring_topology == 'series' else max(0.0, bp)
+    return (site.solar_production_total or 0.0) + battery_term
+
+
 def apply_feedback_adjustment(site):
     """Replicate dynamic_ocpp_evse.py feedback loop.
 
-    Subtracts charger draws from grid CT readings (mapped to site phases via
+    Subtracts load draws from grid CT readings (mapped to site phases via
     get_site_phase_draw()) to recover the true household consumption/export
-    before charger was drawing.
+    before load was drawing.
     In derived mode, recalculates solar_production_total from adjusted export.
     In dedicated solar entity mode, computes household_consumption_total instead.
     """
     # Use phase mapping to get site-phase draws (A, B, C)
     total_phase_a = total_phase_b = total_phase_c = 0.0
-    for c in site.chargers:
+    for c in site.loads:
         a_draw, b_draw, c_draw = c.get_site_phase_draw()
         total_phase_a += a_draw
         total_phase_b += b_draw
@@ -266,27 +278,35 @@ def apply_feedback_adjustment(site):
     total_l2 = total_phase_b
     total_l3 = total_phase_c
 
-    if total_l1 > 0 or total_l2 > 0 or total_l3 > 0:
-        def _adjust(cons, exp, draw):
-            if cons is None:
-                return None, None
-            raw_grid = cons - (exp or 0)
-            true_grid = raw_grid - draw
-            return max(0.0, true_grid), max(0.0, -true_grid)
-
-        adj_a_cons, adj_a_exp = _adjust(site.consumption.a, site.export_current.a, total_l1)
-        adj_b_cons, adj_b_exp = _adjust(site.consumption.b, site.export_current.b, total_l2)
-        adj_c_cons, adj_c_exp = _adjust(site.consumption.c, site.export_current.c, total_l3)
-
-        site.consumption = PhaseValues(adj_a_cons, adj_b_cons, adj_c_cons)
-        site.export_current = PhaseValues(adj_a_exp, adj_b_exp, adj_c_exp)
+    # Off-grid: the grid readings are synthetic zeros that never contained the
+    # load draws — production's _apply_feedback_loop returns early without
+    # adjusting them (subtracting would fabricate export).
+    if not site.is_off_grid and (total_l1 > 0 or total_l2 > 0 or total_l3 > 0):
+        # Same pure helper production's _apply_feedback_loop calls.
+        site.consumption, site.export_current = grid_without_managed_draws(
+            site.consumption,
+            site.export_current,
+            (total_l1, total_l2, total_l3),
+        )
 
     # Derived mode: recalculate solar_production_total from adjusted export.
     # Battery charging absorbs solar power invisible to grid CT — add it back.
     if site.solar_is_derived:
-        site.solar_production_total = site.export_current.total * site.voltage
-        if site.battery_power is not None and site.battery_power < 0:
-            site.solar_production_total += abs(site.battery_power)
+        if site.is_off_grid and site.inverter_output_per_phase is not None:
+            # Off-grid: export is always 0 — production's _derive_solar_production
+            # uses the inverter output instead.
+            # Series: inverter_output = solar + battery_power → solar = output − battery.
+            # Parallel: inverter output IS solar.
+            inv_watts = site.inverter_output_per_phase.total * site.voltage
+            if site.wiring_topology == 'series':
+                bp = site.battery_power if site.battery_power is not None else 0
+                site.solar_production_total = max(0, inv_watts - bp)
+            else:
+                site.solar_production_total = max(0, inv_watts)
+        else:
+            site.solar_production_total = site.export_current.total * site.voltage
+            if site.battery_power is not None and site.battery_power < 0:
+                site.solar_production_total += abs(site.battery_power)
     else:
         # Dedicated solar entity mode: compute household_consumption_total
         # via energy balance: household = solar + battery_power - export
@@ -311,11 +331,11 @@ def check_stability(history, tolerance=0.5):
 
     tail = history[-STABILITY_CYCLES:]
 
-    for charger_id in tail[0]['commanded'].keys():
-        values = [h['commanded'][charger_id] for h in tail]
+    for load_id in tail[0]['commanded'].keys():
+        values = [h['commanded'][load_id] for h in tail]
         variation = max(values) - min(values)
         if variation > tolerance:
-            return False, f"{charger_id} unstable: variation={variation:.2f}A over last {STABILITY_CYCLES} cycles"
+            return False, f"{load_id} unstable: variation={variation:.2f}A over last {STABILITY_CYCLES} cycles"
 
     return True, "Stable"
 
@@ -369,6 +389,7 @@ def build_site_from_scenario(scenario):
         battery_soc=site_data.get('battery_soc'),
         battery_soc_min=site_data.get('battery_soc_min', 20),
         battery_soc_target=site_data.get('battery_soc_target', 80),
+        battery_soc_full=site_data.get('battery_soc_full', DEFAULT_BATTERY_SOC_FULL),
         excess_export_threshold=site_data.get('excess_export_threshold', 13000),
         battery_max_charge_power=site_data.get('battery_max_charge_power', 5000),
         battery_max_discharge_power=site_data.get('battery_max_discharge_power', 5000),
@@ -379,6 +400,7 @@ def build_site_from_scenario(scenario):
         inverter_supports_asymmetric=site_data.get('inverter_supports_asymmetric', False),
         wiring_topology=site_data.get('wiring_topology', 'parallel'),
         allow_grid_charging=site_data.get('allow_grid_charging', True),
+        is_off_grid=site_data.get('off_grid', False),
     )
 
     # Per-phase inverter output: explicit values or auto-derived from simulation
@@ -402,57 +424,88 @@ def build_site_from_scenario(scenario):
             0.0 if phase_c_cons is not None else None,
         )
 
-    # Build chargers
-    # Per-charger operating_mode; fallback to site-level charging_mode for migration
+    # Build loads
+    # Per-load operating_mode; fallback to site-level charging_mode for migration
     site_mode = site_data.get('charging_mode')
 
-    for idx, charger_data in enumerate(scenario['chargers']):
-        device_type = charger_data.get("device_type", "evse")
-        phases = charger_data.get("phases", 1)
+    for idx, load_data in enumerate(scenario['loads']):
+        device_type = load_data.get("device_type", "evse")
+        phases = load_data.get("phases", 1)
 
         if device_type == "plug":
-            power_rating = charger_data.get("power_rating", 2000)
+            power_rating = load_data.get("power_rating", 2000)
             equiv_current = round(power_rating / (voltage * phases), 1)
             min_current = equiv_current
             max_current = equiv_current
+            # Plug hardware rating (A) — the cap for available_current,
+            # separate from the set-power slider.
+            rated_current = load_data.get("plug_max_current", DEFAULT_PLUG_MAX_CURRENT)
+        elif device_type == "hot_water_tank":
+            # Tank is a fixed-power binary load (like a plug): the heating
+            # element draws its full rating or nothing.
+            power_rating = load_data.get("power_rating", 2000)
+            equiv_current = round(power_rating / (voltage * phases), 1)
+            min_current = equiv_current
+            max_current = equiv_current
+            rated_current = equiv_current
         else:
-            min_current = charger_data.get("min_current", 6)
-            max_current = charger_data.get("max_current", 16)
+            min_current = load_data.get("min_current", 6)
+            max_current = load_data.get("max_current", 16)
+            rated_current = max_current
 
-        # Resolve operating mode: per-charger > site-level fallback > device default
-        operating_mode = charger_data.get("operating_mode")
+        # Resolve operating mode: per-load > site-level fallback > device default
+        operating_mode = load_data.get("operating_mode")
         if operating_mode is None and site_mode is not None:
             operating_mode = site_mode
         if operating_mode is None:
             operating_mode = "Continuous" if device_type == "plug" else "Standard"
         # Migrate old mode names
         operating_mode = _MIGRATE_MODE_NAMES.get(operating_mode, operating_mode)
+        # Resolve to the device type's OperatingMode → engine behavior + urgency
+        _mode = resolve_operating_mode(device_type, operating_mode)
 
-        charger = LoadContext(
-            charger_id=f"charger_{idx}",
-            entity_id=charger_data.get("entity_id", f"charger_{idx}"),
+        # Cold-tank promotion: a Solar Priority tank below its normal temperature
+        # is bumped to the Normal urgency tier (behavior unchanged). Mirrors the
+        # production builder in engine/hub_calculation.py.
+        mode_priority = _mode.priority
+        if device_type == "hot_water_tank":
+            mode_priority, _ = resolve_tank_mode_priority(
+                _mode.key,
+                _mode.priority,
+                load_data.get("current_temperature"),
+                load_data.get("normal_temperature", DEFAULT_TANK_NORMAL_TEMPERATURE),
+                load_data.get("prioritize_below_normal", True),
+            )
+
+        load = LoadContext(
+            load_id=f"load_{idx}",
+            entity_id=load_data.get("entity_id", f"load_{idx}"),
             min_current=min_current,
             max_current=max_current,
             phases=phases,
-            priority=charger_data.get("priority", idx),
+            priority=load_data.get("priority", idx),
             device_type=device_type,
-            operating_mode=operating_mode,
-            l1_phase=charger_data.get("l1_phase", "A"),
-            l2_phase=charger_data.get("l2_phase", "B"),
-            l3_phase=charger_data.get("l3_phase", "C"),
-            connector_status=charger_data.get("connector_status",
-                                              "Available" if charger_data.get("active") is False else "Charging"),
-            l1_current=charger_data.get("l1_current", 0),
-            l2_current=charger_data.get("l2_current", 0),
-            l3_current=charger_data.get("l3_current", 0),
+            operating_mode=_mode.key,
+            mode_behavior=behavior_for(_mode),
+            mode_priority=mode_priority,
+            l1_phase=load_data.get("l1_phase", "A"),
+            l2_phase=load_data.get("l2_phase", "B"),
+            l3_phase=load_data.get("l3_phase", "C"),
+            connector_status=load_data.get("connector_status",
+                                              "Available" if load_data.get("active") is False else "Charging"),
+            l1_current=load_data.get("l1_current", 0),
+            l2_current=load_data.get("l2_current", 0),
+            l3_current=load_data.get("l3_current", 0),
+            unmetered=load_data.get("unmetered", False),
+            rated_current=rated_current,
         )
-        site.chargers.append(charger)
+        site.loads.append(load)
 
     # Build circuit groups
-    charger_id_by_entity = {c.entity_id: c.charger_id for c in site.chargers}
+    load_id_by_entity = {c.entity_id: c.load_id for c in site.loads}
     for idx, group_data in enumerate(site_data.get('circuit_groups', [])):
         member_entities = group_data.get('members', [])
-        member_ids = [charger_id_by_entity[e] for e in member_entities if e in charger_id_by_entity]
+        member_ids = [load_id_by_entity[e] for e in member_entities if e in load_id_by_entity]
         group = CircuitGroup(
             group_id=f"group_{idx}",
             name=group_data.get('name', f"group_{idx}"),
@@ -471,7 +524,7 @@ def build_site_from_scenario(scenario):
 def print_scenario_params(scenario):
     """Print scenario parameters for trace/verbose output."""
     site_data = scenario['site']
-    chargers = scenario['chargers']
+    loads = scenario['loads']
 
     # Site basics
     voltage = site_data.get('voltage', 230)
@@ -523,9 +576,9 @@ def print_scenario_params(scenario):
     if excess_thresh:
         print(f"  Excess threshold: {excess_thresh}W")
 
-    # Chargers
+    # Loads
     site_mode = site_data.get('charging_mode')
-    for ch in chargers:
+    for ch in loads:
         eid = ch.get('entity_id', '?')
         dev_type = ch.get('device_type', 'evse')
         phases = ch.get('phases', 1)
@@ -554,11 +607,30 @@ def print_scenario_params(scenario):
 
         if dev_type == 'plug':
             power = ch.get('power_rating', 2000)
-            print(f"  Charger {eid}: plug {power}W {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
+            print(f"  Load {eid}: plug {power}W {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
+        elif dev_type == 'hot_water_tank':
+            power = ch.get('power_rating', 2000)
+            ctemp = ch.get('current_temperature')
+            ntemp = ch.get('normal_temperature', DEFAULT_TANK_NORMAL_TEMPERATURE)
+            # Mirror resolve_tank_mode_priority: a cold Solar Priority tank is
+            # promoted to the Normal urgency tier (1) for the distribution sort.
+            promoted = (
+                ch.get('prioritize_below_normal', True)
+                and op_mode == 'Solar Priority'
+                and ctemp is not None
+                and ctemp < ntemp
+            )
+            if ctemp is None:
+                temp_str = ""
+            elif promoted:
+                temp_str = f" temp={ctemp}<{ntemp}°C→PROMOTED(tier 1)"
+            else:
+                temp_str = f" temp={ctemp}°C"
+            print(f"  Load {eid}: tank {power}W {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str}{temp_str} [{status}]")
         else:
             min_c = ch.get('min_current', 6)
             max_c = ch.get('max_current', 16)
-            print(f"  Charger {eid}: {min_c}-{max_c}A {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
+            print(f"  Load {eid}: evse {min_c}-{max_c}A {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
 
     # Expected
     expected = scenario.get('expected', {})
@@ -575,7 +647,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
     """Run 30-cycle simulation for a scenario.
 
     Cycles 0-4:   Site values ramp from 0 to target (cold start).
-    Cycles 5-24:  Warmup with ramp rate limiting on charger output.
+    Cycles 5-24:  Warmup with ramp rate limiting on load output.
     Cycles 25-29: Stability check — engine targets and commanded limits
                   must converge.
 
@@ -586,6 +658,33 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
 
     commanded_limits = {}  # entity_id -> current commanded limit
     history = []
+
+    # Excess latch state, the hub_runtime["_excess_on"] equivalent: the widened
+    # release band only applies while Excess was already engaged last cycle.
+    excess_on = False
+
+    # Per-load draw-settle tracking: last measured draw and the count of
+    # consecutive cycles it has held steady. Mirrors the HA layer's per-load
+    # runtime state so the engine sees the same draw_settled flag.
+    settle_last_draw = {}   # entity_id -> last cycle's measured draw
+    settle_count = {}       # entity_id -> consecutive steady cycles
+    last_permit = {}        # entity_id -> last cycle's available_current
+
+    # Per-load utilization (0.0–1.0): the fraction of the commanded permit
+    # the device actually draws. 1.0 (default) = draws its full permit; 0.0 =
+    # switched on but idle. Models a car taking less than offered, or an
+    # appliance behind a plug drawing nothing.
+    #
+    # draw_cap (optional, Amps): hard ceiling on the simulated draw — models a
+    # car whose battery limits how much it can take regardless of what we
+    # offer (e.g. a 16 A car on a 32 A EVSE). measured = min(commanded × util,
+    # draw_cap). Defaults to no cap.
+    utilization = {}
+    draw_cap = {}
+    for idx, cd in enumerate(scenario['loads']):
+        eid = cd.get('entity_id', f"load_{idx}")
+        utilization[eid] = cd.get('utilization', 1.0)
+        draw_cap[eid] = cd.get('draw_cap')
 
     for cycle in range(TOTAL_CYCLES):
         # 1. Build site from YAML (household consumption, solar production, battery)
@@ -599,46 +698,99 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         # Save household consumption before CT simulation overwrites it
         household = PhaseValues(site.consumption.a, site.consumption.b, site.consumption.c)
 
-        # 3. Set charger l1/l2/l3_current from previous commanded limits
-        for charger in site.chargers:
-            set_charger_phase_currents(charger, commanded_limits.get(charger.entity_id, 0))
+        # 3. Set load l1/l2/l3_current from previous commanded limits,
+        #    scaled by utilization — the device may draw less than its permit.
+        #    Then update draw-settle tracking: a draw that has held steady for
+        #    SETTLE_CYCLES is trusted as the EVSE's real footprint.
+        for load in site.loads:
+            cmd = commanded_limits.get(load.entity_id, 0)
+            util = utilization.get(load.entity_id, 1.0)
+            simulated = cmd * util
+            cap = draw_cap.get(load.entity_id)
+            if cap is not None:
+                simulated = min(simulated, cap)
+            set_load_phase_currents(load, simulated)
+
+            eid = load.entity_id
+            draw = max(load.l1_current, load.l2_current, load.l3_current)
+            prev = settle_last_draw.get(eid)
+            if prev is not None and abs(draw - prev) <= SETTLE_TOLERANCE:
+                settle_count[eid] = settle_count.get(eid, 0) + 1
+            else:
+                settle_count[eid] = 0
+            settle_last_draw[eid] = draw
+            steady = settle_count[eid] >= SETTLE_CYCLES
+            under_permit = draw + SETTLE_PERMIT_MARGIN < last_permit.get(eid, 0)
+            load.draw_settled = steady and under_permit
 
         # 4. Compute grid CT values from physical inputs
-        #    net = household - solar_per_phase + battery_per_phase + charger_draw
-        #    Map charger L1/L2/L3 draws to site phases A/B/C via phase mapping
-        charger_phase_a = charger_phase_b = charger_phase_c = 0.0
-        for c in site.chargers:
+        #    net = household - solar_per_phase + battery_per_phase + load_draw
+        #    Map load L1/L2/L3 draws to site phases A/B/C via phase mapping
+        load_phase_a = load_phase_b = load_phase_c = 0.0
+        for c in site.loads:
             a_draw, b_draw, c_draw = c.get_site_phase_draw()
-            charger_phase_a += a_draw
-            charger_phase_b += b_draw
-            charger_phase_c += c_draw
+            load_phase_a += a_draw
+            load_phase_b += b_draw
+            load_phase_c += c_draw
         ct_a_net, ct_b_net, ct_c_net, solar_pp, bat_pp = simulate_grid_ct(
-            site, household, charger_phase_a, charger_phase_b, charger_phase_c)
+            site, household, load_phase_a, load_phase_b, load_phase_c)
 
-        # 5. Apply feedback: subtract charger draws (replicates dynamic_ocpp_evse.py)
+        # 4b. Read-time figures the engine captures before its feedback loop and
+        #     the calculator's inverter coverage gate reads: the raw meter and
+        #     the fleet's AC output. Off grid there are no CTs at all, so
+        #     grid_current stays unset (all-None → 0 W net), exactly as
+        #     production leaves it when no phase entity is configured.
+        if not site.is_off_grid:
+            site.grid_current = PhaseValues(ct_a_net, ct_b_net, ct_c_net)
+        site.net_grid_power = site.grid_current.total * site.voltage
+        site.inverter_output_total = simulate_inverter_output(site)
+
+        # 5. Apply feedback: subtract load draws (replicates dynamic_ocpp_evse.py)
         apply_feedback_adjustment(site)
 
-        # 7. Run calculation engine
-        calculate_all_charger_targets(site)
+        # 6. Excess trigger + hysteresis latch (replicates the same block in
+        #    engine/hub_calculation.py — the calculator itself is stateless and
+        #    just reads site.excess_hysteresis). Scenarios that leave
+        #    `excess_hysteresis` unset get 0 and the latch is a no-op.
+        hysteresis = scenario['site'].get('excess_hysteresis', 0)
+        margin = excess_margin(site, hysteresis if excess_on else 0)
+        excess_on = margin >= 0
+        site.excess_hysteresis = hysteresis if excess_on else 0
 
-        # 8. Apply ramp rate limiting to engine targets
-        for charger in site.chargers:
-            target = charger.allocated_current
-            prev = commanded_limits.get(charger.entity_id, 0)
-            commanded_limits[charger.entity_id] = apply_ramp_rate(prev, target)
+        # 7. Run calculation engine
+        calculate_all_load_targets(site)
+
+        # Remember this cycle's permit per load — the next cycle's settle
+        # check uses it to tell "car capped below offer" from "car at offer".
+        for c in site.loads:
+            last_permit[c.entity_id] = c.available_current
+
+        # 8. Set each load's commanded value for the next cycle.
+        #    EVSE: ramp-limited toward the permit (available_current).
+        #    Plug/tank: binary — its set power when the engine powers it
+        #    (permit > 0), else 0; no ramp.
+        for load in site.loads:
+            if load.device_type == "plug":
+                commanded_limits[load.entity_id] = (
+                    load.max_current if load.available_current > 0 else 0
+                )
+            else:
+                target = load.available_current
+                prev = commanded_limits.get(load.entity_id, 0)
+                commanded_limits[load.entity_id] = apply_ramp_rate(prev, target)
 
         # 9. Record history
         history.append({
             'cycle': cycle,
-            'engine_targets': {c.entity_id: c.allocated_current for c in site.chargers},
-            'commanded': {c.entity_id: commanded_limits[c.entity_id] for c in site.chargers},
+            'engine_targets': {c.entity_id: c.allocated_current for c in site.loads},
+            'commanded': {c.entity_id: commanded_limits[c.entity_id] for c in site.loads},
         })
 
         if verbose:
             parts = []
-            for charger in site.chargers:
-                eid = charger.entity_id
-                parts.append(f"{eid}={commanded_limits[eid]:.1f}A(t={charger.allocated_current:.1f})")
+            for load in site.loads:
+                eid = load.entity_id
+                parts.append(f"{eid}={commanded_limits[eid]:.1f}A(t={load.allocated_current:.1f})")
             line = f"  Cycle {cycle:2d}: {', '.join(parts)}"
             if trace:
                 def _fmt_signed(v):
@@ -656,8 +808,8 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
                 inv_str = f"inverter=({inv_a}/{inv_b}/{inv_c} {inv_detail})"
                 # Household load from YAML
                 house_str = f"house=({_fmt_phase(household.a)}/{_fmt_phase(household.b)}/{_fmt_phase(household.c)})"
-                # Sum of charger draws per site phase (mapped from L1/L2/L3)
-                ch_sum_str = f"ch_sum=({charger_phase_a:.1f}/{charger_phase_b:.1f}/{charger_phase_c:.1f})"
+                # Sum of load draws per site phase (mapped from L1/L2/L3)
+                ch_sum_str = f"ch_sum=({load_phase_a:.1f}/{load_phase_b:.1f}/{load_phase_c:.1f})"
                 # Battery: per-phase current in (A/B/C) format + SOC
                 bat_str = ""
                 if site.battery_soc is not None:
@@ -688,11 +840,11 @@ def validate_results(scenario, site):
     passed = True
     errors = []
 
-    for charger in site.chargers:
-        entity_id = charger.entity_id
+    for load in site.loads:
+        entity_id = load.entity_id
         if entity_id in expected:
             expected_allocated = expected[entity_id]['allocated']
-            actual_allocated = charger.allocated_current
+            actual_allocated = load.allocated_current
 
             if abs(actual_allocated - expected_allocated) > 0.1:
                 passed = False
@@ -706,7 +858,7 @@ def validate_results(scenario, site):
 
             if 'available' in expected[entity_id]:
                 expected_available = expected[entity_id]['available']
-                actual_available = charger.available_current
+                actual_available = load.available_current
                 if abs(actual_available - expected_available) > 0.1:
                     passed = False
                     errors.append(
@@ -724,7 +876,7 @@ def validate_results(scenario, site):
 # Test runner
 # ---------------------------------------------------------------------------
 
-def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, trace=False, filter_verified=None):
+def run_tests(yaml_file, verbose=False, trace=False, filter_verified=None):
     """Run all test scenarios with 30-cycle simulation."""
     all_scenarios = load_scenarios(yaml_file)
 
@@ -830,7 +982,7 @@ def run_tests(yaml_file='dev/tests/test_scenarios.yaml', verbose=False, trace=Fa
     return failed_count == 0
 
 
-def run_single_scenario(scenario_name, yaml_file='dev/tests/test_scenarios.yaml', trace=False, source_file=''):
+def run_single_scenario(scenario_name, yaml_file, trace=False, source_file=''):
     """Run a single scenario by name with verbose simulation output."""
     scenarios = load_scenarios(yaml_file)
 
@@ -958,12 +1110,10 @@ if __name__ == "__main__":
             search_paths = []
             if scenarios_dir.exists():
                 search_paths = list(sorted(scenarios_dir.rglob("*.yaml"))) + list(sorted(scenarios_dir.rglob("*.yml")))
-            else:
-                search_paths = [Path(__file__).parent / "test_scenarios.yaml"]
 
             found = False
             for f in search_paths:
-                rel = f.relative_to(scenarios_dir) if scenarios_dir.exists() else f.name
+                rel = f.relative_to(scenarios_dir)
                 with open(f, "r", encoding="utf-8") as fh:
                     data = yaml.safe_load(fh) or {}
                 for sc in data.get("scenarios", []):
@@ -977,6 +1127,8 @@ if __name__ == "__main__":
                 print(f"Scenario '{arg}' not found in scenarios directory or files")
                 success = False
     else:
+        # No path/name argument: default to the scenarios directory next to
+        # this file (same as `python3 dev/tests/run_tests.py dev/tests/scenarios`).
         scenarios_dir = Path(__file__).parent / "scenarios"
         if scenarios_dir.exists():
             combined = _merge_scenarios_from_dir(scenarios_dir)
@@ -989,7 +1141,8 @@ if __name__ == "__main__":
             except Exception:
                 pass
         else:
-            success = run_tests(verbose=True, trace=trace, filter_verified=filter_verified)
+            print(f"Scenarios directory '{scenarios_dir}' not found")
+            success = False
 
     # Print end timestamp and duration
     end_time = datetime.now()

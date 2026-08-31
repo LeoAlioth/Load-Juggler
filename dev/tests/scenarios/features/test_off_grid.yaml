@@ -1,0 +1,121 @@
+# Test scenarios: Off-grid site — inverter limit must be respected
+#
+# An off-grid site has no grid CTs (production injects 0 A grid readings for
+# phases with inverter output sensors), so ALL power flows through the
+# inverter. Regression tests for three off-grid bugs found 2026-06-11:
+#   1. _calculate_grid_limit produced phantom main-breaker headroom
+#      (breaker − 0 A consumption) even though no grid feed exists.
+#   2. _calculate_inverter_limit ignored the household the inverter must keep
+#      serving — invisible off-grid because no grid CT ever sees it.
+#   3. _apply_feedback_loop subtracted charger draws from the synthetic 0 A
+#      grid readings, fabricating export equal to the charger's own draw.
+#
+# Field snapshot behind scenario 1: 1-phase off-grid, 4 kW hybrid inverter,
+# 5 kW battery discharge, solar 1465 W, household ~2.6 kW, 1.75 kW boiler on
+# a smart plug. Inverter output was 4357 W — past its 4 kW rating — yet the
+# boiler was never shed.
+
+scenarios:
+
+  - name: "off-grid-inverter-full-sheds-plug"
+    description: "Off-grid 4kW inverter, household 2.6kW + solar 1.5kW → no room for 1.75kW boiler → plug OFF"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 20
+      distribution_mode: priority
+      solar_production: 1465
+      phase_a_consumption: 11.3   # household ≈ 2600 W
+      battery_soc: 89
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4500
+      battery_max_discharge_power: 5000
+      inverter_max_power: 4000
+      inverter_max_power_per_phase: 4000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "boiler"
+        device_type: "plug"
+        operating_mode: "Solar Priority"
+        power_rating: 1750
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      boiler:
+        # Inverter capacity left for managed loads = 4000 W − 2600 W household
+        # ≈ 6.1 A < the boiler's 7.6 A → must be shed. Before the fixes the
+        # pool showed ~35 A (20 A phantom grid + household-blind inverter).
+        allocated: 0.0
+        available: 0.0
+
+  - name: "off-grid-inverter-headroom-keeps-plug"
+    description: "Off-grid 8kW inverter, same loads → boiler fits within inverter headroom → plug ON"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 20
+      distribution_mode: priority
+      solar_production: 1465
+      phase_a_consumption: 11.3   # household ≈ 2600 W
+      battery_soc: 89
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4500
+      battery_max_discharge_power: 5000
+      inverter_max_power: 8000
+      inverter_max_power_per_phase: 8000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "boiler"
+        device_type: "plug"
+        operating_mode: "Solar Priority"
+        power_rating: 1750
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      boiler:
+        # 8000 W − 2600 W household ≈ 23 A of inverter capacity; source pool
+        # (solar + spare battery discharge) also covers 7.6 A → stays on.
+        allocated: 7.6
+
+  - name: "off-grid-no-household-keeps-plug"
+    description: "Off-grid 4kW inverter, no household load → boiler fits → plug ON (no over-shedding)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 20
+      distribution_mode: priority
+      solar_production: 1465
+      phase_a_consumption: 0.0
+      battery_soc: 89
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 4500
+      battery_max_discharge_power: 5000
+      inverter_max_power: 4000
+      inverter_max_power_per_phase: 4000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "boiler"
+        device_type: "plug"
+        operating_mode: "Solar Priority"
+        power_rating: 1750
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      boiler:
+        # Full 4000 W (17.4 A) inverter capacity available → 7.6 A boiler on.
+        allocated: 7.6

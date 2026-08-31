@@ -4,54 +4,20 @@ Pure Python, no Home Assistant dependencies.
 """
 
 import sys
-import types
-import importlib.util
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Module loading (same pattern as run_tests.py to avoid HA imports)
+# Module loading — shared stub loader (avoids the HA-importing package root)
 # ---------------------------------------------------------------------------
-repo_root = Path(__file__).parents[2]
-_comp_dir = repo_root / "custom_components" / "dynamic_ocpp_evse"
-_calc_dir = _comp_dir / "calculations"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from standalone_loader import load_pure_modules
 
-_PKG_ROOT = "custom_components"
-_PKG_COMP = "custom_components.dynamic_ocpp_evse"
-_PKG_CALC = "custom_components.dynamic_ocpp_evse.calculations"
-
-for _pkg_name in (_PKG_ROOT, _PKG_COMP, _PKG_CALC):
-    if _pkg_name not in sys.modules:
-        _pkg = types.ModuleType(_pkg_name)
-        _pkg.__path__ = []
-        _pkg.__package__ = _pkg_name
-        sys.modules[_pkg_name] = _pkg
-
-
-def _load_module_as(fqn, path):
-    spec = importlib.util.spec_from_file_location(fqn, str(path))
-    module = importlib.util.module_from_spec(spec)
-    # For package __init__.py files, __package__ is the package itself;
-    # for regular modules it's the parent package.
-    if Path(path).name == "__init__.py":
-        module.__package__ = fqn
-    else:
-        module.__package__ = fqn.rsplit(".", 1)[0] if "." in fqn else fqn
-    sys.modules[fqn] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-_load_module_as(f"{_PKG_COMP}.const", _comp_dir / "const.py")
-_load_module_as(f"{_PKG_CALC}.models", _calc_dir / "models.py")
-_load_module_as(f"{_PKG_CALC}.utils", _calc_dir / "utils.py")
-_load_module_as(f"{_PKG_CALC}.target_calculator", _calc_dir / "target_calculator.py")
-_load_module_as(_PKG_CALC, _calc_dir / "__init__.py")
-_load_module_as(f"{_PKG_COMP}.auto_detect", _comp_dir / "auto_detect.py")
+load_pure_modules(engine_modules=("auto_detect",), load_calc_init=True)
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext, SiteContext, PhaseValues,
 )
-from custom_components.dynamic_ocpp_evse.auto_detect import (
+from custom_components.dynamic_ocpp_evse.engine.auto_detect import (
     check_inversion, check_phase_mapping,
     _INV_WINDOW_SIZE, _INV_THRESHOLD,
     _PM_NOTIFY_SCORE, _PM_REMAP_SCORE,
@@ -65,7 +31,7 @@ from custom_components.dynamic_ocpp_evse.auto_detect import (
 def _make_charger(**kwargs):
     """Create a LoadContext with sensible defaults."""
     defaults = dict(
-        charger_id="c1", entity_id="charger_1",
+        load_id="c1", entity_id="charger_1",
         min_current=6, max_current=16, phases=3,
         l1_phase="A", l2_phase="B", l3_phase="C",
         connector_status="Charging", device_type="evse",
@@ -571,9 +537,28 @@ class TestTwoPhaseDetection:
         assert sum(cs.get("score_2ph", {"A": 0, "B": 0, "C": 0}).values()) == 0
 
 
-# ---------------------------------------------------------------------------
-# Run with pytest
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    import pytest
-    sys.exit(pytest.main([__file__, "-v"]))
+    # Deliberately pytest-free: the pure tier has to run on the developer's
+    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
+    # Tests here live in Test* classes, so the runner walks those too — a
+    # fresh instance per test method, matching pytest's isolation.
+    failed = []
+
+    def _run(_name, _fn):
+        try:
+            _fn()
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            failed.append((_name, exc))
+            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
+        else:
+            print(f"PASS {_name}")
+
+    for _name, _obj in sorted(list(globals().items())):
+        if _name.startswith("test_") and callable(_obj):
+            _run(_name, _obj)
+        elif _name.startswith("Test") and isinstance(_obj, type):
+            for _meth in sorted(dir(_obj)):
+                if _meth.startswith("test_"):
+                    _run(f"{_name}.{_meth}", getattr(_obj(), _meth))
+    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    sys.exit(1 if failed else 0)

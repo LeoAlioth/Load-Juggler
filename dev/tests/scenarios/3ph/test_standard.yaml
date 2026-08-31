@@ -22,15 +22,15 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 5750  # 25A
       inverter_max_power: 17250  # 75A
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # 25A breaker - 3A = 22A per phase, capped at max 16A
 
   - name: "3ph-1c-standard-no-bat-asymmetric-consumption"
@@ -53,15 +53,15 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 5750  # 25A
       inverter_max_power: 17250  # 75A
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 15.0  # Phase A: 25-10=15A, Phase B: 25-3=22A, Phase C: 25-3=22A → min=15A
 
 
@@ -85,15 +85,15 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 5750  # 25A
       inverter_max_power: 17250  # 75A
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
     expected:
-      charger_1:
+      load_1:
         allocated: 11.0  # Phase A: 25-10=15A, Phase B: 25-3=22A, Phase C: 25-3=22A → min=15A
 
   - name: "3ph-2c-standard-no-bat-prio"
@@ -116,21 +116,21 @@ scenarios:
       inverter_supports_asymmetric: false
       inverter_max_power_per_phase: 5750  # 25A
       inverter_max_power: 17250  # 75A
-    chargers:
-      - entity_id: "charger_1"
+    loads:
+      - entity_id: "load_1"
         operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
-      - entity_id: "charger_2"
+      - entity_id: "load_2"
         operating_mode: Standard
         min_current: 6
         max_current: 16
         phases: 3
         priority: 2
     expected:
-      charger_1:
+      load_1:
         allocated: 16.0  # 25A - 2A = 23A per phase. Both fit minimums (12A). Prio 1 gets max 16A.
-      charger_2:
+      load_2:
         allocated: 7.0  # 23A - 16A = 7A remaining per phase
