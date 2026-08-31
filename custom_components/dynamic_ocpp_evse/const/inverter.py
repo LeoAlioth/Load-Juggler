@@ -105,22 +105,6 @@ DEFAULT_SOC_LIMIT_NORMAL = 100.0  # % — where an unmanaged battery ceiling sit
 # every meaningful move gets through. Same EEPROM reasoning as above — a slot
 # already within a point of the desired ceiling is not worth a Modbus write.
 
-# How far to inflate THIS inverter's forecast series before the clip integral,
-# in percent. Open-Meteo's daily error on a clear day runs a few percent
-# optimistic-to-pessimistic and is not uniform across arrays: a shaded or
-# soiled string reads differently from a clean south-facing one, which is why
-# this sits per inverter rather than on the hub.
-#
-# It scales ONLY the clip integral — the clippable/storable figures and the
-# reserve they buy. The overnight drop's deadline (``first_production_at``)
-# keeps reading the RAW series, because that estimate already carries its own
-# deliberate early bias (FORECAST_EARLY_START_FACTOR); inflating it too would
-# stack two safety margins on one number and move the drop earlier for no gain.
-#
-# 0 is off, and off means byte-identical figures to a site that never had this.
-CONF_FORECAST_INFLATION = "inverter_forecast_inflation"
-DEFAULT_FORECAST_INFLATION = 0  # % — trust the forecast as published
-
 SOC_LIMIT_DEADBAND = 1.0
 
 # Runtime keys under hass.data[DOMAIN]["inverters"][entry_id].

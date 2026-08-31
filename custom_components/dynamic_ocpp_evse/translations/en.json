@@ -44,6 +44,9 @@
             },
             "soc_control": {
                 "name": "Applied charge level limit"
+            },
+            "forecast_accuracy": {
+                "name": "Forecast accuracy"
             }
         },
         "switch": {
@@ -150,8 +153,7 @@
                     "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
                     "wiring_topology": "Wiring topology",
                     "solar_production_entity_id": "Solar power production sensor",
-                    "solar_forecast_device_ids": "Solar forecast (one device per PV array)",
-                    "inverter_forecast_inflation": "Forecast optimism"
+                    "solar_forecast_device_ids": "Solar forecast (one device per PV array)"
                 },
                 "data_description": {
                     "inverter_max_power": "Nameplate rated power from this inverter's datasheet. Set to 0 to leave unconstrained.",
@@ -160,8 +162,7 @@
                     "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
                     "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
                     "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak.",
-                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power).",
-                    "inverter_forecast_inflation": "Inflate this inverter's PV forecast by this much before working out how much of the day will be clipped. Use it when the forecast reads consistently low for this array and the reserve comes out too small — a clear day beating its forecast by 10% is worth about 10 here. It only affects the clippable/storable figures and the reserve they buy; the overnight drop's timing keeps using the unmodified forecast. Negative deflates an array whose forecast reads high. 0 trusts it as published."
+                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power)."
                 }
             },
             "inverter_battery": {
@@ -596,8 +597,7 @@
                     "inverter_charge_control_interval": "How long a reduction must hold",
                     "inverter_charge_control_deadband": "Write deadband",
                     "inverter_soc_limit_entity_ids": "Battery SOC ceiling entities (optional)",
-                    "inverter_soc_limit_normal_entity_id": "Normal SOC ceiling source (optional)",
-                    "inverter_forecast_inflation": "Forecast optimism"
+                    "inverter_soc_limit_normal_entity_id": "Normal SOC ceiling source (optional)"
                 },
                 "data_description": {
                     "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
@@ -621,8 +621,7 @@
                     "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
                     "battery_soc_entity_id": "The battery's state-of-charge percentage. This is what the SOC-gated operating modes decide on: how far each mode may drain the stored solar buffer, and when a battery counts as full.",
                     "battery_max_charge_power": "The fastest this battery may be charged. Used as the charge sink in the Excess trigger — while the battery can still absorb this much, the site has somewhere to put its production and Excess loads stay off.",
-                    "battery_max_discharge_power": "The fastest this battery may be discharged. Caps how much stored energy the engine counts on when deciding what the inverter can deliver to a load.",
-                    "inverter_forecast_inflation": "Inflate this inverter's PV forecast by this much before working out how much of the day will be clipped. Use it when the forecast reads consistently low for this array and the reserve comes out too small — a clear day beating its forecast by 10% is worth about 10 here. It only affects the clippable/storable figures and the reserve they buy; the overnight drop's timing keeps using the unmodified forecast. Negative deflates an array whose forecast reads high. 0 trusts it as published."
+                    "battery_max_discharge_power": "The fastest this battery may be discharged. Caps how much stored energy the engine counts on when deciding what the inverter can deliver to a load."
                 }
             },
             "plug": {

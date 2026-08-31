@@ -1,5 +1,11 @@
 # Release Notes
 
+## 2.1.1
+
+### New Features
+
+- **Forecast accuracy and peakiness observers (measure only)**: two new sensors that watch how well the PV forecast is actually doing, and change nothing at all. **Forecast accuracy** (one per inverter, `%`) is today's measured production divided by that inverter's own forecast, energy-weighted — 100% means the forecast is exactly right for that array, 90% that it reads 10% high. Intervals where the site was *curtailing* are excluded, because while an inverter is throttling its array the measured production is suppressed by the very thing being forecast; that exclusion is per interval rather than per day, so a clipping day still contributes its honest morning and evening (dropping such days whole would leave the measurement learning only from overcast ones). A running per-array average and the number of contributing days ride along as attributes. **Forecast peakiness** (one per hub, `%`) is how much the site actually clipped against what a 15-minute average predicted it would: 100% means the block average told the whole truth, and anything above is the gap that averaging hides — clipping is one-sided, so a block average can never *over*state it. It is measured from the site's own production samples, with no cloud model and no clear-sky estimate involved. Both exist to answer, with a season of real data, whether a *learned* forecast correction is worth applying — nothing is applied today, and the reserve is computed exactly as before. Note the accuracy sensor needs the forecast configured per inverter (the hub-level legacy forecast field has no array to attribute a measurement to), and both reset on a restart: each day's figure is published as the sensor's own state, so the history is kept by the recorder regardless.
+
 ## 2.1.0
 
 ### New Features

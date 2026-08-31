@@ -74,7 +74,8 @@ class FleetMember:
     solar_assumed: bool = False
     forecast_device_ids: tuple = ()  # this inverter's PV forecast sources
     # Percent to inflate THIS inverter's forecast by before the clip
-    # integral — see CONF_FORECAST_INFLATION. 0 trusts it as published.
+    # integral. 0 trusts it as published, which is every site today: the
+    # observers measure the bias and nothing applies one yet (dev/TODO.md).
     forecast_inflation: float = 0.0
     has_battery: bool = False  # a battery SOC or power entity is configured
     has_battery_power_entity: bool = False
