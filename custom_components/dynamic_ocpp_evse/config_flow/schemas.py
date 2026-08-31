@@ -37,7 +37,7 @@ from ..const import (
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
     CONF_LOAD_PRIORITY,
-    CONF_CHARGE_CONTROL_DEADBAND,
+    CONF_CHARGE_CONTROL_DEADBAND_W,
     CONF_CHARGE_CONTROL_INTERVAL,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_MINIMUM,
@@ -109,7 +109,7 @@ from ..const import (
     DEFAULT_BATTERY_SOC_FULL,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
     DEFAULT_LOAD_PRIORITY,
-    DEFAULT_CHARGE_CONTROL_DEADBAND,
+    DEFAULT_CHARGE_CONTROL_DEADBAND_W,
     DEFAULT_CHARGE_CONTROL_INTERVAL,
     DEFAULT_CHARGE_LIMIT_MINIMUM,
     DEFAULT_CHARGE_LIMIT_NORMAL,
@@ -1048,19 +1048,20 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
         ),
         (
             vol.Optional(
-                CONF_CHARGE_CONTROL_DEADBAND,
+                CONF_CHARGE_CONTROL_DEADBAND_W,
                 default=defaults.get(
-                    CONF_CHARGE_CONTROL_DEADBAND, DEFAULT_CHARGE_CONTROL_DEADBAND
+                    CONF_CHARGE_CONTROL_DEADBAND_W,
+                    DEFAULT_CHARGE_CONTROL_DEADBAND_W,
                 ),
             ),
             selector(
                 {
                     "number": {
                         "min": 0,
-                        "max": 50,
-                        "step": 1,
-                        "mode": "slider",
-                        "unit_of_measurement": "%",
+                        "max": 2000,
+                        "step": 10,
+                        "mode": "box",
+                        "unit_of_measurement": "W",
                     }
                 }
             ),

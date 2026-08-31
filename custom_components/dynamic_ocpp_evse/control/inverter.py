@@ -116,7 +116,7 @@ from ..const import (
     CONF_CHARGE_LIMIT_NORMAL,
     CONF_CHARGE_LIMIT_MINIMUM,
     CONF_CHARGE_CONTROL_INTERVAL,
-    CONF_CHARGE_CONTROL_DEADBAND,
+    CONF_CHARGE_CONTROL_DEADBAND_W,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_BATTERY_NOMINAL_VOLTAGE,
     CONF_SOC_LIMIT_ENTITY_IDS,
@@ -126,7 +126,7 @@ from ..const import (
     DEFAULT_CHARGE_LIMIT_NORMAL,
     DEFAULT_CHARGE_LIMIT_MINIMUM,
     DEFAULT_CHARGE_CONTROL_INTERVAL,
-    DEFAULT_CHARGE_CONTROL_DEADBAND,
+    DEFAULT_CHARGE_CONTROL_DEADBAND_W,
     DEFAULT_BATTERY_NOMINAL_VOLTAGE,
     DEFAULT_SOC_LIMIT_NORMAL,
     SOC_LIMIT_DEADBAND,
@@ -509,12 +509,15 @@ async def send_inverter_charge_limit(
         get_entry_value(entry, CONF_CHARGE_CONTROL_INTERVAL, None)
         or DEFAULT_CHARGE_CONTROL_INTERVAL
     )
-    deadband_pct = get_entry_value(
-        entry, CONF_CHARGE_CONTROL_DEADBAND, DEFAULT_CHARGE_CONTROL_DEADBAND
+    deadband_w = get_entry_value(
+        entry, CONF_CHARGE_CONTROL_DEADBAND_W, DEFAULT_CHARGE_CONTROL_DEADBAND_W
     )
-    # The deadband is a percentage of the normal value so one setting works
-    # whether the register counts amps or watts.
-    deadband = abs((normal or 0) * (deadband_pct or 0) / 100.0)
+    # Watts in, the register's own unit out — the same conversion the slew step
+    # makes, so one setting means the same physical thing whether this register
+    # counts DC amps or watts. It used to be a percentage of the normal value,
+    # which scaled it to the register's full span rather than to the band the
+    # control actually works in (see the constant).
+    deadband = abs(to_target_units(float(deadband_w or 0), unit, voltage))
 
     applied = inverter_rt.get(INVERTER_RT_APPLIED)
     last_write = inverter_rt.get(INVERTER_RT_LAST_WRITE)

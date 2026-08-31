@@ -196,7 +196,7 @@
                     "inverter_charge_limit_normal": "Običajna omejitev polnjenja",
                     "inverter_charge_limit_minimum": "Najmanjša omejitev polnjenja",
                     "inverter_charge_control_interval": "Kako dolgo mora znižanje vztrajati",
-                    "inverter_charge_control_deadband": "Mrtvo območje zapisa",
+                    "inverter_charge_control_deadband_w": "Mrtvo območje zapisa",
                     "inverter_soc_limit_entity_ids": "Entitete zgornje meje napolnjenosti baterije (neobvezno)",
                     "inverter_soc_limit_normal_entity_id": "Vir običajne zgornje meje napolnjenosti (neobvezno)"
                 },
@@ -208,7 +208,7 @@
                     "inverter_charge_limit_normal": "Zapiše se, ko napoved sprosti omejitev, v isti enoti kot ciljna entiteta. 0 povrne največjo vrednost entitete same.",
                     "inverter_charge_limit_minimum": "Najnižja vrednost, ki se zapiše, dokler napoved omejuje polnjenje, v isti enoti kot ciljna entiteta. Majhna spodnja meja (nekaj amperov) omogoči, da baterija sledi porabi gospodinjstva in ostane pri zadržani napolnjenosti, namesto da bi počasi nihala pod njo. 0 uporabi priporočilo takšno, kot je.",
                     "inverter_charge_control_interval": "NIŽJA omejitev polnjenja se zapiše le, kadar se z njo strinja vsak vzorec v tem oknu, zato kuhalnik vode, mimoideči oblak ali priklop avtomobila ne povzročijo zapisa; VIŠJA omejitev se zapiše takoj, ko je na vrsti, vklop omejevanja pa se zapiše nemudoma. Hkrati je to najkrajši čas med zapisi med sprostitvijo omejitve in za zgornjo mejo SOC. 300 s ustreza vsaki napravi — ti registri gredo prek Modbusa in nekatere strojne programske opreme jih zapišejo v EEPROM.",
-                    "inverter_charge_control_deadband": "Kot odstotek običajne omejitve polnjenja. Novo priporočilo, ki je bližje od tega vrednosti v registru, se ne zapiše.",
+                    "inverter_charge_control_deadband_w": "V vatih. Novo priporočilo, ki je vrednosti v registru bližje od tega, se ne zapiše — ti registri gredo prek Modbusa, nekatere različice strojne programske opreme pa jih shranjujejo v EEPROM. V vatih namesto v enoti registra, da nastavitev pomeni isto, ne glede na to, ali register šteje enosmerne ampere ali vate. Pri ZNIŽANJU velja ta vrednost; pri ZVIŠANJU tretjina ene meje sprožitve presežka ali ta vrednost, kar je manjše — zvišanje namreč dovoli shranjevanje in se samo konča, ko izvoz doseže svojo ciljno vrednost.",
                     "inverter_soc_limit_entity_ids": "Entitete, ki hranijo mejo 'napolni do %' te baterije. Pri Deye to ni en sam register, ampak po ena entiteta za vsako časovno rezino (TOU), zato izberite vse rezine, v katerih se baterija sme polniti — priporočena najvišja napolnjenost se zapiše v vse hkrati. Pustite prazno, da priporočilo ostane zgolj svetovalno. Če izberete rezine, se doda stikalo Nadzor napolnjenosti baterije, ki mora biti vklopljeno, preden se karkoli zapiše.",
                     "inverter_soc_limit_normal_entity_id": "Od kod prihaja običajna meja: rezine sledijo tej entiteti, napoved pa jih sme potisniti le pod njo, nikoli nad, zato ostane v rokah vaših avtomatizacij. Brez nje je običajna meja 100 %. Če je nastavljena, a nedosegljiva, se v tem ciklu ne zapiše nič, namesto da bi meje ugibali."
                 }
@@ -595,7 +595,7 @@
                     "inverter_charge_limit_normal": "Običajna omejitev polnjenja",
                     "inverter_charge_limit_minimum": "Najmanjša omejitev polnjenja",
                     "inverter_charge_control_interval": "Kako dolgo mora znižanje vztrajati",
-                    "inverter_charge_control_deadband": "Mrtvo območje zapisa",
+                    "inverter_charge_control_deadband_w": "Mrtvo območje zapisa",
                     "inverter_soc_limit_entity_ids": "Entitete zgornje meje napolnjenosti baterije (neobvezno)",
                     "inverter_soc_limit_normal_entity_id": "Vir običajne zgornje meje napolnjenosti (neobvezno)"
                 },
@@ -613,7 +613,7 @@
                     "inverter_charge_limit_normal": "Zapiše se, ko napoved sprosti omejitev, v isti enoti kot ciljna entiteta. 0 povrne največjo vrednost entitete same.",
                     "inverter_charge_limit_minimum": "Najnižja vrednost, ki se zapiše, dokler napoved omejuje polnjenje, v isti enoti kot ciljna entiteta. Majhna spodnja meja (nekaj amperov) omogoči, da baterija sledi porabi gospodinjstva in ostane pri zadržani napolnjenosti, namesto da bi počasi nihala pod njo. 0 uporabi priporočilo takšno, kot je.",
                     "inverter_charge_control_interval": "NIŽJA omejitev polnjenja se zapiše le, kadar se z njo strinja vsak vzorec v tem oknu, zato kuhalnik vode, mimoideči oblak ali priklop avtomobila ne povzročijo zapisa; VIŠJA omejitev se zapiše takoj, ko je na vrsti, vklop omejevanja pa se zapiše nemudoma. Hkrati je to najkrajši čas med zapisi med sprostitvijo omejitve in za zgornjo mejo SOC. 300 s ustreza vsaki napravi — ti registri gredo prek Modbusa in nekatere strojne programske opreme jih zapišejo v EEPROM.",
-                    "inverter_charge_control_deadband": "Kot odstotek običajne omejitve polnjenja. Novo priporočilo, ki je bližje od tega vrednosti v registru, se ne zapiše.",
+                    "inverter_charge_control_deadband_w": "V vatih. Novo priporočilo, ki je vrednosti v registru bližje od tega, se ne zapiše — ti registri gredo prek Modbusa, nekatere različice strojne programske opreme pa jih shranjujejo v EEPROM. V vatih namesto v enoti registra, da nastavitev pomeni isto, ne glede na to, ali register šteje enosmerne ampere ali vate. Pri ZNIŽANJU velja ta vrednost; pri ZVIŠANJU tretjina ene meje sprožitve presežka ali ta vrednost, kar je manjše — zvišanje namreč dovoli shranjevanje in se samo konča, ko izvoz doseže svojo ciljno vrednost.",
                     "inverter_soc_limit_entity_ids": "Entitete, ki hranijo mejo 'napolni do %' te baterije. Pri Deye to ni en sam register, ampak po ena entiteta za vsako časovno rezino (TOU), zato izberite vse rezine, v katerih se baterija sme polniti — priporočena najvišja napolnjenost se zapiše v vse hkrati. Pustite prazno, da priporočilo ostane zgolj svetovalno. Če izberete rezine, se doda stikalo Nadzor napolnjenosti baterije, ki mora biti vklopljeno, preden se karkoli zapiše.",
                     "inverter_soc_limit_normal_entity_id": "Od kod prihaja običajna meja: rezine sledijo tej entiteti, napoved pa jih sme potisniti le pod njo, nikoli nad, zato ostane v rokah vaših avtomatizacij. Brez nje je običajna meja 100 %. Če je nastavljena, a nedosegljiva, se v tem ciklu ne zapiše nič, namesto da bi meje ugibali.",
                     "inverter_max_power": "Nazivna moč s podatkovnega lista tega razsmernika. 0 = brez omejitve.",

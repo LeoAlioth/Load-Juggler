@@ -52,7 +52,7 @@ from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     CONF_CHARGE_LIMIT_NORMAL,
     CONF_CHARGE_LIMIT_MINIMUM,
     CONF_CHARGE_CONTROL_INTERVAL,
-    CONF_CHARGE_CONTROL_DEADBAND,
+    CONF_CHARGE_CONTROL_DEADBAND_W,
     CONF_BATTERY_NOMINAL_VOLTAGE,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_SOC_LIMIT_ENTITY_IDS,
@@ -394,7 +394,7 @@ def test_deadband_is_a_percentage_of_the_normal_value():
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
         CONF_CHARGE_CONTROL_INTERVAL: 0,
-        CONF_CHARGE_CONTROL_DEADBAND: 5,
+        CONF_CHARGE_CONTROL_DEADBAND_W: 256,  # ≈ the old 5 % of 100 A at 51.2 V
     })
     _arm(hass, entry)
 
@@ -2034,22 +2034,30 @@ if __name__ == "__main__":
 # --- The deadband is directional ---------------------------------------------
 #
 # Observed live 2026-08-30: while the battery sat at its destination the advice
-# was the export overshoot above the setpoint — 245–378 W, or 4.0–6.2 A — and
-# the register stayed at 0 A for fifty minutes, because the deadband is 5 % of
-# the NORMAL value (4.2 A on that site) and the advice straddled it. Export sat
-# ~470 W above its setpoint the whole time. Rises now take a band scaled to the
-# range rises actually cover instead.
+# was the export overshoot above the setpoint — 245–378 W — and the register
+# stayed at 0 A for fifty minutes, because the deadband was then 5 % of the
+# NORMAL value (4.2 A on that site) and the advice straddled it. Two changes
+# came out of it: the deadband became absolute watts, and rises take a band
+# scaled to the range rises actually cover.
+#
+# With the 100 W default the first change alone settles it, and the two bands
+# coincide (see the last test here); the direction only matters once the
+# deadband is raised past a third of one Excess trigger margin.
+
+_ASYM = {                      # 400 W ≈ 7.8 A down, a third of the step up
+    CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+    CONF_CHARGE_CONTROL_INTERVAL: 1,
+    CONF_CHARGE_CONTROL_DEADBAND_W: 400,
+}
 
 
 def test_a_small_rise_from_zero_is_written():
-    """The live case. Normal 100 A, so the reduction deadband is 5 A; the rise
-    band is a third of the 9.77 A step, 3.26 A. A 4 A advice clears the second
-    and not the first, and it is the one that decides."""
+    """The live case, on a site whose deadband is wide enough to have caused it:
+    400 W is 7.8 A down, while up is a third of the 9.77 A step — 3.26 A. A 4 A
+    advice clears the second and not the first, and it is the one that decides.
+    """
     hass = _hass_with_target(current=0.0, maximum=100.0)
-    entry = _entry({
-        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
-        CONF_CHARGE_CONTROL_INTERVAL: 1,
-    })
+    entry = _entry(dict(_ASYM))
     _arm(hass, entry)
 
     asyncio.run(_send(hass, entry, 4.0 * 51.2, 100.0))
@@ -2058,30 +2066,24 @@ def test_a_small_rise_from_zero_is_written():
 
 
 def test_the_same_move_downward_is_still_swallowed():
-    """The asymmetry, stated as its own pin: coming DOWN keeps the full 5 %,
-    because that is where register churn costs something and the persistence
-    window is what gates it."""
-    hass = _hass_with_target(current=8.0, maximum=100.0)
-    entry = _entry({
-        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
-        CONF_CHARGE_CONTROL_INTERVAL: 1,
-    })
+    """The asymmetry, stated as its own pin: coming DOWN keeps the configured
+    figure, because that is where register churn costs something and the
+    persistence window is what gates it."""
+    hass = _hass_with_target(current=9.0, maximum=100.0)
+    entry = _entry(dict(_ASYM))
     _arm(hass, entry)
 
-    # 4 A below the register — inside the 5 A reduction deadband.
+    # 5 A below the register — past the 3.26 A rise band, inside the 7.8 A one.
     asyncio.run(_send(hass, entry, 4.0 * 51.2, 100.0))
 
     assert _written(hass) == []
 
 
 def test_a_rise_below_the_rise_band_is_still_swallowed():
-    """Not zero, either — sub-band jitter must not reach the register, or a
+    """Not zero either — sub-band jitter must not reach the register, or a
     Modbus write lands on every cycle the advice wobbles."""
     hass = _hass_with_target(current=4.0, maximum=100.0)
-    entry = _entry({
-        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
-        CONF_CHARGE_CONTROL_INTERVAL: 1,
-    })
+    entry = _entry(dict(_ASYM))
     _arm(hass, entry)
 
     # 2 A up: over the register, under the 3.26 A rise band.
@@ -2091,14 +2093,14 @@ def test_a_rise_below_the_rise_band_is_still_swallowed():
 
 
 def test_the_rise_band_never_exceeds_the_configured_deadband():
-    """``min(deadband, step/3)``: on a site whose margin is large the third of
-    a step could out-grow the setting, and a change may only ever make the
-    control MORE responsive upward, never less."""
+    """``min(deadband, step/3)``: on a site whose margin is large, a third of a
+    step could out-grow the setting, and this may only ever make the control
+    MORE responsive upward, never less."""
     hass = _hass_with_target(current=0.0, maximum=100.0)
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
         CONF_CHARGE_CONTROL_INTERVAL: 1,
-        CONF_CHARGE_CONTROL_DEADBAND: 1,          # 1 % of 100 A = 1 A
+        CONF_CHARGE_CONTROL_DEADBAND_W: 51,   # ≈ 1 A, well under a third of a step
     })
     _arm(hass, entry)
 
@@ -2106,3 +2108,24 @@ def test_the_rise_band_never_exceeds_the_configured_deadband():
     asyncio.run(_send(hass, entry, 2.0 * 51.2, 100.0))
 
     assert _written(hass) == [2.0]
+
+
+def test_the_default_deadband_needs_no_asymmetry_at_all():
+    """The absolute default is already smaller than a third of a margin, so both
+    directions land on it and the same 2 A move is written either way. Worth
+    pinning: it is why the live fix did not depend on the directional half, and
+    it is what would change if the default were ever raised past ~167 W.
+    """
+    plain = {CONF_BATTERY_NOMINAL_VOLTAGE: 51.2, CONF_CHARGE_CONTROL_INTERVAL: 1}
+
+    up = _hass_with_target(current=4.0, maximum=100.0)
+    _arm(up, _entry(dict(plain)))
+    asyncio.run(_send(up, _entry(dict(plain)), 6.0 * 51.2, 100.0))
+
+    down = _hass_with_target(current=8.0, maximum=100.0)
+    _arm(down, _entry(dict(plain)))
+    asyncio.run(_send(down, _entry(dict(plain)), 6.0 * 51.2, 100.0))
+
+    # 100 W at 51.2 V is 1.95 A, so a 2 A move clears it in both directions.
+    assert _written(up) == [6.0]
+    assert _written(down) == [6.0]

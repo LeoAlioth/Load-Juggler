@@ -77,8 +77,21 @@ DEFAULT_CHARGE_LIMIT_MINIMUM = 0
 # where waiting is free.
 CONF_CHARGE_CONTROL_INTERVAL = "inverter_charge_control_interval"
 DEFAULT_CHARGE_CONTROL_INTERVAL = 300  # s a reduction must hold (and pace a release)
-CONF_CHARGE_CONTROL_DEADBAND = "inverter_charge_control_deadband"
-DEFAULT_CHARGE_CONTROL_DEADBAND = 5  # % of the normal value
+# How far the desired charge limit must sit from the register before a write is
+# worth making, in WATTS. Absolute rather than a percentage of the normal value,
+# which is what it used to be: a percentage is a fraction of the register's FULL
+# span, while the value being corrected while the limit is engaged lives in a
+# band one Excess trigger margin wide (the export overshoot above the setpoint,
+# which is all there is to correct). On a 187 A register 5 % is 9 A — wider than
+# the whole working range, so most of it could not be expressed at all.
+#
+# Watts, not the register's own unit, so one setting means the same thing on an
+# amps register and a watts one; the conversion is the same one the slew step
+# uses (``to_target_units``). That was the original reason for the percentage,
+# and converting is the better answer to it.
+CONF_CHARGE_CONTROL_DEADBAND_W = "inverter_charge_control_deadband_w"
+DEFAULT_CHARGE_CONTROL_DEADBAND_W = 100  # W
+
 
 # --- Battery SOC ceiling control ---------------------------------------------
 #

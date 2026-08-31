@@ -353,7 +353,12 @@ async def test_a_cloudy_household_day_curtails_almost_nothing(hass):
     assert all(row["limiting"] for row in trace)   # the destination hold, all day
     curtailed = _wh(trace, "curtailed")
     assert curtailed <= 100.0, f"curtailed {curtailed:.1f} Wh"
-    assert len(writes) <= 120, f"{len(writes)} writes in 8 h"
+    # 145, not the 120 this held when the write deadband was 5 % of the normal
+    # value. The deadband became an absolute 100 W (2026-08-31), which is ~5×
+    # tighter at this register's scale, so the approach to a moving setpoint
+    # costs more writes: 132 measured here against 120 before. The curtailment
+    # budget above is what the trade buys and must not move.
+    assert len(writes) <= 145, f"{len(writes)} writes in 8 h"
     # And the battery really did absorb the surplus rather than the site export
     # it: the ideal permit and what the pack took agree to within a few percent.
     ideal_wh = sum(_ideal(row) for row in trace) * DT / 3600.0
@@ -493,7 +498,10 @@ async def test_a_burst_train_is_almost_free(hass):
 
     curtailed = _wh(trace, "curtailed")
     assert curtailed <= 10.0, f"curtailed {curtailed:.1f} Wh"
-    assert len(writes) <= 10, f"{len(writes)} writes in two hours"
+    # 16, not 10, for the same reason as the cloudy day above: an absolute
+    # 100 W deadband tracks a moving setpoint more closely and pays for it in
+    # writes (14 measured). Curtailment is unchanged at ≤10 Wh.
+    assert len(writes) <= 16, f"{len(writes)} writes in two hours"
 
 
 # ── the cloud ─────────────────────────────────────────────────────────
