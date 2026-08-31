@@ -18,8 +18,11 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dynamic_ocpp_evse.ocpp_discovery import (
+    ocpp_charge_control_entity,
     ocpp_charger_for_device,
     ocpp_connector_status_entity,
+    ocpp_device_for_charge_point,
+    repair_ocpp_device_id,
     scan_ocpp_chargers,
 )
 from custom_components.dynamic_ocpp_evse.const import (
@@ -1064,3 +1067,260 @@ async def test_options_charger_refuses_a_device_that_is_no_charger(
     marker, _validator = _field(result["data_schema"], FIELD_OCPP_DEVICE)
     assert marker.description == {"suggested_value": empty.id}
     assert CONF_OCPP_DEVICE_ID not in mock_charger_entry.options
+
+
+# --- The charge point device carries TWO identifiers ------------------------
+#
+# ``chargepoint.py`` stamps ``{(ocpp, cp_id), (ocpp, cpid)}`` on the charge
+# point: the id the charger reports over the wire AND the one configured in
+# Home Assistant. Only the cpid names the sensors' unique_ids, the entity_ids
+# and the charge-control switch, so only the cpid may be resolved — and
+# ``device.identifiers`` is a SET, so reading "the first" one answered
+# differently per process. Both orders are covered below by choosing a cp_id
+# that sorts BEFORE the cpid in one case and AFTER it in the other: code that
+# leaned on any ordering fails one of the two.
+
+
+def _dual_identifier_charger(hass, ocpp_entry, cpid, cp_id, metrics=None):
+    """A charge point device carrying both its cpid and its reported cp_id."""
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=ocpp_entry.entry_id,
+        identifiers={("ocpp", cp_id), ("ocpp", cpid)},
+        name=cpid,
+    )
+    for metric in metrics or ("Current.Import", "Current.Offered"):
+        _ocpp_sensor(hass, ocpp_entry, device, cpid, metric)
+    return device
+
+
+@pytest.mark.parametrize(
+    ("cpid", "cp_id"),
+    [
+        # The live case: cpid "charger", cp_id the charger's host:port, which
+        # sorts first. Storing the cp_id resolved fine for the ocpp services
+        # and silently broke `switch.<id>_charge_control`.
+        ("charger", "129.168.1.4:9000"),
+        # And the mirror, where the cp_id sorts last.
+        ("alpha_cp", "zulu-reported-id"),
+    ],
+)
+def test_dual_identifier_device_resolves_to_the_cpid(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry, cpid, cp_id
+):
+    """The cpid wins whichever way the two identifiers would sort."""
+    device = _dual_identifier_charger(hass, ocpp_entry, cpid, cp_id)
+
+    (charger,) = scan_ocpp_chargers(hass)
+    assert charger["id"] == cpid
+    assert charger["device_id"] == cpid
+    assert charger["ha_device_id"] == device.id
+
+    # And the reverse lookups agree, from either direction.
+    assert ocpp_charger_for_device(hass, device.id)["device_id"] == cpid
+    assert ocpp_device_for_charge_point(hass, cpid) == device.id
+
+
+def test_dual_identifier_device_is_found_by_its_reported_cp_id_too(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry
+):
+    """The device lookup is a membership question, so either identifier finds
+    it — what must not happen is the cp_id becoming the STORED id."""
+    device = _dual_identifier_charger(hass, ocpp_entry, "charger", "129.168.1.4:9000")
+    assert ocpp_device_for_charge_point(hass, "129.168.1.4:9000") == device.id
+
+
+def test_dual_identifier_charge_point_outranks_its_connectors(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry
+):
+    """Grouping survives the second identifier: the charge point and its
+    connector sub-devices stay ONE charger, keyed on the cpid. Reading the
+    cp_id off the charge point split them into two."""
+    parent = _dual_identifier_charger(
+        hass, ocpp_entry, "charger", "129.168.1.4:9000", metrics=("Current.Import",)
+    )
+    conn = _ocpp_device(hass, ocpp_entry, "charger", connector=1)
+    _ocpp_sensor(hass, ocpp_entry, conn, "charger", "Current.Offered", connector=1)
+    _ocpp_sensor(hass, ocpp_entry, conn, "charger", "Status.Connector", connector=1)
+
+    (charger,) = scan_ocpp_chargers(hass)
+    assert charger["id"] == "charger"
+    # The charge point device wins the picker default over its own connector.
+    assert charger["ha_device_id"] == parent.id
+    assert charger["current_import_entity"] == "sensor.charger_current_import"
+    assert (
+        charger["current_offered_entity"]
+        == "sensor.charger_connector_1_current_offered"
+    )
+
+
+def test_a_cpid_containing_dots_survives_the_unique_id_split(
+    hass: HomeAssistant, ocpp_entry: MockConfigEntry
+):
+    """The id is rejoined from every part between the domain and the metric,
+    so a dotted cpid is not truncated to its first segment."""
+    _dual_identifier_charger(hass, ocpp_entry, "wall.box.1", "reported-id")
+    (charger,) = scan_ocpp_chargers(hass)
+    assert charger["id"] == "wall.box.1"
+
+
+# --- Repairing a stored id that names no charge point -----------------------
+#
+# Entries written before 2026-02-19 hold the HA device-registry UUID. They only
+# ever worked because the ocpp integration fell back to its first charger when
+# a devid matched nothing; ocpp 0.11.2 turned that into an error, so the id has
+# to be repaired before the first command goes out.
+
+_STALE_UUID = "9f73ee46f46c3c0f25ff691285d7e092"
+
+
+def _load_entry_with_device_id(hass, hub_entry_id, current_import, device_id, **extra):
+    """A load entry whose stored charge point id is whatever is passed in."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Wallbox",
+        data={
+            CONF_NAME: "Wallbox",
+            CONF_ENTITY_ID: "lj_wallbox",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_HUB_ENTRY_ID: hub_entry_id,
+            CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: current_import,
+            CONF_OCPP_DEVICE_ID: device_id,
+        },
+        **extra,
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+def test_a_stale_uuid_charge_point_id_is_repaired(hass: HomeAssistant, ocpp_entry):
+    """The UUID names no charger; the stored Current.Import sensor does."""
+    _dual_identifier_charger(hass, ocpp_entry, "charger", "129.168.1.4:9000")
+    entry = _load_entry_with_device_id(
+        hass, "hub", "sensor.charger_current_import", _STALE_UUID
+    )
+
+    assert repair_ocpp_device_id(hass, entry) == "charger"
+    assert entry.data[CONF_OCPP_DEVICE_ID] == "charger"
+
+
+def test_repairing_leaves_the_sensor_entities_alone(hass: HomeAssistant, ocpp_entry):
+    """A silent repair moves the id and nothing else — re-pointing a charger
+    rewrites every sensor key, but that is a deliberate user action."""
+    _dual_identifier_charger(hass, ocpp_entry, "charger", "129.168.1.4:9000")
+    entry = _load_entry_with_device_id(
+        hass, "hub", "sensor.charger_current_import", _STALE_UUID
+    )
+    before = dict(entry.data)
+
+    repair_ocpp_device_id(hass, entry)
+
+    assert entry.data == {**before, CONF_OCPP_DEVICE_ID: "charger"}
+
+
+def test_a_healthy_charge_point_id_is_left_untouched(hass: HomeAssistant, ocpp_entry):
+    """No-op on every healthy entry, and on every boot after the repair."""
+    _dual_identifier_charger(hass, ocpp_entry, "charger", "129.168.1.4:9000")
+    entry = _load_entry_with_device_id(
+        hass, "hub", "sensor.charger_current_import", "charger"
+    )
+
+    assert repair_ocpp_device_id(hass, entry) is None
+    assert entry.data[CONF_OCPP_DEVICE_ID] == "charger"
+
+
+def test_a_stale_id_in_options_is_repaired_too(hass: HomeAssistant, ocpp_entry):
+    """``get_entry_value`` reads options first, so a stale id there would
+    shadow a repaired one in data."""
+    _dual_identifier_charger(hass, ocpp_entry, "charger", "129.168.1.4:9000")
+    entry = _load_entry_with_device_id(
+        hass,
+        "hub",
+        "sensor.charger_current_import",
+        _STALE_UUID,
+        options={CONF_OCPP_DEVICE_ID: _STALE_UUID},
+    )
+
+    assert repair_ocpp_device_id(hass, entry) == "charger"
+    assert entry.options[CONF_OCPP_DEVICE_ID] == "charger"
+    assert entry.data[CONF_OCPP_DEVICE_ID] == "charger"
+
+
+def test_an_unidentifiable_charger_is_not_guessed(hass: HomeAssistant, ocpp_entry):
+    """No charger owns that sensor — leave the entry alone and let the error
+    stand. A wrong rewrite is worse than a visible failure."""
+    _dual_identifier_charger(hass, ocpp_entry, "charger", "129.168.1.4:9000")
+    entry = _load_entry_with_device_id(
+        hass, "hub", "sensor.some_other_thing_current_import", _STALE_UUID
+    )
+
+    assert repair_ocpp_device_id(hass, entry) is None
+    assert entry.data[CONF_OCPP_DEVICE_ID] == _STALE_UUID
+
+
+# --- The charge-control switch is resolved, not composed --------------------
+
+
+def _ocpp_switch(hass, ocpp_entry, device, cpid, key, *, connector=None):
+    """The charge-control switch as the ocpp integration registers it."""
+    parts = ["switch", "ocpp", cpid]
+    if connector is not None:
+        parts.append(f"conn{connector}")
+    parts.append(key)
+    object_id = (
+        f"{cpid}_{key}" if connector is None else f"{cpid}_connector_{connector}_{key}"
+    )
+    return (
+        er.async_get(hass)
+        .async_get_or_create(
+            "switch",
+            "ocpp",
+            ".".join(parts),
+            suggested_object_id=object_id,
+            config_entry=ocpp_entry,
+            device_id=device.id,
+        )
+        .entity_id
+    )
+
+
+def test_charge_control_switch_is_found_for_a_cpid_the_slug_would_alter(
+    hass: HomeAssistant, ocpp_entry
+):
+    """``switch.{cpid}_charge_control`` composed the wrong name whenever the
+    cpid was not already slug-shaped."""
+    device = _dual_identifier_charger(hass, ocpp_entry, "Wall Box", "reported")
+    entity_id = _ocpp_switch(hass, ocpp_entry, device, "Wall Box", "charge_control")
+    entry = _load_entry_with_device_id(
+        hass, "hub", "sensor.wall_box_current_import", "Wall Box"
+    )
+
+    assert ocpp_charge_control_entity(hass, entry) == entity_id
+    assert entity_id != "switch.Wall Box_charge_control"
+
+
+def test_charge_control_switch_prefers_the_charger_over_its_connectors(
+    hass: HomeAssistant, ocpp_entry
+):
+    """Same ranking as the metric sensors: charger level first."""
+    parent = _dual_identifier_charger(hass, ocpp_entry, "charger", "129.168.1.4:9000")
+    conn = _ocpp_device(hass, ocpp_entry, "charger", connector=1)
+    _ocpp_switch(hass, ocpp_entry, conn, "charger", "charge_control", connector=1)
+    charger_level = _ocpp_switch(hass, ocpp_entry, parent, "charger", "charge_control")
+    entry = _load_entry_with_device_id(
+        hass, "hub", "sensor.charger_current_import", "charger"
+    )
+
+    assert ocpp_charge_control_entity(hass, entry) == charger_level
+
+
+def test_charge_control_switch_falls_back_to_the_composed_name(
+    hass: HomeAssistant, ocpp_entry
+):
+    """A template-sensor site has no ocpp switch to classify — unchanged."""
+    entry = _load_entry_with_device_id(
+        hass, "hub", "sensor.lj_wallbox_current_import", "lj_wallbox"
+    )
+    assert (
+        ocpp_charge_control_entity(hass, entry)
+        == "switch.lj_wallbox_charge_control"
+    )

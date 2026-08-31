@@ -135,6 +135,20 @@ BEHAVIOR_EXCESS = "excess"                  # only run on excess export
 # Binary behaviors (smart plug — on/off, never grid; with a battery the SOC
 # band gates it, without a battery it falls back to live solar surplus).
 BEHAVIOR_BINARY_ABOVE_MIN = "binary_above_min"        # run while battery > minimum SOC
+
+# Minimum time a binary load (smart plug / relay) stays OFF once the engine has
+# shed it, before any permit may switch it back on. Minutes; 0 disables it.
+#
+# It only ever delays switching ON, never a shed, so it cannot hold a load on
+# below a protective floor — which is what makes it safe to apply to every
+# cause at once. What it bounds is CYCLE FREQUENCY: the appliance behind the
+# relay, not the relay, is usually the fragile part. An EV whose outlet is cut
+# mid-negotiation retries, and enough retries in a row lock its onboard charger
+# out until it is unplugged (observed live 2026-08-29); compressors need a
+# similar rest before restarting against head pressure.
+CONF_BINARY_MIN_OFF_TIME = "binary_min_off_time"
+DEFAULT_BINARY_MIN_OFF_TIME = 5  # minutes
+
 BEHAVIOR_BINARY_ABOVE_TARGET = "binary_above_target"  # run while battery > target SOC
 BEHAVIOR_BINARY_EXCESS = "binary_excess"              # run while battery near-full or exporting
 

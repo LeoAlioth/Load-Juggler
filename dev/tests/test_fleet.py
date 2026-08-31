@@ -38,8 +38,11 @@ from custom_components.dynamic_ocpp_evse.engine.fleet import (  # noqa: E402
     forecast_device_ids,
     member_solar,
     member_solar_production,
+    member_solar_published,
     mixed_topologies,
     soc_full_scalar,
+    soc_target_weighted,
+    solar_is_assumed,
     solar_is_measured,
     solar_total,
     sum_outputs,
@@ -129,6 +132,59 @@ def test_single_member_charge_cap_passthrough_below_full():
     assert charge_power_total([_battery(soc=80, charge=5000)]) == 5000
 
 
+# --- Charge capacity: what the battery is PERMITTED to take ---------------------
+#
+# The sum is the allowance the Excess verdict compares the site's placed power
+# against, so it must be the rate each battery MAY take. While our own charge
+# control holds a member's register below its nameplate rate — the PV clipping
+# forecast reserving room for the afternoon — the difference is not a place the
+# site can put production. Only enforcement narrows: a member that is merely
+# advised a lower rate (its switch off) still charges at its rating.
+
+def test_an_enforced_limit_narrows_that_members_share():
+    # 10 kW rated, held at 6.5 kW by the forecast: 6.5 kW is what it may take.
+    members = [_battery(soc=70, charge=10000, enforced_charge_limit=6500)]
+    assert charge_power_total(members) == 6500
+
+
+def test_an_advice_only_member_keeps_its_nameplate_rate():
+    # Nothing is written to this inverter, so it really does still charge at its
+    # rating — narrowing here would under-report the allowance and over-trigger.
+    members = [_battery(soc=70, charge=10000, enforced_charge_limit=None)]
+    assert charge_power_total(members) == 10000
+
+
+def test_only_the_enforcing_member_of_a_mixed_fleet_narrows():
+    members = [
+        _battery("enforcing", soc=70, charge=10000, enforced_charge_limit=6500),
+        _battery("advice_only", soc=70, charge=4000),
+    ]
+    assert charge_power_total(members) == 10500
+
+
+def test_an_enforced_limit_above_the_rating_is_not_a_lift():
+    # min(), never max(): a register held at more than the inverter is rated for
+    # does not make the battery take more than its plate.
+    members = [_battery(soc=70, charge=5000, enforced_charge_limit=9000)]
+    assert charge_power_total(members) == 5000
+
+
+def test_an_enforced_zero_leaves_no_allowance_at_all():
+    # A hard 0 A charge limit: the battery is not a sink, so the export
+    # allowance alone stands between the site and Excess. Not None — the member
+    # is still there with a configured cap, it is just permitted nothing.
+    members = [_battery(soc=70, charge=10000, enforced_charge_limit=0)]
+    assert charge_power_total(members) == 0
+
+
+def test_a_full_member_stays_excluded_whatever_is_enforced():
+    members = [
+        _battery("full", soc=98, full=97, charge=10000, enforced_charge_limit=6500),
+        _battery("empty", soc=30, full=97, charge=3000),
+    ]
+    assert charge_power_total(members) == 3000
+
+
 # --- Discharge capacity: per-member below-min exclusion -------------------------
 
 def test_discharge_excludes_member_below_min():
@@ -157,6 +213,55 @@ def test_soc_full_scalar_single_battery_is_its_own():
 
 def test_soc_full_scalar_multi_battery_is_none():
     assert soc_full_scalar([_battery("a"), _battery("b")]) is None
+
+
+# --- Battery destination: the anchor the clipping reserve is carved below -------
+
+def test_soc_target_single_battery_is_its_own():
+    # The single-battery case must reduce to exactly the member's own ceiling.
+    assert soc_target_weighted([_battery(capacity=20, soc_target=95.0)]) == 95.0
+
+
+def test_soc_target_all_unconfigured_is_a_hundred():
+    # No ceiling source anywhere — every battery is heading for 100 %, which is
+    # the pre-destination behaviour of every site that never configured one.
+    members = [_battery("a", capacity=10), _battery("b", capacity=5)]
+    assert soc_target_weighted(members) == 100.0
+
+
+def test_soc_target_is_capacity_weighted():
+    # 90 % of 10 kWh and 100 % of 30 kWh → (900 + 3000) / 40 = 97.5 %, so one
+    # uniform ceiling leaves exactly the kWh the members' own ceilings imply.
+    members = [
+        _battery("a", capacity=10, soc_target=90.0),
+        _battery("b", capacity=30, soc_target=100.0),
+    ]
+    assert soc_target_weighted(members) == 97.5
+
+
+def test_soc_target_unconfigured_member_contributes_a_hundred():
+    # Mixed: a configured 80 % on 10 kWh beside an unconfigured 10 kWh pack.
+    members = [
+        _battery("a", capacity=10, soc_target=80.0),
+        _battery("b", capacity=10),
+    ]
+    assert soc_target_weighted(members) == 90.0
+
+
+def test_soc_target_ignores_members_without_a_battery_or_capacity():
+    # A PV-only inverter has no destination, and a battery with no configured
+    # capacity contributes no headroom — neither may drag the mean.
+    members = [
+        _battery("a", capacity=20, soc_target=95.0),
+        _battery("b", capacity=0, soc_target=50.0),
+        _member("pv"),
+    ]
+    assert soc_target_weighted(members) == 95.0
+
+
+def test_soc_target_without_batteries_is_the_default():
+    assert soc_target_weighted([_member("pv")]) == 100.0
+    assert soc_target_weighted([]) == 100.0
 
 
 # --- Outputs and solar ----------------------------------------------------------
@@ -227,6 +332,65 @@ def test_solar_is_measured_only_when_every_member_measures():
     assert solar_is_measured([measured, derived]) is False
     # No members at all: nothing is measured, so solar stays derived.
     assert solar_is_measured([]) is False
+
+
+def test_an_invented_zero_is_not_published_as_production():
+    """A dead production sensor computes as 0 W and publishes as nothing.
+
+    ``solar_assumed`` is set by the reader when the configured sensor is
+    unreadable and there is nothing to hold, so the 0 W in ``solar_measured``
+    was invented rather than measured. The calculation keeps using it — 0 W is
+    the conservative figure and the household maths cannot take None — but the
+    member's published production is None, so its device sensor reads unknown
+    instead of a confident 0 W in full sun.
+    """
+    dead = _member("d", has_solar_entity=True, solar_measured=0.0, solar_assumed=True)
+    assert member_solar_production(dead, V) == 0.0  # what the engine allocates on
+    assert member_solar_published(dead, V) is None  # what the sensor shows
+    assert solar_is_assumed([dead]) is True
+
+
+def test_a_readable_production_sensor_publishes_normally():
+    live = _member("m", has_solar_entity=True, solar_measured=1800.0)
+    assert member_solar_published(live, V) == 1800.0
+    assert solar_is_assumed([live]) is False
+    # A real 0 W (night, or a sensor genuinely reading zero) still publishes:
+    # "measured 0" and "invented 0" are different things and only the second
+    # one is the bug.
+    night = _member("n", has_solar_entity=True, solar_measured=0.0)
+    assert member_solar_published(night, V) == 0.0
+    assert solar_is_assumed([night]) is False
+
+
+def test_a_derived_member_is_never_assumed():
+    """No production sensor configured is not a fabrication.
+
+    Such a member derives its production from its inverter output (or the site
+    falls back to grid export), and nothing there is invented — so a site with
+    no solar sensor at all publishes exactly what it always did.
+    """
+    derived = _member("d", output=PhaseValues(a=10.0, b=None, c=None))
+    assert member_solar_published(derived, V) == 10.0 * V
+    assert solar_is_assumed([derived]) is False
+    assert solar_is_assumed([]) is False
+
+
+def test_one_dead_member_keeps_its_sibling_honest_and_silences_the_total():
+    """Per-member publication, fleet-total suppression.
+
+    Each inverter publishes a production sensor of its OWN, so the healthy
+    member keeps reporting its real figure — that is a measurement worth
+    keeping. The fleet TOTAL is a sum containing one invented term, which
+    makes the whole sum fabricated (the rule the grid phases already follow).
+    """
+    live = _member("m", has_solar_entity=True, solar_measured=3000.0)
+    dead = _member("d", has_solar_entity=True, solar_measured=0.0, solar_assumed=True)
+    assert member_solar_published(live, V) == 3000.0
+    assert member_solar_published(dead, V) is None
+    # The engine still allocates on the partial sum...
+    assert solar_total([live, dead], V) == 3000.0
+    # ...and the publisher is told the sum cannot be shown as a measurement.
+    assert solar_is_assumed([live, dead]) is True
 
 
 def test_forecast_device_ids_merge_and_dedupe():

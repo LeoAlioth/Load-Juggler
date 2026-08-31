@@ -41,6 +41,7 @@ from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E
 )
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (  # noqa: E402
     excess_margin,
+    reconstructed_export_power,
 )
 from custom_components.dynamic_ocpp_evse.calculations.utils import (  # noqa: E402
     grid_without_managed_draws,
@@ -96,11 +97,10 @@ def _site(grid_a, grid_b=None, grid_c=None, battery_w=None, soc=60.0,
     )
 
 
-def _margin(site, hysteresis=0.0):
-    """Reconstruct the load-off grid view, then read the margin.
+def _apply_feedback(site):
+    """Take the managed draws off the grid readings, as the engine does.
 
-    Mirrors the engine's order: _apply_feedback_loop() (whose arithmetic is
-    grid_without_managed_draws) runs first, excess_margin() second.
+    The pure core of ``_apply_feedback_loop`` — ``grid_without_managed_draws``.
     """
     draws = [0.0, 0.0, 0.0]
     for c in site.loads:
@@ -112,7 +112,16 @@ def _margin(site, hysteresis=0.0):
         site.consumption, site.export_current = grid_without_managed_draws(
             site.consumption, site.export_current, tuple(draws)
         )
-    return excess_margin(site, hysteresis)
+    return site
+
+
+def _margin(site, hysteresis=0.0):
+    """Reconstruct the load-off grid view, then read the margin.
+
+    Mirrors the engine's order: _apply_feedback_loop() (whose arithmetic is
+    grid_without_managed_draws) runs first, excess_margin() second.
+    """
+    return excess_margin(_apply_feedback(site), hysteresis)
 
 
 def _close(a, b, tol=1e-6):
@@ -337,6 +346,251 @@ def test_a_saturated_battery_gives_the_plain_gross_reading():
     assert _close(saturated, 15500.0 + CHARGE_MAX - (THRESHOLD + CHARGE_MAX))
     assert _close(full, 15500.0 - THRESHOLD)
     assert _close(no_battery, 15500.0 - THRESHOLD)
+
+
+# ---------------------------------------------------------------------------
+# The clipping window: the allowance is what the battery is PERMITTED to take
+# ---------------------------------------------------------------------------
+#
+# ``battery_max_charge_power`` is the rate the battery may take, which is the
+# NAMEPLATE rate only while nothing is holding it back. When the PV clipping
+# forecast has our charge control holding the register at 6.5 kW of a 10 kW
+# rating, the missing 3.5 kW is not somewhere the site can put production, and
+# an allowance that still counts it reads a clipping window — the one moment the
+# site has surplus it cannot place — as a site with room to spare.
+#
+# The numbers are a real site's: 8.7 kW export limit, 500 W trigger margin (so
+# the Excess threshold is 8.2 kW), a 10 kW battery rating and the 6.5 kW the
+# forecast settles the charge limit at.
+
+LIVE_EXPORT_LIMIT = 8700.0
+LIVE_THRESHOLD = LIVE_EXPORT_LIMIT - 500.0  # export limit − trigger margin
+NAMEPLATE = 10000.0
+ENFORCED = 6500.0
+
+
+def _clipping_site(charge_max, battery_w=-ENFORCED, export=LIVE_EXPORT_LIMIT, loads=()):
+    """Midday, export pinned at the hard limit, the array able to give more."""
+    return _site(-export / V, battery_w=battery_w, soc=70.0,
+                 charge_max=charge_max, threshold=LIVE_THRESHOLD, loads=list(loads))
+
+
+def test_the_nameplate_allowance_reads_a_clipping_window_as_no_surplus():
+    """The bug, kept as the contrast. 8.7 kW is leaving the site and 6.5 kW is
+    going into the battery, every watt the site can place — and against an
+    allowance built from the 10 kW rating the control is actively forbidding
+    that reads as 3 kW short of Excess, for the whole window."""
+    assert _close(_margin(_clipping_site(NAMEPLATE)), -3000.0)
+
+
+def test_the_enforced_allowance_engages_excess_in_the_clipping_window():
+    """The same site, the same instant, the allowance the battery is permitted:
+    the margin is the 500 W the site is genuinely placing beyond the threshold,
+    Excess is on, and the surplus goes into a load instead of being curtailed."""
+    assert _close(_margin(_clipping_site(ENFORCED)), 500.0)
+
+
+def test_an_engaged_load_is_not_dropped_when_the_cap_engages():
+    """The drop-on-engage case, reversed.
+
+    A 2 kW plug is running on displaced export, Excess engaged. Then the forecast
+    cap engages under it: the battery goes from its 10 kW rating to 6.5 kW, and
+    since export is already pinned at the hard limit the 3.5 kW it stops taking is
+    curtailed rather than exported — the readings do not move at all. Nothing
+    about the site got worse, so the verdict must not move either.
+    """
+    displaced = -(LIVE_EXPORT_LIMIT - 2000) / V
+    running = dict(soc=70.0, threshold=LIVE_THRESHOLD, loads=[_plug(2000)])
+    before = _site(displaced, battery_w=-NAMEPLATE, charge_max=NAMEPLATE, **running)
+    after = _site(displaced, battery_w=-ENFORCED, charge_max=ENFORCED, **running)
+    # Counting the forbidden 3.5 kW is what used to drop the load mid-window.
+    stuck = _site(displaced, battery_w=-ENFORCED, charge_max=NAMEPLATE, **running)
+
+    assert _close(_margin(before, DEFAULT_EXCESS_HYSTERESIS), 1000.0)
+    assert _close(_margin(after, DEFAULT_EXCESS_HYSTERESIS), 1000.0)
+    assert _margin(stuck, DEFAULT_EXCESS_HYSTERESIS) < 0
+
+
+def test_the_enforced_allowance_keeps_the_load_off_identity():
+    """The stay-on identity is what makes the narrowed allowance safe: a battery
+    sitting on an enforced limit has no headroom, so the load's draw stays on the
+    export side of the reconstruction and the running site reads exactly the
+    margin the idle one does. No new flapping can come out of this."""
+    idle = _clipping_site(ENFORCED)
+    running = _clipping_site(ENFORCED, export=LIVE_EXPORT_LIMIT - 2000,
+                             loads=[_plug(2000)])
+    assert _close(_margin(running), _margin(idle))
+
+
+# ---------------------------------------------------------------------------
+# Only SOLAR export triggers Excess
+# ---------------------------------------------------------------------------
+#
+# The export term is the site's OWN PRODUCTION leaving the meter, so the
+# battery's discharge is netted off it. By conservation
+#
+#     export − battery_discharge == production − consumption
+#
+# in every case, which is why one subtraction covers every inverter work mode: a
+# pack serving the house has nothing at the meter to take away, a pack SELLING
+# to the grid is taken away in full, and a charging or idle pack subtracts
+# nothing at all.
+#
+# These use a FULL battery, so the charge allowance drops out and the trigger is
+# the 13 kW export allowance alone — the state a selling battery is actually in.
+
+
+def test_a_house_served_discharge_leaves_the_verdict_and_reports_only_pv():
+    """The array's own surplus is 13.5 kW and the pack is giving the house 2 kW.
+    Conservation puts both at the meter: 15.5 kW measured, 2 kW of it stored.
+
+    The verdict fires on the PV surplus — and the POOL is the PV surplus. Before
+    the solar-only rule this read +2500 W and handed 2 kW of the house battery to
+    the Excess loads.
+    """
+    selling = _site(-15500 / V, battery_w=2000.0, soc=98.0)
+    idle = _site(-13500 / V, battery_w=0.0, soc=98.0)
+    assert _close(_margin(selling), 500.0)
+    assert _close(_margin(selling), _margin(idle))
+
+
+def test_a_battery_selling_to_grid_cannot_trigger_excess():
+    """Deye "Selling First", a slot with sell semantics, a scheduled sell-down:
+    3 kW of stored energy pushes the meter past the trigger while production is
+    2 kW below it. Stored energy is never surplus, so the verdict stays OFF —
+    and not on the hysteresis band either, which is what the old reading
+    (+1000 W, engaged) would have held it on all evening.
+    """
+    selling = _site(-14000 / V, battery_w=3000.0, soc=98.0)
+    assert _close(_margin(selling), -2000.0)
+    assert _margin(selling, DEFAULT_EXCESS_HYSTERESIS) < 0
+
+
+def test_the_whole_discharge_is_subtracted_deficit_share_included():
+    """Mixed: the house draws 2 kW more than the array makes and the pack
+    discharges 5 kW, so 2 kW covers the deficit and 3 kW leaves the meter.
+
+    The signed term is unclamped, so the whole 5 kW comes off: the exported
+    3 kW cancels the meter reading and the deficit 2 kW pushes the margin
+    BELOW the quiet site's. By conservation the margin is production −
+    consumption against the allowance, and a site that cannot even cover its
+    own house is 2 kW further from Excess than a balanced one. No verdict can
+    flip on the difference — while any allowance stands, both readings are
+    negative; the value is simply the honest one now.
+    """
+    mixed = _site(-3000 / V, battery_w=5000.0, soc=98.0)
+    quiet = _site(0.0, battery_w=0.0, soc=98.0)
+    assert _close(_margin(mixed), -THRESHOLD - 2000.0)
+    assert _margin(mixed) < _margin(quiet)
+
+
+def test_a_charging_or_absent_battery_reads_the_unchanged_margin():
+    """The whole point of composing it as a subtraction of DISCHARGE: on a site
+    whose work mode keeps the battery off the meter — every Zero-Export-to-CT
+    site — the term is inert. Swept against the plain pre-rule arithmetic.
+    """
+    for battery_w in (None, 0.0, -1000.0, -CHARGE_MAX):
+        for export_w in (0.0, 5000.0, THRESHOLD, 17000.0):
+            site = _site(-export_w / V, battery_w=battery_w)
+            charge = max(0.0, -(battery_w or 0))
+            expected = export_w + charge - (THRESHOLD + CHARGE_MAX)
+            assert _close(_margin(site), expected), (export_w, battery_w)
+
+
+def test_the_draw_still_cancels_while_the_battery_discharges():
+    """Draw-invariance survives the new term. A steady 2 kW sell-down with an
+    engaged load on top: the meter shows the draw as less export, the feedback
+    loop puts it back, and the discharge subtraction is the same on both sides —
+    so the load goes on reading the margin the site would read without it.
+    """
+    off = _site(-15500 / V, battery_w=2000.0, soc=98.0)
+    assert _close(_margin(off), 500.0)
+    for watts in (500.0, 3000.0, 9000.0):
+        on = _site((-15500 + watts) / V, battery_w=2000.0, soc=98.0,
+                   loads=[_plug(watts)])
+        assert _close(_margin(on), _margin(off)), f"{watts} W draw shifted it"
+
+
+# ---------------------------------------------------------------------------
+# The same reconstruction, read as a steering signal
+# ---------------------------------------------------------------------------
+#
+# The forecast's charge-limit advice is direct feedback on RECONSTRUCTED export
+# against (export limit − trigger margin). That is only safe to close a loop on
+# because of the identity above: our own loads' draw is credited back, so a car
+# charging on the surplus is not read as an export shortfall and cannot steer
+# the battery's charge limit. These pin that invariance on the same geometries,
+# through the same reconstruction.
+
+
+def _reconstructed(site):
+    """The load-off export figure, after the engine's feedback loop."""
+    _apply_feedback(site)
+    return reconstructed_export_power(site)
+
+
+def test_reconstructed_export_ignores_an_export_displaced_load():
+    off = _reconstructed(_site(-13500 / V, battery_w=-CHARGE_MAX))
+    on = _reconstructed(
+        _site(-11500 / V, battery_w=-CHARGE_MAX, loads=[_plug(2000)])
+    )
+    assert _close(off, 13500.0)
+    assert _close(on, off)
+
+
+def test_reconstructed_export_ignores_a_battery_displaced_load():
+    # The meter never moved — only battery_power did — and the reconstruction
+    # still lands on the same export the site would show with the plug off.
+    off = _reconstructed(_site(-13500 / V, battery_w=-CHARGE_MAX))
+    on = _reconstructed(
+        _site(-13500 / V, battery_w=-3000.0, loads=[_plug(2000)])
+    )
+    assert _close(on, off)
+
+
+def test_reconstructed_export_ignores_a_load_on_the_importing_phase_geometry():
+    # The geometry that cycled in the field, and the one a naive export reading
+    # would have handed the charge advice as a 2 kW error.
+    off = _reconstructed(
+        _site(6.667, -3.333, -3.333, battery_w=-4600.0, threshold=1000.0)
+    )
+    on = _reconstructed(
+        _site(12.464, -6.232, -6.232, battery_w=-2600.0, threshold=1000.0,
+              loads=[_plug(2000)])
+    )
+    assert _close(on, off, tol=1.0)
+
+
+def test_reconstructed_export_ignores_an_engaged_load_in_a_clipping_window():
+    # The advice's own operating point: the charge cap engaged, export pinned at
+    # the limit, an Excess load running on the surplus.
+    idle = _reconstructed(_clipping_site(ENFORCED))
+    running = _reconstructed(
+        _clipping_site(ENFORCED, export=LIVE_EXPORT_LIMIT - 2000,
+                       loads=[_plug(2000)])
+    )
+    assert _close(idle, LIVE_EXPORT_LIMIT)
+    assert _close(running, idle)
+
+
+def test_reconstructed_export_stays_the_physical_meter_figure():
+    # The verdict nets the battery's discharge off this number; the charge
+    # advice does not, because the meter IS the plant it steers. It handles a
+    # discharging battery inside its own arithmetic — the battery term goes
+    # negative and the value clamps at 0, since a charge cap cannot force a
+    # discharge. See calculations.recommended_charge_limit.
+    site = _site(-15500 / V, battery_w=2000.0, soc=98.0)
+    assert _close(_reconstructed(site), 15500.0)
+
+
+def test_reconstructed_export_still_sees_the_household():
+    # The other half of the property: unmanaged draw is NOT credited back, so a
+    # real house step is a real error — the register's downward persistence
+    # window is what keeps a kettle off the register, not blindness to it
+    # (control/inverter.py).
+    quiet = _reconstructed(_site(-13500 / V, battery_w=-CHARGE_MAX))
+    kettle = _reconstructed(_site(-11500 / V, battery_w=-CHARGE_MAX))
+    assert _close(quiet - kettle, 2000.0)
 
 
 # ---------------------------------------------------------------------------

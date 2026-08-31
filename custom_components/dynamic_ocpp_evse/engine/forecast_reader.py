@@ -5,8 +5,8 @@ timezone-aware datetimes. This module is the HA-touching side: it reads the
 ``watts`` attribute the Open-Meteo Solar Forecast sensors expose (a mapping of
 block-start timestamps to average watts), parses and validates it, and sums
 the per-array series into one site series. It is also the only place timezone
-handling lives — the horizon is the start of the next local day, so tomorrow's
-peak is never reserved for twice.
+handling lives — every horizon boundary is a local midnight, so one day's peak
+is never reserved for twice (``forecast_windows``).
 
 Fail open by design: an unreadable entity or attribute contributes nothing,
 which flows through to "nothing to clip" → SOC ceiling 100 % → charge cap
@@ -21,7 +21,7 @@ from datetime import timedelta
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
-from ..calculations import merge_forecast_series
+from ..calculations import FORECAST_LOOKAHEAD_DAYS, merge_forecast_series
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,11 +77,37 @@ def configured_forecast_sensors(hass, device_ids, legacy_entity_ids=None):
     return entity_ids
 
 
-def forecast_window(now=None):
-    """The integration window: (now, start of the next local day)."""
+def forecast_windows(now=None):
+    """The candidate integration windows, nearest first.
+
+    ``[(now, tonight's midnight), (tonight's midnight, tomorrow's midnight), …]``
+    — the remainder of today, then one whole local day per lookahead day. The
+    pure side picks between them (``select_clipping_window``); all this owns is
+    the local-day arithmetic, which is why it lives here and not in
+    ``calculations/``.
+
+    Every boundary is a real local midnight — ``start_of_local_day`` applied to
+    the following midday, never a 24-hour offset — so on the two DST days a year
+    one window is 23 or 25 hours long and the windows still meet exactly. Adding
+    a day's worth of seconds instead would land at 23:00 or 01:00 and leave a
+    gap between one window's end and the next one's start, where a block of clip
+    would belong to neither.
+
+    ``now`` is a parameter so tests need no wall clock.
+    """
     now = now or dt_util.now()
-    until = dt_util.start_of_local_day(now) + timedelta(days=1)
-    return now, until
+    boundary = _next_local_midnight(dt_util.start_of_local_day(now))
+    windows = [(now, boundary)]
+    for _ in range(FORECAST_LOOKAHEAD_DAYS):
+        following = _next_local_midnight(boundary)
+        windows.append((boundary, following))
+        boundary = following
+    return windows
+
+
+def _next_local_midnight(day_start):
+    """The local midnight after ``day_start``, DST-safe (see forecast_windows)."""
+    return dt_util.start_of_local_day(day_start + timedelta(days=1, hours=12))
 
 
 def _parse_watts(entity_id, watts):

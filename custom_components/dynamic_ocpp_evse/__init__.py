@@ -95,7 +95,7 @@ from .const import (
 )
 from .helpers import get_entry_value
 from . import units
-from .ocpp_discovery import scan_ocpp_chargers
+from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
 from .registry import (  # noqa: F401 — re-exported; canonical home is registry.py
     get_loads_for_hub,
     get_groups_for_hub,
@@ -785,6 +785,14 @@ async def _setup_load_entry(hass: HomeAssistant, entry: ConfigEntry):
         raise ConfigEntryNotReady(
             f"Hub {hub_entry_id} not ready for load {entry.title}"
         )
+
+    # Before any entity is built: an entry still carrying a pre-2026-02-19
+    # device-registry UUID as its charge point id has every OCPP command
+    # rejected by ocpp 0.11.2+, and composes the wrong charge-control switch
+    # name. Repaired here rather than in async_migrate_entry because it reads
+    # the device registry — a version-gated migration gets one attempt, while
+    # this re-tries every setup and is a no-op the moment the id is valid.
+    repair_ocpp_device_id(hass, entry)
 
     # Store load data (runtime state written by entities, read by calculation)
     device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)

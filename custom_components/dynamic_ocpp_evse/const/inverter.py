@@ -36,9 +36,9 @@ CONF_BATTERY_VOLTAGE_ENTITY_ID = "battery_voltage_entity_id"
 CONF_BATTERY_NOMINAL_VOLTAGE = "battery_nominal_voltage"
 DEFAULT_BATTERY_NOMINAL_VOLTAGE = 51.2  # V — 16S LFP, the common hybrid pack
 
-# What to write back when the forecast releases the limit (evening, no
-# clipping expected, control switched off). 0 = restore the target entity's
-# own maximum, which is what an unmanaged inverter would sit at.
+# What to write back when the forecast releases the limit (below the battery's
+# destination with no clipping expected, control switched off). 0 = restore the
+# target entity's own maximum, which is what an unmanaged inverter would sit at.
 CONF_CHARGE_LIMIT_NORMAL = "inverter_charge_limit_normal"
 DEFAULT_CHARGE_LIMIT_NORMAL = 0
 
@@ -46,7 +46,8 @@ DEFAULT_CHARGE_LIMIT_NORMAL = 0
 # in the target register's own units — the same convention as the normal above.
 #
 # A recommendation of 0 is legitimate: solar below the export threshold with the
-# battery already at the reserved ceiling means "do not add any more". Written as
+# battery already at the reserved ceiling — or simply parked at its destination
+# on a day that reserves nothing — means "do not add any more". Written as
 # a hard 0 the battery stops charging entirely, so it keeps serving the house
 # instead and the SOC sags — until the latch releases and the inverter recharges
 # at full rate, which is a sawtooth rather than a hold. A couple of amps is
@@ -60,9 +61,22 @@ DEFAULT_CHARGE_LIMIT_MINIMUM = 0
 
 # Write pacing. These registers go over Modbus and some firmwares commit them
 # to EEPROM, so a value that moves a few watts every cycle is genuinely
-# harmful — write only on a real change, and not more often than this.
+# harmful — write only on a real change, and only when it has lasted.
+#
+# The interval is DIRECTIONAL for the charge rate (see ``control/inverter.py``):
+# it is how long a REDUCTION must hold before it is written, since the engaged
+# advice is direct feedback on a live meter and a reduction that lasts less than
+# this — a kettle, a passing cloud, a car plugging in — is not one the register
+# should follow. A rise is not paced by it at all (it is bounded to one Excess
+# trigger margin per write instead), and the cap engaging bypasses it as the
+# protective transition it is. For the RELEASE ramp, and for the SOC ceiling
+# control, it stays a plain minimum time between writes.
+#
+# The key is unchanged from when this was a symmetric write interval, so no
+# stored value migrates: 300 s means the same 300 s, applied to the direction
+# where waiting is free.
 CONF_CHARGE_CONTROL_INTERVAL = "inverter_charge_control_interval"
-DEFAULT_CHARGE_CONTROL_INTERVAL = 300  # s between writes
+DEFAULT_CHARGE_CONTROL_INTERVAL = 300  # s a reduction must hold (and pace a release)
 CONF_CHARGE_CONTROL_DEADBAND = "inverter_charge_control_deadband"
 DEFAULT_CHARGE_CONTROL_DEADBAND = 5  # % of the normal value
 
@@ -97,6 +111,15 @@ INVERTER_RT_CONTROL_ENABLED = "charge_control_enabled"
 INVERTER_RT_APPLIED = "charge_control_applied"  # last value written (target units)
 INVERTER_RT_LAST_WRITE = "charge_control_last_write"  # monotonic seconds
 INVERTER_RT_STATUS = "charge_control_status"
+# The rate the battery is actually PERMITTED to take while this control holds
+# its register down, in WATTS — None whenever nothing is being held back (switch
+# off, no advice, released). The one runtime key here that the calculation
+# engine reads rather than an entity: engine/readers.py picks it up per fleet
+# member so the Excess verdict's charge allowance is the permitted rate rather
+# than the nameplate one (see engine/fleet.charge_power_total). Watts rather
+# than the register's own units, so the engine never has to know about
+# CONF_CHARGE_LIMIT_UNIT or the DC battery voltage.
+INVERTER_RT_ENFORCED_CHARGE_W = "charge_control_enforced_w"
 
 # The same three for the SOC control — its own arming flag, its own write clock
 # and its own standing, because the two controls are armed and paced

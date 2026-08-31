@@ -71,6 +71,7 @@ from ..const import (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
+    CONF_BINARY_MIN_OFF_TIME,
     CONF_PLUG_MAX_CURRENT,
     CONF_PLUG_POWER_MONITOR_ENTITY_ID,
     CONF_PLUG_POWER_RATING,
@@ -124,6 +125,7 @@ from ..const import (
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_OCPP_PROFILE_TIMEOUT,
     DEFAULT_PHASE_VOLTAGE,
+    DEFAULT_BINARY_MIN_OFF_TIME,
     DEFAULT_PLUG_MAX_CURRENT,
     DEFAULT_PLUG_POWER_RATING,
     DEFAULT_PROFILE_VALIDITY_MODE,
@@ -1470,6 +1472,22 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                     CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
                 ),
             ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
+            vol.Required(
+                CONF_BINARY_MIN_OFF_TIME,
+                default=defaults.get(
+                    CONF_BINARY_MIN_OFF_TIME, DEFAULT_BINARY_MIN_OFF_TIME
+                ),
+            ): selector(
+                {
+                    "number": {
+                        "min": 0,
+                        "max": 60,
+                        "step": 1,
+                        "mode": "box",
+                        "unit_of_measurement": "min",
+                    }
+                }
+            ),
             _optional_entity_field(
                 CONF_PLUG_POWER_MONITOR_ENTITY_ID,
                 defaults.get(CONF_PLUG_POWER_MONITOR_ENTITY_ID),
@@ -1593,6 +1611,22 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
                     CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
                 ),
             ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
+            vol.Required(
+                CONF_BINARY_MIN_OFF_TIME,
+                default=defaults.get(
+                    CONF_BINARY_MIN_OFF_TIME, DEFAULT_BINARY_MIN_OFF_TIME
+                ),
+            ): selector(
+                {
+                    "number": {
+                        "min": 0,
+                        "max": 60,
+                        "step": 1,
+                        "mode": "box",
+                        "unit_of_measurement": "min",
+                    }
+                }
+            ),
             _optional_entity_field(
                 CONF_TANK_POWER_ENTITY_ID,
                 defaults.get(CONF_TANK_POWER_ENTITY_ID),

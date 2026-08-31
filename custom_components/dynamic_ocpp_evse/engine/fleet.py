@@ -8,7 +8,10 @@ those scalars, applying the per-member gating that the scalar form cannot
 express:
 
 - **Charge power** sums only members whose OWN battery is below its OWN
-  full-SOC. The fleet passes ``battery_soc_full=None`` to SiteContext when
+  full-SOC, and sums the rate each one is PERMITTED to take rather than its
+  nameplate rate — our own charge control may be holding that member's register
+  below it (see ``charge_power_total``). The fleet passes
+  ``battery_soc_full=None`` to SiteContext when
   more than one battery exists, so the calculations-level full gate (which
   only knows the fleet SOC) can never falsely re-zero a partially-full fleet;
   with a single battery the member's real full-SOC is passed through and the
@@ -59,14 +62,37 @@ class FleetMember:
     output: Optional[PhaseValues] = None  # smoothed amps per phase
     has_solar_entity: bool = False  # a solar production sensor is configured
     solar_measured: Optional[float] = None  # W, smoothed, when measured
+    # True when ``solar_measured`` is the 0 W SUBSTITUTE rather than a reading:
+    # this member's production sensor is configured but unreadable, and there is
+    # no EMA history to hold (a fresh start) or the stale guard has already
+    # given up on it. Set only by engine/readers.py, which is the one place that
+    # knows which substitute a reading got. The 0 W stays for the calculation —
+    # the household maths cannot take None and 0 is the conservative figure —
+    # but a fabricated 0 must not be PUBLISHED as production: right at night, a
+    # lie in daylight, and it lands in long-term statistics either way (see
+    # member_solar_published / solar_is_assumed).
+    solar_assumed: bool = False
     forecast_device_ids: tuple = ()  # this inverter's PV forecast sources
     has_battery: bool = False  # a battery SOC or power entity is configured
     has_battery_power_entity: bool = False
     battery_soc: Optional[float] = None
     battery_power: Optional[float] = None  # W, + discharging / − charging
-    charge_cap: Optional[float] = None  # W
+    charge_cap: Optional[float] = None  # W — nameplate (configured) charge rate
+    # W — the rate this member's battery is actually PERMITTED to take right
+    # now, when our own Battery Charge Control is holding its charge register
+    # down (INVERTER_RT_ENFORCED_CHARGE_W, read in engine/readers.py). None
+    # whenever nothing is being held back, which includes an advice-only member
+    # — see charge_power_total().
+    enforced_charge_limit: Optional[float] = None
     discharge_cap: Optional[float] = None  # W
     soc_full: Optional[float] = None  # %
+    # % — this battery's DESTINATION: the live value of the same "normal SOC
+    # ceiling source" entity the SOC write-control idles its slots at, which is
+    # where this pack ends the day when the forecast says nothing. The clipping
+    # reserve is carved out below it (see soc_target_weighted). None means no
+    # destination is known — no entity configured, or one configured that has
+    # never yet been readable — and anchors that member at 100 %.
+    soc_target: Optional[float] = None
     capacity_kwh: Optional[float] = None
 
     def spans_phase(self, phase: str) -> bool:
@@ -103,11 +129,39 @@ def battery_power_total(members) -> Optional[float]:
 
 
 def charge_power_total(members) -> Optional[float]:
-    """Σ charge caps of members whose OWN battery is below its OWN full-SOC.
+    """Σ PERMITTED charge rates of members whose OWN battery is below its OWN
+    full-SOC.
 
     A member with no SOC reading (or no full-SOC configured) counts as "not
     full" — the classic single-battery engine behaves the same way, gating
     only when both values are known.
+
+    "Permitted" rather than "rated", per member:
+    ``min(charge_cap, enforced_charge_limit)`` while our own Battery Charge
+    Control is holding that member's charge register below its nameplate rate,
+    and the plain ``charge_cap`` otherwise. This is the allowance the Excess
+    verdict compares the site's placed power against
+    (``calculations.excess_margin`` — the only consumer of
+    ``SiteContext.battery_max_charge_power``), and the whole point of the
+    distinction is the clipping window: while the forecast holds the battery at,
+    say, 6.5 kW of a 10 kW rating, the missing 3.5 kW is not somewhere the site
+    can put its production, so counting it would read the site as having room
+    left exactly when it has surplus it cannot place, and Excess loads —
+    which exist to soak that surplus up — could never engage.
+
+    Only ENFORCEMENT narrows. An advice-only member (its switch off, so nothing
+    is written to the inverter) really does still charge at its nameplate rate,
+    so narrowing on the mere existence of an advice would under-report the
+    allowance and over-trigger Excess. That distinction arrives already made:
+    the control publishes a rate only while it is actually holding one, and
+    None otherwise.
+
+    One cycle behind by nature: the register write is performed by a site-cycle
+    worker AFTER the result that carries the advice is published, so what any
+    cycle can know is what the previous cycle's write enforced. At seconds-scale
+    cycles against a forecast that moves over hours, that lag is invisible; and
+    the value is the register's own read-back, so it reports what the battery is
+    permitted rather than what we intend it to be permitted.
     """
     caps = []
     for m in members:
@@ -119,7 +173,10 @@ def charge_power_total(members) -> Optional[float]:
             and m.battery_soc >= m.soc_full
         ):
             continue
-        caps.append(m.charge_cap)
+        cap = m.charge_cap
+        if m.enforced_charge_limit is not None:
+            cap = min(cap, max(0.0, m.enforced_charge_limit))
+        caps.append(cap)
     return sum(caps) if caps else None
 
 
@@ -154,6 +211,45 @@ def soc_full_scalar(members) -> Optional[float]:
 
 def capacity_total(members) -> float:
     return sum(m.capacity_kwh or 0 for m in members)
+
+
+def soc_target_weighted(members, default: float = 100.0) -> float:
+    """The fleet's battery destination in percent — capacity-weighted.
+
+    Capacity weighting is not a matter of taste. The forecast reserves headroom
+    at ONE uniform ceiling ``s`` for the whole fleet, which buys
+    ``Σ cap_i × (target_i − s)/100`` kWh, so the ``s`` that leaves exactly
+    ``absorbable_kwh`` is
+
+        s = (Σ cap_i × target_i) / Σ cap_i  −  absorbable / Σ cap × 100
+
+    — the capacity-weighted mean destination, minus the reserve. That is the
+    same derivation as the flat-100 % one in ``_compute_forecast_advice``, with
+    each member's own destination in place of the 100, and it is what makes
+    ``battery_max_soc``'s single anchor exact for a mixed fleet.
+
+    Only members that HAVE a battery with a known capacity count — a member
+    with no pack has no destination to average, and one with no capacity
+    contributes no headroom either way. A member whose own destination is
+    unknown (no ceiling source configured, or one that has never been readable)
+    counts as ``default``: 100 %, where an unmanaged battery is heading.
+
+    Reduces to exactly the member's own target for a single battery, and to
+    ``default`` when nothing is configured anywhere — byte-identical to the
+    behavior before the destination anchor existed.
+    """
+    weighted = [
+        (
+            float(m.soc_target if m.soc_target is not None else default),
+            float(m.capacity_kwh),
+        )
+        for m in members
+        if m.has_battery and (m.capacity_kwh or 0) > 0
+    ]
+    if not weighted:
+        return float(default)
+    total_capacity = sum(c for _, c in weighted)
+    return sum(t * c for t, c in weighted) / total_capacity
 
 
 def sum_outputs(members, topology: Optional[str] = None) -> Optional[PhaseValues]:
@@ -369,6 +465,33 @@ def solar_total(members, voltage: float) -> Optional[float]:
     # self-consumption), and a negative site production would poison every
     # downstream pool that multiplies or subtracts it.
     return max(0.0, sum(readings))
+
+
+def member_solar_published(member, voltage: float) -> Optional[float]:
+    """One member's production for PUBLICATION — None while its own figure is
+    the invented 0 W (``solar_assumed``), its real production otherwise.
+
+    Per member on purpose: unlike the grid phases, each inverter publishes a
+    production sensor of its OWN, so a healthy sibling has a measurement worth
+    keeping and only the dead member's device sensor reads unknown. The FLEET
+    total is a different question — see solar_is_assumed.
+    """
+    if member.solar_assumed:
+        return None
+    return member_solar_production(member, voltage)
+
+
+def solar_is_assumed(members) -> bool:
+    """True when any member's production figure is an invented 0 W.
+
+    The fleet total sums every member, so one fabricated term makes the whole
+    sum fabricated — the same rule the grid phases follow, and for the same
+    reason: there is no honest way to publish a total that is partly invented.
+    0 W differs from the grid's breaker assumption in that the true value is
+    unknowable in BOTH directions (the array could be idle or at full output),
+    which is an argument for silence rather than against it.
+    """
+    return any(m.solar_assumed for m in members)
 
 
 def solar_is_measured(members) -> bool:

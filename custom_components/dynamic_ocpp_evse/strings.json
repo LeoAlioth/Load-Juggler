@@ -62,6 +62,9 @@
                 "description": "Choose what you want to configure",
                 "data": {
                     "setup_type": "What would you like to set up?"
+                },
+                "data_description": {
+                    "setup_type": "Start with the Home Electrical Hub — it holds the grid connection and the site-wide settings everything else is measured against. Inverters, loads and circuit groups are added afterwards and each links back to it."
                 }
             },
             "hub_info": {
@@ -155,7 +158,8 @@
                     "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
                     "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
                     "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
-                    "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak."
+                    "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak.",
+                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power)."
                 }
             },
             "inverter_battery": {
@@ -172,7 +176,10 @@
                 "data_description": {
                     "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign.",
                     "battery_soc_full": "SOC at or above which THIS battery counts as full and stops absorbing excess solar.",
-                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity). Used for the fleet SOC weighting and the PV clipping forecast."
+                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity). Used for the fleet SOC weighting and the PV clipping forecast.",
+                    "battery_soc_entity_id": "The battery's state-of-charge percentage. This is what the SOC-gated operating modes decide on: how far each mode may drain the stored solar buffer, and when a battery counts as full.",
+                    "battery_max_charge_power": "The fastest this battery may be charged. Used as the charge sink in the Excess trigger — while the battery can still absorb this much, the site has somewhere to put its production and Excess loads stay off.",
+                    "battery_max_discharge_power": "The fastest this battery may be discharged. Caps how much stored energy the engine counts on when deciding what the inverter can deliver to a load."
                 }
             },
             "inverter_control": {
@@ -185,7 +192,7 @@
                     "battery_nominal_voltage": "Battery nominal voltage",
                     "inverter_charge_limit_normal": "Normal charge limit",
                     "inverter_charge_limit_minimum": "Minimum charge limit",
-                    "inverter_charge_control_interval": "Minimum time between writes",
+                    "inverter_charge_control_interval": "How long a reduction must hold",
                     "inverter_charge_control_deadband": "Write deadband",
                     "inverter_soc_limit_entity_ids": "Battery SOC ceiling entities (optional)",
                     "inverter_soc_limit_normal_entity_id": "Normal SOC ceiling source (optional)"
@@ -197,7 +204,7 @@
                     "battery_nominal_voltage": "Fallback for the conversion — 51.2 V for a 16S LFP pack, 25.6 V for 8S.",
                     "inverter_charge_limit_normal": "Written back when the forecast releases the limit, in the same unit as the target entity. 0 restores the entity's own maximum, which is where an unmanaged inverter sits.",
                     "inverter_charge_limit_minimum": "Lowest limit ever written while the forecast is restricting charging, in the register's own unit. A small floor (a couple of amps) lets the battery keep up with the house draw at the reserved ceiling instead of slowly cycling below it. 0 applies the recommendation as-is.",
-                    "inverter_charge_control_interval": "These registers go over Modbus and some firmwares write them to EEPROM, so writes are paced rather than sent every cycle.",
+                    "inverter_charge_control_interval": "A LOWER charge limit is written only once every sample in this window agrees on it, so a kettle, a passing cloud or a car plugging in costs no register write; a HIGHER limit is written as soon as it is due, and the cap engaging is written at once. Also the minimum time between writes while a limit is being released, and for the SOC ceiling. 300 s suits every site \u2014 these registers go over Modbus and some firmwares write them to EEPROM.",
                     "inverter_charge_control_deadband": "As a percentage of the normal charge limit. A new recommendation closer than this to what the register already holds is not written.",
                     "inverter_soc_limit_entity_ids": "The entities holding this battery's 'charge up to %' ceiling. On a Deye that is not one register but one entity per time-of-use slot, so select every slot the battery may charge in — the recommended max SOC is written to all of them together. Leave empty to keep the recommendation advisory. Selecting slots adds a Battery SOC Control switch, which must be turned on before anything is written.",
                     "inverter_soc_limit_normal_entity_id": "Where the everyday ceiling comes from: the slots track this entity, and the forecast may only push them below it, never above, so your own automations keep owning it. Without it, the everyday ceiling is 100%. If it is set but unavailable, nothing is written that cycle rather than a ceiling being guessed."
@@ -208,6 +215,9 @@
                 "description": "Select which electrical hub to add this load to",
                 "data": {
                     "hub_entry_id": "Home Electrical Hub"
+                },
+                "data_description": {
+                    "hub_entry_id": "Which hub this belongs to. Everything added to a hub shares its grid connection, phase layout and site-wide limits."
                 }
             },
             "plug_config": {
@@ -223,7 +233,8 @@
                     "charger_priority": "Priority (1 = highest)",
                     "plug_power_monitor_entity_id": "Power monitoring sensor (optional)",
                     "update_frequency": "Update frequency",
-                    "solar_grace_period": "Solar/Excess grace period"
+                    "solar_grace_period": "Solar/Excess grace period",
+                    "binary_min_off_time": "Minimum off time"
                 },
                 "data_description": {
                     "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power).",
@@ -233,7 +244,9 @@
                     "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
                     "update_frequency": "How often to re-evaluate whether this plug should be turned on or off.",
-                    "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately."
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately.",
+                    "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling — an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
+                    "plug_switch_entity_id": "The switch this integration turns on and off. Anything plugged in behind it is managed as one on/off load."
                 }
             },
             "power_station_config": {
@@ -269,7 +282,10 @@
                     "station_max_charge_power": "The most the station may draw. Set below the hardware's own maximum to cap it.",
                     "station_normal_reserve": "Held day to day. The station discharges down to this level to run its own loads, and charges no further from the grid.",
                     "station_storm_reserve": "Held while the Storm Reserve switch is on — charged from any source and not discharged below.",
-                    "solar_grace_period": "How long to keep charging at minimum when solar/excess conditions are no longer met."
+                    "solar_grace_period": "How long to keep charging at minimum when solar/excess conditions are no longer met.",
+                    "connected_to_phase": "Which electrical phase(s) the station's AC input is wired to. Determines which phase capacity its charging draws from.",
+                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "update_frequency": "How often to re-evaluate the station's charging speed and reserve."
                 }
             },
             "hot_water_tank_config": {
@@ -289,7 +305,8 @@
                     "tank_power_entity_id": "Power sensor (optional)",
                     "tank_power_device_id": "Power device (optional)",
                     "update_frequency": "Update frequency",
-                    "solar_grace_period": "Solar/Excess grace period"
+                    "solar_grace_period": "Solar/Excess grace period",
+                    "binary_min_off_time": "Minimum off time"
                 },
                 "data_description": {
                     "entity_id": "Used as a prefix for entities created by this integration.",
@@ -303,7 +320,9 @@
                     "tank_power_entity_id": "Optional sensor reporting the element's live power draw — used instead of the fixed rating when present.",
                     "tank_power_device_id": "Optionally pick the smart relay/outlet powering the tank; its power sensor is resolved automatically.",
                     "update_frequency": "How often to re-evaluate the tank.",
-                    "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping."
+                    "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping.",
+                    "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling — an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
+                    "tank_prioritize_below_normal": "When on, a Solar Priority tank that has dropped below its Normal temperature is promoted to the Normal urgency tier, so it wins contention against other Solar Priority loads. It does not change where the power comes from — the tank still never uses the grid and still stops at the battery's minimum SOC."
                 }
             },
             "discover_chargers": {
@@ -311,6 +330,9 @@
                 "description": "Select an OCPP charger to configure",
                 "data": {
                     "charger": "Available OCPP Chargers"
+                },
+                "data_description": {
+                    "charger": "Chargers found through the OCPP integration that are not managed yet. Pick one to add it as a load."
                 }
             },
             "charger_info": {
@@ -377,7 +399,8 @@
                     "circuit_group_current_limit": "Circuit breaker rating (per phase)"
                 },
                 "data_description": {
-                    "circuit_group_current_limit": "The amperage rating of the circuit breaker shared by the loads in this group. Allocations will be capped so the combined draw never exceeds this limit on any phase."
+                    "circuit_group_current_limit": "The amperage rating of the circuit breaker shared by the loads in this group. Allocations will be capped so the combined draw never exceeds this limit on any phase.",
+                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.<prefix>_power)."
                 }
             },
             "group_members": {
@@ -385,6 +408,9 @@
                 "description": "Select the loads that share this circuit breaker",
                 "data": {
                     "circuit_group_members": "Member loads"
+                },
+                "data_description": {
+                    "circuit_group_members": "The loads sharing one breaker or sub-feed. Their combined draw is held under the group's limit; when it would be exceeded, the lower-priority members are capped first."
                 }
             }
         },
@@ -453,6 +479,9 @@
                 "description": "Pick the devices in the order you want them served — the first one you select is priority 1 (served first when power is contended), the next is priority 2, and so on. To change the order, remove the chips and re-add them in the order you want. Any device you leave out keeps its current ranking at the end. Note: an operating mode's urgency tier can still override this order.",
                 "data": {
                     "priority_order": "Priority order (first = highest priority)"
+                },
+                "data_description": {
+                    "priority_order": "Drag to reorder. Decides which load is served first when there is not enough power for all of them — this ordering only takes effect in the Priority and Sequential distribution modes."
                 }
             },
             "hub_grid": {
@@ -533,7 +562,8 @@
                     "battery_max_discharge_power": "Maximum power the inverter can discharge from the battery. Check your inverter specs or battery app.",
                     "battery_soc_full": "SOC at or above which the battery counts as full. A smart plug in Excess mode runs once the battery reaches this level (or whenever the site is exporting).",
                     "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak.",
-                    "battery_capacity_kwh": "The kWh your battery's SOC percentage spans (usable capacity). 0 disables the PV clipping forecast."
+                    "battery_capacity_kwh": "The kWh your battery's SOC percentage spans (usable capacity). 0 disables the PV clipping forecast.",
+                    "battery_soc_entity_id": "The battery's state-of-charge percentage. This is what the SOC-gated operating modes decide on: how far each mode may drain the stored solar buffer, and when a battery counts as full."
                 }
             },
             "inverter": {
@@ -561,7 +591,7 @@
                     "battery_nominal_voltage": "Battery nominal voltage",
                     "inverter_charge_limit_normal": "Normal charge limit",
                     "inverter_charge_limit_minimum": "Minimum charge limit",
-                    "inverter_charge_control_interval": "Minimum time between writes",
+                    "inverter_charge_control_interval": "How long a reduction must hold",
                     "inverter_charge_control_deadband": "Write deadband",
                     "inverter_soc_limit_entity_ids": "Battery SOC ceiling entities (optional)",
                     "inverter_soc_limit_normal_entity_id": "Normal SOC ceiling source (optional)"
@@ -579,10 +609,16 @@
                     "battery_nominal_voltage": "Fallback for the conversion — 51.2 V for a 16S LFP pack, 25.6 V for 8S.",
                     "inverter_charge_limit_normal": "Written back when the forecast releases the limit, in the same unit as the target entity. 0 restores the entity's own maximum, which is where an unmanaged inverter sits.",
                     "inverter_charge_limit_minimum": "Lowest limit ever written while the forecast is restricting charging, in the register's own unit. A small floor (a couple of amps) lets the battery keep up with the house draw at the reserved ceiling instead of slowly cycling below it. 0 applies the recommendation as-is.",
-                    "inverter_charge_control_interval": "These registers go over Modbus and some firmwares write them to EEPROM, so writes are paced rather than sent every cycle.",
+                    "inverter_charge_control_interval": "A LOWER charge limit is written only once every sample in this window agrees on it, so a kettle, a passing cloud or a car plugging in costs no register write; a HIGHER limit is written as soon as it is due, and the cap engaging is written at once. Also the minimum time between writes while a limit is being released, and for the SOC ceiling. 300 s suits every site \u2014 these registers go over Modbus and some firmwares write them to EEPROM.",
                     "inverter_charge_control_deadband": "As a percentage of the normal charge limit. A new recommendation closer than this to what the register already holds is not written.",
                     "inverter_soc_limit_entity_ids": "The entities holding this battery's 'charge up to %' ceiling. On a Deye that is not one register but one entity per time-of-use slot, so select every slot the battery may charge in — the recommended max SOC is written to all of them together. Leave empty to keep the recommendation advisory. Selecting slots adds a Battery SOC Control switch, which must be turned on before anything is written.",
-                    "inverter_soc_limit_normal_entity_id": "Where the everyday ceiling comes from: the slots track this entity, and the forecast may only push them below it, never above, so your own automations keep owning it. Without it, the everyday ceiling is 100%. If it is set but unavailable, nothing is written that cycle rather than a ceiling being guessed."
+                    "inverter_soc_limit_normal_entity_id": "Where the everyday ceiling comes from: the slots track this entity, and the forecast may only push them below it, never above, so your own automations keep owning it. Without it, the everyday ceiling is 100%. If it is set but unavailable, nothing is written that cycle rather than a ceiling being guessed.",
+                    "inverter_max_power": "Nameplate rated power from this inverter's datasheet. Set to 0 to leave unconstrained.",
+                    "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase limits.",
+                    "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
+                    "battery_soc_entity_id": "The battery's state-of-charge percentage. This is what the SOC-gated operating modes decide on: how far each mode may drain the stored solar buffer, and when a battery counts as full.",
+                    "battery_max_charge_power": "The fastest this battery may be charged. Used as the charge sink in the Excess trigger — while the battery can still absorb this much, the site has somewhere to put its production and Excess loads stay off.",
+                    "battery_max_discharge_power": "The fastest this battery may be discharged. Caps how much stored energy the engine counts on when deciding what the inverter can deliver to a load."
                 }
             },
             "plug": {
@@ -596,7 +632,8 @@
                     "charger_priority": "Priority (1 = highest)",
                     "plug_power_monitor_entity_id": "Power monitoring sensor (optional)",
                     "update_frequency": "Update frequency",
-                    "solar_grace_period": "Solar/Excess grace period"
+                    "solar_grace_period": "Solar/Excess grace period",
+                    "binary_min_off_time": "Minimum off time"
                 },
                 "data_description": {
                     "plug_power_rating": "The power this device draws when turned on. Used for allocation calculations. Ignored when a power monitor sensor is configured.",
@@ -605,7 +642,9 @@
                     "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "plug_power_monitor_entity_id": "When set, the actual measured power is used instead of the fixed power rating for more accurate allocation.",
                     "update_frequency": "How often to re-evaluate whether this plug should be turned on or off.",
-                    "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately."
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately.",
+                    "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling — an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
+                    "plug_switch_entity_id": "The switch this integration turns on and off. Anything plugged in behind it is managed as one on/off load."
                 }
             },
             "power_station": {
@@ -638,7 +677,10 @@
                     "station_max_charge_power": "The most the station may draw. Set below the hardware's own maximum to cap it.",
                     "station_normal_reserve": "Held day to day. The station discharges down to this level to run its own loads, and charges no further from the grid.",
                     "station_storm_reserve": "Held while the Storm Reserve switch is on — charged from any source and not discharged below.",
-                    "solar_grace_period": "How long to keep charging at minimum when solar/excess conditions are no longer met."
+                    "solar_grace_period": "How long to keep charging at minimum when solar/excess conditions are no longer met.",
+                    "connected_to_phase": "Which electrical phase(s) the station's AC input is wired to. Determines which phase capacity its charging draws from.",
+                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "update_frequency": "How often to re-evaluate the station's charging speed and reserve."
                 }
             },
             "hot_water_tank": {
@@ -656,7 +698,23 @@
                     "tank_power_entity_id": "Power sensor (optional)",
                     "tank_power_device_id": "Power device (optional)",
                     "update_frequency": "Update frequency",
-                    "solar_grace_period": "Solar/Excess grace period"
+                    "solar_grace_period": "Solar/Excess grace period",
+                    "binary_min_off_time": "Minimum off time"
+                },
+                "data_description": {
+                    "climate_entity_id": "The climate entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint.",
+                    "heating_element_power": "Rated power of the heating element — used for power allocation when no power sensor is configured.",
+                    "tank_away_temperature": "Minimal / frost-protection setpoint. Used by Freeze Protection mode and as the low end of Solar Priority.",
+                    "tank_normal_temperature": "Baseline target temperature.",
+                    "tank_boost_temperature": "High target used when surplus energy is available or the battery is above its target SOC.",
+                    "tank_prioritize_below_normal": "When on, a Solar Priority tank that has dropped below its Normal temperature is promoted to the Normal urgency tier, so it wins contention against other Solar Priority loads. It does not change where the power comes from — the tank still never uses the grid and still stops at the battery's minimum SOC.",
+                    "connected_to_phase": "Which electrical phase(s) the heating element is wired to.",
+                    "charger_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "tank_power_entity_id": "Optional sensor reporting the element's live power draw — used instead of the fixed rating when present.",
+                    "tank_power_device_id": "Optionally pick the smart relay/outlet powering the tank; its power sensor is resolved automatically.",
+                    "update_frequency": "How often to re-evaluate the tank.",
+                    "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping.",
+                    "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling — an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it."
                 }
             },
             "charger": {
@@ -719,7 +777,8 @@
                     "circuit_group_members": "Member loads"
                 },
                 "data_description": {
-                    "circuit_group_current_limit": "The amperage rating of the circuit breaker shared by the loads in this group."
+                    "circuit_group_current_limit": "The amperage rating of the circuit breaker shared by the loads in this group.",
+                    "circuit_group_members": "The loads sharing one breaker or sub-feed. Their combined draw is held under the group's limit; when it would be exceeded, the lower-priority members are capped first."
                 }
             }
         }

@@ -143,9 +143,25 @@ class LoadJugglerInverterDataSensor(
         self._attr_native_value = None
 
     def _read_site_data(self):
-        value = self._my_inverter_data().get(self._defn["data_key"])
-        if value is not None:
-            self._attr_native_value = round(float(value), self._defn["decimals"])
+        """This cycle's figure, or unknown when this inverter has none.
+
+        Same contract as the hub data sensors: None from the producer means "no
+        measurement this cycle" — this inverter's production sensor is
+        unreadable with nothing to hold, so the fleet substituted 0 W for the
+        calculation and refuses to publish it. Clearing shows `unknown`;
+        holding the last value would freeze a stale reading that looks live,
+        which is precisely the fabrication the None exists to prevent.
+
+        An empty section (before the first cycle, or an inverter the hub has
+        not aggregated yet) leaves the value untouched.
+        """
+        own = self._my_inverter_data()
+        if not own:
+            return
+        value = own.get(self._defn["data_key"])
+        self._attr_native_value = (
+            None if value is None else round(float(value), self._defn["decimals"])
+        )
 
 
 class LoadJugglerInverterChargeControlSensor(
@@ -259,15 +275,31 @@ class LoadJugglerInverterChargeControlSensor(
 
         Called by the hub coordinator once per site cycle, after the result has
         been published — the advice this consumes is part of that publication.
-        The pacing, deadband and once-only release all live in
+        The directional pacing, deadband and the upward slew limit all live in
         ``control/inverter.py`` and are wall-clock based, so they are unaffected
-        by how often this runs.
+        by how often this runs: a faster cadence feeds the downward persistence
+        window more samples of the same wall-clock window, not a shorter one.
+
+        The hub entry rides along because the slew step is a site-level number
+        (the Excess trigger margin), the way ``control/ocpp.py`` and
+        ``control/power_station.py`` are handed the site voltage.
         """
         # None both when the forecast is off and when it has released the
         # limit — the control treats them the same way, as "restore".
-        advice_w = self._inverter_section(hub_data).get("forecast_charge_limit_w")
+        section = self._inverter_section(hub_data)
+        advice_w = section.get("forecast_charge_limit_w")
+        # The forecast's charge GATE, which the control's downward persistence
+        # window needs in order to tell the cap ENGAGING (protective, written at
+        # once) from a steady-state correction (paced). Missing means a hub that
+        # published no gate state, and the control degrades to writing
+        # reductions immediately — see ``send_inverter_charge_limit``.
         await send_inverter_charge_limit(
-            self.hass, self.config_entry, advice_w, time.monotonic()
+            self.hass,
+            self.config_entry,
+            self._hub_entry,
+            advice_w,
+            time.monotonic(),
+            section.get("forecast_charge_limiting"),
         )
         self._read_control_status()
 

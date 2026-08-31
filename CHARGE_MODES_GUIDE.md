@@ -383,16 +383,28 @@ Threshold-based charging that starts when excess export exceeds a configured thr
 
 **Behavior:**
 - Threshold-based charging that uses excess export above threshold
-- Starts charging when `export_power > threshold`
+- Starts charging once `export_power >= threshold` — at the load's **minimum
+  current**, even when the excess is smaller than that minimum
 - Charging rate: `max(min_current, (export_power - threshold) / voltage)`
 
 **Logic:**
 ```
-If export_power > threshold:
+If export_power >= threshold:
     charge_current = max(min_current, (export_power - threshold) / voltage)
 Else:
     No charging
 ```
+
+**The threshold starts the load; the excess only sizes it.** A car cannot be
+charged below the EVSE's minimum current, so a permit cut to the size of the
+momentary excess would be a permit the hardware cannot express — and gating the
+start on it would leave the load off on exactly the site that needs it most: with
+the inverter's **Battery Charge Control** holding export just under the limit,
+the excess sits *at* the threshold and peaks only between register writes. The
+minimum is therefore a floor for as long as the threshold is met, which is the
+same threshold-hit engagement a smart plug in this mode has always had (its whole
+rating overshoots the excess too). Above the minimum nothing changes — the rate
+follows the excess.
 
 **When to use:**
 - Want to prevent excessive export to grid
@@ -416,7 +428,7 @@ battery is a second sink alongside grid export, so both are summed into a single
 comparison — one number decides Excess for every load:
 
 ```
-margin = (grid export + battery charge power + our own managed load draws)
+margin = (solar export + battery charge power + our own managed load draws)
        - (export allowance + battery charge allowance)
 
 Excess is on when  margin >= 0   — and the margin IS the excess pool, in watts
@@ -427,16 +439,41 @@ A sink contributes its allowance only while it can actually absorb:
 | Sink | Allowance | Zeroed when |
 | ---- | --------- | ----------- |
 | Grid export | **Grid Export Limit − Excess Trigger Margin** | The site is off-grid — nothing can leave. (No limit configured = infinite allowance: the grid absorbs everything, so grid-side Excess never triggers.) |
-| Battery charging | **Battery Max Charge Power** | No battery is configured, **or** SOC is at/above the **Battery Full SOC** |
+| Battery charging | **Battery Max Charge Power** — or the lower rate the inverter's **Battery Charge Control** is actually enforcing | No battery is configured, **or** SOC is at/above the **Battery Full SOC** |
 
 The margin (default 500 W) exists because an inverter curtails slightly *under*
 the export limit — a trigger exactly at the limit would never fire. Enter your
 real physical/contract limit; the trigger takes care of itself.
 
+**Only solar export counts.** The export in that sum is the site's own
+*production* leaving the meter, so the battery's discharge is subtracted from
+what the CT reads. `export − battery discharge` is `production − consumption` in
+every case, which is why one subtraction covers every inverter work mode: a
+battery serving the **house** has nothing at the meter to take away, a battery
+**selling** to the grid is taken away in full, and a **charging or idle** battery
+changes nothing at all. Without it, an inverter in a sell mode (Deye "Selling
+First", a time-of-use slot with sell semantics) would push the meter past the
+trigger on stored energy and start an Excess load on the house battery — charging
+the car from the battery, at a loss. On a site whose work mode keeps the battery
+off the meter (Zero-Export-to-CT and every equivalent self-consumption mode) this
+changes nothing at all.
+
 The full-battery rule matters: a full battery draws no charge power, so leaving
 its rating in the allowance would make the trigger unreachable exactly when the
 site is dumping the most energy. Zeroing it is the same treatment as a battery
 that isn't there.
+
+**A battery held below its rating** is the same rule one step short of full. When
+an inverter's **Battery Charge Control** is armed and the PV clipping forecast
+has it holding the charge register at, say, 6.5 kW of a 10 kW rating, the missing
+3.5 kW is not a place this site can put production either — so the allowance is
+the rate the battery is *permitted* to take, not its plate rating. Counting the
+plate would put the trigger 3.5 kW out of reach for the whole clipping window,
+which is precisely when the site has surplus it cannot place and Excess loads are
+what it has to put it into. Only actual enforcement narrows the allowance: a
+battery that is merely *advised* a lower rate (the switch off, nothing written to
+the inverter) really does still charge at its plate, and in a multi-inverter fleet
+only the enforcing inverter's share narrows.
 
 **Multiple batteries** (inverter entries): each battery's charge rating counts
 toward the allowance only while *that* battery is below *its own* Full SOC —
@@ -448,14 +485,18 @@ however high the fleet average sits.
 
 Zero counts as on, because it is the saturated case — export sitting at the
 allowance *and* the battery pulling its maximum charge rate is precisely "nothing
-more can be absorbed".
+more can be absorbed". A margin of zero is a pool of zero amps, and a modulating
+load (EVSE, power station) still starts — at its **minimum**, on the strength of
+the verdict alone, the same floor the batteryless threshold above describes. The
+pool only sizes the rate above that minimum.
 
 A site with no allowance at all therefore sits exactly at the trigger: off-grid
 with a full battery. That is correct — a full battery cannot take another watt,
-and an off-grid inverter in that state is curtailing — and it is self-limiting,
-because a margin of zero is a pool of zero, so EVSEs and plugs, which need a pool
-above zero, still get nothing. Only a consumer reading the plain verdict acts on
-it: the hot water tank's boost setpoint.
+and an off-grid inverter in that state is curtailing. The loads that read the
+plain verdict run there: the hot water tank's boost setpoint, a plug on its
+near-full trigger, a modulating load at its minimum. It self-corrects rather than
+self-limits — if production cannot cover them the battery discharges, SOC leaves
+"full", its charge allowance returns and the verdict clears.
 
 **Why a battery below its maximum blocks Excess.** If the battery still has
 charge headroom, that surplus belongs in the battery, not in an opportunistic
@@ -484,9 +525,10 @@ using. A 2 kW load on an array with 3 kW curtailed lifts the margin to 2 kW; on 
 array with only 1 kW spare it settles at 1 kW, the amount that was genuinely free.
 
 No SOC floor guards this, and none is needed. A **discharging** battery
-contributes nothing to the absorbed side, so the moment a load pushes the battery
-past charging and into discharge, the margin collapses and Excess clears on its
-own. While the margin does hold, the worst a load can do is make the battery
+contributes nothing to the absorbed side — and grid-tied its discharge comes off
+the export term as well (see *Only solar export counts* above) — so the moment a
+load pushes the battery past charging and into discharge, the margin collapses
+and Excess clears on its own. While the margin does hold, the worst a load can do is make the battery
 charge more slowly — it can never drain it. Beyond the full-battery rule, SOC
 plays no part in the Excess decision on any site.
 
@@ -542,6 +584,16 @@ Production can no longer cover household + our 2000W load, so the battery is
 discharging 1000W to help. Discharge counts as absorbing nothing.
 margin = 0 (charge) + 2000 (our load) - 5000 = -3000W
 Result: Excess clears — no SOC floor needed, the formula self-corrects
+```
+
+*Scenario 7: Grid-tied, the battery is selling to the grid*
+```
+Battery SOC: 98% — full, so its charge allowance drops out
+Battery discharging 3000W, which leaves the site through the meter
+Export at the CT: 14000W, of which only 11000W is the array's
+absorbed = 14000 - 3000 = 11000W   capacity = 13000W
+Result: No charging — stored energy is not surplus, whatever the meter reads.
+        Counting it would start a load on the house battery
 ```
 
 ---
@@ -657,8 +709,10 @@ sensors configured the commanded speed is used instead.
 Minimum and Maximum Charge Power are set during configuration and adjustable as
 sliders afterwards. They are deliberately *not* read from the device: a station
 whose hardware accepts 2400 W can be held to less. The minimum matters more than
-it sounds — an allocation below it cannot be expressed at all, so the mode drops
-the reserve instead of writing a rate.
+it sounds — an allocation below it cannot be expressed at all, so it is the floor
+the station charges at for as long as its mode says charge (in Excess mode, for as
+long as the verdict holds, however small the momentary surplus). Only when the
+mode itself says stop does the reserve drop instead of a rate being written.
 
 ### How It Works
 
@@ -682,14 +736,21 @@ Mode: Excess | Margin: 900W | Min/Max charge power: 200/2400W
 Result: Charge at 900W (floored to 900), reserve raised to the 90% charge limit
 ```
 
-*Scenario 2: Excess mode, margin too small*
+*Scenario 2: Excess mode, margin smaller than the minimum*
 ```
 Mode: Excess | Margin: 150W (below the 200W minimum)
+Result: Charge at 200W — the verdict is what starts the station, and 200 W is the
+        smallest rate it can express, so the minimum is the floor
+```
+
+*Scenario 3: Excess mode, no verdict*
+```
+Mode: Excess | Margin: -900W (the site can still place its production)
 Result: Not charging — reserve dropped to 30%, wall draw goes to zero, and the
         station runs its own loads from its battery
 ```
 
-*Scenario 3: Storm reserve*
+*Scenario 4: Storm reserve*
 ```
 Storm Reserve switch: on | Storm level: 80%
 Result: Reserve 80%, charge speed at maximum, competing as a must-run load

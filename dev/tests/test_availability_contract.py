@@ -29,6 +29,7 @@ import ast
 import math
 import re
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -38,15 +39,41 @@ load_pure_modules(engine_modules=("hub_calculation",))
 
 from custom_components.dynamic_ocpp_evse import units
 from custom_components.dynamic_ocpp_evse.const import (
+    CONF_CLIMATE_ENTITY_ID,
+    CONF_CONNECTED_TO_PHASE,
+    CONF_HEATING_ELEMENT_POWER,
     CONF_INVERT_PHASES,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
+    CONF_PLUG_POWER_MONITOR_ENTITY_ID,
+    CONF_PLUG_POWER_RATING,
+    CONF_PLUG_SWITCH_ENTITY_ID,
+    CONF_SOLAR_PRODUCTION_ENTITY_ID,
+    CONF_STATION_AC_INPUT_ENTITY_ID,
+    CONF_STATION_AC_OUTPUT_ENTITY_ID,
+    CONF_STATION_CHARGE_SPEED_ENTITY_ID,
+    CONF_TANK_POWER_ENTITY_ID,
+    DEVICE_TYPE_HOT_WATER_TANK,
+    DEVICE_TYPE_PLUG,
+    DOMAIN,
     GRID_STALE_TIMEOUT,
+    INPUT_STALE_TIMEOUT,
+)
+from custom_components.dynamic_ocpp_evse.calculations.models import (
+    INACTIVE_STATUSES,
+    LoadContext,
+)
+from custom_components.dynamic_ocpp_evse.engine.hub_result import _draw_is_unknown
+from custom_components.dynamic_ocpp_evse.engine.load_builders import (
+    _build_hot_water_tank_load,
+    _build_plug_load,
+    _build_power_station_load,
 )
 from custom_components.dynamic_ocpp_evse.engine.readers import (
     _UNAVAILABLE,
     _read_entity,
+    _read_fleet_member,
     _read_grid_phases,
     _resolve_grid_phases,
     _track_grid_stale,
@@ -63,9 +90,10 @@ BREAKER = 25.0
 # ever touched, which is exactly why units.py stays importable without HA.
 # ---------------------------------------------------------------------------
 class FakeState:
-    def __init__(self, state, unit="A"):
+    def __init__(self, state, unit="A", **attrs):
         self.state = state
         self.attributes = {"unit_of_measurement": unit} if unit else {}
+        self.attributes.update(attrs)
 
 
 class FakeStates:
@@ -79,6 +107,9 @@ class FakeStates:
 class FakeHass:
     def __init__(self, mapping=None):
         self.states = FakeStates(mapping or {})
+        # Only the inverter runtime bucket is ever looked up (the enforced
+        # charge limit); an empty dict is the "nothing is being held back" case.
+        self.data = {}
 
 
 class FakeEntry:
@@ -262,49 +293,63 @@ def test_grid_phases_inversion_cannot_turn_the_sentinel_into_a_number():
 
 
 def test_resolve_leaves_healthy_readings_alone():
-    resolved, stale = _resolve_grid_phases([5.0, -2.0, None], {}, BREAKER)
+    resolved, stale, assumed = _resolve_grid_phases([5.0, -2.0, None], {}, BREAKER)
     assert resolved == [5.0, -2.0, None]
     assert stale is False
+    assert assumed == (False, False, False)
 
 
 def test_resolve_holds_the_last_ema_during_a_brief_dropout():
     # Failure mode 1: the CT blinks. Holding the last known EMA means a brief
     # dropout has no visible effect at all.
     ema = {"grid_0": 7.5, "grid_1": -1.5}
-    resolved, stale = _resolve_grid_phases(
+    resolved, stale, assumed = _resolve_grid_phases(
         [_UNAVAILABLE, _UNAVAILABLE, None], ema, BREAKER
     )
     assert resolved == [7.5, -1.5, None]
     assert stale is True
+    # A held value is an estimate, NOT the breaker fabrication — so it stays
+    # publishable as a measurement and nothing is flagged.
+    assert assumed == (False, False, False)
 
 
 def test_resolve_assumes_the_breaker_on_a_cold_start():
     # Failure mode 2: unavailable from the very first cycle, no EMA history.
     # Worst case on purpose — a fully loaded phase hands out no headroom, where
     # the old 0 A fallback handed out all of it.
-    resolved, stale = _resolve_grid_phases([_UNAVAILABLE, None, None], {}, BREAKER)
+    resolved, stale, assumed = _resolve_grid_phases(
+        [_UNAVAILABLE, None, None], {}, BREAKER
+    )
     assert resolved == [BREAKER, None, None]
     assert stale is True
     assert resolved[0] != 0
+    # ...and the substitution is reported, because the number is a safety
+    # fabrication and must not be published as a grid measurement.
+    assert assumed == (True, False, False)
 
 
 def test_resolve_is_per_phase():
     # One dead CT must not discard the two good ones, and each dead phase picks
     # its own substitute from its own history.
     ema = {"grid_0": 9.0}
-    resolved, stale = _resolve_grid_phases(
+    resolved, stale, assumed = _resolve_grid_phases(
         [_UNAVAILABLE, 3.0, _UNAVAILABLE], ema, BREAKER
     )
     assert resolved == [9.0, 3.0, BREAKER]
     assert stale is True
+    # Held, read, assumed — the flag distinguishes all three per phase.
+    assert assumed == (False, False, True)
 
 
 def test_resolve_holds_a_zero_ema_because_zero_can_be_a_real_reading():
     # 0 A is a legitimate measurement (a balanced phase). "Held 0" and
     # "invented 0" are different things, and only the second one is the bug.
-    resolved, stale = _resolve_grid_phases([_UNAVAILABLE], {"grid_0": 0.0}, BREAKER)
+    resolved, stale, assumed = _resolve_grid_phases(
+        [_UNAVAILABLE], {"grid_0": 0.0}, BREAKER
+    )
     assert resolved == [0.0]
     assert stale is True
+    assert assumed == (False,)
 
 
 def test_resolve_never_lets_anything_unusable_reach_the_engine():
@@ -316,7 +361,7 @@ def test_resolve_never_lets_anything_unusable_reach_the_engine():
     junk = [_UNAVAILABLE, float("nan"), float("inf"), None, "unavailable", 4.0]
     for value in junk:
         for ema in ({}, {"grid_0": 8.0}):
-            resolved, _ = _resolve_grid_phases([value], dict(ema), BREAKER)
+            resolved, _, _ = _resolve_grid_phases([value], dict(ema), BREAKER)
             assert resolved[0] is None or not units.is_unusable_number(resolved[0]), (
                 value,
                 ema,
@@ -327,6 +372,343 @@ def test_resolve_does_not_mutate_its_input():
     raw = [_UNAVAILABLE, None, None]
     _resolve_grid_phases(raw, {}, BREAKER)
     assert raw == [_UNAVAILABLE, None, None]
+
+
+def test_resolve_flags_a_phase_only_when_it_invented_the_breaker_value():
+    """The publisher's signal has to mean exactly one thing.
+
+    Flagged if and only if this phase had no usable reading AND no EMA
+    history — i.e. the resolved value is the invented main-breaker worst case,
+    which is the one substitute that must not reach the published grid
+    measurements. Never flagged for a real reading, for an absent CT, or for a
+    held EMA value (a held value is an estimate of what the phase was doing
+    moments ago, and blanking the grid sensors through every brief dropout
+    would be its own bug).
+    """
+    raws = [_UNAVAILABLE, 3.0, None, float("nan")]
+    for ema in ({}, {"grid_0": 8.0}, {"grid_3": -1.0}):
+        resolved, _, assumed = _resolve_grid_phases(raws, dict(ema), BREAKER)
+        assert len(assumed) == len(raws)
+        for i, (value, flag) in enumerate(zip(resolved, assumed)):
+            invented = (
+                raws[i] is not None
+                and units.is_unusable_number(raws[i])
+                and f"grid_{i}" not in ema
+            )
+            assert flag is invented, (i, ema)
+            if flag:
+                assert value == BREAKER
+
+
+# ---------------------------------------------------------------------------
+# _read_fleet_member: which solar figures are measurements
+# ---------------------------------------------------------------------------
+#
+# The same two-substitutes distinction as the grid CTs, one layer along. A
+# configured production sensor that cannot be read resolves to either a HELD
+# EMA value (an estimate of what the array was doing moments ago — publishable)
+# or an invented 0 W (a fresh start with no history, or the stale guard having
+# given up on it — not publishable). ``solar_assumed`` marks the second case
+# only, and the calculation goes on using the 0 W either way.
+
+_SOLAR = "sensor.solar"
+
+
+class FakeInverterEntry(FakeEntry):
+    """A minimal inverter config entry: an id, a title, and its data dict."""
+
+    title = "Inverter"
+
+
+def _solar_entry(entity_id=_SOLAR):
+    return FakeInverterEntry({CONF_SOLAR_PRODUCTION_ENTITY_ID: entity_id})
+
+
+def _read_solar(state, ema=None, stale_for=None, entity_id=_SOLAR):
+    """One member read, returning ``(solar_measured, solar_assumed)``.
+
+    ``ema`` seeds the smoothing history, ``stale_for`` how many seconds this
+    sensor has already been continuously unavailable (which is what decides
+    whether the stale guard has swapped its 0 W fallback in yet).
+    """
+    entry = _solar_entry(entity_id)
+    key = f"solar_{entry.entry_id}"
+    hass = FakeHass({_SOLAR: state} if state is not None else {})
+    hub_runtime = {}
+    if stale_for is not None:
+        hub_runtime["_input_stale_since"] = {key: time.monotonic() - stale_for}
+    ema_inputs = dict(ema or {})
+    member = _read_fleet_member(
+        hass, entry, hub_runtime, ema_inputs, V, legacy=False
+    )
+    return member.solar_measured, member.solar_assumed
+
+
+def test_a_readable_production_sensor_is_a_measurement():
+    measured, assumed = _read_solar(FakeState("1800", unit="W"))
+    assert measured == 1800.0
+    assert assumed is False
+
+
+def test_a_genuine_zero_reading_is_a_measurement():
+    # Night, or an array genuinely producing nothing. "Measured 0" and
+    # "invented 0" are different figures and only the second one is the bug.
+    measured, assumed = _read_solar(FakeState("0", unit="W"))
+    assert measured == 0.0
+    assert assumed is False
+
+
+def test_a_cold_start_on_a_dead_sensor_invents_its_zero():
+    # Unreadable from the very first cycle: nothing to hold, so 0 W goes into
+    # the calculation and the flag says it must not be published.
+    for state in (None, FakeState("unavailable", unit="W"), FakeState("", unit="W")):
+        measured, assumed = _read_solar(state)
+        assert measured == 0.0, state
+        assert assumed is True, state
+
+
+def test_a_brief_dropout_holds_its_ema_and_stays_publishable():
+    measured, assumed = _read_solar(
+        FakeState("unavailable", unit="W"),
+        ema={"solar_hub": 4200.0},
+        stale_for=1,
+    )
+    assert measured == 4200.0
+    assert assumed is False
+
+
+def test_the_stale_guard_giving_up_is_an_invented_zero():
+    # Past INPUT_STALE_TIMEOUT the guard drops the held value for its 0 W
+    # fallback — deliberately, so a sensor that died at 8 kW cannot feed
+    # phantom production forever. That 0 is a substitute, not a reading, which
+    # is what makes a mid-run None reachable for the solar keys.
+    measured, assumed = _read_solar(
+        FakeState("unavailable", unit="W"),
+        ema={"solar_hub": 8000.0},
+        stale_for=INPUT_STALE_TIMEOUT + 5,
+    )
+    assert measured == 0.0
+    assert assumed is True
+
+
+def test_no_production_sensor_configured_is_not_a_fabrication():
+    # Nothing was invented: this member derives its production from its
+    # inverter output, or the site falls back to grid export.
+    entry = FakeInverterEntry({})
+    member = _read_fleet_member(FakeHass({}), entry, {}, {}, V, legacy=False)
+    assert member.has_solar_entity is False
+    assert member.solar_measured is None
+    assert member.solar_assumed is False
+
+
+# ---------------------------------------------------------------------------
+# Managed draws: which loads carry an invented 0
+# ---------------------------------------------------------------------------
+#
+# An unreadable current/power monitor leaves its load at 0 A, so a charging car
+# could publish 0 W of Current Managed Power. The 0 stays for the feedback
+# loop; ``draw_assumed`` (set by the builders) plus the load's own engagement
+# (_draw_is_unknown) decide whether the published figures may contain it.
+
+
+def _load(status="Charging", assumed=False, device_type="evse"):
+    load = LoadContext(
+        load_id="load_1",
+        entity_id="load_1",
+        min_current=6,
+        max_current=16,
+        phases=1,
+        connector_status=status,
+        device_type=device_type,
+    )
+    load.draw_assumed = assumed
+    return load
+
+
+def test_a_measured_draw_is_never_unknown():
+    for status in ("Charging", "Available", "SuspendedEV", "Faulted"):
+        for booked in (0, 8.0):
+            assert _draw_is_unknown(_load(status=status), booked) is False
+
+
+def test_an_engaged_load_with_no_reading_is_unknown():
+    # The defect itself: the car is charging, its monitor is unreadable, and
+    # the 0 A it carries must not be published as 0 W of managed power.
+    assert _draw_is_unknown(_load(status="Charging", assumed=True), 0) is True
+    assert _draw_is_unknown(_load(status="SuspendedEVSE", assumed=True), 0) is True
+    # A tank whose thermostat is calling for heat, and a plug switched on (the
+    # HA layer reports "Charging" for both).
+    for device_type in (DEVICE_TYPE_HOT_WATER_TANK, DEVICE_TYPE_PLUG):
+        assert (
+            _draw_is_unknown(
+                _load(status="Charging", assumed=True, device_type=device_type), 0
+            )
+            is True
+        )
+
+
+def test_an_idle_load_with_no_reading_still_publishes_its_zero():
+    """The condition that keeps a whole site's figure alive.
+
+    An offline OCPP charger takes every one of its sensors with it, which is
+    the common case by far — and for a load the engine booked nothing for that
+    also reports itself inactive, 0 W is not a guess: our own allocation and
+    its own status are facts we hold without any meter.
+    """
+    for status in sorted(INACTIVE_STATUSES):
+        assert _draw_is_unknown(_load(status=status, assumed=True), 0) is False
+        # ...unless we are actually giving it power, whatever it reports.
+        assert _draw_is_unknown(_load(status=status, assumed=True), 6.0) is True
+
+
+def test_the_booked_footprint_alone_can_make_a_draw_unknown():
+    # An unmetered EVSE books its whole permit as its footprint, so a nonzero
+    # booking is the engine saying "this load is being fed" even when its
+    # status sensor died along with its meter.
+    assert _draw_is_unknown(_load(status="Unknown", assumed=True), 10.0) is True
+    assert _draw_is_unknown(_load(status="Unknown", assumed=True), None) is False
+
+
+# ---------------------------------------------------------------------------
+# The builders: which monitor reading produced which flag
+# ---------------------------------------------------------------------------
+
+
+def _load_hass(mapping):
+    hass = FakeHass(mapping)
+    hass.data = {DOMAIN: {"loads": {}}}
+    return hass
+
+
+def test_a_plug_flags_only_an_unreadable_monitor():
+    entry = FakeEntry(
+        {
+            CONF_PLUG_SWITCH_ENTITY_ID: "switch.plug",
+            CONF_PLUG_POWER_MONITOR_ENTITY_ID: "sensor.plug_power",
+            CONF_CONNECTED_TO_PHASE: "A",
+            CONF_PLUG_POWER_RATING: 2000,
+        }
+    )
+    on = FakeState("on", unit=None)
+
+    live = _build_plug_load(
+        _load_hass({"switch.plug": on, "sensor.plug_power": FakeState("1500", "W")}),
+        entry, V, "plug_1", 1,
+    )
+    assert live.draw_assumed is False
+    assert live.l1_current > 0
+
+    # A real 0 W (switched on, appliance idle) is a measurement.
+    zero = _build_plug_load(
+        _load_hass({"switch.plug": on, "sensor.plug_power": FakeState("0", "W")}),
+        entry, V, "plug_1", 1,
+    )
+    assert zero.draw_assumed is False
+
+    # Unreadable: same 0 A internally, flagged for publication.
+    dead = _build_plug_load(
+        _load_hass(
+            {"switch.plug": on, "sensor.plug_power": FakeState("unavailable", "W")}
+        ),
+        entry, V, "plug_1", 1,
+    )
+    assert dead.draw_assumed is True
+    assert dead.l1_current == zero.l1_current == 0
+
+
+def test_a_plug_with_no_monitor_configured_is_not_flagged():
+    # Its draw is its configured rating while switched on — a documented
+    # estimate, not an invented measurement, and unchanged by this fix.
+    entry = FakeEntry(
+        {
+            CONF_PLUG_SWITCH_ENTITY_ID: "switch.plug",
+            CONF_CONNECTED_TO_PHASE: "A",
+            CONF_PLUG_POWER_RATING: 2000,
+        }
+    )
+    load = _build_plug_load(
+        _load_hass({"switch.plug": FakeState("on", unit=None)}), entry, V, "plug_1", 1
+    )
+    assert load.draw_assumed is False
+    assert load.l1_current > 0
+
+
+def test_a_tank_flags_only_an_unreadable_power_sensor():
+    entry = FakeEntry(
+        {
+            CONF_CLIMATE_ENTITY_ID: "climate.tank",
+            CONF_TANK_POWER_ENTITY_ID: "sensor.tank_power",
+            CONF_CONNECTED_TO_PHASE: "A",
+            CONF_HEATING_ELEMENT_POWER: 2000,
+        }
+    )
+    heating = FakeState("heat", unit=None, hvac_action="heating")
+
+    live = _build_hot_water_tank_load(
+        _load_hass({"climate.tank": heating, "sensor.tank_power": FakeState("1900", "W")}),
+        entry, V, "tank_1", 1,
+    )
+    assert live.draw_assumed is False
+
+    dead = _build_hot_water_tank_load(
+        _load_hass(
+            {"climate.tank": heating, "sensor.tank_power": FakeState("unknown", "W")}
+        ),
+        entry, V, "tank_1", 1,
+    )
+    assert dead.draw_assumed is True
+    # The element is heating, so this is exactly the case that must not publish
+    # a confident 0 W.
+    assert dead.connector_status not in INACTIVE_STATUSES
+    assert dead.l1_current == 0
+
+
+def test_a_station_flags_a_dead_ac_sensor_only_when_both_are_configured():
+    """The measurement is ``ac_in − ac_out``, so it needs both sensors.
+
+    With both configured, losing either one costs the measurement and the
+    commanded-speed fallback is an estimate of what we ASKED for, not of what
+    the wall is delivering. With the sensors absent by configuration that
+    fallback is the designed answer, and flagging it would blank the site's
+    managed power for a station that never had a meter.
+    """
+    speed = FakeState("500", "W")
+    both = FakeEntry(
+        {
+            CONF_STATION_CHARGE_SPEED_ENTITY_ID: "number.st_speed",
+            CONF_STATION_AC_INPUT_ENTITY_ID: "sensor.st_in",
+            CONF_STATION_AC_OUTPUT_ENTITY_ID: "sensor.st_out",
+            CONF_CONNECTED_TO_PHASE: "A",
+        }
+    )
+    states = {
+        "number.st_speed": speed,
+        "sensor.st_in": FakeState("800", "W"),
+        "sensor.st_out": FakeState("0", "W"),
+    }
+    assert (
+        _build_power_station_load(_load_hass(states), both, V, "st_1", 1).draw_assumed
+        is False
+    )
+
+    dead = dict(states, **{"sensor.st_in": FakeState("unavailable", "W")})
+    assert (
+        _build_power_station_load(_load_hass(dead), both, V, "st_1", 1).draw_assumed
+        is True
+    )
+
+    unconfigured = FakeEntry(
+        {
+            CONF_STATION_CHARGE_SPEED_ENTITY_ID: "number.st_speed",
+            CONF_CONNECTED_TO_PHASE: "A",
+        }
+    )
+    assert (
+        _build_power_station_load(
+            _load_hass({"number.st_speed": speed}), unconfigured, V, "st_1", 1
+        ).draw_assumed
+        is False
+    )
 
 
 # ---------------------------------------------------------------------------
