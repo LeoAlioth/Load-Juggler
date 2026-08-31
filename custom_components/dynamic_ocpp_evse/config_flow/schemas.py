@@ -1111,14 +1111,11 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
             ),
         ),
         (
-            # What the entities above MEAN, because it decides whether a charge
-            # DESTINATION can be read off them at all. A genuine ceiling is a
-            # "stop charging at" and the clipping reserve is carved below it; a
-            # Deye slot SOC is a discharge floor and solar charges to 100 %
-            # regardless, so reading a destination off it invents one and
-            # throttles charging the moment SOC passes the floor. The write side
-            # uses the entity either way, which is why this is a flag and not a
-            # matter of clearing the field.
+            # What a WRITE to the entities above means on this hardware — the
+            # flag the floor-aware SOC fan-out keys on. It never changes what
+            # is READ: the destination always comes from the ceiling source
+            # when that is set (a floor whose value is not the target leaves
+            # the source unset instead). See const/inverter.py.
             vol.Required(
                 CONF_SOC_LIMIT_SEMANTICS,
                 default=defaults.get(
@@ -1131,11 +1128,11 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
                         "options": [
                             {
                                 "value": SOC_LIMIT_SEMANTICS_CEILING,
-                                "label": "Charge ceiling — the battery stops here",
+                                "label": "Charge ceiling — the battery stops charging there",
                             },
                             {
                                 "value": SOC_LIMIT_SEMANTICS_FLOOR,
-                                "label": "Discharge floor — solar still charges to 100%",
+                                "label": "Discharge floor — grid-defense level (Deye TOU slot)",
                             },
                         ],
                         "mode": "dropdown",

@@ -6172,19 +6172,24 @@ async def test_every_hub_sensor_key_is_published_by_the_engine(hass: HomeAssista
     assert not missing, f"defined but never published: {missing}"
 
 
-# --- SOC limit semantics: floor inverters have no destination to read ---------
+# --- SOC limit semantics: a write-side flag that never disturbs the read ------
 #
-# On a Deye the slot SOC is a discharge floor plus grid-charge target — solar
-# charges to 100% whatever it says — so reading a destination off it invents
-# one, and yields_to_excess then engages the charge cap the moment SOC passes
-# the floor. Observed live 2026-08-31: pack at 93% against a phantom 90%
-# "destination", register throttled, 0.01 kWh forecast to clip.
+# The flag says what the fan-out may WRITE into the slot registers (a floor
+# register must never receive a lowered ceiling — the inverter would read it as
+# a grid-charge target). It says nothing about where the pack should go: a Deye
+# whose slot value doubles as the owner's charge target points the ceiling
+# source at the slot, the reserve is carved below that number, and the band
+# above it stays the export-holding buffer the engaged feedback fills. A floor
+# whose value is NOT the target leaves the source unset — anchoring at 100% is
+# that knob's job, not this flag's.
 
 
-async def test_floor_semantics_anchors_the_destination_at_full(hass: HomeAssistant):
-    """With the entities declared a FLOOR, no destination is read: the member
-    anchors at 100% exactly as a site with nothing configured, so a pack above
-    the floor is not treated as having arrived anywhere."""
+async def test_floor_semantics_does_not_disturb_the_destination_read(
+    hass: HomeAssistant,
+):
+    """Declaring the entities a FLOOR changes nothing about the read side: the
+    configured source is still the destination, the reserve is carved below its
+    value, and a pack above it yields — identical to ceiling semantics."""
     from freezegun import freeze_time
     from custom_components.dynamic_ocpp_evse.const import (
         CONF_SOC_LIMIT_SEMANTICS,
@@ -6195,7 +6200,8 @@ async def test_floor_semantics_anchors_the_destination_at_full(hass: HomeAssista
     )
 
     hub, inverter, _rt = _no_clip_rig(hass, "floorsem", soc=93)
-    # The ceiling source reads 90 — on this inverter that is the floor.
+    # The source reads 90 — on this inverter a floor whose value is also the
+    # owner's charge target, so it is the destination all the same.
     hass.states.async_set("number.dst_normal", "90", {"unit_of_measurement": "%"})
     hass.config_entries.async_update_entry(
         inverter,
@@ -6207,10 +6213,9 @@ async def test_floor_semantics_anchors_the_destination_at_full(hass: HomeAssista
         result = run_hub_calculation(hass, hub)
 
     own = result["inverters"][inverter.entry_id]
-    # Anchored at 100, so a 93% pack is nowhere near its destination and the
-    # nothing-to-clip gate is reached: full rate, not a throttled permit.
-    assert own["forecast_battery_max_soc"] == 100
-    assert own["forecast_charge_limiting"] is False
+    # Same numbers the ceiling test below asserts: the flag is invisible here.
+    assert own["forecast_battery_max_soc"] == 90
+    assert own["forecast_charge_limiting"] is True
 
 
 async def test_ceiling_semantics_still_reads_the_destination(hass: HomeAssistant):

@@ -46,9 +46,6 @@ from ..const import (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
-    CONF_SOC_LIMIT_SEMANTICS,
-    SOC_LIMIT_SEMANTICS_FLOOR,
-    DEFAULT_SOC_LIMIT_SEMANTICS,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -673,24 +670,16 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     # fan-out defers all writes while the entity is unreadable, so nothing is
     # written from a held value either way.)
     #
-    # FLOOR-SEMANTICS INVERTERS HAVE NO DESTINATION TO READ. On a Deye the slot
-    # SOC is a discharge floor plus grid-charge target — solar charges to 100 %
-    # whatever it says — so reading a destination off it invents one, and
-    # ``yields_to_excess`` then engages the charge cap the moment SOC passes the
-    # floor. The entity still has a job on such an inverter (the SOC
-    # write-control restores the slots to it), which is why the semantics are a
-    # flag rather than the field being left empty: empty would hand the fan-out
-    # DEFAULT_SOC_LIMIT_NORMAL, and 100 in a floor register means "never
-    # discharge". None here anchors the member at 100 %, exactly as a site with
-    # nothing configured — see ``fleet.soc_target_weighted``.
-    semantics = get_entry_value(
-        entry, CONF_SOC_LIMIT_SEMANTICS, DEFAULT_SOC_LIMIT_SEMANTICS
-    )
-    soc_target_entity = (
-        None
-        if semantics == SOC_LIMIT_SEMANTICS_FLOOR
-        else get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
-    )
+    # Read regardless of the SOC-limit SEMANTICS flag: that flag says what a
+    # WRITE to the slot registers means, never where the pack should go. On a
+    # floor inverter whose slot value doubles as the owner's charge target (a
+    # Deye slot at 90 doing both jobs), pointing this source at the slot is
+    # exactly right — the reserve is carved below 90 and the 90–100 % band
+    # stays the export-holding buffer the standing ceiling's feedback fills
+    # (``recommended_charge_limit``). A floor whose value is NOT the target
+    # (a cheap-tariff 20 %) simply leaves this source unset and anchors at
+    # 100 % — that knob already existed, so the flag must not duplicate it.
+    soc_target_entity = get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
     soc_target = None
     if soc_target_entity:
         held = hub_runtime.setdefault("_soc_target_hold", {})

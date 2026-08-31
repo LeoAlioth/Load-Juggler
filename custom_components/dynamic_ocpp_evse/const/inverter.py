@@ -112,32 +112,32 @@ CONF_SOC_LIMIT_ENTITY_IDS = "inverter_soc_limit_entity_ids"
 CONF_SOC_LIMIT_NORMAL_ENTITY_ID = "inverter_soc_limit_normal_entity_id"
 DEFAULT_SOC_LIMIT_NORMAL = 100.0  # % — where an unmanaged battery ceiling sits
 
-# What the inverter's SOC entities MEAN, which decides whether a destination can
-# be read off them at all.
+# What a WRITE to the inverter's SOC entities MEANS — and only a write. This
+# flag never decides where the pack should go: the destination is always read
+# from CONF_SOC_LIMIT_NORMAL_ENTITY_ID when that is set, whatever the hardware
+# calls the register (see engine/readers.py). A floor register whose value is
+# NOT the owner's charge target simply leaves the source unset and anchors at
+# 100 % — that knob already existed, and the flag must not duplicate it.
 #
-# A genuine ceiling inverter lets its owner say "stop charging at 95 %", and the
-# clipping reserve is then carved out BELOW that number rather than below 100 %
-# — otherwise the unused 95–100 % band is reserved twice and the battery meets
-# the peak with only 5 % of room. That is what the destination is for.
+# The distinction it does carry is what the SOC fan-out may put into the slots.
+# A genuine ceiling register takes "stop charging at N %", so writing the
+# reserve-lowered recommendation into it is the whole point. A Deye slot SOC is
+# a DISCHARGE FLOOR plus grid-charge target: the same write tells the inverter
+# "grid-charge to N % and never discharge below it" — a reservation written
+# into it at night imports toward the reserve instead of holding charging back
+# (observed live 2026-08-25). The floor-aware fan-out fix keys on this flag;
+# until it ships the flag is declarative, and a floor site keeps its SOC
+# control switch off.
 #
-# A Deye's slot SOC is not that. It is a DISCHARGE FLOOR plus a grid-charge
-# target: solar charges to 100 % regardless, and the number says how low the
-# pack may go before the inverter defends it from the grid. There is no register
-# for "stop charging at" on such an inverter, so a destination read off the slot
-# entity is a fiction — and an expensive one: it makes ``yields_to_excess``
-# engage the moment SOC passes the floor, which is the FIRST gate in
-# ``recommended_charge_limit``, ahead of the nothing-to-clip check. Observed
-# live 2026-08-31: the pack at 93 % against a phantom 90 % "destination", the
-# charge register throttled, and 0.01 kWh forecast to clip.
-#
-# The entity is still needed on a floor inverter — the SOC write-control restores
-# the slots to it — so the two meanings have to be told apart rather than the
-# field left empty. Empty would hand the fan-out its fallback of
-# DEFAULT_SOC_LIMIT_NORMAL (100), and 100 written into a floor register means
-# "never discharge below 100 %".
+# The common floor site (a Deye whose one slot value is both the overnight
+# floor and the owner's charge target) points the ceiling SOURCE at the slot:
+# the reserve is carved below that number, the pack parks there on ordinary
+# days, and the band above it stays the export-holding buffer that
+# ``recommended_charge_limit``'s engaged feedback fills only while export sits
+# over the setpoint.
 CONF_SOC_LIMIT_SEMANTICS = "inverter_soc_limit_semantics"
-SOC_LIMIT_SEMANTICS_CEILING = "ceiling"   # stop-charging-at — a destination
-SOC_LIMIT_SEMANTICS_FLOOR = "floor"       # discharge floor / grid-charge target
+SOC_LIMIT_SEMANTICS_CEILING = "ceiling"   # writes mean "stop charging at"
+SOC_LIMIT_SEMANTICS_FLOOR = "floor"       # writes mean "grid-defend this level"
 DEFAULT_SOC_LIMIT_SEMANTICS = SOC_LIMIT_SEMANTICS_CEILING
 SOC_LIMIT_SEMANTICS_OPTIONS = (
     SOC_LIMIT_SEMANTICS_CEILING,
