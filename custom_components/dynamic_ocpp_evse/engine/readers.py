@@ -46,6 +46,8 @@ from ..const import (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    CONF_FORECAST_INFLATION,
+    DEFAULT_FORECAST_INFLATION,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -693,6 +695,10 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         solar_assumed=solar_assumed,
         forecast_device_ids=tuple(
             get_entry_value(entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or ()
+        ),
+        forecast_inflation=float(
+            get_entry_value(entry, CONF_FORECAST_INFLATION, DEFAULT_FORECAST_INFLATION)
+            or 0
         ),
         has_battery=bool(soc_entity or power_entity),
         has_battery_power_entity=bool(power_entity),

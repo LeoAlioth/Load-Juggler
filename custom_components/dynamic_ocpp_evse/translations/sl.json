@@ -150,7 +150,8 @@
                     "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
                     "wiring_topology": "Topologija ožičenja",
                     "solar_production_entity_id": "Senzor proizvodnje solarne energije",
-                    "solar_forecast_device_ids": "Sončna napoved (po ena naprava za vsako PV polje)"
+                    "solar_forecast_device_ids": "Sončna napoved (po ena naprava za vsako PV polje)",
+                    "inverter_forecast_inflation": "Optimizem napovedi"
                 },
                 "data_description": {
                     "inverter_max_power": "Nazivna moč s podatkovnega lista tega razsmernika. 0 = brez omejitve.",
@@ -159,7 +160,8 @@
                     "wiring_topology": "Vzporedno: ta razsmernik napaja omrežno zbiralko neposredno (AC-sklopljena sončna, brez baterije). Zaporedno: moč teče skozi ta razsmernik (hibrid z DC-sklopljeno baterijo).",
                     "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
                     "solar_forecast_device_ids": "Naprave iz integracije Open-Meteo Solar Forecast — ta ustvari po eno napravo za vsako PV polje, zato izberite napravo vsakega polja. Skupaj z omejitvijo izvoza in kapaciteto baterije omogoči svetovalne senzorje, ki priporočajo, kako polna sme biti baterija pred opoldanskim vrhom proizvodnje.",
-                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power)."
+                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power).",
+                    "inverter_forecast_inflation": "Za toliko napihni napoved sončne proizvodnje tega razsmernika, preden se izračuna, koliko dneva bo odrezanega. Uporabite, kadar je napoved za to polje dosledno prenizka in je rezerva premajhna — jasen dan, ki svojo napoved preseže za 10 %, je tu vreden približno 10. Vpliva samo na vrednosti odrezljive/shranljive energije in na rezervo, ki jo ti dve kupita; časovni razpored nočnega znižanja še naprej uporablja nespremenjeno napoved. Negativna vrednost zniža napoved polja, ki bere previsoko. 0 zaupa napovedi, kot je objavljena."
                 }
             },
             "inverter_battery": {
@@ -594,7 +596,8 @@
                     "inverter_charge_control_interval": "Kako dolgo mora znižanje vztrajati",
                     "inverter_charge_control_deadband": "Mrtvo območje zapisa",
                     "inverter_soc_limit_entity_ids": "Entitete zgornje meje napolnjenosti baterije (neobvezno)",
-                    "inverter_soc_limit_normal_entity_id": "Vir običajne zgornje meje napolnjenosti (neobvezno)"
+                    "inverter_soc_limit_normal_entity_id": "Vir običajne zgornje meje napolnjenosti (neobvezno)",
+                    "inverter_forecast_inflation": "Optimizem napovedi"
                 },
                 "data_description": {
                     "wiring_topology": "Vzporedno: ta razsmernik napaja omrežno zbiralko neposredno. Zaporedno: moč teče skozi ta razsmernik (hibrid z baterijo).",
@@ -618,7 +621,8 @@
                     "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
                     "battery_soc_entity_id": "Odstotek napolnjenosti baterije. Na tej vrednosti temeljijo načini delovanja, vezani na SOC: kako globoko posamezen način sme izprazniti shranjeno sončno energijo in kdaj velja baterija za polno.",
                     "battery_max_charge_power": "Najvišja moč, s katero se ta baterija sme polniti. Uporablja se kot ponor pri sprožilcu načina Presežek — dokler baterija lahko sprejme toliko moči, ima merilno mesto kam shraniti proizvodnjo in porabniki v načinu Presežek ostanejo izklopljeni.",
-                    "battery_max_discharge_power": "Najvišja moč, s katero se ta baterija sme prazniti. Omejuje, na koliko shranjene energije računa sistem pri presoji, kaj razsmernik zmore dostaviti porabniku."
+                    "battery_max_discharge_power": "Najvišja moč, s katero se ta baterija sme prazniti. Omejuje, na koliko shranjene energije računa sistem pri presoji, kaj razsmernik zmore dostaviti porabniku.",
+                    "inverter_forecast_inflation": "Za toliko napihni napoved sončne proizvodnje tega razsmernika, preden se izračuna, koliko dneva bo odrezanega. Uporabite, kadar je napoved za to polje dosledno prenizka in je rezerva premajhna — jasen dan, ki svojo napoved preseže za 10 %, je tu vreden približno 10. Vpliva samo na vrednosti odrezljive/shranljive energije in na rezervo, ki jo ti dve kupita; časovni razpored nočnega znižanja še naprej uporablja nespremenjeno napoved. Negativna vrednost zniža napoved polja, ki bere previsoko. 0 zaupa napovedi, kot je objavljena."
                 }
             },
             "plug": {

@@ -80,6 +80,8 @@ from ..const import (
     CONF_SITE_UPDATE_FREQUENCY,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    CONF_FORECAST_INFLATION,
+    DEFAULT_FORECAST_INFLATION,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_GRACE_PERIOD,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -532,6 +534,25 @@ def _build_inverter_solar_schema(hass, defaults: dict | None = None) -> list[tup
                     "device": {
                         "multiple": True,
                         "filter": {"integration": "open_meteo_solar_forecast"},
+                    }
+                }
+            ),
+        ),
+        (
+            vol.Required(
+                CONF_FORECAST_INFLATION,
+                default=defaults.get(
+                    CONF_FORECAST_INFLATION, DEFAULT_FORECAST_INFLATION
+                ),
+            ),
+            selector(
+                {
+                    "number": {
+                        "min": -25,
+                        "max": 50,
+                        "step": 1,
+                        "mode": "box",
+                        "unit_of_measurement": "%",
                     }
                 }
             ),
