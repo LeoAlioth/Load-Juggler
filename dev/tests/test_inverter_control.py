@@ -335,8 +335,11 @@ def test_release_ramps_back_to_the_normal_value_and_then_stops():
         asyncio.run(_send(hass, entry, None, now))
         now += 10.0
 
-    # Within the 5 A deadband of the 100 A normal, which is where the ramp
-    # stops being worth a write (see the ramp section).
+    # 1 A short of the 100 A normal, and that last amp stays unwritten: rises
+    # take the small directional deadband — a third of the 9.77 A step, so
+    # 3.26 A — not the 5 A reduction one. The ramp therefore lands within a
+    # rise band of full rate rather than within a full 5 % of it, and only a
+    # residual genuinely smaller than that band is left on the table.
     assert hass.services.calls[-1][2]["value"] == 99.0
     landed = len(hass.services.calls)
 
@@ -838,13 +841,15 @@ def test_a_release_ramps_to_full_rate_one_margin_at_a_time():
         now += SITE_INTERVAL
 
     ramp = _written(hass)[1:]
-    # Eighteen writes, one a minute, and the nineteenth minute lands: the last
-    # 8.6 A of the climb is inside the 9.35 A deadband (5 % of 187), so the ramp
-    # ends by clearing the marker rather than by spending a write on it.
-    assert len(ramp) == 18
-    assert now == 19 * SITE_INTERVAL + SITE_INTERVAL
+    # Nineteen writes, one a minute, landing ON the normal value. The climb is a
+    # RISE, so it takes the small directional deadband: the final 8.6 A — inside
+    # the 9.35 A reduction deadband (5 % of 187) — is now worth its write, and
+    # the register no longer rests a few percent short of full rate after every
+    # release (see should_write).
+    assert len(ramp) == 19
+    assert now == 19 * SITE_INTERVAL + SITE_INTERVAL  # same cycle count
     assert ramp[0] == 11.8  # 2 A + one 9.77 A margin step
-    assert ramp[-1] == 178.4
+    assert ramp[-1] == 187.0
     # Every step is one margin, never more, and always upward.
     steps = [b - a for a, b in zip([2.0] + ramp, ramp)]
     assert all(0 < step <= MARGIN_AMPS + 0.05 for step in steps), steps
@@ -907,10 +912,11 @@ def test_engaging_deeper_is_never_rate_limited():
     assert _written(hass)[-1] == 2.0
 
 
-def test_the_final_approach_inside_the_deadband_ends_the_release():
-    """Otherwise the marker would never clear and the release would never be
-    finished: the last sliver of the climb is not worth a Modbus write, but it
-    still has to end the ramp."""
+def test_the_final_approach_lands_on_the_normal_value():
+    """The last sliver of the climb IS worth a write, now that rises take the
+    small directional deadband — otherwise the register rests a few percent
+    under full rate after every release, for the rest of the day. What must
+    still hold either way is that the ramp ENDS here rather than looping."""
     hass = _hass_with_target(current=96.0, maximum=100.0)
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: SITE_VOLTAGE,
@@ -923,7 +929,7 @@ def test_the_final_approach_inside_the_deadband_ends_the_release():
 
     asyncio.run(_send(hass, entry, None, 100.0))
 
-    assert hass.services.calls == []  # nothing worth writing
+    assert _written(hass) == [100.0]  # the sliver written, landing on normal
     assert rt[INVERTER_RT_APPLIED] is None  # and the release is over
 
 
@@ -2023,3 +2029,80 @@ if __name__ == "__main__":
             print(f"PASS {_name}")
     print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)
+
+
+# --- The deadband is directional ---------------------------------------------
+#
+# Observed live 2026-08-30: while the battery sat at its destination the advice
+# was the export overshoot above the setpoint — 245–378 W, or 4.0–6.2 A — and
+# the register stayed at 0 A for fifty minutes, because the deadband is 5 % of
+# the NORMAL value (4.2 A on that site) and the advice straddled it. Export sat
+# ~470 W above its setpoint the whole time. Rises now take a band scaled to the
+# range rises actually cover instead.
+
+
+def test_a_small_rise_from_zero_is_written():
+    """The live case. Normal 100 A, so the reduction deadband is 5 A; the rise
+    band is a third of the 9.77 A step, 3.26 A. A 4 A advice clears the second
+    and not the first, and it is the one that decides."""
+    hass = _hass_with_target(current=0.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    _arm(hass, entry)
+
+    asyncio.run(_send(hass, entry, 4.0 * 51.2, 100.0))
+
+    assert _written(hass) == [4.0]
+
+
+def test_the_same_move_downward_is_still_swallowed():
+    """The asymmetry, stated as its own pin: coming DOWN keeps the full 5 %,
+    because that is where register churn costs something and the persistence
+    window is what gates it."""
+    hass = _hass_with_target(current=8.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    _arm(hass, entry)
+
+    # 4 A below the register — inside the 5 A reduction deadband.
+    asyncio.run(_send(hass, entry, 4.0 * 51.2, 100.0))
+
+    assert _written(hass) == []
+
+
+def test_a_rise_below_the_rise_band_is_still_swallowed():
+    """Not zero, either — sub-band jitter must not reach the register, or a
+    Modbus write lands on every cycle the advice wobbles."""
+    hass = _hass_with_target(current=4.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    _arm(hass, entry)
+
+    # 2 A up: over the register, under the 3.26 A rise band.
+    asyncio.run(_send(hass, entry, 6.0 * 51.2, 100.0))
+
+    assert _written(hass) == []
+
+
+def test_the_rise_band_never_exceeds_the_configured_deadband():
+    """``min(deadband, step/3)``: on a site whose margin is large the third of
+    a step could out-grow the setting, and a change may only ever make the
+    control MORE responsive upward, never less."""
+    hass = _hass_with_target(current=0.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+        CONF_CHARGE_CONTROL_DEADBAND: 1,          # 1 % of 100 A = 1 A
+    })
+    _arm(hass, entry)
+
+    # 2 A clears the 1 A deadband; a third of the step (3.26 A) would not.
+    asyncio.run(_send(hass, entry, 2.0 * 51.2, 100.0))
+
+    assert _written(hass) == [2.0]

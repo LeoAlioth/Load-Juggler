@@ -301,17 +301,36 @@ def resolve_minimum_value(entry, normal):
     return min(floor, float(normal))
 
 
-def should_write(current, desired, previous_applied, deadband) -> bool:
+def should_write(current, desired, previous_applied, deadband, deadband_up=None) -> bool:
     """Whether ``desired`` is far enough from what the register already holds.
 
     Compared against the register's live value, so an inverter that rounded or
     rejected the last write is corrected rather than assumed. ``previous_applied``
     covers the case where the register cannot be read back at all.
+
+    DIRECTIONAL, for the same reason the pacing is. The configured deadband is a
+    percentage of the NORMAL value, which is the right scale for a reduction —
+    that is where register churn costs something, and the persistence window
+    already gates those. It is the wrong scale for a rise: while the limit is
+    engaged the advice lives between zero and one Excess trigger margin (the
+    export overshoot above the setpoint, which is all there is to correct), so a
+    deadband sized to the full register span swallows half the range the
+    controller actually works in. Observed live 2026-08-30: an advice hovering
+    at 4–6 A against a 4.2 A deadband left the register at 0 for fifty minutes
+    while export sat ~470 W above its setpoint.
+
+    A rise is the cheap direction to get wrong — it permits absorption, and the
+    approach is self-terminating, since export reaching the setpoint takes the
+    error to zero and no further rise is asked for. Coming back down is what the
+    window is for. ``deadband_up`` of None keeps the old symmetric behaviour.
     """
     reference = current if current is not None else previous_applied
     if reference is None:
         return True
-    return abs(reference - desired) >= max(deadband, 0)
+    band = deadband
+    if deadband_up is not None and desired > reference:
+        band = deadband_up
+    return abs(reference - desired) >= max(band, 0)
 
 
 def slew_margin_w(hub_entry) -> float:
@@ -501,6 +520,19 @@ async def send_inverter_charge_limit(
     last_write = inverter_rt.get(INVERTER_RT_LAST_WRITE)
     # The ramp: how far up one write may go, and where "up" is measured from.
     step = slew_step(slew_margin_w(hub_entry), unit, voltage, deadband)
+    # The RISE deadband, scaled to the range rises actually cover rather than to
+    # the register's full span: a third of the largest single rise allowed, so
+    # crossing that range costs a handful of writes rather than one or ten.
+    # Never larger than the configured deadband, so this can only make the
+    # controller more responsive upward, never less.
+    #
+    # The divisor is calibrated, not chosen: it is the smallest that keeps every
+    # write budget in dev/tests/test_charge_control_loop.py (a two-hour burst
+    # train inside 10 writes, a cloudy day inside 120). A tenth cost 70 % more
+    # writes than those budgets allow — these registers go over Modbus and some
+    # firmwares put them in EEPROM. See ``should_write`` for why up and down
+    # want different bands at all.
+    deadband_up = deadband if step is None else min(deadband, abs(step) / 3.0)
     baseline = ramp_baseline(applied, current)
     releasing = not enabled or advice_w is None
     # The gate edge the exemption keys on. Tracked here rather than handed in as
@@ -563,7 +595,9 @@ async def send_inverter_charge_limit(
         landed = target >= normal
         if last_write is not None and (now_mono - last_write) < interval:
             return
-        writing = should_write(current, target, applied, deadband)
+        writing = should_write(
+            current, target, applied, deadband, deadband_up
+        )
         if not writing and not landed:
             # A ramp step the deadband swallowed. Hold the marker and try again
             # next window rather than declaring the release finished here.
@@ -677,7 +711,7 @@ async def send_inverter_charge_limit(
         # The least reduction every sample in the window agreed on.
         target = round(slew_limited(settled, baseline, step), 1)
 
-    if not should_write(current, target, applied, deadband):
+    if not should_write(current, target, applied, deadband, deadband_up):
         return
 
     await _write(hass, entry, target_entity, target, unit)
