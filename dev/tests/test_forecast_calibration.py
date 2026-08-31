@@ -233,3 +233,40 @@ def test_production_above_forecast_is_not_negative_clipping():
 def test_an_unreadable_input_measures_nothing():
     assert clipped_now(None, 6000.0, saturated=True) == 0.0
     assert clipped_now(9000.0, None, saturated=True) == 0.0
+
+
+# --- What counts as "curtailing" for the gain -------------------------------
+#
+# The exclusion has to key on genuine saturation, not on the charge control's
+# own operating point. The export SETPOINT sits one trigger margin below the
+# real limit and driving export onto it is precisely what the control does, so
+# testing "export >= setpoint" marked normal operation as curtailment: on a live
+# site the observer skipped nearly every productive interval, never reached its
+# minimum informative energy, and published Unknown all day (2026-08-31).
+
+
+def test_sitting_on_the_export_setpoint_is_not_curtailing():
+    """A whole productive day at the controller's own equilibrium must still
+    produce a ratio. Before the fix every one of these intervals was skipped."""
+    st = {}
+    for _ in range(8):
+        st = note_gain_sample(st, 4000.0, 3800.0, 1.0, constrained=False)
+    assert st["skipped_wh"] == 0.0
+    assert st["forecast_wh"] == 32000.0
+    assert round(day_ratio(st), 3) == 0.95
+
+
+def test_genuine_saturation_is_still_excluded():
+    st = note_gain_sample({}, 9000.0, 6000.0, 1.0, constrained=True)
+    assert st["forecast_wh"] == 0.0
+    assert st["skipped_wh"] == 9000.0
+
+
+def test_a_day_of_pure_saturation_reports_nothing_rather_than_a_wrong_number():
+    """The degenerate case the exclusion implies: if every interval is
+    curtailed there is no honest measurement, and None is the right answer —
+    not a ratio built from suppressed production."""
+    st = {}
+    for _ in range(8):
+        st = note_gain_sample(st, 9000.0, 6000.0, 1.0, constrained=True)
+    assert day_ratio(st) is None

@@ -439,12 +439,19 @@ def _compute_forecast_advice(
 
     now_local = windows[0][0]
     local_day = now_local.date()
-    # Curtailing is the one regime the gain must not learn from: while export
-    # sits at the trigger the inverter is throttling its own array, so measured
-    # production is suppressed by the very thing being forecast. Excluded per
-    # INTERVAL, so a clipping day still contributes its honest morning and
-    # evening (see calibration.note_gain_sample).
-    constrained = export_now_w >= export_setpoint > 0
+    # Curtailing is the one regime the gain must not learn from: while the
+    # inverter throttles its own array, measured production is suppressed by the
+    # very thing being forecast. Excluded per INTERVAL, so a clipping day still
+    # contributes its honest morning and evening (calibration.note_gain_sample).
+    #
+    # The verdict is the EXCESS one, the same test the clipped-energy observer
+    # below uses — not "export is above the setpoint". The setpoint sits one
+    # trigger margin BELOW the real limit and driving export onto it is exactly
+    # what the charge control exists to do, so testing against it marked the
+    # controller's own operating point as curtailment: on a live site the gain
+    # observer skipped nearly every productive interval, never reached its
+    # minimum informative energy, and published Unknown all day (2026-08-31).
+    constrained = bool(excess_on)
 
     for m in members:
         if not m.forecast_device_ids:
