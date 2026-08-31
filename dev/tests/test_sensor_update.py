@@ -6044,3 +6044,129 @@ async def test_a_per_inverter_forecast_drives_the_observers(hass: HomeAssistant)
     # And the hub carries the site-level observers.
     assert "forecast_peakiness_pct" in result
     assert "forecast_clipped_actual_kwh" in result
+
+
+# --- Inverter sensor definitions --------------------------------------------
+#
+# The hub table has had a round-trip test since it existed; the inverter one had
+# none at all, so a definition could name a data_key nothing publishes, or miss
+# a translation, and only a real install would notice. Same shape of hole as the
+# unreachable observer loop above, one layer up.
+
+
+def _inverter_defn_sensors(hass, inverter_entry):
+    from custom_components.dynamic_ocpp_evse.entities.inverter import (
+        INVERTER_SENSOR_DEFINITIONS,
+        LoadJugglerInverterDataSensor,
+    )
+
+    return INVERTER_SENSOR_DEFINITIONS, [
+        LoadJugglerInverterDataSensor(hass, inverter_entry, "test_inv", defn)
+        for defn in INVERTER_SENSOR_DEFINITIONS
+    ]
+
+
+async def test_inverter_data_sensors_initialize(hass: HomeAssistant):
+    """Every definition builds a sensor whose properties come from it.
+
+    Constructing them is itself the assertion for a definition missing a key
+    the constructor indexes — which is exactly how a `%s` sensor with no
+    device_class would have failed before that lookup became optional.
+    """
+    hub, inverter, _rt = _no_clip_rig(hass, "invdefn", soc=90)
+    defns, sensors = _inverter_defn_sensors(hass, inverter)
+
+    assert len(sensors) == len(defns)
+    for sensor, defn in zip(sensors, defns):
+        assert sensor.native_value is None  # nothing published yet
+        assert sensor.native_unit_of_measurement == defn["unit"]
+        assert sensor.device_class == defn.get("device_class")
+        assert sensor.state_class == defn.get(
+            "state_class", SensorStateClass.MEASUREMENT
+        )
+        # unique_id_suffix doubles as the translation key, so it must be the
+        # stable identifier in both places.
+        assert sensor.unique_id == f"test_inv_{defn['unique_id_suffix']}"
+        assert sensor.translation_key == defn["unique_id_suffix"]
+
+
+async def test_every_inverter_sensor_has_a_name_translation(hass: HomeAssistant):
+    """A sensor whose translation key is missing shows the raw key as its name
+    in every language — cosmetic, invisible in tests, and permanent."""
+    import json
+    from pathlib import Path
+
+    root = Path("custom_components/dynamic_ocpp_evse")
+    hub, inverter, _rt = _no_clip_rig(hass, "invtrans", soc=90)
+    defns, _sensors = _inverter_defn_sensors(hass, inverter)
+
+    for name in ("strings.json", "translations/en.json", "translations/sl.json"):
+        names = json.loads((root / name).read_text())["entity"]["sensor"]
+        for defn in defns:
+            key = defn["unique_id_suffix"]
+            assert key in names, f"{name} has no entity.sensor.{key}"
+            assert names[key].get("name"), f"{name}: {key} has no name"
+
+
+async def test_every_inverter_sensor_key_is_published_by_the_engine(
+    hass: HomeAssistant,
+):
+    """A definition naming a data_key the engine never publishes reads unknown
+    for ever — the sensor exists, is available, and says nothing.
+
+    Run against the per-inverter forecast rig, so the forecast-gated keys are
+    genuinely produced rather than skipped.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, _rt = _no_clip_rig(hass, "invkeys", soc=95, solar_w=4000.0)
+    device_id = _forecast_device(hass, "invkeys_array", _NO_CLIP_DAY)
+    hass.config_entries.async_update_entry(
+        inverter,
+        options={**inverter.options, CONF_SOLAR_FORECAST_DEVICE_IDS: [device_id]},
+    )
+
+    with freeze_time("2026-08-25 09:30:00+00:00"):
+        run_hub_calculation(hass, hub)
+        result = run_hub_calculation(hass, hub)
+
+    own = result["inverters"][inverter.entry_id]
+    defns, _sensors = _inverter_defn_sensors(hass, inverter)
+    missing = [d["data_key"] for d in defns if d["data_key"] not in own]
+    assert not missing, f"defined but never published: {missing}"
+
+
+async def test_every_hub_sensor_key_is_published_by_the_engine(hass: HomeAssistant):
+    """The same contract for the hub table. It had a properties round-trip but
+    nothing tying a definition to a key the producer actually emits."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, _rt = _no_clip_rig(hass, "hubkeys", soc=95, solar_w=4000.0)
+    device_id = _forecast_device(hass, "hubkeys_array", _NO_CLIP_DAY)
+    hass.config_entries.async_update_entry(
+        inverter,
+        options={**inverter.options, CONF_SOLAR_FORECAST_DEVICE_IDS: [device_id]},
+    )
+
+    with freeze_time("2026-08-25 09:30:00+00:00"):
+        run_hub_calculation(hass, hub)
+        result = run_hub_calculation(hass, hub)
+
+    missing = [
+        d["hub_data_key"]
+        for d in HUB_SENSOR_DEFINITIONS
+        if d["hub_data_key"] not in result
+    ]
+    assert not missing, f"defined but never published: {missing}"
