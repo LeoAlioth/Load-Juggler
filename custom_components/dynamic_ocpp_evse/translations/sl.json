@@ -198,7 +198,8 @@
                     "inverter_charge_control_interval": "Kako dolgo mora znižanje vztrajati",
                     "inverter_charge_control_deadband_w": "Mrtvo območje zapisa",
                     "inverter_soc_limit_entity_ids": "Entitete zgornje meje napolnjenosti baterije (neobvezno)",
-                    "inverter_soc_limit_normal_entity_id": "Vir običajne zgornje meje napolnjenosti (neobvezno)"
+                    "inverter_soc_limit_normal_entity_id": "Vir običajne zgornje meje napolnjenosti (neobvezno)",
+                    "inverter_soc_limit_semantics": "Pomen omejitve SOC"
                 },
                 "data_description": {
                     "inverter_charge_limit_entity_id": "Entiteta 'number' razsmernika za največji tok/moč polnjenja baterije (Deye: 'Battery Max Charge Current'). Pustite prazno, da razsmernik ostane zgolj svetovalen — napoved še vedno objavi priporočilo kot senzor, nič se ne zapiše. Če jo nastavite, se doda stikalo Nadzor polnjenja baterije, ki mora biti vklopljeno, preden se karkoli zapiše.",
@@ -210,7 +211,8 @@
                     "inverter_charge_control_interval": "NIŽJA omejitev polnjenja se zapiše le, kadar se z njo strinja vsak vzorec v tem oknu, zato kuhalnik vode, mimoideči oblak ali priklop avtomobila ne povzročijo zapisa; VIŠJA omejitev se zapiše takoj, ko je na vrsti, vklop omejevanja pa se zapiše nemudoma. Hkrati je to najkrajši čas med zapisi med sprostitvijo omejitve in za zgornjo mejo SOC. 300 s ustreza vsaki napravi — ti registri gredo prek Modbusa in nekatere strojne programske opreme jih zapišejo v EEPROM.",
                     "inverter_charge_control_deadband_w": "V vatih. Novo priporočilo, ki je vrednosti v registru bližje od tega, se ne zapiše — ti registri gredo prek Modbusa, nekatere različice strojne programske opreme pa jih shranjujejo v EEPROM. V vatih namesto v enoti registra, da nastavitev pomeni isto, ne glede na to, ali register šteje enosmerne ampere ali vate. Pri ZNIŽANJU velja ta vrednost; pri ZVIŠANJU tretjina ene meje sprožitve presežka ali ta vrednost, kar je manjše — zvišanje namreč dovoli shranjevanje in se samo konča, ko izvoz doseže svojo ciljno vrednost.",
                     "inverter_soc_limit_entity_ids": "Entitete, ki hranijo mejo 'napolni do %' te baterije. Pri Deye to ni en sam register, ampak po ena entiteta za vsako časovno rezino (TOU), zato izberite vse rezine, v katerih se baterija sme polniti — priporočena najvišja napolnjenost se zapiše v vse hkrati. Pustite prazno, da priporočilo ostane zgolj svetovalno. Če izberete rezine, se doda stikalo Nadzor napolnjenosti baterije, ki mora biti vklopljeno, preden se karkoli zapiše.",
-                    "inverter_soc_limit_normal_entity_id": "Od kod prihaja običajna meja: rezine sledijo tej entiteti, napoved pa jih sme potisniti le pod njo, nikoli nad, zato ostane v rokah vaših avtomatizacij. Brez nje je običajna meja 100 %. Če je nastavljena, a nedosegljiva, se v tem ciklu ne zapiše nič, namesto da bi meje ugibali."
+                    "inverter_soc_limit_normal_entity_id": "Od kod prihaja običajna meja: rezine sledijo tej entiteti, napoved pa jih sme potisniti le pod njo, nikoli nad, zato ostane v rokah vaših avtomatizacij. Brez nje je običajna meja 100 %. Če je nastavljena, a nedosegljiva, se v tem ciklu ne zapiše nič, namesto da bi meje ugibali.",
+                    "inverter_soc_limit_semantics": "Kaj zgornje entitete SOC pomenijo na vašem razsmerniku — od tega je odvisno, ali je iz njih mogoče brati ciljno napolnjenost. **Zgornja meja polnjenja** = baterija se tam preneha polniti, zato se rezerva za odrez izračuna pod njo. **Spodnja meja praznjenja** = številka pove, kako nizko sme pasti napolnjenost, preden jo razsmernik brani z omrežjem, sonce pa jo še vedno polni do 100 % — časovni pas (TOU) na Deyeju je to. Napačna izbira šteje: spodnja meja, brana kot zgornja, pomeni, da Load Juggler misli, da je baterija dosegla cilj takoj ko preseže to številko, in duši polnjenje tudi takrat, ko ni napovedanega odreza."
                 }
             },
             "select_hub": {
@@ -597,7 +599,8 @@
                     "inverter_charge_control_interval": "Kako dolgo mora znižanje vztrajati",
                     "inverter_charge_control_deadband_w": "Mrtvo območje zapisa",
                     "inverter_soc_limit_entity_ids": "Entitete zgornje meje napolnjenosti baterije (neobvezno)",
-                    "inverter_soc_limit_normal_entity_id": "Vir običajne zgornje meje napolnjenosti (neobvezno)"
+                    "inverter_soc_limit_normal_entity_id": "Vir običajne zgornje meje napolnjenosti (neobvezno)",
+                    "inverter_soc_limit_semantics": "Pomen omejitve SOC"
                 },
                 "data_description": {
                     "wiring_topology": "Vzporedno: ta razsmernik napaja omrežno zbiralko neposredno. Zaporedno: moč teče skozi ta razsmernik (hibrid z baterijo).",
@@ -621,7 +624,8 @@
                     "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
                     "battery_soc_entity_id": "Odstotek napolnjenosti baterije. Na tej vrednosti temeljijo načini delovanja, vezani na SOC: kako globoko posamezen način sme izprazniti shranjeno sončno energijo in kdaj velja baterija za polno.",
                     "battery_max_charge_power": "Najvišja moč, s katero se ta baterija sme polniti. Uporablja se kot ponor pri sprožilcu načina Presežek — dokler baterija lahko sprejme toliko moči, ima merilno mesto kam shraniti proizvodnjo in porabniki v načinu Presežek ostanejo izklopljeni.",
-                    "battery_max_discharge_power": "Najvišja moč, s katero se ta baterija sme prazniti. Omejuje, na koliko shranjene energije računa sistem pri presoji, kaj razsmernik zmore dostaviti porabniku."
+                    "battery_max_discharge_power": "Najvišja moč, s katero se ta baterija sme prazniti. Omejuje, na koliko shranjene energije računa sistem pri presoji, kaj razsmernik zmore dostaviti porabniku.",
+                    "inverter_soc_limit_semantics": "Kaj zgornje entitete SOC pomenijo na vašem razsmerniku — od tega je odvisno, ali je iz njih mogoče brati ciljno napolnjenost. **Zgornja meja polnjenja** = baterija se tam preneha polniti, zato se rezerva za odrez izračuna pod njo. **Spodnja meja praznjenja** = številka pove, kako nizko sme pasti napolnjenost, preden jo razsmernik brani z omrežjem, sonce pa jo še vedno polni do 100 % — časovni pas (TOU) na Deyeju je to. Napačna izbira šteje: spodnja meja, brana kot zgornja, pomeni, da Load Juggler misli, da je baterija dosegla cilj takoj ko preseže to številko, in duši polnjenje tudi takrat, ko ni napovedanega odreza."
                 }
             },
             "plug": {

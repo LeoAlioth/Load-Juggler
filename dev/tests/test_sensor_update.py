@@ -6170,3 +6170,63 @@ async def test_every_hub_sensor_key_is_published_by_the_engine(hass: HomeAssista
         if d["hub_data_key"] not in result
     ]
     assert not missing, f"defined but never published: {missing}"
+
+
+# --- SOC limit semantics: floor inverters have no destination to read ---------
+#
+# On a Deye the slot SOC is a discharge floor plus grid-charge target — solar
+# charges to 100% whatever it says — so reading a destination off it invents
+# one, and yields_to_excess then engages the charge cap the moment SOC passes
+# the floor. Observed live 2026-08-31: pack at 93% against a phantom 90%
+# "destination", register throttled, 0.01 kWh forecast to clip.
+
+
+async def test_floor_semantics_anchors_the_destination_at_full(hass: HomeAssistant):
+    """With the entities declared a FLOOR, no destination is read: the member
+    anchors at 100% exactly as a site with nothing configured, so a pack above
+    the floor is not treated as having arrived anywhere."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOC_LIMIT_SEMANTICS,
+        SOC_LIMIT_SEMANTICS_FLOOR,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, _rt = _no_clip_rig(hass, "floorsem", soc=93)
+    # The ceiling source reads 90 — on this inverter that is the floor.
+    hass.states.async_set("number.dst_normal", "90", {"unit_of_measurement": "%"})
+    hass.config_entries.async_update_entry(
+        inverter,
+        options={**inverter.options,
+                 CONF_SOC_LIMIT_SEMANTICS: SOC_LIMIT_SEMANTICS_FLOOR},
+    )
+
+    with freeze_time("2026-08-25 09:30:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+
+    own = result["inverters"][inverter.entry_id]
+    # Anchored at 100, so a 93% pack is nowhere near its destination and the
+    # nothing-to-clip gate is reached: full rate, not a throttled permit.
+    assert own["forecast_battery_max_soc"] == 100
+    assert own["forecast_charge_limiting"] is False
+
+
+async def test_ceiling_semantics_still_reads_the_destination(hass: HomeAssistant):
+    """The default is unchanged: an inverter that really does stop charging at
+    the configured number keeps its destination, and a pack above it yields."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, _rt = _no_clip_rig(hass, "ceilsem", soc=93)
+    hass.states.async_set("number.dst_normal", "90", {"unit_of_measurement": "%"})
+
+    with freeze_time("2026-08-25 09:30:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+
+    own = result["inverters"][inverter.entry_id]
+    assert own["forecast_battery_max_soc"] == 90
+    assert own["forecast_charge_limiting"] is True

@@ -112,6 +112,38 @@ CONF_SOC_LIMIT_ENTITY_IDS = "inverter_soc_limit_entity_ids"
 CONF_SOC_LIMIT_NORMAL_ENTITY_ID = "inverter_soc_limit_normal_entity_id"
 DEFAULT_SOC_LIMIT_NORMAL = 100.0  # % — where an unmanaged battery ceiling sits
 
+# What the inverter's SOC entities MEAN, which decides whether a destination can
+# be read off them at all.
+#
+# A genuine ceiling inverter lets its owner say "stop charging at 95 %", and the
+# clipping reserve is then carved out BELOW that number rather than below 100 %
+# — otherwise the unused 95–100 % band is reserved twice and the battery meets
+# the peak with only 5 % of room. That is what the destination is for.
+#
+# A Deye's slot SOC is not that. It is a DISCHARGE FLOOR plus a grid-charge
+# target: solar charges to 100 % regardless, and the number says how low the
+# pack may go before the inverter defends it from the grid. There is no register
+# for "stop charging at" on such an inverter, so a destination read off the slot
+# entity is a fiction — and an expensive one: it makes ``yields_to_excess``
+# engage the moment SOC passes the floor, which is the FIRST gate in
+# ``recommended_charge_limit``, ahead of the nothing-to-clip check. Observed
+# live 2026-08-31: the pack at 93 % against a phantom 90 % "destination", the
+# charge register throttled, and 0.01 kWh forecast to clip.
+#
+# The entity is still needed on a floor inverter — the SOC write-control restores
+# the slots to it — so the two meanings have to be told apart rather than the
+# field left empty. Empty would hand the fan-out its fallback of
+# DEFAULT_SOC_LIMIT_NORMAL (100), and 100 written into a floor register means
+# "never discharge below 100 %".
+CONF_SOC_LIMIT_SEMANTICS = "inverter_soc_limit_semantics"
+SOC_LIMIT_SEMANTICS_CEILING = "ceiling"   # stop-charging-at — a destination
+SOC_LIMIT_SEMANTICS_FLOOR = "floor"       # discharge floor / grid-charge target
+DEFAULT_SOC_LIMIT_SEMANTICS = SOC_LIMIT_SEMANTICS_CEILING
+SOC_LIMIT_SEMANTICS_OPTIONS = (
+    SOC_LIMIT_SEMANTICS_CEILING,
+    SOC_LIMIT_SEMANTICS_FLOOR,
+)
+
 # Deadband for the SOC fan-out, in SOC points, applied PER TARGET. Fixed rather
 # than configurable: a percentage-of-a-percentage would be a confusing setting,
 # and 1 point is both the resolution these slots accept and small enough that

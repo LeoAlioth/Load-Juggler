@@ -80,6 +80,10 @@ from ..const import (
     CONF_SITE_UPDATE_FREQUENCY,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    CONF_SOC_LIMIT_SEMANTICS,
+    DEFAULT_SOC_LIMIT_SEMANTICS,
+    SOC_LIMIT_SEMANTICS_CEILING,
+    SOC_LIMIT_SEMANTICS_FLOOR,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_GRACE_PERIOD,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -1104,6 +1108,39 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
             ),
             selector(
                 {"entity": {"domain": ["input_number", "number", "sensor"]}}
+            ),
+        ),
+        (
+            # What the entities above MEAN, because it decides whether a charge
+            # DESTINATION can be read off them at all. A genuine ceiling is a
+            # "stop charging at" and the clipping reserve is carved below it; a
+            # Deye slot SOC is a discharge floor and solar charges to 100 %
+            # regardless, so reading a destination off it invents one and
+            # throttles charging the moment SOC passes the floor. The write side
+            # uses the entity either way, which is why this is a flag and not a
+            # matter of clearing the field.
+            vol.Required(
+                CONF_SOC_LIMIT_SEMANTICS,
+                default=defaults.get(
+                    CONF_SOC_LIMIT_SEMANTICS, DEFAULT_SOC_LIMIT_SEMANTICS
+                ),
+            ),
+            selector(
+                {
+                    "select": {
+                        "options": [
+                            {
+                                "value": SOC_LIMIT_SEMANTICS_CEILING,
+                                "label": "Charge ceiling — the battery stops here",
+                            },
+                            {
+                                "value": SOC_LIMIT_SEMANTICS_FLOOR,
+                                "label": "Discharge floor — solar still charges to 100%",
+                            },
+                        ],
+                        "mode": "dropdown",
+                    }
+                }
             ),
         ),
     ]

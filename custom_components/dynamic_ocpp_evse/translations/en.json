@@ -198,7 +198,8 @@
                     "inverter_charge_control_interval": "How long a reduction must hold",
                     "inverter_charge_control_deadband_w": "Write deadband",
                     "inverter_soc_limit_entity_ids": "Battery SOC ceiling entities (optional)",
-                    "inverter_soc_limit_normal_entity_id": "Normal SOC ceiling source (optional)"
+                    "inverter_soc_limit_normal_entity_id": "Normal SOC ceiling source (optional)",
+                    "inverter_soc_limit_semantics": "SOC limit meaning"
                 },
                 "data_description": {
                     "inverter_charge_limit_entity_id": "The inverter's own maximum battery charge current/power number entity (Deye: 'Battery Max Charge Current'). Leave empty to keep this inverter advisory — the forecast still publishes its recommendation as a sensor, nothing is written. Setting it adds a Battery Charge Control switch, which must be turned on before anything is written.",
@@ -210,7 +211,8 @@
                     "inverter_charge_control_interval": "A LOWER charge limit is written only once every sample in this window agrees on it, so a kettle, a passing cloud or a car plugging in costs no register write; a HIGHER limit is written as soon as it is due, and the cap engaging is written at once. Also the minimum time between writes while a limit is being released, and for the SOC ceiling. 300 s suits every site \u2014 these registers go over Modbus and some firmwares write them to EEPROM.",
                     "inverter_charge_control_deadband_w": "In watts. A new recommendation closer than this to what the register already holds is not written — these registers go over Modbus and some firmwares put them in EEPROM. Watts rather than the register's own unit, so the setting means the same thing whether it counts DC amps or watts. Coming DOWN uses this figure; going UP uses a third of one Excess trigger margin or this, whichever is smaller, because a rise permits absorption and the approach ends itself once export reaches its setpoint.",
                     "inverter_soc_limit_entity_ids": "The entities holding this battery's 'charge up to %' ceiling. On a Deye that is not one register but one entity per time-of-use slot, so select every slot the battery may charge in — the recommended max SOC is written to all of them together. Leave empty to keep the recommendation advisory. Selecting slots adds a Battery SOC Control switch, which must be turned on before anything is written.",
-                    "inverter_soc_limit_normal_entity_id": "Where the everyday ceiling comes from: the slots track this entity, and the forecast may only push them below it, never above, so your own automations keep owning it. Without it, the everyday ceiling is 100%. If it is set but unavailable, nothing is written that cycle rather than a ceiling being guessed."
+                    "inverter_soc_limit_normal_entity_id": "Where the everyday ceiling comes from: the slots track this entity, and the forecast may only push them below it, never above, so your own automations keep owning it. Without it, the everyday ceiling is 100%. If it is set but unavailable, nothing is written that cycle rather than a ceiling being guessed.",
+                    "inverter_soc_limit_semantics": "What the SOC entities above mean on your inverter, which decides whether a charge destination can be read from them. **Charge ceiling** = the battery stops charging there, so the clipping reserve is carved out below it. **Discharge floor** = the number is how low the pack may go before the inverter defends it from the grid, and solar still charges to 100% regardless — a Deye time-of-use slot is this. Choosing the wrong one matters: a floor read as a ceiling makes Load Juggler think the battery has arrived at its destination the moment it passes that number, and it throttles charging even with nothing forecast to clip."
                 }
             },
             "select_hub": {
@@ -597,7 +599,8 @@
                     "inverter_charge_control_interval": "How long a reduction must hold",
                     "inverter_charge_control_deadband_w": "Write deadband",
                     "inverter_soc_limit_entity_ids": "Battery SOC ceiling entities (optional)",
-                    "inverter_soc_limit_normal_entity_id": "Normal SOC ceiling source (optional)"
+                    "inverter_soc_limit_normal_entity_id": "Normal SOC ceiling source (optional)",
+                    "inverter_soc_limit_semantics": "SOC limit meaning"
                 },
                 "data_description": {
                     "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
@@ -621,7 +624,8 @@
                     "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
                     "battery_soc_entity_id": "The battery's state-of-charge percentage. This is what the SOC-gated operating modes decide on: how far each mode may drain the stored solar buffer, and when a battery counts as full.",
                     "battery_max_charge_power": "The fastest this battery may be charged. Used as the charge sink in the Excess trigger — while the battery can still absorb this much, the site has somewhere to put its production and Excess loads stay off.",
-                    "battery_max_discharge_power": "The fastest this battery may be discharged. Caps how much stored energy the engine counts on when deciding what the inverter can deliver to a load."
+                    "battery_max_discharge_power": "The fastest this battery may be discharged. Caps how much stored energy the engine counts on when deciding what the inverter can deliver to a load.",
+                    "inverter_soc_limit_semantics": "What the SOC entities above mean on your inverter, which decides whether a charge destination can be read from them. **Charge ceiling** = the battery stops charging there, so the clipping reserve is carved out below it. **Discharge floor** = the number is how low the pack may go before the inverter defends it from the grid, and solar still charges to 100% regardless — a Deye time-of-use slot is this. Choosing the wrong one matters: a floor read as a ceiling makes Load Juggler think the battery has arrived at its destination the moment it passes that number, and it throttles charging even with nothing forecast to clip."
                 }
             },
             "plug": {
