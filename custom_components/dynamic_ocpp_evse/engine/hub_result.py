@@ -28,6 +28,7 @@ from .forecast_observers import (
 )
 from ..calculations.calibration import block_power_at
 from ..calculations import (
+    merge_forecast_series,
     select_clipping_window,
     first_production_at,
     reservation_is_due,

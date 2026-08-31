@@ -5966,3 +5966,81 @@ async def test_a_released_limit_hands_the_nameplate_allowance_back(
 
     rt[INVERTER_RT_ENFORCED_CHARGE_W] = None
     assert run_hub_calculation(hass, hub)["excess_margin_power"] < 0
+
+
+# --- The observers run on a PER-INVERTER forecast -----------------------------
+#
+# Every other forecast rig here configures the source hub-level
+# (CONF_SOLAR_FORECAST_ENTITY_IDS, the legacy field), which leaves
+# ``FleetMember.forecast_device_ids`` empty — so the gain observer's loop, which
+# keys on exactly that, never executed in any test. It shipped a NameError to a
+# live site (2026-08-31: merge_forecast_series used in hub_result and never
+# imported there). This rig is the one that walks that loop.
+
+
+def _forecast_device(hass, slug, watts):
+    """A per-array Open-Meteo device with a watts-bearing sensor, as the
+    integration creates them. Returns the device id."""
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+
+    source = MockConfigEntry(domain="open_meteo_solar_forecast", title=slug)
+    source.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=source.entry_id,
+        identifiers={("open_meteo_solar_forecast", slug)},
+        name=slug,
+    )
+    reg = er.async_get(hass).async_get_or_create(
+        "sensor",
+        "open_meteo_solar_forecast",
+        f"{slug}_energy_production_today",
+        device_id=device.id,
+        config_entry=source,
+        suggested_object_id=f"{slug}_energy_production_today",
+    )
+    hass.states.async_set(
+        reg.entity_id, "12.5", {"unit_of_measurement": "kWh", "watts": dict(watts)}
+    )
+    return device.id
+
+
+async def test_a_per_inverter_forecast_drives_the_observers(hass: HomeAssistant):
+    """The cycle completes and the gain observation reaches the inverter.
+
+    Without the per-inverter source this loop is skipped entirely, which is how
+    a missing import reached a real site: every existing rig configures the
+    forecast hub-level.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, _runtime = _no_clip_rig(hass, "perinv", soc=95, solar_w=4000.0)
+    device_id = _forecast_device(hass, "perinv_array", _NO_CLIP_DAY)
+    # Move the source onto the inverter, which is where a current install has
+    # it — the hub keeps none, so only the per-inverter path can supply a series.
+    hass.config_entries.async_update_entry(
+        inverter, options={**inverter.options,
+                           CONF_SOLAR_FORECAST_DEVICE_IDS: [device_id]}
+    )
+
+    with freeze_time("2026-08-25 09:30:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+        # Two cycles: the first only stamps the monotonic clock, so the second
+        # is the one that actually accumulates a sample.
+        result = run_hub_calculation(hass, hub)
+
+    assert result is not None, "the cycle must not raise"
+    own = result["inverters"][inverter.entry_id]
+    # The observation is published even before a day has closed: the running
+    # gain starts at 1.0 with no days behind it.
+    assert own["forecast_gain"] == 1.0
+    assert own["forecast_gain_days"] == 0
+    assert "forecast_accuracy_pct" in own
+    # And the hub carries the site-level observers.
+    assert "forecast_peakiness_pct" in result
+    assert "forecast_clipped_actual_kwh" in result
