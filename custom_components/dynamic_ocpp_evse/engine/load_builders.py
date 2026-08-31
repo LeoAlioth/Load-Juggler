@@ -96,6 +96,7 @@ from ..registry import get_loads_for_hub, get_groups_for_hub
 from .. import units
 from .readers import (
     _PHASE_LABELS,
+    _UNAVAILABLE,
     _clamp_reported_phase_draw,
     _coerce,
     _fv,
@@ -186,26 +187,21 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
 
     # Try per-phase current import entities first (separate sensors for each phase)
     if evse_import_l1 or evse_import_l2 or evse_import_l3:
-        l1_val = (
-            _coerce(_read_entity(hass, evse_import_l1, None), None)
-            if evse_import_l1
-            else None
-        )
-        l2_val = (
-            _coerce(_read_entity(hass, evse_import_l2, None), None)
-            if evse_import_l2
-            else None
-        )
-        l3_val = (
-            _coerce(_read_entity(hass, evse_import_l3, None), None)
-            if evse_import_l3
-            else None
-        )
+        raw_vals = [
+            _read_entity(hass, entity, None) if entity else None
+            for entity in (evse_import_l1, evse_import_l2, evse_import_l3)
+        ]
+        l1_val, l2_val, l3_val = (_coerce(raw, None) for raw in raw_vals)
 
         if l1_val is not None or l2_val is not None or l3_val is not None:
             load.l1_current = l1_val if l1_val is not None else 0
             load.l2_current = l2_val if l2_val is not None else 0
             load.l3_current = l3_val if l3_val is not None else 0
+            # A phase whose OWN sensor is configured but unreadable contributes
+            # an invented 0 to a draw the other phases made look measured — so
+            # the total is fabricated even though this path produced a reading.
+            if any(raw is _UNAVAILABLE for raw in raw_vals):
+                load.draw_assumed = True
             current_draw = "current_import_l1l2l3"
             _LOGGER.debug(
                 "EVSE %s: Using per-phase current import entities: L1=%.1f L2=%.1f L3=%.1f",
@@ -298,6 +294,16 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
     # it uses). Plugs and tanks always carry a correct draw and are never
     # flagged unmetered.
     load.unmetered = current_draw is None
+    # ...and when monitors ARE configured, "no source" means every one of them
+    # is unreadable: the 0 A this load carries into the cycle is invented, not
+    # a car sitting idle. A charger with no monitor configured at all is a
+    # different, deliberate case (nothing was ever measured to lose), and the
+    # published figures for it are unchanged.
+    if current_draw is None and any(
+        (evse_import, evse_import_l1, evse_import_l2, evse_import_l3,
+         evse_power_import)
+    ):
+        load.draw_assumed = True
 
     # Draw-settle detection: the measured draw is trusted as the EVSE's real
     # footprint — freeing the unused gap to lower-priority loads — only when
@@ -413,10 +419,16 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
     )
 
     power_draw = None
+    monitor_unreadable = False
     if power_monitor_entity:
-        power_draw = _coerce(
-            _read_entity(hass, power_monitor_entity, 0, unit="W")
+        raw_power_draw = _read_entity(
+            hass, power_monitor_entity, 0, unit="W"
         )  # Convert kW→W if needed
+        # A configured monitor that cannot be read leaves this plug's draw at
+        # 0 W. That is the conservative figure for the feedback loop and stays,
+        # but it is invented — see LoadContext.draw_assumed at the end.
+        monitor_unreadable = raw_power_draw is _UNAVAILABLE
+        power_draw = _coerce(raw_power_draw)
 
     # On/off: the switch is authoritative when present; without a switch the
     # power monitor decides; with neither, assume the load is on.
@@ -490,6 +502,7 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
         rated_current=plug_max_current,
+        draw_assumed=monitor_unreadable,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
     _LOGGER.debug(
@@ -572,23 +585,21 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     # Managed draw: the charging component of the wall draw. Falls back to the
     # commanded speed when the AC sensors aren't configured, and only while the
     # station was last told to charge — an idle station draws nothing.
-    ac_in = _coerce(
-        _read_entity(
-            hass,
-            get_entry_value(entry, CONF_STATION_AC_INPUT_ENTITY_ID, None),
-            None,
-            unit="W",
-        ),
-        None,
-    )
-    ac_out = _coerce(
-        _read_entity(
-            hass,
-            get_entry_value(entry, CONF_STATION_AC_OUTPUT_ENTITY_ID, None),
-            None,
-            unit="W",
-        ),
-        None,
+    ac_in_entity = get_entry_value(entry, CONF_STATION_AC_INPUT_ENTITY_ID, None)
+    ac_out_entity = get_entry_value(entry, CONF_STATION_AC_OUTPUT_ENTITY_ID, None)
+    raw_ac_in = _read_entity(hass, ac_in_entity, None, unit="W")
+    raw_ac_out = _read_entity(hass, ac_out_entity, None, unit="W")
+    ac_in = _coerce(raw_ac_in, None)
+    ac_out = _coerce(raw_ac_out, None)
+    # Both sensors configured is the only case that can produce a MEASURED
+    # draw, so it is the only case where losing one of them costs a
+    # measurement: the commanded-speed fallback below is an estimate of what we
+    # asked for, not of what the wall is delivering (conversion losses, a
+    # station tapering near full). With the sensors absent by configuration the
+    # fallback is the designed answer and nothing is flagged.
+    draw_assumed = bool(ac_in_entity and ac_out_entity) and _UNAVAILABLE in (
+        raw_ac_in,
+        raw_ac_out,
     )
     if ac_in is not None and ac_out is not None:
         actual_draw_w = max(0.0, ac_in - abs(ac_out))
@@ -622,6 +633,7 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
         rated_current=max_current,
+        draw_assumed=draw_assumed,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
     _LOGGER.debug(
@@ -680,8 +692,13 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     power_rating = slider_power if slider_power else element_power
     power_entity = get_entry_value(entry, CONF_TANK_POWER_ENTITY_ID, None)
     live = None
+    power_unreadable = False
     if power_entity:
-        live = _coerce(_read_entity(hass, power_entity, 0, unit="W"))
+        raw_live = _read_entity(hass, power_entity, 0, unit="W")
+        # Configured but unreadable: the 0 W below is invented, so a heating
+        # tank must not be published as drawing nothing (draw_assumed).
+        power_unreadable = raw_live is _UNAVAILABLE
+        live = _coerce(raw_live)
         if live and live > 10 and hvac_action == "heating":
             power_rating = live
             load_rt["device_power"] = round(live, 0)
@@ -764,6 +781,7 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         mode_behavior=behavior_for(mode),
         mode_priority=mode_priority,
         rated_current=equivalent_current,
+        draw_assumed=power_unreadable,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
     _LOGGER.debug(

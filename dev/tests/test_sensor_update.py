@@ -6,6 +6,7 @@ function) to verify the data flow from HA entities through the calculation
 engine to the sensor state and the device commands.
 """
 
+import time
 from unittest.mock import patch, AsyncMock, MagicMock
 from datetime import datetime, timedelta, timezone
 
@@ -27,6 +28,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_CHARGER_ID,
     CONF_OCPP_DEVICE_ID,
     CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
+    CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID,
+    CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID,
+    CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID,
     CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
     CONF_EVSE_POWER_OFFERED_ENTITY_ID,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
@@ -64,6 +68,8 @@ from custom_components.dynamic_ocpp_evse.const import (
     DEFAULT_BATTERY_SOC_HYSTERESIS,
     DEFAULT_CHARGE_PAUSE_DURATION,
     CONF_GRID_EXPORT_LIMIT,
+    CONF_EXCESS_TRIGGER_MARGIN,
+    CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_BASE_CONSUMPTION,
     CONF_BATTERY_CAPACITY_KWH,
@@ -78,9 +84,12 @@ from custom_components.dynamic_ocpp_evse.const import (
     CHARGE_LIMIT_UNIT_WATTS,
     INVERTER_RT_APPLIED,
     INVERTER_RT_CONTROL_ENABLED,
+    INVERTER_RT_ENFORCED_CHARGE_W,
+    INVERTER_RT_LAST_WRITE,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     INVERTER_RT_SOC_CONTROL_ENABLED,
+    INPUT_STALE_TIMEOUT,
 )
 from custom_components.dynamic_ocpp_evse.sensor import (
     LoadJugglerDeviceSensor,
@@ -1221,6 +1230,720 @@ async def test_hub_status_names_unavailable_sensor(
     assert any(
         "sensor.battery_power" in w for w in result["hub_warnings"]
     )
+
+
+# ── Cold-start grid failsafe: assumed for safety, never published ────
+
+
+def _knock_out_grid_cts(hass):
+    """Every grid CT unreadable, as on a cold start or an entry reload."""
+    for entity_id in (
+        "sensor.inverter_phase_a",
+        "sensor.inverter_phase_b",
+        "sensor.inverter_phase_c",
+    ):
+        hass.states.async_set(
+            entity_id,
+            "unavailable",
+            {"device_class": "current", "unit_of_measurement": "A"},
+        )
+
+
+async def test_cold_start_grid_assumption_is_not_published_as_a_measurement(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """The failsafe drives the allocation; it must not become a reading.
+
+    With the CTs unreadable and no EMA history, _resolve_grid_phases assumes
+    every phase is loaded right up to the main breaker — deliberately, so a
+    blind site hands out no grid headroom. That number is a safety fabrication,
+    and publishing it painted a 3 x 25 A x 230 V = 17,250 W grid spike onto
+    Current Grid Power, the recorder and long-term statistics on every reload.
+    The allocation still runs on the assumption; the published grid
+    MEASUREMENTS report nothing at all.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    _knock_out_grid_cts(hass)
+
+    result = run_hub_calculation(hass, hub_entry)
+
+    # --- The allocation side, unchanged: the worst case still binds. ---
+    # Every phase is taken as loaded to the 25 A breaker, so the only grid
+    # headroom left is the charger's own measured draw, which the feedback loop
+    # hands back: post-feedback import (25-10) + 25 + 25 = 65 A = 14,950 W
+    # against the 17,250 W import limit less the 200 W buffer -> 2,100 W.
+    assert result["available_grid_power"] == 2100
+    # The permit that leaves is well under the charger's 16 A maximum.
+    assert result["load_targets"][charger_entry.entry_id] == 8.0
+    assert result[CONF_TOTAL_ALLOCATED_CURRENT] == 8.0
+
+    # --- The measurement side: None, not the fabrication. ---
+    for key in ("grid_power", "total_export_power", "household_power"):
+        assert result[key] is None, key
+    # The exact spike the maintainer saw on the live site.
+    assert result["grid_power"] != 3 * 25 * 230
+
+    # A real reading resumes publication on the very next cycle.
+    _set_ha_states(hass, hub_entry)
+    recovered = run_hub_calculation(hass, hub_entry)
+    assert recovered["grid_power"] is not None
+    assert recovered["grid_power"] > 0
+    assert recovered["total_export_power"] is not None
+    assert recovered["household_power"] is not None
+
+
+async def test_cold_start_hands_out_no_grid_sourced_permit(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Pin the failsafe's whole purpose: a blind site allocates strictly less.
+
+    The same site, the same sensors, the only difference being whether the CTs
+    can be read. Nulling the published measurements must not loosen the
+    allocation by a single amp.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    _knock_out_grid_cts(hass)
+    blind = run_hub_calculation(hass, hub_entry)
+
+    # Fresh hub runtime (no EMA history carried over) with healthy CTs, for
+    # the comparison: a site that can see itself grants strictly more.
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id].pop("_ema_inputs", None)
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id].pop("grid_stale_since", None)
+    _set_ha_states(hass, hub_entry)
+    seeing = run_hub_calculation(hass, hub_entry)
+
+    assert blind["available_grid_power"] < seeing["available_grid_power"]
+    assert (
+        blind["total_site_available_power"]
+        < seeing["total_site_available_power"]
+    )
+    assert (
+        blind["load_available"][charger_entry.entry_id]
+        < seeing["load_available"][charger_entry.entry_id]
+    )
+    # And the blind cycle is the one publishing no grid measurement, so the
+    # comparison is between a real reading and a deliberate silence.
+    assert blind["grid_power"] is None
+    assert seeing["grid_power"] is not None
+
+
+async def test_a_held_grid_reading_still_publishes_after_a_dropout(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """A held EMA value is an estimate, not a fabrication — so it publishes.
+
+    The distinction the whole fix rests on: the sensor died mid-run, so we know
+    what the phase was doing moments ago and holding it is honest. Blanking the
+    grid sensors through every brief CT dropout would be its own bug.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    healthy = run_hub_calculation(hass, hub_entry)
+    assert healthy["grid_power"] is not None
+
+    # Now the CTs drop out, with EMA history behind them.
+    _knock_out_grid_cts(hass)
+    held = run_hub_calculation(hass, hub_entry)
+
+    assert held["grid_power"] is not None
+    assert held["grid_power"] == pytest.approx(healthy["grid_power"], rel=0.05)
+    assert held["household_power"] is not None
+
+
+async def test_current_grid_power_sensor_reads_unknown_on_a_cold_start(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Entity tier: None in hub_data reaches HA as `unknown`.
+
+    Availability is not the mechanism here — the producer ran, on time, and
+    reported honestly that it has no grid measurement. The state is unknown
+    while the sensor stays available, which is exactly what keeps the fake
+    spike out of the recorder.
+    """
+    _set_ha_states(hass, hub_entry)
+    _knock_out_grid_cts(hass)
+
+    charger_sensor = LoadJugglerDeviceSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
+    )
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await _run_site_cycle(hass, hub_entry, charger_sensor)
+
+    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
+    sensor = DynamicOcppEvseHubDataSensor(
+        hass, hub_entry, "Test Hub", "test_hub", defn
+    )
+    await sensor.async_update()
+
+    assert hass.data[DOMAIN]["hub_data"][hub_entry.entry_id]["grid_power"] is None
+    assert sensor.native_value is None
+    assert sensor.available is True
+
+    # The first healthy cycle gives the sensor its reading.
+    _set_ha_states(hass, hub_entry)
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await _run_site_cycle(hass, hub_entry, charger_sensor)
+    await sensor.async_update()
+    assert sensor.native_value is not None
+
+
+# ── Dead solar sensor: 0 W for the maths, nothing published ──────────
+
+
+def _solar_hub(slug, solar_entity):
+    """A hub whose own solar production sensor is its only fleet member.
+
+    Measured solar (not derived), so ``solar_power`` is exactly that sensor's
+    reading and ``household_power`` comes from the supply identity — the two
+    published figures a fabricated 0 W would poison.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title=f"Solar Hub {slug}",
+        data={
+            CONF_NAME: f"Solar Hub {slug}",
+            CONF_ENTITY_ID: f"solar_hub_{slug}",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: f"sensor.sl_{slug}_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: solar_entity,
+        },
+    )
+
+
+def _set_solar_states(hass, slug, solar_entity, solar_state):
+    """2 A of import on phase A, and whatever the solar sensor is doing."""
+    hass.states.async_set(
+        f"sensor.sl_{slug}_phase_a", "2.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        solar_entity, solar_state,
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+
+async def test_a_dead_solar_sensor_publishes_no_production(hass):
+    """Configured, unreadable, no history — 0 W internally, unknown outside.
+
+    The one place that substitutes it (engine/readers.py) keeps handing 0 W to
+    the calculation, because the household maths cannot take None and 0 W is
+    the conservative figure. Publishing it painted a confident 0 W onto Current
+    Solar Power — right at night, a lie in daylight, and in long-term
+    statistics either way.
+
+    Two hubs identical but for what their solar sensor says decide it: the one
+    reading a real 0 W and the one that cannot be read at all must allocate
+    identically (the internal figure really is the same 0 W), and differ only
+    in what they publish.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    dead = _solar_hub("dead", "sensor.sl_dead_pv")
+    zero = _solar_hub("zero", "sensor.sl_zero_pv")
+    hass.data[DOMAIN] = {
+        "hubs": {dead.entry_id: {"loads": []}, zero.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+    }
+    _set_solar_states(hass, "dead", "sensor.sl_dead_pv", STATE_UNAVAILABLE)
+    _set_solar_states(hass, "zero", "sensor.sl_zero_pv", "0")
+
+    dead_result = run_hub_calculation(hass, dead)
+    zero_result = run_hub_calculation(hass, zero)
+
+    # --- The measurement side: nothing, rather than a confident 0 W. ---
+    assert dead_result["solar_power"] is None
+    # The household figure is the supply identity, which consumes solar — so it
+    # carries the fabrication and goes with it.
+    assert dead_result["household_power"] is None
+
+    # --- The allocation side: byte-for-byte the same as a measured 0 W. ---
+    assert zero_result["solar_power"] == 0
+    for key in (
+        "available_solar_power",
+        "available_solar_current",
+        "available_grid_power",
+        "total_site_available_power",
+        "available_current_a",
+        "excess_available",
+    ):
+        assert dead_result[key] == zero_result[key], key
+
+
+async def test_a_solar_reading_resumes_publication_on_the_first_cycle(hass):
+    """The silence lasts exactly as long as the sensor is unreadable."""
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _solar_hub("resume", "sensor.sl_resume_pv")
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+    }
+    _set_solar_states(hass, "resume", "sensor.sl_resume_pv", STATE_UNAVAILABLE)
+    assert run_hub_calculation(hass, hub)["solar_power"] is None
+
+    _set_solar_states(hass, "resume", "sensor.sl_resume_pv", "3000")
+    recovered = run_hub_calculation(hass, hub)
+    assert recovered["solar_power"] == 3000
+    assert recovered["household_power"] is not None
+
+
+async def test_a_held_solar_reading_still_publishes_after_a_dropout(hass):
+    """A held EMA value is an estimate, not a fabrication — so it publishes.
+
+    Same distinction the grid fix rests on: the sensor died moments ago and we
+    know what it was reading, so holding it is honest. Blanking Current Solar
+    Power through every brief dropout would be its own bug.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _solar_hub("held", "sensor.sl_held_pv")
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+    }
+    _set_solar_states(hass, "held", "sensor.sl_held_pv", "4000")
+    healthy = run_hub_calculation(hass, hub)
+    assert healthy["solar_power"] == 4000
+
+    _set_solar_states(hass, "held", "sensor.sl_held_pv", STATE_UNAVAILABLE)
+    held = run_hub_calculation(hass, hub)
+    assert held["solar_power"] == 4000
+    assert held["household_power"] is not None
+
+
+async def test_a_site_with_no_solar_sensor_is_unaffected(hass, hub_entry, charger_entry,
+                                                         setup_domain_data):
+    """No production sensor configured is not a fabrication.
+
+    Such a site derives its production from the inverter output, or falls back
+    to grid export plus the fleet's charging draw. Nothing there is invented,
+    so the figure publishes exactly as it always did.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    result = run_hub_calculation(hass, hub_entry)
+
+    assert result["solar_power"] is not None
+    assert result["household_power"] is not None
+
+
+def _solar_inverter(hub_entry, slug, solar_entity):
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title=f"Inverter {slug}",
+        data={
+            CONF_NAME: f"Inverter {slug}",
+            CONF_ENTITY_ID: f"lj_inv_{slug}",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={CONF_SOLAR_PRODUCTION_ENTITY_ID: solar_entity},
+    )
+
+
+async def test_one_dead_inverter_keeps_its_sibling_publishing(hass):
+    """Per-inverter honesty, fleet-total silence.
+
+    Each inverter has a Solar Production sensor of its OWN, so a healthy
+    member's real figure is a measurement worth keeping and only the dead
+    member's device sensor reads unknown. The fleet total is a sum containing an
+    invented term, which makes the whole sum fabricated — the same rule the
+    grid phases follow, and here the true value is unknowable in BOTH
+    directions (idle array or full output), which argues for silence rather
+    than against it.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Fleet Hub",
+        data={
+            CONF_NAME: "Fleet Hub",
+            CONF_ENTITY_ID: "fleet_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.fl_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_PHASE_VOLTAGE: 230,
+        },
+    )
+    live = _solar_inverter(hub, "live", "sensor.fl_live_pv")
+    dead = _solar_inverter(hub, "dead", "sensor.fl_dead_pv")
+    live.add_to_hass(hass)
+    dead.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    hass.states.async_set(
+        "sensor.fl_phase_a", "2.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.fl_live_pv", "3000",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.states.async_set(
+        "sensor.fl_dead_pv", STATE_UNAVAILABLE,
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    result = run_hub_calculation(hass, hub)
+
+    assert result["inverters"][live.entry_id]["solar_w"] == 3000
+    assert result["inverters"][dead.entry_id]["solar_w"] is None
+    assert result["solar_power"] is None
+
+
+async def test_current_solar_power_clears_when_the_sensor_dies_mid_run(hass):
+    """The mid-run case the grid fix could not reach — and the sensor hold.
+
+    A solar sensor that dies at noon is held for INPUT_STALE_TIMEOUT (honest,
+    published), and after that the stale guard substitutes its 0 W fallback:
+    a mid-run None, which the grid keys could never produce. A hub data sensor
+    that HELD its last value there would freeze 5,000 W of production onto a
+    dark array — a stale reading that looks live, which is exactly what the
+    suppression exists to prevent. It clears to unknown instead, and stays
+    available: the producer ran and reported honestly that it has nothing.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+    from custom_components.dynamic_ocpp_evse.entities.hub import publish_hub_data
+
+    hub = _solar_hub("midrun", "sensor.sl_midrun_pv")
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+    }
+    defn = next(
+        d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "solar_power"
+    )
+    sensor = DynamicOcppEvseHubDataSensor(
+        hass, hub, "Solar Hub", "solar_hub_midrun", defn
+    )
+
+    # Hours of healthy readings.
+    _set_solar_states(hass, "midrun", "sensor.sl_midrun_pv", "5000")
+    publish_hub_data(hass, hub.entry_id, run_hub_calculation(hass, hub))
+    await sensor.async_update()
+    assert sensor.native_value == 5000
+
+    # The sensor dies. Within the timeout the held value still publishes.
+    _set_solar_states(hass, "midrun", "sensor.sl_midrun_pv", STATE_UNAVAILABLE)
+    publish_hub_data(hass, hub.entry_id, run_hub_calculation(hass, hub))
+    await sensor.async_update()
+    assert sensor.native_value == 5000
+
+    # Past INPUT_STALE_TIMEOUT the guard gives up on the held value, and the
+    # published figure goes with it.
+    hub_runtime = hass.data[DOMAIN]["hubs"][hub.entry_id]
+    hub_runtime["_input_stale_since"]["solar"] = (
+        time.monotonic() - INPUT_STALE_TIMEOUT - 5
+    )
+    published = publish_hub_data(hass, hub.entry_id, run_hub_calculation(hass, hub))
+    assert published["solar_power"] is None
+    await sensor.async_update()
+    assert sensor.native_value is None
+    assert sensor.available is True
+
+    # And a returning sensor publishes again on its very first reading (the
+    # value ramps because the stale guard cleared the EMA — the point here is
+    # that a number is being reported at all).
+    _set_solar_states(hass, "midrun", "sensor.sl_midrun_pv", "4500")
+    publish_hub_data(hass, hub.entry_id, run_hub_calculation(hass, hub))
+    await sensor.async_update()
+    assert sensor.native_value is not None
+    assert sensor.native_value > 0
+
+
+# ── Unreadable load monitor: 0 A for the loop, nothing published ─────
+
+
+def _set_charger_import(hass, state, attrs=None):
+    """Whatever the charger's Current Import sensor is doing this cycle."""
+    hass.states.async_set(
+        "sensor.test_charger_current_import",
+        state,
+        {
+            "device_class": "current",
+            "unit_of_measurement": "A",
+            **(attrs or {}),
+        },
+    )
+
+
+async def test_a_charging_car_with_a_dead_monitor_publishes_no_managed_power(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """The defect: a charging car could publish 0 W of Current Managed Power.
+
+    Its Current Import sensor is unreadable, so the load carries 0 A into the
+    cycle. That 0 is deliberately conservative for the feedback loop — which
+    subtracts managed draws from the grid CTs, and must never subtract more
+    than it can see — so it stays. What must not happen is publishing it: a car
+    pulling 7 kW reported as 0 W, in the sensor and in long-term statistics.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    _set_charger_import(hass, STATE_UNAVAILABLE)  # the car is still "Charging"
+
+    result = run_hub_calculation(hass, hub_entry)
+
+    # --- The measurement side: nothing at all. ---
+    assert result["total_evse_power"] is None
+    assert result["load_draw"][charger_entry.entry_id] is None
+    # Every household form nets the managed draw out, so it carries the same
+    # fabrication — the car's kilowatts would sit inside the household figure.
+    assert result["household_power"] is None
+
+    # --- The allocation side keeps publishing, exactly as before. ---
+    assert result["load_targets"][charger_entry.entry_id] > 0
+    assert result["load_available"][charger_entry.entry_id] > 0
+    assert result[CONF_TOTAL_ALLOCATED_CURRENT] > 0
+    # The grid measurement is the raw CT reading and is untouched by any of it.
+    assert result["grid_power"] is not None
+
+    # --- The feedback loop's view: still the conservative 0 A. ---
+    # A genuine 0 A reading gives byte-identical grid headroom, which is what
+    # "the internal zero stays" means — nothing was handed back to the pools.
+    _set_charger_import(
+        hass, "0.0", {"l1_current": 0.0, "l2_current": 0.0, "l3_current": 0.0}
+    )
+    measured_zero = run_hub_calculation(hass, hub_entry)
+    assert measured_zero["available_grid_power"] == result["available_grid_power"]
+    # ...and a MEASURED 0 W publishes. Only the invented one is the bug.
+    assert measured_zero["total_evse_power"] == 0
+    assert measured_zero["household_power"] is not None
+
+
+async def test_an_idle_charger_with_a_dead_monitor_still_publishes_zero(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """No car connected: 0 W is a fact, not a guess.
+
+    An offline OCPP charger takes all of its sensors with it — status included
+    — so this is the common case, and blanking Current Managed Power for every
+    site with an idle charger would be a worse bug than the one being fixed.
+    The engine books nothing for it and it reports itself inactive; both are
+    things we know without a meter.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    _set_charger_import(hass, STATE_UNAVAILABLE)
+    hass.states.async_set("sensor.test_charger_status_connector", "Available")
+
+    result = run_hub_calculation(hass, hub_entry)
+
+    assert result["load_targets"][charger_entry.entry_id] == 0
+    assert result["total_evse_power"] == 0
+    assert result["load_draw"][charger_entry.entry_id] == 0
+    assert result["household_power"] is not None
+
+
+async def test_a_healthy_monitor_resumes_managed_power_publication(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """The silence lasts exactly as long as the monitor is unreadable."""
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    _set_charger_import(hass, STATE_UNAVAILABLE)
+    assert run_hub_calculation(hass, hub_entry)["total_evse_power"] is None
+
+    _set_ha_states(hass, hub_entry)  # 10 A on L1 again
+    recovered = run_hub_calculation(hass, hub_entry)
+    assert recovered["total_evse_power"] == round(10.0 * 230, 0)
+    assert recovered["load_draw"][charger_entry.entry_id] == 10.0
+    assert recovered["household_power"] is not None
+
+
+async def test_one_dead_phase_sensor_fabricates_the_whole_draw(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Per-phase monitors: a partly-read draw is still a fabricated total.
+
+    Two of three phase sensors read, the third is unreadable and silently
+    contributes 0 A — which makes the sum look measured while it is short by
+    whatever that phase is really pulling. There is no per-phase managed-power
+    figure published to partial it out into, so the total goes.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    per_phase = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Per-phase Charger",
+        data={
+            CONF_ENTITY_ID: "pp_charger",
+            CONF_NAME: "Per-phase Charger",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_CHARGER_ID: "pp_charger",
+            CONF_EVSE_CURRENT_IMPORT_L1_ENTITY_ID: "sensor.pp_l1",
+            CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID: "sensor.pp_l2",
+            CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID: "sensor.pp_l3",
+            CONF_HUB_ENTRY_ID: hub_entry.entry_id,
+        },
+        options={
+            CONF_LOAD_PRIORITY: 1,
+            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+        },
+    )
+    _set_ha_states(hass, hub_entry)
+    hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["loads"] = [per_phase.entry_id]
+    hass.data[DOMAIN]["loads"] = {
+        per_phase.entry_id: {
+            "entry": per_phase,
+            "hub_entry_id": hub_entry.entry_id,
+            "dynamic_control": True,
+        }
+    }
+    hass.states.async_set("sensor.pp_charger_status_connector", "Charging")
+    for entity, value in (
+        ("sensor.pp_l1", "10.0"),
+        ("sensor.pp_l2", "10.0"),
+        ("sensor.pp_l3", STATE_UNAVAILABLE),
+    ):
+        hass.states.async_set(
+            entity, value,
+            {"device_class": "current", "unit_of_measurement": "A"},
+        )
+
+    result = run_hub_calculation(hass, hub_entry, load_entries=[per_phase])
+
+    assert result["total_evse_power"] is None
+    assert result["load_draw"][per_phase.entry_id] is None
+    # The engine still saw the two phases it could read — the internal draw is
+    # untouched, so allocation and the feedback loop behave exactly as before.
+    assert result["load_targets"][per_phase.entry_id] > 0
+
+    # All three readable: the total publishes again.
+    hass.states.async_set(
+        "sensor.pp_l3", "10.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    healthy = run_hub_calculation(hass, hub_entry, load_entries=[per_phase])
+    assert healthy["total_evse_power"] == round(30.0 * 230, 0)
+
+
+async def test_current_managed_power_sensor_reads_unknown_mid_charge(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """Entity tier, and the mid-run hold: a monitor can die at any moment.
+
+    Unlike the grid failsafe, this None is reachable mid-run — the car is
+    charging and its meter simply stops answering. A sensor that HELD its last
+    value would keep graphing 2.3 kW of managed power against a car whose draw
+    is unknown, so the hub data sensors clear instead (entities/hub.py).
+    """
+    from custom_components.dynamic_ocpp_evse.entities.hub import publish_hub_data
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    _set_ha_states(hass, hub_entry)
+    defn = next(
+        d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "total_evse_power"
+    )
+    sensor = DynamicOcppEvseHubDataSensor(
+        hass, hub_entry, "Test Hub", "test_hub", defn
+    )
+
+    publish_hub_data(hass, hub_entry.entry_id, run_hub_calculation(hass, hub_entry))
+    await sensor.async_update()
+    assert sensor.native_value == round(10.0 * 230, 0)
+
+    _set_charger_import(hass, STATE_UNAVAILABLE)
+    published = publish_hub_data(
+        hass, hub_entry.entry_id, run_hub_calculation(hass, hub_entry)
+    )
+    assert published["total_evse_power"] is None
+    await sensor.async_update()
+    assert sensor.native_value is None
+    assert sensor.available is True
+
+    _set_ha_states(hass, hub_entry)
+    publish_hub_data(hass, hub_entry.entry_id, run_hub_calculation(hass, hub_entry))
+    await sensor.async_update()
+    assert sensor.native_value == round(10.0 * 230, 0)
 
 
 # ── Result dict completeness test ────────────────────────────────────
@@ -2366,6 +3089,1609 @@ async def test_forecast_charge_limit_latch_round_trips_through_hub_runtime(hass)
         assert hub_runtime["_forecast_charge_limiting"] is False
 
 
+def _anchor_hub(slug, export_limit, trigger_margin):
+    """A forecast hub differing only in its export limit and trigger margin.
+
+    Measured solar (not derived) so the advice is a clean function of the
+    reading; 10 kWh pack, 5 kW charge rating, 300 W base consumption.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title=f"Anchor Hub {slug}",
+        data={
+            CONF_NAME: f"Anchor Hub {slug}",
+            CONF_ENTITY_ID: f"anchor_hub_{slug}",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.an_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.an_solar",
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.an_battery_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.an_battery_power",
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_GRID_EXPORT_LIMIT: export_limit,
+            CONF_EXCESS_TRIGGER_MARGIN: trigger_margin,
+            CONF_BASE_CONSUMPTION: 300,
+            CONF_BATTERY_CAPACITY_KWH: 10,
+            CONF_FORECAST_SOC_FLOOR: 30,
+            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.an_forecast"],
+        },
+    )
+
+
+def _set_anchor_states(hass, solar_w, forecast_w, export_w=0.0, battery_w=500.0):
+    """The plant this rig reads: measured export, and what the pack is taking.
+
+    ``export_w`` is watts leaving the meter (so the CT reading is negative) and
+    ``battery_w`` is watts the pack is absorbing (so the power sensor is
+    negative — positive is discharging). Those two figures ARE the engaged
+    advice's inputs; the solar reading no longer enters it at all.
+    """
+    hass.states.async_set(
+        "sensor.an_phase_a", str(-export_w / 230.0),
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.an_solar", str(solar_w),
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    # SOC 88 sits on the engage threshold of the 90 % ceiling below, so the
+    # charge cap is engaged in every one of these cases.
+    hass.states.async_set(
+        "sensor.an_battery_soc", "88",
+        {"device_class": "battery", "unit_of_measurement": "%"},
+    )
+    hass.states.async_set(
+        "sensor.an_battery_power", str(-battery_w),
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.states.async_set(
+        "sensor.an_forecast",
+        "1.0",
+        {
+            "watts": {
+                "2026-08-14T10:00:00+00:00": forecast_w,
+                "2026-08-14T11:00:00+00:00": 0,
+            }
+        },
+    )
+
+
+async def test_forecast_charge_limit_steers_to_a_setpoint_a_margin_under_the_limit(hass):
+    """The engaged advice steers export to (export limit − trigger margin),
+    while the clipping INTEGRAL stays on the true (export limit + base) energy
+    threshold.
+
+    Regression for the masked-site bug: on an inverter that hard-enforces the
+    export limit, a controller whose setpoint IS the limit can never see an
+    error, so its permit freezes while real kilowatts are curtailed (see
+    ``recommended_charge_limit``'s docstring and the closed-loop replays in
+    test_forecast_clipping.py). A margin under the limit, the pinned error is
+    exactly that margin and the permit creeps out.
+
+    Two hubs identical but for the trigger margin — 0 W (the degenerate
+    setpoint, exactly at the limit) and 800 W — decide it, with the meter pinned
+    at the 5 kW limit and the pack taking 500 W: the advice must differ by
+    EXACTLY the margin, and the clipped-energy figure must not move at all.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    at_limit = _anchor_hub("atlimit", 5000, 0)
+    shifted = _anchor_hub("shifted", 5000, 800)
+    hass.data[DOMAIN] = {
+        "hubs": {
+            at_limit.entry_id: {"loads": []},
+            shifted.entry_id: {"loads": []},
+        },
+        "loads": {},
+        "load_allocations": {},
+    }
+    # 1 h at 6300 W is 1 kWh above the true 5300 W threshold, so the ceiling is
+    # 90 % and SOC 88 engages the cap. Export pinned at the 5 kW wall.
+    _set_anchor_states(hass, 6000, 6300, export_w=5000.0, battery_w=500.0)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        at_limit_result = run_hub_calculation(hass, at_limit)
+        shifted_result = run_hub_calculation(hass, shifted)
+
+    # The integral is the ENERGY question and is asked at the true threshold —
+    # the same 1 kWh whatever the trigger margin, so the reserved headroom is
+    # untouched by this setpoint.
+    assert at_limit_result["forecast_clipped_kwh"] == 1.0
+    assert shifted_result["forecast_clipped_kwh"] == 1.0
+    assert at_limit_result["forecast_absorbable_kwh"] == 1.0
+    assert shifted_result["forecast_absorbable_kwh"] == 1.0
+    assert at_limit_result["forecast_battery_max_soc"] == 90
+    assert shifted_result["forecast_battery_max_soc"] == 90
+
+    # The advice is the POWER question, and it is battery + (export − setpoint):
+    #   500 + (5000 − (5000 − 0))   =  500 W — the degenerate case, frozen
+    #   500 + (5000 − (5000 − 800)) = 1300 W — one margin of escape per cycle
+    assert at_limit_result["forecast_charge_limit_w"] == 500
+    assert shifted_result["forecast_charge_limit_w"] == 1300
+    # The two setpoints diverge by exactly the trigger margin.
+    assert (
+        shifted_result["forecast_charge_limit_w"]
+        - at_limit_result["forecast_charge_limit_w"]
+        == 800
+    )
+
+
+async def test_the_export_setpoint_never_goes_below_zero(hass):
+    """Edge: a trigger margin larger than the export limit clamps at 0 W.
+
+    The setpoint is ``max(export limit − margin, 0)`` — watts at the meter — so
+    a tiny export limit cannot push it negative and inflate the advice by the
+    difference. Base consumption is not in this path at all any more.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _anchor_hub("clamped", 400, 500)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+    }
+    # True threshold 700 W; 1 h at 1700 W is 1 kWh clipped → ceiling 90 %.
+    _set_anchor_states(hass, 1000, 1700, export_w=400.0, battery_w=500.0)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+
+    assert result["forecast_clipped_kwh"] == 1.0
+    assert result["forecast_battery_max_soc"] == 90
+    # Setpoint clamped to 0: 500 + (400 − 0) = 900 W. Unclamped the setpoint
+    # would be −100 W and the advice 1000 W.
+    assert result["forecast_charge_limit_w"] == 900
+
+
+# ── PV clipping forecast: the reserve is carved below the destination ──
+#
+# The battery's destination is the per-inverter "normal SOC ceiling source"
+# entity — where that pack ends the day when the forecast says nothing. Carving
+# the reserve out of 100 % on a site whose ceiling sits at 95 % reserves the top
+# 5 % twice, and the battery meets the peak with 5 % of room instead of the
+# reserve. A site that configures no ceiling source anchors at 100 as before.
+
+
+def _destination_hub(slug, base=300):
+    """A forecast hub whose battery (and its ceiling source) is an inverter entry.
+
+    Hub-level: the grid CT, the export limit and base consumption — clipping
+    threshold 5300 W — and the forecast source. The battery belongs to the
+    inverter entry, because that is where the SOC write-control and its normal
+    ceiling source live.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title=f"Destination Hub {slug}",
+        data={
+            CONF_NAME: f"Destination Hub {slug}",
+            CONF_ENTITY_ID: f"destination_hub_{slug}",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.dst_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_GRID_EXPORT_LIMIT: 5000,
+            CONF_BASE_CONSUMPTION: base,
+            CONF_FORECAST_SOC_FLOOR: 30,
+            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.dst_forecast"],
+        },
+    )
+
+
+def _destination_inverter(hub, slug, normal_entity=None, solar_entity=None):
+    """That hub's inverter: a 20 kWh battery, optionally with a ceiling source."""
+    options = {
+        CONF_BATTERY_SOC_ENTITY_ID: "sensor.dst_battery_soc",
+        CONF_BATTERY_POWER_ENTITY_ID: "sensor.dst_battery_power",
+        CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+        CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+        CONF_BATTERY_CAPACITY_KWH: 20,
+    }
+    if normal_entity:
+        options[CONF_SOC_LIMIT_NORMAL_ENTITY_ID] = normal_entity
+    if solar_entity:
+        options[CONF_SOLAR_PRODUCTION_ENTITY_ID] = solar_entity
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title=f"Destination Inverter {slug}",
+        data={
+            CONF_NAME: f"Destination Inverter {slug}",
+            CONF_ENTITY_ID: f"destination_inverter_{slug}",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options=options,
+    )
+
+
+def _set_destination_states(hass, soc, normal="95"):
+    hass.states.async_set(
+        "sensor.dst_phase_a", "2.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.dst_battery_soc", str(soc),
+        {"device_class": "battery", "unit_of_measurement": "%"},
+    )
+    hass.states.async_set(
+        "sensor.dst_battery_power", "-500",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.states.async_set(
+        "number.dst_normal", normal, {"unit_of_measurement": "%"}
+    )
+    # One hour at 7300 W is 2 kWh above the 5300 W threshold, and the 5 kW
+    # charge rating can take all of it: 2 kWh of a 20 kWh pack is 10 % of SOC.
+    hass.states.async_set(
+        "sensor.dst_forecast",
+        "1.0",
+        {
+            "watts": {
+                "2026-08-14T10:00:00+00:00": 7300,
+                "2026-08-14T11:00:00+00:00": 0,
+            }
+        },
+    )
+
+
+async def test_forecast_max_soc_is_carved_below_the_configured_destination(hass):
+    """Same site, same forecast, one difference: a 95 % ceiling source.
+
+    2 kWh of a 20 kWh pack is 10 points of SOC, so the advice is 85 % where the
+    battery is heading for 95 and 90 % where nothing says otherwise.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    with_dest = _destination_hub("with")
+    without = _destination_hub("without")
+    inv_with = _destination_inverter(with_dest, "with", "number.dst_normal")
+    inv_without = _destination_inverter(without, "without")
+    for entry in (inv_with, inv_without):
+        entry.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {
+            with_dest.entry_id: {"loads": []},
+            without.entry_id: {"loads": []},
+        },
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=70)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        dest_result = run_hub_calculation(hass, with_dest)
+        flat_result = run_hub_calculation(hass, without)
+
+    # The ENERGY question is untouched by the anchor — the same 2 kWh either way.
+    assert dest_result["forecast_absorbable_kwh"] == 2.0
+    assert flat_result["forecast_absorbable_kwh"] == 2.0
+
+    assert dest_result["forecast_battery_max_soc"] == 85
+    assert flat_result["forecast_battery_max_soc"] == 90
+    # And the per-inverter advice each device drives its own slots from.
+    assert (
+        dest_result["inverters"][inv_with.entry_id]["forecast_battery_max_soc"] == 85
+    )
+
+
+async def test_forecast_charge_gate_engages_relative_to_the_destination_advice(hass):
+    """The gate follows the recommendation, so the destination moves it too.
+
+    SOC 84 against the 85 % destination advice is inside the engage band
+    (85 − 2); against the 90 % flat-anchored advice of the identical site it is
+    not. Same battery, same forecast, same SOC — only the anchor differs.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    with_dest = _destination_hub("gate")
+    without = _destination_hub("gateflat")
+    inv_with = _destination_inverter(with_dest, "gate", "number.dst_normal")
+    inv_without = _destination_inverter(without, "gateflat")
+    for entry in (inv_with, inv_without):
+        entry.add_to_hass(hass)
+    dest_runtime = {"loads": []}
+    flat_runtime = {"loads": []}
+    hass.data[DOMAIN] = {
+        "hubs": {
+            with_dest.entry_id: dest_runtime,
+            without.entry_id: flat_runtime,
+        },
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=84)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        dest_result = run_hub_calculation(hass, with_dest)
+        flat_result = run_hub_calculation(hass, without)
+
+    # Engaged: production (derived, ~500 W) is far below the advice anchor, so
+    # there is nothing unexportable to charge with.
+    assert dest_result["forecast_charge_limit_w"] == 0
+    assert dest_runtime["_forecast_charge_limiting"] is True
+    # Released on the identical site whose battery is heading for 100 %.
+    assert flat_result["forecast_charge_limit_w"] == 5000
+    assert flat_runtime["_forecast_charge_limiting"] is False
+
+
+async def test_a_mid_day_destination_change_moves_the_advice_with_it(hass):
+    """The user moves their own ceiling at noon; the advice follows.
+
+    The ratchet only absorbs falls SMALLER than its band, so a real change
+    lands on the next cycle in both directions. A change inside the band is
+    held — and there the write is still the user's own number, because the
+    fan-out writes min(normal, recommendation) (see
+    test_inverter_control.py::test_advice_above_the_normal_writes_the_normal).
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("moving")
+    inverter = _destination_inverter(hub, "moving", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=70)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+        # Lowered to 80 %: the reserve moves down with the destination at once.
+        hass.states.async_set("number.dst_normal", "80", {"unit_of_measurement": "%"})
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 70
+
+        # Raised back: a rise is never resisted.
+        hass.states.async_set("number.dst_normal", "95", {"unit_of_measurement": "%"})
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+        # A one-point trim is inside the FORECAST_SOC_HYSTERESIS band, so the
+        # published advice holds — the write follows the user's 94 regardless.
+        hass.states.async_set("number.dst_normal", "94", {"unit_of_measurement": "%"})
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+
+async def test_an_unreadable_destination_holds_its_last_known_value(hass):
+    """A ceiling source is a SETPOINT, so it is held rather than stale-guarded.
+
+    "The user asked for 95 %" stays true through a dropout. Snapping back to the
+    100 % anchor would RAISE the published ceiling, which the ratchet would then
+    resist bringing down again for the rest of the day — and the write-control
+    defers every write while the entity is unreadable anyway.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("dropout")
+    inverter = _destination_inverter(hub, "dropout", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=70)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+        hass.states.async_set("number.dst_normal", STATE_UNAVAILABLE)
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+        # Never readable at all (a fresh hub, a typo'd entity) is the one case
+        # with nothing better to hold: the 100 % anchor, exactly as before.
+        fresh_hub = _destination_hub("fresh")
+        fresh_inv = _destination_inverter(fresh_hub, "fresh", "number.dst_missing")
+        fresh_inv.add_to_hass(hass)
+        hass.data[DOMAIN]["hubs"][fresh_hub.entry_id] = {"loads": []}
+        assert run_hub_calculation(hass, fresh_hub)["forecast_battery_max_soc"] == 90
+
+
+# ── PV clipping forecast: the NEXT clipping window ────────────────────
+#
+# The reservation is measured against the next clip within the horizon, not the
+# remainder of the calendar day. While today still has clip left that IS the
+# remainder of today, byte for byte; once today's clip has integrated away the
+# window rolls over to tomorrow's peak, and the search never looks further.
+
+# One hour at 7300 W is 2 kWh above the 5300 W threshold — 10 points of the
+# 20 kWh pack, so the reserve below the 95 % destination is 85 %.
+_TODAY_PEAK = {
+    "2026-08-14T10:00:00+00:00": 7300,
+    "2026-08-14T11:00:00+00:00": 0,
+}
+# One hour at 8300 W is 3 kWh — 15 points, so tomorrow's reserve is 80 %.
+_TOMORROW_PEAK = {
+    "2026-08-15T10:00:00+00:00": 8300,
+    "2026-08-15T11:00:00+00:00": 0,
+}
+_DAY_AFTER_PEAK = {
+    "2026-08-16T10:00:00+00:00": 8300,
+    "2026-08-16T11:00:00+00:00": 0,
+}
+
+
+def _set_window_states(hass, soc, watts):
+    """The destination rig, with an explicit forecast series."""
+    _set_destination_states(hass, soc=soc)
+    hass.states.async_set("sensor.dst_forecast", "1.0", {"watts": dict(watts)})
+
+
+async def test_todays_window_is_untouched_while_today_still_clips(hass):
+    """Byte-equivalence: at 08:00 with a peak still ahead, tomorrow's forecast
+    changes nothing at all. Same clip, same storable, same ceiling, same cap."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("windownow")
+    inverter = _destination_inverter(hub, "windownow", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+
+    keys = (
+        "forecast_clipped_kwh",
+        "forecast_absorbable_kwh",
+        "forecast_battery_max_soc",
+        "forecast_headroom_deficit_kwh",
+        "forecast_charge_limit_w",
+    )
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        _set_window_states(hass, soc=78, watts=_TODAY_PEAK)
+        hass.data[DOMAIN]["hubs"][hub.entry_id] = {"loads": []}
+        today_only = run_hub_calculation(hass, hub)
+        today_only = {k: today_only[k] for k in keys}
+
+        _set_window_states(hass, soc=78, watts={**_TODAY_PEAK, **_TOMORROW_PEAK})
+        hass.data[DOMAIN]["hubs"][hub.entry_id] = {"loads": []}
+        with_tomorrow = run_hub_calculation(hass, hub)
+        with_tomorrow = {k: with_tomorrow[k] for k in keys}
+
+    assert today_only == with_tomorrow
+    assert with_tomorrow["forecast_clipped_kwh"] == 2.0
+    assert with_tomorrow["forecast_battery_max_soc"] == 85
+
+
+async def test_the_window_rolls_over_to_tomorrow_once_todays_clip_is_spent(hass):
+    """18:00, today's peak hours past: the reservation, and every published
+    figure with it, is about TOMORROW's peak.
+
+    The charge cap deliberately does not follow — it asks only about today, so
+    it stays released overnight and this feature writes no charge register in
+    the dark. SOC 78 sits exactly on the engage threshold of tomorrow's 80 %
+    ceiling, so a cap that DID follow the window would engage here.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("windownext")
+    inverter = _destination_inverter(hub, "windownext", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    runtime = {"loads": []}
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: runtime},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_window_states(hass, soc=78, watts={**_TODAY_PEAK, **_TOMORROW_PEAK})
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        morning = run_hub_calculation(hass, hub)
+    assert morning["forecast_battery_max_soc"] == 85
+
+    with freeze_time("2026-08-14 18:00:00+00:00"):
+        evening = run_hub_calculation(hass, hub)
+
+    assert evening["forecast_clipped_kwh"] == 3.0
+    assert evening["forecast_absorbable_kwh"] == 3.0
+    # 15 points below the 95 % destination — and the 5-point fall clears the
+    # FORECAST_SOC_HYSTERESIS band, so the ratchet does not fight the handover.
+    assert evening["forecast_battery_max_soc"] == 80
+    assert evening["inverters"][inverter.entry_id]["forecast_battery_max_soc"] == 80
+    # The cap: released, at full rate, nothing latched.
+    assert evening["forecast_charge_limit_w"] == 5000
+    assert runtime["_forecast_charge_limiting"] is False
+
+    # An overnight forecast improvement heals the recommendation upward at once.
+    with freeze_time("2026-08-14 23:00:00+00:00"):
+        _set_window_states(
+            hass,
+            soc=78,
+            watts={**_TODAY_PEAK, "2026-08-15T10:00:00+00:00": 6300,
+                   "2026-08-15T11:00:00+00:00": 0},
+        )
+        healed = run_hub_calculation(hass, hub)
+    assert healed["forecast_absorbable_kwh"] == 1.0
+    assert healed["forecast_battery_max_soc"] == 90
+
+
+async def test_the_window_search_never_looks_past_tomorrow(hass):
+    """A clip the day after tomorrow must not hold the battery low through the
+    clear day in between: with nothing today and nothing tomorrow, the
+    recommendation rests at the destination."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("windowcap")
+    inverter = _destination_inverter(hub, "windowcap", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_window_states(hass, soc=78, watts=_DAY_AFTER_PEAK)
+
+    with freeze_time("2026-08-14 18:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+
+    assert result["forecast_clipped_kwh"] == 0.0
+    assert result["forecast_battery_max_soc"] == 95
+
+    # The same clip one day nearer IS reserved for — the cap is what differs.
+    _set_window_states(hass, soc=78, watts=_TOMORROW_PEAK)
+    hass.data[DOMAIN]["hubs"][hub.entry_id] = {"loads": []}
+    with freeze_time("2026-08-14 18:00:00+00:00"):
+        nearer = run_hub_calculation(hass, hub)
+    assert nearer["forecast_battery_max_soc"] == 80
+
+
+# ── PV clipping forecast: the just-in-time floor drop ─────────────────
+#
+# The maintainer's worked example, end to end. Destination 95 %, a 20 kWh pack,
+# 300 W base consumption, no clip left today and 2 kWh of it tomorrow — so the
+# reserve is 85 %. Production overtakes the house at 08:30, the shed is
+# 2 kWh / 300 W = 6 h 40 min, and the early-start factor asks for 8 h: the floor
+# drops at 00:30 and the evening's house draw comes out of the battery, not the
+# grid.
+
+# Tomorrow's shape: pre-dawn dribble below the 300 W house draw, the crossing at
+# 08:30, and one hour 2 kW above the 5300 W clipping threshold.
+_TOMORROW_DAWN = {
+    "2026-08-15T06:00:00+00:00": 50,
+    "2026-08-15T07:00:00+00:00": 200,
+    "2026-08-15T08:00:00+00:00": 200,
+    "2026-08-15T08:30:00+00:00": 400,
+    "2026-08-15T09:00:00+00:00": 1000,
+    "2026-08-15T10:00:00+00:00": 7300,
+    "2026-08-15T11:00:00+00:00": 0,
+}
+
+
+def _jit_rig(hass, slug):
+    """The worked example's hub, inverter and runtime."""
+    hub = _destination_hub(slug)
+    inverter = _destination_inverter(hub, slug, "number.dst_normal")
+    inverter.add_to_hass(hass)
+    runtime = {"loads": []}
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: runtime},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    return hub, inverter, runtime
+
+
+def _set_jit_states(hass, soc, watts=None):
+    _set_destination_states(hass, soc=soc)
+    hass.states.async_set(
+        "sensor.dst_forecast", "1.0", {"watts": dict(watts or _TOMORROW_DAWN)}
+    )
+
+
+async def test_the_reserve_is_held_through_the_evening_and_dropped_just_in_time(hass):
+    """The recommendation rests at the 95 % destination all evening, then lands
+    on tomorrow's 85 % reserve at 00:30 — 8 hours before production starts."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, runtime = _jit_rig(hass, "jit")
+    _set_jit_states(hass, soc=95)
+
+    def at(stamp):
+        with freeze_time(stamp):
+            return run_hub_calculation(hass, hub)
+
+    # The evening. The published clip is TOMORROW's 2 kWh — the window has
+    # rolled over — but the reserve it buys is not applied yet.
+    evening = at("2026-08-14 18:00:00+00:00")
+    assert evening["forecast_absorbable_kwh"] == 2.0
+    assert evening["forecast_battery_max_soc"] == 95
+    assert runtime["_forecast_reservation_due"] is False
+    # The RESERVATION half of the cap asks only about today, and today is spent
+    # — so nothing here is reserving for tomorrow's clip. What holds the pack is
+    # the destination it is sitting on: 95 of 95, so the standing ceiling engages
+    # and the advice is the floor rather than the BMS's own rate (the live bug of
+    # 2026-08-25, where a day with no clip forecast ran the pack to 98 %).
+    assert runtime["_forecast_soc_yielding"] is True
+    assert evening["forecast_charge_limit_w"] == 0
+    assert runtime["_forecast_charge_limiting"] is True
+    # And it is the floor for the honest reason: the meter is nowhere near the
+    # export setpoint at 18:00, so there is no surplus to permit. Nothing is
+    # carried between cycles for a stale correction to live in.
+    assert not [k for k in runtime if "trim" in k]
+
+    for stamp in ("2026-08-14 22:00:00+00:00", "2026-08-15 00:00:00+00:00"):
+        held = at(stamp)
+        assert held["forecast_battery_max_soc"] == 95, f"dropped early at {stamp}"
+        assert held["inverters"][inverter.entry_id][
+            "forecast_battery_max_soc"
+        ] == 95
+
+    # 00:29 — one minute short of the 8 hours the shed is given.
+    assert at("2026-08-15 00:29:00+00:00")["forecast_battery_max_soc"] == 95
+
+    # 00:30 — 6 h 40 min of shed × 1.2 = exactly 8 h before 08:30.
+    dropped = at("2026-08-15 00:30:00+00:00")
+    assert dropped["forecast_battery_max_soc"] == 85
+    assert dropped["inverters"][inverter.entry_id]["forecast_battery_max_soc"] == 85
+    assert runtime["_forecast_reservation_due"] is True
+    # A 10-point fall clears the FORECAST_SOC_HYSTERESIS band in one cycle —
+    # the ratchet does not fight the handover.
+
+
+async def test_nothing_touches_the_charge_register_overnight_below_the_destination(
+    hass,
+):
+    """The same evening with the pack a band below its destination.
+
+    This is where "the cap asks only about today, and today is spent" still
+    holds, and it is the half of the old behaviour worth keeping: under the
+    ceiling, with tomorrow's clip a night away, the pack is left at full rate and
+    this feature writes no charge register in the dark.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, runtime = _jit_rig(hass, "jitbelow")
+    # 92 is a full FORECAST_SOC_HYSTERESIS band below the 95 % destination, so
+    # the yield latch cannot be engaged there in either direction.
+    _set_jit_states(hass, soc=92)
+
+    with freeze_time("2026-08-14 18:00:00+00:00"):
+        evening = run_hub_calculation(hass, hub)
+
+    assert evening["forecast_absorbable_kwh"] == 2.0
+    assert evening["forecast_battery_max_soc"] == 95
+    assert runtime["_forecast_soc_yielding"] is False
+    assert evening["forecast_charge_limit_w"] == 5000
+    assert runtime["_forecast_charge_limiting"] is False
+
+
+async def test_the_drop_holds_against_a_faster_night_and_an_early_finish(hass):
+    """Once dropped, dropped. A pack emptying faster than base consumption
+    would make the plain arithmetic say "not yet" again; the latch stops the
+    recommendation climbing back to the destination in the dark."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, runtime = _jit_rig(hass, "jitlatch")
+    _set_jit_states(hass, soc=95)
+
+    with freeze_time("2026-08-15 00:30:00+00:00"):
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+    # 01:30, twice base consumption taken: 7 h left against 1.2 × 5 h 20 min.
+    with freeze_time("2026-08-15 01:30:00+00:00"):
+        _set_jit_states(hass, soc=93)
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+    # The shed finishes hours early: the floor holds the pack at the reserve and
+    # the house moves to the grid, which is exactly the intent.
+    with freeze_time("2026-08-15 04:00:00+00:00"):
+        _set_jit_states(hass, soc=85)
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+    # And an SOC dropout afterwards does not re-raise a floor already acted on.
+    with freeze_time("2026-08-15 05:00:00+00:00"):
+        hass.states.async_set("sensor.dst_battery_soc", STATE_UNAVAILABLE)
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+    assert runtime["_forecast_reservation_due"] is True
+
+
+async def test_an_overnight_forecast_improvement_heals_the_reserve_upward(hass):
+    """A dropped reserve still follows the forecast: a smaller clip tomorrow is
+    a rise, and rises are never resisted."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, _runtime = _jit_rig(hass, "jitheal")
+    _set_jit_states(hass, soc=95)
+
+    with freeze_time("2026-08-15 00:30:00+00:00"):
+        assert run_hub_calculation(hass, hub)["forecast_battery_max_soc"] == 85
+
+    with freeze_time("2026-08-15 01:00:00+00:00"):
+        _set_jit_states(
+            hass, soc=94, watts={**_TOMORROW_DAWN, "2026-08-15T10:00:00+00:00": 6300}
+        )
+        healed = run_hub_calculation(hass, hub)
+    assert healed["forecast_absorbable_kwh"] == 1.0
+    assert healed["forecast_battery_max_soc"] == 90
+
+
+async def test_an_unknown_soc_overnight_holds_at_the_destination(hass):
+    """No SOC is no basis for evicting a battery — hold, and let the next cycle
+    with a reading decide."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, runtime = _jit_rig(hass, "jitnosoc")
+    _set_jit_states(hass, soc=95)
+    hass.states.async_set("sensor.dst_battery_soc", STATE_UNAVAILABLE)
+
+    # 04:00 is well past the 00:30 the drop would otherwise have landed on.
+    with freeze_time("2026-08-15 04:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+    assert result["forecast_battery_max_soc"] == 95
+    assert runtime["_forecast_reservation_due"] is False
+
+
+async def test_a_night_too_short_applies_the_reserve_at_once(hass):
+    """Today's clip zeroes with too little night left to shed in: no schedule to
+    keep, so the reservation lands immediately."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, runtime = _jit_rig(hass, "jitshort")
+    _set_jit_states(hass, soc=95)
+
+    # 04:00: 4½ h to production against the 8 h the shed is given.
+    with freeze_time("2026-08-15 04:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+    assert result["forecast_battery_max_soc"] == 85
+    assert runtime["_forecast_reservation_due"] is True
+
+
+async def test_an_unreadable_base_consumption_falls_back_to_the_plain_drop(hass):
+    """Degraded mode is the pre-scheduling behaviour: apply the reservation as
+    soon as it is known. It can only make the battery arrive early."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    template = _destination_hub("jitnobase")
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title=template.title,
+        data=dict(template.data),
+        options={**template.options, CONF_BASE_CONSUMPTION: 0},
+    )
+    inverter = _destination_inverter(hub, "jitnobase", "number.dst_normal")
+    inverter.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_jit_states(hass, soc=95)
+
+    with freeze_time("2026-08-14 18:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+    # Threshold 5000 W without base consumption → 2.3 kWh, so 84 % rather than
+    # 85 — the point is that it is applied at 18:00 rather than held.
+    assert result["forecast_battery_max_soc"] == 84
+
+
+# ── PV clipping forecast: the engaged advice, through the real cycle ───
+#
+# The engaged value is memoryless direct feedback — what the pack is absorbing
+# plus (RECONSTRUCTED export − the export setpoint) — so these run the real hub
+# cycle with a plant on the other side of it and read the loop's own behaviour.
+# The site deliberately draws 500 W against a 300 W configured base: under the
+# old feedforward + integral-trim design that 200 W error parked export short of
+# the Excess trigger until a slow trim walked it back, and here base does not
+# enter the instantaneous path at all.
+
+_FB_SOLAR_W = 8000.0     # measured production, honestly under the hard limit
+_FB_HOUSE_W = 500.0      # what the house really draws (the hub says 300)
+_FB_SETPOINT_W = 4500.0  # export limit 5000 − trigger margin 500
+# Where this plant's feedback equilibrium is: production − house − setpoint.
+_FB_EQUILIBRIUM_W = _FB_SOLAR_W - _FB_HOUSE_W - _FB_SETPOINT_W  # 3000 W
+
+
+def _fb_site(hass, inverter, advice_w):
+    """Apply an advice to the plant: the battery takes it, the rest exports.
+
+    Also republishes the enforcement the charge control would have written
+    (INVERTER_RT_ENFORCED_CHARGE_W), so the Excess verdict's allowance narrows
+    to the rate the battery is really permitted — one cycle behind, exactly as
+    in production.
+    """
+    export_w = _FB_SOLAR_W - _FB_HOUSE_W - advice_w
+    hass.states.async_set(
+        "sensor.dst_phase_a", str(-export_w / 230.0),
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.dst_battery_power", str(-advice_w),
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.data[DOMAIN]["inverters"][inverter.entry_id] = {
+        INVERTER_RT_ENFORCED_CHARGE_W: advice_w
+    }
+
+
+def _fb_rig(hass, slug, soc=88, base=None):
+    """A destination hub whose production is measured, ready for a plant loop.
+
+    ``base`` overrides the hub's base consumption, which is what pins that the
+    instantaneous path does not read it.
+    """
+    hub = _destination_hub(slug, base=300 if base is None else base)
+    inverter = _destination_inverter(
+        hub, slug, "number.dst_normal", solar_entity="sensor.dst_solar"
+    )
+    inverter.add_to_hass(hass)
+    runtime = {"loads": []}
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN].setdefault("hubs", {})[hub.entry_id] = runtime
+    hass.data[DOMAIN].setdefault("loads", {})
+    hass.data[DOMAIN].setdefault("load_allocations", {})
+    hass.data[DOMAIN].setdefault("inverters", {})
+    _set_destination_states(hass, soc=soc)
+    hass.states.async_set(
+        "sensor.dst_solar", str(_FB_SOLAR_W),
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    # Start the plant at the OLD design's equilibrium (production − anchor,
+    # anchor = limit − margin + base), which is 200 W of battery too much and
+    # 200 W of export too little. One cycle of the new controller corrects it.
+    _fb_site(hass, inverter, _FB_SOLAR_W - (_FB_SETPOINT_W + 300))
+    return hub, inverter, runtime
+
+
+async def test_the_advice_puts_the_site_on_the_excess_trigger_at_once(hass):
+    """The loop end to end, through the real cycle and the real reconstruction.
+
+    Closed loop: each cycle's published advice becomes the next cycle's battery
+    power and CT reading, and the charge control's enforcement narrows the Excess
+    allowance as it does in production. The house draws 500 W against the hub's
+    300 W base, which under the feedforward + trim design parked export 200 W
+    under the trigger and left the site's Excess margin at −200 W — a load's
+    width from firing — until twenty minutes of integration had walked it back.
+
+    Direct feedback closes it on the FIRST cycle: the meter says export is
+    200 W short, so the battery gives exactly 200 W back, export lands on
+    (limit − margin) and the margin closes onto the trigger. base_consumption is
+    never consulted here — it goes on being exact where it belongs, in the
+    clipping integral.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, runtime = _fb_rig(hass, "feedback")
+    old_design = _FB_SOLAR_W - (_FB_SETPOINT_W + 300)   # 3200 W
+
+    with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
+        # One cycle, and the clock has not even moved: there is no time constant
+        # to elapse, because there is no integrator.
+        result = run_hub_calculation(hass, hub)
+        advice = result["forecast_charge_limit_w"]
+        assert runtime["_forecast_charge_limiting"] is True
+        assert advice == _FB_EQUILIBRIUM_W == old_design - 200
+
+        # Applied, the site sits ON the trigger — export exactly (limit − margin)
+        # — and it is a fixed point: zero error means "permit what you already
+        # take", so the value repeats for as long as the plant holds still.
+        for _ in range(20):
+            frozen.tick(10)
+            _fb_site(hass, inverter, advice)
+            result = run_hub_calculation(hass, hub)
+            advice = result["forecast_charge_limit_w"]
+            # Within the amps↔watts round trip of the CT reading.
+            assert advice == pytest.approx(_FB_EQUILIBRIUM_W, abs=2)
+
+        assert _FB_SOLAR_W - _FB_HOUSE_W - advice == pytest.approx(
+            _FB_SETPOINT_W, abs=2
+        )
+        # And the verdict the whole exercise is about fires: export is on
+        # (limit − margin), a margin of 0 IS Excess, and the engaged latch then
+        # widens the band by the Excess hysteresis — which is what the published
+        # margin shows once it has engaged.
+        assert result["excess_available"] is True
+        assert result["excess_margin_power"] > 0
+        # Nothing accumulated anywhere: no trim state to reset, and no stamp.
+        assert not [key for key in runtime if "trim" in key]
+
+
+async def test_a_misconfigured_base_changes_nothing_in_the_instantaneous_path(hass):
+    """base_consumption lives in the INTEGRAL only, and this proves the split.
+
+    Two hubs on the same plant, one with a base of 300 W and one with 5000 W —
+    wildly wrong, sixteen times the house draw. The clipping integral must
+    disagree (it is a different threshold, so a different reserve), and the
+    engaged charge advice must be byte-identical, because it is computed from
+    the meter and the pack alone.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    # SOC 96 so the DESTINATION hold is what engages the gate in both: that
+    # boundary is base-independent, while the reservation's ceiling is not (a
+    # 5 kW base really does mean less of the day clips, which is the integral
+    # doing its job).
+    honest_hub, _honest_inv, _ = _fb_rig(hass, "basehonest", soc=96, base=300)
+    wrong_hub, _wrong_inv, _ = _fb_rig(hass, "basewrong", soc=96, base=5000)
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        honest = run_hub_calculation(hass, honest_hub)
+        wrong = run_hub_calculation(hass, wrong_hub)
+
+    # The energy question DOES move — a 5 kW base means the site can place 5 kW
+    # more, so less of the forecast peak clips.
+    assert honest["forecast_clipped_kwh"] > wrong["forecast_clipped_kwh"] == 0.0
+    assert honest["forecast_battery_max_soc"] < wrong["forecast_battery_max_soc"]
+    # Both gates are engaged, on the destination the pack is sitting at.
+    assert honest["forecast_charge_limit_w"] is not None
+    # The power question does not move at all.
+    assert honest["forecast_charge_limit_w"] == pytest.approx(
+        _FB_EQUILIBRIUM_W, abs=2
+    )
+    assert wrong["forecast_charge_limit_w"] == honest["forecast_charge_limit_w"]
+
+
+async def test_the_advice_carries_nothing_out_of_a_cloud(hass):
+    """A cloud is two different cycles, and that is the whole handling.
+
+    The integral trim needed a conditional-integration rule here (the advice is
+    pinned at its floor, the actuator cannot move, so do not integrate) and its
+    correctness rested on that rule firing. Memoryless, the collapse is simply
+    what the meter says now, and the recovery is what it says next — with no
+    earned value to hold, freeze, or re-converge.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, runtime = _fb_rig(hass, "cloud")
+
+    with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
+        advice = None
+        for _ in range(10):
+            frozen.tick(10)
+            _fb_site(hass, inverter, advice or _FB_EQUILIBRIUM_W)
+            advice = run_hub_calculation(hass, hub)["forecast_charge_limit_w"]
+        assert advice == pytest.approx(_FB_EQUILIBRIUM_W, abs=2)
+
+        # The cloud: production collapses below the house draw, so the battery
+        # stops charging and the site imports. A 4.5 kW error, and the honest
+        # answer to it is "charge nothing".
+        hass.states.async_set(
+            "sensor.dst_solar", "300",
+            {"device_class": "power", "unit_of_measurement": "W"},
+        )
+        for cycle in range(60):  # ten minutes of cloud
+            frozen.tick(10)
+            hass.states.async_set(
+                "sensor.dst_phase_a", str(200.0 / 230.0),
+                {"device_class": "current", "unit_of_measurement": "A"},
+            )
+            hass.states.async_set(
+                "sensor.dst_battery_power", "0",
+                {"device_class": "power", "unit_of_measurement": "W"},
+            )
+            hass.data[DOMAIN]["inverters"][inverter.entry_id] = {
+                INVERTER_RT_ENFORCED_CHARGE_W: 0.0
+            }
+            result = run_hub_calculation(hass, hub)
+            assert runtime["_forecast_charge_limiting"] is True
+            if cycle < 20:
+                continue  # the input EMAs are still following the sun down
+            assert result["forecast_charge_limit_w"] == 0
+
+        # The sun returns to the same plant, and the value comes back to the same
+        # equilibrium — no overshoot on the way, which is what a stale positive
+        # correction would have shown up as.
+        hass.states.async_set(
+            "sensor.dst_solar", str(_FB_SOLAR_W),
+            {"device_class": "power", "unit_of_measurement": "W"},
+        )
+        for _ in range(30):
+            frozen.tick(10)
+            _fb_site(hass, inverter, _FB_EQUILIBRIUM_W)
+            after = run_hub_calculation(hass, hub)
+            assert after["forecast_charge_limit_w"] <= _FB_EQUILIBRIUM_W + 2
+        assert after["forecast_charge_limit_w"] == pytest.approx(
+            _FB_EQUILIBRIUM_W, abs=2
+        )
+        assert not [key for key in runtime if "trim" in key]
+
+
+async def test_a_selling_pack_needs_no_freeze_rule(hass):
+    """A CHARGE limit cannot correct an export error the battery is causing.
+
+    The integral trim froze for this (a discharging pack is taking nothing for a
+    charge limit to trim, and integrating it would wind a correction earned
+    under a plant that no longer exists). Here the discharge is simply a negative
+    term: the pack SELLS 2 kW, so the arithmetic asks for a discharge, and the
+    clamp at 0 is the honest answer — for as long as it lasts, and not one cycle
+    longer.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, runtime = _fb_rig(hass, "selling")
+
+    with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
+        for _ in range(10):
+            frozen.tick(10)
+            _fb_site(hass, inverter, _FB_EQUILIBRIUM_W)
+            advice = run_hub_calculation(hass, hub)["forecast_charge_limit_w"]
+        assert advice == pytest.approx(_FB_EQUILIBRIUM_W, abs=2)
+
+        # The pack flips to selling 2 kW: the meter reads 2 kW MORE export than
+        # the array is making, and the pack is absorbing nothing.
+        def _selling():
+            hass.states.async_set(
+                "sensor.dst_battery_power", "2000",
+                {"device_class": "power", "unit_of_measurement": "W"},
+            )
+            hass.states.async_set(
+                "sensor.dst_phase_a",
+                str(-(_FB_SETPOINT_W + 2000.0) / 230.0),
+                {"device_class": "current", "unit_of_measurement": "A"},
+            )
+
+        for cycle in range(60):
+            frozen.tick(10)
+            _selling()
+            result = run_hub_calculation(hass, hub)
+            assert runtime["_forecast_charge_limiting"] is True
+            if cycle < 20:
+                continue  # the input EMAs are still crossing into discharge
+            # −2000 + 2000 = 0: the two terms cancel, which is exactly right —
+            # stopping the sale would put those watts back on the meter, so
+            # there is nothing here for the battery to be permitted. And it
+            # stays 0 for as long as the sale lasts, with nothing winding up
+            # behind it.
+            assert result["forecast_charge_limit_w"] == pytest.approx(0, abs=5)
+
+        # Charging resumes, and so does the permit — from the plant, not from a
+        # value earned before the sale, and never past the equilibrium on the
+        # way (which is what carried state would have looked like).
+        for _ in range(30):
+            frozen.tick(10)
+            _fb_site(hass, inverter, _FB_EQUILIBRIUM_W)
+            result = run_hub_calculation(hass, hub)
+            assert result["forecast_charge_limit_w"] <= _FB_EQUILIBRIUM_W + 2
+        assert result["forecast_charge_limit_w"] == pytest.approx(
+            _FB_EQUILIBRIUM_W, abs=2
+        )
+
+
+async def test_the_battery_yields_to_an_engaged_excess_load_above_its_destination(hass):
+    """Above the destination the battery is the absorber of LAST RESORT.
+
+    An engaged Excess EVSE drawing 2300 W displaces battery charging watt for
+    watt above the 95 % destination; below it, the battery is served first and
+    the same car changes nothing. The draw arrives through the real
+    reconstruction, so the verdict that engaged the car does not move either.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("yield")
+    inverter = _destination_inverter(
+        hub, "yield", "number.dst_normal", solar_entity="sensor.dst_solar"
+    )
+    load = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="Excess EVSE",
+        data={
+            CONF_NAME: "Excess EVSE",
+            CONF_ENTITY_ID: "excess_evse",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_CHARGER_ID: "excess_evse",
+            CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.dst_evse_current",
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options={
+            CONF_LOAD_PRIORITY: 1,
+            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+            CONF_PHASES: 1,
+        },
+    )
+    inverter.add_to_hass(hass)
+    load.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": [load.entry_id]}},
+        "loads": {
+            load.entry_id: {
+                "entry": load,
+                "hub_entry_id": hub.entry_id,
+                "operating_mode": "Excess",
+                "dynamic_control": True,
+            }
+        },
+        "load_allocations": {load.entry_id: 0},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=96)
+    hass.states.async_set(
+        "sensor.dst_solar", "8000",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    # The pack is absorbing 3 kW and the meter is pinned at the 5 kW wall, so
+    # the engaged value is 3000 + (5000 − 4500) = 3500 W of permit.
+    hass.states.async_set(
+        "sensor.dst_battery_power", "-3000",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    def cycle(evse_amps, repeats=20):
+        """Hold one physical state until the EMAs have followed it, then read."""
+        draw_w = evse_amps * 230.0
+        # What the charge control is enforcing, which production always
+        # publishes while the cap is engaged: with the pack sitting ON its
+        # enforced rate it has no headroom, so the reconstruction leaves the
+        # car's freed power on the EXPORT side instead of handing it to the
+        # battery — see ``_reconstruct_placement``.
+        hass.data[DOMAIN]["inverters"][inverter.entry_id] = {
+            INVERTER_RT_ENFORCED_CHARGE_W: 3000.0
+        }
+        for _ in range(repeats):
+            # Physics: the car's draw comes off the meter, and the engine's
+            # feedback loop plus reconstruction put it back — which is what
+            # makes the reconstruction safe to steer on.
+            hass.states.async_set(
+                "sensor.dst_phase_a", str(-(5000.0 - draw_w) / 230.0),
+                {"device_class": "current", "unit_of_measurement": "A"},
+            )
+            hass.states.async_set(
+                "sensor.dst_evse_current", str(evse_amps),
+                {"device_class": "current", "unit_of_measurement": "A"},
+            )
+            result = run_hub_calculation(hass, hub)
+        return result
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        idle = cycle(0.0)
+        assert idle["forecast_charge_limit_w"] == pytest.approx(3500, abs=2)
+
+        drawing = cycle(10.0)  # 10 A on one phase = 2300 W
+        assert drawing["forecast_charge_limit_w"] == pytest.approx(
+            3500 - 2300, abs=2
+        )
+        # Draw-invariant verdict: the same answer with the car running as
+        # without it — the reconstruction is what makes the yield safe.
+        assert drawing["excess_available"] == idle["excess_available"]
+
+        # Below the destination the battery comes first: same car, no yield.
+        hass.states.async_set(
+            "sensor.dst_battery_soc", "88",
+            {"device_class": "battery", "unit_of_measurement": "%"},
+        )
+        below = cycle(10.0)
+        assert below["forecast_charge_limit_w"] == pytest.approx(3500, abs=2)
+
+
+async def test_the_verdict_does_not_flap_while_the_battery_yields_above_target(hass):
+    """The interaction the yield could have broken: allowance narrowing.
+
+    Above the destination an engaged Excess load takes the surplus and the
+    battery's advice drops by its draw; the charge control then enforces that
+    lower rate, which narrows the Excess allowance in turn. The worry is a loop
+    — narrower allowance, smaller margin, load dropped, advice back up. It
+    cannot happen, because both halves of the verdict are load-invariant: the
+    draw is credited back on the export side, and a battery sitting on an
+    enforced limit has no headroom to be handed anything. The margin only ever
+    grows as the battery yields.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("noflap")
+    inverter = _destination_inverter(
+        hub, "noflap", "number.dst_normal", solar_entity="sensor.dst_solar"
+    )
+    load = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="Excess EVSE",
+        data={
+            CONF_NAME: "Excess EVSE",
+            CONF_ENTITY_ID: "excess_evse_noflap",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_CHARGER_ID: "excess_evse_noflap",
+            CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.dst_evse_current",
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options={
+            CONF_LOAD_PRIORITY: 1,
+            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
+            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
+            CONF_PHASES: 1,
+        },
+    )
+    inverter.add_to_hass(hass)
+    load.add_to_hass(hass)
+    runtime = {"loads": [load.entry_id]}
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: runtime},
+        "loads": {
+            load.entry_id: {
+                "entry": load,
+                "hub_entry_id": hub.entry_id,
+                "operating_mode": "Excess",
+                "dynamic_control": True,
+            }
+        },
+        "load_allocations": {load.entry_id: 0},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=96)
+    hass.states.async_set(
+        "sensor.dst_solar", "8000",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    def stage(export_w, battery_w, enforced_w, evse_amps, repeats=20):
+        """Hold one physical state until the EMAs have followed it, then read."""
+        hass.data[DOMAIN]["inverters"][inverter.entry_id] = {
+            INVERTER_RT_ENFORCED_CHARGE_W: enforced_w
+        }
+        for _ in range(repeats):
+            hass.states.async_set(
+                "sensor.dst_phase_a", str(-export_w / 230.0),
+                {"device_class": "current", "unit_of_measurement": "A"},
+            )
+            hass.states.async_set(
+                "sensor.dst_battery_power", str(-battery_w),
+                {"device_class": "power", "unit_of_measurement": "W"},
+            )
+            hass.states.async_set(
+                "sensor.dst_evse_current", str(evse_amps),
+                {"device_class": "current", "unit_of_measurement": "A"},
+            )
+            result = run_hub_calculation(hass, hub)
+        return result
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        # 1. Clipping window, car idle: 8000 W produced, 500 W house, the
+        #    battery on its enforced 3000 W, 4500 W leaving — export exactly on
+        #    the trigger, and Excess on precisely because the allowance is the
+        #    enforced rate rather than the 5 kW nameplate.
+        idle = stage(4500.0, 3000.0, 3000.0, 0.0)
+        assert idle["excess_available"] is True
+        # Export ON the setpoint: zero error, so the permit is what the pack
+        # already takes.
+        assert idle["forecast_charge_limit_w"] == pytest.approx(3000, abs=2)
+
+        # 2. The car engages on the surplus, taking 2300 W of what was being
+        #    exported. The verdict must not move — and the battery yields.
+        engaged = stage(2200.0, 3000.0, 3000.0, 10.0)
+        assert engaged["excess_available"] is True
+        assert engaged["excess_margin_power"] >= idle["excess_margin_power"]
+        assert engaged["forecast_charge_limit_w"] == pytest.approx(
+            3000 - 2300, abs=2
+        )
+
+        # 3. The control writes that lower rate, so the battery really does take
+        #    700 W and the allowance narrows with it. The margin only widens:
+        #    nothing here can drop the load that earned it.
+        yielded = stage(4500.0, 700.0, 700.0, 10.0)
+        assert yielded["excess_available"] is True
+        assert yielded["excess_margin_power"] > engaged["excess_margin_power"]
+        assert yielded["forecast_charge_limit_w"] == pytest.approx(
+            3000 - 2300, abs=2
+        )
+
+
+# ── PV clipping forecast: the destination is a STANDING ceiling ────────
+#
+# The live event of 2026-08-25. Destination 95 %, a 20 kWh pack, and a day the
+# forecast said would clip NOTHING: the charge advice's first test was
+# "absorbable_kwh <= 0 → full rate", so the pack crossed 95 % at 08:55 UTC and
+# ran to 98 % at the BMS's own 80 A while the maintainer watched. The 5 % above
+# the destination is the buffer for a day that beats the forecast, and it must
+# not be spent by a forecast that under-read the day.
+
+# A clear day whose every block is far below the 5300 W clipping threshold:
+# nothing to reserve for, all day, which is the state the bug needed.
+_NO_CLIP_DAY = {
+    "2026-08-25T08:00:00+00:00": 3000,
+    "2026-08-25T09:00:00+00:00": 4000,
+    "2026-08-25T10:00:00+00:00": 4000,
+    "2026-08-25T11:00:00+00:00": 0,
+}
+
+
+def _no_clip_rig(hass, slug, soc, solar_w=4000.0, normal_entity="number.dst_normal"):
+    """The destination rig on a day with nothing forecast to clip."""
+    hub = _destination_hub(slug)
+    inverter = _destination_inverter(
+        hub, slug, normal_entity, solar_entity="sensor.dst_solar"
+    )
+    inverter.add_to_hass(hass)
+    runtime = {"loads": []}
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: runtime},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=soc)
+    hass.states.async_set("sensor.dst_forecast", "1.0", {"watts": dict(_NO_CLIP_DAY)})
+    hass.states.async_set(
+        "sensor.dst_solar", str(solar_w),
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    return hub, inverter, runtime
+
+
+async def test_the_destination_stops_the_charge_with_nothing_forecast_to_clip(hass):
+    """The live event, replayed: SOC 93 → 94 → 95 → 96 → 97, then back down.
+
+    Full rate below the destination — under the ceiling, with nothing reserved,
+    refilling is right — and the floor from 95 on, with the latch engaged. Before
+    the reorder every one of these cycles published the full 5 kW.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, runtime = _no_clip_rig(hass, "standing", soc=93)
+
+    def at_soc(soc):
+        hass.states.async_set(
+            "sensor.dst_battery_soc", str(soc),
+            {"device_class": "battery", "unit_of_measurement": "%"},
+        )
+        with freeze_time("2026-08-25 09:00:00+00:00"):
+            return run_hub_calculation(hass, hub)
+
+    # Nothing is reserved anywhere: the ceiling IS the destination all morning.
+    first = at_soc(93)
+    assert first["forecast_absorbable_kwh"] == 0.0
+    assert first["forecast_battery_max_soc"] == 95
+
+    for soc in (93, 94):
+        result = at_soc(soc)
+        assert result["forecast_charge_limit_w"] == 5000, f"held at SOC {soc}"
+        assert runtime["_forecast_charge_limiting"] is False
+        assert runtime["_forecast_soc_yielding"] is False
+
+    # 08:55 UTC on the maintainer's site: the crossing. Production is under the
+    # export limit, so there is no overshoot to charge with and the advice is the
+    # floor — the pack parks at its destination instead of running to 98 %.
+    for soc in (95, 96, 97):
+        result = at_soc(soc)
+        assert result["forecast_charge_limit_w"] == 0, f"ran on at SOC {soc}"
+        assert runtime["_forecast_charge_limiting"] is True
+        assert runtime["_forecast_soc_yielding"] is True
+        # The per-inverter advice the charge control actually drives.
+        assert result["inverters"][inverter.entry_id]["forecast_charge_limit_w"] == 0
+        # And the ceiling is still the destination — this is a POWER hold, not a
+        # reservation: nothing was carved out below 95.
+        assert result["forecast_battery_max_soc"] == 95
+
+    # A tick back inside the band still holds (the yield latch releases a full
+    # FORECAST_SOC_HYSTERESIS below the destination, not on the first tick).
+    for soc in (94, 93):
+        assert at_soc(soc)["forecast_charge_limit_w"] == 0, f"released at SOC {soc}"
+
+    # The evening: the house takes the pack down a full band and the hold lets
+    # go. Below the ceiling, full rate is the right answer again.
+    released = at_soc(92)
+    assert released["forecast_charge_limit_w"] == 5000
+    assert runtime["_forecast_charge_limiting"] is False
+    assert runtime["_forecast_soc_yielding"] is False
+
+
+async def test_a_parked_pack_accumulates_nothing_at_all(hass):
+    """An afternoon parked on the floor leaves nothing behind to kick.
+
+    A parked pack reports ``limiting`` with its advice pinned at 0 against a
+    standing 4.5 kW export error — the regime the deleted integral trim needed
+    its freeze-at-floor rule for, because without it an afternoon of these
+    cycles integrated to the clamp and the first real surplus arrived with a
+    kilowatt of stale correction on top of it. Memoryless, there is nothing to
+    freeze and nothing carried: every cycle is the same recomputation, and the
+    hub runtime never grows a value for it.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    # Production far below the export setpoint and the site importing, so the
+    # standing error is the biggest it ever gets.
+    hub, _inverter, runtime = _no_clip_rig(hass, "parkedtrim", soc=95, solar_w=1000.0)
+
+    with freeze_time("2026-08-25 09:00:00+00:00") as frozen:
+        for _ in range(180):  # half an hour at the 10 s cycle
+            frozen.tick(10)
+            result = run_hub_calculation(hass, hub)
+            assert result["forecast_charge_limit_w"] == 0
+            assert runtime["_forecast_charge_limiting"] is True
+        # No integrator, no stamp, no accumulated correction — the only forecast
+        # state carried is the three latches and the ceiling ratchet.
+        assert sorted(k for k in runtime if k.startswith("_forecast")) == [
+            "_forecast_charge_limiting",
+            "_forecast_max_soc",
+            "_forecast_parse_memo",
+            "_forecast_reservation_due",
+            "_forecast_soc_yielding",
+        ]
+
+
+async def test_a_site_with_no_ceiling_source_is_untouched_by_the_hold(hass):
+    """No ceiling source anywhere: the destination is 100 %, so the gate cannot
+    engage below it and such a site behaves exactly as it did before.
+
+    The whole SOC range on the same clear day, against the old rule's answer.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inverter, runtime = _no_clip_rig(
+        hass, "nosource", soc=90, normal_entity=None
+    )
+
+    def at_soc(soc):
+        hass.states.async_set(
+            "sensor.dst_battery_soc", str(soc),
+            {"device_class": "battery", "unit_of_measurement": "%"},
+        )
+        with freeze_time("2026-08-25 09:00:00+00:00"):
+            return run_hub_calculation(hass, hub)
+
+    assert at_soc(90)["forecast_battery_max_soc"] == 100
+    for soc in range(0, 100, 7):
+        result = at_soc(soc)
+        assert result["forecast_charge_limit_w"] == 5000, f"held at SOC {soc}"
+        assert runtime["_forecast_charge_limiting"] is False
+        assert runtime["_forecast_soc_yielding"] is False
+    for soc in (96, 97, 98, 99):
+        assert at_soc(soc)["forecast_charge_limit_w"] == 5000, f"held at SOC {soc}"
+
+    # At 100 the pack IS at its destination, and a full battery held on the
+    # floor is what a standing ceiling means — it cannot charge either way.
+    assert at_soc(100)["forecast_charge_limit_w"] == 0
+    assert runtime["_forecast_soc_yielding"] is True
+
+
+async def test_the_parked_battery_hands_the_surplus_to_the_excess_verdict(hass):
+    """Why the hold must report ``limiting`` — the other half of the fix.
+
+    A held advice sends the control down its LIMITING branch, which publishes
+    what the register really permits (INVERTER_RT_ENFORCED_CHARGE_W). That is
+    what narrows the Excess verdict's battery allowance to the floor, and it is
+    load-bearing: it is how the surplus a parked battery refuses reaches the
+    Excess loads that exist to soak it up.
+
+    The plant: 4800 W produced (exactly the advice anchor, so no overshoot), a
+    300 W house, the battery parked and taking nothing, and 4500 W leaving — the
+    export limit less the trigger margin, saturated.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, runtime = _no_clip_rig(hass, "parked", soc=95, solar_w=4800.0)
+
+    def cycle(enforced_w, repeats=6):
+        """Hold one physical state until the EMAs have followed it."""
+        hass.data[DOMAIN]["inverters"][inverter.entry_id] = {
+            INVERTER_RT_ENFORCED_CHARGE_W: enforced_w
+        }
+        for _ in range(repeats):
+            hass.states.async_set(
+                "sensor.dst_phase_a", str(-4500.0 / 230.0),
+                {"device_class": "current", "unit_of_measurement": "A"},
+            )
+            hass.states.async_set(
+                "sensor.dst_battery_power", "0",
+                {"device_class": "power", "unit_of_measurement": "W"},
+            )
+            result = run_hub_calculation(hass, hub)
+        return result
+
+    with freeze_time("2026-08-25 09:00:00+00:00"):
+        # What the control has written: the floor, because the pack is parked at
+        # its destination with no overshoot to admit.
+        parked = cycle(0.0)
+        assert parked["forecast_charge_limit_w"] == pytest.approx(0, abs=2)
+        assert runtime["_forecast_charge_limiting"] is True
+        # Allowance = the export limit less the trigger margin, and nothing at
+        # all for a battery that may take nothing — so the 4500 W leaving the
+        # site sits exactly on it and Excess fires. The reading is +500 rather
+        # than 0 because the verdict has latched on and its release band
+        # (DEFAULT_EXCESS_HYSTERESIS) widens the margin from the second cycle.
+        assert parked["excess_available"] is True
+        assert parked["excess_margin_power"] == pytest.approx(500.0, abs=1.0)
+
+        # The bite: without the narrowing the same site reads 5 kW short of
+        # Excess, because the nameplate rate counts as somewhere to put power
+        # the battery is in fact refusing.
+        unnarrowed = cycle(None)
+        assert unnarrowed["excess_margin_power"] == pytest.approx(-5000.0, abs=1.0)
+        assert unnarrowed["excess_available"] is False
+
+
 async def test_grid_phases_in_watts_are_converted_to_amps(
     hass,
     hub_entry,
@@ -2729,11 +5055,19 @@ async def test_repeated_cycles_write_once_inside_the_interval(
     assert len(_register_writes(mock_call)) == 1
 
 
-async def test_the_cycle_releases_the_limit_exactly_once(
+async def test_the_cycle_ramps_the_release_and_then_stops(
     hass, hub_entry, inverter_entry
 ):
-    """Advice stopping restores the normal value, and only on the first cycle
-    that sees it — a release must not be rewritten every 2 s all night."""
+    """Advice stopping walks the register back UP to the normal value one Excess
+    trigger margin per write, and then stops for good.
+
+    Two failures in one test, because the fix for the first caused the second:
+    the release must not hand the battery full rate in a single step (it would
+    drink the clipping reserve out of exportable power in minutes), and it must
+    not be rewritten every 2 s all night either. The ramp arithmetic itself is
+    pinned in test_inverter_control.py; this is the same contract through the
+    real cycle, with the register accepting every write.
+    """
     sensor = await _add_charge_control(hass, inverter_entry)
 
     with patch(
@@ -2741,21 +5075,64 @@ async def test_the_cycle_releases_the_limit_exactly_once(
     ), _advice_cycle(inverter_entry, 2560.0):
         await _run_site_cycle(hass, hub_entry)
 
+    inverter_rt = hass.data[DOMAIN]["inverters"][inverter_entry.entry_id]
     # The inverter took the 50 A we wrote; now the forecast releases.
     hass.states.async_set(CHARGE_TARGET, "50", {"max": 100})
     with _accepting_register(hass) as mock_call, _advice_cycle(inverter_entry, None):
+        # Four back-to-back cycles inside the 300 s write window: the release is
+        # paced like every other write, so none of them writes anything.
         for _ in range(4):
             await _run_site_cycle(hass, hub_entry)
+        assert _register_writes(mock_call) == []
+        assert inverter_rt[INVERTER_RT_APPLIED] == 50.0
 
-    writes = _register_writes(mock_call)
-    assert len(writes) == 1, writes
-    assert writes[0][0][2]["value"] == 100.0
-    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_IDLE
-    # And the restore is visible in the value the sensor graphs: back up at the
-    # normal limit, read from the register the later cycles saw.
-    assert sensor.native_value == 100.0
-    inverter_rt = hass.data[DOMAIN]["inverters"][inverter_entry.entry_id]
+        # Now open the write window repeatedly — backdating our own pacing marker
+        # rather than patching the clock — and let the ramp run to its end.
+        for _ in range(10):
+            inverter_rt[INVERTER_RT_LAST_WRITE] -= 400
+            await _run_site_cycle(hass, hub_entry)
+            if inverter_rt[INVERTER_RT_APPLIED] is None:
+                break
+
+    # 500 W of margin at 51.2 V is a 9.8 A step. The last 1 A of the climb is
+    # inside the 5 A deadband, so the ramp ends by clearing the marker rather
+    # than by spending a write on it.
+    written = [call[0][2]["value"] for call in _register_writes(mock_call)]
+    assert written == [59.8, 69.6, 79.4, 89.2, 99.0]
     assert inverter_rt[INVERTER_RT_APPLIED] is None
+    assert sensor.extra_state_attributes["control_state"] == CONTROL_STATE_IDLE
+    # And the climb is visible in the value the sensor graphs, read from the
+    # register the later cycles saw.
+    assert sensor.native_value == 99.0
+
+
+async def test_the_ramp_step_comes_from_the_hubs_trigger_margin(
+    hass, hub_entry, inverter_entry
+):
+    """The slew step is a SITE-level setting, so it has to travel from the hub
+    entry to a control that is handed the inverter's own entry. This is that
+    wiring, end to end: change the hub's Excess trigger margin and the size of
+    the release step changes with it."""
+    hub_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        hub_entry,
+        options={**hub_entry.options, CONF_EXCESS_TRIGGER_MARGIN: 1024},
+    )
+    await _add_charge_control(hass, inverter_entry)
+
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ), _advice_cycle(inverter_entry, 2560.0):
+        await _run_site_cycle(hass, hub_entry)
+
+    inverter_rt = hass.data[DOMAIN]["inverters"][inverter_entry.entry_id]
+    hass.states.async_set(CHARGE_TARGET, "50", {"max": 100})
+    with _accepting_register(hass) as mock_call, _advice_cycle(inverter_entry, None):
+        inverter_rt[INVERTER_RT_LAST_WRITE] -= 400
+        await _run_site_cycle(hass, hub_entry)
+
+    # 1024 W at 51.2 V is a 20 A step, not the 9.8 A the 500 W default gives.
+    assert [c[0][2]["value"] for c in _register_writes(mock_call)] == [70.0]
 
 
 async def test_update_entity_refreshes_the_status_without_writing(
@@ -3366,3 +5743,208 @@ async def test_composed_status_name_still_used_without_a_registry_entry(
     load = _build_evse_load(hass, charger_entry, 230, "test_charger", 1)
 
     assert load.connector_status == "SuspendedEV"
+
+
+# ── The Excess verdict counts only the rate the battery MAY take ───────
+#
+# The engine half of the narrowing. The charge control publishes what it is
+# holding a member's register at (INVERTER_RT_ENFORCED_CHARGE_W, written by
+# control/inverter.py and covered in dev/tests/test_inverter_control.py); the
+# fleet read picks it up per member, and the Excess verdict's battery allowance
+# becomes the sum of the PERMITTED rates instead of the nameplate ones.
+#
+# One cycle behind by nature: the register write is a site-cycle worker that runs
+# after the result is published, so a cycle can only know what the previous
+# cycle's write enforced. That is what these drive — the runtime dict as the
+# hand-off, and the published excess_margin_power as the visible consequence.
+
+CLIP_EXPORT_LIMIT = 9200.0  # W — the site's hard export limit
+CLIP_EXPORT_A = 40.0  # A on phase A = 9200 W leaving the site
+CLIP_THRESHOLD = CLIP_EXPORT_LIMIT - 500.0  # the default trigger margin below it
+ENFORCING_NAMEPLATE = 10000.0
+ADVICE_ONLY_NAMEPLATE = 4000.0
+ENFORCED_RATE = 6500.0
+
+
+@pytest.fixture
+def clipping_hub() -> MockConfigEntry:
+    """A one-phase hub with an export limit and no battery of its own.
+
+    No hub-level battery fields on purpose: every battery belongs to an inverter
+    entry here, so the fleet is exactly the two members below and each one's
+    share of the allowance is attributable.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title="Clipping Hub",
+        data={
+            CONF_NAME: "Clipping Hub",
+            CONF_ENTITY_ID: "clipping_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.clip_phase_a",
+            CONF_MAIN_BREAKER_RATING: 63,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_GRID_EXPORT_LIMIT: CLIP_EXPORT_LIMIT,
+        },
+    )
+
+
+def _battery_inverter(hub, title, entity_id, charge_cap):
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title=title,
+        data={
+            CONF_NAME: title,
+            CONF_ENTITY_ID: entity_id,
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options={
+            CONF_BATTERY_SOC_ENTITY_ID: f"sensor.{entity_id}_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: f"sensor.{entity_id}_power",
+            CONF_BATTERY_MAX_CHARGE_POWER: charge_cap,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: charge_cap,
+        },
+    )
+
+
+def _clipping_site_states(hass, enforcing, advice_only):
+    """Midday: 9.2 kW leaving the site, both batteries pinned at their own rate.
+
+    The enforcing member is charging at the 6.5 kW its register is being held to,
+    the advice-only one at its full 4 kW plate — so the site is placing every watt
+    it can, which is exactly the state the verdict has to recognise.
+    """
+    hass.states.async_set(
+        "sensor.clip_phase_a", str(-CLIP_EXPORT_A),
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    for entry, power in ((enforcing, -ENFORCED_RATE), (advice_only, -ADVICE_ONLY_NAMEPLATE)):
+        name = entry.data[CONF_ENTITY_ID]
+        hass.states.async_set(
+            f"sensor.{name}_soc", "70",
+            {"device_class": "battery", "unit_of_measurement": "%"},
+        )
+        hass.states.async_set(
+            f"sensor.{name}_power", str(power),
+            {"device_class": "power", "unit_of_measurement": "W"},
+        )
+
+
+@pytest.fixture
+def clipping_fleet(hass, clipping_hub):
+    """The hub, its two battery inverters and the runtime buckets, wired up."""
+    enforcing = _battery_inverter(
+        clipping_hub, "Enforcing Hybrid", "enforcing", ENFORCING_NAMEPLATE
+    )
+    advice_only = _battery_inverter(
+        clipping_hub, "Advice Only Hybrid", "advice_only", ADVICE_ONLY_NAMEPLATE
+    )
+    for entry in (clipping_hub, enforcing, advice_only):
+        entry.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {clipping_hub.entry_id: {"entry": clipping_hub, "loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {enforcing.entry_id: {}, advice_only.entry_id: {}},
+    }
+    _clipping_site_states(hass, enforcing, advice_only)
+    return clipping_hub, enforcing, advice_only
+
+
+async def test_the_enforced_rate_round_trips_from_the_runtime_into_the_verdict(
+    hass, clipping_fleet
+):
+    """The hand-off, end to end.
+
+    Cycle one: nothing is being held back, so the allowance is the two nameplate
+    rates (14 kW) and the site — placing 9.2 kW of export plus 10.5 kW of
+    charging — reads 3 kW short of Excess. That is the bug: a clipping window
+    reported as a site with room to spare.
+
+    Cycle two: the charge control has written its limit and recorded the 6.5 kW
+    it is holding the enforcing member to. The allowance becomes the 10.5 kW the
+    two batteries may actually take, and the same readings read +500 W — the
+    watts the site is genuinely placing beyond the Excess threshold.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, enforcing, _advice_only = clipping_fleet
+
+    nameplate = run_hub_calculation(hass, hub)["excess_margin_power"]
+    assert nameplate == pytest.approx(
+        CLIP_EXPORT_LIMIT
+        + ENFORCED_RATE
+        + ADVICE_ONLY_NAMEPLATE
+        - (CLIP_THRESHOLD + ENFORCING_NAMEPLATE + ADVICE_ONLY_NAMEPLATE),
+        abs=1.0,
+    )
+    assert nameplate < 0
+
+    hass.data[DOMAIN]["inverters"][enforcing.entry_id][
+        INVERTER_RT_ENFORCED_CHARGE_W
+    ] = ENFORCED_RATE
+
+    enforced = run_hub_calculation(hass, hub)["excess_margin_power"]
+
+    # Only the enforcing member's share narrowed: the whole difference is the
+    # 3.5 kW its register is forbidding, and the advice-only member's 4 kW plate
+    # is still counted in full.
+    assert enforced - nameplate == pytest.approx(
+        ENFORCING_NAMEPLATE - ENFORCED_RATE, abs=1.0
+    )
+    assert enforced == pytest.approx(500.0, abs=1.0)
+    assert enforced > 0
+
+
+async def test_an_advice_only_fleet_keeps_its_nameplate_allowance(
+    hass, clipping_fleet
+):
+    """Neither switch armed: nothing is written to either inverter, so both
+    batteries really do still charge at their plate rate. Narrowing on the mere
+    existence of a forecast advice would report an allowance the site does not
+    have and engage Excess against a battery still free to absorb."""
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, enforcing, advice_only = clipping_fleet
+    # What an unarmed control leaves behind: the runtime bucket exists (its
+    # sensor is running) and says nothing is being held back.
+    for entry in (enforcing, advice_only):
+        hass.data[DOMAIN]["inverters"][entry.entry_id][
+            INVERTER_RT_ENFORCED_CHARGE_W
+        ] = None
+
+    result = run_hub_calculation(hass, hub)
+
+    assert result["excess_margin_power"] == pytest.approx(-3000.0, abs=1.0)
+
+
+async def test_a_released_limit_hands_the_nameplate_allowance_back(
+    hass, clipping_fleet
+):
+    """Evening: the forecast releases, the control restores full rate and clears
+    what it was enforcing. The allowance must widen again in the same cycle the
+    battery is free — a narrowing that outlived the limit would hold Excess on
+    against a battery with real headroom."""
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, enforcing, _advice_only = clipping_fleet
+    rt = hass.data[DOMAIN]["inverters"][enforcing.entry_id]
+
+    rt[INVERTER_RT_ENFORCED_CHARGE_W] = ENFORCED_RATE
+    assert run_hub_calculation(hass, hub)["excess_margin_power"] > 0
+
+    rt[INVERTER_RT_ENFORCED_CHARGE_W] = None
+    assert run_hub_calculation(hass, hub)["excess_margin_power"] < 0

@@ -45,6 +45,7 @@ from ..const import (
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
+    CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -54,8 +55,10 @@ from ..const import (
     DEFAULT_CHARGE_RATE_UNIT,
     DEFAULT_PHASE_VOLTAGE,
     DEFAULT_WIRING_TOPOLOGY,
+    DOMAIN,
     EMA_ALPHA,
     INPUT_STALE_TIMEOUT,
+    INVERTER_RT_ENFORCED_CHARGE_W,
 )
 from ..calculations.utils import is_number
 from ..helpers import get_entry_value
@@ -405,9 +408,9 @@ def _resolve_grid_phases(raw_phases, ema_inputs, main_breaker_rating):
 
     The counterpart to _read_grid_phases' refusal to invent a number, and the
     ONLY place allowed to decide what an unreadable grid CT stands in for.
-    Returns ``(resolved_phases, any_stale)``; ``resolved_phases`` holds only
-    floats and Nones, so nothing unusable can reach the EMA smoothing, the
-    engine, or the published grid figures.
+    Returns ``(resolved_phases, any_stale, assumed_phases)``;
+    ``resolved_phases`` holds only floats and Nones, so nothing unusable can
+    reach the EMA smoothing, the engine, or the published grid figures.
 
     Documented failure-mode behaviour, unchanged:
       * a reading we have history for → hold the last known EMA value, which a
@@ -418,6 +421,20 @@ def _resolve_grid_phases(raw_phases, ema_inputs, main_breaker_rating):
     The >GRID_STALE_TIMEOUT escalation is the caller's, driven by the
     ``any_stale`` flag through _track_grid_stale.
 
+    ``assumed_phases`` is a per-phase tuple of bools marking ONLY the second
+    case — the phases standing on the breaker assumption rather than on a
+    reading or a held EMA value. It exists because the two substitutes are
+    different kinds of number: a held EMA value is a legitimate estimate of
+    what the phase was doing a moment ago and is fine to publish as a
+    measurement, whereas the breaker assumption is a fabrication chosen for
+    safety, and publishing it paints a 3 x breaker x voltage spike onto the
+    grid sensors, the recorder and long-term statistics (issue: cold-start
+    failsafe published as a measurement). The publisher (engine/hub_result.py)
+    nulls the grid MEASUREMENTS while any phase is flagged; the allocation
+    keeps using the assumption, which is what makes it safe. Derived here
+    rather than re-tested downstream: this is the one place that knows which
+    substitute each phase got.
+
     Driven by the READINGS, not by a second walk over the config keys. The
     sentinel is the single source of truth for "this CT is unreadable", so there
     is no membership list here that can drift away from the reader's — which is
@@ -427,6 +444,7 @@ def _resolve_grid_phases(raw_phases, ema_inputs, main_breaker_rating):
     Pure: a list, the EMA dict, a number. No hass, no config entry.
     """
     resolved = list(raw_phases)
+    assumed = [False] * len(resolved)
     any_stale = False
     for i, raw in enumerate(resolved):
         if raw is None:
@@ -435,8 +453,9 @@ def _resolve_grid_phases(raw_phases, ema_inputs, main_breaker_rating):
             continue  # Usable signed reading
         held = ema_inputs.get(f"grid_{i}")
         resolved[i] = main_breaker_rating if held is None else held
+        assumed[i] = held is None
         any_stale = True
-    return resolved, any_stale
+    return resolved, any_stale, tuple(assumed)
 
 
 def _track_grid_stale(hub_runtime, any_stale, now):
@@ -552,6 +571,29 @@ def _smooth_member_output(output_pv, hub_runtime, ema_inputs, key_prefix):
     return PhaseValues(*smoothed)
 
 
+def _read_enforced_charge_limit(hass, entry):
+    """The charge rate our own control is currently holding this member to, in W.
+
+    Not an entity read: the inverter's charge control records it in that entry's
+    runtime dict (``INVERTER_RT_ENFORCED_CHARGE_W``) as it drives the register,
+    because it is the only place that knows whether the switch is armed, what the
+    register actually reads back, and what unit that register counts in.
+
+    None whenever nothing is being held back — switch off, no advice, released,
+    no register configured at all, or simply before the first write pass of a
+    fresh start — and None is exactly what leaves the member at its nameplate
+    charge rate in ``fleet.charge_power_total()``. The legacy hub member has no
+    charge control of its own (it is a per-inverter-entry feature), so it lands
+    on None through the same lookup rather than through a special case.
+    """
+    entry_id = getattr(entry, "entry_id", None)
+    if not entry_id:
+        return None
+    inverter_rt = hass.data.get(DOMAIN, {}).get("inverters", {}).get(entry_id) or {}
+    value = inverter_rt.get(INVERTER_RT_ENFORCED_CHARGE_W)
+    return float(value) if is_number(value) else None
+
+
 def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy):
     """Read one inverter (an inverter entry, or the hub's legacy fields) into
     a FleetMember. ``legacy`` selects the historic EMA key namespace."""
@@ -571,17 +613,29 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     solar_entity = get_entry_value(entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
     solar_key = "solar" if legacy else f"solar_{entry.entry_id}"
     solar_measured = None
+    solar_assumed = False
     if solar_entity:
         raw_solar = _read_entity(hass, solar_entity, 0, unit="W")  # kW→W if needed
         # A dead solar sensor must not keep feeding its last reading forever
         # (e.g. 8 kW held into the night) — fall back to 0 W after timeout.
-        raw_solar = _stale_guard(hub_runtime, ema_inputs, solar_key, raw_solar, 0.0)
-        solar_measured = _smooth(ema_inputs, solar_key, raw_solar)
+        guarded_solar = _stale_guard(
+            hub_runtime, ema_inputs, solar_key, raw_solar, 0.0
+        )
+        # The guard swapped its own 0 W fallback in, which it does only after
+        # INPUT_STALE_TIMEOUT of continuous unavailability: from here on the
+        # figure is a safety substitute, not a measurement. Detected by the
+        # substitution itself rather than by re-testing the timer, so there is
+        # only ever one place that knows the rule.
+        solar_assumed = raw_solar is _UNAVAILABLE and guarded_solar is not _UNAVAILABLE
+        solar_measured = _smooth(ema_inputs, solar_key, guarded_solar)
         # _smooth returns None when the entity is unavailable and there is no
         # EMA history yet (a fresh start at night) — 0 W, not None, since the
-        # household maths downstream cannot take None.
+        # household maths downstream cannot take None. Flagged for the same
+        # reason as above: nothing measured this, so it must not be PUBLISHED
+        # as a solar reading (see fleet.FleetMember.solar_assumed).
         if solar_measured is None:
             solar_measured = 0.0
+            solar_assumed = True
 
     soc_entity = get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
     power_entity = get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
@@ -600,6 +654,32 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         _smooth(ema_inputs, power_key, raw_power) if power_entity else None
     )
 
+    # This member's battery DESTINATION — the live value of the same "normal SOC
+    # ceiling source" entity the SOC write-control idles its slots at. The
+    # clipping reserve is carved out below it rather than below 100 %
+    # (fleet.soc_target_weighted → calculations.battery_max_soc).
+    #
+    # HELD while unreadable, not stale-guarded: this is a SETPOINT, not a
+    # measurement. "The user asked for 95 %" stays true through a brief
+    # unavailability, where a held power reading would be a phantom kilowatt —
+    # and letting it snap back to 100 % would instead raise the published
+    # ceiling, which the ratchet would then resist lowering again for the rest
+    # of the day. None only while no entity is configured, or one is and has
+    # never yet been readable in this hub's lifetime; both anchor at 100 %,
+    # exactly as every site did before this existed. (The write-control's own
+    # fan-out defers all writes while the entity is unreadable, so nothing is
+    # written from a held value either way.)
+    soc_target_entity = get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
+    soc_target = None
+    if soc_target_entity:
+        held = hub_runtime.setdefault("_soc_target_hold", {})
+        raw_target = _read_entity(hass, soc_target_entity, None)
+        if raw_target is _UNAVAILABLE or raw_target is None:
+            soc_target = held.get(entry.entry_id)
+        else:
+            soc_target = float(raw_target)
+            held[entry.entry_id] = soc_target
+
     return fleet.FleetMember(
         entry_id=entry.entry_id,
         name=get_entry_value(entry, CONF_NAME, entry.title if not legacy else "Hub"),
@@ -610,6 +690,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         output=output_pv,
         has_solar_entity=bool(solar_entity),
         solar_measured=solar_measured,
+        solar_assumed=solar_assumed,
         forecast_device_ids=tuple(
             get_entry_value(entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or ()
         ),
@@ -618,8 +699,10 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         battery_soc=float(battery_soc) if battery_soc is not None else None,
         battery_power=float(battery_power) if battery_power is not None else None,
         charge_cap=get_entry_value(entry, CONF_BATTERY_MAX_CHARGE_POWER, None),
+        enforced_charge_limit=_read_enforced_charge_limit(hass, entry),
         discharge_cap=get_entry_value(entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None),
         soc_full=get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL),
+        soc_target=soc_target,
         capacity_kwh=get_entry_value(
             entry, CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH
         ),

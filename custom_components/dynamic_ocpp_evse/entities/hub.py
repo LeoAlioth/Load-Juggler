@@ -258,6 +258,13 @@ HUB_SENSOR_DEFINITIONS = [
     # "an amount that can both increase and decrease" — which is exactly what
     # a remaining-today advisory figure does. TOTAL keeps them out of the
     # energy dashboard's metered pipeline (no last_reset, nothing accumulates).
+    #
+    # All three describe the NEXT clipping window rather than the calendar day
+    # (``select_clipping_window``): the remainder of today while today still
+    # clips, and from the evening onward TOMORROW's peak. So these do not fall
+    # to zero at dusk and sit there — they roll over to what the site is about
+    # to face, which is the figure the overnight SOC reservation is made from.
+    # A day with no clip today and none tomorrow reads 0.00 on all three.
     {
         "name_suffix": "Forecast Clippable Energy",
         "unique_id_suffix": "forecast_clippable_energy",
@@ -372,9 +379,24 @@ class LoadJugglerHubDataSensor(
         self._attr_native_value = None
 
     def _read_site_data(self):
+        """Publish this cycle's figure, or unknown when there isn't one.
+
+        A key that arrives as None means the producer ran and reported that it
+        has no measurement — a sensor unreadable with nothing to hold, so the
+        engine substituted a safety value internally and refuses to publish it
+        (see engine/hub_result.py). Clearing the value is what turns that into
+        `unknown`; HOLDING the last one would freeze a stale reading that looks
+        live, which for a figure like solar production is exactly the lie the
+        substitution was suppressed to avoid.
+
+        Before the first cycle there is no hub_data at all and nothing to
+        report either way; availability (SiteFreshnessMixin) is the separate
+        question of whether the producer is still running.
+        """
         hub_data = self._hub_data()
-        key = self._defn["hub_data_key"]
-        if hub_data and hub_data.get(key) is not None:
-            self._attr_native_value = round(
-                float(hub_data[key]), self._defn["decimals"]
-            )
+        if not hub_data:
+            return
+        value = hub_data.get(self._defn["hub_data_key"])
+        self._attr_native_value = (
+            None if value is None else round(float(value), self._defn["decimals"])
+        )

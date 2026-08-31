@@ -14,6 +14,17 @@ _LOGGER = logging.getLogger(__name__)
 # than crashing the calculation with an AttributeError.
 VALID_PHASE_MASKS = frozenset({"A", "B", "C", "AB", "AC", "BC", "ABC"})
 
+# The connector statuses that mean "this load is not drawing anything".
+# An EVSE receives power only with a car connected; a hot water tank only while
+# its thermostat calls for heat (the HA layer reports "Available" for an idle
+# climate); a plug reports "Available" while its switch is off. Read by the
+# distribution engine (which additionally treats a plug as always active, so an
+# off plug is never stuck off) and by the publisher, which needs to know
+# whether a load with an unreadable power monitor could be drawing at all.
+INACTIVE_STATUSES = frozenset(
+    {"Available", "Unknown", "Unavailable", "Finishing", "Faulted"}
+)
+
 
 @dataclass
 class LoadContext:
@@ -68,6 +79,16 @@ class LoadContext:
     # when on, 0 when off), so they are never flagged unmetered.
     unmetered: bool = False
 
+    # True when the per-phase draw above is a fabricated 0 rather than a
+    # reading: this load HAS a current/power monitor configured, and it is
+    # unreadable with nothing held. The 0 stays for the calculation — it is the
+    # conservative figure for the feedback loop, which subtracts managed draws
+    # from the grid CTs — but a load that may well be drawing kilowatts must
+    # not be PUBLISHED as drawing 0 W (see engine/hub_result.py, which pairs it
+    # with the load's own engagement to decide). Set by the HA layer's builders,
+    # the only place that knows which monitor produced which number.
+    draw_assumed: bool = False
+
     # EVSE only: True when the car's measured draw has held steady for several
     # cycles — it has reached a ceiling below what we offered, rather than
     # still tracking our ramping permit. Only then is the draw trusted as the
@@ -94,6 +115,18 @@ class LoadContext:
     ocpp_device_id: str = None
     stack_level: int = 2
     charge_rate_unit: str = "auto"  # "amps", "watts", or "auto"
+
+    @property
+    def reports_idle(self) -> bool:
+        """True when the load itself says it is drawing nothing.
+
+        Its own status is a fact we have without any power monitor: no car
+        connected, a thermostat not calling for heat, a switch that is off. That
+        is what makes a 0 W figure honest for such a load even when its monitor
+        is unreadable — and, conversely, what makes the fabricated 0 of a load
+        that reports itself active something we must not publish.
+        """
+        return self.connector_status in INACTIVE_STATUSES
 
     def get_site_phase_draw(self) -> tuple[float, float, float]:
         """Map L1/L2/L3 current to site phases A/B/C using phase mapping."""

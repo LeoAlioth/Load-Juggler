@@ -373,9 +373,21 @@ def _apply_soc_hysteresis(
         # above it (floor 20, hysteresis 3 → stop at 20, resume at 23). The
         # target's band sits below its setting for the same reason in reverse —
         # charging never overshoots the configured ceiling.
+        #
+        # STRICTLY above, because "stop AT the floor" is what the consumers
+        # mean by it: the SOC-gated binary modes run while ``soc > soc_min``
+        # (calculations.target_calculator._source_limit). Latching on ``>=``
+        # here disagreed with them at exactly the floor — the latch read "still
+        # above", so it never widened the threshold, while the gate read "not
+        # above" and shed the load. The band was then unreachable: the load
+        # switched off AT the floor, the battery recovered one percent, the load
+        # switched back on and pulled it down again, cycling in a 1% window for
+        # as long as production held. Nothing on the target side needs this:
+        # there the latch DOES adjust its threshold while above, so the gate
+        # cannot chatter against it.
         was_above_min = hub_runtime.get("_soc_above_min", False)
         if was_above_min:
-            now_above_min = battery_soc >= battery_soc_min
+            now_above_min = battery_soc > battery_soc_min
         else:
             now_above_min = battery_soc >= battery_soc_min + battery_soc_hysteresis
         hub_runtime["_soc_above_min"] = now_above_min
@@ -760,7 +772,12 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     ema_inputs = hub_runtime.setdefault("_ema_inputs", {})
 
     # --- Resolve unreadable grid CTs (the only place allowed to substitute) ---
-    raw_phases, any_grid_stale = _resolve_grid_phases(
+    # ``grid_assumed_phases`` marks the phases standing on the main-breaker
+    # worst case rather than on a reading or a held EMA value. The allocation
+    # below runs on the assumption exactly as before — that is what keeps a
+    # blind site from handing out headroom — but the PUBLISHED grid
+    # measurements must not carry it (see _build_hub_result).
+    raw_phases, any_grid_stale, grid_assumed_phases = _resolve_grid_phases(
         raw_phases, ema_inputs, main_breaker_rating
     )
     grid_stale_duration = _track_grid_stale(
@@ -807,7 +824,13 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS
     )
     # Charge capacity sums only members whose own battery is below its own
-    # full-SOC; discharge is summed after the SOC-min hysteresis latch below.
+    # full-SOC, and sums what each one is PERMITTED to take rather than its
+    # nameplate rate: while our own Battery Charge Control holds a member's
+    # register below that rate, the difference is not somewhere this site can
+    # place production (see fleet.charge_power_total). This scalar has exactly
+    # one consumer, the Excess verdict — calculations.excess_margin — so the
+    # narrowing reaches nothing else. Discharge is summed after the SOC-min
+    # hysteresis latch below.
     battery_max_charge_power = fleet.charge_power_total(members)
 
     max_grid_import_power = _read_max_import_power(hass, hub_entry)
@@ -1056,7 +1079,10 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     inverters_data = {
         m.entry_id: {
             "name": m.name,
-            "solar_w": fleet.member_solar_production(m, voltage),
+            # None while this member's own production sensor is unreadable with
+            # nothing to hold — its device sensor reads unknown rather than a
+            # confident 0 W. A healthy sibling keeps publishing its own figure.
+            "solar_w": fleet.member_solar_published(m, voltage),
             "battery_soc": m.battery_soc,
             "battery_power": m.battery_power,
         }
@@ -1094,6 +1120,10 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         auto_notifications,
         group_data,
         grid_stale=grid_stale,
+        grid_assumed=any(grid_assumed_phases),
+        # Same split for solar: the calculation keeps the conservative 0 W of a
+        # dead production sensor, the published measurement does not.
+        solar_assumed=fleet.solar_is_assumed(members),
         hub_status=hub_status,
         hub_warnings=hub_warnings,
         excess_available=excess_on,

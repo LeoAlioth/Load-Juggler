@@ -9,8 +9,8 @@ from homeassistant.components.sensor import (
 from homeassistant.core import callback
 from datetime import datetime, timezone
 from ..const import (
-    CONF_CHARGER_ID,
     CONF_LOAD_PRIORITY,
+    CONF_BINARY_MIN_OFF_TIME,
     CONF_CHARGE_PAUSE_DURATION,
     CONF_CONNECTED_TO_PHASE,
     CONF_DEVICE_TYPE,
@@ -24,6 +24,7 @@ from ..const import (
     CONF_STATION_MIN_CHARGE_POWER,
     CONF_UPDATE_FREQUENCY,
     DEFAULT_LOAD_PRIORITY,
+    DEFAULT_BINARY_MIN_OFF_TIME,
     DEFAULT_CHARGE_PAUSE_DURATION,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_MIN_CHARGE_CURRENT,
@@ -38,9 +39,10 @@ from ..const import (
     DOMAIN,
     EVSE_MODE_EXCESS,
     EVSE_MODE_SOLAR_ONLY,
+    EVSE_MODE_SOLAR_PRIORITY,
 )
 from ..helpers import get_entry_value
-from ..ocpp_discovery import ocpp_connector_status_entity
+from ..ocpp_discovery import ocpp_charge_control_entity, ocpp_connector_status_entity
 from .. import units
 from .mixins import LoadEntityMixin, SiteFreshnessMixin
 from ..registry import get_hub_for_load
@@ -53,6 +55,75 @@ from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
 
 _LOGGER = logging.getLogger(__name__)
+
+
+
+def min_off_hold(permit, off_since, now, min_off_seconds):
+    """Withhold a binary load's permit until it has been off long enough.
+
+    Returns ``(permit, off_since, held)``. ``held`` is the dwell in seconds when
+    this call decided one — the value the caller logs — and None otherwise.
+
+    One-directional by construction: the only thing it can do to a permit is
+    take it away, so it can never keep a load running past a protective shed.
+    That is what lets it apply to every cause at once, unlike the grace hold,
+    which has to know WHICH cause it is bridging (see ``grace_modes``).
+
+    ``off_since`` is the caller's stored stamp, returned updated: set on the
+    cycle the permit first goes to zero, cleared once the dwell is served, so
+    the dwell measures from the shed rather than from the recovery.
+    """
+    if permit <= 0:
+        return permit, off_since if off_since is not None else now, None
+    if off_since is None:
+        return permit, None, None
+    held = now - off_since
+    if held < min_off_seconds:
+        return 0.0, off_since, held
+    return permit, None, held
+
+
+def soc_floor_reached(hub_data) -> bool:
+    """Is the battery sitting at (or under) the floor the engine gated on?
+
+    ``battery_soc_min`` in ``hub_data`` is the HYSTERESIS-WIDENED floor — the
+    very number ``_source_limit`` compared against this cycle — so this answers
+    "was the minimum SOC the reason the permit collapsed?" without the load
+    layer having to know anything else about why.
+
+    Unreadable either way counts as reached: an unknown SOC must not buy a
+    ride-through that the protective case would refuse.
+    """
+    live_soc = hub_data.get("battery_soc")
+    gated_floor = hub_data.get("battery_soc_min")
+    if live_soc is None or gated_floor is None:
+        return True
+    return live_soc <= gated_floor
+
+
+def grace_modes(binary_load, hub_data) -> tuple:
+    """Which operating modes may hold a collapsed permit through the grace window.
+
+    Solar Only and Excess always may. Solar Priority was excluded outright
+    (decided 2026-08-17) because a grace hold cannot tell WHY the permit
+    collapsed and would therefore also bridge a minimum-SOC shed, and that floor
+    is protective — it has to act on the cycle it happens.
+
+    That reason is answerable rather than fundamental for a BINARY load: the
+    live SOC and the gated floor are both published, so the one cause that must
+    never be bridged can be named here (``soc_floor_reached``). Above the floor
+    a Solar Priority plug or tank now rides out the other causes — a brief
+    inverter saturation, a cloud — instead of cycling its relay; at the floor it
+    sheds exactly as before. Nothing holds a load on below its floor.
+
+    Modulating loads are unchanged: in Solar Priority they fall back to a
+    grid-backed minimum rather than to zero, so there is no collapse to bridge.
+    """
+    modes = (EVSE_MODE_SOLAR_ONLY.key, EVSE_MODE_EXCESS.key)
+    if binary_load and not soc_floor_reached(hub_data):
+        modes = (*modes, EVSE_MODE_SOLAR_PRIORITY.key)
+    return modes
+
 
 
 class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity):
@@ -86,13 +157,12 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         )
         self.hub_entry = hub_entry
         load_entity_id = config_entry.data.get(CONF_ENTITY_ID)
-        ocpp_device_id = config_entry.data.get(CONF_CHARGER_ID, load_entity_id)
         # Classified out of the registries, shared with the engine (same cache),
         # so a renamed status entity and a multi-connector charger both resolve.
         self._connector_status_entity = ocpp_connector_status_entity(
             hass, config_entry
         )
-        self._charge_control_entity = f"switch.{ocpp_device_id}_charge_control"
+        self._charge_control_entity = ocpp_charge_control_entity(hass, config_entry)
         self._state = None
         self._phases = None
         # Phase count actually seen drawing, from the engine's live per-load
@@ -114,6 +184,9 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # re-arm on the next cycle and duty-cycle the load forever.
         self._binary_last_permit = 0.0
         self._grace_exhausted = False
+        # Monotonic stamp of the cycle a binary load's permit went to zero; the
+        # minimum-off-time dwell measures from it. None while the load is on.
+        self._binary_off_since = None
         self._prev_operating_mode = None
         self._prev_distribution_mode = None
         self._last_set_current = 0
@@ -295,6 +368,10 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 self._grace_started_at = None
             # A spent grace window belongs to the mode that spent it.
             self._grace_exhausted = False
+            # So does a minimum-off-time dwell: picking a mode is an explicit
+            # instruction, and making it wait out a dwell begun under the
+            # previous mode would read as the switch simply ignoring the user.
+            self._binary_off_since = None
 
         self._prev_operating_mode = self._operating_mode
         self._prev_distribution_mode = current_distribution_mode
@@ -452,14 +529,21 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 )
                 self._grace_started_at = None
 
-        # Solar Priority is deliberately NOT in this list (decided 2026-08-17):
-        # a grace hold here cannot tell WHY the permit collapsed, so it would
-        # also bridge minimum-SOC sheds — and the minimum SOC is a protective
-        # floor that must act immediately. Consequence: a Solar Priority binary
-        # load sheds at once on inverter saturation, with no ride-through.
+        # Solar Priority was excluded from this list (decided 2026-08-17) on the
+        # grounds that a grace hold cannot tell WHY the permit collapsed, so it
+        # would also bridge minimum-SOC sheds — and the minimum SOC is a
+        # protective floor that must act immediately.
+        #
+        # That reason turns out to be answerable rather than fundamental: the
+        # live SOC and the floor the engine actually gated on are both published
+        # in hub_data, and that floor is already the hysteresis-widened one, so
+        # this layer CAN name the one cause it must never bridge. A Solar
+        # Priority binary load therefore rides out every other collapse — a
+        # brief inverter saturation, a cloud — while an SOC shed still acts on
+        # the cycle it happens, exactly as before. Nothing holds a load on below
+        # its floor; the hold is simply no longer forbidden above it.
         if (
-            self._operating_mode
-            in (EVSE_MODE_SOLAR_ONLY.key, EVSE_MODE_EXCESS.key)
+            self._operating_mode in grace_modes(binary_load, hub_data)
             and grace_period_seconds > 0
         ):
             if self._available_current < min_charge_current:
@@ -534,6 +618,54 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         else:
             if self._grace_started_at is not None:
                 self._grace_started_at = None
+
+        # MINIMUM OFF TIME — the last word on a binary load's permit, applied
+        # after grace has had its say. Once the engine sheds the load it stays
+        # shed for the configured span whatever recovers in the meantime.
+        #
+        # Deliberately one-directional: it can only withhold a permit, never
+        # hold one, so it cannot keep a load running below the minimum SOC or
+        # past any other protective shed. That is what lets it apply to every
+        # cause at once, where the grace hold has to reason about which cause
+        # it is bridging.
+        #
+        # It bounds cycle FREQUENCY, which is what damages the appliance behind
+        # the relay rather than the relay itself: an EV cut mid-negotiation
+        # retries, and enough retries lock its onboard charger out until it is
+        # unplugged. Cleared on a mode change, since choosing a mode is an
+        # explicit instruction and should not wait out a dwell it predates.
+        if binary_load:
+            min_off_seconds = (
+                float(
+                    get_entry_value(
+                        self.config_entry,
+                        CONF_BINARY_MIN_OFF_TIME,
+                        DEFAULT_BINARY_MIN_OFF_TIME,
+                    )
+                    or 0
+                )
+                * 60
+            )
+            permit, self._binary_off_since, held = min_off_hold(
+                self._available_current,
+                self._binary_off_since,
+                time.monotonic(),
+                min_off_seconds,
+            )
+            if permit != self._available_current:
+                _LOGGER.debug(
+                    "Minimum off time holding %s off for another %.0fs",
+                    self._attr_name,
+                    min_off_seconds - held,
+                )
+                self._available_current = permit
+            elif held is not None and min_off_seconds > 0:
+                _LOGGER.info(
+                    "Minimum off time satisfied for %s after %.0fs —"
+                    " switching back on",
+                    self._attr_name,
+                    held,
+                )
 
         if DOMAIN not in self.hass.data:
             self.hass.data[DOMAIN] = {}

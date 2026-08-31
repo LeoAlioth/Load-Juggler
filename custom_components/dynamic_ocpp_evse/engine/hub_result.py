@@ -21,28 +21,36 @@ from __future__ import annotations
 import logging
 
 from ..calculations import (
-    clipping_forecast,
+    select_clipping_window,
+    first_production_at,
+    reservation_is_due,
     battery_max_soc,
+    excess_load_draw_power,
     headroom_deficit_kwh,
+    reconstructed_export_power,
     recommended_charge_limit,
+    yields_to_excess,
 )
 from ..const import (
     CONF_BASE_CONSUMPTION,
+    CONF_EXCESS_TRIGGER_MARGIN,
     CONF_FORECAST_SOC_FLOOR,
     CONF_GRID_EXPORT_LIMIT,
     CONF_PHASES,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_TOTAL_ALLOCATED_CURRENT,
     DEFAULT_BASE_CONSUMPTION,
+    DEFAULT_EXCESS_TRIGGER_MARGIN,
     DEFAULT_FORECAST_SOC_FLOOR,
     DEFAULT_GRID_EXPORT_LIMIT,
+    DEFAULT_SOC_LIMIT_NORMAL,
     FORECAST_SOC_HYSTERESIS,
 )
 from ..helpers import get_entry_value
 from . import fleet
 from .forecast_reader import (
     read_forecast_series,
-    forecast_window,
+    forecast_windows,
     configured_forecast_sensors,
 )
 
@@ -70,25 +78,112 @@ def _compute_forecast_advice(
     for the current instant, so a battery that is momentarily full still
     counts (its ceiling advice is exactly what empties it). Reserving
     ``absorbable_kwh`` across the fleet at one uniform ceiling ``s`` gives
-    ``Σ cap_i × (100 − s)/100`` — precisely what battery_max_soc computes
-    from the summed capacity — so every battery is advised the same percent,
-    splitting the headroom proportionally to capacity by construction. The
-    recommended charge limit splits proportionally to each member's charge
+    ``Σ cap_i × (target_i − s)/100`` — precisely what battery_max_soc computes
+    from the summed capacity and the capacity-weighted destination
+    (``fleet.soc_target_weighted``) — so every battery is advised the same
+    percent, splitting the headroom proportionally to capacity by construction.
+    The recommended charge limit splits proportionally to each member's charge
     cap, clamped to its own cap.
 
-    Two fleet-level pieces of carried state, both in ``hub_runtime`` and
-    neither ever per-member (the advice is uniform by construction, so
-    per-member state would diverge):
+    The reserve is carved below where the batteries are HEADING rather than
+    below 100 %: each member's "normal SOC ceiling source" entity is its
+    destination, and a member without one is heading for 100 (so a site that
+    configures none behaves exactly as it did before). Nothing downstream needs
+    to change for it — the write-control fan-out already writes
+    ``min(normal, recommendation)``, and the recommendation is now at or below
+    the destination by construction. The two ways it can sit ABOVE a member's
+    own normal are both safe there: a floor higher than the destination
+    (``CONF_FORECAST_SOC_FLOOR``), and the ratchet holding a recommendation
+    from before the user lowered their ceiling by less than
+    FORECAST_SOC_HYSTERESIS. The min() writes the user's number in both cases.
+    A larger mid-day change to the destination is not resisted at all: the
+    ratchet only absorbs falls smaller than its band, so lowering the ceiling by
+    more than that lowers the recommendation on the very next cycle, and raising
+    it lets the recommendation rise freely.
+
+    The window the integral runs over is the NEXT clipping window, not the rest
+    of the calendar day (``select_clipping_window``). While today still has clip
+    left that is the remainder of today and every published figure is exactly
+    what it always was. Once today's clip has integrated away, the window
+    becomes tomorrow's — and one day is as far as the search ever looks
+    (``FORECAST_LOOKAHEAD_DAYS``), so with no clip today and none tomorrow the
+    recommendation rests at the destination. The clippable / storable / deficit
+    figures follow that same window, so from the evening onward they describe
+    TOMORROW's peak: "how much the site will fail to place at the next peak, and
+    how much of that the battery can still make room for".
+
+    A reservation for a window that is still a night away is not APPLIED the
+    moment today's clip runs out. The published ceiling becomes a discharge
+    floor once the SOC write-control fans it out, so dropping it at dusk parks
+    the pack at the reserve by early evening and the house runs on the grid
+    until dawn; the battery only has to be down there by the time production
+    starts. So the advice holds at the destination and drops just in time,
+    scheduled against ``first_production_at`` with base consumption as the
+    discharge-rate estimator (``reservation_is_due`` for the rule, the latch and
+    the degraded modes). The ratchet does not fight the handover: the hold is a
+    RISE to the destination, which is never resisted, and the drop is normally
+    many points, so it clears the FORECAST_SOC_HYSTERESIS band in one cycle.
+
+    The RESERVATION half of the charge-rate advice deliberately does NOT follow
+    the window — it is handed ``absorbable_today``, which is zero the moment the
+    reservation moves to tomorrow. That half exists to stop the battery eating
+    headroom out from under a clip that is happening; a clip a night away is
+    answered by the SOC ceiling instead, and leaving it released overnight is
+    what keeps a clip in the dark from writing to a charge register.
+
+    The DESTINATION half does not ask about the window at all: a battery at or
+    above where its owner sends it is held there whatever the forecast says, and
+    the room above the destination stays the buffer for a day the forecast
+    under-read (see ``recommended_charge_limit``). It costs no register traffic
+    to speak of — with no overshoot the advice is a single flat value, so the
+    control writes the floor once and the deadband swallows every cycle after
+    it — and a pack that spends the evening serving the house falls a
+    hysteresis band below the destination and releases on its own.
+
+    The energy question and the power question are asked in DIFFERENT terms.
+    The integral is an energy question about a whole day, asked at the true
+    clipping threshold (``export limit + base consumption``). The instantaneous
+    charge-limit advice is a power question about this cycle, and it is
+    MEMORYLESS DIRECT FEEDBACK on two live figures — what the fleet battery is
+    absorbing and what the meter is exporting — against an export SETPOINT one
+    Excess trigger margin under the limit. It never consults base consumption at
+    all: base is a guess about the house, and a guess in the instantaneous path
+    was what the deleted integral trim existed to correct. See
+    ``recommended_charge_limit`` for the derivation, including why a
+    hard-limiting inverter cannot mask this form either.
+
+    The fleet-level carried state, all of it in ``hub_runtime`` and none of it
+    ever per-member (the advice is uniform by construction, so per-member state
+    would diverge):
 
     * ``_forecast_max_soc`` — the published ceiling's ratchet, mirroring the
       Excess latch: it rises freely and falls only past
       FORECAST_SOC_HYSTERESIS. Whole percent — inverter SOC registers are
       integers.
+    * ``_forecast_reservation_due`` — whether the next window's reservation has
+      already been applied for this night, so a pack discharging faster than
+      base consumption cannot make the advice climb back to the destination in
+      the dark (``reservation_is_due``). Self-clearing: nothing is latched while
+      production is under way, so every night starts from a clean state.
     * ``_forecast_charge_limiting`` — whether the charge-rate cap was engaged
-      last cycle, which is what makes its SOC gate a two-threshold latch
+      last cycle, which is what makes its RESERVATION gate a two-threshold latch
       instead of one boundary the integer SOC can sit on and flap across (see
-      ``recommended_charge_limit``). The engine owns the persistence; the
-      calculation stays a pure function of state in, state out.
+      ``recommended_charge_limit``). One state for both engagement sources, the
+      destination hold included: at the destination the reserved ceiling is at or
+      below the SOC anyway, so the two always agree, and carrying the hold in it
+      is what lets a clip appearing while the pack is parked take over without a
+      step. The engine owns the persistence; the calculation stays a pure
+      function of state in, state out.
+    * ``_forecast_soc_yielding`` — whether the battery was already at or above
+      its destination, the latch of the same shape at that crossing
+      (``yields_to_excess``). It decides two things at once: that the Excess
+      loads are served first (``excess_draw_w``) and that the destination is held
+      as a standing ceiling (``at_destination``).
+    Every one of them is dropped the moment the feature is not configured, so a
+    site that turns it off leaves nothing behind. There is deliberately no state
+    for the engaged VALUE any more: it is recomputed from this cycle's
+    measurements, so a reload, a cloud or an hour of release leaves nothing
+    stale to carry back in.
     """
     export_limit = (
         get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT)
@@ -107,7 +202,9 @@ def _compute_forecast_advice(
     )
     if export_limit <= 0 or capacity_kwh <= 0 or not (device_ids or legacy_entity_ids):
         hub_runtime.pop("_forecast_max_soc", None)
+        hub_runtime.pop("_forecast_reservation_due", None)
         hub_runtime.pop("_forecast_charge_limiting", None)
+        hub_runtime.pop("_forecast_soc_yielding", None)
         hub_runtime.pop("_forecast_parse_memo", None)
         return None, {}
 
@@ -117,7 +214,36 @@ def _compute_forecast_advice(
     soc_floor = get_entry_value(
         hub_entry, CONF_FORECAST_SOC_FLOOR, DEFAULT_FORECAST_SOC_FLOOR
     )
-    threshold = export_limit + base_consumption
+    # TWO numbers, in two different currencies, and deliberately so.
+    #
+    # ``clip_threshold`` is POWER THE SITE CAN PLACE — export limit plus the
+    # house — and it is what the forecast INTEGRAL must use: the energy question
+    # ("how many kWh will this day produce above what we can place?") is
+    # answered at the real export limit, or the reserved headroom would be
+    # systematically too large. base_consumption belongs here, where it is a
+    # day-scale average of a real quantity.
+    #
+    # ``export_setpoint`` is WATTS AT THE METER — where the instantaneous
+    # charge-limit advice steers export to — and it carries no house term at
+    # all: the advice measures what the house is doing this cycle instead of
+    # assuming it (see ``recommended_charge_limit``). It sits one Excess trigger
+    # margin under the limit for the same reason the Excess trigger does: a
+    # signal anchored exactly AT a hard limit can never be observed. An inverter
+    # that hard-enforces the export limit curtails its own PV to hold it, so
+    # with export pinned at the wall the feedback value is
+    #     battery + (limit − setpoint) = battery + margin
+    # and the permit SELF-CREEPS by one margin per cycle until export falls off
+    # the limit; from there the plain feedback tracks the sun and export settles
+    # a margin under the limit, where nothing is curtailed and every reading is
+    # honest.
+    excess_trigger_margin = (
+        get_entry_value(
+            hub_entry, CONF_EXCESS_TRIGGER_MARGIN, DEFAULT_EXCESS_TRIGGER_MARGIN
+        )
+        or 0
+    )
+    clip_threshold = export_limit + base_consumption
+    export_setpoint = max(0.0, export_limit - excess_trigger_margin)
 
     # UNGATED fleet charge rate (see docstring) and total inverter capacity.
     fleet_charge_cap = sum(m.charge_cap or 0 for m in members) or None
@@ -132,17 +258,61 @@ def _compute_forecast_advice(
 
     entity_ids = configured_forecast_sensors(hass, device_ids, legacy_entity_ids)
     series = read_forecast_series(hass, entity_ids, hub_runtime)
-    now, until = forecast_window()
-    fc = clipping_forecast(
+    # The NEXT clipping window, not the rest of the calendar day: the remainder
+    # of today while today still has clip left, tomorrow once it does not (see
+    # ``select_clipping_window``). ``window`` is 0 exactly in the first case.
+    windows = forecast_windows()
+    window, fc = select_clipping_window(
         series,
-        threshold,
-        now,
-        until,
+        clip_threshold,
+        windows,
         charge_cap_w=fleet_charge_cap,
         power_cap_w=power_cap,
     )
+    until = windows[window][1]
+    # The charge-rate advice protects headroom that is at risk NOW, so it asks
+    # only about today: a clip that is a night away is the SOC ceiling's problem,
+    # and the ceiling is what makes room for it. Identical to ``fc`` whenever the
+    # chosen window IS today; zero once the reservation has moved to tomorrow,
+    # which keeps the cap released and the register untouched all night —
+    # exactly as it was before the window could ever move.
+    absorbable_today = fc.absorbable_kwh if window == 0 else 0.0
 
-    max_soc = battery_max_soc(fc.absorbable_kwh, capacity_kwh, soc_floor)
+    # Where the fleet's batteries are HEADING (their own normal-ceiling sources,
+    # capacity-weighted; 100 % for every member that configures none). The
+    # reserve is carved below this, not below 100 — see
+    # ``fleet.soc_target_weighted`` for the weighting's derivation and
+    # ``battery_max_soc`` for why the destination is the right anchor.
+    soc_target = fleet.soc_target_weighted(members, DEFAULT_SOC_LIMIT_NORMAL)
+    reserved_soc = battery_max_soc(
+        fc.absorbable_kwh, capacity_kwh, soc_floor, soc_target=soc_target
+    )
+    # Just-in-time: the reserve has to be in place by the time production
+    # starts, not the moment the clip is computed. Until then the advice rests
+    # at the destination, so the evening's house draw comes out of the battery
+    # instead of the grid. Every term is recomputed from live state each cycle —
+    # the only thing carried is the latch that keeps a drop dropped. See
+    # ``reservation_is_due``.
+    production_at = first_production_at(
+        series, base_consumption, windows[0][0], windows[-1][1], power_cap_w=power_cap
+    )
+    due, due_latched = reservation_is_due(
+        windows[0][0],
+        production_at,
+        battery_soc,
+        reserved_soc,
+        capacity_kwh,
+        base_consumption,
+        hub_runtime.get("_forecast_reservation_due", False),
+    )
+    hub_runtime["_forecast_reservation_due"] = due_latched
+    # Holding means the destination itself — battery_max_soc with nothing to
+    # absorb — so the floor and its clamps stay exactly where they always were.
+    max_soc = (
+        reserved_soc
+        if due
+        else battery_max_soc(0.0, capacity_kwh, soc_floor, soc_target=soc_target)
+    )
     proposed = round(max_soc)
     prev = hub_runtime.get("_forecast_max_soc")
     if prev is not None and prev - FORECAST_SOC_HYSTERESIS <= proposed < prev:
@@ -150,21 +320,61 @@ def _compute_forecast_advice(
     hub_runtime["_forecast_max_soc"] = proposed
 
     deficit = headroom_deficit_kwh(fc.absorbable_kwh, capacity_kwh, battery_soc)
+    # The two live plant figures the engaged advice is computed from, read once.
+    battery_charge_w = -(site.battery_power or 0.0)
+    export_now_w = reconstructed_export_power(site)
     charge_limit = None
+    limiting = False
     if fleet_charge_cap:
+        # Above the destination the battery is the absorber of LAST RESORT: the
+        # Excess loads that exist to soak up surplus get it first, and the
+        # battery takes what they cannot. Below it the battery comes first, as
+        # ever. Latched at the crossing (see ``yields_to_excess``) because this
+        # moves the advice by whole kilowatts and an integer SOC register would
+        # otherwise sit on the boundary and flip it.
+        #
+        # The same crossing is also the STANDING CEILING: at or above the
+        # destination the charge cap engages whether or not anything is forecast
+        # to clip, because the room above the destination is the buffer for a day
+        # the forecast under-read and not the forecast's to spend (see
+        # ``recommended_charge_limit`` — that gate is tested before the clip).
+        yielding = yields_to_excess(
+            battery_soc,
+            soc_target,
+            FORECAST_SOC_HYSTERESIS,
+            hub_runtime.get("_forecast_soc_yielding", False),
+        )
+        hub_runtime["_forecast_soc_yielding"] = yielding
+        # The engaged value's two live inputs, both from THIS cycle:
+        #
+        # * what the fleet battery is absorbing, positive charging —
+        #   ``site.battery_power`` is positive DISCHARGING (see
+        #   ``fleet.battery_power_total``), so it is negated here and a pack that
+        #   is giving power back arrives as a negative term, which the pure
+        #   function's clamp at 0 turns into "a charge cap cannot force a
+        #   discharge". No sensor at all reads 0, the conservative degradation.
+        # * RECONSTRUCTED export — the draws-credited-back figure the Excess
+        #   verdict decides on, and the reason this loop is safe to close: an
+        #   engaged Excess load's kilowatts are not read as an export shortfall,
+        #   so our own loads cannot steer the battery's limit (they are
+        #   subtracted deliberately instead, as ``excess_draw_w``).
         charge_limit, limiting = recommended_charge_limit(
-            fc.absorbable_kwh,
+            absorbable_today,
             battery_soc,
             proposed,
             fleet_charge_cap,
-            site.solar_production_total or 0,
-            threshold,
+            battery_charge_w,
+            export_now_w,
+            export_setpoint,
             FORECAST_SOC_HYSTERESIS,
             hub_runtime.get("_forecast_charge_limiting", False),
+            excess_draw_w=excess_load_draw_power(site) if yielding else 0.0,
+            at_destination=yielding,
         )
         hub_runtime["_forecast_charge_limiting"] = limiting
     else:
         hub_runtime.pop("_forecast_charge_limiting", None)
+        hub_runtime.pop("_forecast_soc_yielding", None)
 
     # Per-inverter advice: the uniform ceiling for every battery member, and
     # the fleet charge limit split proportionally to each member's charge cap,
@@ -182,19 +392,36 @@ def _compute_forecast_advice(
         per_inverter[m.entry_id] = {
             "forecast_battery_max_soc": proposed,
             "forecast_charge_limit_w": member_limit,
+            # The GATE, not the value: the charge control needs to know a
+            # protective regime transition (the cap engaging) from a
+            # steady-state correction, because only the latter is paced by the
+            # persistence window (see ``control/inverter.py``). Fleet-wide by
+            # construction — one latch decides for every member.
+            "forecast_charge_limiting": bool(limiting),
         }
 
     _LOGGER.debug(
-        "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW to %s"
-        " | max SOC %d%% (raw %.1f) deficit %.2f kWh charge cap %s",
+        "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW"
+        " (export setpoint %dW) in window +%dd to %s"
+        " | max SOC %d%% (raw %.1f of destination %.1f%%) deficit %.2f kWh"
+        " | reserve %s (reserved %.1f%%, production from %s)"
+        " charge cap %s (battery %+.0fW, export %.0fW)",
         fc.clipped_kwh,
         fc.absorbable_kwh,
-        threshold,
+        clip_threshold,
+        export_setpoint,
+        window,
         until,
         proposed,
         max_soc,
+        soc_target,
         deficit,
+        "due" if due else "held at the destination",
+        reserved_soc,
+        production_at,
         f"{charge_limit:.0f}W" if charge_limit is not None else "n/a",
+        battery_charge_w,
+        export_now_w,
     )
 
     return {
@@ -206,6 +433,35 @@ def _compute_forecast_advice(
             round(charge_limit, 0) if charge_limit is not None else None
         ),
     }, per_inverter
+
+
+def _draw_is_unknown(load, booked):
+    """Whether this load's published draw would be a fabrication.
+
+    Two conditions, and both are needed:
+
+    * its monitor produced no reading (``draw_assumed`` — configured, but
+      unreadable with nothing held), and
+    * we have reason to believe it could be drawing: the engine booked
+      footprint for it this cycle (``load_targets``, which for an unmetered
+      EVSE is its whole permit), or it reports itself active — a car connected,
+      a thermostat calling for heat, a switch that is on.
+
+    The second half is what keeps this from blanking Current Managed Power
+    across a whole site because one idle charger is offline — by far the common
+    case, since an offline OCPP charger takes every one of its sensors with it.
+    For a load the engine booked nothing for and that says it is not running,
+    0 W is not a guess: our own allocation and its own status are facts we hold
+    without any meter. Once either says otherwise, the 0 is an invention about a
+    load that may be pulling kilowatts, and no honest total can contain it.
+
+    The booked figure is deliberately ``load_targets`` and not
+    ``load_available``: an inactive load still gets an available current (so the
+    HA layer can switch it back on), so the permit alone would call every
+    offline charger engaged — the exact false positive this rule exists to
+    avoid.
+    """
+    return bool(load.draw_assumed) and ((booked or 0) > 0 or not load.reports_idle)
 
 
 def _build_hub_result(
@@ -223,6 +479,8 @@ def _build_hub_result(
     auto_detect_notifications=None,
     group_data=None,
     grid_stale=False,
+    grid_assumed=False,
+    solar_assumed=False,
     hub_status="OK",
     hub_warnings=None,
     excess_available=False,
@@ -230,7 +488,67 @@ def _build_hub_result(
     forecast_advice=None,
     inverters_data=None,
 ):
-    """Build the result dict returned by run_hub_calculation."""
+    """Build the result dict returned by run_hub_calculation.
+
+    ``grid_assumed`` says that at least one grid phase this cycle is the
+    main-breaker worst case invented by ``_resolve_grid_phases`` (a CT
+    unreadable with no EMA history — cold start, or the first cycles after an
+    entry reload), not a reading and not a held EMA value. It splits the two
+    kinds of published figure apart:
+
+    * the grid MEASUREMENTS — ``grid_power``, ``total_export_power`` and the
+      ``household_power`` derived from them — publish None, so their sensors
+      read unknown and the recorder stores nothing. Publishing the assumption
+      instead painted a fabricated grid spike (3 x breaker x voltage) onto
+      Current Grid Power and into long-term statistics on every reload;
+    * the computed ALLOCATIONS — every ``available_*`` / remaining figure and
+      the per-load permits — keep publishing. The engine really did allocate
+      on the worst case, so "no headroom" is the truthful consequence of the
+      assumption, not a fabrication.
+
+    None for the TOTALS even when only one phase is assumed: a total that
+    contains one fabricated phase is itself fabricated, and there is no
+    per-phase grid measurement published to partial it out into. A HELD EMA
+    value is not covered — that is a legitimate estimate of what the phase was
+    doing moments ago, and suppressing it would blank the grid sensors during
+    every brief CT dropout.
+
+    ``solar_assumed`` is the same split for solar (``fleet.solar_is_assumed``):
+    a CONFIGURED production sensor that is unreadable with nothing to hold
+    substitutes 0 W, which the calculation keeps — it is the conservative
+    figure, and the household maths cannot take None — while ``solar_power``
+    publishes None. A confident 0 W is right at night and a lie in daylight,
+    and either way it lands in long-term statistics. ``household_power`` joins
+    it ONLY when the household figure was itself computed from solar (the
+    supply identity); the inverter-output form does not consume solar and
+    stays. A site with NO production sensor configured is not affected at all:
+    its solar is derived from the inverter output or grid export, and nothing
+    there is invented. Per-inverter figures are handled one member at a time in
+    hub_calculation.py, where each member has a published sensor of its own.
+
+    The third case is the managed draws (``LoadContext.draw_assumed``, resolved
+    per load by ``_draw_is_unknown`` below): an unreadable current or power
+    monitor leaves its load carrying 0 A, so a charging car could publish 0 W
+    of ``total_evse_power``. The internal 0 stays — it is the conservative
+    figure for the feedback loop, which subtracts managed draws from the grid
+    CTs — while ``total_evse_power``, that load's ``load_draw`` entry and
+    ``household_power`` publish None. Household joins them because EVERY form
+    of it nets the managed draw out (the identity subtracts it; the per-phase
+    form is built on post-feedback consumption), so a fabricated 0 leaves the
+    car's kilowatts sitting inside the household figure. ``total_export_power``
+    does NOT: with the draw at 0 the feedback loop subtracts nothing, so the
+    published export degrades to the CT's own reading rather than to an
+    invented number.
+    """
+    # Which loads carry an invented 0 draw this cycle (see _draw_is_unknown).
+    # Resolved once, here, because both the per-load figure and the total need
+    # the same answer, and it needs this cycle's permits.
+    draw_unknown = {
+        c.load_id: _draw_is_unknown(c, load_targets.get(c.load_id))
+        for c in site.loads
+    }
+    managed_draw_assumed = any(draw_unknown.values())
+
     # Grid available power (based on consumption after feedback loop).
     # Off-grid there is no grid feed at all — headroom is 0 by definition.
     if site.is_off_grid:
@@ -296,16 +614,22 @@ def _build_hub_result(
         + (battery_power or 0)
         - total_evse_power,
     )
+    # ``household_from_solar`` records which of the three it was, because only
+    # the two identity forms carry a fabricated solar figure into the household
+    # result — form 2 is built from grid and inverter output alone.
     if not site.solar_is_derived and site.solar_production_total:
         household_power = round(_identity_household, 0)
+        household_from_solar = True
     elif hh_phases is not None:
         household_power = round(
             sum(v for v in (hh_phases.a, hh_phases.b, hh_phases.c) if v is not None)
             * voltage,
             0,
         )
+        household_from_solar = False
     else:
         household_power = round(_identity_household, 0)
+        household_from_solar = True
 
     # Cap grid headroom by max grid import power limit (if configured)
     if site.max_grid_import_power is not None:
@@ -427,6 +751,30 @@ def _build_hub_result(
     battery_remaining_current = battery_remaining / voltage if voltage else 0
     inverter_remaining_current = inverter_sourced / voltage if voltage else 0
 
+    # The grid measurements, or None while any phase is the breaker assumption
+    # (see the docstring). Computed either way — the household identity above
+    # needs the same terms — and dropped only at the point of publication.
+    published_grid_power = None if grid_assumed else round(net_consumption, 0)
+    published_export_power = (
+        None if grid_assumed else round(site.total_export_power, 0)
+    )
+    # Same for solar, and for the household figure whenever it was derived FROM
+    # solar (see the docstring and household_from_solar above).
+    published_solar_power = (
+        None if solar_assumed else round(site.solar_production_total or 0, 0)
+    )
+    published_household_power = (
+        None
+        if grid_assumed
+        or (solar_assumed and household_from_solar)
+        or managed_draw_assumed
+        else household_power
+    )
+    # The managed draw: the total while every engaged load's contribution is a
+    # reading, and each load's own figure the same way. Per load because each
+    # has a published figure of its own, exactly like the per-inverter solar.
+    published_evse_power = None if managed_draw_assumed else total_evse_power
+
     # Build per-load operating modes dict
     load_modes = {c.load_id: c.operating_mode for c in site.loads}
 
@@ -446,7 +794,11 @@ def _build_hub_result(
     # device draws right now, which can be far below its reserved allocation
     # (e.g. a metered plug switched on but its appliance idle).
     load_draw = {
-        c.load_id: round(c.l1_current + c.l2_current + c.l3_current, 1)
+        c.load_id: (
+            None
+            if draw_unknown[c.load_id]
+            else round(c.l1_current + c.l2_current + c.l3_current, 1)
+        )
         for c in site.loads
     }
 
@@ -482,14 +834,14 @@ def _build_hub_result(
         "available_battery_current": round(battery_remaining_current, 1),
         "available_inverter_current": round(inverter_remaining_current, 1),
         "total_site_available_power": round(total_site_available, 0),
-        "grid_power": round(net_consumption, 0),
+        "grid_power": published_grid_power,
         "available_grid_power": round(grid_headroom, 0),
         "available_battery_power": battery_remaining,
-        "total_evse_power": total_evse_power,
-        "household_power": household_power,
-        "solar_power": round(site.solar_production_total or 0, 0),
+        "total_evse_power": published_evse_power,
+        "household_power": published_household_power,
+        "solar_power": published_solar_power,
         "available_solar_power": round(solar_available, 0),
-        "total_export_power": round(site.total_export_power, 0),
+        "total_export_power": published_export_power,
         # The one Excess decision, computed by excess_margin() with the hysteresis
         # latch applied. Every Excess-mode load reads this rather than re-deriving
         # the rule — including the hot water tank, whose boost setpoint is
