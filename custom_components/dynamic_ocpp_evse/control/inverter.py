@@ -106,6 +106,7 @@ hardware:
 """
 
 import logging
+import math
 
 from ..const import (
     DOMAIN,
@@ -220,6 +221,45 @@ def _entity_max(hass, entity_id):
     except (TypeError, ValueError):
         return None
 
+
+def _entity_step(hass, entity_id):
+    """The target register's own quantum, when it advertises one.
+
+    Deye's ``Battery Max Charge Current`` is integer amps: written 6.2 it holds
+    6. Harmless on its own, but the write decision compares against the
+    register's LIVE value, so the 0.2 A it silently dropped is a standing
+    disagreement between what we want and what we read. Larger than the
+    deadband, that disagreement is a write every cycle, for ever — which is
+    exactly the Modbus and EEPROM churn the deadband exists to prevent, caused
+    by the deadband being smaller than the device's own resolution.
+
+    Quantising the target first removes the disagreement instead of relying on
+    the deadband to be wide enough to hide it. None when the entity does not
+    advertise a step, which keeps every such site byte-identical to before.
+    """
+    state = hass.states.get(entity_id) if entity_id else None
+    if state is None:
+        return None
+    try:
+        step = float(state.attributes.get("step"))
+    except (TypeError, ValueError):
+        return None
+    return step if step > 0 else None
+
+
+def quantise(value, step):
+    """``value`` snapped to the register's own grid, rounding DOWN.
+
+    Down, not nearest: every value this module writes is a permit — a ceiling
+    on what the battery may draw — so the rounding direction has a meaning.
+    Rounding up would hand out a few watts more than the advice allowed, which
+    on the reservation path is headroom the forecast was trying to keep.
+
+    A step of None (unknown) leaves the value alone.
+    """
+    if not step or step <= 0:
+        return value
+    return math.floor(value / step) * step
 
 def battery_voltage(hass, entry) -> float:
     """DC battery voltage for the W↔A conversion: the live sensor when one is
@@ -518,6 +558,10 @@ async def send_inverter_charge_limit(
     # which scaled it to the register's full span rather than to the band the
     # control actually works in (see the constant).
     deadband = abs(to_target_units(float(deadband_w or 0), unit, voltage))
+    # The register's own quantum. Every value written below is snapped to it, so
+    # the read-back the write decision compares against matches what we asked
+    # for instead of the device's rounding of it (see ``_entity_step``).
+    reg_step = _entity_step(hass, target_entity)
 
     applied = inverter_rt.get(INVERTER_RT_APPLIED)
     last_write = inverter_rt.get(INVERTER_RT_LAST_WRITE)
@@ -577,7 +621,9 @@ async def send_inverter_charge_limit(
             # this control writes nothing at all, so the unwind cannot be spread
             # over a ramp it would have no standing to finish. One write, now,
             # and the register is theirs again.
-            await _write(hass, entry, target_entity, normal, unit)
+            await _write(
+                hass, entry, target_entity, quantise(normal, reg_step), unit
+            )
             inverter_rt[INVERTER_RT_APPLIED] = None
             inverter_rt[INVERTER_RT_LAST_WRITE] = now_mono
             _LOGGER.info(
@@ -594,8 +640,14 @@ async def send_inverter_charge_limit(
         # "refill at maximum, starting now" — the advice self-heals upward as the
         # clip burns down, and each self-heal used to hand the battery the whole
         # normal value for one burst of exportable power.
-        target = round(slew_limited(normal, baseline, step), 1)
-        landed = target >= normal
+        # Against the QUANTISED normal, not the raw one. quantise rounds down,
+        # so a normal value off the register's grid (84.5 on a whole-amp
+        # register) is unreachable — and "landed" is what ends the ramp, so
+        # comparing against the raw value would hold the release open for ever,
+        # writing nothing and never clearing its marker.
+        normal_q = quantise(normal, reg_step)
+        target = round(quantise(slew_limited(normal, baseline, step), reg_step), 1)
+        landed = target >= normal_q
         if last_write is not None and (now_mono - last_write) < interval:
             return
         writing = should_write(
@@ -648,7 +700,7 @@ async def send_inverter_charge_limit(
     # is the same "you may refill" in smaller words. Rounded AFTER the slew, so a
     # rise of exactly one margin — the masked-site self-creep — is not shaved by
     # a hundredth and passes through untouched.
-    target = round(slew_limited(desired, baseline, step), 1)
+    target = round(quantise(slew_limited(desired, baseline, step), reg_step), 1)
     inverter_rt[INVERTER_RT_STATUS] = CONTROL_STATE_LIMITING
     # The recommendation stays the ADVICE (floored), not the ramp's next step:
     # the sensor's job is to report what we want the register at, while the ramp
@@ -712,7 +764,7 @@ async def send_inverter_charge_limit(
             )
             return
         # The least reduction every sample in the window agreed on.
-        target = round(slew_limited(settled, baseline, step), 1)
+        target = round(quantise(slew_limited(settled, baseline, step), reg_step), 1)
 
     if not should_write(current, target, applied, deadband, deadband_up):
         return

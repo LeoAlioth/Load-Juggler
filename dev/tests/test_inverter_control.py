@@ -2129,3 +2129,92 @@ def test_the_default_deadband_needs_no_asymmetry_at_all():
     # 100 W at 51.2 V is 1.95 A, so a 2 A move clears it in both directions.
     assert _written(up) == [6.0]
     assert _written(down) == [6.0]
+
+
+# --- The register's own quantum ------------------------------------------------
+#
+# Deye's Battery Max Charge Current is whole amps: written 6.2 it holds 6
+# (observed live 2026-08-31). The write decision compares against the register's
+# LIVE value, so that silently-dropped 0.2 A is a standing disagreement between
+# what we want and what we read. Wider than the deadband it would be a write
+# every cycle for ever — the exact churn the deadband exists to prevent, caused
+# by the deadband being narrower than the device's resolution. Snapping the
+# target to the register's grid removes the disagreement at its source.
+
+
+def _stepped(current=0.0, maximum=100.0, step=1.0):
+    hass = _Hass()
+    hass.states.set(TARGET, current, max=maximum, step=step)
+    return hass
+
+
+def test_a_written_value_is_snapped_to_the_register_step():
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    hass = _stepped(current=0.0, step=1.0)
+    _arm(hass, entry)
+
+    # 6.2 A of advice on a whole-amp register.
+    asyncio.run(_send(hass, entry, 6.2 * 51.2, 100.0))
+
+    assert _written(hass) == [6.0]
+
+
+def test_snapping_rounds_DOWN_because_the_value_is_a_permit():
+    """Every value this module writes is a ceiling on what the battery may
+    draw, so rounding up would hand out more than the advice allowed — on the
+    reservation path, headroom the forecast was trying to keep."""
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    hass = _stepped(current=0.0, step=1.0)
+    _arm(hass, entry)
+
+    asyncio.run(_send(hass, entry, 6.9 * 51.2, 100.0))   # not 7.0
+
+    assert _written(hass) == [6.0]
+
+
+def test_a_register_with_no_step_is_unchanged():
+    """Every site whose register does not advertise a step keeps the previous
+    one-decimal behaviour exactly."""
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    hass = _hass_with_target(current=0.0, maximum=100.0)   # no step attribute
+    _arm(hass, entry)
+
+    asyncio.run(_send(hass, entry, 6.2 * 51.2, 100.0))
+
+    assert _written(hass) == [6.2]
+
+
+def test_the_release_still_completes_when_normal_is_off_the_grid():
+    """The trap snapping introduces: quantise rounds DOWN, so a normal value
+    off the register's grid (84.5 on a whole-amp register) is unreachable. The
+    ramp ends on "landed", so comparing against the RAW normal would hold the
+    release open for ever — writing nothing, never clearing its marker.
+    """
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    hass = _stepped(current=80.0, maximum=84.5, step=1.0)
+    rt = _arm(hass, entry)
+    rt[INVERTER_RT_APPLIED] = 80.0          # mid-release
+
+    now = 100.0
+    for _ in range(20):
+        asyncio.run(_send(hass, entry, None, now))
+        last = hass.services.calls[-1][2]["value"] if hass.services.calls else 80.0
+        hass.states.set(TARGET, last, max=84.5, step=1.0)
+        now += 10.0
+        if rt[INVERTER_RT_APPLIED] is None:
+            break
+
+    assert rt[INVERTER_RT_APPLIED] is None, "the release must finish"
+    assert hass.services.calls[-1][2]["value"] == 84.0   # the grid, not 84.5
