@@ -57,6 +57,9 @@ from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    CONF_SOC_LIMIT_SEMANTICS,
+    SOC_LIMIT_SEMANTICS_CEILING,
+    SOC_LIMIT_SEMANTICS_FLOOR,
     DEFAULT_SOC_LIMIT_NORMAL,
     SOC_LIMIT_DEADBAND,
     INVERTER_RT_APPLIED,
@@ -1816,6 +1819,149 @@ def test_the_slot_read_backs_are_taken_before_the_write():
 
     assert len(_soc_writes(hass)) == 3
     assert rt[INVERTER_RT_SOC_SLOTS] == {eid: 70.0 for eid in SOC_SLOTS}
+
+
+# --- Floor semantics: writes only in each state's safe direction ---------------
+#
+# On a Deye the slot SOC is a discharge floor plus grid-charge target, so the
+# ceiling fan-out's unconditional tracking is harm there: holding the slots at
+# the destination blocks overnight self-consumption and imports toward it
+# (observed live 2026-08-25). Under CONF_SOC_LIMIT_SEMANTICS = floor, a
+# reservation may only LOWER a slot (the pre-clip "the house may drain to
+# here" drop) and tracking the normal may only RAISE one back to the source —
+# which is also what makes the release memoryless: the restore is a plain
+# raise toward the live source value, needing no record of what we dropped.
+
+
+def _floor_entry(options=None, targets=None):
+    return _soc_entry(
+        {
+            CONF_SOC_LIMIT_NORMAL_ENTITY_ID: NORMAL_ENTITY,
+            CONF_SOC_LIMIT_SEMANTICS: SOC_LIMIT_SEMANTICS_FLOOR,
+            **(options or {}),
+        },
+        targets=targets,
+    )
+
+
+def test_floor_reservation_lowers_the_slots():
+    """The just-in-time drop reaches the hardware: floor slots at the owner's
+    everyday value are written down to the reserve."""
+    hass = _soc_hass(slots={eid: 90 for eid in SOC_SLOTS}, normal=90)
+    entry = _floor_entry()
+    rt = _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, 82.0, 0.0))
+
+    assert _soc_writes(hass) == [(eid, 82.0) for eid in SOC_SLOTS]
+    assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_LIMITING
+
+
+def test_floor_reservation_never_raises_a_slot_already_below_the_reserve():
+    """A slot the owner keeps lower than the reserve already satisfies it —
+    raising it would defend charge nobody asked defended, and on a Deye
+    grid-charge toward it."""
+    slots = {SOC_SLOTS[0]: 90, SOC_SLOTS[1]: 70, SOC_SLOTS[2]: 90}
+    hass = _soc_hass(slots=slots, normal=90)
+    entry = _floor_entry()
+    _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, 82.0, 0.0))
+
+    assert _soc_writes(hass) == [(SOC_SLOTS[0], 82.0), (SOC_SLOTS[2], 82.0)]
+
+
+def test_floor_release_restores_the_source_with_no_memory():
+    """Slots we dropped overnight climb back to the live source value on
+    release — from a FRESH runtime dict, which is the restart-mid-window case:
+    nothing about the restore depends on remembering that we wrote the drop."""
+    hass = _soc_hass(slots={eid: 82 for eid in SOC_SLOTS}, normal=90)
+    entry = _floor_entry()
+    rt = _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, None, 0.0))
+
+    assert _soc_writes(hass) == [(eid, 90.0) for eid in SOC_SLOTS]
+    assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_IDLE
+
+
+def test_floor_idle_never_lowers_an_owner_raised_slot():
+    """A slot the owner raised above the source (a storm hold at 100) keeps its
+    protection: tracking the normal only ever raises floor slots."""
+    hass = _soc_hass(slots={eid: 100 for eid in SOC_SLOTS}, normal=90)
+    entry = _floor_entry()
+    _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, None, 0.0))
+
+    assert _soc_writes(hass) == []
+
+
+def test_ceiling_semantics_keeps_the_unconditional_tracking():
+    """The paired rig: the same owner-raised slots under explicit CEILING
+    semantics are clamped down to the normal — that clamp IS the control on a
+    register that means 'stop charging at'."""
+    hass = _soc_hass(slots={eid: 100 for eid in SOC_SLOTS}, normal=90)
+    entry = _soc_entry(
+        {
+            CONF_SOC_LIMIT_NORMAL_ENTITY_ID: NORMAL_ENTITY,
+            CONF_SOC_LIMIT_SEMANTICS: SOC_LIMIT_SEMANTICS_CEILING,
+        }
+    )
+    _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, None, 0.0))
+
+    assert _soc_writes(hass) == [(eid, 90.0) for eid in SOC_SLOTS]
+
+
+def test_floor_holds_dropped_slots_through_the_daytime_climb():
+    """As the clip burns, the advice climbs (82 → 84 → … → 90) but stays below
+    the normal. Raising the floor behind the climbing advice would re-defend
+    charge step by step, so dropped slots hold until the full release."""
+    hass = _soc_hass(slots={eid: 82 for eid in SOC_SLOTS}, normal=90)
+    entry = _floor_entry()
+    rt = _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, 84.0, 0.0))
+
+    assert _soc_writes(hass) == []
+    # Still the enforced intent — the sensor reports 84 while the slots hold 82.
+    assert rt[INVERTER_RT_SOC_DESIRED] == 84.0
+    assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_LIMITING
+
+
+def test_floor_without_a_source_defers_all_writes():
+    """The 100 fallback written into a floor register would mean 'never
+    discharge below 100' — so floor semantics with no source writes nothing."""
+    hass = _soc_hass(slots={eid: 90 for eid in SOC_SLOTS})
+    entry = _soc_entry({CONF_SOC_LIMIT_SEMANTICS: SOC_LIMIT_SEMANTICS_FLOOR})
+    rt = _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, 82.0, 0.0))
+
+    assert _soc_writes(hass) == []
+    assert rt[INVERTER_RT_SOC_DESIRED] is None
+    assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_IDLE
+
+
+def test_floor_source_among_the_managed_slots_defers_all_writes():
+    """Writing the reserve into the entity the destination is read from — and
+    the restore is anchored to — would ratchet both down to our own last limit.
+    A managed slot as the source is a misconfiguration, not a degraded mode."""
+    hass = _soc_hass(slots={eid: 90 for eid in SOC_SLOTS})
+    entry = _soc_entry(
+        {
+            CONF_SOC_LIMIT_NORMAL_ENTITY_ID: SOC_SLOTS[0],
+            CONF_SOC_LIMIT_SEMANTICS: SOC_LIMIT_SEMANTICS_FLOOR,
+        }
+    )
+    rt = _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, 82.0, 0.0))
+
+    assert _soc_writes(hass) == []
+    assert rt[INVERTER_RT_SOC_DESIRED] is None
 
 
 # --- Source-level guards on the drive mechanism -------------------------------

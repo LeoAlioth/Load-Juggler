@@ -120,14 +120,16 @@ DEFAULT_SOC_LIMIT_NORMAL = 100.0  # % — where an unmanaged battery ceiling sit
 # 100 % — that knob already existed, and the flag must not duplicate it.
 #
 # The distinction it does carry is what the SOC fan-out may put into the slots.
-# A genuine ceiling register takes "stop charging at N %", so writing the
-# reserve-lowered recommendation into it is the whole point. A Deye slot SOC is
-# a DISCHARGE FLOOR plus grid-charge target: the same write tells the inverter
-# "grid-charge to N % and never discharge below it" — a reservation written
-# into it at night imports toward the reserve instead of holding charging back
-# (observed live 2026-08-25). The floor-aware fan-out fix keys on this flag;
-# until it ships the flag is declarative, and a floor site keeps its SOC
-# control switch off.
+# A genuine ceiling register takes "stop charging at N %", so tracking
+# min(source, recommendation) unconditionally is the whole point. A Deye slot
+# SOC is a DISCHARGE FLOOR plus grid-charge target: the same number tells the
+# inverter "grid-charge to N % and never discharge below it" — so holding the
+# slots at the destination all night blocks self-consumption and imports toward
+# it (observed live 2026-08-25). Under floor semantics the fan-out therefore
+# writes only in each state's safe direction (a reservation may only lower a
+# slot, tracking the source may only raise one back), and refuses to write at
+# all without a configured source that is not itself a managed slot — see
+# ``send_inverter_soc_limit``.
 #
 # The common floor site (a Deye whose one slot value is both the overnight
 # floor and the owner's charge target) points the ceiling SOURCE at the slot:
