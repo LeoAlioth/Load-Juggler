@@ -6108,6 +6108,82 @@ async def test_every_inverter_sensor_has_a_name_translation(hass: HomeAssistant)
             assert names[key].get("name"), f"{name}: {key} has no name"
 
 
+async def test_battery_less_array_gets_the_accuracy_sensor(hass: HomeAssistant):
+    """Forecast accuracy follows the array, not the battery.
+
+    The engine's observer loop measures actual ÷ forecast for every member that
+    OWNS a forecast device (hub_result gates on forecast_device_ids alone), so
+    a pure AC-coupled PV inverter — no battery, no advice — computes a value
+    every cycle. The setup gate used to inherit the advice sensors' battery
+    requirement and silently dropped it. Both shapes through the real platform
+    setup: the battery-less array gets accuracy and no battery/advice sensors;
+    the battery inverter with no forecast device of its own gets the advice
+    sensors and no accuracy.
+    """
+    from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    )
+
+    hub = _destination_hub("acarray")
+    hub.add_to_hass(hass)
+    # The fleet's battery (capacity 20 kWh) — enables the site forecast.
+    battery_inverter = _destination_inverter(hub, "acarray", "number.dst_normal")
+    battery_inverter.add_to_hass(hass)
+    # The battery-less AC-coupled array, owning its own forecast device.
+    array = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="AC Array",
+        data={
+            CONF_NAME: "AC Array",
+            CONF_ENTITY_ID: "ac_array",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options={
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.ac_solar",
+            CONF_SOLAR_FORECAST_DEVICE_IDS: ["ac-array-forecast-device"],
+        },
+    )
+    array.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+
+    async def suffixes(entry):
+        captured = []
+        await sensor_platform.async_setup_entry(
+            hass, entry, lambda new, **kw: captured.extend(new)
+        )
+        return {
+            defn["unique_id_suffix"]
+            for s in captured
+            for defn in [getattr(s, "_defn", None)]
+            if defn is not None
+        }
+
+    array_sensors = await suffixes(array)
+    assert "forecast_accuracy" in array_sensors
+    assert "solar_production" in array_sensors
+    assert not array_sensors & {
+        "battery_soc",
+        "battery_power",
+        "forecast_battery_max_soc",
+        "forecast_charge_limit",
+    }
+
+    battery_sensors = await suffixes(battery_inverter)
+    assert "forecast_battery_max_soc" in battery_sensors
+    assert "forecast_charge_limit" in battery_sensors
+    # No forecast device of its own → nothing for the observer to measure.
+    assert "forecast_accuracy" not in battery_sensors
+
+
 async def test_every_inverter_sensor_key_is_published_by_the_engine(
     hass: HomeAssistant,
 ):

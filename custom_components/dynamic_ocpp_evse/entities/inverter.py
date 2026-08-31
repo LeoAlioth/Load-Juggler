@@ -113,13 +113,17 @@ INVERTER_SENSOR_DEFINITIONS = [
     # applying (see calculations/calibration.py and dev/TODO.md). No
     # device_class: this is a ratio in percent, not a battery level, and
     # SensorDeviceClass.BATTERY would put a battery icon on it everywhere.
+    # Gated on this inverter OWNING a forecast device, not on it having a
+    # battery: accuracy is a property of the array, and the engine's observer
+    # loop measures it for battery-less members too (a pure AC-coupled PV
+    # inverter is often the site's cleanest instrument).
     {
         "unique_id_suffix": "forecast_accuracy",
         "data_key": "forecast_accuracy_pct",
         "unit": "%",
         "icon": "mdi:target-variant",
         "decimals": 1,
-        "requires_forecast": True,
+        "requires_forecast_device": True,
     },
 ]
 
