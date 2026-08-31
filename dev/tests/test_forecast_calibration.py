@@ -203,3 +203,33 @@ def test_a_window_entirely_above_the_limit_has_no_gap():
 def test_an_empty_window_measures_nothing():
     assert clip_pair([], 5000.0) == (0.0, 0.0)
     assert clip_pair([(0.0, 9000.0)], 5000.0) == (0.0, 0.0)
+
+
+# --- Clipped energy: the ground truth, estimated ---------------------------
+#
+# Curtailed energy cannot be metered — the inverter never produces it — so the
+# only route is the forecast's excess over measured production, counted while
+# the site is saturated. Honest about the one direction it errs in.
+
+from custom_components.dynamic_ocpp_evse.calculations.calibration import (  # noqa: E402
+    clipped_now,
+)
+
+
+def test_nothing_is_clipped_while_the_site_can_still_place_power():
+    assert clipped_now(9000.0, 6000.0, saturated=False) == 0.0
+
+
+def test_the_forecast_shortfall_is_the_clip_while_saturated():
+    assert clipped_now(9000.0, 6000.0, saturated=True) == 3000.0
+
+
+def test_production_above_forecast_is_not_negative_clipping():
+    """A pessimistic forecast means the day beat it, not that clipping ran
+    backwards — the estimate floors at zero."""
+    assert clipped_now(6000.0, 9000.0, saturated=True) == 0.0
+
+
+def test_an_unreadable_input_measures_nothing():
+    assert clipped_now(None, 6000.0, saturated=True) == 0.0
+    assert clipped_now(9000.0, None, saturated=True) == 0.0

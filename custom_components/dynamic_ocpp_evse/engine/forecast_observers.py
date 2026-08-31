@@ -20,6 +20,7 @@ from ..calculations.calibration import (
     GAIN_CLAMP_HIGH,
     GAIN_CLAMP_LOW,
     clip_pair,
+    clipped_now,
     day_ratio,
     note_gain_sample,
     update_gain,
@@ -160,4 +161,49 @@ def observe_peakiness(hub_runtime, now, day, threshold_w, production_w, dt_hours
     return {
         "forecast_peakiness_pct": pct,
         "forecast_peakiness_windows": state["windows"],
+    }
+
+
+_RT_CLIPPED = "_forecast_clipped_observer"
+
+
+def observe_clipped(hub_runtime, day, forecast_w, actual_w, saturated, dt_hours):
+    """Accumulate today's curtailed energy. Returns the published keys.
+
+    The ground truth the whole clipping feature otherwise lacks: what the site
+    ACTUALLY threw away, next to what the forecast said it would
+    (``forecast_clipped_kwh``). Those two side by side are what tells you
+    whether the reserve is doing its job.
+
+    Resets at local midnight, so the sensor is a daily total. The previous
+    day's figure is kept as an attribute rather than logged only, because the
+    comparison against that morning's prediction is the interesting part.
+    """
+    state = hub_runtime.setdefault(
+        _RT_CLIPPED, {"day": day, "wh": 0.0, "saturated_h": 0.0, "yesterday": None}
+    )
+    if state["day"] != day:
+        if state["wh"] > 0:
+            _LOGGER.info(
+                "Clipped energy: yesterday the site threw away an estimated"
+                " %.2f kWh over %.1f h of saturation",
+                state["wh"] / 1000.0,
+                state["saturated_h"],
+            )
+        state.update(
+            day=day,
+            yesterday=round(state["wh"] / 1000.0, 2),
+            wh=0.0,
+            saturated_h=0.0,
+        )
+
+    if dt_hours > 0:
+        state["wh"] += clipped_now(forecast_w, actual_w, saturated) * dt_hours
+        if saturated:
+            state["saturated_h"] += dt_hours
+
+    return {
+        "forecast_clipped_actual_kwh": round(state["wh"] / 1000.0, 2),
+        "forecast_clipped_actual_hours": round(state["saturated_h"], 2),
+        "forecast_clipped_actual_yesterday_kwh": state["yesterday"],
     }

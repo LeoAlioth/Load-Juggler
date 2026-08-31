@@ -304,6 +304,28 @@ HUB_SENSOR_DEFINITIONS = [
     # one-sided, so a block average can never overstate it. Measured from the
     # site's own production samples, no cloud model involved. Nothing acts on
     # it (see calculations/calibration.py and dev/TODO.md).
+    # The ground truth for the whole clipping feature: what the site ACTUALLY
+    # threw away today, next to what the forecast predicted it would
+    # (Forecast Clippable Energy). Accumulated only while the Excess verdict
+    # holds — export allowance used up AND the battery taking all it can — and
+    # estimated as the forecast's excess over measured production, because
+    # curtailed energy cannot be metered: the inverter never makes it. Bounded
+    # by the forecast's own accuracy, and in the same direction.
+    {
+        "name_suffix": "Clipped Energy Today",
+        "unique_id_suffix": "forecast_clipped_actual",
+        "hub_data_key": "forecast_clipped_actual_kwh",
+        "unit": "kWh",
+        "device_class": SensorDeviceClass.ENERGY,
+        # Rises through the day and resets at local midnight — the state class
+        # HA documents for a daily-resetting energy counter. The advisory
+        # forecast kWh sensors above are TOTAL instead because they rise AND
+        # fall as the remaining day shrinks.
+        "state_class": SensorStateClass.TOTAL_INCREASING,
+        "icon": "mdi:content-cut",
+        "decimals": 2,
+        "requires_forecast": True,
+    },
     {
         "name_suffix": "Forecast Peakiness",
         "unique_id_suffix": "forecast_peakiness",

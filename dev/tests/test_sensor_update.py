@@ -4601,6 +4601,7 @@ async def test_a_parked_pack_accumulates_nothing_at_all(hass):
         # a given rig configures its forecast per inverter or hub-wide (the
         # gain observer is per inverter, and only runs where devices are).
         observer_state = {
+            "_forecast_clipped_observer",
             "_forecast_gain_observer",
             "_forecast_obs_mono",
             "_forecast_peak_observer",

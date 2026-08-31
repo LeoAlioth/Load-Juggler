@@ -187,3 +187,28 @@ def clip_pair(samples, threshold_w):
     mean_w = sum(float(watts) * dt for dt, watts in samples if dt > 0) / total_hours
     block_wh = max(0.0, mean_w - threshold_w) * total_hours
     return true_wh, block_wh
+
+
+def clipped_now(forecast_w, actual_w, saturated):
+    """Watts being curtailed right now, or 0.0.
+
+    An ESTIMATE, and honest about which way it errs. While the site is
+    saturated — export allowance used up AND the battery taking all it can —
+    every watt the array could still make has nowhere to go, so the forecast's
+    excess over measured production is what is being thrown away. It is the only
+    route to the number: curtailed energy cannot be metered, because the
+    inverter never produces it.
+
+    Bounded by the forecast's own accuracy, and in the same direction: a
+    forecast reading 10% high inflates this, one reading low understates it.
+    That is exactly what the accuracy observer measures on the site's
+    UNCONSTRAINED intervals, which is what would let this be corrected later.
+
+    Clamped at zero: measured production above forecast means the forecast was
+    pessimistic, not that clipping ran backwards.
+
+    Pure function — unit-testable.
+    """
+    if not saturated or forecast_w is None or actual_w is None:
+        return 0.0
+    return max(0.0, float(forecast_w) - float(actual_w))

@@ -22,6 +22,7 @@ import logging
 import time
 
 from .forecast_observers import (
+    observe_clipped,
     observe_gain,
     observe_peakiness,
 )
@@ -70,6 +71,7 @@ def _compute_forecast_advice(
     site,
     battery_soc,
     members,
+    excess_on=False,
 ):
     """Advisory battery headroom from the PV clipping forecast.
 
@@ -471,6 +473,19 @@ def _compute_forecast_advice(
         fleet.solar_total(members, site.voltage),
         dt_hours,
     )
+    # SATURATION is the Excess verdict, not a second test of the same thing:
+    # "the export allowance is used up AND the battery is taking all it can" is
+    # precisely what that margin already decides, hysteresis and all. Reusing it
+    # means the clipped figure can never disagree with the verdict the rest of
+    # the integration acts on.
+    clipped = observe_clipped(
+        hub_runtime,
+        local_day,
+        block_power_at(series, now_local),
+        fleet.solar_total(members, site.voltage),
+        excess_on,
+        dt_hours,
+    )
 
     _LOGGER.debug(
         "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW"
@@ -498,6 +513,7 @@ def _compute_forecast_advice(
 
     return {
         **peakiness,
+        **clipped,
         "forecast_clipped_kwh": round(fc.clipped_kwh, 2),
         "forecast_absorbable_kwh": round(fc.absorbable_kwh, 2),
         "forecast_battery_max_soc": proposed,
