@@ -298,6 +298,43 @@ HUB_SENSOR_DEFINITIONS = [
         "decimals": 2,
         "requires_forecast": True,
     },
+    # OBSERVE-ONLY: how much the site ACTUALLY clipped today against what a
+    # 15-minute average predicted it would. 100% means the block average told
+    # the whole truth; above it is the Jensen gap — clipping is convex and
+    # one-sided, so a block average can never overstate it. Measured from the
+    # site's own production samples, no cloud model involved. Nothing acts on
+    # it (see calculations/calibration.py and dev/TODO.md).
+    # The ground truth for the whole clipping feature: what the site ACTUALLY
+    # threw away today, next to what the forecast predicted it would
+    # (Forecast Clippable Energy). Accumulated only while the Excess verdict
+    # holds — export allowance used up AND the battery taking all it can — and
+    # estimated as the forecast's excess over measured production, because
+    # curtailed energy cannot be metered: the inverter never makes it. Bounded
+    # by the forecast's own accuracy, and in the same direction.
+    {
+        "name_suffix": "Clipped Energy Today",
+        "unique_id_suffix": "forecast_clipped_actual",
+        "hub_data_key": "forecast_clipped_actual_kwh",
+        "unit": "kWh",
+        "device_class": SensorDeviceClass.ENERGY,
+        # Rises through the day and resets at local midnight — the state class
+        # HA documents for a daily-resetting energy counter. The advisory
+        # forecast kWh sensors above are TOTAL instead because they rise AND
+        # fall as the remaining day shrinks.
+        "state_class": SensorStateClass.TOTAL_INCREASING,
+        "icon": "mdi:content-cut",
+        "decimals": 2,
+        "requires_forecast": True,
+    },
+    {
+        "name_suffix": "Forecast Peakiness",
+        "unique_id_suffix": "forecast_peakiness",
+        "hub_data_key": "forecast_peakiness_pct",
+        "unit": "%",
+        "icon": "mdi:chart-bell-curve",
+        "decimals": 1,
+        "requires_forecast": True,
+    },
     # The recommended max-SOC and charge-limit sensors live on the inverter
     # entries (entities/inverter.py) — the advice is per battery, and that is
     # where the future write-control will act. The fleet values remain in
@@ -371,7 +408,9 @@ class LoadJugglerHubDataSensor(
         )
         self._defn = defn
         self._attr_native_unit_of_measurement = defn["unit"]
-        self._attr_device_class = defn["device_class"]
+        # Optional: a ratio in percent has no fitting HA device class, and
+        # borrowing one (BATTERY, POWER_FACTOR) would mislabel it everywhere.
+        self._attr_device_class = defn.get("device_class")
         self._attr_state_class = defn.get(
             "state_class", SensorStateClass.MEASUREMENT
         )

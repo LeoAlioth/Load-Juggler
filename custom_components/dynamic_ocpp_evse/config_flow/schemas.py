@@ -37,7 +37,7 @@ from ..const import (
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
     CONF_LOAD_PRIORITY,
-    CONF_CHARGE_CONTROL_DEADBAND,
+    CONF_CHARGE_CONTROL_DEADBAND_W,
     CONF_CHARGE_CONTROL_INTERVAL,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_MINIMUM,
@@ -80,6 +80,10 @@ from ..const import (
     CONF_SITE_UPDATE_FREQUENCY,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    CONF_SOC_LIMIT_SEMANTICS,
+    DEFAULT_SOC_LIMIT_SEMANTICS,
+    SOC_LIMIT_SEMANTICS_CEILING,
+    SOC_LIMIT_SEMANTICS_FLOOR,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_GRACE_PERIOD,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -109,7 +113,7 @@ from ..const import (
     DEFAULT_BATTERY_SOC_FULL,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
     DEFAULT_LOAD_PRIORITY,
-    DEFAULT_CHARGE_CONTROL_DEADBAND,
+    DEFAULT_CHARGE_CONTROL_DEADBAND_W,
     DEFAULT_CHARGE_CONTROL_INTERVAL,
     DEFAULT_CHARGE_LIMIT_MINIMUM,
     DEFAULT_CHARGE_LIMIT_NORMAL,
@@ -1048,19 +1052,20 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
         ),
         (
             vol.Optional(
-                CONF_CHARGE_CONTROL_DEADBAND,
+                CONF_CHARGE_CONTROL_DEADBAND_W,
                 default=defaults.get(
-                    CONF_CHARGE_CONTROL_DEADBAND, DEFAULT_CHARGE_CONTROL_DEADBAND
+                    CONF_CHARGE_CONTROL_DEADBAND_W,
+                    DEFAULT_CHARGE_CONTROL_DEADBAND_W,
                 ),
             ),
             selector(
                 {
                     "number": {
                         "min": 0,
-                        "max": 50,
-                        "step": 1,
-                        "mode": "slider",
-                        "unit_of_measurement": "%",
+                        "max": 2000,
+                        "step": 10,
+                        "mode": "box",
+                        "unit_of_measurement": "W",
                     }
                 }
             ),
@@ -1103,6 +1108,36 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
             ),
             selector(
                 {"entity": {"domain": ["input_number", "number", "sensor"]}}
+            ),
+        ),
+        (
+            # What a WRITE to the entities above means on this hardware — the
+            # flag the floor-aware SOC fan-out keys on. It never changes what
+            # is READ: the destination always comes from the ceiling source
+            # when that is set (a floor whose value is not the target leaves
+            # the source unset instead). See const/inverter.py.
+            vol.Required(
+                CONF_SOC_LIMIT_SEMANTICS,
+                default=defaults.get(
+                    CONF_SOC_LIMIT_SEMANTICS, DEFAULT_SOC_LIMIT_SEMANTICS
+                ),
+            ),
+            selector(
+                {
+                    "select": {
+                        "options": [
+                            {
+                                "value": SOC_LIMIT_SEMANTICS_CEILING,
+                                "label": "Charge ceiling — the battery stops charging there",
+                            },
+                            {
+                                "value": SOC_LIMIT_SEMANTICS_FLOOR,
+                                "label": "Discharge floor — grid-defense level (Deye TOU slot)",
+                            },
+                        ],
+                        "mode": "dropdown",
+                    }
+                }
             ),
         ),
     ]

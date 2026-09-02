@@ -1336,7 +1336,7 @@ async def test_migration_seeds_grid_export_limit_in_one_pass(hass: HomeAssistant
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
     assert entry.options[CONF_GRID_EXPORT_LIMIT] == 13000 + DEFAULT_EXCESS_TRIGGER_MARGIN
     assert entry.options[CONF_EXCESS_TRIGGER_MARGIN] == DEFAULT_EXCESS_TRIGGER_MARGIN
 
@@ -1366,7 +1366,7 @@ async def test_migration_leaves_offgrid_hub_unlimited(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
     assert not entry.options.get(CONF_GRID_EXPORT_LIMIT)
 
 
@@ -1404,7 +1404,7 @@ async def test_migration_renames_stored_charger_strings(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
     assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD == "load"
     # Both stores are renamed, and the legacy spelling is gone from each.
     assert entry.data[CONF_LOAD_PRIORITY] == 2
@@ -1438,7 +1438,7 @@ async def test_migration_of_stored_charger_strings_is_idempotent(
     assert await async_migrate_entry(hass, entry)
     assert dict(entry.data) == migrated_data
     assert dict(entry.options) == migrated_options
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
 
 
 async def test_migration_leaves_non_load_entries_alone(hass: HomeAssistant):
@@ -1462,7 +1462,7 @@ async def test_migration_leaves_non_load_entries_alone(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
     assert dict(entry.data) == data_before
     assert dict(entry.options) == options_before
 
@@ -1486,7 +1486,7 @@ async def test_migrated_load_entry_sets_up(hass: HomeAssistant, mock_hub_entry):
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
-    assert entry.minor_version == 5
+    assert entry.minor_version == 6
     assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD
     assert entry.entry_id in hass.data[DOMAIN]["loads"]
     assert entry.entry_id in hass.data[DOMAIN]["load_allocations"]

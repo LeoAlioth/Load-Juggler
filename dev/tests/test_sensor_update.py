@@ -355,7 +355,7 @@ async def test_hub_data_sensors_initialize(hass, hub_entry):
         assert sensor._attr_unique_id == f"test_hub_{defn['unique_id_suffix']}"
         assert sensor.native_value is None  # No data yet
         assert sensor.native_unit_of_measurement == defn["unit"]
-        assert sensor.device_class == defn["device_class"]
+        assert sensor.device_class == defn.get("device_class")
         # W/A/% sensors are instantaneous readings (MEASUREMENT); the advisory
         # kWh forecast sensors override to ENERGY + TOTAL per their definitions
         # (HA rejects ENERGY + MEASUREMENT; TOTAL fits a rises-and-falls amount).
@@ -4584,15 +4584,33 @@ async def test_a_parked_pack_accumulates_nothing_at_all(hass):
             result = run_hub_calculation(hass, hub)
             assert result["forecast_charge_limit_w"] == 0
             assert runtime["_forecast_charge_limiting"] is True
-        # No integrator, no stamp, no accumulated correction — the only forecast
-        # state carried is the three latches and the ceiling ratchet.
-        assert sorted(k for k in runtime if k.startswith("_forecast")) == [
+        # No integrator, no stamp, no accumulated correction — the only state
+        # the ADVICE carries is the three latches and the ceiling ratchet.
+        advice_state = [
             "_forecast_charge_limiting",
             "_forecast_max_soc",
             "_forecast_parse_memo",
             "_forecast_reservation_due",
             "_forecast_soc_yielding",
         ]
+        # The observers DO accumulate, and deliberately: measuring forecast
+        # accuracy and peakiness is what they are for. Excluded by name rather
+        # than folded into the list above, so the ADVICE's statelessness stays
+        # exactly the assertion it was — an integrator sneaking back into the
+        # advice still fails here — and so the list does not depend on whether
+        # a given rig configures its forecast per inverter or hub-wide (the
+        # gain observer is per inverter, and only runs where devices are).
+        observer_state = {
+            "_forecast_clipped_observer",
+            "_forecast_gain_observer",
+            "_forecast_obs_mono",
+            "_forecast_peak_observer",
+        }
+        assert sorted(
+            k
+            for k in runtime
+            if k.startswith("_forecast") and k not in observer_state
+        ) == advice_state
 
 
 async def test_a_site_with_no_ceiling_source_is_untouched_by_the_hold(hass):
@@ -5948,3 +5966,348 @@ async def test_a_released_limit_hands_the_nameplate_allowance_back(
 
     rt[INVERTER_RT_ENFORCED_CHARGE_W] = None
     assert run_hub_calculation(hass, hub)["excess_margin_power"] < 0
+
+
+# --- The observers run on a PER-INVERTER forecast -----------------------------
+#
+# Every other forecast rig here configures the source hub-level
+# (CONF_SOLAR_FORECAST_ENTITY_IDS, the legacy field), which leaves
+# ``FleetMember.forecast_device_ids`` empty — so the gain observer's loop, which
+# keys on exactly that, never executed in any test. It shipped a NameError to a
+# live site (2026-08-31: merge_forecast_series used in hub_result and never
+# imported there). This rig is the one that walks that loop.
+
+
+def _forecast_device(hass, slug, watts):
+    """A per-array Open-Meteo device with a watts-bearing sensor, as the
+    integration creates them. Returns the device id."""
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+
+    source = MockConfigEntry(domain="open_meteo_solar_forecast", title=slug)
+    source.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=source.entry_id,
+        identifiers={("open_meteo_solar_forecast", slug)},
+        name=slug,
+    )
+    reg = er.async_get(hass).async_get_or_create(
+        "sensor",
+        "open_meteo_solar_forecast",
+        f"{slug}_energy_production_today",
+        device_id=device.id,
+        config_entry=source,
+        suggested_object_id=f"{slug}_energy_production_today",
+    )
+    hass.states.async_set(
+        reg.entity_id, "12.5", {"unit_of_measurement": "kWh", "watts": dict(watts)}
+    )
+    return device.id
+
+
+async def test_a_per_inverter_forecast_drives_the_observers(hass: HomeAssistant):
+    """The cycle completes and the gain observation reaches the inverter.
+
+    Without the per-inverter source this loop is skipped entirely, which is how
+    a missing import reached a real site: every existing rig configures the
+    forecast hub-level.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, _runtime = _no_clip_rig(hass, "perinv", soc=95, solar_w=4000.0)
+    device_id = _forecast_device(hass, "perinv_array", _NO_CLIP_DAY)
+    # Move the source onto the inverter, which is where a current install has
+    # it — the hub keeps none, so only the per-inverter path can supply a series.
+    hass.config_entries.async_update_entry(
+        inverter, options={**inverter.options,
+                           CONF_SOLAR_FORECAST_DEVICE_IDS: [device_id]}
+    )
+
+    with freeze_time("2026-08-25 09:30:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+        # Two cycles: the first only stamps the monotonic clock, so the second
+        # is the one that actually accumulates a sample.
+        result = run_hub_calculation(hass, hub)
+
+    assert result is not None, "the cycle must not raise"
+    own = result["inverters"][inverter.entry_id]
+    # The observation is published even before a day has closed: the running
+    # gain starts at 1.0 with no days behind it.
+    assert own["forecast_gain"] == 1.0
+    assert own["forecast_gain_days"] == 0
+    assert "forecast_accuracy_pct" in own
+    # And the hub carries the site-level observers.
+    assert "forecast_peakiness_pct" in result
+    assert "forecast_clipped_actual_kwh" in result
+
+
+# --- Inverter sensor definitions --------------------------------------------
+#
+# The hub table has had a round-trip test since it existed; the inverter one had
+# none at all, so a definition could name a data_key nothing publishes, or miss
+# a translation, and only a real install would notice. Same shape of hole as the
+# unreachable observer loop above, one layer up.
+
+
+def _inverter_defn_sensors(hass, inverter_entry):
+    from custom_components.dynamic_ocpp_evse.entities.inverter import (
+        INVERTER_SENSOR_DEFINITIONS,
+        LoadJugglerInverterDataSensor,
+    )
+
+    return INVERTER_SENSOR_DEFINITIONS, [
+        LoadJugglerInverterDataSensor(hass, inverter_entry, "test_inv", defn)
+        for defn in INVERTER_SENSOR_DEFINITIONS
+    ]
+
+
+async def test_inverter_data_sensors_initialize(hass: HomeAssistant):
+    """Every definition builds a sensor whose properties come from it.
+
+    Constructing them is itself the assertion for a definition missing a key
+    the constructor indexes — which is exactly how a `%s` sensor with no
+    device_class would have failed before that lookup became optional.
+    """
+    hub, inverter, _rt = _no_clip_rig(hass, "invdefn", soc=90)
+    defns, sensors = _inverter_defn_sensors(hass, inverter)
+
+    assert len(sensors) == len(defns)
+    for sensor, defn in zip(sensors, defns):
+        assert sensor.native_value is None  # nothing published yet
+        assert sensor.native_unit_of_measurement == defn["unit"]
+        assert sensor.device_class == defn.get("device_class")
+        assert sensor.state_class == defn.get(
+            "state_class", SensorStateClass.MEASUREMENT
+        )
+        # unique_id_suffix doubles as the translation key, so it must be the
+        # stable identifier in both places.
+        assert sensor.unique_id == f"test_inv_{defn['unique_id_suffix']}"
+        assert sensor.translation_key == defn["unique_id_suffix"]
+
+
+async def test_every_inverter_sensor_has_a_name_translation(hass: HomeAssistant):
+    """A sensor whose translation key is missing shows the raw key as its name
+    in every language — cosmetic, invisible in tests, and permanent."""
+    import json
+    from pathlib import Path
+
+    root = Path("custom_components/dynamic_ocpp_evse")
+    hub, inverter, _rt = _no_clip_rig(hass, "invtrans", soc=90)
+    defns, _sensors = _inverter_defn_sensors(hass, inverter)
+
+    for name in ("strings.json", "translations/en.json", "translations/sl.json"):
+        names = json.loads((root / name).read_text())["entity"]["sensor"]
+        for defn in defns:
+            key = defn["unique_id_suffix"]
+            assert key in names, f"{name} has no entity.sensor.{key}"
+            assert names[key].get("name"), f"{name}: {key} has no name"
+
+
+async def test_battery_less_array_gets_the_accuracy_sensor(hass: HomeAssistant):
+    """Forecast accuracy follows the array, not the battery.
+
+    The engine's observer loop measures actual ÷ forecast for every member that
+    OWNS a forecast device (hub_result gates on forecast_device_ids alone), so
+    a pure AC-coupled PV inverter — no battery, no advice — computes a value
+    every cycle. The setup gate used to inherit the advice sensors' battery
+    requirement and silently dropped it. Both shapes through the real platform
+    setup: the battery-less array gets accuracy and no battery/advice sensors;
+    the battery inverter with no forecast device of its own gets the advice
+    sensors and no accuracy.
+    """
+    from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    )
+
+    hub = _destination_hub("acarray")
+    hub.add_to_hass(hass)
+    # The fleet's battery (capacity 20 kWh) — enables the site forecast.
+    battery_inverter = _destination_inverter(hub, "acarray", "number.dst_normal")
+    battery_inverter.add_to_hass(hass)
+    # The battery-less AC-coupled array, owning its own forecast device.
+    array = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="AC Array",
+        data={
+            CONF_NAME: "AC Array",
+            CONF_ENTITY_ID: "ac_array",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options={
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.ac_solar",
+            CONF_SOLAR_FORECAST_DEVICE_IDS: ["ac-array-forecast-device"],
+        },
+    )
+    array.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+
+    async def suffixes(entry):
+        captured = []
+        await sensor_platform.async_setup_entry(
+            hass, entry, lambda new, **kw: captured.extend(new)
+        )
+        return {
+            defn["unique_id_suffix"]
+            for s in captured
+            for defn in [getattr(s, "_defn", None)]
+            if defn is not None
+        }
+
+    array_sensors = await suffixes(array)
+    assert "forecast_accuracy" in array_sensors
+    assert "solar_production" in array_sensors
+    assert not array_sensors & {
+        "battery_soc",
+        "battery_power",
+        "forecast_battery_max_soc",
+        "forecast_charge_limit",
+    }
+
+    battery_sensors = await suffixes(battery_inverter)
+    assert "forecast_battery_max_soc" in battery_sensors
+    assert "forecast_charge_limit" in battery_sensors
+    # No forecast device of its own → nothing for the observer to measure.
+    assert "forecast_accuracy" not in battery_sensors
+
+
+async def test_every_inverter_sensor_key_is_published_by_the_engine(
+    hass: HomeAssistant,
+):
+    """A definition naming a data_key the engine never publishes reads unknown
+    for ever — the sensor exists, is available, and says nothing.
+
+    Run against the per-inverter forecast rig, so the forecast-gated keys are
+    genuinely produced rather than skipped.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, _rt = _no_clip_rig(hass, "invkeys", soc=95, solar_w=4000.0)
+    device_id = _forecast_device(hass, "invkeys_array", _NO_CLIP_DAY)
+    hass.config_entries.async_update_entry(
+        inverter,
+        options={**inverter.options, CONF_SOLAR_FORECAST_DEVICE_IDS: [device_id]},
+    )
+
+    with freeze_time("2026-08-25 09:30:00+00:00"):
+        run_hub_calculation(hass, hub)
+        result = run_hub_calculation(hass, hub)
+
+    own = result["inverters"][inverter.entry_id]
+    defns, _sensors = _inverter_defn_sensors(hass, inverter)
+    missing = [d["data_key"] for d in defns if d["data_key"] not in own]
+    assert not missing, f"defined but never published: {missing}"
+
+
+async def test_every_hub_sensor_key_is_published_by_the_engine(hass: HomeAssistant):
+    """The same contract for the hub table. It had a properties round-trip but
+    nothing tying a definition to a key the producer actually emits."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, _rt = _no_clip_rig(hass, "hubkeys", soc=95, solar_w=4000.0)
+    device_id = _forecast_device(hass, "hubkeys_array", _NO_CLIP_DAY)
+    hass.config_entries.async_update_entry(
+        inverter,
+        options={**inverter.options, CONF_SOLAR_FORECAST_DEVICE_IDS: [device_id]},
+    )
+
+    with freeze_time("2026-08-25 09:30:00+00:00"):
+        run_hub_calculation(hass, hub)
+        result = run_hub_calculation(hass, hub)
+
+    missing = [
+        d["hub_data_key"]
+        for d in HUB_SENSOR_DEFINITIONS
+        if d["hub_data_key"] not in result
+    ]
+    assert not missing, f"defined but never published: {missing}"
+
+
+# --- SOC limit semantics: a write-side flag that never disturbs the read ------
+#
+# The flag says what the fan-out may WRITE into the slot registers (a floor
+# register must never receive a lowered ceiling — the inverter would read it as
+# a grid-charge target). It says nothing about where the pack should go: a Deye
+# whose slot value doubles as the owner's charge target points the ceiling
+# source at the slot, the reserve is carved below that number, and the band
+# above it stays the export-holding buffer the engaged feedback fills. A floor
+# whose value is NOT the target leaves the source unset — anchoring at 100% is
+# that knob's job, not this flag's.
+
+
+async def test_floor_semantics_does_not_disturb_the_destination_read(
+    hass: HomeAssistant,
+):
+    """Declaring the entities a FLOOR changes nothing about the read side: the
+    configured source is still the destination, the reserve is carved below its
+    value, and a pack above it yields — identical to ceiling semantics."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOC_LIMIT_SEMANTICS,
+        SOC_LIMIT_SEMANTICS_FLOOR,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, _rt = _no_clip_rig(hass, "floorsem", soc=93)
+    # The source reads 90 — on this inverter a floor whose value is also the
+    # owner's charge target, so it is the destination all the same.
+    hass.states.async_set("number.dst_normal", "90", {"unit_of_measurement": "%"})
+    hass.config_entries.async_update_entry(
+        inverter,
+        options={**inverter.options,
+                 CONF_SOC_LIMIT_SEMANTICS: SOC_LIMIT_SEMANTICS_FLOOR},
+    )
+
+    with freeze_time("2026-08-25 09:30:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+
+    own = result["inverters"][inverter.entry_id]
+    # Same numbers the ceiling test below asserts: the flag is invisible here.
+    assert own["forecast_battery_max_soc"] == 90
+    assert own["forecast_charge_limiting"] is True
+
+
+async def test_ceiling_semantics_still_reads_the_destination(hass: HomeAssistant):
+    """The default is unchanged: an inverter that really does stop charging at
+    the configured number keeps its destination, and a pack above it yields."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter, _rt = _no_clip_rig(hass, "ceilsem", soc=93)
+    hass.states.async_set("number.dst_normal", "90", {"unit_of_measurement": "%"})
+
+    with freeze_time("2026-08-25 09:30:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+
+    own = result["inverters"][inverter.entry_id]
+    assert own["forecast_battery_max_soc"] == 90
+    assert own["forecast_charge_limiting"] is True

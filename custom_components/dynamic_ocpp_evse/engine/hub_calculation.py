@@ -1099,6 +1099,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         site,
         battery_soc,
         members,
+        excess_on,
     )
     for inv_id, advice in forecast_per_inverter.items():
         if inv_id in inverters_data:

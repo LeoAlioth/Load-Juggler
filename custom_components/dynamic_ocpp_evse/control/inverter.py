@@ -103,9 +103,26 @@ hardware:
   the slots straight back, and while no advice exists the control simply tracks
   the normal entity. That is why the charge-rate control's "restored exactly
   once" rule has no twin here — there is no state to unwind.
+
+Under FLOOR semantics (``CONF_SOC_LIMIT_SEMANTICS``) the same memoryless value
+is written, but only in each state's own safe direction: a reservation
+(desired below the normal) may only LOWER a slot — on a floor register that
+write means "the house may drain to here", the just-in-time pre-clip drop —
+and tracking the normal may only RAISE one back toward the source value. The
+two cross-cases are both harm on a floor register (raising defends charge the
+owner never asked defended, and on a Deye grid-charges toward it; lowering an
+owner-raised slot drops protection they set by hand), so they are skipped.
+Because raising stops at the source and lowering at the recommendation, the
+release still needs no memory: the slots we dropped overnight climb back to
+the source in one deadband-gated write when the advice self-heals. Floor
+writes also carry two hard prerequisites — a configured normal source (the
+100-default written into a floor register would mean "never discharge"), and
+that source must not itself be one of the managed slots (writing the reserve
+into it would drag the destination, and the restore anchor, down with it).
 """
 
 import logging
+import math
 
 from ..const import (
     DOMAIN,
@@ -116,20 +133,23 @@ from ..const import (
     CONF_CHARGE_LIMIT_NORMAL,
     CONF_CHARGE_LIMIT_MINIMUM,
     CONF_CHARGE_CONTROL_INTERVAL,
-    CONF_CHARGE_CONTROL_DEADBAND,
+    CONF_CHARGE_CONTROL_DEADBAND_W,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_BATTERY_NOMINAL_VOLTAGE,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    CONF_SOC_LIMIT_SEMANTICS,
     CHARGE_LIMIT_UNIT_AMPS,
     DEFAULT_CHARGE_LIMIT_UNIT,
     DEFAULT_CHARGE_LIMIT_NORMAL,
     DEFAULT_CHARGE_LIMIT_MINIMUM,
     DEFAULT_CHARGE_CONTROL_INTERVAL,
-    DEFAULT_CHARGE_CONTROL_DEADBAND,
+    DEFAULT_CHARGE_CONTROL_DEADBAND_W,
     DEFAULT_BATTERY_NOMINAL_VOLTAGE,
     DEFAULT_SOC_LIMIT_NORMAL,
+    DEFAULT_SOC_LIMIT_SEMANTICS,
     SOC_LIMIT_DEADBAND,
+    SOC_LIMIT_SEMANTICS_FLOOR,
     INVERTER_RT_APPLIED,
     INVERTER_RT_CONTROL_ENABLED,
     INVERTER_RT_ENFORCED_CHARGE_W,
@@ -184,6 +204,7 @@ INVERTER_RT_SOC_SLOTS = "soc_control_slots"  # {entity_id: read-back or None}
 # Throttle marker for the "cannot read the normal ceiling" warning: a misconfigured
 # normal entity would otherwise log once per site cycle, forever.
 INVERTER_RT_SOC_WARNED = "soc_control_normal_warned"
+INVERTER_RT_SOC_FLOOR_WARNED = "soc_control_floor_warned"
 SOC_NORMAL_WARN_INTERVAL = 300.0  # s between repeats of that warning
 
 
@@ -220,6 +241,45 @@ def _entity_max(hass, entity_id):
     except (TypeError, ValueError):
         return None
 
+
+def _entity_step(hass, entity_id):
+    """The target register's own quantum, when it advertises one.
+
+    Deye's ``Battery Max Charge Current`` is integer amps: written 6.2 it holds
+    6. Harmless on its own, but the write decision compares against the
+    register's LIVE value, so the 0.2 A it silently dropped is a standing
+    disagreement between what we want and what we read. Larger than the
+    deadband, that disagreement is a write every cycle, for ever — which is
+    exactly the Modbus and EEPROM churn the deadband exists to prevent, caused
+    by the deadband being smaller than the device's own resolution.
+
+    Quantising the target first removes the disagreement instead of relying on
+    the deadband to be wide enough to hide it. None when the entity does not
+    advertise a step, which keeps every such site byte-identical to before.
+    """
+    state = hass.states.get(entity_id) if entity_id else None
+    if state is None:
+        return None
+    try:
+        step = float(state.attributes.get("step"))
+    except (TypeError, ValueError):
+        return None
+    return step if step > 0 else None
+
+
+def quantise(value, step):
+    """``value`` snapped to the register's own grid, rounding DOWN.
+
+    Down, not nearest: every value this module writes is a permit — a ceiling
+    on what the battery may draw — so the rounding direction has a meaning.
+    Rounding up would hand out a few watts more than the advice allowed, which
+    on the reservation path is headroom the forecast was trying to keep.
+
+    A step of None (unknown) leaves the value alone.
+    """
+    if not step or step <= 0:
+        return value
+    return math.floor(value / step) * step
 
 def battery_voltage(hass, entry) -> float:
     """DC battery voltage for the W↔A conversion: the live sensor when one is
@@ -301,17 +361,36 @@ def resolve_minimum_value(entry, normal):
     return min(floor, float(normal))
 
 
-def should_write(current, desired, previous_applied, deadband) -> bool:
+def should_write(current, desired, previous_applied, deadband, deadband_up=None) -> bool:
     """Whether ``desired`` is far enough from what the register already holds.
 
     Compared against the register's live value, so an inverter that rounded or
     rejected the last write is corrected rather than assumed. ``previous_applied``
     covers the case where the register cannot be read back at all.
+
+    DIRECTIONAL, for the same reason the pacing is. The configured deadband is a
+    percentage of the NORMAL value, which is the right scale for a reduction —
+    that is where register churn costs something, and the persistence window
+    already gates those. It is the wrong scale for a rise: while the limit is
+    engaged the advice lives between zero and one Excess trigger margin (the
+    export overshoot above the setpoint, which is all there is to correct), so a
+    deadband sized to the full register span swallows half the range the
+    controller actually works in. Observed live 2026-08-30: an advice hovering
+    at 4–6 A against a 4.2 A deadband left the register at 0 for fifty minutes
+    while export sat ~470 W above its setpoint.
+
+    A rise is the cheap direction to get wrong — it permits absorption, and the
+    approach is self-terminating, since export reaching the setpoint takes the
+    error to zero and no further rise is asked for. Coming back down is what the
+    window is for. ``deadband_up`` of None keeps the old symmetric behaviour.
     """
     reference = current if current is not None else previous_applied
     if reference is None:
         return True
-    return abs(reference - desired) >= max(deadband, 0)
+    band = deadband
+    if deadband_up is not None and desired > reference:
+        band = deadband_up
+    return abs(reference - desired) >= max(band, 0)
 
 
 def slew_margin_w(hub_entry) -> float:
@@ -490,17 +569,37 @@ async def send_inverter_charge_limit(
         get_entry_value(entry, CONF_CHARGE_CONTROL_INTERVAL, None)
         or DEFAULT_CHARGE_CONTROL_INTERVAL
     )
-    deadband_pct = get_entry_value(
-        entry, CONF_CHARGE_CONTROL_DEADBAND, DEFAULT_CHARGE_CONTROL_DEADBAND
+    deadband_w = get_entry_value(
+        entry, CONF_CHARGE_CONTROL_DEADBAND_W, DEFAULT_CHARGE_CONTROL_DEADBAND_W
     )
-    # The deadband is a percentage of the normal value so one setting works
-    # whether the register counts amps or watts.
-    deadband = abs((normal or 0) * (deadband_pct or 0) / 100.0)
+    # Watts in, the register's own unit out — the same conversion the slew step
+    # makes, so one setting means the same physical thing whether this register
+    # counts DC amps or watts. It used to be a percentage of the normal value,
+    # which scaled it to the register's full span rather than to the band the
+    # control actually works in (see the constant).
+    deadband = abs(to_target_units(float(deadband_w or 0), unit, voltage))
+    # The register's own quantum. Every value written below is snapped to it, so
+    # the read-back the write decision compares against matches what we asked
+    # for instead of the device's rounding of it (see ``_entity_step``).
+    reg_step = _entity_step(hass, target_entity)
 
     applied = inverter_rt.get(INVERTER_RT_APPLIED)
     last_write = inverter_rt.get(INVERTER_RT_LAST_WRITE)
     # The ramp: how far up one write may go, and where "up" is measured from.
     step = slew_step(slew_margin_w(hub_entry), unit, voltage, deadband)
+    # The RISE deadband, scaled to the range rises actually cover rather than to
+    # the register's full span: a third of the largest single rise allowed, so
+    # crossing that range costs a handful of writes rather than one or ten.
+    # Never larger than the configured deadband, so this can only make the
+    # controller more responsive upward, never less.
+    #
+    # The divisor is calibrated, not chosen: it is the smallest that keeps every
+    # write budget in dev/tests/test_charge_control_loop.py (a two-hour burst
+    # train inside 10 writes, a cloudy day inside 120). A tenth cost 70 % more
+    # writes than those budgets allow — these registers go over Modbus and some
+    # firmwares put them in EEPROM. See ``should_write`` for why up and down
+    # want different bands at all.
+    deadband_up = deadband if step is None else min(deadband, abs(step) / 3.0)
     baseline = ramp_baseline(applied, current)
     releasing = not enabled or advice_w is None
     # The gate edge the exemption keys on. Tracked here rather than handed in as
@@ -542,7 +641,9 @@ async def send_inverter_charge_limit(
             # this control writes nothing at all, so the unwind cannot be spread
             # over a ramp it would have no standing to finish. One write, now,
             # and the register is theirs again.
-            await _write(hass, entry, target_entity, normal, unit)
+            await _write(
+                hass, entry, target_entity, quantise(normal, reg_step), unit
+            )
             inverter_rt[INVERTER_RT_APPLIED] = None
             inverter_rt[INVERTER_RT_LAST_WRITE] = now_mono
             _LOGGER.info(
@@ -559,11 +660,19 @@ async def send_inverter_charge_limit(
         # "refill at maximum, starting now" — the advice self-heals upward as the
         # clip burns down, and each self-heal used to hand the battery the whole
         # normal value for one burst of exportable power.
-        target = round(slew_limited(normal, baseline, step), 1)
-        landed = target >= normal
+        # Against the QUANTISED normal, not the raw one. quantise rounds down,
+        # so a normal value off the register's grid (84.5 on a whole-amp
+        # register) is unreachable — and "landed" is what ends the ramp, so
+        # comparing against the raw value would hold the release open for ever,
+        # writing nothing and never clearing its marker.
+        normal_q = quantise(normal, reg_step)
+        target = round(quantise(slew_limited(normal, baseline, step), reg_step), 1)
+        landed = target >= normal_q
         if last_write is not None and (now_mono - last_write) < interval:
             return
-        writing = should_write(current, target, applied, deadband)
+        writing = should_write(
+            current, target, applied, deadband, deadband_up
+        )
         if not writing and not landed:
             # A ramp step the deadband swallowed. Hold the marker and try again
             # next window rather than declaring the release finished here.
@@ -611,7 +720,7 @@ async def send_inverter_charge_limit(
     # is the same "you may refill" in smaller words. Rounded AFTER the slew, so a
     # rise of exactly one margin — the masked-site self-creep — is not shaved by
     # a hundredth and passes through untouched.
-    target = round(slew_limited(desired, baseline, step), 1)
+    target = round(quantise(slew_limited(desired, baseline, step), reg_step), 1)
     inverter_rt[INVERTER_RT_STATUS] = CONTROL_STATE_LIMITING
     # The recommendation stays the ADVICE (floored), not the ramp's next step:
     # the sensor's job is to report what we want the register at, while the ramp
@@ -675,9 +784,9 @@ async def send_inverter_charge_limit(
             )
             return
         # The least reduction every sample in the window agreed on.
-        target = round(slew_limited(settled, baseline, step), 1)
+        target = round(quantise(slew_limited(settled, baseline, step), reg_step), 1)
 
-    if not should_write(current, target, applied, deadband):
+    if not should_write(current, target, applied, deadband, deadband_up):
         return
 
     await _write(hass, entry, target_entity, target, unit)
@@ -793,6 +902,30 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
         _warn_unreadable_normal(entry, inverter_rt, now_mono)
         return
 
+    floor_semantics = (
+        get_entry_value(entry, CONF_SOC_LIMIT_SEMANTICS, DEFAULT_SOC_LIMIT_SEMANTICS)
+        == SOC_LIMIT_SEMANTICS_FLOOR
+    )
+    if floor_semantics:
+        # Two hard prerequisites before anything is written into a FLOOR
+        # register, both fatal rather than degraded:
+        #
+        # * A configured source. Without one the normal is the 100 constant,
+        #   and 100 written into a floor register means "never discharge" —
+        #   the battery would defend a full pack against the house all night.
+        # * The source must not be one of the managed slots. The reservation
+        #   write-down would then land in the entity the destination is read
+        #   from AND the restore is anchored to, ratcheting both down to our
+        #   own last reserve with nothing left to climb back to. Point the
+        #   source at a helper (an input_number holding the everyday value)
+        #   instead.
+        normal_entity = get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
+        if not normal_entity or normal_entity in targets:
+            inverter_rt[INVERTER_RT_SOC_STATUS] = CONTROL_STATE_IDLE
+            inverter_rt[INVERTER_RT_SOC_DESIRED] = None
+            _warn_floor_misconfig(entry, inverter_rt, now_mono, normal_entity)
+            return
+
     desired = round(desired_soc(normal, advice_soc), 1)
     inverter_rt[INVERTER_RT_SOC_DESIRED] = desired
     # "limiting" is specifically "we are holding it below what its owner asked
@@ -826,6 +959,20 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
             continue
         if abs(current - desired) < SOC_LIMIT_DEADBAND:
             continue
+        if floor_semantics and (desired < normal) != (current > desired):
+            # A floor register is only ever written in the state's own safe
+            # direction. Limiting (desired below the normal) may only LOWER a
+            # slot — "the house may drain to here", the pre-clip drop — and
+            # tracking the normal may only RAISE one back toward the source.
+            # The cross-cases are both harm on a floor: raising a slot that
+            # already sits below the reserve defends charge the owner never
+            # asked defended (and on a Deye, grid-charges toward it), and
+            # lowering an owner-raised slot (a storm hold at 100) drops
+            # protection they set by hand. A ceiling register keeps the
+            # unconditional tracking — "stop charging at" is safe to write in
+            # either direction, and clamping an above-normal slot down IS the
+            # control there.
+            continue
         due.append(entity_id)
 
     if not due:
@@ -848,6 +995,33 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
         len(targets),
         ", ".join(due),
     )
+
+
+def _warn_floor_misconfig(entry, inverter_rt, now_mono, normal_entity) -> None:
+    """Warn that floor-semantics writes are deferred, at most occasionally."""
+    warned_at = inverter_rt.get(INVERTER_RT_SOC_FLOOR_WARNED)
+    if warned_at is not None and (now_mono - warned_at) < SOC_NORMAL_WARN_INTERVAL:
+        return
+    inverter_rt[INVERTER_RT_SOC_FLOOR_WARNED] = now_mono
+    if not normal_entity:
+        _LOGGER.warning(
+            "%s: SOC entities are declared a discharge floor but no normal "
+            "source is configured — deferring all SOC writes (the 100%% "
+            "fallback written into a floor register would mean 'never "
+            "discharge'). Point the Normal SOC ceiling source at the value "
+            "the slots should idle at.",
+            entry.title,
+        )
+    else:
+        _LOGGER.warning(
+            "%s: the normal SOC source (%s) is itself one of the managed "
+            "slots — deferring all SOC writes, since writing the reserve into "
+            "it would drag the destination and the restore anchor down with "
+            "it. Point the source at a separate helper (an input_number "
+            "holding the everyday value) instead.",
+            entry.title,
+            normal_entity,
+        )
 
 
 def _warn_unreadable_normal(entry, inverter_rt, now_mono) -> None:

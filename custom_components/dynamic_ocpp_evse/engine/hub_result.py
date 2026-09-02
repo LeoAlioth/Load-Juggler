@@ -19,8 +19,16 @@ them.
 from __future__ import annotations
 
 import logging
+import time
 
+from .forecast_observers import (
+    observe_clipped,
+    observe_gain,
+    observe_peakiness,
+)
+from ..calculations.calibration import block_power_at
 from ..calculations import (
+    merge_forecast_series,
     select_clipping_window,
     first_production_at,
     reservation_is_due,
@@ -49,7 +57,7 @@ from ..const import (
 from ..helpers import get_entry_value
 from . import fleet
 from .forecast_reader import (
-    read_forecast_series,
+    read_forecast_series_pair,
     forecast_windows,
     configured_forecast_sensors,
 )
@@ -64,6 +72,7 @@ def _compute_forecast_advice(
     site,
     battery_soc,
     members,
+    excess_on=False,
 ):
     """Advisory battery headroom from the PV clipping forecast.
 
@@ -257,13 +266,24 @@ def _compute_forecast_advice(
         power_cap = fleet_max_power + (fleet_charge_cap or 0)
 
     entity_ids = configured_forecast_sensors(hass, device_ids, legacy_entity_ids)
-    series = read_forecast_series(hass, entity_ids, hub_runtime)
+    # Per-array optimism, resolved device → entity so the factor follows the
+    # array rather than the site (fleet.forecast_inflation_by_device). Only the
+    # CLIP series is inflated; ``series`` below stays raw for the overnight
+    # drop's deadline, which carries its own early bias already.
+    inflation_by_device = fleet.forecast_inflation_by_device(members)
+    inflation_by_entity = {}
+    for device_id, pct in inflation_by_device.items():
+        for entity_id in configured_forecast_sensors(hass, [device_id], None):
+            inflation_by_entity.setdefault(entity_id, pct)
+    series, clip_series, by_entity = read_forecast_series_pair(
+        hass, entity_ids, hub_runtime, inflation_by_entity
+    )
     # The NEXT clipping window, not the rest of the calendar day: the remainder
     # of today while today still has clip left, tomorrow once it does not (see
     # ``select_clipping_window``). ``window`` is 0 exactly in the first case.
     windows = forecast_windows()
     window, fc = select_clipping_window(
-        series,
+        clip_series,
         clip_threshold,
         windows,
         charge_cap_w=fleet_charge_cap,
@@ -400,6 +420,81 @@ def _compute_forecast_advice(
             "forecast_charge_limiting": bool(limiting),
         }
 
+    # --- Observers (measure only; the advice above is untouched) -----------
+    #
+    # Two forecast errors, watched separately because neither correction fixes
+    # the other: this inverter's LEVEL bias (actual ÷ forecast energy) and the
+    # site's PEAKINESS (how much a 15-minute average understates the clip).
+    # Both publish what they would have corrected and correct nothing — a
+    # season of evidence decides whether either is worth applying.
+    #
+    # dt comes off the monotonic clock and is capped: after a stall or a
+    # suspend, one cycle must not book an hour of made-up energy.
+    now_mono = time.monotonic()
+    last_mono = hub_runtime.get("_forecast_obs_mono")
+    hub_runtime["_forecast_obs_mono"] = now_mono
+    dt_hours = 0.0
+    if last_mono is not None:
+        dt_hours = max(0.0, min(now_mono - last_mono, 60.0)) / 3600.0
+
+    now_local = windows[0][0]
+    local_day = now_local.date()
+    # Curtailing is the one regime the gain must not learn from: while the
+    # inverter throttles its own array, measured production is suppressed by the
+    # very thing being forecast. Excluded per INTERVAL, so a clipping day still
+    # contributes its honest morning and evening (calibration.note_gain_sample).
+    #
+    # The verdict is the EXCESS one, the same test the clipped-energy observer
+    # below uses — not "export is above the setpoint". The setpoint sits one
+    # trigger margin BELOW the real limit and driving export onto it is exactly
+    # what the charge control exists to do, so testing against it marked the
+    # controller's own operating point as curtailment: on a live site the gain
+    # observer skipped nearly every productive interval, never reached its
+    # minimum informative energy, and published Unknown all day (2026-08-31).
+    constrained = bool(excess_on)
+
+    for m in members:
+        if not m.forecast_device_ids:
+            continue
+        member_entities = configured_forecast_sensors(
+            hass, list(m.forecast_device_ids), None
+        )
+        member_series = merge_forecast_series(
+            [by_entity[e] for e in member_entities if e in by_entity]
+        )
+        observed = observe_gain(
+            hub_runtime,
+            m.entry_id,
+            local_day,
+            block_power_at(member_series, now_local),
+            fleet.member_solar_production(m, site.voltage),
+            dt_hours,
+            constrained,
+        )
+        per_inverter.setdefault(m.entry_id, {}).update(observed)
+
+    peakiness = observe_peakiness(
+        hub_runtime,
+        now_local,
+        local_day,
+        clip_threshold,
+        fleet.solar_total(members, site.voltage),
+        dt_hours,
+    )
+    # SATURATION is the Excess verdict, not a second test of the same thing:
+    # "the export allowance is used up AND the battery is taking all it can" is
+    # precisely what that margin already decides, hysteresis and all. Reusing it
+    # means the clipped figure can never disagree with the verdict the rest of
+    # the integration acts on.
+    clipped = observe_clipped(
+        hub_runtime,
+        local_day,
+        block_power_at(series, now_local),
+        fleet.solar_total(members, site.voltage),
+        excess_on,
+        dt_hours,
+    )
+
     _LOGGER.debug(
         "Forecast advice: clip %.2f kWh / storable %.2f kWh above %dW"
         " (export setpoint %dW) in window +%dd to %s"
@@ -425,6 +520,8 @@ def _compute_forecast_advice(
     )
 
     return {
+        **peakiness,
+        **clipped,
         "forecast_clipped_kwh": round(fc.clipped_kwh, 2),
         "forecast_absorbable_kwh": round(fc.absorbable_kwh, 2),
         "forecast_battery_max_soc": proposed,

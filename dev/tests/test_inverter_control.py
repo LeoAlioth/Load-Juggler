@@ -52,11 +52,14 @@ from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     CONF_CHARGE_LIMIT_NORMAL,
     CONF_CHARGE_LIMIT_MINIMUM,
     CONF_CHARGE_CONTROL_INTERVAL,
-    CONF_CHARGE_CONTROL_DEADBAND,
+    CONF_CHARGE_CONTROL_DEADBAND_W,
     CONF_BATTERY_NOMINAL_VOLTAGE,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    CONF_SOC_LIMIT_SEMANTICS,
+    SOC_LIMIT_SEMANTICS_CEILING,
+    SOC_LIMIT_SEMANTICS_FLOOR,
     DEFAULT_SOC_LIMIT_NORMAL,
     SOC_LIMIT_DEADBAND,
     INVERTER_RT_APPLIED,
@@ -335,8 +338,11 @@ def test_release_ramps_back_to_the_normal_value_and_then_stops():
         asyncio.run(_send(hass, entry, None, now))
         now += 10.0
 
-    # Within the 5 A deadband of the 100 A normal, which is where the ramp
-    # stops being worth a write (see the ramp section).
+    # 1 A short of the 100 A normal, and that last amp stays unwritten: rises
+    # take the small directional deadband — a third of the 9.77 A step, so
+    # 3.26 A — not the 5 A reduction one. The ramp therefore lands within a
+    # rise band of full rate rather than within a full 5 % of it, and only a
+    # residual genuinely smaller than that band is left on the table.
     assert hass.services.calls[-1][2]["value"] == 99.0
     landed = len(hass.services.calls)
 
@@ -391,7 +397,7 @@ def test_deadband_is_a_percentage_of_the_normal_value():
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
         CONF_CHARGE_CONTROL_INTERVAL: 0,
-        CONF_CHARGE_CONTROL_DEADBAND: 5,
+        CONF_CHARGE_CONTROL_DEADBAND_W: 256,  # ≈ the old 5 % of 100 A at 51.2 V
     })
     _arm(hass, entry)
 
@@ -838,13 +844,15 @@ def test_a_release_ramps_to_full_rate_one_margin_at_a_time():
         now += SITE_INTERVAL
 
     ramp = _written(hass)[1:]
-    # Eighteen writes, one a minute, and the nineteenth minute lands: the last
-    # 8.6 A of the climb is inside the 9.35 A deadband (5 % of 187), so the ramp
-    # ends by clearing the marker rather than by spending a write on it.
-    assert len(ramp) == 18
-    assert now == 19 * SITE_INTERVAL + SITE_INTERVAL
+    # Nineteen writes, one a minute, landing ON the normal value. The climb is a
+    # RISE, so it takes the small directional deadband: the final 8.6 A — inside
+    # the 9.35 A reduction deadband (5 % of 187) — is now worth its write, and
+    # the register no longer rests a few percent short of full rate after every
+    # release (see should_write).
+    assert len(ramp) == 19
+    assert now == 19 * SITE_INTERVAL + SITE_INTERVAL  # same cycle count
     assert ramp[0] == 11.8  # 2 A + one 9.77 A margin step
-    assert ramp[-1] == 178.4
+    assert ramp[-1] == 187.0
     # Every step is one margin, never more, and always upward.
     steps = [b - a for a, b in zip([2.0] + ramp, ramp)]
     assert all(0 < step <= MARGIN_AMPS + 0.05 for step in steps), steps
@@ -907,10 +915,11 @@ def test_engaging_deeper_is_never_rate_limited():
     assert _written(hass)[-1] == 2.0
 
 
-def test_the_final_approach_inside_the_deadband_ends_the_release():
-    """Otherwise the marker would never clear and the release would never be
-    finished: the last sliver of the climb is not worth a Modbus write, but it
-    still has to end the ramp."""
+def test_the_final_approach_lands_on_the_normal_value():
+    """The last sliver of the climb IS worth a write, now that rises take the
+    small directional deadband — otherwise the register rests a few percent
+    under full rate after every release, for the rest of the day. What must
+    still hold either way is that the ramp ENDS here rather than looping."""
     hass = _hass_with_target(current=96.0, maximum=100.0)
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: SITE_VOLTAGE,
@@ -923,7 +932,7 @@ def test_the_final_approach_inside_the_deadband_ends_the_release():
 
     asyncio.run(_send(hass, entry, None, 100.0))
 
-    assert hass.services.calls == []  # nothing worth writing
+    assert _written(hass) == [100.0]  # the sliver written, landing on normal
     assert rt[INVERTER_RT_APPLIED] is None  # and the release is over
 
 
@@ -1812,6 +1821,149 @@ def test_the_slot_read_backs_are_taken_before_the_write():
     assert rt[INVERTER_RT_SOC_SLOTS] == {eid: 70.0 for eid in SOC_SLOTS}
 
 
+# --- Floor semantics: writes only in each state's safe direction ---------------
+#
+# On a Deye the slot SOC is a discharge floor plus grid-charge target, so the
+# ceiling fan-out's unconditional tracking is harm there: holding the slots at
+# the destination blocks overnight self-consumption and imports toward it
+# (observed live 2026-08-25). Under CONF_SOC_LIMIT_SEMANTICS = floor, a
+# reservation may only LOWER a slot (the pre-clip "the house may drain to
+# here" drop) and tracking the normal may only RAISE one back to the source —
+# which is also what makes the release memoryless: the restore is a plain
+# raise toward the live source value, needing no record of what we dropped.
+
+
+def _floor_entry(options=None, targets=None):
+    return _soc_entry(
+        {
+            CONF_SOC_LIMIT_NORMAL_ENTITY_ID: NORMAL_ENTITY,
+            CONF_SOC_LIMIT_SEMANTICS: SOC_LIMIT_SEMANTICS_FLOOR,
+            **(options or {}),
+        },
+        targets=targets,
+    )
+
+
+def test_floor_reservation_lowers_the_slots():
+    """The just-in-time drop reaches the hardware: floor slots at the owner's
+    everyday value are written down to the reserve."""
+    hass = _soc_hass(slots={eid: 90 for eid in SOC_SLOTS}, normal=90)
+    entry = _floor_entry()
+    rt = _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, 82.0, 0.0))
+
+    assert _soc_writes(hass) == [(eid, 82.0) for eid in SOC_SLOTS]
+    assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_LIMITING
+
+
+def test_floor_reservation_never_raises_a_slot_already_below_the_reserve():
+    """A slot the owner keeps lower than the reserve already satisfies it —
+    raising it would defend charge nobody asked defended, and on a Deye
+    grid-charge toward it."""
+    slots = {SOC_SLOTS[0]: 90, SOC_SLOTS[1]: 70, SOC_SLOTS[2]: 90}
+    hass = _soc_hass(slots=slots, normal=90)
+    entry = _floor_entry()
+    _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, 82.0, 0.0))
+
+    assert _soc_writes(hass) == [(SOC_SLOTS[0], 82.0), (SOC_SLOTS[2], 82.0)]
+
+
+def test_floor_release_restores_the_source_with_no_memory():
+    """Slots we dropped overnight climb back to the live source value on
+    release — from a FRESH runtime dict, which is the restart-mid-window case:
+    nothing about the restore depends on remembering that we wrote the drop."""
+    hass = _soc_hass(slots={eid: 82 for eid in SOC_SLOTS}, normal=90)
+    entry = _floor_entry()
+    rt = _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, None, 0.0))
+
+    assert _soc_writes(hass) == [(eid, 90.0) for eid in SOC_SLOTS]
+    assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_IDLE
+
+
+def test_floor_idle_never_lowers_an_owner_raised_slot():
+    """A slot the owner raised above the source (a storm hold at 100) keeps its
+    protection: tracking the normal only ever raises floor slots."""
+    hass = _soc_hass(slots={eid: 100 for eid in SOC_SLOTS}, normal=90)
+    entry = _floor_entry()
+    _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, None, 0.0))
+
+    assert _soc_writes(hass) == []
+
+
+def test_ceiling_semantics_keeps_the_unconditional_tracking():
+    """The paired rig: the same owner-raised slots under explicit CEILING
+    semantics are clamped down to the normal — that clamp IS the control on a
+    register that means 'stop charging at'."""
+    hass = _soc_hass(slots={eid: 100 for eid in SOC_SLOTS}, normal=90)
+    entry = _soc_entry(
+        {
+            CONF_SOC_LIMIT_NORMAL_ENTITY_ID: NORMAL_ENTITY,
+            CONF_SOC_LIMIT_SEMANTICS: SOC_LIMIT_SEMANTICS_CEILING,
+        }
+    )
+    _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, None, 0.0))
+
+    assert _soc_writes(hass) == [(eid, 90.0) for eid in SOC_SLOTS]
+
+
+def test_floor_holds_dropped_slots_through_the_daytime_climb():
+    """As the clip burns, the advice climbs (82 → 84 → … → 90) but stays below
+    the normal. Raising the floor behind the climbing advice would re-defend
+    charge step by step, so dropped slots hold until the full release."""
+    hass = _soc_hass(slots={eid: 82 for eid in SOC_SLOTS}, normal=90)
+    entry = _floor_entry()
+    rt = _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, 84.0, 0.0))
+
+    assert _soc_writes(hass) == []
+    # Still the enforced intent — the sensor reports 84 while the slots hold 82.
+    assert rt[INVERTER_RT_SOC_DESIRED] == 84.0
+    assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_LIMITING
+
+
+def test_floor_without_a_source_defers_all_writes():
+    """The 100 fallback written into a floor register would mean 'never
+    discharge below 100' — so floor semantics with no source writes nothing."""
+    hass = _soc_hass(slots={eid: 90 for eid in SOC_SLOTS})
+    entry = _soc_entry({CONF_SOC_LIMIT_SEMANTICS: SOC_LIMIT_SEMANTICS_FLOOR})
+    rt = _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, 82.0, 0.0))
+
+    assert _soc_writes(hass) == []
+    assert rt[INVERTER_RT_SOC_DESIRED] is None
+    assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_IDLE
+
+
+def test_floor_source_among_the_managed_slots_defers_all_writes():
+    """Writing the reserve into the entity the destination is read from — and
+    the restore is anchored to — would ratchet both down to our own last limit.
+    A managed slot as the source is a misconfiguration, not a degraded mode."""
+    hass = _soc_hass(slots={eid: 90 for eid in SOC_SLOTS})
+    entry = _soc_entry(
+        {
+            CONF_SOC_LIMIT_NORMAL_ENTITY_ID: SOC_SLOTS[0],
+            CONF_SOC_LIMIT_SEMANTICS: SOC_LIMIT_SEMANTICS_FLOOR,
+        }
+    )
+    rt = _arm_soc(hass, entry)
+
+    asyncio.run(send_inverter_soc_limit(hass, entry, 82.0, 0.0))
+
+    assert _soc_writes(hass) == []
+    assert rt[INVERTER_RT_SOC_DESIRED] is None
+
+
 # --- Source-level guards on the drive mechanism -------------------------------
 #
 # The entity half of this lives in test_sensor_update.py (it needs a real HA
@@ -2023,3 +2175,192 @@ if __name__ == "__main__":
             print(f"PASS {_name}")
     print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)
+
+
+# --- The deadband is directional ---------------------------------------------
+#
+# Observed live 2026-08-30: while the battery sat at its destination the advice
+# was the export overshoot above the setpoint — 245–378 W — and the register
+# stayed at 0 A for fifty minutes, because the deadband was then 5 % of the
+# NORMAL value (4.2 A on that site) and the advice straddled it. Two changes
+# came out of it: the deadband became absolute watts, and rises take a band
+# scaled to the range rises actually cover.
+#
+# With the 100 W default the first change alone settles it, and the two bands
+# coincide (see the last test here); the direction only matters once the
+# deadband is raised past a third of one Excess trigger margin.
+
+_ASYM = {                      # 400 W ≈ 7.8 A down, a third of the step up
+    CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+    CONF_CHARGE_CONTROL_INTERVAL: 1,
+    CONF_CHARGE_CONTROL_DEADBAND_W: 400,
+}
+
+
+def test_a_small_rise_from_zero_is_written():
+    """The live case, on a site whose deadband is wide enough to have caused it:
+    400 W is 7.8 A down, while up is a third of the 9.77 A step — 3.26 A. A 4 A
+    advice clears the second and not the first, and it is the one that decides.
+    """
+    hass = _hass_with_target(current=0.0, maximum=100.0)
+    entry = _entry(dict(_ASYM))
+    _arm(hass, entry)
+
+    asyncio.run(_send(hass, entry, 4.0 * 51.2, 100.0))
+
+    assert _written(hass) == [4.0]
+
+
+def test_the_same_move_downward_is_still_swallowed():
+    """The asymmetry, stated as its own pin: coming DOWN keeps the configured
+    figure, because that is where register churn costs something and the
+    persistence window is what gates it."""
+    hass = _hass_with_target(current=9.0, maximum=100.0)
+    entry = _entry(dict(_ASYM))
+    _arm(hass, entry)
+
+    # 5 A below the register — past the 3.26 A rise band, inside the 7.8 A one.
+    asyncio.run(_send(hass, entry, 4.0 * 51.2, 100.0))
+
+    assert _written(hass) == []
+
+
+def test_a_rise_below_the_rise_band_is_still_swallowed():
+    """Not zero either — sub-band jitter must not reach the register, or a
+    Modbus write lands on every cycle the advice wobbles."""
+    hass = _hass_with_target(current=4.0, maximum=100.0)
+    entry = _entry(dict(_ASYM))
+    _arm(hass, entry)
+
+    # 2 A up: over the register, under the 3.26 A rise band.
+    asyncio.run(_send(hass, entry, 6.0 * 51.2, 100.0))
+
+    assert _written(hass) == []
+
+
+def test_the_rise_band_never_exceeds_the_configured_deadband():
+    """``min(deadband, step/3)``: on a site whose margin is large, a third of a
+    step could out-grow the setting, and this may only ever make the control
+    MORE responsive upward, never less."""
+    hass = _hass_with_target(current=0.0, maximum=100.0)
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+        CONF_CHARGE_CONTROL_DEADBAND_W: 51,   # ≈ 1 A, well under a third of a step
+    })
+    _arm(hass, entry)
+
+    # 2 A clears the 1 A deadband; a third of the step (3.26 A) would not.
+    asyncio.run(_send(hass, entry, 2.0 * 51.2, 100.0))
+
+    assert _written(hass) == [2.0]
+
+
+def test_the_default_deadband_needs_no_asymmetry_at_all():
+    """The absolute default is already smaller than a third of a margin, so both
+    directions land on it and the same 2 A move is written either way. Worth
+    pinning: it is why the live fix did not depend on the directional half, and
+    it is what would change if the default were ever raised past ~167 W.
+    """
+    plain = {CONF_BATTERY_NOMINAL_VOLTAGE: 51.2, CONF_CHARGE_CONTROL_INTERVAL: 1}
+
+    up = _hass_with_target(current=4.0, maximum=100.0)
+    _arm(up, _entry(dict(plain)))
+    asyncio.run(_send(up, _entry(dict(plain)), 6.0 * 51.2, 100.0))
+
+    down = _hass_with_target(current=8.0, maximum=100.0)
+    _arm(down, _entry(dict(plain)))
+    asyncio.run(_send(down, _entry(dict(plain)), 6.0 * 51.2, 100.0))
+
+    # 100 W at 51.2 V is 1.95 A, so a 2 A move clears it in both directions.
+    assert _written(up) == [6.0]
+    assert _written(down) == [6.0]
+
+
+# --- The register's own quantum ------------------------------------------------
+#
+# Deye's Battery Max Charge Current is whole amps: written 6.2 it holds 6
+# (observed live 2026-08-31). The write decision compares against the register's
+# LIVE value, so that silently-dropped 0.2 A is a standing disagreement between
+# what we want and what we read. Wider than the deadband it would be a write
+# every cycle for ever — the exact churn the deadband exists to prevent, caused
+# by the deadband being narrower than the device's resolution. Snapping the
+# target to the register's grid removes the disagreement at its source.
+
+
+def _stepped(current=0.0, maximum=100.0, step=1.0):
+    hass = _Hass()
+    hass.states.set(TARGET, current, max=maximum, step=step)
+    return hass
+
+
+def test_a_written_value_is_snapped_to_the_register_step():
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    hass = _stepped(current=0.0, step=1.0)
+    _arm(hass, entry)
+
+    # 6.2 A of advice on a whole-amp register.
+    asyncio.run(_send(hass, entry, 6.2 * 51.2, 100.0))
+
+    assert _written(hass) == [6.0]
+
+
+def test_snapping_rounds_DOWN_because_the_value_is_a_permit():
+    """Every value this module writes is a ceiling on what the battery may
+    draw, so rounding up would hand out more than the advice allowed — on the
+    reservation path, headroom the forecast was trying to keep."""
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    hass = _stepped(current=0.0, step=1.0)
+    _arm(hass, entry)
+
+    asyncio.run(_send(hass, entry, 6.9 * 51.2, 100.0))   # not 7.0
+
+    assert _written(hass) == [6.0]
+
+
+def test_a_register_with_no_step_is_unchanged():
+    """Every site whose register does not advertise a step keeps the previous
+    one-decimal behaviour exactly."""
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    hass = _hass_with_target(current=0.0, maximum=100.0)   # no step attribute
+    _arm(hass, entry)
+
+    asyncio.run(_send(hass, entry, 6.2 * 51.2, 100.0))
+
+    assert _written(hass) == [6.2]
+
+
+def test_the_release_still_completes_when_normal_is_off_the_grid():
+    """The trap snapping introduces: quantise rounds DOWN, so a normal value
+    off the register's grid (84.5 on a whole-amp register) is unreachable. The
+    ramp ends on "landed", so comparing against the RAW normal would hold the
+    release open for ever — writing nothing, never clearing its marker.
+    """
+    entry = _entry({
+        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
+        CONF_CHARGE_CONTROL_INTERVAL: 1,
+    })
+    hass = _stepped(current=80.0, maximum=84.5, step=1.0)
+    rt = _arm(hass, entry)
+    rt[INVERTER_RT_APPLIED] = 80.0          # mid-release
+
+    now = 100.0
+    for _ in range(20):
+        asyncio.run(_send(hass, entry, None, now))
+        last = hass.services.calls[-1][2]["value"] if hass.services.calls else 80.0
+        hass.states.set(TARGET, last, max=84.5, step=1.0)
+        now += 10.0
+        if rt[INVERTER_RT_APPLIED] is None:
+            break
+
+    assert rt[INVERTER_RT_APPLIED] is None, "the release must finish"
+    assert hass.services.calls[-1][2]["value"] == 84.0   # the grid, not 84.5

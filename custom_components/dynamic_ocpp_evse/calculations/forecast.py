@@ -125,6 +125,29 @@ def merge_forecast_series(series_list):
     return merged
 
 
+def scale_forecast_series(series, inflation_pct):
+    """One array's series, inflated by ``inflation_pct`` percent.
+
+    Applied per ARRAY before the merge, not to the merged site series: the
+    factor belongs to the inverter whose array it describes, and a shaded
+    string may want a different bias from a clean one. Summing scaled arrays
+    and scaling the sum only coincide when every array shares a factor, so
+    doing it here is what makes a mixed fleet exact.
+
+    0 (or anything falsy) returns the series unchanged — the same object, so
+    an unconfigured site costs nothing. Negative deflates, which is a
+    legitimate answer for a forecast that reads high.
+
+    Pure function — unit-testable.
+    """
+    if not inflation_pct:
+        return series
+    factor = 1.0 + float(inflation_pct) / 100.0
+    if factor < 0:
+        factor = 0.0
+    return {ts: float(watts) * factor for ts, watts in (series or {}).items()}
+
+
 def clipping_forecast(
     series,
     threshold_w,

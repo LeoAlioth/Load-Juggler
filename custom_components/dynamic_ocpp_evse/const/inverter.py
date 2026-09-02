@@ -77,8 +77,21 @@ DEFAULT_CHARGE_LIMIT_MINIMUM = 0
 # where waiting is free.
 CONF_CHARGE_CONTROL_INTERVAL = "inverter_charge_control_interval"
 DEFAULT_CHARGE_CONTROL_INTERVAL = 300  # s a reduction must hold (and pace a release)
-CONF_CHARGE_CONTROL_DEADBAND = "inverter_charge_control_deadband"
-DEFAULT_CHARGE_CONTROL_DEADBAND = 5  # % of the normal value
+# How far the desired charge limit must sit from the register before a write is
+# worth making, in WATTS. Absolute rather than a percentage of the normal value,
+# which is what it used to be: a percentage is a fraction of the register's FULL
+# span, while the value being corrected while the limit is engaged lives in a
+# band one Excess trigger margin wide (the export overshoot above the setpoint,
+# which is all there is to correct). On a 187 A register 5 % is 9 A — wider than
+# the whole working range, so most of it could not be expressed at all.
+#
+# Watts, not the register's own unit, so one setting means the same thing on an
+# amps register and a watts one; the conversion is the same one the slew step
+# uses (``to_target_units``). That was the original reason for the percentage,
+# and converting is the better answer to it.
+CONF_CHARGE_CONTROL_DEADBAND_W = "inverter_charge_control_deadband_w"
+DEFAULT_CHARGE_CONTROL_DEADBAND_W = 100  # W
+
 
 # --- Battery SOC ceiling control ---------------------------------------------
 #
@@ -99,11 +112,46 @@ CONF_SOC_LIMIT_ENTITY_IDS = "inverter_soc_limit_entity_ids"
 CONF_SOC_LIMIT_NORMAL_ENTITY_ID = "inverter_soc_limit_normal_entity_id"
 DEFAULT_SOC_LIMIT_NORMAL = 100.0  # % — where an unmanaged battery ceiling sits
 
+# What a WRITE to the inverter's SOC entities MEANS — and only a write. This
+# flag never decides where the pack should go: the destination is always read
+# from CONF_SOC_LIMIT_NORMAL_ENTITY_ID when that is set, whatever the hardware
+# calls the register (see engine/readers.py). A floor register whose value is
+# NOT the owner's charge target simply leaves the source unset and anchors at
+# 100 % — that knob already existed, and the flag must not duplicate it.
+#
+# The distinction it does carry is what the SOC fan-out may put into the slots.
+# A genuine ceiling register takes "stop charging at N %", so tracking
+# min(source, recommendation) unconditionally is the whole point. A Deye slot
+# SOC is a DISCHARGE FLOOR plus grid-charge target: the same number tells the
+# inverter "grid-charge to N % and never discharge below it" — so holding the
+# slots at the destination all night blocks self-consumption and imports toward
+# it (observed live 2026-08-25). Under floor semantics the fan-out therefore
+# writes only in each state's safe direction (a reservation may only lower a
+# slot, tracking the source may only raise one back), and refuses to write at
+# all without a configured source that is not itself a managed slot — see
+# ``send_inverter_soc_limit``.
+#
+# The common floor site (a Deye whose one slot value is both the overnight
+# floor and the owner's charge target) points the ceiling SOURCE at the slot:
+# the reserve is carved below that number, the pack parks there on ordinary
+# days, and the band above it stays the export-holding buffer that
+# ``recommended_charge_limit``'s engaged feedback fills only while export sits
+# over the setpoint.
+CONF_SOC_LIMIT_SEMANTICS = "inverter_soc_limit_semantics"
+SOC_LIMIT_SEMANTICS_CEILING = "ceiling"   # writes mean "stop charging at"
+SOC_LIMIT_SEMANTICS_FLOOR = "floor"       # writes mean "grid-defend this level"
+DEFAULT_SOC_LIMIT_SEMANTICS = SOC_LIMIT_SEMANTICS_CEILING
+SOC_LIMIT_SEMANTICS_OPTIONS = (
+    SOC_LIMIT_SEMANTICS_CEILING,
+    SOC_LIMIT_SEMANTICS_FLOOR,
+)
+
 # Deadband for the SOC fan-out, in SOC points, applied PER TARGET. Fixed rather
 # than configurable: a percentage-of-a-percentage would be a confusing setting,
 # and 1 point is both the resolution these slots accept and small enough that
 # every meaningful move gets through. Same EEPROM reasoning as above — a slot
 # already within a point of the desired ceiling is not worth a Modbus write.
+
 SOC_LIMIT_DEADBAND = 1.0
 
 # Runtime keys under hass.data[DOMAIN]["inverters"][entry_id].

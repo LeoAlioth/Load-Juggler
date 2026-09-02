@@ -73,6 +73,10 @@ class FleetMember:
     # member_solar_published / solar_is_assumed).
     solar_assumed: bool = False
     forecast_device_ids: tuple = ()  # this inverter's PV forecast sources
+    # Percent to inflate THIS inverter's forecast by before the clip
+    # integral. 0 trusts it as published, which is every site today: the
+    # observers measure the bias and nothing applies one yet (dev/TODO.md).
+    forecast_inflation: float = 0.0
     has_battery: bool = False  # a battery SOC or power entity is configured
     has_battery_power_entity: bool = False
     battery_soc: Optional[float] = None
@@ -512,6 +516,34 @@ def forecast_device_ids(members) -> list:
             if device_id not in seen:
                 seen.append(device_id)
     return seen
+
+
+
+def forecast_inflation_by_device(members) -> dict:
+    """``{forecast device id: percent}`` across the fleet.
+
+    Mirrors ``forecast_device_ids``' de-duplication rule — first member to
+    claim a device wins it — so a device shared between two inverter entries
+    (a misconfiguration, but a possible one) cannot be counted twice with two
+    different biases. Members with no bias are omitted rather than mapped to 0,
+    so an all-default fleet returns an empty dict and the reader can skip the
+    scaling pass entirely.
+    """
+    claimed = set()
+    out = {}
+    for m in members:
+        for device_id in m.forecast_device_ids or ():
+            if device_id in claimed:
+                continue
+            # Claimed tracked separately from the result: keying first-wins on
+            # the OUTPUT would let an unbiased first claimant fall through and
+            # hand the device to a biased sibling, which is the same
+            # double-counting the de-duplication exists to prevent, only
+            # quieter.
+            claimed.add(device_id)
+            if m.forecast_inflation:
+                out[device_id] = float(m.forecast_inflation)
+    return out
 
 
 def charging_power_total(members) -> float:

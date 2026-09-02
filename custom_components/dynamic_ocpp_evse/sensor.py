@@ -19,6 +19,7 @@ from .const import (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_SITE_UPDATE_FREQUENCY,
+    CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_UPDATE_FREQUENCY,
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DEFAULT_UPDATE_FREQUENCY,
@@ -278,11 +279,38 @@ async def async_setup_entry(
             # device (an AC-coupled array's clipping is absorbed here too).
             and fleet_has_forecast_sources(hass, hub_entry)
         )
+        # The accuracy observer is the reverse shape: it needs THIS inverter to
+        # own a forecast device — actual ÷ forecast is a property of the array,
+        # battery or not (the engine's observer loop gates on
+        # forecast_device_ids alone) — plus the engine's own early-return gate,
+        # export limit and some fleet battery capacity, or the value would
+        # never publish.
+        fleet_capacity = 0
+        if hub_entry is not None:
+            fleet_capacity = (
+                get_entry_value(hub_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0
+            )
+            for child in hass.config_entries.async_entries(DOMAIN):
+                if (
+                    child.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+                    and child.data.get(CONF_HUB_ENTRY_ID) == hub_entry.entry_id
+                ):
+                    fleet_capacity += (
+                        get_entry_value(child, CONF_BATTERY_CAPACITY_KWH, 0) or 0
+                    )
+        inv_observes_forecast = (
+            bool(get_entry_value(config_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None))
+            and hub_entry is not None
+            and (get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
+            and fleet_capacity > 0
+        )
         entities = []
         for defn in INVERTER_SENSOR_DEFINITIONS:
             if defn.get("requires_battery") and not inv_has_battery:
                 continue
             if defn.get("requires_forecast") and not inv_has_forecast:
+                continue
+            if defn.get("requires_forecast_device") and not inv_observes_forecast:
                 continue
             entities.append(
                 LoadJugglerInverterDataSensor(hass, config_entry, entity_id, defn)

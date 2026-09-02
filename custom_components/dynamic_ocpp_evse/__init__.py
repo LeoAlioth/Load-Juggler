@@ -61,6 +61,7 @@ from .const import (
     DEFAULT_BATTERY_SOC_HYSTERESIS,
     DEFAULT_BATTERY_SOC_MIN,
     DEFAULT_BATTERY_SOC_TARGET,
+    DEFAULT_CHARGE_CONTROL_DEADBAND_W,
     DEFAULT_CHARGE_PAUSE_DURATION,
     DEFAULT_CHARGE_RATE_UNIT,
     DEFAULT_DISTRIBUTION_MODE,
@@ -118,6 +119,8 @@ INTEGRATION_VERSION = "2.0.0"
 # have to inspect an entry_type predating it.
 _LEGACY_ENTRY_TYPE_CHARGER = "charger"
 _LEGACY_CONF_CHARGER_PRIORITY = "charger_priority"
+# The write deadband when it was a percentage of the normal value (2.5 → 2.6).
+_LEGACY_CONF_CHARGE_CONTROL_DEADBAND = "inverter_charge_control_deadband"
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -312,6 +315,40 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "Migrated %s to the load naming: %s", entry.title, ", ".join(changed)
             )
         _LOGGER.info("Updated minor version to 5")
+
+    # Migrate 2.5 → 2.6: the charge-register write deadband stopped being a
+    # percentage of the normal value and became an absolute figure in watts
+    # (CONF_CHARGE_CONTROL_DEADBAND_W). The two cannot be converted here — the
+    # normal value is an entity read, not a stored number — and reading the old
+    # number as watts would be far worse than dropping it: a stored 5 would mean
+    # 5 W, which is no deadband at all on registers that go over Modbus and in
+    # some firmwares to EEPROM. So the legacy key is dropped and the new default
+    # applies; an inverter whose deadband was deliberately tuned needs it set
+    # again, which the release notes say.
+    #
+    # Inverter-scoped and idempotent: only an entry still carrying the legacy
+    # spelling is touched, and every other entry type passes through with just
+    # its minor_version bumped.
+    if entry.version == 2 and getattr(entry, "minor_version", 0) < 6:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        dropped = [
+            label
+            for store, label in ((data, "data"), (options, "options"))
+            if store.pop(_LEGACY_CONF_CHARGE_CONTROL_DEADBAND, None) is not None
+        ]
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, minor_version=6
+        )
+        if dropped:
+            _LOGGER.info(
+                "%s: the percentage write deadband was dropped from %s — the"
+                " setting is now absolute watts, defaulting to %sW",
+                entry.title,
+                ", ".join(dropped),
+                DEFAULT_CHARGE_CONTROL_DEADBAND_W,
+            )
+        _LOGGER.info("Updated minor version to 6")
 
     return True
 

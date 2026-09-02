@@ -669,6 +669,16 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     # exactly as every site did before this existed. (The write-control's own
     # fan-out defers all writes while the entity is unreadable, so nothing is
     # written from a held value either way.)
+    #
+    # Read regardless of the SOC-limit SEMANTICS flag: that flag says what a
+    # WRITE to the slot registers means, never where the pack should go. On a
+    # floor inverter whose slot value doubles as the owner's charge target (a
+    # Deye slot at 90 doing both jobs), pointing this source at the slot is
+    # exactly right — the reserve is carved below 90 and the 90–100 % band
+    # stays the export-holding buffer the standing ceiling's feedback fills
+    # (``recommended_charge_limit``). A floor whose value is NOT the target
+    # (a cheap-tariff 20 %) simply leaves this source unset and anchors at
+    # 100 % — that knob already existed, so the flag must not duplicate it.
     soc_target_entity = get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
     soc_target = None
     if soc_target_entity:
