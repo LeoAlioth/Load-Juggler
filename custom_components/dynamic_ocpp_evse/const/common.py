@@ -69,6 +69,16 @@ RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
 
 # EMA smoothing — exponential moving average on engine output before rate limiting
 EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothing)
+# The battery charge controller reads export and battery power through its OWN
+# smoothers, which are DIRECTIONAL (engine/readers._smooth_directional): a move
+# toward a limit — deeper export, heavier import, or the mirror for battery
+# power — takes this weight; a move back toward zero keeps EMA_ALPHA. Two
+# readings to converge, not one: 1.0 passed every lensing spike straight into
+# the register and fed the register↔Excess-allowance loop (21 verdict flips on
+# the lensing+EVSE rig against 1), and a single reading is also how a motor's
+# start-up inrush looks. 0.6 gave back a third of the curtailment win. 0.8 kept
+# the verdict at 1 flip and halved curtailment — dev/tests/test_charge_control_loop.py.
+CTRL_FAST_ALPHA = 0.8
 DEAD_BAND = 0.3          # Ignore changes smaller than this (Schmitt trigger, amps)
 GRID_STALE_TIMEOUT = 60  # Seconds of grid CT unavailability before falling to min_current
 INPUT_STALE_TIMEOUT = 60  # Seconds of solar/battery/inverter sensor unavailability before falling back to a safe value

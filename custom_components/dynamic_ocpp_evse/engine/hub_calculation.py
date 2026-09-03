@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from dataclasses import replace
 
 from ..calculations import (
     SiteContext,
@@ -78,10 +79,47 @@ from .readers import (
     _read_grid_phases,
     _resolve_grid_phases,
     _smooth,
+    _smooth_directional,
     _track_grid_stale,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _managed_phase_draws(site):
+    """Σ managed-load draw per site phase (A), the feedback loop's subtrahend."""
+    total_draws = [0.0, 0.0, 0.0]
+    for c in site.loads:
+        a_draw, b_draw, c_draw = c.get_site_phase_draw()
+        total_draws[0] += a_draw
+        total_draws[1] += b_draw
+        total_draws[2] += c_draw
+    return total_draws
+
+
+def _charge_control_view(site, consumption, export, battery_power):
+    """The site as the battery CHARGE CONTROLLER reads it.
+
+    Same loads, same allowance, same feedback subtraction as ``site`` — only
+    the grid phases and the battery power come from the DIRECTIONAL smoothers
+    (``readers._smooth_directional``): export moving toward the limit and
+    charging falling both reach the controller in two cycles, while the moves
+    back toward zero keep the ordinary EMA. Nothing else reads this view; the
+    Excess verdict and the allocation stay on the symmetric site, which is what
+    keeps a responsive register from flapping the verdict through the
+    allowance term (measured: 21 flips when the shared readings were made
+    fast, 1 with the view scoped here — dev/tests/test_charge_control_loop.py).
+
+    Built AFTER ``_apply_feedback_loop`` ran on the site, so the same
+    managed-draw subtraction is applied to these phases here; off-grid the
+    phases are synthetic zeros on both views and there is nothing to subtract.
+    """
+    draws = _managed_phase_draws(site)
+    if not site.is_off_grid and any(d > 0 for d in draws):
+        consumption, export = grid_without_managed_draws(consumption, export, draws)
+    return replace(
+        site, consumption=consumption, export_current=export, battery_power=battery_power
+    )
 
 
 def _apply_feedback_loop(site, solar_is_derived, members):
@@ -99,14 +137,7 @@ def _apply_feedback_loop(site, solar_is_derived, members):
     if site.is_off_grid:
         return
 
-    # Sum load draws per site phase
-    total_draws = [0.0, 0.0, 0.0]
-    for c in site.loads:
-        a_draw, b_draw, c_draw = c.get_site_phase_draw()
-        total_draws[0] += a_draw
-        total_draws[1] += b_draw
-        total_draws[2] += c_draw
-
+    total_draws = _managed_phase_draws(site)
     if not any(d > 0 for d in total_draws):
         return
 
@@ -791,6 +822,19 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     export = [max(0, -r) if r is not None else None for r in smoothed_phases]
     consumption_pv = PhaseValues(*consumption)
     export_pv = PhaseValues(*export)
+    # The charge controller's view of the same phases: fast toward either
+    # limit, slow back toward zero, under its own EMA keys (see
+    # _charge_control_view). The symmetric values above feed everything else.
+    ctrl_phases = [
+        _smooth_directional(ema_inputs, f"grid_ctrl_{i}", r, fast_away=True)
+        for i, r in enumerate(raw_phases)
+    ]
+    ctrl_consumption_pv = PhaseValues(
+        *[max(0, r) if r is not None else None for r in ctrl_phases]
+    )
+    ctrl_export_pv = PhaseValues(
+        *[max(0, -r) if r is not None else None for r in ctrl_phases]
+    )
 
     total_export_current = export_pv.total
     total_export_power = total_export_current * voltage if voltage > 0 else 0
@@ -820,6 +864,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # --- Battery data (fleet) ---
     battery_soc = fleet.weighted_soc(members)
     battery_power = fleet.battery_power_total(members)
+    battery_power_ctrl = fleet.battery_power_total(members, "battery_power_ctrl")
     battery_soc_hysteresis = get_entry_value(
         hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS
     )
@@ -1026,6 +1071,12 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
 
     # --- Feedback loop ---
     _apply_feedback_loop(site, solar_is_derived, members)
+    ctrl_site = _charge_control_view(
+        site,
+        ctrl_consumption_pv,
+        ctrl_export_pv,
+        float(battery_power_ctrl) if battery_power_ctrl is not None else None,
+    )
 
     excess_on, margin = _apply_excess_latch(hub_runtime, site, excess_hysteresis)
 
@@ -1100,6 +1151,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         battery_soc,
         members,
         excess_on,
+        ctrl_site=ctrl_site,
     )
     for inv_id, advice in forecast_per_inverter.items():
         if inv_id in inverters_data:

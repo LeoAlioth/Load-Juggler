@@ -73,6 +73,7 @@ def _compute_forecast_advice(
     battery_soc,
     members,
     excess_on=False,
+    ctrl_site=None,
 ):
     """Advisory battery headroom from the PV clipping forecast.
 
@@ -340,9 +341,16 @@ def _compute_forecast_advice(
     hub_runtime["_forecast_max_soc"] = proposed
 
     deficit = headroom_deficit_kwh(fc.absorbable_kwh, capacity_kwh, battery_soc)
-    # The two live plant figures the engaged advice is computed from, read once.
-    battery_charge_w = -(site.battery_power or 0.0)
-    export_now_w = reconstructed_export_power(site)
+    # The two live plant figures the engaged advice is computed from, read once
+    # — from the CHARGE-CONTROL VIEW of the site when the engine supplies one:
+    # the same loads, allowance and feedback subtraction, but grid phases and
+    # battery power through the directional smoothers (engine/readers), so a
+    # lensing peak reaches the register in two cycles instead of being averaged
+    # away while the Excess verdict keeps reading the symmetric site. Falling
+    # back to the site itself keeps every pure rig and scenario byte-identical.
+    view = ctrl_site or site
+    battery_charge_w = -(view.battery_power or 0.0)
+    export_now_w = reconstructed_export_power(view)
     charge_limit = None
     limiting = False
     if fleet_charge_cap:

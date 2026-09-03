@@ -81,6 +81,12 @@ class FleetMember:
     has_battery_power_entity: bool = False
     battery_soc: Optional[float] = None
     battery_power: Optional[float] = None  # W, + discharging / − charging
+    # W — the same reading as seen by the battery CHARGE CONTROLLER: smoothed
+    # directionally (fast when charging falls, slow when it rises — the mirror
+    # of the controller's export view, see engine/readers._smooth_directional).
+    # Consumed only through the charge-control view of the site; every other
+    # reader of battery power uses the symmetric value above.
+    battery_power_ctrl: Optional[float] = None
     charge_cap: Optional[float] = None  # W — nameplate (configured) charge rate
     # W — the rate this member's battery is actually PERMITTED to take right
     # now, when our own Battery Charge Control is holding its charge register
@@ -122,10 +128,14 @@ def weighted_soc(members) -> Optional[float]:
     return sum(s for s, _ in socs) / len(socs)
 
 
-def battery_power_total(members) -> Optional[float]:
+def battery_power_total(members, attr: str = "battery_power") -> Optional[float]:
     """Summed battery power; None only when NO member has a power sensor —
-    that is the signal the derived-solar discharge gate keys on."""
-    values = [m.battery_power for m in members if m.has_battery_power_entity]
+    that is the signal the derived-solar discharge gate keys on.
+
+    ``attr`` selects which smoothed view is summed: the symmetric
+    ``battery_power`` (the default, every consumer but one) or the charge
+    controller's ``battery_power_ctrl``. Same gating either way."""
+    values = [getattr(m, attr) for m in members if m.has_battery_power_entity]
     readings = [v for v in values if v is not None]
     if not values:
         return None

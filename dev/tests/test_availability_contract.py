@@ -76,6 +76,7 @@ from custom_components.dynamic_ocpp_evse.engine.readers import (
     _read_fleet_member,
     _read_grid_phases,
     _resolve_grid_phases,
+    _smooth_directional,
     _track_grid_stale,
 )
 
@@ -896,6 +897,53 @@ def test_grid_phase_reader_does_not_coerce_the_sentinel_away():
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Directional smoothing — the charge controller's private view of the plant
+# ---------------------------------------------------------------------------
+# ``_smooth_directional`` weights a reading by which way it moves: toward a
+# limit (away from zero) fast, back toward zero slow — or the mirror, for
+# battery power. Everything else is ``_smooth``'s contract. The numbers below
+# use the defaults: EMA_ALPHA 0.3, CTRL_FAST_ALPHA 0.8.
+
+
+def test_directional_is_fast_away_from_zero_and_slow_toward_it():
+    ema = {}
+    assert _smooth_directional(ema, "g", -10.0, fast_away=True) == -10.0  # seeds
+    # Deeper export (away from zero): the fast weight, 80 % of the way.
+    assert math.isclose(_smooth_directional(ema, "g", -20.0, fast_away=True), -18.0, abs_tol=0.01)
+    # Easing back toward zero: the ordinary 0.3.
+    assert math.isclose(_smooth_directional(ema, "g", -10.0, fast_away=True), -15.6, abs_tol=0.01)
+
+
+def test_directional_treats_a_sign_flip_as_away():
+    """Export to import is a move toward the OTHER limit, so it is fast too —
+    an inrush that flips the meter must not wait out a decay from the wrong side."""
+    ema = {}
+    _smooth_directional(ema, "g", -10.0, fast_away=True)
+    assert math.isclose(_smooth_directional(ema, "g", 5.0, fast_away=True), 2.0, abs_tol=0.01)
+
+
+def test_directional_mirror_is_fast_toward_zero_for_battery_power():
+    """Battery power is smoothed in mirror: a permit cut (charging falls, toward
+    zero) is fast, so it moves together with the export rise it causes."""
+    ema = {}
+    _smooth_directional(ema, "b", -2000.0, fast_away=False)
+    assert math.isclose(_smooth_directional(ema, "b", -500.0, fast_away=False), -800.0, abs_tol=0.01)
+    # Charging rising again (away from zero): slow.
+    assert math.isclose(_smooth_directional(ema, "b", -2000.0, fast_away=False), -1160.0, abs_tol=0.01)
+
+
+def test_directional_keeps_the_smoothing_contract():
+    ema = {}
+    assert _smooth_directional(ema, "g", None, fast_away=True) is None       # not configured
+    assert _smooth_directional(ema, "g", _UNAVAILABLE, fast_away=True) is None  # nothing to hold yet
+    _smooth_directional(ema, "g", -4.0, fast_away=True)
+    assert _smooth_directional(ema, "g", _UNAVAILABLE, fast_away=True) == -4.0  # held
+    assert _smooth_directional(ema, "g", "garbage", fast_away=True) == -4.0     # held
+    # Its own key: the symmetric grid_0 state is untouched by the ctrl view.
+    assert "grid_0" not in ema
+
 if __name__ == "__main__":
     # Deliberately pytest-free: the pure tier has to run on the developer's
     # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).

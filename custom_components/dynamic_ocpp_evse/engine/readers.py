@@ -56,6 +56,7 @@ from ..const import (
     DEFAULT_PHASE_VOLTAGE,
     DEFAULT_WIRING_TOPOLOGY,
     DOMAIN,
+    CTRL_FAST_ALPHA,
     EMA_ALPHA,
     INPUT_STALE_TIMEOUT,
     INVERTER_RT_ENFORCED_CHARGE_W,
@@ -101,6 +102,39 @@ def _smooth(ema_dict: dict, key: str, raw, alpha: float = EMA_ALPHA):
     smoothed = alpha * val + (1 - alpha) * prev
     ema_dict[key] = smoothed
     return round(smoothed, 2)
+
+
+def _smooth_directional(ema_dict: dict, key: str, raw, fast_away: bool,
+                        alpha: float = EMA_ALPHA, fast_alpha: float = CTRL_FAST_ALPHA):
+    """An EMA whose weight depends on which way the reading is moving.
+
+    ``fast_away=True``: a move AWAY from zero — deeper export, heavier import,
+    a sign flip — takes ``fast_alpha``; a move back toward zero keeps ``alpha``.
+    ``fast_away=False`` is the mirror, for battery power: fast toward zero,
+    slow away. The two are a matched pair for the charge controller's feedback
+    law ``battery + (export − setpoint)``: a permit cut is battery↓ and export↑
+    in the same instant, so if export were fast and battery slow the law would
+    read the transition twice and overshoot (the steady rig hunted through nine
+    writes with the export side alone; the mirrored pair settles in one).
+
+    Everything else is ``_smooth``'s contract — None passes through, an
+    unavailable reading holds the last value, the first reading seeds — which
+    is why this only chooses the weight and delegates.
+
+    Pure function — unit-testable.
+    """
+    prev = ema_dict.get(key)
+    if prev is None or raw is None or raw is _UNAVAILABLE:
+        return _smooth(ema_dict, key, raw, alpha)
+    try:
+        val = float(raw)
+    except (ValueError, TypeError):
+        return _smooth(ema_dict, key, raw, alpha)
+    if not math.isfinite(val):
+        return _smooth(ema_dict, key, raw, alpha)
+    away = abs(val) > abs(prev) or (val * prev < 0)
+    fast = away if fast_away else not away
+    return _smooth(ema_dict, key, raw, fast_alpha if fast else alpha)
 
 
 def _stale_guard(hub_runtime: dict, ema_dict: dict, key: str, raw, fallback):
@@ -653,6 +687,15 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     battery_power = (
         _smooth(ema_inputs, power_key, raw_power) if power_entity else None
     )
+    # The charge controller's view of the same reading: the mirror of its
+    # export view — fast when charging falls, slow when it rises — under its
+    # own EMA key, so the symmetric value above is untouched for every other
+    # consumer (see _smooth_directional for why the pair must be matched).
+    battery_power_ctrl = (
+        _smooth_directional(ema_inputs, f"{power_key}_ctrl", raw_power, fast_away=False)
+        if power_entity
+        else None
+    )
 
     # This member's battery DESTINATION — the live value of the same "normal SOC
     # ceiling source" entity the SOC write-control idles its slots at. The
@@ -708,6 +751,9 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         has_battery_power_entity=bool(power_entity),
         battery_soc=float(battery_soc) if battery_soc is not None else None,
         battery_power=float(battery_power) if battery_power is not None else None,
+        battery_power_ctrl=(
+            float(battery_power_ctrl) if battery_power_ctrl is not None else None
+        ),
         charge_cap=get_entry_value(entry, CONF_BATTERY_MAX_CHARGE_POWER, None),
         enforced_charge_limit=_read_enforced_charge_limit(hass, entry),
         discharge_cap=get_entry_value(entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None),

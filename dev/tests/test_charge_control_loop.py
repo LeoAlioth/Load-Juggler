@@ -336,9 +336,11 @@ async def test_a_cloudy_household_day_curtails_almost_nothing(hass):
 
     The experiments put the design this replaced (production feedforward anchored
     a margin low, plus a bounded integral trim) at ~370 Wh of curtailment on this
-    day. Production measures ~51 Wh here, and the budget below is 100 Wh —
-    generous enough not to be a fingerprint of the seed, tight enough that a
-    return to a stateful value could not pass it.
+    day. Production measured ~51 Wh here when the controller read the site's
+    symmetric EMA; with its own directional view of export and battery power
+    (2026-09-03) it measures ~22 Wh, and the budget below is 35 Wh — generous
+    enough not to be a fingerprint of the seed, tight enough that neither a
+    return to a stateful value nor a return to the symmetric reading passes.
 
     The whole price is register traffic, and that is bounded here too: the
     downward window is what keeps a day of household events from becoming a day
@@ -352,13 +354,13 @@ async def test_a_cloudy_household_day_curtails_almost_nothing(hass):
 
     assert all(row["limiting"] for row in trace)   # the destination hold, all day
     curtailed = _wh(trace, "curtailed")
-    assert curtailed <= 100.0, f"curtailed {curtailed:.1f} Wh"
-    # 145, not the 120 this held when the write deadband was 5 % of the normal
-    # value. The deadband became an absolute 100 W (2026-08-31), which is ~5×
-    # tighter at this register's scale, so the approach to a moving setpoint
-    # costs more writes: 132 measured here against 120 before. The curtailment
-    # budget above is what the trade buys and must not move.
-    assert len(writes) <= 145, f"{len(writes)} writes in 8 h"
+    assert curtailed <= 35.0, f"curtailed {curtailed:.1f} Wh"
+    # 130: the absolute 100 W deadband (2026-08-31) cost writes over the old
+    # 5 % one (132 against 120), and the controller's directional view of the
+    # plant (2026-09-03) gave some back — 113 measured — because a peak that is
+    # followed in two cycles is not chased for ten. The curtailment budget above
+    # is what both trades buy and must not move.
+    assert len(writes) <= 130, f"{len(writes)} writes in 8 h"
     # And the battery really did absorb the surplus rather than the site export
     # it: the ideal permit and what the pack took agree to within a few percent.
     ideal_wh = sum(_ideal(row) for row in trace) * DT / 3600.0
@@ -500,7 +502,8 @@ async def test_a_burst_train_is_almost_free(hass):
     assert curtailed <= 10.0, f"curtailed {curtailed:.1f} Wh"
     # 16, not 10, for the same reason as the cloudy day above: an absolute
     # 100 W deadband tracks a moving setpoint more closely and pays for it in
-    # writes (14 measured). Curtailment is unchanged at ≤10 Wh.
+    # writes (14 measured; 13 with the directional view). Curtailment fell from
+    # 6.8 to 3.4 Wh with that view and stays inside the same ≤10 Wh budget.
     assert len(writes) <= 16, f"{len(writes)} writes in two hours"
 
 
@@ -550,3 +553,45 @@ async def test_a_steady_plant_settles_and_stops_writing(hass):
     ]
     assert written_late == []
     assert _reversals(writes) == 0
+
+
+# ── the controller's own view of the plant, and the verdict it must not touch ──
+
+
+def _lensing_peaks():
+    """A plant just under the wall with 1–3 minute cloud-lensing peaks — the
+    shape of a real export-limited afternoon (2026-09-02 on the maintainer's
+    site: eight bursts of 300–600 W over the setpoint, none over 6 minutes)."""
+    rnd = __import__("random").Random(20260902)
+    bursts, t = [], 300.0
+    while t < 7200:
+        bursts.append((t, t + rnd.uniform(90, 180)))
+        t += rnd.uniform(480, 720)
+
+    def potential(t):
+        return 7500.0 if any(s <= t < e for s, e in bursts) else 6800.0
+
+    return potential
+
+
+async def test_lensing_peaks_do_not_flap_the_excess_verdict(hass):
+    """The coupling the directional view had to respect.
+
+    The charge controller reads export and battery power through its own
+    fast-toward-a-limit smoothers (engine/readers._smooth_directional), and the
+    Excess verdict counts the PERMITTED charge rate as allowance — so a register
+    that follows every peak moves the margin by the same watts. Fully following
+    the readings (weight 1.0) flapped this rig's verdict 21 times in two hours
+    against 1 with the symmetric EMA; the 0.8 weight, scoped to the controller
+    alone, leaves it at 1. Both halves are pinned here: the verdict does not
+    flap, and the register is not written for every peak either.
+    """
+    writes = []
+    trace = await _loop(hass, "lensev", _lensing_peaks(), BASE, soc0=96.0,
+                        cycles=3600, plant_wh=400_000.0, writes=writes,
+                        load=lambda t, verdict: 3000.0 if verdict else 0.0)
+
+    flips = sum(1 for a, b in zip(trace, trace[1:]) if a["verdict"] != b["verdict"])
+    assert flips <= 2, f"the Excess verdict flapped {flips} times"
+    assert len(writes) <= 8, f"{len(writes)} writes chasing lensing peaks"
+    assert _wh(trace, "curtailed") <= 5.0
