@@ -12,6 +12,7 @@ Clear architecture:
 """
 
 import logging
+from typing import Optional
 
 from .models import (
     INACTIVE_STATUSES,
@@ -1089,6 +1090,7 @@ def _source_limit(
     solar: PhaseConstraints,
     excess: PhaseConstraints,
     base: float = 0,
+    excess_ahead: "Optional[float]" = None,
 ) -> float:
     """Compute source-limited maximum allocation for a load.
 
@@ -1100,6 +1102,11 @@ def _source_limit(
     Args:
         base: Current already reserved in pass 1 (accounts for prior deductions
               from source pools so the ceiling includes the pass-1 allocation).
+        excess_ahead: Pass 1 only — the Excess surplus (A on this load's mask)
+              left after every higher-ranked load's CLAIM, or None when nothing
+              ahead has claimed any (this load is the first consumer). Excess
+              loads start in rank order: a lower-ranked one starts only while
+              something is left — see _allocate_minimums.
     """
     mask = load.active_phases_mask
     behavior = load.mode_behavior
@@ -1158,7 +1165,8 @@ def _source_limit(
             and _inverter_covers_load(load, site)
         ):
             return load.max_current
-        return load.max_current if excess.get_available(mask) > 0 else 0
+        pool = excess.get_available(mask) if excess_ahead is None else excess_ahead
+        return load.max_current if pool > 0 else 0
 
     if behavior == BEHAVIOR_FULL_POWER:
         return load.max_current
@@ -1191,6 +1199,18 @@ def _source_limit(
         #
         # Release is untouched — the latch's hysteresis on the reconstructed
         # margin (which adds this load's own draw back) is what lets go.
+        #
+        # The verdict starts only the FIRST Excess consumer, though. Behind a
+        # higher-ranked load that has claimed the surplus, this load starts —
+        # and keeps running — only while something is left after that claim
+        # (``excess_ahead``; a claim is the permit, not the momentary draw,
+        # so a tank that has just been permitted its 2 kW counts in full).
+        # It need not cover this load's own minimum: 500 W left after the
+        # tank still starts a 1.4 kW EVSE at its floor, exactly as the verdict
+        # would. Nothing left means this load yields to the rank above it —
+        # two 2 kW steps do not both engage on a 300 W surplus.
+        if excess_ahead is not None and excess_ahead <= 0:
+            return 0
         e_avail = excess.get_available(mask)
         if e_avail <= 0 and not _excess_verdict(site):
             return 0
@@ -1302,6 +1322,21 @@ def _allocate_minimums(
     """
     allocated = {}
     footprints = {}
+    # Excess start order. The pools above are reduced by each load's real
+    # footprint, which is right for sizing but wrong for STARTING: a load
+    # permitted this cycle has no draw yet, so the next Excess load would see
+    # the whole surplus still there and start too — two 2 kW steps engaging
+    # on a 300 W surplus, then flapping. So a second ledger, ``claims``, is
+    # kept against the pool as it stood before pass 1: every load that gets a
+    # permit claims max(footprint, permit) on its phases (a binary or Excess
+    # load's permit is what it WILL draw; a grid-backed EVSE claims only what
+    # it is measured to draw, so a settled car does not block the surplus it
+    # is not using). An Excess load reads what is left after the claims ahead
+    # of it and starts only while that is positive — or on the verdict alone
+    # when nothing ahead has claimed anything (the saturated single-load site,
+    # where the pool is 0 and yet Excess is on).
+    excess_start = excess.copy()
+    claims = {"A": 0.0, "B": 0.0, "C": 0.0}
     for load in loads:
         mask = load.active_phases_mask
         if not mask:
@@ -1310,7 +1345,10 @@ def _allocate_minimums(
             continue
 
         # Source limit: is this mode allowed to charge at all?
-        src_max = _source_limit(load, site, solar, excess, base=0)
+        src_max = _source_limit(
+            load, site, solar, excess, base=0,
+            excess_ahead=_excess_ahead(excess_start, claims, mask, site),
+        )
         if src_max < load.min_current:
             allocated[load.entity_id] = 0
             footprints[load.entity_id] = 0
@@ -1332,8 +1370,37 @@ def _allocate_minimums(
         footprints[load.entity_id] = draw
         physical = physical.deduct(draw, mask)
         solar, excess = _deduct_from_sources(draw, mask, solar, excess)
+        claim = max(draw, load.min_current) if _claims_its_permit(load) else draw
+        for phase in mask:
+            claims[phase] += claim
 
     return allocated, footprints, physical, solar, excess
+
+
+def _claims_its_permit(load: LoadContext) -> bool:
+    """Whether a load's Excess-start claim is its permit rather than its draw:
+    binary loads (rating in, rating out) and the Excess behaviors, which will
+    draw what they were just permitted as soon as they respond."""
+    return load.min_current == load.max_current or load.mode_behavior in (
+        BEHAVIOR_EXCESS,
+        BEHAVIOR_BINARY_EXCESS,
+    )
+
+
+def _excess_ahead(
+    excess_start: PhaseConstraints, claims: dict, mask: str, site: SiteContext
+) -> "Optional[float]":
+    """Excess surplus (A on ``mask``) left after the claims ahead — None while
+    nothing has been claimed. Symmetric pools are per phase, so the binding
+    claim is the heaviest phase in the mask; an asymmetric pool is one shared
+    total, so every claim anywhere counts, spread over this load's phases."""
+    if not any(claims.values()):
+        return None
+    if site.inverter_supports_asymmetric:
+        claimed = sum(claims.values()) / len(mask)
+    else:
+        claimed = max(claims[phase] for phase in mask)
+    return excess_start.get_available(mask) - claimed
 
 
 def _distribute_per_phase_priority(

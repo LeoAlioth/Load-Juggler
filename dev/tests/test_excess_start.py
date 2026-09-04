@@ -2,12 +2,20 @@
 
 Machine-authored tests — not yet human-reviewed.
 
-The rule: *the verdict starts the load, the pool only sizes it.* A modulating
-load (an EVSE) cannot run below its minimum current, so while Excess is engaged
-its minimum IS the floor — held there while the momentary pool is smaller than
-it, followed upward once the pool exceeds it. That is the start edge the binary
-Excess loads (plug, tank boost) have always had: they engage on threshold-hit
-even though their whole rating overshoots the pool.
+The rule: *the verdict starts the FIRST load, the pool only sizes it.* A
+modulating load (an EVSE) cannot run below its minimum current, so while Excess
+is engaged its minimum IS the floor — held there while the momentary pool is
+smaller than it, followed upward once the pool exceeds it. That is the start
+edge the binary Excess loads (plug, tank boost) have always had: they engage on
+threshold-hit even though their whole rating overshoots the pool.
+
+Behind the first consumer, Excess loads start IN RANK ORDER: each one only
+while the surplus left after the higher-ranked loads' claims (their permits,
+not their not-yet-measured draws) is still positive. It need not cover the
+load's own minimum — 500 W left after a 2.1 kW tank still starts a 1.4 kW EVSE
+at its floor — but nothing left means it waits, and a running one yields. Two
+2 kW steps no longer engage together on a 300 W surplus and flap (the EcoFlow +
+boiler site, 2026-09-03).
 
 Gating the start on the pool instead leaves a modulating load at 0 forever on
 the site the pool is smallest at: with our charge control tracking the export
@@ -189,25 +197,105 @@ def test_a_running_load_rides_a_pool_dip_at_its_minimum():
 
 
 def test_the_floor_is_each_load_s_own_minimum():
-    """Not a constant: a 10 A load floors at 10 A, a 6 A one at 6 A."""
+    """Not a constant: a 10 A load floors at 10 A, a 6 A one at 6 A. 7 A of
+    pool: the first claims its 6 A floor, 1 A is left, so the second starts —
+    at ITS floor of 10 A, which the leftover need not cover."""
     small = _evse("small", min_current=6.0, priority=1)
     large = _evse("large", min_current=10.0, priority=2)
-    _prepare(_site(THRESHOLD, loads=[small, large]))
+    _prepare(_site(THRESHOLD + 7.0 * V, loads=[small, large]))
     assert _close(small.allocated_current, 6.0)
     assert _close(large.allocated_current, 10.0)
 
 
-def test_two_excess_loads_on_an_empty_pool_each_get_their_floor():
-    """The shared verdict engages both, and the first one's draw draining the
-    pool to zero does not stop the second — the same way two Excess plugs both
-    switch on. (The multi-load attribution question this raises is the
-    watch-only 'Excess margin over-credits' item in dev/TODO.md; parity with
-    the binary loads is all that is claimed here.)"""
+def test_two_excess_loads_on_an_empty_pool_only_the_first_starts():
+    """The verdict starts the first consumer on a pool of 0 (the saturated
+    site). The second sees nothing left after the first one's 6 A claim and
+    waits — it no longer rides the same verdict onto a surplus that cannot
+    feed it."""
     first = _evse("first", priority=1)
     second = _evse("second", priority=2)
     _prepare(_site(THRESHOLD, loads=[first, second]))
     assert _close(first.allocated_current, 6.0)
-    assert _close(second.allocated_current, 6.0)
+    assert _close(second.allocated_current, 0.0)
+
+
+def _tank(eid="tank", watts=2100.0, priority=2, heating=True):
+    """A 2.1 kW binary tank (Freeze Protection: full-power behavior, tier 1)
+    that is calling for heat — its draw is its rating while heating and 0 the
+    cycle it has only just been permitted."""
+    amps = watts / V
+    return LoadContext(
+        load_id=eid,
+        entity_id=eid,
+        min_current=amps,
+        max_current=amps,
+        phases=1,
+        priority=priority,
+        device_type="hot_water_tank",
+        operating_mode="Freeze Protection",
+        mode_behavior="full_power",
+        mode_priority=1,
+        active_phases_mask="A",
+        l1_phase="A",
+        l1_current=amps if heating else 0.0,
+        rated_current=amps,
+    )
+
+
+def test_a_lower_ranked_evse_starts_on_what_the_tank_leaves():
+    """Anže's example: a 2.5 kW surplus, a 2.1 kW tank ahead of a 1.4 kW-minimum
+    EVSE. The tank takes its 2.1 kW, 400 W are left, and the EVSE still starts at
+    its 6 A floor — the leftover is positive, that is all the rule asks."""
+    tank = _tank(heating=True)
+    evse = _evse("evse", min_current=6.0, priority=3)
+    # Physical CT: the reconstructed surplus of 2500 W minus the tank's draw.
+    margin = _prepare(_site(THRESHOLD + 2500.0 - 2100.0, loads=[tank, evse]))
+    assert _close(margin, 2500.0, tol=1.0)
+    assert _close(tank.allocated_current, 2100.0 / V)
+    assert _close(evse.allocated_current, 6.0)
+
+
+def test_a_lower_ranked_excess_load_waits_behind_a_tank_that_takes_it_all():
+    """The live pattern: a 300 W surplus, the tank's 2.1 kW step ahead of the
+    station. Nothing is left after the tank's claim, so the station does not
+    start — with or without the tank already drawing (the claim is the permit,
+    so the cycle the tank has only just been permitted counts the same)."""
+    for heating in (True, False):
+        tank = _tank(heating=heating)
+        station = _evse("station", min_current=0.9, max_current=10.4, priority=3)
+        draw = 2100.0 if heating else 0.0
+        _prepare(_site(THRESHOLD + 300.0 - draw, loads=[tank, station]))
+        # The tank's permit is its available current; the published
+        # allocation is its measured footprint (0 until the element responds).
+        assert _close(tank.available_current, 2100.0 / V), f"heating={heating}"
+        assert _close(station.allocated_current, 0.0), f"heating={heating}"
+
+
+def test_a_running_lower_ranked_load_yields_when_the_tank_claims_the_surplus():
+    """The station was charging at its 0.9 A floor when the tank engaged. With
+    the tank's claim exceeding the 300 W surplus the station is cut, not held
+    at its floor — the rank above it owns the surplus."""
+    tank = _tank(heating=True)
+    station = _evse("station", min_current=0.9, max_current=10.4, priority=3, draw=0.9)
+    _prepare(_site(THRESHOLD + 300.0 - 2100.0 - 0.9 * V, loads=[tank, station]))
+    assert _close(tank.allocated_current, 2100.0 / V)
+    assert _close(station.allocated_current, 0.0)
+
+
+def test_a_settled_grid_backed_evse_claims_only_its_draw():
+    """A Standard-mode car permitted 16 A but settled at 10 A does not block
+    the surplus it is not using: an Excess load behind it sees the pool minus
+    10 A, not minus 16 A."""
+    car = LoadContext(
+        load_id="car", entity_id="car", min_current=6.0, max_current=16.0,
+        phases=1, priority=1, device_type="evse", operating_mode="Standard",
+        mode_behavior="full_power", mode_priority=1, active_phases_mask="A",
+        l1_phase="A", l1_current=10.0, draw_settled=True,
+    )
+    evse = _evse("evse", min_current=6.0, priority=2)
+    # 12 A of surplus with the car's 10 A already off the CT.
+    _prepare(_site(THRESHOLD + 12.0 * V - 10.0 * V, loads=[car, evse]))
+    assert _close(evse.allocated_current, 6.0)
 
 
 def test_the_pool_beyond_the_floors_follows_the_rank():
