@@ -702,6 +702,20 @@ def _build_hub_result(
 
     # Net site consumption
     net_consumption = sum(r for r in raw_phases if r is not None) * voltage
+    # Raw export with the managed draws added back, per phase (an importing
+    # phase adds no export — the same clamp the engine's reconstruction uses).
+    _draws = [0.0, 0.0, 0.0]
+    for c in site.loads:
+        for i, d in enumerate(c.get_site_phase_draw()):
+            _draws[i] += d
+    raw_export_with_loads_off = (
+        sum(
+            max(0.0, -(r or 0.0) + d)
+            for r, d in zip(raw_phases, _draws)
+            if r is not None
+        )
+        * voltage
+    )
 
     # Unmanaged (household) draw, W. NOT household_consumption_total — that is
     # only the inverter-served share (solar + battery − export), which omits
@@ -944,14 +958,12 @@ def _build_hub_result(
         "available_inverter_current": round(inverter_remaining_current, 1),
         "total_site_available_power": round(total_site_available, 0),
         "grid_power": published_grid_power,
-        # The same net flow from the SMOOTHED phases — the figure the engine
-        # actually worked from this cycle, and the one ``total_export_power``
-        # (smoothed export with the managed draws added back) is built on.
-        # The Overview shows this so its two grid lines share one basis.
-        "grid_power_smoothed": (
-            None
-            if grid_assumed or site.net_grid_power is None
-            else round(site.net_grid_power, 0)
+        # The reconstructed export on the RAW meter basis: this cycle's meter
+        # export plus the managed draws — what the site would export with our
+        # loads off, on the same reading ``grid_power`` shows. (The engine's
+        # own figure, ``total_export_power``, is the smoothed one.)
+        "total_export_power_raw": (
+            None if grid_assumed else round(raw_export_with_loads_off, 0)
         ),
         "available_grid_power": round(grid_headroom, 0),
         "available_battery_power": battery_remaining,

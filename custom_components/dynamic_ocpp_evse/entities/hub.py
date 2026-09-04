@@ -364,6 +364,18 @@ _HUB_REPUBLISH_KEYS = frozenset(
     # live on the inverter entries) but kept in hub_data for automations.
     "forecast_battery_max_soc",
     "forecast_charge_limit_w",
+    # Read by the Overview page (config_flow/pages.py): the raw-basis
+    # reconstructed export, the per-load measured draws and permits, and the
+    # forecast figures that have no hub sensor of their own. Anything the
+    # Overview reads must be listed here or it silently falls back —
+    # test_the_overview_reads_only_republished_keys pins the set.
+    "total_export_power_raw",
+    "load_draw",
+    "load_targets",
+    "load_available",
+    "forecast_window_tomorrow",
+    "forecast_accuracy_pct",
+    "forecast_clipped_actual_yesterday_kwh",
 }
 
 
