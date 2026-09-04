@@ -22,6 +22,7 @@
 
 ### Bug Fixes
 
+- **A full power station no longer credits the site with its commanded charge speed**: with no AC input/output sensors configured, a power station's draw falls back to the charge speed Load Juggler last wrote. It now falls back to 0 W once the station's battery has reached the backup reserve it is holding, since the station stops drawing from the wall there whatever speed is set. Before, a station sitting full kept adding up to its full commanded speed to the reconstructed export, which could hold the Excess verdict on and over-state the site's surplus.
 - **A PV-only inverter no longer counts as a second battery**: the inverter form saves *Battery max charge power* and *Battery max discharge power* at their 5000 W defaults even when no battery entities are set, and the fleet sums counted them. On a site with a hybrid next to a battery-less string inverter, the hybrid was advised only its share of the charge limit — a 4500 W pack beside a 5000 W phantom got 47 % — so the charge register sat far below what the export overshoot called for while the inverter curtailed, and the Excess allowance was 5 kW wider than the site's real battery. Battery figures are now read only from inverters that have a battery SOC or power entity.
 
 ## 2.1.0

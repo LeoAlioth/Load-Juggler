@@ -253,7 +253,8 @@ async def test_draw_falls_back_to_commanded_speed_without_sensors(
         station_entry,
         drop_options=(CONF_STATION_AC_INPUT_ENTITY_ID, CONF_STATION_AC_OUTPUT_ENTITY_ID),
     )
-    _set_states(hass, speed="800")
+    # Charging means the control has raised the reserve to the charge limit.
+    _set_states(hass, speed="800", soc="60", reserve="90")
 
     domain_data["station_charging"] = True
     charging = _build(hass, entry)
@@ -262,6 +263,38 @@ async def test_draw_falls_back_to_commanded_speed_without_sensors(
     domain_data["station_charging"] = False
     idle = _build(hass, entry)
     assert idle.l1_current == 0
+
+
+async def test_commanded_speed_fallback_is_zero_once_soc_reaches_the_reserve(
+    hass, hub_entry, station_entry, domain_data
+):
+    """Without AC sensors the fallback is what we commanded — but a station
+    whose SOC has reached the reserve it holds draws nothing from the wall,
+    whatever speed is set. Crediting 800 W back to the site there would keep
+    Excess engaged on surplus that is not there."""
+    entry = _entry_variant(
+        station_entry,
+        drop_options=(CONF_STATION_AC_INPUT_ENTITY_ID, CONF_STATION_AC_OUTPUT_ENTITY_ID),
+    )
+    domain_data["station_charging"] = True
+
+    _set_states(hass, speed="800", soc="95", reserve="95")
+    assert _build(hass, entry).l1_current == 0
+
+    _set_states(hass, speed="800", soc="90", reserve="95")
+    assert _build(hass, entry).l1_current == pytest.approx(800 / 230, abs=0.01)
+
+    # No reserve entity readable: the control's last written reserve decides.
+    hass.states.async_remove(RESERVE)
+    domain_data["station_reserve"] = 95
+    hass.states.async_set(SOC, "96", {"device_class": "battery", "unit_of_measurement": "%"})
+    assert _build(hass, entry).l1_current == 0
+
+    # A raise in flight: we wrote 95 but the device still shows 30. SOC 60 is
+    # not a full station — the higher of the two decides.
+    _set_states(hass, speed="800", soc="60", reserve="30")
+    domain_data["station_reserve"] = 95
+    assert _build(hass, entry).l1_current == pytest.approx(800 / 230, abs=0.01)
 
 
 # ── Builder: status ───────────────────────────────────────────────────

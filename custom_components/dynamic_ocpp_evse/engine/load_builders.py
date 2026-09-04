@@ -49,6 +49,7 @@ from ..const import (
     CONF_PLUG_POWER_RATING,
     CONF_PLUG_SWITCH_ENTITY_ID,
     CONF_STATION_AC_INPUT_ENTITY_ID,
+    CONF_STATION_RESERVE_ENTITY_ID,
     CONF_STATION_AC_OUTPUT_ENTITY_ID,
     CONF_STATION_BATTERY_LEVEL_ENTITY_ID,
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
@@ -518,6 +519,33 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
     return load
 
 
+def _station_at_its_reserve(hass, entry, load_rt, soc) -> bool:
+    """Whether the station's SOC has reached the backup reserve it is holding —
+    the point where it stops drawing from the wall regardless of the commanded
+    speed. Judged against the higher of the live reserve entity and the reserve
+    the control last wrote. Unknown SOC or reserve → not at it (the old behaviour)."""
+    if soc is None:
+        return False
+    reserve = _coerce(
+        _read_entity(
+            hass, get_entry_value(entry, CONF_STATION_RESERVE_ENTITY_ID, None), None
+        ),
+        None,
+    )
+    written = load_rt.get("station_reserve")
+    candidates = [r for r in (reserve, written) if r is not None]
+    if not candidates:
+        return False
+    try:
+        # The higher of the two: a reserve we have just raised to charge may
+        # not have reached the device yet (BLE), and until it has, the live
+        # entity still shows the lower normal level — which is not a full
+        # station, only a write in flight.
+        return float(soc) >= max(float(r) for r in candidates)
+    except (TypeError, ValueError):
+        return False
+
+
 def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     """Build a LoadContext for a portable power station (modulating load).
 
@@ -603,11 +631,17 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     )
     if ac_in is not None and ac_out is not None:
         actual_draw_w = max(0.0, ac_in - abs(ac_out))
-    elif load_rt.get("station_charging"):
+    elif load_rt.get("station_charging") and not _station_at_its_reserve(
+        hass, entry, load_rt, soc
+    ):
         # _read_entity parses and unit-converts; _coerce only maps the
         # unavailable sentinel, so the raw state string must not go through it.
         actual_draw_w = _coerce(_read_entity(hass, speed_entity, 0, unit="W"), 0) or 0
     else:
+        # Idle — or commanded to charge but already at the reserve, where the
+        # station's own gate stops the wall draw whatever speed we wrote. Adding
+        # the commanded speed back then would credit the site with surplus it
+        # does not have (a full station kept the Excess verdict on, 2026-09-03).
         actual_draw_w = 0
 
     mode = resolve_operating_mode(
