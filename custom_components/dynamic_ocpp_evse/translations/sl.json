@@ -613,7 +613,7 @@
             },
             "inverter_solar": {
                 "title": "PV",
-                "description": "Sončno polje za tem razsmernikom.",
+                "description": "Sončna elektrarna (PV) za tem razsmernikom.",
                 "data": {
                     "solar_production_entity_id": "Senzor proizvodnje solarne energije",
                     "solar_forecast_device_ids": "Sončna napoved (po ena naprava za vsako PV polje)"
