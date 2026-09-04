@@ -352,9 +352,15 @@ def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
 
     parts.append(f"permitted {_fmt(_load_permit(hass, load_entry, hub_data), 'A')}")
 
-    draw = (runtime.get("load_allocations") or {}).get(load_entry.entry_id)
-    if draw is None:
-        draw = (hub_data.get("load_targets") or {}).get(load_entry.entry_id)
+    # The MEASURED draw (what "Managed loads drawing" sums), not the permit —
+    # a station trickling at its 200 W floor on a 0 A permit reads as such.
+    load_draw = hub_data.get("load_draw")
+    if isinstance(load_draw, dict) and load_entry.entry_id in load_draw:
+        draw = load_draw[load_entry.entry_id]
+    else:
+        draw = (runtime.get("load_allocations") or {}).get(load_entry.entry_id)
+        if draw is None:
+            draw = (hub_data.get("load_targets") or {}).get(load_entry.entry_id)
     parts.append(f"drawing {_fmt(draw, 'A')}")
 
     status = _device_status(hass, load_entry) or (runtime.get("load_status") or {}).get(
@@ -512,7 +518,12 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             lines.append(f"- Phase {label}: {_fmt(abs(value), 'A')} {flow}")
     else:
         lines.append("- No grid CTs configured — off-grid site")
-    grid_w = hub_data.get("grid_power")
+    # The smoothed figure, as the engine saw it this cycle — the same basis as
+    # the reconstructed export below, so the two lines differ by exactly the
+    # managed draws. (The raw meter reading is the grid power sensor.)
+    grid_w = hub_data.get("grid_power_smoothed")
+    if grid_w is None:
+        grid_w = hub_data.get("grid_power")
     if isinstance(grid_w, (int, float)):
         flow = "Exporting" if grid_w < 0 else "Importing"
         lines.append(f"- {flow}: {_fmt(abs(grid_w), 'W', 0)}")

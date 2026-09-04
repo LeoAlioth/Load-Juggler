@@ -944,6 +944,15 @@ def _build_hub_result(
         "available_inverter_current": round(inverter_remaining_current, 1),
         "total_site_available_power": round(total_site_available, 0),
         "grid_power": published_grid_power,
+        # The same net flow from the SMOOTHED phases — the figure the engine
+        # actually worked from this cycle, and the one ``total_export_power``
+        # (smoothed export with the managed draws added back) is built on.
+        # The Overview shows this so its two grid lines share one basis.
+        "grid_power_smoothed": (
+            None
+            if grid_assumed or site.net_grid_power is None
+            else round(site.net_grid_power, 0)
+        ),
         "available_grid_power": round(grid_headroom, 0),
         "available_battery_power": battery_remaining,
         "total_evse_power": published_evse_power,

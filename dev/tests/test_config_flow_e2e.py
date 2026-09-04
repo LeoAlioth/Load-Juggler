@@ -1222,9 +1222,12 @@ async def test_overview_page_reports_live_values(
             "total_evse_power": 2300,
             "excess_available": True,
             "excess_margin_power": 350,
+            "grid_power_smoothed": 1150,
+            "load_draw": {plug.entry_id: 4.3},
         }
     }
-    hass.data[DOMAIN]["load_allocations"] = {plug.entry_id: 4.3}
+    # The allocation is NOT what the line shows — the measured draw is.
+    hass.data[DOMAIN]["load_allocations"] = {plug.entry_id: 9.9}
     hass.data[DOMAIN]["load_status"] = {plug.entry_id: "Charging"}
 
     text = _overview_text(hass, mock_hub_entry.entry_id)
@@ -1242,7 +1245,9 @@ async def test_overview_page_reports_live_values(
     # Priorities are integers, the meter line says which way it flows, and the
     # reconstructed export is named for what it is.
     assert "priority 1 " in text and "priority 1.0" not in text
-    assert "Importing: 1200 W" in text
+    # The smoothed basis, the same one the reconstructed export is built on.
+    assert "Importing: 1150 W" in text
+    assert "drawing 9.9 A" not in text
     assert "Export with managed loads off: 0 W" in text
     assert "Exported now" not in text
 
