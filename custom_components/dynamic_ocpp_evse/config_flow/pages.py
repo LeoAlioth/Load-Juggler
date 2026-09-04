@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_registry import (
 )
 from .. import units
 from ..const import (
+    CONF_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_ENTITY_ID,
@@ -290,6 +291,44 @@ def _phase_mapping_text(hass, load_entry) -> str:
     return "→".join(mapped)
 
 
+def _whole(value):
+    """A priority or rank as the integer it is — never ``2.0``."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value
+    return int(number) if number.is_integer() else number
+
+
+# Non-EVSE loads have their own status sensor with their own vocabulary
+# (Heating / Idle, Charging / Full / Idle, On / Off); the shared load_status
+# bucket speaks EVSE ("Unplugged" for a connector that does not exist).
+_STATUS_UNIQUE_ID_SUFFIX = {
+    DEVICE_TYPE_HOT_WATER_TANK: "_tank_status",
+    DEVICE_TYPE_POWER_STATION: "_charging_status",
+    DEVICE_TYPE_PLUG: "_charging_status",
+}
+
+
+def _device_status(hass, load_entry) -> str | None:
+    """A non-EVSE load's own status sensor state, or None (EVSE, or no sensor)."""
+    suffix = _STATUS_UNIQUE_ID_SUFFIX.get(
+        load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    )
+    if not suffix:
+        return None
+    unique_id = f"{load_entry.data.get(CONF_ENTITY_ID)}{suffix}"
+    entity_id = async_get_entity_registry(hass).async_get_entity_id(
+        "sensor", DOMAIN, unique_id
+    )
+    state = hass.states.get(entity_id) if entity_id else None
+    if state is None or units.is_unavailable(state):
+        return None
+    return state.state
+
+
 def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
     """One "name · mode · priority · permit · draw · status" line."""
     runtime = _runtime(hass)
@@ -297,8 +336,10 @@ def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
     parts = [f"**{load_entry.title}**", _DEVICE_TYPE_LABELS.get(device_type, "Load")]
     parts.append(_load_mode(hass, load_entry))
 
-    priority = get_entry_value(load_entry, CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY)
-    rank = (runtime.get("load_ranks") or {}).get(load_entry.entry_id)
+    priority = _whole(
+        get_entry_value(load_entry, CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY)
+    )
+    rank = _whole((runtime.get("load_ranks") or {}).get(load_entry.entry_id))
     if rank is not None and rank != priority:
         parts.append(f"priority {priority} (served {rank}.)")
     else:
@@ -311,7 +352,9 @@ def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
         draw = (hub_data.get("load_targets") or {}).get(load_entry.entry_id)
     parts.append(f"drawing {_fmt(draw, 'A')}")
 
-    status = (runtime.get("load_status") or {}).get(load_entry.entry_id)
+    status = _device_status(hass, load_entry) or (runtime.get("load_status") or {}).get(
+        load_entry.entry_id
+    )
     parts.append(status or "status unknown")
 
     mask = (runtime.get("load_phase_masks") or {}).get(load_entry.entry_id)
@@ -463,8 +506,18 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             lines.append(f"- Phase {label}: {_fmt(abs(value), 'A')} {flow}")
     else:
         lines.append("- No grid CTs configured — off-grid site")
-    lines.append(f"- Net grid power: {_fmt(hub_data.get('grid_power'), 'W', 0)}")
-    lines.append(f"- Exported now: {_fmt(hub_data.get('total_export_power'), 'W', 0)}")
+    grid_w = hub_data.get("grid_power")
+    if isinstance(grid_w, (int, float)):
+        flow = "Exporting" if grid_w < 0 else "Importing"
+        lines.append(f"- {flow} now: {_fmt(abs(grid_w), 'W', 0)}")
+    else:
+        lines.append(f"- Net grid power: {_fmt(grid_w, 'W', 0)}")
+    # The reconstructed figure the Excess verdict and the charge control steer
+    # on: the meter with the managed loads' draws added back.
+    lines.append(
+        "- Export with managed loads off: "
+        f"{_fmt(hub_data.get('total_export_power'), 'W', 0)}"
+    )
     if hub_data.get("grid_stale"):
         lines.append("- ⚠️ Grid readings are stale — holding the last known values")
 

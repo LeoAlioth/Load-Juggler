@@ -1236,6 +1236,12 @@ async def test_overview_page_reports_live_values(
     assert "Excess trigger: on" in text
     # No forecast configured: the forecast section is absent, not dashes.
     assert "PV forecast" not in text
+    # Priorities are integers, the meter line says which way it flows, and the
+    # reconstructed export is named for what it is.
+    assert "priority 1 " in text and "priority 1.0" not in text
+    assert "Importing now: 1200 W" in text
+    assert "Export with managed loads off: 0 W" in text
+    assert "Exported now" not in text
 
 
 async def test_overview_page_shows_the_forecast_when_it_is_on(
