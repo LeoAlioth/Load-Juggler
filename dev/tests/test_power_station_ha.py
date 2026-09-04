@@ -265,6 +265,17 @@ async def test_draw_falls_back_to_commanded_speed_without_sensors(
     assert idle.l1_current == 0
 
 
+async def test_an_excess_station_claims_its_minimum_for_the_start_ledger(
+    hass, hub_entry, station_entry, domain_data
+):
+    _set_states(hass)
+    load = _build(hass, station_entry)
+    assert load.excess_claim_current == pytest.approx(200 / 230, abs=0.01)
+    # At its charge limit it is inactive and claims nothing.
+    _set_states(hass, soc="95", limit="90")
+    assert _build(hass, station_entry).excess_claim_current == 0
+
+
 async def test_commanded_speed_fallback_is_zero_once_soc_reaches_the_reserve(
     hass, hub_entry, station_entry, domain_data
 ):

@@ -932,6 +932,13 @@ def test_yield_engages_at_the_destination_and_releases_a_band_below_it():
     assert yields_to_excess(94.0, 95.0, 2.0, True) is True
     assert yields_to_excess(93.0, 95.0, 2.0, True) is True
     assert yields_to_excess(92.0, 95.0, 2.0, True) is False
+    # An unknown SOC holds the previous answer — a sensor dropout must not
+    # release the destination hold (nor engage it).
+    assert yields_to_excess(None, 95.0, 2.0, True) is True
+    assert yields_to_excess(None, 95.0, 2.0, False) is False
+    # No destination configured is still never above it.
+    assert yields_to_excess(None, None, 2.0, True) is False
+    assert yields_to_excess(96.0, None, 2.0, True) is False
 
 
 def test_yield_latch_holds_through_an_integer_soc_flap_at_the_destination():
@@ -945,8 +952,11 @@ def test_yield_latch_holds_through_an_integer_soc_flap_at_the_destination():
         assert yielding is True, f"yield released at SOC {soc}"
 
 
-def test_yield_is_off_without_an_soc_or_a_destination():
-    assert yields_to_excess(None, 95.0, 2.0, True) is False
+def test_yield_holds_without_an_soc_and_is_off_without_a_destination():
+    # An unknown SOC keeps whatever the latch said last cycle — both ways.
+    assert yields_to_excess(None, 95.0, 2.0, True) is True
+    assert yields_to_excess(None, 95.0, 2.0, False) is False
+    # No destination is never "above it", whatever the latch was.
     assert yields_to_excess(99.0, None, 2.0, True) is False
 
 
@@ -1129,14 +1139,17 @@ def test_a_clip_appearing_while_parked_hands_over_to_the_reservation():
 
 
 def test_an_unknown_soc_keeps_the_reservations_ordering():
-    """No reading is no destination crossing to detect — ``yields_to_excess`` is
-    False without an SOC — so the unknown case sits where it always sat.
+    """No reading is no destination crossing to detect — ``yields_to_excess``
+    HOLDS its previous answer without an SOC (a dropout must not release a
+    hold that was on, nor engage one that was off) — and below the hold the
+    unknown case sits where it always sat.
 
     Nothing to clip: full rate, because a dead SOC sensor must not strand the
     pack on the floor for the rest of the day. A reservation at risk: protected,
     exactly as before.
     """
-    assert yields_to_excess(None, _DEST, _HYST, True) is False
+    assert yields_to_excess(None, _DEST, _HYST, True) is True
+    assert yields_to_excess(None, _DEST, _HYST, False) is False
     assert recommended_charge_limit(
         0.0, None, _DEST, _BMS_RATE, 0.0, _SP - 5000.0, _SP, _HYST, True,
         at_destination=False,

@@ -138,10 +138,19 @@ def calculate_all_load_targets(site: SiteContext) -> None:
     # steps (circuit groups, hub result) still see every load.
     if active_loads:
         site.loads = active_loads
+        # Loads the verdict is about to start but that are not active yet (a
+        # boosting tank whose thermostat has not responded) still claim their
+        # rating in the Excess start ledger — see _allocate_minimums.
+        site.excess_potential_claims = tuple(
+            (_rank(c), c.active_phases_mask, float(c.excess_claim_current))
+            for c in inactive_loads
+            if c.active_phases_mask and (c.excess_claim_current or 0) > 0
+        )
         try:
             _distribute_power(site, physical_pool, solar_pool, excess_pool)
         finally:
             site.loads = all_loads
+            site.excess_potential_claims = ()
 
     # Set inactive loads to 0 allocated
     for load in inactive_loads:
@@ -1212,6 +1221,12 @@ def _source_limit(
         if excess_ahead is not None and excess_ahead <= 0:
             return 0
         e_avail = excess.get_available(mask)
+        if excess_ahead is not None:
+            # Sized on what the claims ahead leave, too: a load about to start
+            # (claimed, not yet drawing) has not reduced the pool, and this
+            # load must not be handed the surplus it is about to take. In pass
+            # 2 ``base`` is already this load's own reserved share of it.
+            e_avail = min(e_avail, max(0.0, excess_ahead - base))
         if e_avail <= 0 and not _excess_verdict(site):
             return 0
         return max(load.min_current, base + e_avail)
@@ -1314,7 +1329,7 @@ def _allocate_minimums(
     All allocations deduct from solar and excess pools (any draw reduces export).
 
     Returns (allocated dict, footprints dict, remaining physical, remaining
-    solar, remaining excess). ``footprints`` is the real draw deducted here
+    solar, remaining excess, excess-ahead dict for pass 2). ``footprints`` is the real draw deducted here
     for each load — never more than the minimum reserved; a load that
     draws above its minimum has the surplus deducted in pass 2, where it
     fills. Pass 2 uses ``footprints`` to deduct only the *additional* real
@@ -1322,6 +1337,7 @@ def _allocate_minimums(
     """
     allocated = {}
     footprints = {}
+    ahead = {}
     # Excess start order. The pools above are reduced by each load's real
     # footprint, which is right for sizing but wrong for STARTING: a load
     # permitted this cycle has no draw yet, so the next Excess load would see
@@ -1337,6 +1353,10 @@ def _allocate_minimums(
     # where the pool is 0 and yet Excess is on).
     excess_start = excess.copy()
     claims = {"A": 0.0, "B": 0.0, "C": 0.0}
+    # Inactive loads the verdict is about to start (site.excess_potential_claims),
+    # folded into the ledger at their rank so a lower-ranked Excess load sees
+    # them ahead of it on the very cycle the verdict turns on.
+    potential = sorted(getattr(site, "excess_potential_claims", ()) or ())
     for load in loads:
         mask = load.active_phases_mask
         if not mask:
@@ -1344,10 +1364,15 @@ def _allocate_minimums(
             footprints[load.entity_id] = 0
             continue
 
+        while potential and potential[0][0] < _rank(load):
+            _, p_mask, p_claim = potential.pop(0)
+            for phase in p_mask:
+                claims[phase] += p_claim
+
         # Source limit: is this mode allowed to charge at all?
+        ahead[load.entity_id] = _excess_ahead(excess_start, claims, mask, site)
         src_max = _source_limit(
-            load, site, solar, excess, base=0,
-            excess_ahead=_excess_ahead(excess_start, claims, mask, site),
+            load, site, solar, excess, base=0, excess_ahead=ahead[load.entity_id]
         )
         if src_max < load.min_current:
             allocated[load.entity_id] = 0
@@ -1374,7 +1399,7 @@ def _allocate_minimums(
         for phase in mask:
             claims[phase] += claim
 
-    return allocated, footprints, physical, solar, excess
+    return allocated, footprints, physical, solar, excess, ahead
 
 
 def _claims_its_permit(load: LoadContext) -> bool:
@@ -1422,7 +1447,7 @@ def _distribute_per_phase_priority(
     remaining = physical_pool.copy()
     solar_rem = solar_pool.copy()
     excess_rem = excess_pool.copy()
-    allocated, footprints, remaining, solar_rem, excess_rem = _allocate_minimums(
+    allocated, footprints, remaining, solar_rem, excess_rem, ahead = _allocate_minimums(
         sorted_loads, site, remaining, solar_rem, excess_rem
     )
 
@@ -1438,7 +1463,10 @@ def _distribute_per_phase_priority(
             continue
 
         phys_avail = remaining.get_available(mask)
-        src_max = _source_limit(load, site, solar_rem, excess_rem, base=base)
+        src_max = _source_limit(
+            load, site, solar_rem, excess_rem, base=base,
+            excess_ahead=ahead.get(load.entity_id),
+        )
         effective_max = min(src_max, load.max_current)
         additional = max(0, min(effective_max - base, phys_avail))
         total = base + additional
@@ -1521,7 +1549,7 @@ def _distribute_per_phase_shared(
     remaining = physical_pool.copy()
     solar_rem = solar_pool.copy()
     excess_rem = excess_pool.copy()
-    allocated, footprints, remaining, solar_rem, excess_rem = _allocate_minimums(
+    allocated, footprints, remaining, solar_rem, excess_rem, ahead = _allocate_minimums(
         sorted_loads, site, remaining, solar_rem, excess_rem
     )
 
@@ -1544,7 +1572,10 @@ def _distribute_per_phase_shared(
     while True:
         loads_wanting_more = []
         for c in charging_loads:
-            src_max = _source_limit(c, site, solar_rem, excess_rem, base=allocated[c.entity_id])
+            src_max = _source_limit(
+                c, site, solar_rem, excess_rem, base=allocated[c.entity_id],
+                excess_ahead=ahead.get(c.entity_id),
+            )
             effective_max = min(c.max_current, src_max)
             if allocated[c.entity_id] >= effective_max:
                 continue
@@ -1571,7 +1602,10 @@ def _distribute_per_phase_shared(
         batch = []
         for load in loads_wanting_more:
             mask = load.active_phases_mask
-            src_max = _source_limit(load, site, solar_rem, excess_rem, base=allocated[load.entity_id])
+            src_max = _source_limit(
+                load, site, solar_rem, excess_rem, base=allocated[load.entity_id],
+                excess_ahead=ahead.get(load.entity_id),
+            )
             effective_max = min(load.max_current, src_max)
             additional = min(per_load_increment, effective_max - allocated[load.entity_id])
             additional = max(0, additional)

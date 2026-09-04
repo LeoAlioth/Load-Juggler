@@ -96,6 +96,16 @@ class LoadContext:
     # Set by the HA layer (or the test harness) from per-load draw history.
     draw_settled: bool = False
 
+    # The current this load will draw the moment the Excess verdict starts it —
+    # its rating for a binary load (a plug in Excess mode, a tank whose mode
+    # boosts on surplus and is below its boost setpoint), its minimum for a
+    # modulating one (an Excess EVSE or power station); 0 for a load the
+    # verdict does not start. Read by the Excess start ledger for loads that
+    # are not yet ACTIVE — a tank claims its 2 kW the cycle the verdict turns
+    # on, before its thermostat has responded, so a lower-ranked station does
+    # not start on a surplus the tank is about to take (SE17K, 2026-09-04).
+    excess_claim_current: float = 0.0
+
     # Device hardware current rating (A) — the ceiling for available_current.
     # EVSE: its configured max current. Plug: the socket/relay rating, which
     # is separate from the set-power slider (the slider tracks the connected
@@ -237,6 +247,11 @@ class SiteContext:
     # engaged, so a load doesn't chatter at the trigger point. The engine owns
     # the latch and sets this; the calculator stays stateless.
     excess_hysteresis: float = 0
+    # Excess start claims of loads that are INACTIVE this cycle but that the
+    # verdict is about to start: ``((rank, mask, amps), ...)`` — set by
+    # calculate_all_load_targets around the distribution, consumed by the
+    # pass-1 ledger (see LoadContext.excess_claim_current).
+    excess_potential_claims: tuple = ()
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
     is_off_grid: bool = False  # True when no grid CT sensors are configured
 

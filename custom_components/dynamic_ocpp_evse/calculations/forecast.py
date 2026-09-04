@@ -515,12 +515,19 @@ def yields_to_excess(battery_soc, soc_target, hysteresis_pct, was_yielding=False
     side: yielding starts exactly at the destination and never a percent early,
     which is what keeps "below the destination the battery comes first" true.
 
-    False whenever either number is unknown — no SOC to judge by, or no
-    destination configured (a battery heading for 100 % is never above it).
+    False when no destination is configured (a battery heading for 100 % is
+    never above it). An UNKNOWN SOC holds the previous answer: the latch is
+    deliberately not reset by a reading that is merely missing.
 
     Pure function — unit-testable.
     """
-    if battery_soc is None or soc_target is None:
+    if battery_soc is None:
+        # No reading this cycle: HOLD. A sensor hiccup must not release the
+        # destination hold and hand the pack full rate for the outage — live
+        # 2026-09-04, a 90 s Modbus dropout took the advice from ~900 W to
+        # 4500 W. (No destination configured is a different thing: never above.)
+        return bool(was_yielding) if soc_target is not None else False
+    if soc_target is None:
         return False
     if was_yielding:
         return battery_soc >= soc_target - hysteresis_pct

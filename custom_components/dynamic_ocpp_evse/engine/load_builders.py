@@ -23,6 +23,7 @@ import math
 import time
 
 from ..calculations import LoadContext, CircuitGroup
+from ..calculations.models import INACTIVE_STATUSES
 from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
@@ -90,6 +91,12 @@ from ..const import (
     behavior_for,
     resolve_operating_mode,
     resolve_tank_mode_priority,
+    BEHAVIOR_BINARY_EXCESS,
+    BEHAVIOR_EXCESS,
+    CONF_TANK_BOOST_TEMPERATURE,
+    DEFAULT_TANK_BOOST_TEMPERATURE,
+    TANK_MODE_FREEZE_PROTECTION,
+    TANK_MODE_NORMAL,
 )
 from ..helpers import get_entry_value
 from ..ocpp_discovery import ocpp_connector_status_entity
@@ -167,6 +174,12 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
         rated_current=max_current,
+        excess_claim_current=(
+            min_current
+            if behavior_for(mode) == BEHAVIOR_EXCESS
+            and connector_status not in INACTIVE_STATUSES
+            else 0.0
+        ),
         l1_phase=l1_phase,
         l2_phase=l2_phase,
         l3_phase=l3_phase,
@@ -503,6 +516,9 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
         rated_current=plug_max_current,
+        excess_claim_current=(
+            equivalent_current if behavior_for(mode) == BEHAVIOR_BINARY_EXCESS else 0.0
+        ),
         draw_assumed=monitor_unreadable,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
@@ -667,6 +683,12 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
         rated_current=max_current,
+        excess_claim_current=(
+            min_current
+            if behavior_for(mode) == BEHAVIOR_EXCESS
+            and connector_status not in INACTIVE_STATUSES
+            else 0.0
+        ),
         draw_assumed=draw_assumed,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
@@ -776,6 +798,9 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     normal_temp = load_rt.get("tank_normal_temperature") or get_entry_value(
         entry, CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE
     )
+    boost_temp = load_rt.get("tank_boost_temperature") or get_entry_value(
+        entry, CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE
+    )
 
     # Surplus demotion: a tank aiming at boost is heating on energy the site
     # would otherwise dump, so it competes at the Excess tier instead of its
@@ -815,6 +840,16 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         mode_behavior=behavior_for(mode),
         mode_priority=mode_priority,
         rated_current=equivalent_current,
+        # The verdict starts this tank (its setpoint jumps to boost) whenever
+        # its mode rides surplus and it is below the boost temperature — so it
+        # claims its rating from the verdict-on cycle, thermostat idle or not.
+        excess_claim_current=(
+            equivalent_current
+            if mode.key in (TANK_MODE_FREEZE_PROTECTION.key, TANK_MODE_NORMAL.key)
+            and current_temp is not None
+            and current_temp < boost_temp
+            else 0.0
+        ),
         draw_assumed=power_unreadable,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )

@@ -282,6 +282,38 @@ def test_a_running_lower_ranked_load_yields_when_the_tank_claims_the_surplus():
     assert _close(station.allocated_current, 0.0)
 
 
+def test_an_idle_tank_about_to_boost_claims_before_it_heats():
+    """The verdict-on cycle: the tank's thermostat has not responded yet, so
+    the tank is INACTIVE — but it will boost, and it says so
+    (excess_claim_current). The station behind it must not start on the 300 W
+    the tank is about to take, on that very cycle."""
+    tank = _tank(heating=False)
+    tank.connector_status = "Available"  # thermostat idle → inactive
+    tank.excess_claim_current = 2100.0 / V
+    station = _evse("station", min_current=0.9, max_current=10.4, priority=3)
+    _prepare(_site(THRESHOLD + 300.0, loads=[tank, station]))
+    assert tank.allocated_current == 0  # inactive: nothing allocated
+    assert _close(station.allocated_current, 0.0)
+
+    # With room to spare after the tank's claim, the station still starts.
+    tank2 = _tank(heating=False)
+    tank2.connector_status = "Available"
+    tank2.excess_claim_current = 2100.0 / V
+    station2 = _evse("station2", min_current=0.9, max_current=10.4, priority=3)
+    _prepare(_site(THRESHOLD + 2500.0, loads=[tank2, station2]))
+    # Sized on what the tank's claim leaves (400 W), not on the whole pool the
+    # not-yet-drawing tank has left untouched.
+    assert _close(station2.allocated_current, 400.0 / V, tol=0.06)
+
+    # An idle tank that will NOT boost (already above its boost setpoint —
+    # claim 0) leaves the surplus to the station.
+    tank3 = _tank(heating=False)
+    tank3.connector_status = "Available"
+    station3 = _evse("station3", min_current=0.9, max_current=10.4, priority=3)
+    _prepare(_site(THRESHOLD + 300.0, loads=[tank3, station3]))
+    assert _close(station3.allocated_current, 300.0 / V, tol=0.06)
+
+
 def test_a_settled_grid_backed_evse_claims_only_its_draw():
     """A Standard-mode car permitted 16 A but settled at 10 A does not block
     the surplus it is not using: an Excess load behind it sees the pool minus
