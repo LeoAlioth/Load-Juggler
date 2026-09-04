@@ -359,7 +359,8 @@ def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
 
     mask = (runtime.get("load_phase_masks") or {}).get(load_entry.entry_id)
     if mask:
-        parts.append(f"on {mask}")
+        phases = ", ".join(mask)
+        parts.append(f"phase {phases}" if len(mask) == 1 else f"phases {phases}")
 
     cap = _group_cap_for(hass, hub_entry_id, load_entry.entry_id)
     if cap:
