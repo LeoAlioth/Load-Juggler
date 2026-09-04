@@ -189,8 +189,6 @@ from ..ocpp_discovery import (
 )
 from .options import LoadJugglerOptionsFlow
 from .schemas import (
-    _build_hub_inverter_schema,
-    _build_inverter_solar_schema,
     _charger_current_schema,
     _charger_info_schema,
     _charger_timing_schema,
