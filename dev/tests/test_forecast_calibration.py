@@ -14,10 +14,17 @@ from datetime import datetime, timedelta, timezone
 from custom_components.dynamic_ocpp_evse.calculations.calibration import (
     GAIN_CLAMP_HIGH,
     GAIN_CLAMP_LOW,
+    GAIN_HOUR_OFFSET_HIGH,
     block_power_at,
+    block_start,
     clip_pair,
+    close_block,
     day_ratio,
+    hourly_offsets,
     note_gain_sample,
+    prune_series,
+    series_days,
+    series_gain,
     update_gain,
 )
 
@@ -270,3 +277,75 @@ def test_a_day_of_pure_saturation_reports_nothing_rather_than_a_wrong_number():
     for _ in range(8):
         st = note_gain_sample(st, 9000.0, 6000.0, 1.0, constrained=True)
     assert day_ratio(st) is None
+
+
+# --- The 15-minute gain series -------------------------------------------------
+
+
+def _blocks(day_offsets_hours_ratios, base=datetime(2026, 9, 1, 0, 0, tzinfo=timezone(timedelta(hours=2)))):
+    """Blocks of 1000 Wh forecast at (day, hour) with the given actual ratio."""
+    out = []
+    for day, hour, ratio in day_offsets_hours_ratios:
+        start = base + timedelta(days=day, hours=hour)
+        out.append({"t": start.isoformat(), "f": 1000.0, "a": 1000.0 * ratio, "s": 0.0})
+    return out
+
+
+def test_block_start_floors_to_the_forecast_block():
+    now = datetime(2026, 9, 4, 13, 37, 12, tzinfo=timezone(timedelta(hours=2)))
+    assert block_start(now) == "2026-09-04T13:30:00+02:00"
+
+
+def test_close_block_records_energy_and_skips_empty_blocks():
+    assert close_block([], "t0", {}) == []
+    series = close_block([], "t0", {"forecast_wh": 250.0, "actual_wh": 240.0, "skipped_wh": 0.0})
+    assert series == [{"t": "t0", "f": 250.0, "a": 240.0, "s": 0.0}]
+    # A fully constrained block is kept — its skipped energy is information.
+    series = close_block(series, "t1", {"skipped_wh": 300.0})
+    assert series[-1] == {"t": "t1", "f": 0.0, "a": 0.0, "s": 300.0}
+
+
+def test_prune_series_keeps_the_last_fourteen_days():
+    blocks = _blocks([(0, 12, 1.0), (10, 12, 1.0), (15, 12, 1.0)])
+    now = datetime(2026, 9, 16, 12, 0, tzinfo=timezone(timedelta(hours=2)))
+    kept = prune_series(blocks, now, days=14)
+    assert [b["t"][:10] for b in kept] == ["2026-09-11", "2026-09-16"]
+
+
+def test_series_gain_is_one_ratio_of_two_sums_clamped():
+    # 3 kWh at 0.9 and 1 kWh at 1.5: energy-weighted 1.05, not the mean 1.2.
+    blocks = _blocks([(0, 10, 0.9), (0, 11, 0.9), (0, 12, 0.9), (0, 13, 1.5)])
+    assert abs(series_gain(blocks) - 1.05) < 1e-9
+    assert series_gain(_blocks([(0, 12, 0.2), (0, 13, 0.2), (0, 14, 0.2)])) == GAIN_CLAMP_LOW
+    # Too little comparable energy says nothing.
+    assert series_gain(_blocks([(0, 12, 0.5)])) is None
+
+
+def test_hourly_offsets_ride_on_the_overall_gain():
+    """Mornings read 0.6 of forecast, afternoons 1.2: the overall gain is 0.9
+    and the hours carry only their departure from it — not independent gains."""
+    blocks = _blocks(
+        [(d, 8, 0.6) for d in range(3)] + [(d, 14, 1.2) for d in range(3)]
+    )
+    overall = series_gain(blocks)
+    assert abs(overall - 0.9) < 1e-9
+    offsets = hourly_offsets(blocks, overall, min_wh=2000.0)
+    assert abs(offsets[8] - 0.6 / 0.9) < 1e-3
+    assert abs(offsets[14] - 1.2 / 0.9) < 1e-3
+    # Effective gain per hour = overall × offset — recovers each hour's ratio.
+    assert abs(overall * offsets[8] - 0.6) < 1e-3
+
+
+def test_hourly_offsets_need_enough_energy_and_are_clamped():
+    blocks = _blocks([(0, 8, 5.0), (0, 8, 5.0), (0, 14, 1.0), (0, 14, 1.0), (0, 14, 1.0)])
+    overall = series_gain(blocks)  # clamped at 1.25
+    offsets = hourly_offsets(blocks, overall, min_wh=2000.0)
+    assert offsets[8] == GAIN_HOUR_OFFSET_HIGH
+    assert 14 in offsets
+    assert hourly_offsets(blocks, overall, min_wh=5000.0) == {}
+
+
+def test_series_days_counts_dates_with_comparable_energy():
+    blocks = _blocks([(0, 12, 1.0), (0, 13, 1.0), (3, 12, 1.0)])
+    blocks.append({"t": "2026-09-09T12:00:00+02:00", "f": 0.0, "a": 0.0, "s": 400.0})
+    assert series_days(blocks) == 2

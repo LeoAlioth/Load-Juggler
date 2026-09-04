@@ -20,6 +20,8 @@ nothing, so a season of evidence decides whether either is worth applying.
 Pure functions — unit-testable.
 """
 
+from datetime import timedelta
+
 import logging
 
 _LOGGER = logging.getLogger(__name__)
@@ -161,6 +163,100 @@ def update_gain(
         return gain
     moved = float(gain) + weight * (float(ratio) - float(gain))
     return min(high, max(low, moved))
+
+
+# --- The 15-minute gain series -------------------------------------------------
+#
+# The gain is computed from a stored series of per-block energy pairs rather
+# than from a running average: recomputable when the rule changes, inspectable,
+# and able to carry SHAPE — an overall gain offset by hour of day — which a
+# scalar average cannot. Blocks match the forecast's own resolution.
+GAIN_SERIES_DAYS = 14          # how much history the series keeps
+GAIN_BLOCK_MINUTES = 15        # one Open-Meteo forecast block
+GAIN_MIN_HOUR_WH = 1000.0      # an hour-of-day needs this much comparable
+                               # forecast energy across the window to offset
+GAIN_HOUR_OFFSET_LOW = 0.5     # bounds on an hour's offset from the overall
+GAIN_HOUR_OFFSET_HIGH = 2.0
+
+
+def block_start(now, minutes=GAIN_BLOCK_MINUTES):
+    """The start of the block ``now`` falls in — the series key, ISO 8601."""
+    floored = now.replace(
+        minute=(now.minute // minutes) * minutes, second=0, microsecond=0
+    )
+    return floored.isoformat()
+
+
+def close_block(series, start_iso, acc):
+    """Append a finished block's accumulators to ``series`` (a new list).
+
+    A block with no comparable energy at all (night, or fully constrained) is
+    still recorded when it skipped something — the skipped energy is what says
+    the day was curtailed — but an empty block is not.
+    """
+    acc = acc or {}
+    f = float(acc.get("forecast_wh", 0.0))
+    a = float(acc.get("actual_wh", 0.0))
+    k = float(acc.get("skipped_wh", 0.0))
+    if f <= 0 and a <= 0 and k <= 0:
+        return list(series or [])
+    return list(series or []) + [
+        {"t": start_iso, "f": round(f, 1), "a": round(a, 1), "s": round(k, 1)}
+    ]
+
+
+def prune_series(series, now, days=GAIN_SERIES_DAYS):
+    """Drop blocks older than ``days`` before ``now`` (ISO strings compare in
+    order because they share ``now``'s offset — the series is local time)."""
+    cutoff = (now - timedelta(days=days)).isoformat()
+    return [b for b in (series or []) if b.get("t", "") >= cutoff]
+
+
+def series_gain(series, min_wh=GAIN_MIN_DAY_WH, low=GAIN_CLAMP_LOW, high=GAIN_CLAMP_HIGH):
+    """The overall gain: energy-weighted actual ÷ forecast over the whole
+    series, clamped — or None while the series holds too little comparable
+    energy to say anything (the caller keeps 1.0)."""
+    f = sum(float(b.get("f", 0.0)) for b in (series or []))
+    a = sum(float(b.get("a", 0.0)) for b in (series or []))
+    if f < min_wh or f <= 0:
+        return None
+    return min(high, max(low, a / f))
+
+
+def hourly_offsets(series, overall, min_wh=GAIN_MIN_HOUR_WH,
+                   low=GAIN_HOUR_OFFSET_LOW, high=GAIN_HOUR_OFFSET_HIGH):
+    """Per hour-of-day multipliers on the overall gain: ``{hour: offset}``.
+
+    NOT independent hourly gains. Each hour's own energy-weighted ratio is
+    expressed relative to the overall gain, so the overall figure stays the one
+    number that says how far the forecast is off and the offsets only say
+    where in the day it is off more or less (behind a ridge at dawn, under
+    lensing at noon). An hour appears only when its comparable forecast energy
+    across the window reaches ``min_wh``; offsets are clamped.
+    """
+    if not overall or overall <= 0:
+        return {}
+    f = {}
+    a = {}
+    for b in series or []:
+        t = b.get("t", "")
+        try:
+            hour = int(t[11:13])
+        except (TypeError, ValueError):
+            continue
+        f[hour] = f.get(hour, 0.0) + float(b.get("f", 0.0))
+        a[hour] = a.get(hour, 0.0) + float(b.get("a", 0.0))
+    offsets = {}
+    for hour in sorted(f):
+        if f[hour] < min_wh or f[hour] <= 0:
+            continue
+        offsets[hour] = round(min(high, max(low, (a[hour] / f[hour]) / overall)), 3)
+    return offsets
+
+
+def series_days(series):
+    """How many distinct dates carry comparable energy in the series."""
+    return len({b.get("t", "")[:10] for b in (series or []) if float(b.get("f", 0.0)) > 0})
 
 
 def clip_pair(samples, threshold_w):

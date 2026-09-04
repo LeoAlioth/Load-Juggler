@@ -25,6 +25,7 @@ from homeassistant.components.sensor import (
 )
 
 from ..const import (
+    DOMAIN,
     CHARGE_LIMIT_UNIT_AMPS,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
@@ -48,6 +49,10 @@ from ..control.inverter import (
     send_inverter_charge_limit,
     send_inverter_soc_limit,
 )
+from homeassistant.helpers.restore_state import RestoreEntity, RestoredExtraData
+from homeassistant.util import dt as dt_util
+
+from ..engine.forecast_observers import gain_state, restore_gain_state
 from ..helpers import get_entry_value
 from .mixins import (
     InverterEntityMixin,
@@ -124,18 +129,30 @@ INVERTER_SENSOR_DEFINITIONS = [
         "icon": "mdi:target-variant",
         "decimals": 1,
         "requires_forecast_device": True,
+        # This sensor carries the gain observer's 15-minute series across
+        # restarts (restore data, not attributes — the recorder must not copy
+        # a growing array on every state change) and publishes the learned
+        # gain, its hourly offsets and the series size as attributes.
+        "restores_gain": True,
     },
 ]
 
 
 class LoadJugglerInverterDataSensor(
-    SiteCycleConsumerMixin, InverterEntityMixin, SensorEntity
+    SiteCycleConsumerMixin, InverterEntityMixin, SensorEntity, RestoreEntity
 ):
     """Generic per-inverter data sensor driven by a definition dict.
 
     A pure reader of the hub's published fleet aggregate, so it is pushed by
     the hub coordinator and available only while that publication is fresh.
     All of these are numeric instantaneous readings (W, %) — measurement.
+
+    One definition (``restores_gain``) also carries state: the forecast gain
+    observer's series of 15-minute forecast/actual energy pairs rides along in
+    this entity's RESTORE data, so a restart does not forget what the array's
+    forecast has been doing for the last two weeks. Restore data is written by
+    HA at shutdown and every 15 minutes, outside the recorder; the attributes
+    expose only the derived summary.
     """
 
     # HA composes the friendly name as "<device name> <entity name>", so
@@ -182,6 +199,49 @@ class LoadJugglerInverterDataSensor(
         value = own.get(self._defn["data_key"])
         self._attr_native_value = (
             None if value is None else round(float(value), self._defn["decimals"])
+        )
+
+    # --- The gain series: attributes out, restore data across restarts ------
+
+    def _hub_runtime(self) -> dict:
+        """The hub's runtime bucket — where the observers keep their state."""
+        hub_id = self._site_hub_entry_id
+        hubs = self.hass.data.setdefault(DOMAIN, {}).setdefault("hubs", {})
+        return hubs.setdefault(hub_id, {}) if hub_id else {}
+
+    @property
+    def extra_state_attributes(self):
+        if not self._defn.get("restores_gain"):
+            return None
+        own = self._my_inverter_data()
+        if not own or "forecast_gain" not in own:
+            return None
+        return {
+            "gain": own.get("forecast_gain"),
+            "gain_hourly": own.get("forecast_gain_hourly") or {},
+            "gain_days": own.get("forecast_gain_days"),
+            "gain_blocks": own.get("forecast_gain_blocks"),
+        }
+
+    @property
+    def extra_restore_state_data(self):
+        if not self._defn.get("restores_gain"):
+            return None
+        saved = gain_state(self._hub_runtime(), self.config_entry.entry_id)
+        return RestoredExtraData(saved) if saved else None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if not self._defn.get("restores_gain"):
+            return
+        last = await self.async_get_last_extra_data()
+        if last is None:
+            return
+        restore_gain_state(
+            self._hub_runtime(),
+            self.config_entry.entry_id,
+            last.as_dict(),
+            dt_util.now().date(),
         )
 
 

@@ -6393,3 +6393,139 @@ async def test_a_pv_only_inverter_takes_no_share_of_the_battery_advice(hass):
     assert own["forecast_charge_limit_w"] == 1000
     assert "forecast_charge_limit_w" not in result["inverters"].get(array.entry_id, {})
     assert result["excess_margin_power"] == pytest.approx(-4000.0, abs=1.0)
+
+
+# --- The gain observer keeps a 15-minute series and survives a restart --------
+
+
+def _gain_saved_state(day_iso):
+    """Two weeks' worth of an array reading 0.9 of its forecast: 3 blocks a day
+    of 1000 Wh forecast / 900 Wh measured at 10:00, 12:00 and 14:00."""
+    from datetime import date, timedelta as td
+    day = date.fromisoformat(day_iso)
+    series = []
+    for back in range(1, 8):
+        d = day - td(days=back)
+        for hour in (10, 12, 14):
+            series.append(
+                {"t": f"{d.isoformat()}T{hour:02d}:00:00+02:00", "f": 1000.0, "a": 900.0, "s": 0.0}
+            )
+    return {
+        "day": day_iso,
+        "acc": {"forecast_wh": 3000.0, "actual_wh": 2700.0, "skipped_wh": 0.0},
+        "block": f"{day_iso}T09:00:00+02:00",
+        "block_acc": {"forecast_wh": 100.0, "actual_wh": 90.0, "skipped_wh": 0.0},
+        "series": series,
+        "last_ratio": 0.9,
+    }
+
+
+def test_restore_gain_state_rebuilds_the_gain_from_the_series():
+    """Restored on the same local day: the series, the running day and the open
+    block all come back and the gain is recomputed from the series — 0.9 over
+    7 days — not trusted from a saved scalar."""
+    from datetime import date
+    from custom_components.dynamic_ocpp_evse.engine.forecast_observers import (
+        gain_state,
+        restore_gain_state,
+    )
+
+    runtime = {}
+    assert restore_gain_state(runtime, "inv", _gain_saved_state("2026-09-04"), date(2026, 9, 4))
+    state = runtime["_forecast_gain_observer"]["inv"]
+    assert abs(state["gain"] - 0.9) < 1e-9
+    assert state["days"] == 7
+    assert state["acc"]["forecast_wh"] == 3000.0
+    assert state["block"] == "2026-09-04T09:00:00+02:00"
+    assert state["hourly"][10] == 1.0 and state["hourly"][14] == 1.0
+    # Round trip: what the sensor saves is what the restore reads.
+    saved = gain_state(runtime, "inv")
+    assert saved["series"] == state["series"] and saved["day"] == "2026-09-04"
+    # A second restore never overwrites a live observer.
+    assert not restore_gain_state(runtime, "inv", {"series": []}, date(2026, 9, 4))
+
+
+def test_restore_gain_state_drops_a_stale_day_but_keeps_the_series():
+    from datetime import date
+    from custom_components.dynamic_ocpp_evse.engine.forecast_observers import (
+        restore_gain_state,
+    )
+
+    runtime = {}
+    restore_gain_state(runtime, "inv", _gain_saved_state("2026-09-03"), date(2026, 9, 4))
+    state = runtime["_forecast_gain_observer"]["inv"]
+    assert state["acc"] == {} and state["block"] is None and state["block_acc"] == {}
+    assert state["day"] == "2026-09-04"
+    assert abs(state["gain"] - 0.9) < 1e-9 and state["days"] == 7
+
+
+def test_observe_gain_closes_blocks_into_the_series_and_recomputes():
+    """Samples across a block boundary: the first block is closed into the
+    series on rollover, today's accuracy keeps accumulating, and the gain is
+    recomputed from the whole series."""
+    from datetime import date, datetime as dt, timezone as tz, timedelta as td
+    from custom_components.dynamic_ocpp_evse.engine.forecast_observers import (
+        observe_gain,
+        restore_gain_state,
+    )
+
+    runtime = {}
+    restore_gain_state(runtime, "inv", _gain_saved_state("2026-09-04"), date(2026, 9, 4))
+    local = tz(td(hours=2))
+    t = dt(2026, 9, 4, 9, 10, tzinfo=local)
+    # 50 min of 4000 W forecast against 4000 W measured — a perfect block.
+    for step in range(10):
+        out = observe_gain(
+            runtime, "inv", t.date(), 4000.0, 4000.0, 5 / 60, False,
+            now_local=t + td(minutes=5 * step),
+        )
+    state = runtime["_forecast_gain_observer"]["inv"]
+    # 09:00 block closed (its restored 100 Wh + 15 min of 4000 W), 09:15–09:45
+    # closed too, 09:45 block still open.
+    assert state["block"] == "2026-09-04T09:45:00+02:00"
+    assert [b["t"] for b in state["series"][-3:]] == [
+        "2026-09-04T09:00:00+02:00", "2026-09-04T09:15:00+02:00", "2026-09-04T09:30:00+02:00",
+    ]
+    # Seven days at 0.9 plus ~2.6 kWh at 1.0 pulls the gain above 0.9.
+    assert 0.9 < out["forecast_gain"] < 1.0
+    assert out["forecast_gain_days"] == 8
+    assert out["forecast_gain_blocks"] == len(state["series"])
+    assert out["forecast_accuracy_pct"] > 90.0
+    assert isinstance(out["forecast_gain_hourly"], dict)
+
+
+async def test_the_accuracy_sensor_restores_the_gain_series(hass: HomeAssistant):
+    """The sensor seeds the observer from its restore data when it is added, and
+    offers the observer's state back as restore data."""
+    from datetime import date
+    from homeassistant.helpers.restore_state import RestoredExtraData
+    from homeassistant.util import dt as dt_util
+    from unittest.mock import patch, AsyncMock
+    from custom_components.dynamic_ocpp_evse.entities.inverter import (
+        INVERTER_SENSOR_DEFINITIONS,
+        LoadJugglerInverterDataSensor,
+    )
+
+    hub = _destination_hub("restore")
+    hub.add_to_hass(hass)
+    array = _destination_inverter(hub, "restore", "number.dst_normal")
+    array.add_to_hass(hass)
+    hass.data[DOMAIN] = {"hubs": {hub.entry_id: {"loads": []}}, "loads": {}, "load_allocations": {}, "inverters": {}}
+
+    defn = next(d for d in INVERTER_SENSOR_DEFINITIONS if d.get("restores_gain"))
+    sensor = LoadJugglerInverterDataSensor(hass, array, "restore_inv", defn)
+    sensor.hass = hass
+    sensor.entity_id = "sensor.restore_inv_forecast_accuracy"
+    today = dt_util.now().date().isoformat()
+    saved = RestoredExtraData(_gain_saved_state(today))
+    with patch.object(
+        LoadJugglerInverterDataSensor, "async_get_last_extra_data", AsyncMock(return_value=saved)
+    ), patch.object(LoadJugglerInverterDataSensor, "async_get_last_state", AsyncMock(return_value=None)):
+        await sensor.async_added_to_hass()
+
+    state = hass.data[DOMAIN]["hubs"][hub.entry_id]["_forecast_gain_observer"][array.entry_id]
+    assert abs(state["gain"] - 0.9) < 1e-9 and state["days"] == 7
+    # And the way back: the restore data offered is the observer's state.
+    offered = sensor.extra_restore_state_data.as_dict()
+    assert offered["series"] == state["series"]
+    assert offered["day"] == today

@@ -478,6 +478,7 @@ def _compute_forecast_advice(
             fleet.member_solar_production(m, site.voltage),
             dt_hours,
             constrained,
+            now_local=now_local,
         )
         per_inverter.setdefault(m.entry_id, {}).update(observed)
 
