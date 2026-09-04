@@ -717,18 +717,10 @@ def _selector_config(data_schema, key) -> dict:
     raise AssertionError(f"{key} not present in schema")
 
 
-async def _open_inverter_settings(hass, entry_id, features=None):
-    """Open an inverter's options: the features page first, then settings.
-
-    ``features`` defaults to everything declared, so the settings page shows
-    every section the combined page used to.
-    """
-    result = await _open_options(hass, entry_id)
-    assert result["step_id"] == "inverter_features"
-    if features is None:
-        features = ["solar", "battery", "battery_control"]
-    return await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input={CONF_INVERTER_FEATURES: features}
+def _declare_features(hass, entry, features):
+    """Declare an inverter's features so its menu offers the matching pages."""
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_INVERTER_FEATURES: list(features)}
     )
 
 
@@ -786,11 +778,11 @@ async def test_inverter_options_does_not_autodetect_phases(
             {"device_class": "current", "unit_of_measurement": "A"},
         )
 
-    result = await _open_inverter_settings(hass, inverter.entry_id)
+    result = await _open_options(hass, inverter.entry_id, step="inverter_core")
 
     # None of the three phase fields may be pre-filled.
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "inverter_settings"
+    assert result["step_id"] == "inverter_core"
     schema = result["data_schema"]
     assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID) is None
     assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID) is None
@@ -840,8 +832,9 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
     hass.states.async_set("number.deye_tou_soc_2", "100", {"max": 100})
     hass.states.async_set("input_number.battery_ceiling", "90")
 
-    result = await _open_inverter_settings(hass, inverter.entry_id)
-    assert result["step_id"] == "inverter_settings"
+    _declare_features(hass, inverter, ["battery", "battery_control"])
+    result = await _open_options(hass, inverter.entry_id, step="inverter_control")
+    assert result["step_id"] == "inverter_control"
     schema = result["data_schema"]
     assert _schema_has(schema, CONF_SOC_LIMIT_ENTITY_IDS)
     assert _schema_has(schema, CONF_SOC_LIMIT_NORMAL_ENTITY_ID)
@@ -874,7 +867,8 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
     ]
 
     # Now clear them the way the UI does: the key simply isn't submitted.
-    result = await _open_inverter_settings(hass, inverter.entry_id)
+    _declare_features(hass, inverter, ["battery", "battery_control"])
+    result = await _open_options(hass, inverter.entry_id, step="inverter_control")
     schema = result["data_schema"]
     submitted = {
         key: value
@@ -930,8 +924,9 @@ async def test_inverter_options_round_trip_the_minimum_charge_limit(
             ent, "5.0", {"device_class": "current", "unit_of_measurement": "A"}
         )
 
-    result = await _open_inverter_settings(hass, inverter.entry_id)
-    assert result["step_id"] == "inverter_settings"
+    _declare_features(hass, inverter, ["battery", "battery_control"])
+    result = await _open_options(hass, inverter.entry_id, step="inverter_control")
+    assert result["step_id"] == "inverter_control"
     schema = result["data_schema"]
     assert _schema_has(schema, CONF_CHARGE_LIMIT_MINIMUM)
     # Never negative, and defaulting to 0 — which is "no floor at all", the
@@ -957,7 +952,8 @@ async def test_inverter_options_round_trip_the_minimum_charge_limit(
     assert inverter.options[CONF_CHARGE_LIMIT_MINIMUM] == 2
 
     # And the stored value comes back as the form's default on the next visit.
-    result = await _open_inverter_settings(hass, inverter.entry_id)
+    _declare_features(hass, inverter, ["battery", "battery_control"])
+    result = await _open_options(hass, inverter.entry_id, step="inverter_control")
     assert _schema_default(result["data_schema"], CONF_CHARGE_LIMIT_MINIMUM) == 2
 
 
@@ -2038,27 +2034,25 @@ async def test_unticking_the_battery_in_options_clears_its_settings(
     stored_before = {**inverter.data, **inverter.options}
     assert stored_before.get(CONF_BATTERY_SOC_ENTITY_ID)
 
-    result = await _open_options(hass, inverter.entry_id)
+    menu = await hass.config_entries.options.async_init(inverter.entry_id)
+    assert menu["type"] == FlowResultType.MENU
+    assert "inverter_battery" in menu["menu_options"]
+    assert "inverter_core" in menu["menu_options"]
+
+    result = await _open_options(hass, inverter.entry_id, step="inverter_features")
     assert result["step_id"] == "inverter_features"
     assert "battery" in _suggested_value(result["data_schema"], CONF_INVERTER_FEATURES)
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], user_input={CONF_INVERTER_FEATURES: ["solar"]}
     )
-    assert result["step_id"] == "inverter_settings"
-    schema = result["data_schema"]
-    assert not _schema_has(schema, CONF_BATTERY_SOC_ENTITY_ID)
-    assert not _schema_has(schema, CONF_BATTERY_MAX_CHARGE_POWER)
-
-    submitted = {
-        key: value
-        for key, value in stored_before.items()
-        if _schema_has(schema, key) and value is not None
-    }
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input=submitted
-    )
     assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    # The battery page is gone from the menu, the solar page is offered.
+    menu = await hass.config_entries.options.async_init(inverter.entry_id)
+    assert "inverter_battery" not in menu["menu_options"]
+    assert "inverter_solar" in menu["menu_options"]
+    assert "inverter_control" not in menu["menu_options"]
     assert inverter.options[CONF_INVERTER_FEATURES] == ["solar"]
     assert inverter.options[CONF_BATTERY_SOC_ENTITY_ID] is None
     assert inverter.options[CONF_BATTERY_POWER_ENTITY_ID] is None

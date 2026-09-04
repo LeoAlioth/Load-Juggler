@@ -1203,20 +1203,6 @@ def _has_feature(features, feature) -> bool:
     return features is None or feature in features
 
 
-def _inverter_combined_schema(
-    hass, defaults: dict | None = None, features=None
-) -> vol.Schema:
-    """Inverter + solar + battery + write-control on one page (inverter
-    options flow), each section only when its feature is declared.
-    ``features=None`` shows every section."""
-    fields = _inverter_config_schema(hass, defaults, features)
-    if _has_feature(features, INVERTER_FEATURE_BATTERY):
-        fields.extend(_build_inverter_battery_schema(hass, defaults))
-    if _has_feature(features, INVERTER_FEATURE_BATTERY_CONTROL):
-        fields.extend(_build_inverter_control_schema(hass, defaults))
-    return vol.Schema(dict(fields))
-
-
 def _hub_schema(
     hass,
     defaults: dict | None = None,

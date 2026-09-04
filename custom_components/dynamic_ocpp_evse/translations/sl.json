@@ -470,7 +470,12 @@
                 "menu_options": {
                     "settings": "Uredi nastavitve",
                     "overview": "Pregled (v živo)",
-                    "summary": "Kako odloča"
+                    "summary": "Kako odloča",
+                    "inverter_features": "Funkcije razsmernika",
+                    "inverter_core": "Razsmernik",
+                    "inverter_solar": "PV",
+                    "inverter_battery": "Baterija",
+                    "inverter_control": "Upravljanje polnjenja baterije"
                 }
             },
             "overview": {
@@ -582,14 +587,14 @@
             },
             "inverter_features": {
                 "title": "Funkcije razsmernika",
-                "description": "Označite, kaj ta razsmernik ima. Podrobnosti boste nastavili na naslednjih straneh.",
+                "description": "Označite, kaj ta razsmernik ima. V meniju se nato pokaže stran za vsako.",
                 "data": {
                     "inverter_features": "Ta razsmernik ima"
                 }
             },
-            "inverter_settings": {
-                "title": "Posodobi nastavitve razsmernika",
-                "description": "Posodobite ta razsmernik.",
+            "inverter_core": {
+                "title": "Razsmernik",
+                "description": "AC stran razsmernika: zmogljivost, topologija in senzorji izhoda po fazah.",
                 "data": {
                     "inverter_max_power": "Skupna moč razsmernika",
                     "inverter_max_power_per_phase": "Največja moč razsmernika na fazo",
@@ -597,15 +602,51 @@
                     "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
                     "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
                     "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
-                    "wiring_topology": "Topologija ožičenja",
+                    "wiring_topology": "Topologija ožičenja"
+                },
+                "data_description": {
+                    "inverter_max_power": "Nazivna moč s podatkovnega lista tega razsmernika. 0 = brez omejitve.",
+                    "inverter_max_power_per_phase": "Običajno skupna moč, deljena s številom faz. 0 = brez omejitve na fazo.",
+                    "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
+                    "wiring_topology": "Vzporedno: ta razsmernik napaja omrežno zbiralko neposredno. Zaporedno: moč teče skozi ta razsmernik (hibrid z baterijo)."
+                }
+            },
+            "inverter_solar": {
+                "title": "PV",
+                "description": "Sončno polje za tem razsmernikom.",
+                "data": {
+                    "solar_production_entity_id": "Senzor proizvodnje solarne energije",
+                    "solar_forecast_device_ids": "Sončna napoved (po ena naprava za vsako PV polje)"
+                },
+                "data_description": {
+                    "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
+                    "solar_forecast_device_ids": "Naprave iz integracije Open-Meteo Solar Forecast — ta ustvari po eno napravo za vsako PV polje, zato izberite napravo vsakega polja. Skupaj z omejitvijo izvoza in kapaciteto baterije omogoči svetovalne senzorje, ki priporočajo, kako polna sme biti baterija pred opoldanskim vrhom proizvodnje."
+                }
+            },
+            "inverter_battery": {
+                "title": "Baterija",
+                "description": "Baterija za tem razsmernikom.",
+                "data": {
                     "battery_soc_entity_id": "Senzor napolnjenosti baterije (SOC)",
                     "battery_power_entity_id": "Senzor moči baterije",
                     "battery_max_charge_power": "Največja moč polnjenja baterije",
                     "battery_max_discharge_power": "Največja moč praznjenja baterije",
                     "battery_soc_full": "Napolnjenost polne baterije",
-                    "battery_capacity_kwh": "Kapaciteta baterije",
-                    "solar_production_entity_id": "Senzor proizvodnje solarne energije",
-                    "solar_forecast_device_ids": "Sončna napoved (po ena naprava za vsako PV polje)",
+                    "battery_capacity_kwh": "Kapaciteta baterije"
+                },
+                "data_description": {
+                    "battery_soc_entity_id": "Odstotek napolnjenosti baterije. Na tej vrednosti temeljijo načini delovanja, vezani na SOC: kako globoko posamezen način sme izprazniti shranjeno sončno energijo in kdaj velja baterija za polno.",
+                    "battery_power_entity_id": "Pozitivno med praznjenjem, negativno med polnjenjem.",
+                    "battery_max_charge_power": "Najvišja moč, s katero se ta baterija sme polniti. Uporablja se kot ponor pri sprožilcu načina Presežek — dokler baterija lahko sprejme toliko moči, ima merilno mesto kam shraniti proizvodnjo in porabniki v načinu Presežek ostanejo izklopljeni.",
+                    "battery_max_discharge_power": "Najvišja moč, s katero se ta baterija sme prazniti. Omejuje, na koliko shranjene energije računa sistem pri presoji, kaj razsmernik zmore dostaviti porabniku.",
+                    "battery_soc_full": "Napolnjenost, pri kateri TA baterija šteje za polno.",
+                    "battery_capacity_kwh": "kWh, ki jih pokriva odstotek napolnjenosti te baterije."
+                }
+            },
+            "inverter_control": {
+                "title": "Upravljanje polnjenja baterije",
+                "description": "Kaj Load Juggler zapisuje v razsmernik za njegovo baterijo.",
+                "data": {
                     "inverter_charge_limit_entity_id": "Entiteta omejitve polnjenja baterije (neobvezno)",
                     "inverter_charge_limit_unit": "Enota, ki jo pričakuje ta entiteta",
                     "battery_voltage_entity_id": "Senzor napetosti baterije (neobvezno)",
@@ -619,12 +660,6 @@
                     "inverter_soc_limit_semantics": "Pomen omejitve SOC"
                 },
                 "data_description": {
-                    "wiring_topology": "Vzporedno: ta razsmernik napaja omrežno zbiralko neposredno. Zaporedno: moč teče skozi ta razsmernik (hibrid z baterijo).",
-                    "battery_power_entity_id": "Pozitivno med praznjenjem, negativno med polnjenjem.",
-                    "battery_soc_full": "Napolnjenost, pri kateri TA baterija šteje za polno.",
-                    "battery_capacity_kwh": "kWh, ki jih pokriva odstotek napolnjenosti te baterije.",
-                    "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
-                    "solar_forecast_device_ids": "Naprave iz integracije Open-Meteo Solar Forecast — ta ustvari po eno napravo za vsako PV polje, zato izberite napravo vsakega polja. Skupaj z omejitvijo izvoza in kapaciteto baterije omogoči svetovalne senzorje, ki priporočajo, kako polna sme biti baterija pred opoldanskim vrhom proizvodnje.",
                     "inverter_charge_limit_entity_id": "Entiteta 'number' razsmernika za največji tok/moč polnjenja baterije (Deye: 'Battery Max Charge Current'). Pustite prazno, da razsmernik ostane zgolj svetovalen — napoved še vedno objavi priporočilo kot senzor, nič se ne zapiše. Če jo nastavite, se doda stikalo Nadzor polnjenja baterije, ki mora biti vklopljeno, preden se karkoli zapiše.",
                     "inverter_charge_limit_unit": "Deye in večina hibridov pričakuje enosmerne ampere pri napetosti baterije, nekateri razsmerniki vate. Priporočilo se izračuna v vatih in pretvori.",
                     "battery_voltage_entity_id": "Za pretvorbo iz vatov v ampere. Natančnejše od nazivne vrednosti; ko manjka, se uporabi nazivna.",
@@ -635,12 +670,6 @@
                     "inverter_charge_control_deadband_w": "V vatih. Novo priporočilo, ki je vrednosti v registru bližje od tega, se ne zapiše — ti registri gredo prek Modbusa, nekatere različice strojne programske opreme pa jih shranjujejo v EEPROM. V vatih namesto v enoti registra, da nastavitev pomeni isto, ne glede na to, ali register šteje enosmerne ampere ali vate. Pri ZNIŽANJU velja ta vrednost; pri ZVIŠANJU tretjina ene meje sprožitve presežka ali ta vrednost, kar je manjše — zvišanje namreč dovoli shranjevanje in se samo konča, ko izvoz doseže svojo ciljno vrednost.",
                     "inverter_soc_limit_entity_ids": "Entitete, ki hranijo mejo 'napolni do %' te baterije. Pri Deye to ni en sam register, ampak po ena entiteta za vsako časovno rezino (TOU), zato izberite vse rezine, v katerih se baterija sme polniti — priporočena najvišja napolnjenost se zapiše v vse hkrati. Pustite prazno, da priporočilo ostane zgolj svetovalno. Če izberete rezine, se doda stikalo Nadzor napolnjenosti baterije, ki mora biti vklopljeno, preden se karkoli zapiše.",
                     "inverter_soc_limit_normal_entity_id": "Od kod prihaja običajna meja: rezine sledijo tej entiteti, napoved pa jih sme potisniti le pod njo, nikoli nad, zato ostane v rokah vaših avtomatizacij. Brez nje je običajna meja 100 %. Če je nastavljena, a nedosegljiva, se v tem ciklu ne zapiše nič, namesto da bi meje ugibali.",
-                    "inverter_max_power": "Nazivna moč s podatkovnega lista tega razsmernika. 0 = brez omejitve.",
-                    "inverter_max_power_per_phase": "Običajno skupna moč, deljena s številom faz. 0 = brez omejitve na fazo.",
-                    "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
-                    "battery_soc_entity_id": "Odstotek napolnjenosti baterije. Na tej vrednosti temeljijo načini delovanja, vezani na SOC: kako globoko posamezen način sme izprazniti shranjeno sončno energijo in kdaj velja baterija za polno.",
-                    "battery_max_charge_power": "Najvišja moč, s katero se ta baterija sme polniti. Uporablja se kot ponor pri sprožilcu načina Presežek — dokler baterija lahko sprejme toliko moči, ima merilno mesto kam shraniti proizvodnjo in porabniki v načinu Presežek ostanejo izklopljeni.",
-                    "battery_max_discharge_power": "Najvišja moč, s katero se ta baterija sme prazniti. Omejuje, na koliko shranjene energije računa sistem pri presoji, kaj razsmernik zmore dostaviti porabniku.",
                     "inverter_soc_limit_semantics": "Kaj pomeni pisanje v zgornje entitete SOC. **Zgornja meja polnjenja** — „prenehaj polniti pri“; entitete ves čas sledijo nižji od vrednosti vira in priporočila. **Spodnja meja praznjenja** — vrednost pove, kako nizko sme pasti napolnjenost, preden jo razsmernik brani z omrežjem (Deye TOU). Takrat se piše le v varni smeri: znižanje na priporočilo večer pred napovedanim odrezom, da hiša izprazni baterijo do rezerve, po koncu rezervacije pa dvig nazaj na vrednost vira — ročno zvišana vrednost se nikoli ne zniža in nič se ne dvigne nad vir. Branja izbira ne spremeni: ciljna napolnjenost vedno prihaja iz vira, kadar je nastavljen."
                 }
             },

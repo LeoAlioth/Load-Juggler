@@ -470,7 +470,12 @@
                 "menu_options": {
                     "settings": "Edit settings",
                     "overview": "Overview (live)",
-                    "summary": "How it decides"
+                    "summary": "How it decides",
+                    "inverter_features": "Features",
+                    "inverter_core": "Inverter",
+                    "inverter_solar": "PV",
+                    "inverter_battery": "Battery",
+                    "inverter_control": "Battery charge management"
                 }
             },
             "overview": {
@@ -582,14 +587,14 @@
             },
             "inverter_features": {
                 "title": "Inverter features",
-                "description": "Tick what this inverter has. The details are set on the next pages.",
+                "description": "Tick what this inverter has. The menu then offers a page for each.",
                 "data": {
                     "inverter_features": "This inverter has"
                 }
             },
-            "inverter_settings": {
-                "title": "Update Inverter Settings",
-                "description": "Update this inverter.",
+            "inverter_core": {
+                "title": "Inverter",
+                "description": "The inverter's AC side: capacity, topology and per-phase output sensors.",
                 "data": {
                     "inverter_max_power": "Total inverter power capacity",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase",
@@ -597,15 +602,51 @@
                     "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
                     "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
                     "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
-                    "wiring_topology": "Wiring topology",
+                    "wiring_topology": "Wiring topology"
+                },
+                "data_description": {
+                    "inverter_max_power": "Nameplate rated power from this inverter's datasheet. Set to 0 to leave unconstrained.",
+                    "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase limits.",
+                    "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
+                    "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery)."
+                }
+            },
+            "inverter_solar": {
+                "title": "PV",
+                "description": "The PV array behind this inverter.",
+                "data": {
+                    "solar_production_entity_id": "Solar power production sensor",
+                    "solar_forecast_device_ids": "Solar forecast (one device per PV array)"
+                },
+                "data_description": {
+                    "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
+                    "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak."
+                }
+            },
+            "inverter_battery": {
+                "title": "Battery",
+                "description": "The battery behind this inverter.",
+                "data": {
                     "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
                     "battery_power_entity_id": "Battery power sensor",
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
                     "battery_soc_full": "Battery full SOC",
-                    "battery_capacity_kwh": "Battery capacity",
-                    "solar_production_entity_id": "Solar power production sensor",
-                    "solar_forecast_device_ids": "Solar forecast (one device per PV array)",
+                    "battery_capacity_kwh": "Battery capacity"
+                },
+                "data_description": {
+                    "battery_soc_entity_id": "The battery's state-of-charge percentage. This is what the SOC-gated operating modes decide on: how far each mode may drain the stored solar buffer, and when a battery counts as full.",
+                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging and negative while charging.",
+                    "battery_max_charge_power": "The fastest this battery may be charged. Used as the charge sink in the Excess trigger — while the battery can still absorb this much, the site has somewhere to put its production and Excess loads stay off.",
+                    "battery_max_discharge_power": "The fastest this battery may be discharged. Caps how much stored energy the engine counts on when deciding what the inverter can deliver to a load.",
+                    "battery_soc_full": "SOC at or above which THIS battery counts as full and stops absorbing excess solar.",
+                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity)."
+                }
+            },
+            "inverter_control": {
+                "title": "Battery charge management",
+                "description": "What Load Juggler writes to the inverter for its battery.",
+                "data": {
                     "inverter_charge_limit_entity_id": "Battery charge limit entity to control (optional)",
                     "inverter_charge_limit_unit": "What that entity expects",
                     "battery_voltage_entity_id": "Battery voltage sensor (optional)",
@@ -619,12 +660,6 @@
                     "inverter_soc_limit_semantics": "SOC limit meaning"
                 },
                 "data_description": {
-                    "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
-                    "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging and negative while charging.",
-                    "battery_soc_full": "SOC at or above which THIS battery counts as full and stops absorbing excess solar.",
-                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity).",
-                    "solar_production_entity_id": "Optional — if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
-                    "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration — it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak.",
                     "inverter_charge_limit_entity_id": "The inverter's own maximum battery charge current/power number entity (Deye: 'Battery Max Charge Current'). Leave empty to keep this inverter advisory — the forecast still publishes its recommendation as a sensor, nothing is written. Setting it adds a Battery Charge Control switch, which must be turned on before anything is written.",
                     "inverter_charge_limit_unit": "Deye and most hybrids take DC amps at battery voltage; some inverters take watts. The recommendation is computed in watts and converted.",
                     "battery_voltage_entity_id": "Used for the watts-to-amps conversion. More accurate than the nominal value across the charge curve; the nominal is used when it is missing.",
@@ -635,12 +670,6 @@
                     "inverter_charge_control_deadband_w": "In watts. A new recommendation closer than this to what the register already holds is not written — these registers go over Modbus and some firmwares put them in EEPROM. Watts rather than the register's own unit, so the setting means the same thing whether it counts DC amps or watts. Coming DOWN uses this figure; going UP uses a third of one Excess trigger margin or this, whichever is smaller, because a rise permits absorption and the approach ends itself once export reaches its setpoint.",
                     "inverter_soc_limit_entity_ids": "The entities holding this battery's 'charge up to %' ceiling. On a Deye that is not one register but one entity per time-of-use slot, so select every slot the battery may charge in — the recommended max SOC is written to all of them together. Leave empty to keep the recommendation advisory. Selecting slots adds a Battery SOC Control switch, which must be turned on before anything is written.",
                     "inverter_soc_limit_normal_entity_id": "Where the everyday ceiling comes from: the slots track this entity, and the forecast may only push them below it, never above, so your own automations keep owning it. Without it, the everyday ceiling is 100%. If it is set but unavailable, nothing is written that cycle rather than a ceiling being guessed.",
-                    "inverter_max_power": "Nameplate rated power from this inverter's datasheet. Set to 0 to leave unconstrained.",
-                    "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase limits.",
-                    "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
-                    "battery_soc_entity_id": "The battery's state-of-charge percentage. This is what the SOC-gated operating modes decide on: how far each mode may drain the stored solar buffer, and when a battery counts as full.",
-                    "battery_max_charge_power": "The fastest this battery may be charged. Used as the charge sink in the Excess trigger — while the battery can still absorb this much, the site has somewhere to put its production and Excess loads stay off.",
-                    "battery_max_discharge_power": "The fastest this battery may be discharged. Caps how much stored energy the engine counts on when deciding what the inverter can deliver to a load.",
                     "inverter_soc_limit_semantics": "What writing to the SOC entities above means. **Charge ceiling** — “stop charging at”; the entities continuously track the lower of the source value and the recommendation. **Discharge floor** — the value says how low the pack may go before the inverter defends it from the grid (Deye TOU). Writes then happen only in the safe direction: lowered to the recommendation the night before a forecast clip, so the house drains the battery to the reserve, and raised back to the source value once the reservation ends — a manually raised value is never lowered and nothing is ever raised above the source. Reading is unchanged: the charge destination always comes from the source when it is set."
                 }
             },

@@ -55,6 +55,9 @@ from ..const import (
     MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
     OCPP_INTEGRATION_DOMAIN,
     CONF_INVERTER_FEATURES,
+    INVERTER_FEATURE_BATTERY,
+    INVERTER_FEATURE_BATTERY_CONTROL,
+    INVERTER_FEATURE_SOLAR,
 )
 from ..detection_patterns import BATTERY_MAX_DISCHARGE_POWER_PATTERNS
 from ..helpers import (
@@ -107,10 +110,13 @@ from .schemas import (
     _hub_battery_schema,
     _hub_grid_schema,
     _hub_inverter_schema,
-    _inverter_combined_schema,
     _plug_schema,
     _power_station_schema,
     _inverter_features_schema,
+    _build_hub_inverter_schema,
+    _build_inverter_solar_schema,
+    _build_inverter_battery_schema,
+    _build_inverter_control_schema,
 )
 
 
@@ -262,6 +268,19 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         entry type, and "How it decides" for the hub.
         """
         entry_type = self.config_entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
+        if entry_type == ENTRY_TYPE_INVERTER:
+            # An inverter's menu lists its pages directly: the features first,
+            # then one page per declared feature — each saves on its own.
+            features = inverter_features(self.config_entry)
+            menu_options = ["inverter_features", "inverter_core"]
+            if INVERTER_FEATURE_SOLAR in features:
+                menu_options.append("inverter_solar")
+            if INVERTER_FEATURE_BATTERY in features:
+                menu_options.append("inverter_battery")
+            if INVERTER_FEATURE_BATTERY_CONTROL in features:
+                menu_options.append("inverter_control")
+            menu_options.append("overview")
+            return self.async_show_menu(step_id="init", menu_options=menu_options)
         menu_options = ["settings", "overview"]
         if entry_type == ENTRY_TYPE_HUB:
             menu_options.append("summary")
@@ -335,69 +354,103 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_inverter(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Options for an inverter entry: the features page first."""
+        """Options for an inverter entry: the features page."""
         return await self.async_step_inverter_features(user_input)
 
     async def async_step_inverter_features(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Options for an inverter entry, page 1: what it has. The settings
-        page after it shows only the declared sections. (Named for its step
-        id — the frontend's submit is routed by it.)"""
-        return await self._async_wizard_page(
-            user_input,
-            step_id="inverter_features",
-            schema=lambda defaults: _inverter_features_schema(defaults),
-            next_step=self.async_step_inverter_settings,
-            list_normalizers=(_normalize_features_list,),
-            validate=_validate_inverter_features,
-            show_defaults=lambda: {
-                **self._defaults,
-                CONF_INVERTER_FEATURES: inverter_features(self.config_entry),
-            },
-        )
-
-    async def async_step_inverter_settings(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Options for an inverter entry, page 2: inverter, and the PV, battery
-        and write-control sections its features declare. Saving clears the
-        keys of every section left undeclared."""
-        features = list(self._data.get(CONF_INVERTER_FEATURES) or [])
-
-        def _validate(data: dict, errors: dict):
-            _validate_charge_limit_unit(self.hass, data, errors)
-            # Returned last: a bad forecast device's name feeds the form's
-            # ``entity`` placeholder (see _async_edit_page's validate hook).
-            return _validate_forecast_devices(self.hass, data, errors)
+        """What this inverter has. Saves on its own: the menu then offers a
+        page per declared feature, and the keys of every feature unticked
+        here are cleared so nothing outlives the section it belonged to."""
 
         def _finalize(data: dict) -> None:
-            _normalize_inverter_power_caps(data)
-            strip_unfeatured_inverter_options(data, features, clear_all=True)
+            strip_unfeatured_inverter_options(
+                data, data.get(CONF_INVERTER_FEATURES) or [], clear_all=True
+            )
 
         return await self._async_edit_page(
             user_input,
-            step_id="inverter_settings",
-            schema=lambda defaults: _inverter_combined_schema(
-                self.hass, defaults, features
+            step_id="inverter_features",
+            schema=lambda defaults: _inverter_features_schema(
+                {
+                    **defaults,
+                    CONF_INVERTER_FEATURES: inverter_features(self.config_entry),
+                }
             ),
-            entity_keys=_INVERTER_ENTITY_KEYS
-            + [
-                CONF_SOLAR_PRODUCTION_ENTITY_ID,
-                CONF_BATTERY_SOC_ENTITY_ID,
-                CONF_BATTERY_POWER_ENTITY_ID,
+            list_normalizers=(_normalize_features_list,),
+            validate=_validate_inverter_features,
+            finalize=_finalize,
+        )
+
+    async def async_step_inverter_core(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The inverter's AC side: capacity, topology, per-phase output."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="inverter_core",
+            schema=lambda defaults: vol.Schema(
+                dict(_build_hub_inverter_schema(self.hass, defaults))
+            ),
+            entity_keys=_INVERTER_ENTITY_KEYS,
+            unit_map=_INVERTER_OUTPUT_UNIT_MAP,
+            finalize=_normalize_inverter_power_caps,
+        )
+
+    async def async_step_inverter_solar(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The PV array behind this inverter: production sensor, forecast."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="inverter_solar",
+            schema=lambda defaults: vol.Schema(
+                dict(_build_inverter_solar_schema(self.hass, defaults))
+            ),
+            entity_keys=[CONF_SOLAR_PRODUCTION_ENTITY_ID],
+            list_normalizers=(_normalize_forecast_list,),
+            unit_map=_SOLAR_UNIT_MAP,
+            # Returns a bad forecast device's name for the ``entity`` placeholder.
+            validate=lambda data, errors: _validate_forecast_devices(
+                self.hass, data, errors
+            ),
+        )
+
+    async def async_step_inverter_battery(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The battery behind this inverter."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="inverter_battery",
+            schema=lambda defaults: vol.Schema(
+                dict(_build_inverter_battery_schema(self.hass, defaults))
+            ),
+            entity_keys=[CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
+            unit_map=_BATTERY_UNIT_MAP,
+        )
+
+    async def async_step_inverter_control(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Battery charge management: the charge register and SOC slots."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="inverter_control",
+            schema=lambda defaults: vol.Schema(
+                dict(_build_inverter_control_schema(self.hass, defaults))
+            ),
+            entity_keys=[
                 CONF_CHARGE_LIMIT_ENTITY_ID,
                 CONF_BATTERY_VOLTAGE_ENTITY_ID,
                 CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
             ],
-            list_normalizers=(_normalize_forecast_list, _normalize_soc_limit_list),
-            unit_map=_INVERTER_OUTPUT_UNIT_MAP
-            | _SOLAR_UNIT_MAP
-            | _BATTERY_UNIT_MAP
-            | _WRITE_CONTROL_UNIT_MAP,
-            validate=_validate,
-            finalize=_finalize,
-            last_step=None,
+            list_normalizers=(_normalize_soc_limit_list,),
+            unit_map=_WRITE_CONTROL_UNIT_MAP,
+            validate=lambda data, errors: _validate_charge_limit_unit(
+                self.hass, data, errors
+            ),
         )
 
     async def async_step_hub_grid(
