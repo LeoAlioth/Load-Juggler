@@ -518,23 +518,28 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             lines.append(f"- Phase {label}: {_fmt(abs(value), 'A')} {flow}")
     else:
         lines.append("- No grid CTs configured — off-grid site")
-    # The smoothed figure, as the engine saw it this cycle — the same basis as
-    # the reconstructed export below, so the two lines differ by exactly the
-    # managed draws. (The raw meter reading is the grid power sensor.)
-    grid_w = hub_data.get("grid_power_smoothed")
-    if grid_w is None:
-        grid_w = hub_data.get("grid_power")
+    # Both grid lines on the RAW meter basis: the reading, and the reading
+    # with the managed loads' draws added back — so they differ by exactly
+    # those draws. (The engine itself works on smoothed values; that figure
+    # belongs to the grid power / export sensors, not to this page.)
+    grid_w = hub_data.get("grid_power")
     if isinstance(grid_w, (int, float)):
         flow = "Exporting" if grid_w < 0 else "Importing"
         lines.append(f"- {flow}: {_fmt(abs(grid_w), 'W', 0)}")
     else:
         lines.append(f"- Net grid power: {_fmt(grid_w, 'W', 0)}")
-    # The reconstructed figure the Excess verdict and the charge control steer
-    # on: the meter with the managed loads' draws added back.
-    lines.append(
-        "- Export with managed loads off: "
-        f"{_fmt(hub_data.get('total_export_power'), 'W', 0)}"
+    loads_off = hub_data.get("total_export_power_raw")
+    if loads_off is None:
+        loads_off = hub_data.get("total_export_power")
+    export_limit = get_entry_value(entry, CONF_GRID_EXPORT_LIMIT, 0) or 0
+    over = (
+        " ❗ over the export limit"
+        if isinstance(loads_off, (int, float))
+        and export_limit > 0
+        and loads_off > export_limit
+        else ""
     )
+    lines.append(f"- Export with managed loads off: {_fmt(loads_off, 'W', 0)}{over}")
     if hub_data.get("grid_stale"):
         lines.append("- ⚠️ Grid readings are stale — holding the last known values")
 

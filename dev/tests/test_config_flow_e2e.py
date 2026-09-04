@@ -1222,7 +1222,7 @@ async def test_overview_page_reports_live_values(
             "total_evse_power": 2300,
             "excess_available": True,
             "excess_margin_power": 350,
-            "grid_power_smoothed": 1150,
+            "total_export_power_raw": 0,
             "load_draw": {plug.entry_id: 4.3},
         }
     }
@@ -1245,9 +1245,9 @@ async def test_overview_page_reports_live_values(
     # Priorities are integers, the meter line says which way it flows, and the
     # reconstructed export is named for what it is.
     assert "priority 1 " in text and "priority 1.0" not in text
-    # The smoothed basis, the same one the reconstructed export is built on.
-    assert "Importing: 1150 W" in text
+    assert "Importing: 1200 W" in text
     assert "drawing 9.9 A" not in text
+    assert "❗" not in text
     assert "Export with managed loads off: 0 W" in text
     assert "Exported now" not in text
 
@@ -2194,3 +2194,50 @@ async def test_migration_infers_features_and_drops_the_phantom_battery(
     # Idempotent: a second pass changes nothing.
     assert await async_migrate_entry(hass, pv_only)
     assert pv_only.options[CONF_INVERTER_FEATURES] == ["solar"]
+
+
+async def test_the_overview_reads_only_republished_keys(hass: HomeAssistant):
+    """Every hub_data key the Overview page reads must survive the hub's
+    republish whitelist — a key missing there silently falls back (the raw
+    reconstructed export fell back to the smoothed one, 2026-09-04)."""
+    import re
+    from pathlib import Path
+    from custom_components.dynamic_ocpp_evse.entities.hub import (
+        _HUB_REPUBLISH_KEYS,
+        publish_hub_data,
+    )
+
+    pages = Path(
+        "custom_components/dynamic_ocpp_evse/config_flow/pages.py"
+    ).read_text()
+    read = set(re.findall(r"""hub_data(?:\.get\(|\[)["']([a-z_]+)["']""", pages))
+    assert read, "the scan found nothing — the page's access pattern changed"
+    always = {"last_update", "grid_stale", "group_data", "hub_status", "hub_warnings"}
+    missing = read - set(_HUB_REPUBLISH_KEYS) - always
+    assert not missing, f"Overview reads keys the hub does not republish: {sorted(missing)}"
+    published = publish_hub_data(hass, "hub", {k: 1 for k in read})
+    assert all(published.get(k) == 1 for k in read - always)
+
+
+async def test_the_overview_flags_export_over_the_limit(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
+    from datetime import datetime, timezone
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.config_entries.async_update_entry(
+        mock_hub_entry, options={**mock_hub_entry.options, CONF_GRID_EXPORT_LIMIT: 8000}
+    )
+    hass.data[DOMAIN]["hub_data"] = {
+        mock_hub_entry.entry_id: {
+            "last_update": datetime.now(timezone.utc),
+            "grid_power": -8319,
+            "total_export_power_raw": 8557,
+        }
+    }
+    text = _overview_text(hass, mock_hub_entry.entry_id)
+    assert "Exporting: 8319 W" in text
+    assert "Export with managed loads off: 8557 W ❗ over the export limit" in text
