@@ -266,6 +266,104 @@ def soc_target_weighted(members, default: float = 100.0) -> float:
     return sum(t * c for t, c in weighted) / total_capacity
 
 
+def split_charge_limit(members, charge_limit, ceiling) -> dict:
+    """Divide the fleet's charge-limit advice among its battery members by
+    REMAINING HEADROOM, water-filled against each member's own charge cap.
+
+    Returns ``{entry_id: watts}`` for every member that can carry a charge
+    limit — a battery with a known capacity and a configured charge cap. Empty
+    when there is no advice or no such member.
+
+    The feedback loop decides the fleet TOTAL ("absorb this many watts and the
+    meter lands on the setpoint"); this only decides which pack takes them, so
+    any positive split with a per-member clamp converges. What the split
+    chooses is how the packs fill RELATIVE to each other, and the rule is made
+    to agree with the SOC advice: that advice publishes ONE uniform ceiling and
+    thereby divides the reserve by capacity, so the charge rate is divided by
+    the room each pack still has under that same ceiling —
+    ``capacity × (ceiling − SOC)``. Packs then arrive at the ceiling together
+    instead of the one behind the bigger charger filling first and idling while
+    the other is still climbing (the old rule, proportional to charge cap).
+
+    Fallbacks, in order, each applied to the whole fleet so the weights stay in
+    one unit:
+
+    * an unknown SOC anywhere, or no ceiling → weights are plain capacity
+      (equal C-rate: the same lockstep, blind to where each pack sits);
+    * every pack at or above the ceiling → capacity again. This is the
+      destination hold, where the standing ceiling lets the engaged feedback
+      fill the buffer above it with overflow (``recommended_charge_limit``),
+      and that overflow is shared like any other charge;
+    * a member's share exceeding its charge cap → clamped there, the excess
+      water-filled over the members still under theirs;
+    * watts left when every pack WITH headroom is clamped → offered, by
+      capacity, to the packs at the ceiling — the overflow case again, per
+      pack, so a small charger on the pack with room never strands power the
+      loop asked the fleet to absorb. Anything beyond every cap is dropped (the
+      caller's fleet clamp already bounds the total by the permitted sum).
+
+    Reduces to ``min(cap, charge_limit)`` for a single battery — byte-identical
+    to the cap-proportional rule it replaces there.
+
+    Pure function — unit-testable.
+    """
+    if charge_limit is None:
+        return {}
+    eligible = [
+        m
+        for m in members
+        if m.has_battery and (m.capacity_kwh or 0) > 0 and m.charge_cap is not None
+    ]
+    if not eligible:
+        return {}
+    remaining = max(0.0, float(charge_limit))
+    caps = {m.entry_id: max(0.0, float(m.charge_cap)) for m in eligible}
+    shares = {m.entry_id: 0.0 for m in eligible}
+    capacity = {m.entry_id: float(m.capacity_kwh) for m in eligible}
+
+    def fill(ids, weights):
+        """Water-fill ``remaining`` over ``ids`` by ``weights``, clamping at
+        each cap and re-offering the excess to the members still open."""
+        nonlocal remaining
+        open_ids = [i for i in ids if weights[i] > 0 and shares[i] < caps[i]]
+        while remaining > 1e-9 and open_ids:
+            wsum = sum(weights[i] for i in open_ids)
+            clamped = [
+                i
+                for i in open_ids
+                if shares[i] + remaining * weights[i] / wsum >= caps[i]
+            ]
+            if not clamped:
+                for i in open_ids:
+                    shares[i] += remaining * weights[i] / wsum
+                remaining = 0.0
+                return
+            for i in clamped:
+                remaining -= caps[i] - shares[i]
+                shares[i] = caps[i]
+            open_ids = [i for i in open_ids if i not in clamped]
+
+    headroom = None
+    if ceiling is not None and all(m.battery_soc is not None for m in eligible):
+        headroom = {
+            m.entry_id: capacity[m.entry_id]
+            * max(0.0, float(ceiling) - float(m.battery_soc))
+            for m in eligible
+        }
+        if not any(w > 0 for w in headroom.values()):
+            headroom = None
+
+    if headroom is None:
+        fill(list(shares), capacity)
+        return shares
+    fill([i for i, w in headroom.items() if w > 0], headroom)
+    if remaining > 1e-9:
+        # Every pack with room is at its cap: the rest is overflow, offered to
+        # the packs already at the ceiling the way the destination hold does.
+        fill([i for i, w in headroom.items() if w <= 0], capacity)
+    return shares
+
+
 def sum_outputs(members, topology: Optional[str] = None) -> Optional[PhaseValues]:
     """Per-phase sum of member outputs (amps), optionally filtered by
     topology. A phase is non-None if any summed member covers it."""

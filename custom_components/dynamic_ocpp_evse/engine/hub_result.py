@@ -92,8 +92,9 @@ def _compute_forecast_advice(
     from the summed capacity and the capacity-weighted destination
     (``fleet.soc_target_weighted``) — so every battery is advised the same
     percent, splitting the headroom proportionally to capacity by construction.
-    The recommended charge limit splits proportionally to each member's charge
-    cap, clamped to its own cap.
+    The recommended charge limit is divided by the room each pack still has
+    under that ceiling, water-filled against each member's own charge cap
+    (``fleet.split_charge_limit``), so the packs arrive at the ceiling together.
 
     The reserve is carved below where the batteries are HEADING rather than
     below 100 %: each member's "normal SOC ceiling source" entity is its
@@ -405,18 +406,17 @@ def _compute_forecast_advice(
         hub_runtime.pop("_forecast_soc_yielding", None)
 
     # Per-inverter advice: the uniform ceiling for every battery member, and
-    # the fleet charge limit split proportionally to each member's charge cap,
-    # clamped to its own cap.
+    # the fleet charge limit divided by the room each pack still has under
+    # that ceiling, clamped to its own cap (fleet.split_charge_limit).
     per_inverter = {}
     hub_id = getattr(hub_entry, "entry_id", None)
+    charge_shares = fleet.split_charge_limit(members, charge_limit, proposed)
     for m in members:
         if m.entry_id == hub_id or not m.has_battery or not (m.capacity_kwh or 0) > 0:
             continue
         member_limit = None
-        if charge_limit is not None and fleet_charge_cap and m.charge_cap:
-            member_limit = round(
-                min(m.charge_cap, charge_limit * m.charge_cap / fleet_charge_cap), 0
-            )
+        if m.entry_id in charge_shares:
+            member_limit = round(charge_shares[m.entry_id], 0)
         per_inverter[m.entry_id] = {
             "forecast_battery_max_soc": proposed,
             "forecast_charge_limit_w": member_limit,

@@ -42,6 +42,7 @@ from custom_components.dynamic_ocpp_evse.engine.fleet import (  # noqa: E402
     mixed_topologies,
     soc_full_scalar,
     soc_target_weighted,
+    split_charge_limit,
     solar_is_assumed,
     solar_is_measured,
     solar_total,
@@ -472,6 +473,79 @@ def test_single_member_limits_passthrough():
 
 def test_capacity_total():
     assert capacity_total([_battery("a", capacity=10), _battery("b", capacity=5)]) == 15
+
+
+# ---------------------------------------------------------------------------
+# split_charge_limit — the fleet advice divided by remaining headroom
+# ---------------------------------------------------------------------------
+def _pack(entry_id, soc, capacity, charge=5000.0):
+    return _battery(entry_id, soc=soc, capacity=capacity, charge=charge, power=0.0)
+
+
+def test_split_single_battery_is_min_of_cap_and_limit():
+    assert split_charge_limit([_pack("a", 50, 10)], 1000.0, 90) == {"a": 1000.0}
+    assert split_charge_limit([_pack("a", 50, 10, charge=800.0)], 1000.0, 90) == {
+        "a": 800.0
+    }
+
+
+def test_split_equal_soc_divides_by_capacity():
+    shares = split_charge_limit([_pack("a", 50, 10), _pack("b", 50, 20)], 3000.0, 90)
+    assert shares["a"] == 1000.0 and shares["b"] == 2000.0
+
+
+def test_split_follows_remaining_headroom_not_charge_cap():
+    # Same capacity and cap, but a is 5 points under the ceiling and b 15:
+    # b has three times the room and takes three quarters.
+    shares = split_charge_limit([_pack("a", 90, 10), _pack("b", 80, 10)], 2000.0, 95)
+    assert shares["a"] == 500.0 and shares["b"] == 1500.0
+
+
+def test_split_clamps_at_the_cap_and_refills_the_rest():
+    # b would want 1500 but its charger only does 1000 — a takes the rest.
+    shares = split_charge_limit(
+        [_pack("a", 90, 10), _pack("b", 80, 10, charge=1000.0)], 2000.0, 95
+    )
+    assert shares == {"a": 1000.0, "b": 1000.0}
+
+
+def test_split_all_at_the_ceiling_falls_back_to_capacity():
+    # The destination hold: both parked at 95, overflow shared by capacity.
+    shares = split_charge_limit([_pack("a", 95, 10), _pack("b", 96, 30)], 4000.0, 95)
+    assert shares["a"] == 1000.0 and shares["b"] == 3000.0
+
+
+def test_split_overflow_reaches_the_pack_at_the_ceiling():
+    # a is parked at the ceiling, b has room but a 1 kW charger: the 2 kW the
+    # loop asked for is 1 kW into b and the rest offered to a as overflow.
+    shares = split_charge_limit(
+        [_pack("a", 95, 10), _pack("b", 80, 10, charge=1000.0)], 2000.0, 95
+    )
+    assert shares == {"a": 1000.0, "b": 1000.0}
+
+
+def test_split_unknown_soc_anywhere_uses_capacity_for_all():
+    shares = split_charge_limit([_pack("a", None, 10), _pack("b", 80, 30)], 4000.0, 95)
+    assert shares["a"] == 1000.0 and shares["b"] == 3000.0
+
+
+def test_split_excludes_members_that_cannot_carry_a_limit():
+    members = [
+        _pack("a", 50, 10),
+        _battery("nocap", soc=50, capacity=10, charge=None),
+        _battery("nocapacity", soc=50, capacity=0),
+        _member("pv_only"),
+    ]
+    assert split_charge_limit(members, 1000.0, 90) == {"a": 1000.0}
+    assert split_charge_limit(members, None, 90) == {}
+    assert split_charge_limit([_member("pv_only")], 1000.0, 90) == {}
+
+
+def test_split_never_hands_out_more_than_the_caps():
+    shares = split_charge_limit(
+        [_pack("a", 50, 10, charge=500.0), _pack("b", 50, 10, charge=500.0)], 5000.0, 90
+    )
+    assert shares == {"a": 500.0, "b": 500.0}
 
 
 # ---------------------------------------------------------------------------
