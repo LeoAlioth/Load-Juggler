@@ -171,7 +171,7 @@ def _live_hub_data(hass, hub_entry_id: str | None) -> tuple[dict, str]:
     stamp = dt_util.as_local(last_update).strftime("%H:%M:%S")
     if age > _STALE_AFTER_SECONDS:
         return data, f"⚠️ **Stale** — last calculated at {stamp} ({_fmt_age(age)})."
-    return data, f"Snapshot of the values calculated at {stamp} — press Refresh for a new one."
+    return data, f"Refreshed: {stamp}"
 
 
 def _load_permit(hass, load_entry, hub_data: dict):
