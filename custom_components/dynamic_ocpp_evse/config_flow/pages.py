@@ -510,7 +510,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
     grid_w = hub_data.get("grid_power")
     if isinstance(grid_w, (int, float)):
         flow = "Exporting" if grid_w < 0 else "Importing"
-        lines.append(f"- {flow} now: {_fmt(abs(grid_w), 'W', 0)}")
+        lines.append(f"- {flow}: {_fmt(abs(grid_w), 'W', 0)}")
     else:
         lines.append(f"- Net grid power: {_fmt(grid_w, 'W', 0)}")
     # The reconstructed figure the Excess verdict and the charge control steer

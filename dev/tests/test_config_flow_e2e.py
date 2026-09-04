@@ -1239,7 +1239,7 @@ async def test_overview_page_reports_live_values(
     # Priorities are integers, the meter line says which way it flows, and the
     # reconstructed export is named for what it is.
     assert "priority 1 " in text and "priority 1.0" not in text
-    assert "Importing now: 1200 W" in text
+    assert "Importing: 1200 W" in text
     assert "Export with managed loads off: 0 W" in text
     assert "Exported now" not in text
 
