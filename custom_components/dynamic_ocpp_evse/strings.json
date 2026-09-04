@@ -479,7 +479,8 @@
                     "hub_connection": "Grid",
                     "hub_export": "Export limit and Excess",
                     "hub_policy": "Battery and forecast policy",
-                    "hub_timing": "Timing and detection"
+                    "hub_timing": "Timing and detection",
+                    "priority": "Device priority order"
                 }
             },
             "overview": {

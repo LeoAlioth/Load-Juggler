@@ -479,7 +479,8 @@
                     "hub_connection": "Omrežje",
                     "hub_export": "Omejitev izvoza in presežki",
                     "hub_policy": "Baterije in napovedi",
-                    "hub_timing": "Časovni intervali"
+                    "hub_timing": "Časovni intervali",
+                    "priority": "Vrstni red prioritet naprav"
                 }
             },
             "overview": {
