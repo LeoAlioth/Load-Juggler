@@ -475,7 +475,11 @@
                     "inverter_core": "Inverter",
                     "inverter_solar": "PV",
                     "inverter_battery": "Battery",
-                    "inverter_control": "Battery charge management"
+                    "inverter_control": "Battery charge management",
+                    "hub_connection": "Grid connection",
+                    "hub_export": "Export limit and Excess",
+                    "hub_policy": "Battery and forecast policy",
+                    "hub_timing": "Timing and detection"
                 }
             },
             "overview": {
@@ -540,6 +544,69 @@
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. The band sits on the safe side of each setting: with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%; with a 20% minimum, discharging stops at 20% and resumes at 23% — the battery never runs below the floor.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
+                }
+            },
+            "hub_connection": {
+                "title": "Grid connection",
+                "description": "How the site is wired to the grid. Leaving every phase sensor empty makes the hub off-grid.",
+                "data": {
+                    "phase_a_current_entity_id": "Sensor that measures grid current for phase A (optional - set to 'None' for off-grid setups)",
+                    "phase_b_current_entity_id": "Sensor for phase B current (optional)",
+                    "phase_c_current_entity_id": "Sensor for phase C current (optional)",
+                    "invert_phases": "Invert current readings",
+                    "main_breaker_rating": "Main breaker rating (per phase)",
+                    "phase_voltage": "Phase voltage",
+                    "enable_max_import_power": "Create max import power limit slider",
+                    "max_import_power_entity_id": "Sensor for maximum import power (optional override)"
+                },
+                "data_description": {
+                    "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
+                    "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
+                    "phase_voltage": "Typically 230V in Europe, 120V in North America.",
+                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to disable the limit entirely.",
+                    "max_import_power_entity_id": "Advanced — use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider."
+                }
+            },
+            "hub_export": {
+                "title": "Export limit and Excess",
+                "description": "The export wall, where Excess engages under it, and how it releases.",
+                "data": {
+                    "grid_export_limit": "Grid export limit",
+                    "excess_trigger_margin": "Excess trigger margin",
+                    "excess_hysteresis": "Excess hysteresis"
+                },
+                "data_description": {
+                    "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
+                    "excess_trigger_margin": "How far below the export limit Excess mode engages. Inverters curtail slightly under the limit, so a trigger exactly at the limit would never fire.",
+                    "excess_hysteresis": "How far the surplus may fall below the trigger before an engaged load releases. The trigger margin sets where Excess engages; this sets the band it holds through, so a load stays on instead of chattering while the surplus hovers at the trigger."
+                }
+            },
+            "hub_policy": {
+                "title": "Battery and forecast policy",
+                "description": "Site-wide battery and PV forecast policy, applied across every inverter on this hub.",
+                "data": {
+                    "battery_soc_hysteresis": "Battery SOC hysteresis",
+                    "base_consumption": "Base house consumption",
+                    "forecast_soc_floor": "Forecast SOC floor"
+                },
+                "data_description": {
+                    "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. The band sits on the safe side of each setting: with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%; with a 20% minimum, discharging stops at 20% and resumes at 23% — the battery never runs below the floor.",
+                    "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable — entering a peak figure disables the feature in practice.",
+                    "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
+                }
+            },
+            "hub_timing": {
+                "title": "Timing and detection",
+                "description": "How often the engine refreshes and what it detects on its own.",
+                "data": {
+                    "site_update_frequency": "Site sensor refresh rate",
+                    "auto_detect_phase_mapping": "Detect phase mapping mismatches",
+                    "solar_grace_period": "Solar/Excess grace period"
+                },
+                "data_description": {
+                    "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to loads.",
+                    "auto_detect_phase_mapping": "Monitors load current draws to detect incorrect phase wiring. Works for all load types on multi-phase sites. Disable if false alerts occur.",
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
                 }
             },
             "hub_inverter": {

@@ -475,7 +475,11 @@
                     "inverter_core": "Razsmernik",
                     "inverter_solar": "PV",
                     "inverter_battery": "Baterija",
-                    "inverter_control": "Upravljanje polnjenja baterije"
+                    "inverter_control": "Upravljanje polnjenja baterije",
+                    "hub_connection": "Omrežni priključek",
+                    "hub_export": "Omejitev izvoza in presežki",
+                    "hub_policy": "Baterije in napovedi",
+                    "hub_timing": "Časovni intervali"
                 }
             },
             "overview": {
@@ -540,6 +544,69 @@
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % — baterija nikoli ne pade pod spodnjo mejo.",
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva — vnos vršne porabe funkcijo v praksi izklopi.",
                     "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
+                }
+            },
+            "hub_connection": {
+                "title": "Omrežni priključek",
+                "description": "Kako je objekt priključen na omrežje. Če pustite vse fazne senzorje prazne, je hub otočni.",
+                "data": {
+                    "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (neobvezno - nastavite na 'None' za izvenomrežne nastavitve)",
+                    "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno)",
+                    "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
+                    "invert_phases": "Obrni odčitke toka",
+                    "main_breaker_rating": "Nazivni tok glavnega odklopnika (na fazo)",
+                    "phase_voltage": "Napetost na fazo",
+                    "enable_max_import_power": "Omogoči omejitev največje odjemne moči",
+                    "max_import_power_entity_id": "Senzor za največjo odjemno moč (neobvezno — nadomesti drsnik)"
+                },
+                "data_description": {
+                    "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
+                    "main_breaker_rating": "Nazivni tok (v amperih), natisnjen na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
+                    "phase_voltage": "Običajno 230 V v Evropi, 120 V v Severni Ameriki.",
+                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne odjemne moči (privzeto = odklopnik x faze x napetost). Odstranite kljukico, da omejitev povsem izklopite.",
+                    "max_import_power_entity_id": "Napredno — uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom."
+                }
+            },
+            "hub_export": {
+                "title": "Omejitev izvoza in presežki",
+                "description": "Omejitev izvoza, kje pod njo se vklopi presežek in kako se izklopi.",
+                "data": {
+                    "grid_export_limit": "Omejitev izvoza v omrežje",
+                    "excess_trigger_margin": "Odmik sprožilca Excess",
+                    "excess_hysteresis": "Histereza načina Excess"
+                },
+                "data_description": {
+                    "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje. Način Excess se sproži, ko se izvoz približa tej meji na manj kot odmik sprožilca; skupaj s kapaciteto baterije in sončno napovedjo (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve: Excess se na izvoz nikoli ne sproži, napoved je izklopljena.",
+                    "excess_trigger_margin": "Koliko pod omejitvijo izvoza se sproži način Excess. Razsmerniki režejo tik pod omejitvijo, zato se sprožilec točno na njej ne bi nikoli sprožil.",
+                    "excess_hysteresis": "Koliko sme presežek pasti pod sprožilec, preden se vklopljeni porabnik izklopi. Odmik sprožilca določa, kje se način Excess vklopi; ta nastavitev pa širino pasu, v katerem ostane vklopljen, da porabnik ne utripa, ko presežek niha okoli sprožilca."
+                }
+            },
+            "hub_policy": {
+                "title": "Baterije in napovedi",
+                "description": "Politika baterij in napovedi PV za celoten objekt, za vse razsmernike na tem hubu.",
+                "data": {
+                    "battery_soc_hysteresis": "Histereza napolnjenosti baterije",
+                    "base_consumption": "Osnovna poraba hiše",
+                    "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti"
+                },
+                "data_description": {
+                    "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % — baterija nikoli ne pade pod spodnjo mejo.",
+                    "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva — vnos vršne porabe funkcijo v praksi izklopi.",
+                    "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
+                }
+            },
+            "hub_timing": {
+                "title": "Časovni intervali",
+                "description": "Kako pogosto se motor osveži in kaj zazna sam.",
+                "data": {
+                    "site_update_frequency": "Pogostost osveževanja senzorjev lokacije",
+                    "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
+                    "solar_grace_period": "Odlog za način Solar/Excess"
+                },
+                "data_description": {
+                    "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja porabnikom.",
+                    "auto_detect_phase_mapping": "Spremlja tokove porabnikov za zaznavo nepravilnega faznega ožičenja. Deluje za vse vrste porabnikov na večfaznih lokacijah. Onemogočite ob lažnih opozorilih.",
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
                 }
             },
             "hub_inverter": {

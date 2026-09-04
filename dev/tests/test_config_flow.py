@@ -255,7 +255,8 @@ async def test_options_flow_hub_shows_menu(
     mock_hub_entry: MockConfigEntry,
     mock_setup,
 ):
-    """A hub's options open on the menu: settings, overview, how it decides."""
+    """An imported hub's options open on a menu of one page per question, plus
+    overview and how it decides — no priority page without loads."""
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
@@ -264,14 +265,16 @@ async def test_options_flow_hub_shows_menu(
 
     assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "init"
-    assert result["menu_options"] == ["settings", "overview", "summary"]
+    assert result["menu_options"] == [
+        "hub_connection", "hub_export", "hub_policy", "hub_timing", "overview", "summary",
+    ]
 
-    # "Edit settings" leads to the first editable hub page.
+    # The first menu entry is the grid connection page.
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"next_step_id": "settings"}
+        result["flow_id"], {"next_step_id": "hub_connection"}
     )
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_grid"
+    assert result["step_id"] == "hub_connection"
 
 
 async def test_options_flow_charger_shows_form(

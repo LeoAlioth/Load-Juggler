@@ -1232,6 +1232,50 @@ def _hub_grid_schema(hass, defaults: dict | None = None) -> vol.Schema:
     return _hub_schema(hass, defaults, include_grid=True, include_battery=False)
 
 
+# The hub's options menu splits the grid page into four pages, one question
+# each: how the site is wired to the grid, where the export wall and the
+# Excess trigger sit, the fleet-wide battery/forecast policy, and the engine's
+# timing. The setup wizard keeps the one page (_hub_grid_schema).
+HUB_CONNECTION_KEYS = (
+    CONF_PHASE_A_CURRENT_ENTITY_ID,
+    CONF_PHASE_B_CURRENT_ENTITY_ID,
+    CONF_PHASE_C_CURRENT_ENTITY_ID,
+    CONF_INVERT_PHASES,
+    CONF_MAIN_BREAKER_RATING,
+    CONF_PHASE_VOLTAGE,
+    CONF_ENABLE_MAX_IMPORT_POWER,
+    CONF_MAX_IMPORT_POWER_ENTITY_ID,
+)
+HUB_EXPORT_KEYS = (
+    CONF_GRID_EXPORT_LIMIT,
+    CONF_EXCESS_TRIGGER_MARGIN,
+    CONF_EXCESS_HYSTERESIS,
+)
+HUB_POLICY_KEYS = (
+    CONF_BATTERY_SOC_HYSTERESIS,
+    CONF_BASE_CONSUMPTION,
+    CONF_FORECAST_SOC_FLOOR,
+)
+HUB_TIMING_KEYS = (
+    CONF_SITE_UPDATE_FREQUENCY,
+    CONF_AUTO_DETECT_PHASE_MAPPING,
+    CONF_SOLAR_GRACE_PERIOD,
+)
+
+
+def _hub_section_schema(hass, defaults, keys) -> vol.Schema:
+    """One hub options page: the grid page's fields restricted to ``keys``,
+    in the grid page's own order, so the two never drift apart."""
+    wanted = set(keys)
+    fields = [
+        (marker, validator)
+        for marker, validator in _build_hub_grid_schema(hass, defaults)
+        if getattr(marker, "schema", None) in wanted
+    ]
+    assert len(fields) == len(wanted), "hub section keys drifted from the grid page"
+    return vol.Schema(dict(fields))
+
+
 def _hub_battery_schema(hass, defaults: dict | None = None) -> vol.Schema:
     """Build schema with only the legacy hub solar/battery fields."""
     return _hub_schema(hass, defaults, include_grid=False, include_battery=True)

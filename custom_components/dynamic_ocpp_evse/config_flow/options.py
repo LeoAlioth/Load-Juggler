@@ -65,7 +65,7 @@ from ..helpers import (
     validate_charger_settings,
     validate_offgrid_battery_requirement,
 )
-from ..helpers import inverter_features, strip_unfeatured_inverter_options
+from ..helpers import hub_has_battery, inverter_features, strip_unfeatured_inverter_options
 from .helpers import (
     _BATTERY_ENTITY_KEYS,
     _BATTERY_UNIT_MAP,
@@ -117,6 +117,11 @@ from .schemas import (
     _build_inverter_solar_schema,
     _build_inverter_battery_schema,
     _build_inverter_control_schema,
+    _hub_section_schema,
+    HUB_CONNECTION_KEYS,
+    HUB_EXPORT_KEYS,
+    HUB_POLICY_KEYS,
+    HUB_TIMING_KEYS,
 )
 
 
@@ -281,6 +286,23 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 menu_options.append("inverter_control")
             menu_options.append("overview")
             return self.async_show_menu(step_id="init", menu_options=menu_options)
+        if entry_type == ENTRY_TYPE_HUB and self.config_entry.data.get(
+            MIGRATE_HUB_INVERTER_IMPORTED_FLAG
+        ):
+            # A hub whose hardware lives on inverter entries edits its own
+            # settings one question per page. The battery/forecast policy is
+            # offered only while some inverter on it declares a battery; the
+            # priority order only while it has loads to order.
+            menu_options = ["hub_connection", "hub_export"]
+            if hub_has_battery(self.hass, self.config_entry):
+                menu_options.append("hub_policy")
+            menu_options.append("hub_timing")
+            if _controlled_devices(self.hass, self.config_entry.entry_id):
+                menu_options.append("priority")
+            menu_options += ["overview", "summary"]
+            return self.async_show_menu(step_id="init", menu_options=menu_options)
+        # A hub still carrying legacy hardware fields (never auto-imported)
+        # keeps the wizard, whose later pages edit those fields.
         menu_options = ["settings", "overview"]
         if entry_type == ENTRY_TYPE_HUB:
             menu_options.append("summary")
@@ -489,6 +511,66 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             entity_keys=_GRID_ENTITY_KEYS,
             unit_map=_GRID_UNIT_MAP,
             validate=_require_battery_when_offgrid,
+        )
+
+    async def async_step_hub_connection(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """How the site is wired to the grid: CTs, breaker, voltage, import cap.
+        Dropping every CT makes the hub off-grid, so the battery requirement is
+        checked here."""
+
+        def _require_battery_when_offgrid(data, errors) -> None:
+            validate_offgrid_battery_requirement(
+                data, self._defaults, errors,
+                hass=self.hass, hub_entry_id=self.config_entry.entry_id,
+            )
+
+        return await self._async_edit_page(
+            user_input,
+            step_id="hub_connection",
+            schema=lambda defaults: _hub_section_schema(
+                self.hass, defaults, HUB_CONNECTION_KEYS
+            ),
+            entity_keys=_GRID_ENTITY_KEYS,
+            unit_map=_GRID_UNIT_MAP,
+            validate=_require_battery_when_offgrid,
+        )
+
+    async def async_step_hub_export(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The export wall and the Excess trigger under it."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="hub_export",
+            schema=lambda defaults: _hub_section_schema(
+                self.hass, defaults, HUB_EXPORT_KEYS
+            ),
+        )
+
+    async def async_step_hub_policy(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Fleet-wide battery and forecast policy."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="hub_policy",
+            schema=lambda defaults: _hub_section_schema(
+                self.hass, defaults, HUB_POLICY_KEYS
+            ),
+        )
+
+    async def async_step_hub_timing(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The engine's timing: refresh interval, phase detection, solar grace."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="hub_timing",
+            schema=lambda defaults: _hub_section_schema(
+                self.hass, defaults, HUB_TIMING_KEYS
+            ),
         )
 
     async def async_step_hub_inverter(

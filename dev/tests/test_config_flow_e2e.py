@@ -646,14 +646,21 @@ async def test_options_flow_hub_saves_changes(
         {"device_class": "power", "unit_of_measurement": "W"},
     )
 
-    # One page: grid + site policy. No hardware fields — those moved to the
-    # inverter entry the setup above auto-created.
-    result = await _open_options(hass, mock_hub_entry.entry_id)
+    # The imported hub's menu: one page per question, no hardware fields —
+    # those moved to the inverter entry the setup above auto-created — and no
+    # priority page, since this hub has no loads to order.
+    menu = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
+    assert menu["type"] == FlowResultType.MENU
+    assert menu["menu_options"] == [
+        "hub_connection", "hub_export", "hub_policy", "hub_timing", "overview", "summary",
+    ]
+
+    result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_connection")
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hub_grid"
+    assert result["step_id"] == "hub_connection"
     assert not _schema_has(result["data_schema"], CONF_BATTERY_MAX_CHARGE_POWER)
     assert not _schema_has(result["data_schema"], CONF_SOLAR_PRODUCTION_ENTITY_ID)
-
+    assert not _schema_has(result["data_schema"], CONF_GRID_EXPORT_LIMIT)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
@@ -662,15 +669,34 @@ async def test_options_flow_hub_saves_changes(
             CONF_INVERT_PHASES: False,
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
             CONF_PHASE_VOLTAGE: 230,
-            CONF_GRID_EXPORT_LIMIT: 13500,
-            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_export")
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_GRID_EXPORT_LIMIT: 13500}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_policy")
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
             CONF_BATTERY_SOC_HYSTERESIS: 5,
             CONF_BASE_CONSUMPTION: 400,
             CONF_FORECAST_SOC_FLOOR: 35,
         },
     )
-    # Saves and closes — this hub has no loads to prioritise.
     assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_timing")
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    # Each page saved only its own fields, and none clobbered another's.
+    assert mock_hub_entry.options.get(CONF_PHASE_A_CURRENT_ENTITY_ID) == "sensor.inverter_phase_a"
 
     # Options should now contain the submitted values
     assert mock_hub_entry.options.get(CONF_MAIN_BREAKER_RATING) == 25
@@ -1095,26 +1121,10 @@ async def test_options_flow_priority_reorders_devices(
         {"device_class": "power", "unit_of_measurement": "W"},
     )
 
-    # Page 1: grid + site policy. The hub's hardware was auto-imported onto an
-    # inverter entry during setup, so the next page is the priority order.
-    result = await _open_options(hass, mock_hub_entry.entry_id)
-    assert result["step_id"] == "hub_grid"
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
-            CONF_MAIN_BREAKER_RATING: 25,
-            CONF_INVERT_PHASES: False,
-            CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
-            CONF_PHASE_VOLTAGE: 230,
-            CONF_GRID_EXPORT_LIMIT: 13500,
-            CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
-            CONF_BATTERY_SOC_HYSTERESIS: 5,
-            CONF_BASE_CONSUMPTION: 400,
-            CONF_FORECAST_SOC_FLOOR: 35,
-        },
-    )
+    # With loads on the hub the menu offers the priority page directly.
+    menu = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
+    assert "priority" in menu["menu_options"]
+    result = await _open_options(hass, mock_hub_entry.entry_id, step="priority")
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "priority"
 
