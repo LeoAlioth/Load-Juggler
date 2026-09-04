@@ -1228,6 +1228,9 @@ async def test_overview_page_reports_live_values(
     hass.data[DOMAIN]["load_status"] = {plug.entry_id: "Charging"}
 
     text = _overview_text(hass, mock_hub_entry.entry_id)
+    # A snapshot names the clock time it was calculated at, never a running age.
+    assert "Snapshot of the values calculated at " in text
+    assert "s ago" not in text
     assert "3400 W" in text  # solar production
     assert "64 %" in text  # battery SOC
     assert "Pond Pump" in text

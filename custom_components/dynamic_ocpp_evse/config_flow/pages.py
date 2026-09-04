@@ -7,6 +7,7 @@ in (hass, entry_id) so they can be unit-tested without a flow instance.
 Moved verbatim out of the single-file config_flow.py.
 """
 from datetime import datetime, timezone
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry as er_async_entries_for_config_entry,
     async_get as async_get_entity_registry,
@@ -164,9 +165,13 @@ def _live_hub_data(hass, hub_entry_id: str | None) -> tuple[dict, str]:
             age = None
     if age is None:
         return data, "Live values (age unknown)."
+    # A clock time, not an age: this page is a snapshot that never re-renders
+    # until Refresh is pressed, so "0 s ago" would sit there as a frozen
+    # counter. The stale line keeps the age — that one is the point.
+    stamp = dt_util.as_local(last_update).strftime("%H:%M:%S")
     if age > _STALE_AFTER_SECONDS:
-        return data, f"⚠️ **Stale** — last calculated {_fmt_age(age)}."
-    return data, f"Live values, calculated {_fmt_age(age)}."
+        return data, f"⚠️ **Stale** — last calculated at {stamp} ({_fmt_age(age)})."
+    return data, f"Snapshot of the values calculated at {stamp} — press Refresh for a new one."
 
 
 def _load_permit(hass, load_entry, hub_data: dict):
