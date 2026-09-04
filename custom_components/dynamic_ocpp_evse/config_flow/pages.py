@@ -533,7 +533,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
         loads_off = hub_data.get("total_export_power")
     export_limit = get_entry_value(entry, CONF_GRID_EXPORT_LIMIT, 0) or 0
     over = (
-        " ❗ over the export limit"
+        " ❗"
         if isinstance(loads_off, (int, float))
         and export_limit > 0
         and loads_off > export_limit

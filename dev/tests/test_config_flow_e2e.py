@@ -2240,4 +2240,5 @@ async def test_the_overview_flags_export_over_the_limit(
     }
     text = _overview_text(hass, mock_hub_entry.entry_id)
     assert "Exporting: 8319 W" in text
-    assert "Export with managed loads off: 8557 W ❗ over the export limit" in text
+    assert "Export with managed loads off: 8557 W ❗" in text
+    assert "over the export limit" not in text
