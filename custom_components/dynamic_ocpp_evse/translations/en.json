@@ -141,7 +141,7 @@
             },
             "inverter_features": {
                 "title": "Inverter features",
-                "description": "What this inverter has. Only the pages for the features you tick are shown, and nothing is stored for the rest — a PV-only string inverter never carries battery settings.",
+                "description": "Which features this inverter supports or has enabled.",
                 "data": {
                     "inverter_features": "This inverter has"
                 }
@@ -174,7 +174,7 @@
             },
             "inverter_battery": {
                 "title": "Inverter Battery",
-                "description": "The battery physically behind this inverter.",
+                "description": "The battery behind this inverter.",
                 "data": {
                     "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
                     "battery_power_entity_id": "Battery power sensor",
@@ -441,7 +441,7 @@
             "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. A battery SOC entity and a battery power entity are both required.",
             "invalid_unit": "Sensor unit mismatch — check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V).",
             "unknown": "An unknown error occurred",
-            "control_needs_battery": "Battery charge management needs a battery — tick “Battery connected” as well."
+            "control_needs_battery": "Battery charge management needs a battery — tick “Battery” as well."
         },
         "abort": {
             "entry_not_found": "Configuration entry not found",
@@ -458,7 +458,7 @@
             "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. A battery SOC entity and a battery power entity are both required.",
             "ocpp_device_not_usable": "That device has no usable OCPP charger sensors. Pick the device the OCPP integration created for the charger — it needs a current import sensor plus a current offered or power offered sensor.",
             "invalid_unit": "Sensor unit mismatch — check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V).",
-            "control_needs_battery": "Battery charge management needs a battery — tick “Battery connected” as well."
+            "control_needs_battery": "Battery charge management needs a battery — tick “Battery” as well."
         },
         "abort": {
             "entry_not_found": "Configuration entry not found"
@@ -582,14 +582,14 @@
             },
             "inverter_features": {
                 "title": "Inverter features",
-                "description": "Tick what this inverter has. The settings page shows only those sections, and a section you untick is cleared when you save.",
+                "description": "Tick what this inverter has. The details are set on the next pages.",
                 "data": {
                     "inverter_features": "This inverter has"
                 }
             },
             "inverter_settings": {
                 "title": "Update Inverter Settings",
-                "description": "Update this inverter — the sections shown are the features it declares.",
+                "description": "Update this inverter.",
                 "data": {
                     "inverter_max_power": "Total inverter power capacity",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase",
@@ -877,8 +877,8 @@
     "selector": {
         "inverter_features": {
             "options": {
-                "solar": "PV array connected",
-                "battery": "Battery connected",
+                "solar": "PV",
+                "battery": "Battery",
                 "battery_control": "Battery charge management (writes to the inverter)"
             }
         }
