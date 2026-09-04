@@ -153,6 +153,11 @@ from ..const import (
     STATION_CHARGE_POWER_STEP,
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
+    CONF_INVERTER_FEATURES,
+    INVERTER_FEATURE_BATTERY,
+    INVERTER_FEATURE_BATTERY_CONTROL,
+    INVERTER_FEATURE_SOLAR,
+    INVERTER_FEATURES,
 )
 from ..helpers import normalize_optional_entity
 from .helpers import (
@@ -1153,13 +1158,62 @@ def _inverter_control_schema(hass, defaults: dict | None = None) -> vol.Schema:
     return vol.Schema(dict(_build_inverter_control_schema(hass, defaults)))
 
 
-def _inverter_combined_schema(hass, defaults: dict | None = None) -> vol.Schema:
-    """Inverter + solar + battery + write-control on one page
-    (inverter options flow)."""
+def _inverter_features_schema(defaults: dict | None = None) -> vol.Schema:
+    """The first inverter page: what this inverter HAS.
+
+    A multi-select of feature slugs (labels via the ``inverter_features``
+    selector translation). ``suggested_value`` rather than ``default``: a list
+    the user empties is omitted by the frontend, and a default would silently
+    put the old list back (the same clearing rule as the SOC slots).
+    """
+    defaults = defaults or {}
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_INVERTER_FEATURES,
+                description={
+                    "suggested_value": list(defaults.get(CONF_INVERTER_FEATURES) or [])
+                },
+            ): selector(
+                {
+                    "select": {
+                        "options": list(INVERTER_FEATURES),
+                        "multiple": True,
+                        "mode": "list",
+                        "translation_key": "inverter_features",
+                    }
+                }
+            ),
+        }
+    )
+
+
+def _inverter_config_schema(hass, defaults: dict | None = None, features=None):
+    """The inverter's own page on setup: the AC side, plus the PV section when
+    the solar feature is declared. Returns the field list (the create step
+    adds name and entity id in front of it)."""
     fields = _build_hub_inverter_schema(hass, defaults)
-    fields.extend(_build_inverter_solar_schema(hass, defaults))
-    fields.extend(_build_inverter_battery_schema(hass, defaults))
-    fields.extend(_build_inverter_control_schema(hass, defaults))
+    if _has_feature(features, INVERTER_FEATURE_SOLAR):
+        fields.extend(_build_inverter_solar_schema(hass, defaults))
+    return fields
+
+
+def _has_feature(features, feature) -> bool:
+    """None means "everything" — the pre-features shape of these pages."""
+    return features is None or feature in features
+
+
+def _inverter_combined_schema(
+    hass, defaults: dict | None = None, features=None
+) -> vol.Schema:
+    """Inverter + solar + battery + write-control on one page (inverter
+    options flow), each section only when its feature is declared.
+    ``features=None`` shows every section."""
+    fields = _inverter_config_schema(hass, defaults, features)
+    if _has_feature(features, INVERTER_FEATURE_BATTERY):
+        fields.extend(_build_inverter_battery_schema(hass, defaults))
+    if _has_feature(features, INVERTER_FEATURE_BATTERY_CONTROL):
+        fields.extend(_build_inverter_control_schema(hass, defaults))
     return vol.Schema(dict(fields))
 
 

@@ -458,6 +458,11 @@ async def test_inverter_battery_with_soc_sensor_without_device_class(
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={"setup_type": "inverter"}
     )
+    assert result["step_id"] == "inverter_features"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={"inverter_features": ["solar", "battery", "battery_control"]},
+    )
     assert result["step_id"] == "inverter_config"
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -553,6 +558,10 @@ async def test_power_sensors_with_watts_unit_without_device_class(
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={"setup_type": "inverter"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={"inverter_features": ["solar", "battery", "battery_control"]},
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],

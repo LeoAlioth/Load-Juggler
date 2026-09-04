@@ -82,6 +82,8 @@ from custom_components.dynamic_ocpp_evse.const import (
     DEFAULT_STACK_LEVEL,
     DEFAULT_CHARGE_RATE_UNIT,
     DEFAULT_PROFILE_VALIDITY_MODE,
+    CONF_INVERTER_FEATURES,
+    ENTRY_TYPE_INVERTER,
 )
 from custom_components.dynamic_ocpp_evse.helpers import get_entry_value
 
@@ -281,6 +283,10 @@ async def test_inverter_forecast_devices_validated(hass: HomeAssistant):
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={"setup_type": "inverter"}
     )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={CONF_INVERTER_FEATURES: ["solar", "battery", "battery_control"]},
+    )
     assert result["step_id"] == "inverter_config"
 
     # A device without any watts-bearing sensor is rejected, named in the error
@@ -340,6 +346,10 @@ async def test_inverter_empty_forecast_selection_accepted(hass: HomeAssistant):
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={"setup_type": "inverter"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={CONF_INVERTER_FEATURES: ["solar", "battery", "battery_control"]},
     )
     # The multi-device selector omits its key entirely when left empty
     result = await hass.config_entries.flow.async_configure(
@@ -707,6 +717,21 @@ def _selector_config(data_schema, key) -> dict:
     raise AssertionError(f"{key} not present in schema")
 
 
+async def _open_inverter_settings(hass, entry_id, features=None):
+    """Open an inverter's options: the features page first, then settings.
+
+    ``features`` defaults to everything declared, so the settings page shows
+    every section the combined page used to.
+    """
+    result = await _open_options(hass, entry_id)
+    assert result["step_id"] == "inverter_features"
+    if features is None:
+        features = ["solar", "battery", "battery_control"]
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_INVERTER_FEATURES: features}
+    )
+
+
 async def _open_options(hass, entry_id, step="settings"):
     """Open an entry's options menu and pick one of its entries.
 
@@ -761,11 +786,11 @@ async def test_inverter_options_does_not_autodetect_phases(
             {"device_class": "current", "unit_of_measurement": "A"},
         )
 
-    result = await _open_options(hass, inverter.entry_id)
+    result = await _open_inverter_settings(hass, inverter.entry_id)
 
     # None of the three phase fields may be pre-filled.
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "inverter"
+    assert result["step_id"] == "inverter_settings"
     schema = result["data_schema"]
     assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID) is None
     assert _suggested_value(schema, CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID) is None
@@ -815,8 +840,8 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
     hass.states.async_set("number.deye_tou_soc_2", "100", {"max": 100})
     hass.states.async_set("input_number.battery_ceiling", "90")
 
-    result = await _open_options(hass, inverter.entry_id)
-    assert result["step_id"] == "inverter"
+    result = await _open_inverter_settings(hass, inverter.entry_id)
+    assert result["step_id"] == "inverter_settings"
     schema = result["data_schema"]
     assert _schema_has(schema, CONF_SOC_LIMIT_ENTITY_IDS)
     assert _schema_has(schema, CONF_SOC_LIMIT_NORMAL_ENTITY_ID)
@@ -849,7 +874,7 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
     ]
 
     # Now clear them the way the UI does: the key simply isn't submitted.
-    result = await _open_options(hass, inverter.entry_id)
+    result = await _open_inverter_settings(hass, inverter.entry_id)
     schema = result["data_schema"]
     submitted = {
         key: value
@@ -905,8 +930,8 @@ async def test_inverter_options_round_trip_the_minimum_charge_limit(
             ent, "5.0", {"device_class": "current", "unit_of_measurement": "A"}
         )
 
-    result = await _open_options(hass, inverter.entry_id)
-    assert result["step_id"] == "inverter"
+    result = await _open_inverter_settings(hass, inverter.entry_id)
+    assert result["step_id"] == "inverter_settings"
     schema = result["data_schema"]
     assert _schema_has(schema, CONF_CHARGE_LIMIT_MINIMUM)
     # Never negative, and defaulting to 0 — which is "no floor at all", the
@@ -932,7 +957,7 @@ async def test_inverter_options_round_trip_the_minimum_charge_limit(
     assert inverter.options[CONF_CHARGE_LIMIT_MINIMUM] == 2
 
     # And the stored value comes back as the form's default on the next visit.
-    result = await _open_options(hass, inverter.entry_id)
+    result = await _open_inverter_settings(hass, inverter.entry_id)
     assert _schema_default(result["data_schema"], CONF_CHARGE_LIMIT_MINIMUM) == 2
 
 
@@ -1336,7 +1361,7 @@ async def test_migration_seeds_grid_export_limit_in_one_pass(hass: HomeAssistant
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 6
+    assert entry.minor_version == 7
     assert entry.options[CONF_GRID_EXPORT_LIMIT] == 13000 + DEFAULT_EXCESS_TRIGGER_MARGIN
     assert entry.options[CONF_EXCESS_TRIGGER_MARGIN] == DEFAULT_EXCESS_TRIGGER_MARGIN
 
@@ -1366,7 +1391,7 @@ async def test_migration_leaves_offgrid_hub_unlimited(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 6
+    assert entry.minor_version == 7
     assert not entry.options.get(CONF_GRID_EXPORT_LIMIT)
 
 
@@ -1404,7 +1429,7 @@ async def test_migration_renames_stored_charger_strings(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 6
+    assert entry.minor_version == 7
     assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD == "load"
     # Both stores are renamed, and the legacy spelling is gone from each.
     assert entry.data[CONF_LOAD_PRIORITY] == 2
@@ -1438,7 +1463,7 @@ async def test_migration_of_stored_charger_strings_is_idempotent(
     assert await async_migrate_entry(hass, entry)
     assert dict(entry.data) == migrated_data
     assert dict(entry.options) == migrated_options
-    assert entry.minor_version == 6
+    assert entry.minor_version == 7
 
 
 async def test_migration_leaves_non_load_entries_alone(hass: HomeAssistant):
@@ -1462,7 +1487,7 @@ async def test_migration_leaves_non_load_entries_alone(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 6
+    assert entry.minor_version == 7
     assert dict(entry.data) == data_before
     assert dict(entry.options) == options_before
 
@@ -1486,7 +1511,7 @@ async def test_migrated_load_entry_sets_up(hass: HomeAssistant, mock_hub_entry):
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
-    assert entry.minor_version == 6
+    assert entry.minor_version == 7
     assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD
     assert entry.entry_id in hass.data[DOMAIN]["loads"]
     assert entry.entry_id in hass.data[DOMAIN]["load_allocations"]
@@ -1547,6 +1572,10 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={"setup_type": "inverter"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={CONF_INVERTER_FEATURES: ["solar", "battery", "battery_control"]},
     )
     # Single hub → select_hub auto-skips straight to the inverter form
     assert result["type"] == FlowResultType.FORM
@@ -1875,3 +1904,227 @@ async def test_hub_inverter_import_merges_later_fields(hass: HomeAssistant):
         if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
     ]
     assert len(inverters) == 1
+
+
+# ── Inverter features: the first page decides which pages follow ──────────
+
+
+async def test_pv_only_inverter_skips_the_battery_pages_and_stores_no_battery(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    """Solar only: inverter_config creates the entry directly — no battery
+    page, no write-control page — and the entry carries no battery cap. That
+    default (5000 W on a PV-only entry) is the phantom that took 53 % of the
+    charge advice on a live site."""
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set(
+        "sensor.string_pv", "3000",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "inverter"}
+    )
+    assert result["step_id"] == "inverter_features"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_INVERTER_FEATURES: ["solar"]}
+    )
+    assert result["step_id"] == "inverter_config"
+    schema = result["data_schema"]
+    assert _schema_has(schema, CONF_SOLAR_PRODUCTION_ENTITY_ID)
+    assert not _schema_has(schema, CONF_BATTERY_SOC_ENTITY_ID)
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_NAME: "String Only",
+            CONF_ENTITY_ID: "lj_string_only",
+            CONF_INVERTER_MAX_POWER: 8700,
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.string_pv",
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    options = result["options"]
+    assert options[CONF_INVERTER_FEATURES] == ["solar"]
+    assert options[CONF_SOLAR_PRODUCTION_ENTITY_ID] == "sensor.string_pv"
+    assert options.get(CONF_BATTERY_MAX_CHARGE_POWER) is None
+    assert options.get(CONF_BATTERY_MAX_DISCHARGE_POWER) is None
+    assert options.get(CONF_BATTERY_SOC_ENTITY_ID) is None
+
+
+async def test_battery_without_control_ends_on_the_battery_page(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    """Solar + battery, no write-control: the battery page is the last one."""
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set(
+        "sensor.hyb_soc", "50", {"device_class": "battery", "unit_of_measurement": "%"}
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "inverter"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_INVERTER_FEATURES: ["battery"]}
+    )
+    assert result["step_id"] == "inverter_config"
+    assert not _schema_has(result["data_schema"], CONF_SOLAR_PRODUCTION_ENTITY_ID)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={CONF_NAME: "Hybrid NoCtl", CONF_ENTITY_ID: "lj_hyb_noctl"},
+    )
+    assert result["step_id"] == "inverter_battery"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={CONF_BATTERY_SOC_ENTITY_ID: "sensor.hyb_soc"},
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["options"][CONF_INVERTER_FEATURES] == ["battery"]
+    assert result["options"][CONF_BATTERY_SOC_ENTITY_ID] == "sensor.hyb_soc"
+    assert result["options"][CONF_BATTERY_MAX_CHARGE_POWER] == 5000
+
+
+async def test_write_control_without_a_battery_is_refused(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "inverter"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={CONF_INVERTER_FEATURES: ["solar", "battery_control"]},
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "inverter_features"
+    assert result["errors"] == {CONF_INVERTER_FEATURES: "control_needs_battery"}
+
+
+async def test_unticking_the_battery_in_options_clears_its_settings(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    """The options flow opens on the features page with the declared (or
+    inferred) list suggested; unticking battery hides its section and clears
+    every battery key on save, so a stale cap cannot outlive the battery."""
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    inverter = next(
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+    )
+    for ent in ("sensor.inverter_phase_a", "sensor.inverter_phase_b", "sensor.inverter_phase_c"):
+        hass.states.async_set(
+            ent, "5.0", {"device_class": "current", "unit_of_measurement": "A"}
+        )
+    stored_before = {**inverter.data, **inverter.options}
+    assert stored_before.get(CONF_BATTERY_SOC_ENTITY_ID)
+
+    result = await _open_options(hass, inverter.entry_id)
+    assert result["step_id"] == "inverter_features"
+    assert "battery" in _suggested_value(result["data_schema"], CONF_INVERTER_FEATURES)
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_INVERTER_FEATURES: ["solar"]}
+    )
+    assert result["step_id"] == "inverter_settings"
+    schema = result["data_schema"]
+    assert not _schema_has(schema, CONF_BATTERY_SOC_ENTITY_ID)
+    assert not _schema_has(schema, CONF_BATTERY_MAX_CHARGE_POWER)
+
+    submitted = {
+        key: value
+        for key, value in stored_before.items()
+        if _schema_has(schema, key) and value is not None
+    }
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input=submitted
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert inverter.options[CONF_INVERTER_FEATURES] == ["solar"]
+    assert inverter.options[CONF_BATTERY_SOC_ENTITY_ID] is None
+    assert inverter.options[CONF_BATTERY_POWER_ENTITY_ID] is None
+    assert inverter.options[CONF_BATTERY_MAX_CHARGE_POWER] is None
+    assert inverter.options[CONF_BATTERY_MAX_DISCHARGE_POWER] is None
+
+
+async def test_migration_infers_features_and_drops_the_phantom_battery(
+    hass: HomeAssistant,
+):
+    """A pre-2.7 PV-only inverter entry carrying the form's battery defaults
+    comes out declared solar-only with those defaults cleared; a hybrid with a
+    charge register comes out with all three features and nothing touched."""
+    from custom_components.dynamic_ocpp_evse import async_migrate_entry
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_CHARGE_LIMIT_ENTITY_ID,
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN, version=2, minor_version=6, title="Hub",
+        data={CONF_NAME: "Hub", CONF_ENTITY_ID: "hub", ENTRY_TYPE: ENTRY_TYPE_HUB},
+        options={CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_a"},
+    )
+    pv_only = MockConfigEntry(
+        domain=DOMAIN, version=2, minor_version=6, title="SolarEdge",
+        data={
+            CONF_NAME: "SolarEdge", CONF_ENTITY_ID: "lj_se",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER, CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options={
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.se_power",
+            CONF_INVERTER_MAX_POWER: 8700,
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+        },
+    )
+    hybrid = MockConfigEntry(
+        domain=DOMAIN, version=2, minor_version=6, title="Deye",
+        data={
+            CONF_NAME: "Deye", CONF_ENTITY_ID: "lj_deye",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER, CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options={
+            CONF_SOLAR_FORECAST_DEVICE_IDS: ["dev1"],
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.deye_soc",
+            CONF_BATTERY_MAX_CHARGE_POWER: 4500,
+            CONF_CHARGE_LIMIT_ENTITY_ID: "number.deye_max_charge_current",
+        },
+    )
+    for entry in (hub, pv_only, hybrid):
+        entry.add_to_hass(hass)
+        assert await async_migrate_entry(hass, entry)
+        assert entry.minor_version == 7
+
+    assert CONF_INVERTER_FEATURES not in hub.options
+    assert pv_only.options[CONF_INVERTER_FEATURES] == ["solar"]
+    assert pv_only.options[CONF_BATTERY_MAX_CHARGE_POWER] is None
+    assert pv_only.options[CONF_BATTERY_MAX_DISCHARGE_POWER] is None
+    assert pv_only.options[CONF_SOLAR_PRODUCTION_ENTITY_ID] == "sensor.se_power"
+    assert hybrid.options[CONF_INVERTER_FEATURES] == [
+        "solar", "battery", "battery_control"
+    ]
+    assert hybrid.options[CONF_BATTERY_MAX_CHARGE_POWER] == 4500
+    assert hybrid.options[CONF_CHARGE_LIMIT_ENTITY_ID] == "number.deye_max_charge_current"
+
+    # Idempotent: a second pass changes nothing.
+    assert await async_migrate_entry(hass, pv_only)
+    assert pv_only.options[CONF_INVERTER_FEATURES] == ["solar"]

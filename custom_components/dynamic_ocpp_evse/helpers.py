@@ -16,6 +16,26 @@ from .const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_INVERTER,
+    CONF_BATTERY_CAPACITY_KWH,
+    CONF_BATTERY_MAX_CHARGE_POWER,
+    CONF_BATTERY_MAX_DISCHARGE_POWER,
+    CONF_BATTERY_NOMINAL_VOLTAGE,
+    CONF_BATTERY_SOC_FULL,
+    CONF_BATTERY_VOLTAGE_ENTITY_ID,
+    CONF_CHARGE_CONTROL_DEADBAND_W,
+    CONF_CHARGE_CONTROL_INTERVAL,
+    CONF_CHARGE_LIMIT_ENTITY_ID,
+    CONF_CHARGE_LIMIT_MINIMUM,
+    CONF_CHARGE_LIMIT_NORMAL,
+    CONF_CHARGE_LIMIT_UNIT,
+    CONF_INVERTER_FEATURES,
+    CONF_SOC_LIMIT_ENTITY_IDS,
+    CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    CONF_SOC_LIMIT_SEMANTICS,
+    CONF_SOLAR_PRODUCTION_ENTITY_ID,
+    INVERTER_FEATURE_BATTERY,
+    INVERTER_FEATURE_BATTERY_CONTROL,
+    INVERTER_FEATURE_SOLAR,
 )
 
 
@@ -160,3 +180,96 @@ def validate_offgrid_battery_requirement(
                 ):
                     return
         errors["base"] = "battery_required_no_cts"
+
+
+# --- Inverter features: what an inverter entry declares it has ---------------
+
+# Every option key each feature owns. The config flow shows a section only for
+# a declared feature, and clears these keys when the feature is not declared;
+# the migration infers the list for entries from before it existed.
+INVERTER_FEATURE_KEYS = {
+    INVERTER_FEATURE_SOLAR: (
+        CONF_SOLAR_PRODUCTION_ENTITY_ID,
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    ),
+    INVERTER_FEATURE_BATTERY: (
+        CONF_BATTERY_SOC_ENTITY_ID,
+        CONF_BATTERY_POWER_ENTITY_ID,
+        CONF_BATTERY_MAX_CHARGE_POWER,
+        CONF_BATTERY_MAX_DISCHARGE_POWER,
+        CONF_BATTERY_SOC_FULL,
+        CONF_BATTERY_CAPACITY_KWH,
+    ),
+    INVERTER_FEATURE_BATTERY_CONTROL: (
+        CONF_CHARGE_LIMIT_ENTITY_ID,
+        CONF_CHARGE_LIMIT_UNIT,
+        CONF_BATTERY_VOLTAGE_ENTITY_ID,
+        CONF_BATTERY_NOMINAL_VOLTAGE,
+        CONF_CHARGE_LIMIT_NORMAL,
+        CONF_CHARGE_LIMIT_MINIMUM,
+        CONF_CHARGE_CONTROL_INTERVAL,
+        CONF_CHARGE_CONTROL_DEADBAND_W,
+        CONF_SOC_LIMIT_ENTITY_IDS,
+        CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+        CONF_SOC_LIMIT_SEMANTICS,
+    ),
+}
+
+# Keys that hold a list: cleared to an empty list, never None, because their
+# readers iterate them.
+_INVERTER_LIST_KEYS = frozenset({CONF_SOLAR_FORECAST_DEVICE_IDS, CONF_SOC_LIMIT_ENTITY_IDS})
+
+
+def infer_inverter_features(options: dict) -> list:
+    """The feature list an entry from before the list existed must have meant.
+
+    Solar when it names a production sensor or a forecast device; battery when
+    it names an SOC or power entity; write-control when it names a charge
+    register or SOC slots (which also implies the battery). Nothing is read
+    from the numeric fields on purpose — they carry the form's defaults on
+    every entry, which is the whole reason the list exists.
+    """
+    features = []
+    if options.get(CONF_SOLAR_PRODUCTION_ENTITY_ID) or options.get(
+        CONF_SOLAR_FORECAST_DEVICE_IDS
+    ):
+        features.append(INVERTER_FEATURE_SOLAR)
+    has_battery = bool(
+        options.get(CONF_BATTERY_SOC_ENTITY_ID) or options.get(CONF_BATTERY_POWER_ENTITY_ID)
+    )
+    has_control = bool(
+        options.get(CONF_CHARGE_LIMIT_ENTITY_ID) or options.get(CONF_SOC_LIMIT_ENTITY_IDS)
+    )
+    if has_battery or has_control:
+        features.append(INVERTER_FEATURE_BATTERY)
+    if has_control:
+        features.append(INVERTER_FEATURE_BATTERY_CONTROL)
+    return features
+
+
+def strip_unfeatured_inverter_options(options: dict, features, *, clear_all=False) -> dict:
+    """Clear every key of every feature NOT in ``features`` — in place, and
+    returned. Entities and numbers go to None, lists to [] (their readers
+    iterate). By default only keys the dict actually holds are touched, so a
+    migration adds nothing; ``clear_all`` writes every undeclared key, which
+    is what the options flow needs — its page dict never held the fields it
+    did not show, and ``_save`` merges that page onto the stored options,
+    where a missing key would leave the old value standing. None rather than
+    a deletion for the same reason."""
+    declared = set(features or ())
+    for feature, keys in INVERTER_FEATURE_KEYS.items():
+        if feature in declared:
+            continue
+        for key in keys:
+            if clear_all or key in options:
+                options[key] = [] if key in _INVERTER_LIST_KEYS else None
+    return options
+
+
+def inverter_features(entry: ConfigEntry) -> list:
+    """The declared feature list of an inverter entry, inferred when the entry
+    predates the list (a not-yet-migrated entry, or one seeded in a test)."""
+    declared = get_entry_value(entry, CONF_INVERTER_FEATURES, None)
+    if declared is not None:
+        return list(declared)
+    return infer_inverter_features({**entry.data, **entry.options})

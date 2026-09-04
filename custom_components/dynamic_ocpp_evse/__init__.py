@@ -93,8 +93,13 @@ from .const import (
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
     MIGRATE_PLUG_SOLAR_ONLY_FLAG,
+    CONF_INVERTER_FEATURES,
 )
-from .helpers import get_entry_value
+from .helpers import (
+    get_entry_value,
+    infer_inverter_features,
+    strip_unfeatured_inverter_options,
+)
 from . import units
 from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
 from .registry import (  # noqa: F401 — re-exported; canonical home is registry.py
@@ -349,6 +354,28 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 DEFAULT_CHARGE_CONTROL_DEADBAND_W,
             )
         _LOGGER.info("Updated minor version to 6")
+
+    # 2.7: inverter entries declare their FEATURES (PV array / battery /
+    # battery write-control) on the first page of their setup, and the pages
+    # for undeclared sections are not shown. Entries from before the list
+    # existed get it inferred from what they had configured, and the keys of
+    # every undeclared section are cleared — the form had been saving *Battery
+    # max charge power* at its default on PV-only entries, and that phantom
+    # pack took a share of every fleet sum (2026-09-03, live).
+    if entry.version == 2 and getattr(entry, "minor_version", 0) < 7:
+        options = dict(entry.options)
+        if (
+            entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+            and CONF_INVERTER_FEATURES not in options
+        ):
+            features = infer_inverter_features({**entry.data, **options})
+            options[CONF_INVERTER_FEATURES] = features
+            strip_unfeatured_inverter_options(options, features)
+            _LOGGER.info(
+                "%s: inverter features inferred as %s", entry.title, features or "none"
+            )
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=7)
+        _LOGGER.info("Updated minor version to 7")
 
     return True
 

@@ -63,6 +63,9 @@ from ..const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
+    CONF_INVERTER_FEATURES,
+    INVERTER_FEATURE_BATTERY,
+    INVERTER_FEATURE_BATTERY_CONTROL,
 )
 from ..helpers import get_entry_value, normalize_optional_entity
 from ..registry import get_inverters_for_hub
@@ -668,3 +671,21 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
         if any(source.get(key) for source in sources)
     )
     return max(count, 1)
+
+
+def _normalize_features_list(data: dict) -> dict:
+    """The features multi-select omits its key when emptied — store []."""
+    normalized = dict(data)
+    normalized[CONF_INVERTER_FEATURES] = list(normalized.get(CONF_INVERTER_FEATURES) or [])
+    return normalized
+
+
+def _validate_inverter_features(data: dict, errors: dict) -> None:
+    """Battery write-control is a battery feature: without a battery declared
+    there is nothing to write the charge limit or SOC ceiling FOR."""
+    features = data.get(CONF_INVERTER_FEATURES) or []
+    if (
+        INVERTER_FEATURE_BATTERY_CONTROL in features
+        and INVERTER_FEATURE_BATTERY not in features
+    ):
+        errors[CONF_INVERTER_FEATURES] = "control_needs_battery"

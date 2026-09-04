@@ -139,6 +139,13 @@
                     "wiring_topology": "Parallel: inverter and grid feed independently (AC-coupled solar, no battery). Series: all power flows through the inverter (hybrid inverter with DC-coupled battery)."
                 }
             },
+            "inverter_features": {
+                "title": "Inverter features",
+                "description": "What this inverter has. Only the pages for the features you tick are shown, and nothing is stored for the rest — a PV-only string inverter never carries battery settings.",
+                "data": {
+                    "inverter_features": "This inverter has"
+                }
+            },
             "inverter_config": {
                 "title": "Inverter",
                 "description": "Add an inverter as a power source on this hub. A site can have several (e.g. an older AC-coupled string inverter plus a new hybrid) — the hub aggregates the whole fleet.",
@@ -167,7 +174,7 @@
             },
             "inverter_battery": {
                 "title": "Inverter Battery",
-                "description": "The battery physically behind this inverter — leave everything empty if it has none.",
+                "description": "The battery physically behind this inverter.",
                 "data": {
                     "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
                     "battery_power_entity_id": "Battery power sensor",
@@ -433,7 +440,8 @@
             "entity_id_in_use": "This entity ID is already used by another Load Juggler device — choose a unique one.",
             "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. A battery SOC entity and a battery power entity are both required.",
             "invalid_unit": "Sensor unit mismatch — check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V).",
-            "unknown": "An unknown error occurred"
+            "unknown": "An unknown error occurred",
+            "control_needs_battery": "Battery charge management needs a battery — tick “Battery connected” as well."
         },
         "abort": {
             "entry_not_found": "Configuration entry not found",
@@ -449,7 +457,8 @@
             "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
             "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. A battery SOC entity and a battery power entity are both required.",
             "ocpp_device_not_usable": "That device has no usable OCPP charger sensors. Pick the device the OCPP integration created for the charger — it needs a current import sensor plus a current offered or power offered sensor.",
-            "invalid_unit": "Sensor unit mismatch — check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V)."
+            "invalid_unit": "Sensor unit mismatch — check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V).",
+            "control_needs_battery": "Battery charge management needs a battery — tick “Battery connected” as well."
         },
         "abort": {
             "entry_not_found": "Configuration entry not found"
@@ -571,9 +580,16 @@
                     "battery_soc_entity_id": "The battery's state-of-charge percentage. This is what the SOC-gated operating modes decide on: how far each mode may drain the stored solar buffer, and when a battery counts as full."
                 }
             },
-            "inverter": {
+            "inverter_features": {
+                "title": "Inverter features",
+                "description": "Tick what this inverter has. The settings page shows only those sections, and a section you untick is cleared when you save.",
+                "data": {
+                    "inverter_features": "This inverter has"
+                }
+            },
+            "inverter_settings": {
                 "title": "Update Inverter Settings",
-                "description": "Update this inverter and its battery",
+                "description": "Update this inverter — the sections shown are the features it declares.",
                 "data": {
                     "inverter_max_power": "Total inverter power capacity",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase",
@@ -855,6 +871,15 @@
                     "name": "Minimum Current",
                     "description": "The minimum current in Amps."
                 }
+            }
+        }
+    },
+    "selector": {
+        "inverter_features": {
+            "options": {
+                "solar": "PV array connected",
+                "battery": "Battery connected",
+                "battery_control": "Battery charge management (writes to the inverter)"
             }
         }
     }

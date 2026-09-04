@@ -54,6 +54,7 @@ from ..const import (
     FIELD_OCPP_DEVICE,
     MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
     OCPP_INTEGRATION_DOMAIN,
+    CONF_INVERTER_FEATURES,
 )
 from ..detection_patterns import BATTERY_MAX_DISCHARGE_POWER_PATTERNS
 from ..helpers import (
@@ -61,6 +62,7 @@ from ..helpers import (
     validate_charger_settings,
     validate_offgrid_battery_requirement,
 )
+from ..helpers import inverter_features, strip_unfeatured_inverter_options
 from .helpers import (
     _BATTERY_ENTITY_KEYS,
     _BATTERY_UNIT_MAP,
@@ -89,6 +91,8 @@ from .helpers import (
     _validate_charge_limit_unit,
     _validate_entity_units,
     _validate_forecast_devices,
+    _normalize_features_list,
+    _validate_inverter_features,
 )
 from ..ocpp_discovery import (
     ocpp_charger_for_device,
@@ -106,6 +110,7 @@ from .schemas import (
     _inverter_combined_schema,
     _plug_schema,
     _power_station_schema,
+    _inverter_features_schema,
 )
 
 
@@ -330,7 +335,35 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_inverter(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Options for an inverter entry — one page: inverter, PV and battery."""
+        """Options for an inverter entry: the features page first."""
+        return await self.async_step_inverter_features(user_input)
+
+    async def async_step_inverter_features(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Options for an inverter entry, page 1: what it has. The settings
+        page after it shows only the declared sections. (Named for its step
+        id — the frontend's submit is routed by it.)"""
+        return await self._async_wizard_page(
+            user_input,
+            step_id="inverter_features",
+            schema=lambda defaults: _inverter_features_schema(defaults),
+            next_step=self.async_step_inverter_settings,
+            list_normalizers=(_normalize_features_list,),
+            validate=_validate_inverter_features,
+            show_defaults=lambda: {
+                **self._defaults,
+                CONF_INVERTER_FEATURES: inverter_features(self.config_entry),
+            },
+        )
+
+    async def async_step_inverter_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Options for an inverter entry, page 2: inverter, and the PV, battery
+        and write-control sections its features declare. Saving clears the
+        keys of every section left undeclared."""
+        features = list(self._data.get(CONF_INVERTER_FEATURES) or [])
 
         def _validate(data: dict, errors: dict):
             _validate_charge_limit_unit(self.hass, data, errors)
@@ -338,10 +371,16 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             # ``entity`` placeholder (see _async_edit_page's validate hook).
             return _validate_forecast_devices(self.hass, data, errors)
 
+        def _finalize(data: dict) -> None:
+            _normalize_inverter_power_caps(data)
+            strip_unfeatured_inverter_options(data, features, clear_all=True)
+
         return await self._async_edit_page(
             user_input,
-            step_id="inverter",
-            schema=lambda defaults: _inverter_combined_schema(self.hass, defaults),
+            step_id="inverter_settings",
+            schema=lambda defaults: _inverter_combined_schema(
+                self.hass, defaults, features
+            ),
             entity_keys=_INVERTER_ENTITY_KEYS
             + [
                 CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -357,7 +396,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             | _BATTERY_UNIT_MAP
             | _WRITE_CONTROL_UNIT_MAP,
             validate=_validate,
-            finalize=_normalize_inverter_power_caps,
+            finalize=_finalize,
             last_step=None,
         )
 

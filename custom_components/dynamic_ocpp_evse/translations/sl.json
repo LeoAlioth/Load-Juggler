@@ -139,6 +139,13 @@
                     "wiring_topology": "Vzporedno: razsmernik in omrežje napajata neodvisno (AC-sklopljena sončna, brez baterije). Zaporedno: vsa energija teče skozi razsmernik (hibridni razsmernik z DC-sklopljeno baterijo)."
                 }
             },
+            "inverter_features": {
+                "title": "Funkcije razsmernika",
+                "description": "Kaj ta razsmernik ima. Prikazane so le strani za označene funkcije, za ostale se nič ne shrani — razsmernik brez baterije nikoli ne nosi nastavitev baterije.",
+                "data": {
+                    "inverter_features": "Ta razsmernik ima"
+                }
+            },
             "inverter_config": {
                 "title": "Razsmernik",
                 "description": "Dodajte razsmernik kot vir energije na tem merilnem mestu. Lokacija jih ima lahko več (npr. starejši AC-sklopljeni razsmernik in nov hibridni) — merilno mesto sešteje celotno floto.",
@@ -167,7 +174,7 @@
             },
             "inverter_battery": {
                 "title": "Baterija razsmernika",
-                "description": "Baterija, ki je fizično za tem razsmernikom — pustite prazno, če je nima.",
+                "description": "Baterija, ki je fizično za tem razsmernikom.",
                 "data": {
                     "battery_soc_entity_id": "Senzor napolnjenosti baterije (SOC)",
                     "battery_power_entity_id": "Senzor moči baterije",
@@ -433,7 +440,8 @@
             "entity_id_in_use": "Ta ID entitete že uporablja druga naprava Load Juggler — izberite enoličen ID.",
             "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta napolnjenosti baterije in entiteta moči baterije.",
             "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V).",
-            "unknown": "Prišlo je do neznane napake"
+            "unknown": "Prišlo je do neznane napake",
+            "control_needs_battery": "Upravljanje polnjenja baterije potrebuje baterijo — označite tudi »Priključena baterija«."
         },
         "abort": {
             "entry_not_found": "Konfiguracijski vnos ni najden",
@@ -449,7 +457,8 @@
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
             "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta napolnjenosti baterije in entiteta moči baterije.",
             "ocpp_device_not_usable": "Ta naprava nima uporabnih senzorjev OCPP polnilne postaje. Izberite napravo, ki jo je za polnilno postajo ustvarila integracija OCPP — potrebuje senzor uvoženega toka ter senzor ponujenega toka ali ponujene moči.",
-            "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V)."
+            "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V).",
+            "control_needs_battery": "Upravljanje polnjenja baterije potrebuje baterijo — označite tudi »Priključena baterija«."
         },
         "abort": {
             "entry_not_found": "Konfiguracijski vnos ni najden"
@@ -571,9 +580,16 @@
                     "battery_soc_entity_id": "Odstotek napolnjenosti baterije. Na tej vrednosti temeljijo načini delovanja, vezani na SOC: kako globoko posamezen način sme izprazniti shranjeno sončno energijo in kdaj velja baterija za polno."
                 }
             },
-            "inverter": {
+            "inverter_features": {
+                "title": "Funkcije razsmernika",
+                "description": "Označite, kaj ta razsmernik ima. Stran z nastavitvami prikaže le te razdelke; razdelek, ki ga odznačite, se ob shranjevanju počisti.",
+                "data": {
+                    "inverter_features": "Ta razsmernik ima"
+                }
+            },
+            "inverter_settings": {
                 "title": "Posodobi nastavitve razsmernika",
-                "description": "Posodobite ta razsmernik in njegovo baterijo",
+                "description": "Posodobite ta razsmernik — prikazani razdelki so funkcije, ki jih ima.",
                 "data": {
                     "inverter_max_power": "Skupna moč razsmernika",
                     "inverter_max_power_per_phase": "Največja moč razsmernika na fazo",
@@ -855,6 +871,15 @@
                     "name": "Minimalni tok",
                     "description": "Minimalni tok v amperih."
                 }
+            }
+        }
+    },
+    "selector": {
+        "inverter_features": {
+            "options": {
+                "solar": "Priključeno sončno polje",
+                "battery": "Priključena baterija",
+                "battery_control": "Upravljanje polnjenja baterije (zapisuje v razsmernik)"
             }
         }
     }

@@ -20,6 +20,24 @@ Everything here is optional. With no target entity configured, the inverter
 entry stays advisory — exactly as before write-control existed.
 """
 
+# What this inverter HAS — declared on the first page of its setup, and the
+# gate for every page after it. A list of the feature slugs below. A section
+# whose feature is not declared is not shown, and its keys are cleared on
+# save (helpers.strip_unfeatured_inverter_options), so an entry never carries
+# a battery it does not have: the form's *Battery max charge power* default
+# on a PV-only entry used to give a phantom pack a share of the fleet sums.
+# Entries from before the list existed get it inferred from what they had
+# configured (helpers.infer_inverter_features, in the 2.7 migration).
+CONF_INVERTER_FEATURES = "inverter_features"
+INVERTER_FEATURE_SOLAR = "solar"  # a PV array: production sensor, forecast
+INVERTER_FEATURE_BATTERY = "battery"  # a pack: SOC/power, caps, capacity
+INVERTER_FEATURE_BATTERY_CONTROL = "battery_control"  # write-control pages
+INVERTER_FEATURES = (
+    INVERTER_FEATURE_SOLAR,
+    INVERTER_FEATURE_BATTERY,
+    INVERTER_FEATURE_BATTERY_CONTROL,
+)
+
 # The number entity to write: the inverter's max battery charge current/power.
 CONF_CHARGE_LIMIT_ENTITY_ID = "inverter_charge_limit_entity_id"
 
