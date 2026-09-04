@@ -733,6 +733,17 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
             soc_target = float(raw_target)
             held[entry.entry_id] = soc_target
 
+    # A member with no battery entity has no battery, whatever its options
+    # carry: the inverter form saves *Battery max charge power* at its default
+    # even on a PV-only entry, and letting that number through gave the
+    # phantom pack a share of everything summed over the fleet — 53 % of the
+    # charge-limit advice (4500 W Deye against a 5000 W default, measured live
+    # 2026-09-03: the register sat at 5 A while the inverter curtailed 500 W),
+    # 5 kW of Excess allowance the site never had, and the same again on the
+    # discharge side. None is what every consumer already reads as "no
+    # battery here".
+    has_battery = bool(soc_entity or power_entity)
+
     return fleet.FleetMember(
         entry_id=entry.entry_id,
         name=get_entry_value(entry, CONF_NAME, entry.title if not legacy else "Hub"),
@@ -747,16 +758,26 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         forecast_device_ids=tuple(
             get_entry_value(entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or ()
         ),
-        has_battery=bool(soc_entity or power_entity),
+        has_battery=has_battery,
         has_battery_power_entity=bool(power_entity),
         battery_soc=float(battery_soc) if battery_soc is not None else None,
         battery_power=float(battery_power) if battery_power is not None else None,
         battery_power_ctrl=(
             float(battery_power_ctrl) if battery_power_ctrl is not None else None
         ),
-        charge_cap=get_entry_value(entry, CONF_BATTERY_MAX_CHARGE_POWER, None),
-        enforced_charge_limit=_read_enforced_charge_limit(hass, entry),
-        discharge_cap=get_entry_value(entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None),
+        charge_cap=(
+            get_entry_value(entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
+            if has_battery
+            else None
+        ),
+        enforced_charge_limit=(
+            _read_enforced_charge_limit(hass, entry) if has_battery else None
+        ),
+        discharge_cap=(
+            get_entry_value(entry, CONF_BATTERY_MAX_DISCHARGE_POWER, None)
+            if has_battery
+            else None
+        ),
         soc_full=get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL),
         soc_target=soc_target,
         capacity_kwh=get_entry_value(

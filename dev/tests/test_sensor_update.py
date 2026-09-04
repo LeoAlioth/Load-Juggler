@@ -6311,3 +6311,85 @@ async def test_ceiling_semantics_still_reads_the_destination(hass: HomeAssistant
     own = result["inverters"][inverter.entry_id]
     assert own["forecast_battery_max_soc"] == 90
     assert own["forecast_charge_limiting"] is True
+
+
+# --- A PV-only inverter carries no battery, whatever its options say ----------
+#
+# The inverter form saves *Battery max charge power* at its 5000 W default even
+# on an entry with no battery entity. Live (2026-09-03), that phantom took 53 %
+# of the charge-limit advice — 4500 W Deye against a 5000 W SolarEdge default —
+# so the register sat at 5 A while the inverter curtailed 500 W, and the same
+# 5 kW widened the Excess allowance. The reader now hands the fleet None for
+# every battery figure of a member without a battery entity.
+
+
+def _pv_only_inverter(hub, slug):
+    """A string inverter with a PV sensor and the form's battery defaults left
+    behind in its options — no SOC, no battery power."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title=f"PV Only {slug}",
+        data={
+            CONF_NAME: f"PV Only {slug}",
+            CONF_ENTITY_ID: f"pv_only_{slug}",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options={
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.pv_only_production",
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+        },
+    )
+
+
+async def test_a_pv_only_inverter_takes_no_share_of_the_battery_advice(hass):
+    """Two inverters on one hub: a 5 kW hybrid parked at its 95 % destination
+    and a PV-only array whose options still carry the 5000 W battery defaults.
+
+    Meter pinned at the 5 kW export limit with the pack taking 500 W, so the
+    engaged feedback asks for 500 + (5000 − 4500) = 1000 W. Split by charge cap
+    over a fleet that wrongly counts the array, the hybrid was advised 500 W;
+    it must be advised the whole 1000 W. And the Excess allowance is the
+    hybrid's 5 kW nameplate alone (advice-only, nothing enforced): export 5000
+    + charging 500 against the 4500 W trigger plus 5000 W of battery is
+    −4000 W of margin, not the −9000 W a phantom second battery reads.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = _destination_hub("pvonly")
+    hybrid = _destination_inverter(hub, "pvonly", "number.dst_normal")
+    array = _pv_only_inverter(hub, "pvonly")
+    for entry in (hybrid, array):
+        entry.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=95, normal="95")
+    # Export pinned at the 5 kW limit: 5000 / 230 A leaving on the one phase.
+    hass.states.async_set(
+        "sensor.dst_phase_a", str(-5000.0 / 230.0),
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        "sensor.pv_only_production", "3000",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+
+    own = result["inverters"][hybrid.entry_id]
+    assert own["forecast_charge_limiting"] is True
+    assert result["forecast_charge_limit_w"] == 1000
+    assert own["forecast_charge_limit_w"] == 1000
+    assert "forecast_charge_limit_w" not in result["inverters"].get(array.entry_id, {})
+    assert result["excess_margin_power"] == pytest.approx(-4000.0, abs=1.0)
