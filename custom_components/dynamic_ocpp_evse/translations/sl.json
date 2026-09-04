@@ -476,7 +476,7 @@
                     "inverter_solar": "PV",
                     "inverter_battery": "Baterija",
                     "inverter_control": "Upravljanje polnjenja baterije",
-                    "hub_connection": "Omrežni priključek",
+                    "hub_connection": "Omrežje",
                     "hub_export": "Omejitev izvoza in presežki",
                     "hub_policy": "Baterije in napovedi",
                     "hub_timing": "Časovni intervali"
@@ -547,8 +547,8 @@
                 }
             },
             "hub_connection": {
-                "title": "Omrežni priključek",
-                "description": "Kako je objekt priključen na omrežje. Če pustite vse fazne senzorje prazne, je hub otočni.",
+                "title": "Omrežje",
+                "description": "Kako je objekt priključen na omrežje. Če pustite vse fazne senzorje prazne, se smatra otočno delovanje.",
                 "data": {
                     "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (neobvezno - nastavite na 'None' za izvenomrežne nastavitve)",
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno)",
@@ -569,7 +569,7 @@
             },
             "hub_export": {
                 "title": "Omejitev izvoza in presežki",
-                "description": "Omejitev izvoza, kje pod njo se vklopi presežek in kako se izklopi.",
+                "description": "Omejitev izvoza, tolerance.",
                 "data": {
                     "grid_export_limit": "Omejitev izvoza v omrežje",
                     "excess_trigger_margin": "Odmik sprožilca Excess",
@@ -583,7 +583,7 @@
             },
             "hub_policy": {
                 "title": "Baterije in napovedi",
-                "description": "Politika baterij in napovedi PV za celoten objekt, za vse razsmernike na tem hubu.",
+                "description": "Delovanje baterij razsmernikov in napovedi proizvodnje za celoten objekt.",
                 "data": {
                     "battery_soc_hysteresis": "Histereza napolnjenosti baterije",
                     "base_consumption": "Osnovna poraba hiše",
@@ -597,7 +597,7 @@
             },
             "hub_timing": {
                 "title": "Časovni intervali",
-                "description": "Kako pogosto se motor osveži in kaj zazna sam.",
+                "description": "Pogostost osveževanja in zaznavanje napak v konfiguraciji.",
                 "data": {
                     "site_update_frequency": "Pogostost osveževanja senzorjev lokacije",
                     "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
