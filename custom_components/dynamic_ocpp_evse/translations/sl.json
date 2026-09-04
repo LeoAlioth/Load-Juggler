@@ -141,7 +141,7 @@
             },
             "inverter_features": {
                 "title": "Funkcije razsmernika",
-                "description": "Kaj ta razsmernik ima. Prikazane so le strani za označene funkcije, za ostale se nič ne shrani — razsmernik brez baterije nikoli ne nosi nastavitev baterije.",
+                "description": "Katere funkcije razsmernik podpira oz. ima omogočene.",
                 "data": {
                     "inverter_features": "Ta razsmernik ima"
                 }
@@ -174,7 +174,7 @@
             },
             "inverter_battery": {
                 "title": "Baterija razsmernika",
-                "description": "Baterija, ki je fizično za tem razsmernikom.",
+                "description": "Baterija za tem razsmernikom.",
                 "data": {
                     "battery_soc_entity_id": "Senzor napolnjenosti baterije (SOC)",
                     "battery_power_entity_id": "Senzor moči baterije",
@@ -441,7 +441,7 @@
             "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta napolnjenosti baterije in entiteta moči baterije.",
             "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V).",
             "unknown": "Prišlo je do neznane napake",
-            "control_needs_battery": "Upravljanje polnjenja baterije potrebuje baterijo — označite tudi »Priključena baterija«."
+            "control_needs_battery": "Upravljanje polnjenja baterije potrebuje baterijo — označite tudi »Baterija«."
         },
         "abort": {
             "entry_not_found": "Konfiguracijski vnos ni najden",
@@ -458,7 +458,7 @@
             "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta napolnjenosti baterije in entiteta moči baterije.",
             "ocpp_device_not_usable": "Ta naprava nima uporabnih senzorjev OCPP polnilne postaje. Izberite napravo, ki jo je za polnilno postajo ustvarila integracija OCPP — potrebuje senzor uvoženega toka ter senzor ponujenega toka ali ponujene moči.",
             "invalid_unit": "Neujemanje enote senzorja — preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V).",
-            "control_needs_battery": "Upravljanje polnjenja baterije potrebuje baterijo — označite tudi »Priključena baterija«."
+            "control_needs_battery": "Upravljanje polnjenja baterije potrebuje baterijo — označite tudi »Baterija«."
         },
         "abort": {
             "entry_not_found": "Konfiguracijski vnos ni najden"
@@ -582,14 +582,14 @@
             },
             "inverter_features": {
                 "title": "Funkcije razsmernika",
-                "description": "Označite, kaj ta razsmernik ima. Stran z nastavitvami prikaže le te razdelke; razdelek, ki ga odznačite, se ob shranjevanju počisti.",
+                "description": "Označite, kaj ta razsmernik ima. Podrobnosti boste nastavili na naslednjih straneh.",
                 "data": {
                     "inverter_features": "Ta razsmernik ima"
                 }
             },
             "inverter_settings": {
                 "title": "Posodobi nastavitve razsmernika",
-                "description": "Posodobite ta razsmernik — prikazani razdelki so funkcije, ki jih ima.",
+                "description": "Posodobite ta razsmernik.",
                 "data": {
                     "inverter_max_power": "Skupna moč razsmernika",
                     "inverter_max_power_per_phase": "Največja moč razsmernika na fazo",
@@ -877,8 +877,8 @@
     "selector": {
         "inverter_features": {
             "options": {
-                "solar": "Priključeno sončno polje",
-                "battery": "Priključena baterija",
+                "solar": "PV",
+                "battery": "Baterija",
                 "battery_control": "Upravljanje polnjenja baterije (zapisuje v razsmernik)"
             }
         }
