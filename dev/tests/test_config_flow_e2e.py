@@ -1234,6 +1234,54 @@ async def test_overview_page_reports_live_values(
     assert "drawing 4.3 A" in text
     assert "Charging" in text
     assert "Excess trigger: on" in text
+    # No forecast configured: the forecast section is absent, not dashes.
+    assert "PV forecast" not in text
+
+
+async def test_overview_page_shows_the_forecast_when_it_is_on(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """Every published forecast figure reaches the hub Overview: the next
+    window's clippable / storable / deficit energy, the advised ceiling, the
+    fleet charge limit with its gate, the clipped-energy observer and the
+    accuracy/peakiness observers."""
+    from datetime import datetime, timezone
+    from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+
+    hass.data[DOMAIN]["hub_data"] = {
+        mock_hub_entry.entry_id: {
+            "last_update": datetime.now(timezone.utc),
+            "grid_power": -8300,
+            "solar_power": 12000,
+            "total_export_power": 8300,
+            "forecast_window_tomorrow": False,
+            "forecast_clipped_kwh": 3.25,
+            "forecast_absorbable_kwh": 2.5,
+            "forecast_headroom_deficit_kwh": 0.75,
+            "forecast_battery_max_soc": 84,
+            "forecast_charge_limit_w": 1250,
+            "forecast_clipped_actual_kwh": 0.12,
+            "forecast_clipped_actual_yesterday_kwh": 1.4,
+            "forecast_accuracy_pct": 96.4,
+            "forecast_peakiness_pct": 101.2,
+            "inverters": {"inv": {"forecast_charge_limiting": True}},
+        }
+    }
+    text = _overview_text(hass, mock_hub_entry.entry_id)
+    assert "PV forecast — next clipping window (today)" in text
+    assert "Clippable: 3.25 kWh" in text
+    assert "battery can store: 2.50 kWh" in text
+    assert "nowhere to go: 0.75 kWh" in text
+    assert "Advised battery ceiling: 84 %" in text
+    assert "Fleet charge limit: 1250 W (holding)" in text
+    assert "Clipped so far today: 0.12 kWh · yesterday: 1.40 kWh" in text
+    assert "Forecast accuracy: 96 % · peakiness: 101 %" in text
 
 
 async def test_overview_page_for_a_load_entry(

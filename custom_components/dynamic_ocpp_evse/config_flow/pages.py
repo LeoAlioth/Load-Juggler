@@ -371,6 +371,53 @@ def _unmanaged_household_w(hub_data):
     return max(0, round(grid + solar + battery - managed, 0))
 
 
+def _forecast_overview_lines(hub_data: dict) -> list[str]:
+    """The PV clipping forecast as the hub sees it — empty when it is off.
+
+    The energy figures describe the NEXT clipping window: the rest of today
+    while today still has clip left, tomorrow's peak once it has integrated
+    away (``forecast_window_tomorrow``). The observers' lines appear only once
+    they have data.
+    """
+    if hub_data.get("forecast_clipped_kwh") is None:
+        return []
+    window = "tomorrow" if hub_data.get("forecast_window_tomorrow") else "today"
+    lines = ["", f"**☀️ PV forecast — next clipping window ({window})**"]
+    lines.append(
+        f"- Clippable: {_fmt(hub_data.get('forecast_clipped_kwh'), 'kWh', 2)}"
+        f" · battery can store: {_fmt(hub_data.get('forecast_absorbable_kwh'), 'kWh', 2)}"
+        f" · nowhere to go: {_fmt(hub_data.get('forecast_headroom_deficit_kwh'), 'kWh', 2)}"
+    )
+    lines.append(
+        f"- Advised battery ceiling: {_fmt(hub_data.get('forecast_battery_max_soc'), '%', 0)}"
+    )
+    limit = hub_data.get("forecast_charge_limit_w")
+    if limit is not None:
+        limiting = any(
+            (inv or {}).get("forecast_charge_limiting")
+            for inv in (hub_data.get("inverters") or {}).values()
+        )
+        lines.append(
+            f"- Fleet charge limit: {_fmt(limit, 'W', 0)}"
+            f" ({'holding' if limiting else 'released'})"
+        )
+    clipped_today = hub_data.get("forecast_clipped_actual_kwh")
+    if clipped_today is not None:
+        yesterday = hub_data.get("forecast_clipped_actual_yesterday_kwh")
+        lines.append(
+            f"- Clipped so far today: {_fmt(clipped_today, 'kWh', 2)}"
+            + (f" · yesterday: {_fmt(yesterday, 'kWh', 2)}" if yesterday is not None else "")
+        )
+    accuracy = hub_data.get("forecast_accuracy_pct")
+    peakiness = hub_data.get("forecast_peakiness_pct")
+    if accuracy is not None or peakiness is not None:
+        lines.append(
+            f"- Forecast accuracy: {_fmt(accuracy, '%', 0)}"
+            f" · peakiness: {_fmt(peakiness, '%', 0)}"
+        )
+    return lines
+
+
 def _hub_overview_lines(hass, entry) -> list[str]:
     """Site-wide live overview for a hub entry."""
     hub_data, note = _live_hub_data(hass, entry.entry_id)
@@ -467,6 +514,8 @@ def _hub_overview_lines(hass, entry) -> list[str]:
         lines.append(
             f"- Unmanaged loads (household): {_fmt(unmanaged, 'W', 0)}"
         )
+
+    lines += _forecast_overview_lines(hub_data)
 
     hub_runtime = (_runtime(hass).get("hubs") or {}).get(entry.entry_id) or {}
     distribution = hub_runtime.get("distribution_mode") or get_entry_value(
@@ -620,9 +669,22 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
             lines.append(
                 f"- Hold SOC below: {_fmt(own.get('forecast_battery_max_soc'), '%', 0)}"
             )
+            limiting = own.get("forecast_charge_limiting")
+            state = "" if limiting is None else f" ({'holding' if limiting else 'released'})"
             lines.append(
-                f"- Recommended charge limit: {_fmt(own.get('forecast_charge_limit_w'), 'W', 0)}"
+                f"- Recommended charge limit: {_fmt(own.get('forecast_charge_limit_w'), 'W', 0)}{state}"
             )
+    if own.get("forecast_accuracy_pct") is not None or own.get("forecast_gain") is not None:
+        lines += ["", "**☀️ This array's forecast**"]
+        lines.append(
+            f"- Accuracy today: {_fmt(own.get('forecast_accuracy_pct'), '%', 0)}"
+            f" · learned gain: {_fmt(own.get('forecast_gain'), '', 2)}"
+            + (
+                f" over {own.get('forecast_gain_days')} d"
+                if own.get("forecast_gain_days") is not None
+                else ""
+            )
+        )
     else:
         lines += ["", "- No battery configured on this inverter"]
     return lines

@@ -530,6 +530,9 @@ def _compute_forecast_advice(
     return {
         **peakiness,
         **clipped,
+        # Which window the figures below describe: today's remaining peak, or
+        # tomorrow's once today's clip has integrated away (display only).
+        "forecast_window_tomorrow": bool(window),
         "forecast_clipped_kwh": round(fc.clipped_kwh, 2),
         "forecast_absorbable_kwh": round(fc.absorbable_kwh, 2),
         "forecast_battery_max_soc": proposed,
