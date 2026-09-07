@@ -187,6 +187,27 @@ def _arm(hass, entry, enabled=True):
 # --- Conversion and helpers ---------------------------------------------------
 
 
+def test_a_zero_target_is_never_swallowed_by_the_deadband():
+    """A 0 target always writes while the register holds anything else.
+
+    The gap between a token 1 A and 0 is smaller than any useful deadband
+    (1 A ~ 51 W against a 100 W band), so without the exemption the register
+    sat at 1 A for ever under a 0 W advice — observed live 2026-09-04.
+    """
+    # Stuck case: register 1, advice 0, deadband far wider than the gap.
+    assert should_write(1.0, 0.0, None, 100.0, 20.0) is True
+    assert should_write(0.5, 0.0, None, 100.0, 20.0) is True
+    # Already there: nothing to write.
+    assert should_write(0.0, 0.0, None, 100.0, 20.0) is False
+    # Unreadable register falls back to what was applied, same rule.
+    assert should_write(None, 0.0, 1.0, 100.0, 20.0) is True
+    assert should_write(None, 0.0, 0.0, 100.0, 20.0) is False
+    # And the exemption is for 0 alone — a small NON-zero target is still
+    # gated, in both directions.
+    assert should_write(1.0, 0.5, None, 100.0, 20.0) is False
+    assert should_write(0.0, 1.0, None, 100.0, 20.0) is False
+
+
 def test_watts_to_amps_uses_battery_voltage():
     assert to_target_units(5120.0, "A", 51.2) == 100.0
 

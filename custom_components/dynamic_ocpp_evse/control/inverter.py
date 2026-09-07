@@ -383,10 +383,20 @@ def should_write(current, desired, previous_applied, deadband, deadband_up=None)
     approach is self-terminating, since export reaching the setpoint takes the
     error to zero and no further rise is asked for. Coming back down is what the
     window is for. ``deadband_up`` of None keeps the old symmetric behaviour.
+
+    ZERO IS EXEMPT. "Add nothing" is a state, not a point on the continuum: a
+    register left at 1 A under a 0 W advice keeps the pack taking a token
+    amount for ever, and the deadband cannot close that gap because the whole
+    remaining distance is smaller than it (live 2026-09-04: 1 A ≈ 51 W against
+    a 100 W deadband, stuck indefinitely). A configured minimum charge limit
+    keeps its own floor — it never asks for 0 in the first place — so this
+    exemption only fires where 0 is genuinely what the advice means.
     """
     reference = current if current is not None else previous_applied
     if reference is None:
         return True
+    if desired == 0:
+        return reference != 0
     band = deadband
     if deadband_up is not None and desired > reference:
         band = deadband_up
