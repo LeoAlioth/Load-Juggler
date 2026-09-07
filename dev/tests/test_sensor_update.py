@@ -1232,6 +1232,56 @@ async def test_hub_status_names_unavailable_sensor(
     )
 
 
+async def test_a_disabled_max_import_limit_ignores_its_leftover_entity(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """The enable flag gates the ENTITY too, on every path that reads the pair.
+
+    An entity configured while the limit was enabled kept being read after it
+    was switched off, and its dropouts kept being reported — so a site with
+    ``enable_max_import_power: false`` and a stale entity went to a warning
+    state every time that sensor blinked, taking every load's sensors with it.
+    Measured on the live site 2026-09-07: ten such episodes in one morning,
+    for a limit the site was not using.
+    """
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_ENABLE_MAX_IMPORT_POWER,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub_entry.add_to_hass(hass)
+    _set_ha_states(hass, hub_entry)
+    # The fixture already names a max-import entity; it is unreadable, exactly
+    # as the live one keeps being.
+    hass.states.async_set(
+        "sensor.grid_power_limit", "unavailable",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    # Enabled: the entity IS the site's business, so its dropout is reported.
+    hass.config_entries.async_update_entry(
+        hub_entry,
+        options={**hub_entry.options, CONF_ENABLE_MAX_IMPORT_POWER: True},
+    )
+    result = run_hub_calculation(hass, hub_entry)
+    assert "Max import power sensor" in result["hub_status"]
+
+    # Disabled: the same entity is neither read nor reported.
+    hass.config_entries.async_update_entry(
+        hub_entry,
+        options={**hub_entry.options, CONF_ENABLE_MAX_IMPORT_POWER: False},
+    )
+    result = run_hub_calculation(hass, hub_entry)
+    assert "Max import power" not in result["hub_status"]
+    assert not any("Max import power" in w for w in result["hub_warnings"])
+    assert not any("grid_power_limit" in w for w in result["hub_warnings"])
+
+
 # ── Cold-start grid failsafe: assumed for safety, never published ────
 
 

@@ -75,16 +75,20 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         # Always create Power Buffer (useful even without battery)
         entities.append(PowerBufferSlider(hass, config_entry, name, entity_id))
 
-        # Create Max Import Power slider when checkbox is enabled and no entity override
+        # Max Import Power: the ENABLE FLAG IS TESTED FIRST, matching
+        # engine/hub_calculation._read_max_import_power. Testing the entity
+        # first meant a stale entity from when the limit was enabled kept
+        # claiming to own the limit after it was switched off, so the site got
+        # neither a slider nor a disabled limit.
         enable_max_import = get_entry_value(config_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
         max_import_entity = get_entry_value(config_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
-        if enable_max_import and not max_import_entity:
-            entities.append(MaxImportPowerSlider(hass, config_entry, name, entity_id))
-            _LOGGER.info("Max import power slider created (no entity override)")
+        if not enable_max_import:
+            _LOGGER.info("Max import power limit disabled")
         elif max_import_entity:
             _LOGGER.info("Max import power using entity override: %s", max_import_entity)
         else:
-            _LOGGER.info("Max import power limit disabled")
+            entities.append(MaxImportPowerSlider(hass, config_entry, name, entity_id))
+            _LOGGER.info("Max import power slider created (no entity override)")
 
         # Only create battery entities if battery is configured
         if has_battery:

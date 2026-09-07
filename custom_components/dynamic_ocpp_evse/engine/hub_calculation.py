@@ -343,25 +343,29 @@ def _read_site_phases(hass, hub_entry, voltage):
 def _read_max_import_power(hass, hub_entry):
     """The site's max grid import power, or None for unlimited.
 
-    Three sources in precedence order, which is what the section comment
-    below spells out: a configured entity wins, then the hub's own slider,
-    and a disabled limit is None.
+    The ENABLE FLAG COMES FIRST, then a configured entity, then the hub's own
+    slider. The flag used to be tested last, so an entity left behind from
+    when the limit was enabled went on being read after it was switched off —
+    and a site with the limit disabled and a stale entity had that sensor's
+    dropouts reported on the hub status, taking the whole site to a warning
+    state ten times a day for a feature it was not using (live 2026-09-07:
+    ``enable_max_import_power: false`` beside
+    ``max_import_power_entity_id: sensor.current_block_power_limit``).
+    Disabled means disabled, on every one of the three code paths that read
+    this pair — see ``_check_entity_availability`` and ``number.py``.
     """
-    # --- Max grid import power (entity override → shared hub data → None) ---
-    enable_max_import = get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
+    # --- Max grid import power (disabled → entity override → hub slider) ---
+    if not get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True):
+        return None
     max_import_power_entity = get_entry_value(
         hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None
     )
     if max_import_power_entity:
-        max_grid_import_power = _coerce(
+        return _coerce(
             _read_entity(hass, max_import_power_entity, None, unit="W"), None
         )  # Convert kW→W if needed
-    elif enable_max_import:
-        hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
-        max_grid_import_power = hub_rt.get("max_import_power", None)
-    else:
-        max_grid_import_power = None
-    return max_grid_import_power
+    hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
+    return hub_rt.get("max_import_power", None)
 
 
 def _apply_soc_hysteresis(

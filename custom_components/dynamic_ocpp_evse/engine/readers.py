@@ -33,6 +33,7 @@ from ..const import (
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_SOC_FULL,
     CONF_CHARGE_RATE_UNIT,
+    CONF_ENABLE_MAX_IMPORT_POWER,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
@@ -298,15 +299,23 @@ def _check_entity_availability(hass, hub_entry) -> list:
     sensor in the status line and spell out the full detail in a warning.
     """
     unavailable = []
-    checks = (
+    checks = [
         ("Solar production sensor", CONF_SOLAR_PRODUCTION_ENTITY_ID),
         ("Battery SOC sensor", CONF_BATTERY_SOC_ENTITY_ID),
         ("Battery power sensor", CONF_BATTERY_POWER_ENTITY_ID),
         ("Inverter output sensor (L1)", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
         ("Inverter output sensor (L2)", CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
         ("Inverter output sensor (L3)", CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
-        ("Max import power sensor", CONF_MAX_IMPORT_POWER_ENTITY_ID),
-    )
+    ]
+    # Only while the limit is ENABLED. A disabled max-import limit is not read
+    # by the engine (``_read_max_import_power`` returns None before it looks at
+    # the entity), so reporting its sensor missing would put the whole site
+    # into a warning state over a feature it is not using — measured on the
+    # live site 2026-09-07: ten "Sensor unavailable: Max import power sensor"
+    # episodes in a morning, every load's sensors going unavailable with the
+    # hub, against ``enable_max_import_power: false``.
+    if get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True):
+        checks.append(("Max import power sensor", CONF_MAX_IMPORT_POWER_ENTITY_ID))
     for label, conf_key in checks:
         entity_id = get_entry_value(hub_entry, conf_key, None)
         if not entity_id:
