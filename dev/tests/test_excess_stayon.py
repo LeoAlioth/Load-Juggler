@@ -170,17 +170,29 @@ def test_battery_displaced_on_an_importing_phase_reads_its_load_off_margin():
 
     The plug's 2 kW then comes out of the charge rate (2.6 kW). Subtracting the
     draw from phase A cannot show up as export because that phase still reads
-    net import — it clamps at zero — while the charge term drops the whole
-    2 kW, so the margin read −533 W with the plug running against +133 W with
-    it off. That 667 W step is the on/off cycling. Both states must read +133 W.
+    net import, while the charge term drops the whole 2 kW, so the margin read
+    −533 W with the plug running against +133 W with it off. That 667 W step is
+    the on/off cycling. LOAD-INVARIANCE is what this test protects, and it is
+    what must hold whatever basis the verdict reads.
+
+    The VALUE moved when the verdict went net (2026-09-07): gross read this site
+    as exporting 1533 W, because it counted 3.33 A leaving on B and C and
+    ignored the 6.67 A arriving on A. Net reads the site's true position — zero
+    — so the margin is −1400 W and Excess is OFF. That is the physically correct
+    verdict: the pack is taking 4600 W of a 5000 W allowance, so there are still
+    400 W of sink left and nothing is spare. The gross figure remains correct for
+    the export LIMIT and is still asserted, on the consumer that faces it, in
+    ``test_import_on_one_phase_buys_no_export_headroom_on_another`` below.
     """
     off = _margin(_site(6.667, -3.333, -3.333, battery_w=-4600.0, threshold=1000.0))
     on = _margin(
         _site(12.464, -6.232, -6.232, battery_w=-2600.0, threshold=1000.0,
               loads=[_plug(2000)])
     )
-    assert off > 0 and _close(off, 133.2, tol=0.3)
+    # The point of the test: the plug cannot move its own verdict.
     assert _close(on, off, tol=0.5)
+    # Net, so the importing phase counts: 400 W of charge headroom left = no surplus.
+    assert off < 0 and _close(off, -1400.2, tol=0.5)
 
 
 def test_the_importing_phase_error_stays_zero_at_every_draw_size():
@@ -324,14 +336,37 @@ def test_hysteresis_cannot_manufacture_a_pool_that_does_not_exist():
 def test_import_on_one_phase_buys_no_export_headroom_on_another():
     """An export limit is physical and contractual per exported flow. A site
     pushing 10 A out on two phases while pulling 10 A in on the third IS
-    exporting 20 A — the import does not net it away, so the same gross export
-    reads the same margin whatever the third phase is doing."""
+    exporting 20 A — the import does not net it away, so the same GROSS export
+    reads the same whatever the third phase is doing.
+
+    Asserted on ``reconstructed_export_power``, the consumer that faces the
+    limit (the forecast's charge-limit advice steers the meter against a
+    contractual setpoint). The Excess verdict reads the same reconstruction NET,
+    because it asks a different question — see the companion below.
+    """
+    both = _site(10.0, -10.0, -10.0, battery_w=None, soc=None,
+                 charge_max=None, threshold=3000.0)
+    exporting_only = _site(0.0, -10.0, -10.0, battery_w=None, soc=None,
+                           charge_max=None, threshold=3000.0)
+    gross_both = reconstructed_export_power(_apply_feedback(both))
+    gross_only = reconstructed_export_power(_apply_feedback(exporting_only))
+    assert _close(gross_both, 20.0 * V)
+    assert _close(gross_both, gross_only)
+
+
+def test_the_surplus_question_nets_the_importing_phase_away():
+    """The other half of the same reading. 10 A out on two phases against 10 A
+    in on the third nets to 10 A: a load put on an exporting phase can take
+    that, and no more, without the site importing. So the verdict — unlike the
+    limit — must count the importing phase, and the two sites above are NOT
+    equivalent to it."""
     both = _margin(_site(10.0, -10.0, -10.0, battery_w=None, soc=None,
                          charge_max=None, threshold=3000.0))
     exporting_only = _margin(_site(0.0, -10.0, -10.0, battery_w=None, soc=None,
                                    charge_max=None, threshold=3000.0))
-    assert _close(both, 20.0 * V - 3000.0)
-    assert _close(both, exporting_only)
+    assert _close(both, 10.0 * V - 3000.0)
+    assert _close(exporting_only, 20.0 * V - 3000.0)
+    assert both < exporting_only
 
 
 def test_a_saturated_battery_gives_the_plain_gross_reading():

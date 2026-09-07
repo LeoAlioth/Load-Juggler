@@ -80,18 +80,27 @@ scenarios:
 
   - name: "3ph-bat-excess-plug-unbalanced-battery-displaced-stays-on"
     description: >
+      A PACK WITH HEADROOM LEFT IS NOT A SITE WITH SURPLUS — the case that
+      inverted when the Excess verdict went net (2026-09-07).
       Household 10 A on phase A, 10 A/phase of solar, the battery taking 4.6 kW
       of its 5 kW allowance: the meter reads +6.67 A on A and -3.33 A on B and
-      C, so the site exports 1533 W gross — 133 W past the 1 kW trigger, which
-      is a real export the limit counts — and the plug engages.
-      Its 2 kW then comes out of the battery's charge rate (4.6 -> 2.6 kW), and
-      that is the case that used to break: the draw is subtracted from phase A,
-      which still reads net import, so the export side could not absorb it
-      while the charge term dropped the full 2 kW. The margin fell to -533 W
-      and the plug switched off — then on, then off, once per cycle. Completing
-      the load-off reconstruction (the freed 2 kW goes back to the battery's
-      headroom, its per-phase demand restored) reads +133 W with the plug
-      running, the same figure as with it off, and the 30 cycles are stable.
+      C. Read GROSS that was 1533 W of export — 133 W past the 1 kW trigger —
+      because it counted the 3.33 A leaving on B and C and ignored the 6.67 A
+      arriving on A. Read NET the site's position is exactly zero, so the
+      margin is 0 + 4600 - (1000 + 5000) = -1400 W and the plug stays off.
+      That is correct: the pack can still take 400 W, so nothing is spare.
+      The gross figure remains right for the export LIMIT, which is what the
+      charge-limit advice steers on.
+      This is general on a battery site, not a quirk of these numbers: Excess
+      needs solar - household >= threshold + charge allowance, and a site with
+      that much surplus has already filled the pack to its allowance. So under
+      the net verdict a battery site shows Excess only once its pack is
+      SATURATED — which is the sibling scenario below.
+      What this scenario was written for (ISSUES.md #41 — a running load must
+      not suppress its own verdict) still holds here: the margin reads -1400 W
+      with the plug off and -1400 W with it running. It is exercised with the
+      plug actually ON by the export-displaced sibling below, and pinned
+      directly in dev/tests/test_excess_stayon.py.
     human_verified: false
     site:
       voltage: 230
@@ -119,7 +128,7 @@ scenarios:
         l1_phase: "A"
     expected:
       plug_1:
-        allocated: 8.7  # 2000 W / 230 V — on, and stays on
+        allocated: 0.0  # net verdict: the pack still has 400 W of headroom
 
   - name: "3ph-bat-excess-plug-unbalanced-export-displaced-stays-on"
     description: >

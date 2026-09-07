@@ -645,7 +645,7 @@ def _charge_allowance(site: SiteContext) -> float:
     return site.battery_max_charge_power or 0
 
 
-def _reconstruct_placement(site: SiteContext):
+def _reconstruct_placement(site: SiteContext, *, net: bool = False):
     """The load-off reconstruction: ``(export_w, battery_restored_w)``.
 
     Every figure the Excess verdict decides on is read as the site would read it
@@ -721,23 +721,47 @@ def _reconstruct_placement(site: SiteContext):
     battery_restored = min(managed_draw, headroom)
     # Charging is symmetric across the phases that exist, so the restored
     # demand lands per phase — which is why it can cancel export on one
-    # phase without touching the import on another. Gross, clamped per
-    # phase, then summed: the export semantics never change.
+    # phase without touching the import on another. Summed GROSS by default
+    # and NET on request; see _reconstruct_signed_per_phase for why both are
+    # correct and which consumer wants which.
     per_phase = (
         battery_restored / site.export_current.active_count / site.voltage
         if battery_restored and site.export_current.active_count
         else 0.0
     )
-    export = 0.0
-    for exp, cons in (
-        (site.export_current.a, site.consumption.a),
-        (site.export_current.b, site.consumption.b),
-        (site.export_current.c, site.consumption.c),
-    ):
-        if exp is None:
-            continue
-        export += max(0.0, exp - (cons or 0) - per_phase)
+    signed = _reconstruct_signed_per_phase(site, per_phase)
+    if net:
+        export = sum(v for v in signed if v is not None)
+    else:
+        export = sum(max(0.0, v) for v in signed if v is not None)
     return export * site.voltage, battery_restored
+
+
+def _reconstruct_signed_per_phase(site: SiteContext, restored_per_phase: float):
+    """Per-phase load-off export in AMPS, SIGNED — ``[a, b, c]``, None where the
+    phase does not exist.
+
+    Split out because whether an importing phase CANCELS an exporting one is the
+    caller's question, not this function's, and the two answers are both right:
+
+    * **Gross** (clamp each phase at 0, then sum) for anything facing the export
+      LIMIT — the limit is contractual per exported flow, so a site pushing 30 A
+      out on two phases while pulling 10 A in on the third is exporting 30 A,
+      not 20 A. Slovenia meters it that way.
+    * **Net** (sum the signed values) for anything asking whether there is
+      SURPLUS — with A and B importing 1 A each and C exporting 2 A the site has
+      nothing spare, and a load put on C would simply import.
+
+    Pure function — unit-testable.
+    """
+    return [
+        None if exp is None else exp - (cons or 0) - restored_per_phase
+        for exp, cons in (
+            (site.export_current.a, site.consumption.a),
+            (site.export_current.b, site.consumption.b),
+            (site.export_current.c, site.consumption.c),
+        )
+    ]
 
 
 def reconstructed_export_power(site: SiteContext) -> float:
@@ -884,7 +908,17 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     # narrower allowance is a smaller headroom in exactly the same way a
     # partly-charged battery is, so the draw add-back keeps cancelling.
     charge_allowance = _charge_allowance(site)
-    export, battery_restored = _reconstruct_placement(site)
+    # NET, not gross: this is the SURPLUS question. With A and B importing 1 A
+    # each and C exporting 2 A the site has nothing spare — a load put on C
+    # would simply import — so the signed sum is 0 and Excess is off. The
+    # charge-limit advice reads the same reconstruction GROSS, because it
+    # steers the meter against a contractual export limit; see
+    # _reconstruct_signed_per_phase. The pool is built on this same net basis
+    # (_calculate_excess_available), and the two must never disagree: a gross
+    # verdict beside a net pool would engage Excess on an unbalanced site and
+    # then hand out nothing, leaving modulating loads pinned at their minimum
+    # on GRID power.
+    export, battery_restored = _reconstruct_placement(site, net=True)
 
     # SIGNED DISCHARGE, ONE TERM FOR EVERY SITE. Only the site's own production
     # can be surplus; stored energy on its way out never is. The subtraction is

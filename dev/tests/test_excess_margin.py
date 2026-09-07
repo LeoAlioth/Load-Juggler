@@ -19,7 +19,10 @@ verdict it engaged on — off-grid, where export is always 0, that makes the
 margin the load-off surplus by conservation.
 """
 
-from custom_components.dynamic_ocpp_evse.calculations import excess_margin
+from custom_components.dynamic_ocpp_evse.calculations import (
+    excess_margin,
+    reconstructed_export_power,
+)
 from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext,
     PhaseValues,
@@ -349,3 +352,53 @@ def test_grid_tied_engages_below_target_when_export_says_so():
     # The battery is charge-rate limited and taking all it can; the remainder is
     # genuinely leaving the site. Observable surplus needs no SOC proxy.
     assert excess_margin(_site(export=14000, battery_power=-5000, soc=50)) == 1000
+
+
+# --- Gross for the limit, net for the surplus ------------------------------
+#
+# Every ``_site`` above is SINGLE-PHASE (b and c are None), so no phase can
+# import while another exports and the two readings coincide — which is why
+# none of those assertions moved when the verdict went net (2026-09-07). The
+# distinction needs three phases to show at all.
+
+
+def _site_3ph(a_w, b_w, c_w, export_limit=EXPORT_LIMIT):
+    """A batteryless three-phase site from SIGNED per-phase watts
+    (+ exporting, − importing)."""
+    voltage = 230.0
+    return SiteContext(
+        voltage=voltage,
+        consumption=PhaseValues(*[max(0.0, -w) / voltage for w in (a_w, b_w, c_w)]),
+        export_current=PhaseValues(*[max(0.0, w) / voltage for w in (a_w, b_w, c_w)]),
+        battery_power=None,
+        battery_soc=None,
+        battery_soc_full=SOC_FULL,
+        battery_max_charge_power=None,
+        excess_export_threshold=export_limit,
+        is_off_grid=False,
+        loads=[],
+    )
+
+
+def test_an_importing_phase_is_netted_off_the_surplus():
+    """5 kW out on two phases against 3 kW in on the third is 7 kW of surplus,
+    not 10 kW: a load can only take what the site is NET exporting before it
+    starts importing. The verdict reads this net."""
+    site = _site_3ph(5000.0, 5000.0, -3000.0, export_limit=0.0)
+    assert round(excess_margin(site), 1) == 7000.0
+
+
+def test_the_same_reading_is_ten_kilowatts_to_the_export_limit():
+    """The other half: a contractual export limit counts exported FLOW per
+    phase, so the same site is exporting 10 kW and the import buys no headroom.
+    That figure is what the charge-limit advice steers on."""
+    site = _site_3ph(5000.0, 5000.0, -3000.0, export_limit=0.0)
+    assert round(reconstructed_export_power(site), 1) == 10000.0
+
+
+def test_a_balanced_site_reads_the_same_either_way():
+    """No phase importing, so nothing to net — the two bases coincide, which is
+    what keeps every single-phase case in this module byte-identical."""
+    site = _site_3ph(4000.0, 4000.0, 4000.0, export_limit=0.0)
+    assert round(excess_margin(site), 1) == 12000.0
+    assert round(reconstructed_export_power(site), 1) == 12000.0
