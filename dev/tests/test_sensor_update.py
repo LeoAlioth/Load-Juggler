@@ -6697,6 +6697,51 @@ async def test_off_grid_gets_the_clipping_figures_but_no_advice(hass: HomeAssist
     assert "_forecast_charge_limiting" not in runtime
 
 
+async def test_room_needed_is_the_figure_the_reserve_was_sized_on(hass: HomeAssistant):
+    """Three limits, three figures, and only the last one is decided with.
+
+    ``clipped_kwh`` is all surplus above the house; ``absorbable_kwh`` clamps
+    each block to the charge RATE; and both consumers then clamp that to the
+    pack — ``needed = min(absorbable, capacity)`` in ``battery_max_soc`` and
+    ``headroom_deficit_kwh`` alike. So a rate integral running past the pack
+    size is discarded before anything acts on it, which is why the Overview
+    publishes the clamped figure: kozolec displayed "battery can store
+    18.16 kWh" against a 9.5 kWh pack (2026-09-07).
+
+    Six hours of 6000 W over a 250 W house: 5750 W of surplus a block, of which
+    the 4000 W charger can take 4000 — so 34.5 kWh clippable, 24 kWh within the
+    rate, and 9.5 kWh the pack could ever hold.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, _inv = _off_grid_rig(
+        hass,
+        "roomneed",
+        soc="70",
+        forecast={
+            "2026-08-14T10:00:00+00:00": 6000,
+            "2026-08-14T11:00:00+00:00": 6000,
+            "2026-08-14T12:00:00+00:00": 6000,
+            "2026-08-14T13:00:00+00:00": 6000,
+            "2026-08-14T14:00:00+00:00": 6000,
+            "2026-08-14T15:00:00+00:00": 6000,
+            "2026-08-14T16:00:00+00:00": 0,
+        },
+    )
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+
+    assert result["forecast_clipped_kwh"] == pytest.approx(34.5, abs=0.01)
+    assert result["forecast_absorbable_kwh"] == pytest.approx(24.0, abs=0.01)
+    # The pack, not the rate integral — and NOT the raw 24 kWh.
+    assert result["forecast_room_needed_kwh"] == pytest.approx(9.5, abs=0.01)
+    # 70 % of a 9.5 kWh pack leaves 2.85 kWh, so 6.65 kWh has nowhere to go.
+    assert result["forecast_headroom_deficit_kwh"] == pytest.approx(6.65, abs=0.01)
+
+
 async def test_off_grid_curtailment_is_judged_on_the_battery(hass: HomeAssistant):
     """The gain observer needs a curtailment test, and off-grid the export wall
     cannot supply one: a full pack is what says the array is being throttled."""

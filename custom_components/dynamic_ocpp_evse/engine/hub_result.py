@@ -380,6 +380,17 @@ def _compute_forecast_advice(
         hub_runtime.pop("_forecast_soc_yielding", None)
 
     deficit = headroom_deficit_kwh(fc.absorbable_kwh, capacity_kwh, battery_soc)
+    # The figure the ENGINE acts on, published because ``absorbable_kwh`` is
+    # not it: both consumers clamp to capacity on their first line
+    # (``needed = min(absorbable, capacity)`` in ``battery_max_soc`` and
+    # ``headroom_deficit_kwh``), so a rate integral that runs past the pack
+    # size has already been discarded by the time anything decides with it.
+    # Displaying the raw integral read as "battery can store 18.16 kWh" on a
+    # 9.5 kWh pack (kozolec, 2026-09-07) — true of the charge rate over the
+    # window, false of the battery, and not what the reserve was sized on.
+    # Room needed carries information at both ends: below capacity it says the
+    # charge RATE binds, at capacity it says the pack size does.
+    room_needed = min(max(0.0, fc.absorbable_kwh), capacity_kwh)
     # The two live plant figures the engaged advice is computed from, read once
     # — from the CHARGE-CONTROL VIEW of the site when the engine supplies one:
     # the same loads, allowance and feedback subtraction, but grid phases and
@@ -586,6 +597,7 @@ def _compute_forecast_advice(
         "forecast_window_tomorrow": bool(window),
         "forecast_clipped_kwh": round(fc.clipped_kwh, 2),
         "forecast_absorbable_kwh": round(fc.absorbable_kwh, 2),
+        "forecast_room_needed_kwh": round(room_needed, 2),
         "forecast_battery_max_soc": published_soc,
         "forecast_headroom_deficit_kwh": round(deficit, 2),
         "forecast_charge_limit_w": (

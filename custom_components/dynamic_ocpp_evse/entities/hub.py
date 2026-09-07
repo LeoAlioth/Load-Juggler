@@ -376,6 +376,11 @@ _HUB_REPUBLISH_KEYS = frozenset(
     "forecast_window_tomorrow",
     "forecast_accuracy_pct",
     "forecast_clipped_actual_yesterday_kwh",
+    # The clamped headroom figure the reserve is actually sized on
+    # (min(absorbable, capacity)) — absorbable_kwh has a hub sensor, this does
+    # not, and the Overview shows this one because the raw rate integral runs
+    # past the pack and is discarded before anything decides with it.
+    "forecast_room_needed_kwh",
 }
 
 

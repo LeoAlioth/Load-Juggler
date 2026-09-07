@@ -1277,6 +1277,7 @@ async def test_overview_page_shows_the_forecast_when_it_is_on(
             "forecast_window_tomorrow": False,
             "forecast_clipped_kwh": 3.25,
             "forecast_absorbable_kwh": 2.5,
+            "forecast_room_needed_kwh": 2.5,
             "forecast_headroom_deficit_kwh": 0.75,
             "forecast_battery_max_soc": 84,
             "forecast_charge_limit_w": 1250,
@@ -1290,7 +1291,12 @@ async def test_overview_page_shows_the_forecast_when_it_is_on(
     text = _overview_text(hass, mock_hub_entry.entry_id)
     assert "PV forecast — next clipping window (today)" in text
     assert "Clippable: 3.25 kWh" in text
-    assert "battery can store: 2.50 kWh" in text
+    # The room the reserve was SIZED on, not the raw rate integral: on a pack
+    # smaller than the day's surplus the integral is clamped away before
+    # anything decides with it, and reading it as storage was false (kozolec
+    # showed "battery can store 18.16 kWh" on a 9.5 kWh pack, 2026-09-07).
+    assert "battery room needed: 2.50 kWh" in text
+    assert "battery can store" not in text
     assert "nowhere to go: 0.75 kWh" in text
     assert "Advised battery ceiling: 84 %" in text
     assert "Fleet charge limit: 1250 W (holding)" in text

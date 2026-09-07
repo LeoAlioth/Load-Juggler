@@ -440,7 +440,7 @@ def _forecast_overview_lines(hub_data: dict) -> list[str]:
     lines = ["", f"**☀️ PV forecast — next clipping window ({window})**"]
     lines.append(
         f"- Clippable: {_fmt(hub_data.get('forecast_clipped_kwh'), 'kWh', 2)}"
-        f" · battery can store: {_fmt(hub_data.get('forecast_absorbable_kwh'), 'kWh', 2)}"
+        f" · battery room needed: {_fmt(hub_data.get('forecast_room_needed_kwh'), 'kWh', 2)}"
         f" · nowhere to go: {_fmt(hub_data.get('forecast_headroom_deficit_kwh'), 'kWh', 2)}"
     )
     lines.append(
