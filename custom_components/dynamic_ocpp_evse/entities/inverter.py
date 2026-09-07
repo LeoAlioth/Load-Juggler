@@ -221,6 +221,10 @@ class LoadJugglerInverterDataSensor(
             "gain_hourly": own.get("forecast_gain_hourly") or {},
             "gain_days": own.get("forecast_gain_days"),
             "gain_blocks": own.get("forecast_gain_blocks"),
+            # Why the gain may not be moving: a gain of 1.0 over 0 days is
+            # what a fresh restart, a failed restore and a fully curtailed
+            # day all look like, and only this figure separates them.
+            "gain_skipped_pct": own.get("forecast_gain_skipped_pct"),
         }
 
     @property

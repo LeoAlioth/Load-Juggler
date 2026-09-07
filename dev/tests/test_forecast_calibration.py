@@ -21,6 +21,7 @@ from custom_components.dynamic_ocpp_evse.calculations.calibration import (
     clip_pair,
     close_block,
     day_ratio,
+    day_skipped_share,
     hourly_offsets,
     note_gain_sample,
     battery_is_saturated,
@@ -280,6 +281,46 @@ def test_a_day_of_pure_saturation_reports_nothing_rather_than_a_wrong_number():
     for _ in range(8):
         st = note_gain_sample(st, 9000.0, 6000.0, 1.0, constrained=True)
     assert day_ratio(st) is None
+
+
+# --- Saying so, rather than looking like a fresh start -------------------------
+#
+# The exclusion above is correct, and on an off-grid site whose pack fills by
+# mid-morning it can discard nearly the whole day — correctly. What that leaves
+# behind is indistinguishable from a warming-up observer or a failed restore:
+# gain 1.0, 0 days, 0 blocks in all three cases. Live on the off-grid site
+# (2026-09-07, kozolec): 300.6 Wh skipped, nothing measured, accuracy null.
+
+
+def test_a_fully_curtailed_day_says_it_threw_everything_away():
+    st = {}
+    for _ in range(8):
+        st = note_gain_sample(st, 9000.0, 6000.0, 1.0, constrained=True)
+    assert day_ratio(st) is None  # still no honest ratio
+    assert day_skipped_share(st) == 1.0  # and now it says why
+
+
+def test_an_honest_day_reports_nothing_skipped():
+    st = {}
+    for _ in range(8):
+        st = note_gain_sample(st, 4000.0, 3800.0, 1.0, constrained=False)
+    assert day_skipped_share(st) == 0.0
+
+
+def test_the_share_is_energy_weighted_not_a_count_of_intervals():
+    """One long curtailed block outweighs several short honest ones, because
+    the question is how much ENERGY the gain could not be measured on."""
+    st = {}
+    st = note_gain_sample(st, 1000.0, 1100.0, 1.0, False)   # 1 kWh honest
+    st = note_gain_sample(st, 9000.0, 6000.0, 1.0, True)    # 9 kWh curtailed
+    assert day_skipped_share(st) == 0.9
+
+
+def test_nothing_observed_yet_is_not_zero_percent_skipped():
+    """A fresh day and a day that discarded nothing are different answers, so
+    the caller can publish "no data" rather than a confident 0 %."""
+    assert day_skipped_share({}) is None
+    assert day_skipped_share(None) is None
 
 
 # --- The 15-minute gain series -------------------------------------------------

@@ -6528,8 +6528,51 @@ def test_observe_gain_closes_blocks_into_the_series_and_recomputes():
     assert 0.9 < out["forecast_gain"] < 1.0
     assert out["forecast_gain_days"] == 8
     assert out["forecast_gain_blocks"] == len(state["series"])
-    assert out["forecast_accuracy_pct"] > 90.0
-    assert isinstance(out["forecast_gain_hourly"], dict)
+    # An honest run threw nothing away, which is a different statement from
+    # having no data — see the curtailed case below.
+    assert out["forecast_gain_skipped_pct"] == 0.0
+
+
+def test_observe_gain_says_when_it_is_discarding_the_whole_day():
+    """The off-grid case, live on kozolec 2026-09-07: pack at 99 % against a
+    97 % full-SOC, so every interval is correctly excluded — 300.6 Wh skipped,
+    nothing measured, accuracy null. Correct, and previously indistinguishable
+    from a fresh restart or a failed restore: all three read gain 1.0 over 0
+    days. The skipped share is what separates them."""
+    from datetime import date, datetime as dt, timezone as tz, timedelta as td
+    from custom_components.dynamic_ocpp_evse.engine.forecast_observers import (
+        observe_gain,
+    )
+
+    runtime = {}
+    local = tz(td(hours=2))
+    t = dt(2026, 9, 7, 12, 15, tzinfo=local)
+    for step in range(8):
+        out = observe_gain(
+            runtime, "inv", date(2026, 9, 7), 6785.0, 4263.0, 5 / 60,
+            True,  # constrained: soc 99 >= soc_full 97
+            now_local=t + td(minutes=5 * step),
+        )
+    assert out["forecast_accuracy_pct"] is None
+    assert out["forecast_gain"] == 1.0
+    assert out["forecast_gain_days"] == 0
+    # The one figure that says the observer is starved rather than warming up.
+    assert out["forecast_gain_skipped_pct"] == 100.0
+
+
+def test_observe_gain_reports_no_skipped_share_before_its_first_sample():
+    """Nothing observed is not "0 % discarded" — the sensor must be able to
+    publish "no data yet" instead of a confident zero."""
+    from datetime import date, datetime as dt, timezone as tz, timedelta as td
+    from custom_components.dynamic_ocpp_evse.engine.forecast_observers import (
+        observe_gain,
+    )
+
+    out = observe_gain(
+        {}, "inv", date(2026, 9, 7), None, None, 0.0, False,
+        now_local=dt(2026, 9, 7, 12, 15, tzinfo=tz(td(hours=2))),
+    )
+    assert out["forecast_gain_skipped_pct"] is None
 
 
 async def test_the_accuracy_sensor_restores_the_gain_series(hass: HomeAssistant):

@@ -28,6 +28,7 @@ from ..calculations.calibration import (
     note_gain_sample,
     prune_series,
     series_days,
+    day_skipped_share,
     series_gain,
 )
 
@@ -61,8 +62,10 @@ def observe_gain(
     the published state; it moves through the day and settles by evening),
     ``forecast_gain`` (the overall gain from the stored 15-minute series),
     ``forecast_gain_hourly`` (per hour-of-day offsets ON that overall gain),
-    ``forecast_gain_days`` (distinct days in the series) and
-    ``forecast_gain_blocks``.
+    ``forecast_gain_days`` (distinct days in the series),
+    ``forecast_gain_blocks`` and ``forecast_gain_skipped_pct`` (how much of
+    today's forecast energy was excluded — the figure that tells a STARVED
+    observer from a warming-up one, which otherwise look identical).
 
     Two ledgers. Today's accumulators feed the accuracy figure and are not
     persisted anywhere. The SERIES of finished 15-minute blocks — forecast Wh,
@@ -123,6 +126,7 @@ def observe_gain(
     )
 
     today = day_ratio(state["acc"])
+    skipped = day_skipped_share(state["acc"])
     return {
         # Percent, so the sensor reads 100 when the forecast is exactly right
         # and the deviation is legible without doing arithmetic.
@@ -131,6 +135,12 @@ def observe_gain(
         "forecast_gain_hourly": dict(state["hourly"]),
         "forecast_gain_days": state["days"],
         "forecast_gain_blocks": len(state["series"]),
+        # Percent, matching forecast_accuracy_pct so the two read together:
+        # "accuracy unknown, 100 % skipped" is a complete answer, where an
+        # accuracy of None on its own is a question.
+        "forecast_gain_skipped_pct": (
+            None if skipped is None else round(skipped * 100.0, 1)
+        ),
         "forecast_gain_clamp": [GAIN_CLAMP_LOW, GAIN_CLAMP_HIGH],
     }
 

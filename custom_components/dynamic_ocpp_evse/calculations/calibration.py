@@ -140,6 +140,38 @@ def day_ratio(state, min_wh=GAIN_MIN_DAY_WH):
     return actual_wh / forecast_wh
 
 
+def day_skipped_share(state):
+    """The share of a day's forecast energy the observer excluded, 0.0-1.0.
+
+    Both of ``note_gain_sample``'s exclusion reasons, because it tallies them
+    into one bucket and the useful question is how much was thrown away, not
+    why each watt-hour went: curtailed intervals, and the near-dark blocks
+    under ``GAIN_MIN_BLOCK_W``. Which one dominates is legible from the hour —
+    a high share at midday is curtailment, at dusk it is the noise floor.
+
+    ``note_gain_sample`` has always tallied the excluded energy so the
+    published observation "can say how much of the day it had to throw away";
+    this is the figure that says it. It matters because a starved observer and
+    a warming-up one look identical from outside — a gain of 1.0 over 0 days
+    reads the same whether the series is empty because the integration just
+    restarted, because a restore failed, or because every interval was
+    correctly discarded as curtailed. On an off-grid site whose pack is full
+    through the middle of the day, the last of those is the normal case and
+    NOT a fault (dev/TODO.md), so it has to be legible rather than inferred.
+
+    None when nothing has been observed at all: "0 % skipped" and "no data
+    yet" are different answers, and the caller publishes them differently.
+
+    Pure function — unit-testable.
+    """
+    forecast_wh = float((state or {}).get("forecast_wh", 0.0))
+    skipped_wh = float((state or {}).get("skipped_wh", 0.0))
+    total = forecast_wh + skipped_wh
+    if total <= 0:
+        return None
+    return skipped_wh / total
+
+
 def update_gain(
     gain,
     ratio,
