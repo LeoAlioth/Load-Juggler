@@ -2342,6 +2342,7 @@ async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
     the runtime buckets are not on their own (they hold entity objects)."""
     import json
     from datetime import datetime, timezone
+    from pathlib import Path
     from custom_components.dynamic_ocpp_evse.diagnostics import (
         async_get_config_entry_diagnostics,
     )
@@ -2374,6 +2375,18 @@ async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
 
     assert diag["config"]["hub"]["entry_id"] == mock_hub_entry.entry_id
     assert diag["integration"]["requested_from"]["is_hub"] is True
+    # The build, from manifest.json — a separate question from the entry's
+    # config-schema version, and the one a dump used to leave us guessing at.
+    manifest = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "custom_components"
+            / DOMAIN
+            / "manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert diag["integration"]["release"] == manifest["version"]
+    assert diag["config"]["hub"]["version"] != diag["integration"]["release"]
     ids = {c["entry_id"] for c in diag["config"]["children"]}
     assert plug.entry_id in ids
     assert diag["config"]["child_count"] == len(diag["config"]["children"])

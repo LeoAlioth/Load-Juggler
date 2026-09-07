@@ -33,6 +33,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.loader import IntegrationNotFound, async_get_integration
 
 from .const import (
     CONF_DEVICE_TYPE,
@@ -113,6 +114,19 @@ async def async_get_config_entry_diagnostics(
     """The whole site, from whichever entry the user pressed the button on."""
     domain_data = hass.data.get(DOMAIN, {}) or {}
 
+    # The RELEASE that produced these numbers, from manifest.json. Not the
+    # same question as the ``version`` in each entry dump below, which is the
+    # config-schema revision the migrations count — hence the separate key.
+    # Asking "which build is this?" cost two round trips in one day
+    # (2026-09-07), which is exactly the round trip this file exists to avoid.
+    # Guarded because a diagnostics download must never fail to render.
+    integration = None
+    try:
+        integration = await async_get_integration(hass, DOMAIN)
+    except IntegrationNotFound:
+        pass
+    release = getattr(integration, "version", None)
+
     # Resolve to the hub: a child's own settings are rarely enough to explain
     # what it was allocated.
     hub_entry = entry
@@ -142,6 +156,7 @@ async def async_get_config_entry_diagnostics(
     return {
         "integration": {
             "domain": DOMAIN,
+            "release": str(release) if release else None,
             "requested_from": {
                 "entry_id": entry.entry_id,
                 "title": entry.title,
