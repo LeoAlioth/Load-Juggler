@@ -31,6 +31,7 @@ from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
 )
 from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (  # noqa: E402
     resolve_tank_mode_priority,
+    tank_boost_is_opportunistic,
     TANK_SURPLUS_URGENCY_TIER,
 )
 
@@ -319,6 +320,57 @@ def test_missing_label_keeps_the_mode_tier():
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+# --- Opportunistic boost: refusable, but never below the mode's own floor -----
+#
+# tank_boost_is_opportunistic decides whether a boosting tank is allocated as
+# BEHAVIOR_BINARY_EXCESS (gated on real surplus) or keeps BEHAVIOR_FULL_POWER
+# (unconditional). resolve_tank_setpoint returns "boost" on the surplus verdict
+# ALONE, with no temperature test, so the floor guard here is what stops a
+# 25 C frost-protection element being refused power.
+
+FREEZE = TANK_MODE_FREEZE_PROTECTION.key
+NORMALK = TANK_MODE_NORMAL.key
+
+
+def test_boost_above_the_away_floor_is_opportunistic():
+    # Freeze Protection asks for `away`; past it, boost heat is free energy.
+    assert tank_boost_is_opportunistic(FREEZE, "boost", 35.0, 30.0) is True
+
+
+def test_boost_below_the_away_floor_is_frost_protection():
+    # THE GUARD: the label says boost, the tank is cold, the element must run.
+    assert tank_boost_is_opportunistic(FREEZE, "boost", 25.0, 30.0) is False
+
+
+def test_boost_exactly_at_the_floor_is_opportunistic():
+    assert tank_boost_is_opportunistic(FREEZE, "boost", 30.0, 30.0) is True
+
+
+def test_a_normal_mode_tank_below_its_normal_floor_still_runs():
+    assert tank_boost_is_opportunistic(NORMALK, "boost", 38.0, 42.0) is False
+
+
+def test_a_normal_mode_tank_above_its_floor_is_opportunistic():
+    assert tank_boost_is_opportunistic(NORMALK, "boost", 45.0, 42.0) is True
+
+
+def test_the_away_and_normal_setpoints_are_never_opportunistic():
+    # Only the boost label rides surplus; the mode's own floor is must-run.
+    assert tank_boost_is_opportunistic(FREEZE, "away", 35.0, 30.0) is False
+    assert tank_boost_is_opportunistic(NORMALK, "normal", 45.0, 42.0) is False
+
+
+def test_solar_priority_is_left_alone():
+    # Already BEHAVIOR_SOLAR_PRIORITY, and its boost is SOC-driven.
+    assert tank_boost_is_opportunistic(SOLAR, "boost", 45.0, 42.0) is False
+
+
+def test_an_unknown_temperature_is_never_opportunistic():
+    # A missing reading must not be what gates a must-run element.
+    assert tank_boost_is_opportunistic(FREEZE, "boost", None, 30.0) is False
+    assert tank_boost_is_opportunistic(FREEZE, "boost", 35.0, None) is False
+
+
 if __name__ == "__main__":
     # Deliberately pytest-free: the pure tier has to run on the developer's
     # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).

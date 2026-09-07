@@ -91,9 +91,12 @@ from ..const import (
     behavior_for,
     resolve_operating_mode,
     resolve_tank_mode_priority,
+    tank_boost_is_opportunistic,
     BEHAVIOR_BINARY_EXCESS,
     BEHAVIOR_EXCESS,
+    CONF_TANK_AWAY_TEMPERATURE,
     CONF_TANK_BOOST_TEMPERATURE,
+    DEFAULT_TANK_AWAY_TEMPERATURE,
     DEFAULT_TANK_BOOST_TEMPERATURE,
     TANK_MODE_FREEZE_PROTECTION,
     TANK_MODE_NORMAL,
@@ -801,6 +804,9 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     boost_temp = load_rt.get("tank_boost_temperature") or get_entry_value(
         entry, CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE
     )
+    away_temp = load_rt.get("tank_away_temperature") or get_entry_value(
+        entry, CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE
+    )
 
     # Surplus demotion: a tank aiming at boost is heating on energy the site
     # would otherwise dump, so it competes at the Excess tier instead of its
@@ -826,6 +832,20 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     )
     load_rt["tank_priority_elevated"] = elevated
 
+    # ...and its BEHAVIOR the same way, from the same label. The tier demotion
+    # above says a boosting tank is opportunistic; this is what makes the
+    # allocator agree, so the tank is sized by the surplus it claims against
+    # instead of taking its rating from the physical pool regardless. Below its
+    # mode's own floor temperature it stays full-power and unconditional — see
+    # tank_boost_is_opportunistic for why that guard is not optional.
+    opportunistic = tank_boost_is_opportunistic(
+        mode.key,
+        setpoint_label,
+        current_temp,
+        away_temp if mode.key == TANK_MODE_FREEZE_PROTECTION.key else normal_temp,
+    )
+    mode_behavior = BEHAVIOR_BINARY_EXCESS if opportunistic else behavior_for(mode)
+
     load = LoadContext(
         load_id=entry.entry_id,
         entity_id=load_entity_id,
@@ -837,7 +857,7 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         connector_status=connector_status,
         device_type=DEVICE_TYPE_HOT_WATER_TANK,
         operating_mode=mode.key,
-        mode_behavior=behavior_for(mode),
+        mode_behavior=mode_behavior,
         mode_priority=mode_priority,
         rated_current=equivalent_current,
         # The verdict starts this tank (its setpoint jumps to boost) whenever

@@ -50,6 +50,48 @@ TANK_SURPLUS_URGENCY_TIER = 4
 DEFAULT_OPERATING_MODE_HOT_WATER_TANK = TANK_MODE_NORMAL
 
 
+def tank_boost_is_opportunistic(
+    mode_key, setpoint_label, current_temp, floor_temp
+) -> bool:
+    """Is this tank's BOOST heating opportunistic — surplus only, refusable?
+
+    The companion to ``resolve_tank_mode_priority``'s surplus demotion below,
+    which already drops a boosting tank to the Excess tier. That moved the
+    tank's URGENCY but not its behavior: Freeze Protection and Normal both map
+    to ``BEHAVIOR_FULL_POWER``, whose whole body is ``return max_current``, so a
+    boosting tank took its element's full rating from the physical pool however
+    little surplus existed. It claimed against the Excess ledger — reducing what
+    lower-ranked loads were offered — while never being subject to the pool
+    itself (measured live 2026-09-07: a 74 W margin, a 2 kW element, and the
+    station behind it starved). True here, the caller reads
+    ``BEHAVIOR_BINARY_EXCESS`` instead: still all-or-nothing at the full
+    rating, but gated on the surplus actually existing.
+
+    THE FLOOR GUARD IS THE POINT. ``resolve_tank_setpoint`` returns "boost" on
+    the surplus verdict alone, with NO temperature test — so a tank at 25 °C
+    with the verdict on is labelled "boost" too. Gating that on the pool would
+    deny power to a FROST-PROTECTION element. So the boost only counts as
+    opportunistic once the tank has already reached the temperature its mode
+    actually asks for: away for Freeze Protection, normal for Normal. Below
+    that it keeps full power, unconditionally.
+
+    An unknown temperature reads as NOT opportunistic, deliberately: a missing
+    reading must never be what gates a must-run element.
+
+    Solar Priority is absent on purpose — it is ``BEHAVIOR_SOLAR_PRIORITY``
+    already, and its boost is SOC-driven rather than surplus-driven.
+
+    Pure function — unit-testable.
+    """
+    if setpoint_label != "boost":
+        return False
+    if mode_key not in (TANK_MODE_FREEZE_PROTECTION.key, TANK_MODE_NORMAL.key):
+        return False
+    if current_temp is None or floor_temp is None:
+        return False
+    return float(current_temp) >= float(floor_temp)
+
+
 def resolve_tank_mode_priority(
     mode_key,
     mode_priority,
