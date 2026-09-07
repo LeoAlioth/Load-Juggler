@@ -2288,3 +2288,90 @@ async def test_the_inverter_overview_separates_battery_from_forecast(
     assert "SOC: 68 %" in text
     assert "Accuracy today: 96 %" in text
     assert "No battery configured" not in text
+
+
+# ── Diagnostics: the whole site in one download ──────────────────────────
+
+
+async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    """Downloading from the hub yields every entry's config, the live result
+    and the carried runtime — and the whole thing is JSON-serialisable, which
+    the runtime buckets are not on their own (they hold entity objects)."""
+    import json
+    from datetime import datetime, timezone
+    from custom_components.dynamic_ocpp_evse.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+    from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    plug = _plug_entry(mock_hub_entry, "Pond Pump", priority=1)
+    plug.add_to_hass(hass)
+
+    hass.data[DOMAIN]["hub_data"] = {
+        mock_hub_entry.entry_id: {
+            "last_update": datetime.now(timezone.utc),
+            "grid_power": -8319,
+        }
+    }
+    # A runtime bucket carrying something HA-shaped, which must not break the
+    # dump: the gain series beside a live object.
+    hub_rt = hass.data[DOMAIN]["hubs"][mock_hub_entry.entry_id]
+    hub_rt["_excess_on"] = True
+    hub_rt["_forecast_gain_observer"] = {
+        "inv": {"series": [{"t": "2026-09-04T12:00:00+02:00", "f": 1000.0, "a": 900.0}]}
+    }
+    hub_rt["coordinator"] = object()   # a known live object: skipped outright
+    hub_rt["_unexpected_object"] = object()  # anything else: type marker
+
+    diag = await async_get_config_entry_diagnostics(hass, mock_hub_entry)
+    json.dumps(diag)  # must not raise
+
+    assert diag["config"]["hub"]["entry_id"] == mock_hub_entry.entry_id
+    assert diag["integration"]["requested_from"]["is_hub"] is True
+    ids = {c["entry_id"] for c in diag["config"]["children"]}
+    assert plug.entry_id in ids
+    assert diag["config"]["child_count"] == len(diag["config"]["children"])
+    # Options are dumped verbatim — that is the point of the file.
+    hub_opts = diag["config"]["hub"]["options"]
+    assert hub_opts["main_breaker_rating"] == mock_hub_entry.options["main_breaker_rating"]
+    # Live result and carried state came along; the live object did not.
+    assert diag["live"]["hub_data"]["grid_power"] == -8319
+    assert diag["runtime"]["hub"]["_excess_on"] is True
+    assert diag["runtime"]["hub"]["_forecast_gain_observer"]["inv"]["series"][0]["f"] == 1000.0
+    # A known live object is dropped by name; anything unexpected is kept as a
+    # marker, so a dump still shows that something was there.
+    assert "coordinator" not in diag["runtime"]["hub"]
+    assert diag["runtime"]["hub"]["_unexpected_object"] == "<object>"
+    # The auto-imported inverter is a child, with its effective features.
+    inv = next(
+        c for c in diag["config"]["children"]
+        if c["entry_type"] == ENTRY_TYPE_INVERTER
+    )
+    assert isinstance(inv["features_effective"], list)
+
+
+async def test_diagnostics_from_a_child_still_dumps_the_hub(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    """Pressing the button on a load gives the same site-wide file: a load's
+    own settings rarely explain what it was allocated."""
+    from custom_components.dynamic_ocpp_evse.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    plug = _plug_entry(mock_hub_entry, "Pond Pump", priority=1)
+    plug.add_to_hass(hass)
+
+    diag = await async_get_config_entry_diagnostics(hass, plug)
+    assert diag["config"]["hub"]["entry_id"] == mock_hub_entry.entry_id
+    assert diag["integration"]["requested_from"]["entry_id"] == plug.entry_id
+    assert diag["integration"]["requested_from"]["is_hub"] is False
+    assert plug.entry_id in {c["entry_id"] for c in diag["config"]["children"]}
