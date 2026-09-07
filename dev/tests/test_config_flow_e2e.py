@@ -2247,6 +2247,44 @@ async def test_the_overview_flags_export_over_the_limit(
     assert "over the export limit" not in text
 
 
+async def test_the_overview_omits_the_grid_lines_off_grid(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    """No CTs, no meter: reporting a flow or a reconstructed export would be a
+    confident number about a connection that does not exist."""
+    from datetime import datetime, timezone
+    from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.config_entries.async_update_entry(
+        mock_hub_entry,
+        options={
+            k: v
+            for k, v in mock_hub_entry.options.items()
+            if k
+            not in (
+                CONF_PHASE_A_CURRENT_ENTITY_ID,
+                CONF_PHASE_B_CURRENT_ENTITY_ID,
+                CONF_PHASE_C_CURRENT_ENTITY_ID,
+            )
+        },
+    )
+    hass.data[DOMAIN]["hub_data"] = {
+        mock_hub_entry.entry_id: {
+            "last_update": datetime.now(timezone.utc),
+            "grid_power": 0.0,
+            "total_export_power": 0.0,
+            "total_export_power_raw": None,
+        }
+    }
+    text = _overview_text(hass, mock_hub_entry.entry_id)
+    assert "off-grid site" in text
+    assert "Export with managed loads off" not in text
+    assert "Importing" not in text and "Exporting" not in text
+
+
 async def test_the_inverter_overview_separates_battery_from_forecast(
     hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
 ):

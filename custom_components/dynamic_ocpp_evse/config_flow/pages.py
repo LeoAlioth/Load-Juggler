@@ -516,30 +516,35 @@ def _hub_overview_lines(hass, entry) -> list[str]:
                 continue
             flow = "export" if value < 0 else "import"
             lines.append(f"- Phase {label}: {_fmt(abs(value), 'A')} {flow}")
+        off_grid = False
     else:
         lines.append("- No grid CTs configured — off-grid site")
+        off_grid = True
     # Both grid lines on the RAW meter basis: the reading, and the reading
     # with the managed loads' draws added back — so they differ by exactly
     # those draws. (The engine itself works on smoothed values; that figure
     # belongs to the grid power / export sensors, not to this page.)
-    grid_w = hub_data.get("grid_power")
-    if isinstance(grid_w, (int, float)):
-        flow = "Exporting" if grid_w < 0 else "Importing"
-        lines.append(f"- {flow}: {_fmt(abs(grid_w), 'W', 0)}")
-    else:
-        lines.append(f"- Net grid power: {_fmt(grid_w, 'W', 0)}")
-    loads_off = hub_data.get("total_export_power_raw")
-    if loads_off is None:
-        loads_off = hub_data.get("total_export_power")
-    export_limit = get_entry_value(entry, CONF_GRID_EXPORT_LIMIT, 0) or 0
-    over = (
-        " ❗"
-        if isinstance(loads_off, (int, float))
-        and export_limit > 0
-        and loads_off > export_limit
-        else ""
-    )
-    lines.append(f"- Export with managed loads off: {_fmt(loads_off, 'W', 0)}{over}")
+    # Off-grid there is no meter and no export: both lines below would be a
+    # confident 0 W (or worse, our own loads' draw reported as export).
+    if not off_grid:
+        grid_w = hub_data.get("grid_power")
+        if isinstance(grid_w, (int, float)):
+            flow = "Exporting" if grid_w < 0 else "Importing"
+            lines.append(f"- {flow}: {_fmt(abs(grid_w), 'W', 0)}")
+        else:
+            lines.append(f"- Net grid power: {_fmt(grid_w, 'W', 0)}")
+        loads_off = hub_data.get("total_export_power_raw")
+        export_limit = get_entry_value(entry, CONF_GRID_EXPORT_LIMIT, 0) or 0
+        over = (
+            " ❗"
+            if isinstance(loads_off, (int, float))
+            and export_limit > 0
+            and loads_off > export_limit
+            else ""
+        )
+        lines.append(
+            f"- Export with managed loads off: {_fmt(loads_off, 'W', 0)}{over}"
+        )
     if hub_data.get("grid_stale"):
         lines.append("- ⚠️ Grid readings are stale — holding the last known values")
 

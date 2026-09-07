@@ -711,13 +711,21 @@ def _build_hub_result(
     for c in site.loads:
         for i, d in enumerate(c.get_site_phase_draw()):
             _draws[i] += d
+    # Off-grid there is nothing to export to and the phase readings are
+    # synthetic zeros, so adding the draws back would fabricate export equal to
+    # whatever our loads are drawing (3141 W on a live off-grid site,
+    # 2026-09-07). The same early-out ``_apply_feedback_loop`` takes.
     raw_export_with_loads_off = (
-        sum(
-            max(0.0, -(r or 0.0) + d)
-            for r, d in zip(raw_phases, _draws)
-            if r is not None
+        None
+        if site.is_off_grid
+        else (
+            sum(
+                max(0.0, -(r or 0.0) + d)
+                for r, d in zip(raw_phases, _draws)
+                if r is not None
+            )
+            * voltage
         )
-        * voltage
     )
 
     # Unmanaged (household) draw, W. NOT household_consumption_total — that is
@@ -966,7 +974,9 @@ def _build_hub_result(
         # loads off, on the same reading ``grid_power`` shows. (The engine's
         # own figure, ``total_export_power``, is the smoothed one.)
         "total_export_power_raw": (
-            None if grid_assumed else round(raw_export_with_loads_off, 0)
+            None
+            if grid_assumed or raw_export_with_loads_off is None
+            else round(raw_export_with_loads_off, 0)
         ),
         "available_grid_power": round(grid_headroom, 0),
         "available_battery_power": battery_remaining,

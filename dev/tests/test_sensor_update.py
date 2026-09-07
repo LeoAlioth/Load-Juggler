@@ -6567,3 +6567,66 @@ async def test_the_accuracy_sensor_restores_the_gain_series(hass: HomeAssistant)
     offered = sensor.extra_restore_state_data.as_dict()
     assert offered["series"] == state["series"]
     assert offered["day"] == today
+
+
+async def test_an_off_grid_site_publishes_no_reconstructed_export(hass: HomeAssistant):
+    """Off-grid the phase readings are synthetic zeros, so adding the managed
+    draws back would report our own loads' consumption as export (a live
+    off-grid site read 3141 W of it, 2026-09-07)."""
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=8,
+        title="Off-grid Hub",
+        data={
+            CONF_NAME: "Off-grid Hub",
+            CONF_ENTITY_ID: "offgrid_hub",
+            ENTRY_TYPE: ENTRY_TYPE_HUB,
+        },
+        options={CONF_MAIN_BREAKER_RATING: 40, CONF_PHASE_VOLTAGE: 230},
+    )
+    inverter = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=8,
+        title="Off-grid Inverter",
+        data={
+            CONF_NAME: "Off-grid Inverter",
+            CONF_ENTITY_ID: "offgrid_inv",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options={
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.og_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: "sensor.og_batt",
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.og_solar",
+            CONF_BATTERY_CAPACITY_KWH: 9.5,
+        },
+    )
+    for entry in (hub, inverter):
+        entry.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    hass.states.async_set(
+        "sensor.og_soc", "100", {"device_class": "battery", "unit_of_measurement": "%"}
+    )
+    hass.states.async_set(
+        "sensor.og_batt", "-2731", {"device_class": "power", "unit_of_measurement": "W"}
+    )
+    hass.states.async_set(
+        "sensor.og_solar", "6542", {"device_class": "power", "unit_of_measurement": "W"}
+    )
+
+    result = run_hub_calculation(hass, hub)
+
+    assert result["total_export_power"] == 0
+    # Not a number at all: there is no meter to reconstruct from.
+    assert result["total_export_power_raw"] is None
