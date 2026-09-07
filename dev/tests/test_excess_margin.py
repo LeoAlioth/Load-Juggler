@@ -8,7 +8,9 @@ number decides it for every Excess-mode load:
     margin = (grid export + battery charge power + our own managed draws)
            - (export allowance + battery charge allowance - hysteresis)
 
-``margin >= 0`` means Excess is on, and the value is the excess pool in watts. A
+``margin >= 0`` means Excess is on. The value is the excess pool in watts only when
+read with ``hysteresis=0`` — with the latch's band it answers the VERDICT and
+overstates the pool by that band (see _calculate_excess_available). A
 sink contributes its allowance only while it can actually absorb — no grid means
 no export allowance, and no battery (or a full one) means no charge allowance.
 The measured battery discharge counts against the absorbed side, unclamped and

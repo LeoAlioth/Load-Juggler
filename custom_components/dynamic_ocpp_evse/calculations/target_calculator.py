@@ -814,8 +814,11 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     battery's charge headroom (see the term itself); off-grid, where there are
     no readings at all, it is added wholesale.
 
-    — where ``margin >= 0`` means Excess is on, and the value *is* the excess
-    pool in watts. Callers need nothing else; the breakdown goes to the debug log.
+    — where ``margin >= 0`` means Excess is on. The value is the excess pool in
+    watts ONLY when read with ``hysteresis=0``: called with the latch's band it
+    answers the verdict and overstates the pool by exactly that band, which is
+    why ``_calculate_excess_available`` gates on one reading and sizes on the
+    other. Callers need nothing else; the breakdown goes to the debug log.
 
     A sink contributes its allowance only while it can actually absorb:
 
@@ -987,18 +990,27 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
 
     For ASYMMETRIC inverters: Excess power can be allocated to any phase.
     For SYMMETRIC inverters: Excess power is divided per-phase.
+
+    THE VERDICT DECIDES WHETHER THE POOL EXISTS; THE MARGIN DECIDES ITS SIZE,
+    AND THE TWO READ THE HYSTERESIS DIFFERENTLY. The verdict takes it, because
+    it is the latch's release band — a running load must ride a momentary dip at
+    its minimum instead of being cut. The SIZE must not: a deadband on a
+    decision is not surplus, and counting it handed out watts the site never
+    had for exactly as long as a load stayed engaged. Measured live
+    (2026-09-07): the published margin read 989 W where the site's reconstructed
+    export was 489 W over its threshold, the whole difference being the 500 W
+    hysteresis, and two loads sized themselves on it.
     """
-    margin = excess_margin(site, site.excess_hysteresis)
+    if not _excess_verdict(site):
+        return PhaseConstraints.zeros()
 
-    if margin >= 0:
-        total_available = margin / site.voltage if site.voltage > 0 else 0
-        constraints = _build_inverter_constraints(site, total_available)
-        _LOGGER.debug(
-            f"Excess constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}"
-        )
-        return constraints
-
-    return PhaseConstraints.zeros()
+    margin = excess_margin(site, 0.0)
+    total_available = max(0.0, margin) / site.voltage if site.voltage > 0 else 0
+    constraints = _build_inverter_constraints(site, total_available)
+    _LOGGER.debug(
+        f"Excess constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}"
+    )
+    return constraints
 
 
 def _below_soc_target(site: SiteContext) -> bool:

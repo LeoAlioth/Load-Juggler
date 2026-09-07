@@ -271,6 +271,56 @@ def test_a_lower_ranked_excess_load_waits_behind_a_tank_that_takes_it_all():
         assert _close(station.allocated_current, 0.0), f"heating={heating}"
 
 
+# ---------------------------------------------------------------------------
+# The pool's size takes no hysteresis
+# ---------------------------------------------------------------------------
+#
+# The latch's release band belongs to the VERDICT — a running load rides a
+# momentary dip at its minimum instead of being cut. It must not size the pool:
+# a deadband on a decision is not surplus. Live 2026-09-07 the published margin
+# read 989 W where the reconstruction was 489 W over its threshold, the whole
+# difference being the 500 W band, and two loads sized themselves on it.
+
+
+def test_the_pool_is_zero_at_the_threshold_and_tracks_above_it():
+    """Anze's arithmetic: at the threshold the pool is exactly 0, and 100 W
+    above it the pool is 100 W."""
+    at = _evse("at", min_current=0.9, max_current=10.4)
+    _prepare(_site(THRESHOLD, loads=[at]))
+    # A pool of 0 is still Excess (saturated), so the load starts at its floor.
+    assert _close(at.allocated_current, 0.9)
+
+    above = _evse("above", min_current=0.9, max_current=10.4)
+    margin = _prepare(_site(THRESHOLD + 100.0, loads=[above]))
+    assert _close(margin, 100.0, tol=1.0)
+
+
+def test_the_hysteresis_never_widens_the_pool():
+    """Same site, same engaged verdict, hysteresis 0 vs 500: the allocation is
+    identical. Before the fix the band was handed out as surplus."""
+    allocations = []
+    for hysteresis in (0.0, 500.0):
+        load = _evse("evse", min_current=0.9, max_current=10.4)
+        site = _site(THRESHOLD + 300.0, loads=[load])
+        site.excess_hysteresis = hysteresis
+        _prepare(site)
+        allocations.append(load.allocated_current)
+    assert _close(*allocations), allocations
+    # And the 300 W surplus is what sized it, not 300 + 500.
+    assert _close(allocations[0], 300.0 / V, tol=0.05)
+
+
+def test_the_release_band_still_keeps_a_running_load_alive():
+    """The verdict keeps its hysteresis, so a load already running rides a dip
+    below the threshold at its minimum rather than being cut — the pool's size
+    losing the band must not cost the latch its job."""
+    load = _evse("evse", min_current=0.9, max_current=10.4, draw=0.9)
+    site = _site(THRESHOLD - 200.0 - 0.9 * V, loads=[load])
+    site.excess_hysteresis = 500.0
+    _prepare(site)
+    assert _close(load.allocated_current, 0.9)
+
+
 def _site_3ph(export_w, loads=(), breaker=BREAKER, threshold=THRESHOLD):
     """The same batteryless site on three phases, exporting ``export_w`` TOTAL.
 
