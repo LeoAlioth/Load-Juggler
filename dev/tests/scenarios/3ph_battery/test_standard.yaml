@@ -53,6 +53,18 @@ scenarios:
   - name: "3ph-1c-standard-heavy-importing"
     description: "Home consuming more than solar produces (importing)"
     human_verified: false
+    # KNOWN BUG, found by the physical-invariant check 2026-09-07 (dev/TODO.md):
+    # _calculate_site_limit credits the inverter's output TWICE on a phase that
+    # nets to export while still carrying household load — once by netting
+    # `consumption` down to 0 (so the grid pool is the whole breaker) and again
+    # as the separate inverter pool. Phase A here carries 8 A of household
+    # against 4.33 A/phase of solar and 6 A/phase of battery discharge, so it
+    # nets 2.33 A of export: true headroom is 25 + 2.33 = 27.33 A, the pool
+    # offers 25 + 4.33 = 29.33 A, and the 2 A gap is the inverter output already
+    # serving the household. The allocation lands only 0.97 A over here because
+    # max-import caps it before the full error can show.
+    known_invariant_breaches:
+      - "phase A: 25.97 A drawn against a 25 A breaker"
     site:
       voltage: 230
       main_breaker_rating: 25

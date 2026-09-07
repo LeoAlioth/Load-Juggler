@@ -31,7 +31,11 @@ from custom_components.dynamic_ocpp_evse.calculations.utils import (
     compute_household_per_phase,
     grid_without_managed_draws,
 )
-from custom_components.dynamic_ocpp_evse.const.modes import resolve_operating_mode, behavior_for
+from custom_components.dynamic_ocpp_evse.const.modes import (
+    resolve_operating_mode,
+    behavior_for,
+    BEHAVIOR_EXCESS,
+)
 from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
     resolve_tank_mode_priority,
     DEFAULT_TANK_NORMAL_TEMPERATURE,
@@ -117,8 +121,13 @@ def set_load_phase_currents(load, commanded_limit):
     """Set load l1/l2/l3_current from commanded limit based on phase mapping.
 
     Uses the load's L1/L2/L3 → site phase mapping (l1_phase, l2_phase, l3_phase)
-    to determine which OCPP phases are active. L1 is always used; L2/L3 depend on
-    the load's active_phases_mask containing the corresponding site phases.
+    to determine which OCPP phases are active, bounded by how many legs the load
+    actually HAS: a 1-phase load energises L1 only, whatever its l2/l3 mapping
+    says. That bound matters because ``l2_phase`` defaults to "B" and
+    ``l3_phase`` to "C" when a scenario does not name them, so a 1-phase load
+    declared on phase B used to match on L2 as well and have its simulated draw
+    DOUBLED onto that phase — the CT readings for every such load were wrong,
+    and the physical-invariant check is what surfaced it (2026-09-07).
     """
     load.l1_current = 0
     load.l2_current = 0
@@ -126,13 +135,14 @@ def set_load_phase_currents(load, commanded_limit):
     if commanded_limit <= 0:
         return
     mask = (load.active_phases_mask or "").upper()
-    # L1 is always active if its mapped site phase is in the mask
-    if load.l1_phase in mask:
-        load.l1_current = commanded_limit
-    if load.l2_phase in mask:
-        load.l2_current = commanded_limit
-    if load.l3_phase in mask:
-        load.l3_current = commanded_limit
+    legs = [(load.l1_phase, "l1_current")]
+    if (load.phases or 1) >= 2:
+        legs.append((load.l2_phase, "l2_current"))
+    if (load.phases or 1) >= 3:
+        legs.append((load.l3_phase, "l3_current"))
+    for phase, attr in legs:
+        if phase in mask:
+            setattr(load, attr, commanded_limit)
 
 
 def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
@@ -662,6 +672,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
     # Excess latch state, the hub_runtime["_excess_on"] equivalent: the widened
     # release band only applies while Excess was already engaged last cycle.
     excess_on = False
+    invariant_breaches = set()  # physical guards, deduplicated across cycles
 
     # Per-load draw-settle tracking: last measured draw and the count of
     # consecutive cycles it has held steady. Mirrors the HA layer's per-load
@@ -695,8 +706,12 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
             t = (cycle + 1) / RAMP_UP_CYCLES
             scale_site_values(site, t)
 
-        # Save household consumption before CT simulation overwrites it
+        # Save household consumption before CT simulation overwrites it, and
+        # the PHYSICAL solar total before the feedback loop re-derives it — the
+        # invariant check below needs the site as the sky made it, not as the
+        # engine reconstructed it.
         household = PhaseValues(site.consumption.a, site.consumption.b, site.consumption.c)
+        physical_solar_w = site.solar_production_total
 
         # 3. Set load l1/l2/l3_current from previous commanded limits,
         #    scaled by utilization — the device may draw less than its permit.
@@ -759,6 +774,16 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
 
         # 7. Run calculation engine
         calculate_all_load_targets(site)
+
+        # 7b. Physical invariants — every scenario, every settled cycle. Only
+        #     past the ramp-up: cycles 0-4 scale household and solar toward
+        #     their real values, so the site is deliberately not yet the site
+        #     the scenario describes and a transient breach there says nothing.
+        #     The convergence the harness already tests is what makes the
+        #     settled cycles the right place to assert physics.
+        if cycle >= RAMP_UP_CYCLES:
+            for breach in check_physical_invariants(site, household, physical_solar_w):
+                invariant_breaches.add(f"cycle {cycle}: {breach}")
 
         # Remember this cycle's permit per load — the next cycle's settle
         # check uses it to tell "car capped below offer" from "car at offer".
@@ -831,7 +856,117 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         passed = False
         errors.append(f"Stability check failed: {stability_msg}")
 
+    # --- Physical invariants: no scenario may breach them, whatever it tests ---
+    #
+    # A scenario may declare `known_invariant_breaches:` — a list of substrings,
+    # each with the reason in its own comment. The bookkeeping is two-way on
+    # purpose: an unlisted breach FAILS (so a new one cannot hide behind an old
+    # one), and a listed substring that no longer occurs also FAILS (so the
+    # exemption is deleted when the bug is fixed, instead of quietly outliving
+    # it).
+    known = scenario.get("known_invariant_breaches") or []
+    unmatched = [
+        b for b in sorted(invariant_breaches)
+        if not any(k in b for k in known)
+    ]
+    stale = [k for k in known if not any(k in b for b in invariant_breaches)]
+    if unmatched:
+        passed = False
+        for breach in unmatched:
+            errors.append(f"Physical invariant: {breach}")
+    if stale:
+        passed = False
+        for k in stale:
+            errors.append(
+                f"known_invariant_breaches lists '{k}' but nothing breached it "
+                "— fixed? delete the entry"
+            )
+
     return passed, errors, history
+
+
+# Slack on the invariant checks below: float noise in the CT simulation, plus
+# the register quantisation a real device applies. Well under the smallest
+# decision the engine makes.
+INVARIANT_TOLERANCE = 0.05  # A
+
+
+def check_physical_invariants(site, household, physical_solar_w):
+    """Physical guards on what the engine just decided — run on EVERY scenario.
+
+    The scenarios' own ``expected`` blocks say what each site should allocate.
+    These say what NO site may ever do, whatever it was written to test, and
+    they are the half that catches a bug nobody thought to write a scenario
+    for. Both are stated against the physical inputs the CT simulation was
+    built from (household, solar, battery), not against the engine's own view
+    of them — checking the engine against its own reconstruction would only
+    prove it is self-consistent, which every bug in this class already was.
+
+    **A — the breaker.** With the permits just issued actually drawn, no phase
+    may exceed ``main_breaker_rating``.
+
+    **B — a modulating Excess load may never cause import.** Recompute the
+    site's position with those loads' permits removed: if removing them turns
+    import into less import, the engine sized them on surplus that was not
+    there. Restricted to ``BEHAVIOR_EXCESS`` on purpose — it is the one
+    behaviour the engine SIZES against a surplus pool, so it has no excuse.
+    Binary Excess loads are exempt by decision (Anže, 2026-09-07: a 2 kW
+    element on a smaller surplus still boosts, because the overshoot costs
+    export), and Solar Priority is exempt because it deliberately runs on a
+    grid-backed minimum below the SOC target.
+
+    Returns a list of violation strings; empty means legal.
+    """
+    saved = [(c, c.l1_current, c.l2_current, c.l3_current) for c in site.loads]
+    # The feedback loop re-derives solar_production_total on a derived-solar
+    # site, so the value on `site` by now already has the loads' draws folded
+    # in. Feeding that back into the CT simulation would count them twice and
+    # report an import the site never had — restore the physical figure for the
+    # duration of the check. (Missing this was worth ~2 A on a 460 W site.)
+    saved_solar = site.solar_production_total
+    site.solar_production_total = physical_solar_w
+
+    def _phase_draws():
+        a = b = c = 0.0
+        for load in site.loads:
+            pa, pb, pc = load.get_site_phase_draw()
+            a += pa
+            b += pb
+            c += pc
+        return a, b, c
+
+    try:
+        for load in site.loads:
+            # ALLOCATED, not available: the permit is a per-load ceiling and two
+            # loads sharing a phase are each offered more than the phase can
+            # give them together. The allocation is the engine's actual
+            # decision, and the only figure physics has to honour.
+            set_load_phase_currents(load, load.allocated_current)
+        with_all = simulate_grid_ct(site, household, *_phase_draws())[:3]
+        for load in site.loads:
+            if load.mode_behavior == BEHAVIOR_EXCESS:
+                set_load_phase_currents(load, 0)
+        without_excess = simulate_grid_ct(site, household, *_phase_draws())[:3]
+    finally:
+        for load, l1, l2, l3 in saved:
+            load.l1_current, load.l2_current, load.l3_current = l1, l2, l3
+        site.solar_production_total = saved_solar
+
+    violations = []
+    breaker = site.main_breaker_rating or 0
+    for label, net, bare in zip("ABC", with_all, without_excess):
+        if net is None:
+            continue
+        if breaker and net > breaker + INVARIANT_TOLERANCE:
+            violations.append(
+                f"phase {label}: {net:.2f} A drawn against a {breaker:.0f} A breaker"
+            )
+        extra = max(0.0, net) - max(0.0, bare or 0.0)
+        if extra > INVARIANT_TOLERANCE:
+            violations.append(
+                f"phase {label}: modulating Excess loads add {extra:.2f} A of import"
+            )
+    return violations
 
 
 def validate_results(scenario, site):
