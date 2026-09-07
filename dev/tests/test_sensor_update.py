@@ -6441,8 +6441,46 @@ def test_restore_gain_state_rebuilds_the_gain_from_the_series():
     # Round trip: what the sensor saves is what the restore reads.
     saved = gain_state(runtime, "inv")
     assert saved["series"] == state["series"] and saved["day"] == "2026-09-04"
-    # A second restore never overwrites a live observer.
+    # A second restore never overwrites an observer that has series blocks.
     assert not restore_gain_state(runtime, "inv", {"series": []}, date(2026, 9, 4))
+
+
+def test_restore_gain_state_merges_onto_an_observer_the_first_cycle_created():
+    """The live order of events: the hub's first cycle creates the observer
+    before the accuracy sensor is added, so the restore has to MERGE — a
+    plain skip threw the whole stored fortnight away on every restart (live
+    2026-09-07: 3 blocks after 3 days of uptime).
+
+    The session's own accumulators win; the stored series is adopted; and a
+    live observer that already has series blocks is never clobbered.
+    """
+    from datetime import date, datetime as dt, timezone as tz, timedelta as td
+    from custom_components.dynamic_ocpp_evse.engine.forecast_observers import (
+        observe_gain,
+        restore_gain_state,
+    )
+
+    runtime = {}
+    local = tz(td(hours=2))
+    observe_gain(
+        runtime, "inv", date(2026, 9, 4), 4000.0, 3600.0, 5 / 60, False,
+        now_local=dt(2026, 9, 4, 9, 10, tzinfo=local),
+    )
+    live = runtime["_forecast_gain_observer"]["inv"]
+    assert live["series"] == []  # nothing closed yet — the restore must win
+    live_acc = dict(live["acc"])
+
+    assert restore_gain_state(runtime, "inv", _gain_saved_state("2026-09-04"), date(2026, 9, 4))
+    state = runtime["_forecast_gain_observer"]["inv"]
+    assert len(state["series"]) == 21 and state["days"] == 7
+    assert abs(state["gain"] - 0.9) < 1e-9
+    # This session's accumulators are kept, not overwritten by the saved copy.
+    assert state["acc"] == live_acc
+    assert state["block"] == "2026-09-04T09:00:00+02:00"
+
+    # A second restore now finds a series and refuses.
+    assert not restore_gain_state(runtime, "inv", {"series": []}, date(2026, 9, 4))
+    assert len(state["series"]) == 21
 
 
 def test_restore_gain_state_drops_a_stale_day_but_keeps_the_series():

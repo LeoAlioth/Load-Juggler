@@ -160,23 +160,41 @@ def gain_state(hub_runtime, entry_id):
 
 
 def restore_gain_state(hub_runtime, entry_id, saved, today):
-    """Seed the observer from a sensor's restored data — once, before the
-    first cycle. The series always comes back (pruned against ``today``); the
-    in-progress day and block come back only when they belong to ``today``
-    (a restart after midnight must not resume yesterday's accuracy).
-    Returns True when something was restored."""
+    """Seed the observer from a sensor's restored data.
+
+    The series always comes back (pruned against ``today``); the in-progress
+    day and block come back only when they belong to ``today`` — a restart
+    after midnight must not resume yesterday's accuracy.
+
+    MERGES rather than refusing when the observer already exists. The hub's
+    first calculation cycle usually beats this entity being added (separate
+    config entries, and the hub coordinator refreshes on setup), so the
+    observer is already there with an EMPTY series — and a plain "already
+    present, skip" threw the restored history away on every restart, which is
+    why a fortnight's series never grew past the current session (live
+    2026-09-07: 3 blocks after 3 days). A live series with blocks in it is
+    never clobbered, and whatever the live observer has already accumulated
+    this session (day accumulators, the open block) wins over the saved copy.
+
+    Returns True when the series was seeded.
+    """
     if not saved or not isinstance(saved, dict):
         return False
     store = hub_runtime.setdefault(_RT_GAIN, {})
-    if entry_id in store:
+    live = store.get(entry_id)
+    if live and (live.get("series") or []):
+        # A real running observer with history of its own: leave it alone.
         return False
     today_key = today.isoformat() if hasattr(today, "isoformat") else str(today)
     same_day = saved.get("day") == today_key
+    saved_acc = dict(saved.get("acc") or {}) if same_day else {}
     state = {
         "day": today_key,
-        "acc": dict(saved.get("acc") or {}) if same_day else {},
-        "block": saved.get("block") if same_day else None,
-        "block_acc": dict(saved.get("block_acc") or {}) if same_day else {},
+        "acc": (live or {}).get("acc") or saved_acc,
+        "block": (live or {}).get("block")
+        or (saved.get("block") if same_day else None),
+        "block_acc": (live or {}).get("block_acc")
+        or (dict(saved.get("block_acc") or {}) if same_day else {}),
         "series": [b for b in (saved.get("series") or []) if isinstance(b, dict)],
         "last_ratio": saved.get("last_ratio"),
         "gain": 1.0,
@@ -186,8 +204,9 @@ def restore_gain_state(hub_runtime, entry_id, saved, today):
     _recompute_gain(state)
     store[entry_id] = state
     _LOGGER.info(
-        "Forecast gain for %s restored: %d block(s) over %d day(s), gain %.3f",
+        "Forecast gain for %s restored: %d block(s) over %d day(s), gain %.3f%s",
         entry_id, len(state["series"]), state["days"], state["gain"],
+        " (merged onto the running observer)" if live else "",
     )
     return True
 
