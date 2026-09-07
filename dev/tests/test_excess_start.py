@@ -49,6 +49,7 @@ load_pure_modules()
 from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E402
     CircuitGroup,
     LoadContext,
+    PhaseConstraints,
     PhaseValues,
     SiteContext,
 )
@@ -345,6 +346,84 @@ def _site_3ph(export_w, loads=(), breaker=BREAKER, threshold=THRESHOLD):
     )
 
 
+# ---------------------------------------------------------------------------
+# The pool's own physics: net, signed, summed
+# ---------------------------------------------------------------------------
+#
+# The excess pool carries ``netting=True`` because what it rations is the
+# surplus that cannot be EXPORTED, and the export position is a site total. The
+# gross pools (grid, inverter, group, solar, physical) keep the default: a
+# breaker, an inverter leg and a contractual export limit are all per-phase
+# quantities. Anze's rule, 2026-09-07: per-phase -1, -1, 2 is a site total of 0.
+
+
+def test_the_pool_totals_its_phases():
+    """-1, -1, 2 sums to 0, so nothing is available anywhere — a load on C must
+    not see its own +2 while A and B are importing, because taking it would
+    simply make the site import."""
+    pool = PhaseConstraints.from_per_phase(-1.0, -1.0, 2.0, netting=True)
+    assert _close(pool.ABC, 0.0)
+    assert _close(pool.get_available("C"), 0.0)
+    # A three-phase load is bound by its WEAKEST leg (-1), not by the total's
+    # share (0) — it cannot avoid drawing on the importing phases. Either way
+    # it is refused; the value says which constraint answered.
+    assert _close(pool.get_available("ABC"), -1.0)
+
+
+def test_an_importing_phase_does_not_bind_a_load_elsewhere():
+    """-2, 1, 2 nets to 1, and a load on C may take that 1 A. Under the gross
+    rule it would get 0: the two-phase field AC = -2 + 2 = 0 binds a load that
+    is not even on phase A. That is right for a breaker and wrong for
+    surplus."""
+    net = PhaseConstraints.from_per_phase(-2.0, 1.0, 2.0, netting=True)
+    gross = PhaseConstraints.from_per_phase(-2.0, 1.0, 2.0)
+    assert _close(net.get_available("C"), 1.0)
+    assert _close(gross.get_available("C"), 0.0)
+
+
+def test_a_claim_leaves_the_rest_of_the_site_total():
+    """A claim bigger than its own phase's share must not consume the other
+    phases. 4.348 A/phase (3 kW) less a 9.13 A claim on B leaves 3.91 A —
+    900 W of real surplus. The gross cascade zeroed every field, including
+    that."""
+    pool = PhaseConstraints.from_per_phase(4.348, 4.348, 4.348, netting=True)
+    after = pool.deduct(9.130, "B")
+    assert _close(after.ABC, 3.914, tol=0.01)
+    assert _close(after.get_available("C"), 3.914, tol=0.01)
+
+    gross_after = PhaseConstraints.from_per_phase(4.348, 4.348, 4.348).deduct(9.130, "B")
+    assert _close(gross_after.ABC, 0.0)
+
+
+def test_the_netting_flag_survives_every_pool_operation():
+    """A method that drops the flag silently reverts the pool to gross — a
+    wrong number with no error, so every operation is pinned."""
+    base = PhaseConstraints.from_per_phase(1.0, 1.0, 1.0, netting=True)
+    other = PhaseConstraints.from_per_phase(1.0, 1.0, 1.0, netting=True)
+    for name, obj in (
+        ("copy", base.copy()),
+        ("add", base + other),
+        ("element_min", base.element_min(other)),
+        ("element_max", base.element_max(other)),
+        ("deduct", base.deduct(0.5, "A")),
+        ("normalize", base.normalize()),
+        ("zeros", PhaseConstraints.zeros(netting=True)),
+    ):
+        assert obj.netting is True, name
+    # And the default is still gross, on every constructor.
+    assert PhaseConstraints.zeros().netting is False
+    assert PhaseConstraints.from_per_phase(1.0, 1.0, 1.0).netting is False
+    assert PhaseConstraints.from_pool(1.0, 1.0, 1.0, 3.0).netting is False
+
+
+def test_a_net_pool_is_never_reshaped_by_normalize():
+    """normalize()'s clamp-and-cascade is the symmetric-inverter rule — 5 A on
+    one leg consumes 5 A on all three. True of capacity, false of surplus, so a
+    net pool passes through untouched even with a phase deep in the negative."""
+    pool = PhaseConstraints.from_per_phase(-5.0, 4.0, 4.0, netting=True)
+    assert pool.normalize() == pool
+
+
 def test_a_claim_on_one_phase_counts_against_a_load_on_another():
     """A claim anywhere is a claim against everyone, whatever the inverter's
     phase symmetry, because the export limit it rations is a SITE TOTAL.
@@ -375,14 +454,19 @@ def test_a_claim_on_another_phase_still_leaves_room_when_there_is_room():
     three phases (4.35 A of phase-C surplus less the claim's 3.04 A share),
     not the 3.9 A that 900 W on one phase would be.
 
-    THAT UNDERSTATEMENT IS KNOWN AND CONSERVATIVE. The pool states its
-    availability per phase while the surplus it rations is a site total, so a
-    claim can only be spread evenly to be comparable — even though the tank
-    drew entirely on B and left phase C's own export untouched. Fixing it
-    properly means making the Excess pool a site-total budget, which is the
-    same change the sizing needs (dev/TODO.md); until then a load on another
-    phase is offered too little rather than, as before, the whole surplus
-    twice over.
+    THE CAUSE IS NOT THE CLAIM ACCOUNTING, which was the first guess and is
+    now gone: the pool is per-phase and net, and ``_excess_ahead`` re-deducts
+    the claims through the pool itself with no divisor. The figure did not
+    move. It is the LOADS-OFF RECONSTRUCTION that decides this: the tank's
+    2.1 kW is credited back onto phase B, the phase it draws on, so B is where
+    the surplus appears and phase C is left with only its own share. A load on
+    C is then bound by C, not by the site total.
+
+    Whether that is a defect depends on a question this test does not settle:
+    an Excess load may not drive its OWN phase into import (Anze, 2026-09-07 —
+    a Standard load may, and does, because it reads the physical pool), and
+    letting C reach the whole site total would do exactly that. So the 1.3 A is
+    the conservative reading of a real constraint, not an accounting artifact.
     """
     tank = _tank(phase="B", heating=True)
     station = _evse(

@@ -294,6 +294,26 @@ class PhaseConstraints:
     - A, B, C: single-phase limits
     - AB, AC, BC: two-phase combination limits
     - ABC: three-phase (total) limit
+
+    ``netting`` SAYS WHICH PHYSICS THE POOL OBEYS, and it travels with the pool
+    rather than being passed at each call site, because ``deduct`` reaches
+    ``normalize`` internally and a call-site flag could not steer that.
+
+    * **Gross** (the default — grid, inverter, group, solar, physical): each
+      phase's flow stands on its own, and a combination is bounded by its
+      members. Right for a breaker, for what an inverter leg can deliver, and
+      for an export LIMIT, which is contractual per exported flow — a site
+      pushing 30 A out on two phases while pulling 10 A in on the third is
+      exporting 30 A, not 20 A, and Slovenia meters it that way.
+    * **Net** (the Excess pool): the total is the algebraic SUM, so an importing
+      phase cancels an exporting one. Right for SURPLUS — with A and B importing
+      1 A each and C exporting 2 A the site has nothing spare, so ``ABC`` is 0
+      and a load on C may take nothing: taking C's 2 A would simply import.
+      Under netting the two-phase fields never bound a load that is not on them
+      (``AC = A + C`` goes negative when A imports and would otherwise refuse a
+      C-only load), values stay signed, and ``normalize``'s clamp-and-cascade is
+      skipped — it encodes the symmetric-inverter rule that 5 A on one leg
+      consumes 5 A on all three, which is true of capacity and false of surplus.
     """
     A: float = 0.0
     B: float = 0.0
@@ -302,21 +322,27 @@ class PhaseConstraints:
     AC: float = 0.0
     BC: float = 0.0
     ABC: float = 0.0
+    netting: bool = False
 
     @classmethod
-    def zeros(cls) -> PhaseConstraints:
-        return cls()
+    def zeros(cls, netting: bool = False) -> PhaseConstraints:
+        return cls(netting=netting)
 
     @classmethod
-    def from_per_phase(cls, a: float, b: float, c: float) -> PhaseConstraints:
+    def from_per_phase(
+        cls, a: float, b: float, c: float, netting: bool = False
+    ) -> PhaseConstraints:
         """Build constraints from per-phase values (symmetric inverter pattern).
 
-        Multi-phase combos are the sum of their components.
+        Multi-phase combos are the sum of their components — which is also
+        exactly what a NET pool wants, so this is the constructor both use;
+        only ``netting`` differs, and it changes how the fields are READ.
         """
         return cls(
             A=a, B=b, C=c,
             AB=a + b, AC=a + c, BC=b + c,
             ABC=a + b + c,
+            netting=netting,
         )
 
     @classmethod
@@ -332,11 +358,16 @@ class PhaseConstraints:
             ABC=total,
         )
 
+    # ``netting`` is carried from the LEFT operand throughout: combining pools
+    # of different physics is a bug, not a case to average, and every live
+    # combination (``_calculate_site_limit``'s grid + inverter) is gross on
+    # both sides.
     def __add__(self, other: PhaseConstraints) -> PhaseConstraints:
         return PhaseConstraints(
             A=self.A + other.A, B=self.B + other.B, C=self.C + other.C,
             AB=self.AB + other.AB, AC=self.AC + other.AC, BC=self.BC + other.BC,
             ABC=self.ABC + other.ABC,
+            netting=self.netting,
         )
 
     def _element_op(self, other: PhaseConstraints, op) -> PhaseConstraints:
@@ -344,6 +375,7 @@ class PhaseConstraints:
             A=op(self.A, other.A), B=op(self.B, other.B), C=op(self.C, other.C),
             AB=op(self.AB, other.AB), AC=op(self.AC, other.AC), BC=op(self.BC, other.BC),
             ABC=op(self.ABC, other.ABC),
+            netting=self.netting,
         )
 
     def element_min(self, other: PhaseConstraints) -> PhaseConstraints:
@@ -363,6 +395,15 @@ class PhaseConstraints:
         if mask not in VALID_PHASE_MASKS:
             _LOGGER.warning("Unknown phase mask '%s', returning 0", mask)
             return 0
+
+        if self.netting:
+            # Own phase(s) and the site TOTAL, nothing else. The two-phase
+            # fields are sums here, so a negative phase would otherwise refuse
+            # a load that is not even on it: at (-2, 1, 2) a load on C is
+            # bounded by AC = 0 under the gross rule, where the site genuinely
+            # has 1 A spare for it.
+            own = min(getattr(self, phase) for phase in mask)
+            return min(own, self.ABC / len(mask))
 
         if len(mask) == 1:
             phase = mask
@@ -396,6 +437,19 @@ class PhaseConstraints:
             _LOGGER.warning("Unknown phase mask '%s', deduct skipped", mask)
             return self.copy()
 
+        if self.netting:
+            # Subtract from the named phases and rebuild the sums. No cascade
+            # (a claim on B does not consume A and C — that is the symmetric
+            # INVERTER's rule) and no clamp (the remaining site total must stay
+            # readable: a 9.13 A claim against a 4.35 A/phase pool leaves
+            # 3.91 A of site surplus, where the gross path zeroed every field).
+            per_phase = {p: getattr(self, p) for p in "ABC"}
+            for phase in mask:
+                per_phase[phase] -= current
+            return PhaseConstraints.from_per_phase(
+                per_phase["A"], per_phase["B"], per_phase["C"], netting=True
+            )
+
         result = self.copy()
 
         # Deduct from individual phases
@@ -415,6 +469,15 @@ class PhaseConstraints:
 
     def normalize(self) -> PhaseConstraints:
         """Apply cascading limits to ensure constraint consistency. Returns new instance."""
+        if self.netting:
+            # Nothing to reconcile: a net pool's combinations are sums of its
+            # phases by construction, so it is always already consistent. And
+            # the cascade below would destroy it — it clamps at zero and pushes
+            # an over-deduction on one phase into the others, which is the
+            # symmetric-inverter rule (5 A on B really does consume 5 A on all
+            # three legs) and is false of surplus.
+            return self.copy()
+
         r = self.copy()
 
         for _ in range(2):

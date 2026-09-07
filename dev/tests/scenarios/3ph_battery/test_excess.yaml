@@ -141,6 +141,15 @@ scenarios:
       export, the feedback loop hands the whole draw back (the battery has no
       headroom, so the reconstruction adds nothing), and the margin reads
       +1567 W again with the plug running: on for all 30 cycles.
+      Read NET (2026-09-07) the site position is -2.25 + 7.75 + 7.75 = 13.25 A
+      = 3047 W, so the margin is 3047 + 5000 - 7000 = +1047 W and Excess is
+      still on. But this plug sits on phase A, the one IMPORTING 2.25 A, and an
+      Excess load may not drive its own phase into import — that is precisely
+      the power it exists to avoid buying. So it gets nothing here, and the
+      export-displaced stay-on property is exercised by the phase-B twin below.
+      A STANDARD load on this phase would still run: it reads the physical pool
+      (the breaker, gross and per phase), because a grid-backed load is meant
+      to import. Only Solar and Excess are refused.
     human_verified: false
     site:
       voltage: 230
@@ -166,6 +175,50 @@ scenarios:
         phases: 1
         priority: 1
         l1_phase: "A"
+    expected:
+      plug_1:
+        allocated: 0.0  # Excess load on the importing phase — refused
+
+  - name: "3ph-bat-excess-plug-on-an-exporting-phase-stays-on"
+    description: >
+      The export-displaced stay-on property (ISSUES.md #41) with the plug where
+      an Excess load is allowed to run: the SAME unbalanced site as above —
+      15 A/phase of solar, 10 A of household on phase A, the battery pinned at
+      its 5 kW charge allowance, a 2 kW trigger — but the plug on phase B,
+      which exports 7.75 A rather than importing.
+      Net margin -2.25 + 7.75 + 7.75 = 13.25 A = 3047 W, plus 5000 W of charge
+      against a 7000 W allowance = +1047 W, so Excess is on and phase B's own
+      position is comfortably positive. The plug is binary, so it takes its
+      whole 2 kW rating even though the pool is smaller — accepted, because the
+      overshoot costs export and never import.
+      Its draw comes off export (the battery has no headroom to give any back),
+      the reconstruction hands the whole 2 kW back, and the margin reads +1047 W
+      with the plug running just as it does with it off: on for all 30 cycles.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 10350  # 15 A per phase
+      phase_a_consumption: 10.0
+      phase_b_consumption: 0
+      phase_c_consumption: 0
+      excess_export_threshold: 2000
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_soc_full: 97
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 12000
+    loads:
+      - entity_id: "plug_1"
+        device_type: "plug"
+        operating_mode: "Excess"
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        l1_phase: "B"
     expected:
       plug_1:
         allocated: 8.7  # 2000 W / 230 V — on, and stays on

@@ -1035,14 +1035,40 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
     export was 489 W over its threshold, the whole difference being the 500 W
     hysteresis, and two loads sized themselves on it.
     """
-    if not _excess_verdict(site):
-        return PhaseConstraints.zeros()
+    if not _excess_verdict(site) or site.voltage <= 0:
+        return PhaseConstraints.zeros(netting=True)
 
     margin = excess_margin(site, 0.0)
-    total_available = max(0.0, margin) / site.voltage if site.voltage > 0 else 0
-    constraints = _build_inverter_constraints(site, total_available)
+    total = margin / site.voltage
+
+    if site.inverter_supports_asymmetric:
+        # The inverter can put its output on any leg, so the site total is the
+        # only bound and a single-phase load may reach all of it. Same shape as
+        # the gross asymmetric pool; ``netting`` only changes how it is read.
+        constraints = PhaseConstraints.from_pool(total, total, total, total)
+        constraints.netting = True
+    else:
+        # Symmetric: each phase carries its OWN signed position, plus an even
+        # share of the terms that belong to no phase (the battery's flow and
+        # the allowance — one pack, one contractual limit). Sums back to
+        # ``margin`` by construction, which is the invariant the tests pin, so
+        # a balanced site is bit-identical to the old even spread and only an
+        # unbalanced one moves.
+        grid = [
+            None if exp is None else (exp or 0.0) - (cons or 0.0)
+            for exp, cons in (
+                (site.export_current.a, site.consumption.a),
+                (site.export_current.b, site.consumption.b),
+                (site.export_current.c, site.consumption.c),
+            )
+        ]
+        present = [g for g in grid if g is not None]
+        share = (total - sum(present)) / (len(present) or 1)
+        constraints = PhaseConstraints.from_per_phase(
+            *[0.0 if g is None else g + share for g in grid], netting=True
+        )
     _LOGGER.debug(
-        f"Excess constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}"
+        f"Excess constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}, net): {constraints}"
     )
     return constraints
 
@@ -1464,40 +1490,42 @@ def _excess_ahead(
     """Excess surplus (A on ``mask``) left after the claims ahead — None while
     nothing has been claimed.
 
-    EVERY claim counts, on whatever phase it was made. What this pool rations
-    is the surplus that cannot be EXPORTED, and the export limit is a site
-    total — so a claim on B is a claim against a load on C whatever the
-    inverter's phase symmetry says. The symmetric branch used to count only
-    the claims landing on this load's own phases
-    (``max(claims[phase] for phase in mask)``), which handed the same
-    site-wide headroom to two loads on different phases: live on 2026-09-07
-    the tank claimed 9.4 A on B and the station on C read its pool as
-    untouched, so both ran on one lot of surplus. That per-phase view is right
-    for the INVERTER CAPACITY pool — a different constraint, built in
-    ``_build_inverter_constraints`` — and wrong for this one.
+    EVERY claim counts, on whatever phase it was made, because what this pool
+    rations is the surplus that cannot be EXPORTED and the export position is a
+    site total. The pool's own arithmetic does the work: it is a NET pool
+    (``PhaseConstraints.netting``), so re-deducting the claims and reading it
+    gives own-phase(s) against the remaining site total, with no divisor and no
+    per-phase spreading of a claim that landed on one leg.
 
-    The branch stays because the two pools STATE their availability
-    differently, and a claim can only be subtracted from a like quantity:
+    That last point is what this replaced. The claim used to be charged either
+    to the load's own phases only — handing the same site-wide headroom to two
+    loads on different phases (live 2026-09-07: the tank claimed 9.4 A on B and
+    the station on C read its pool as untouched) — or, after the first fix,
+    spread evenly across the site's phases, which was safe but understated: a
+    9.13 A claim against a 4.35 A/phase pool left 900 W of real surplus and
+    offered a load on another phase only a third of it.
 
-    * symmetric — ``get_available`` is PER PHASE, so the site-total claim is
-      spread over the site's phases to be comparable;
-    * asymmetric — the pool is one shared total, which is what
-      ``get_available`` returns, so the claim comes off it whole (spread over
-      this load's own legs, unchanged from before).
+    ``claims`` is already per-phase accumulated, which is exactly what
+    ``deduct`` would have produced: a single-phase claim of X sits on its own
+    phase, a three-phase claim of X sits X on each. So the pool can be rebuilt
+    from it directly.
 
-    Getting that wrong is a factor of ``num_phases``: charging a 2.1 kW claim
-    in full against one phase's third of the surplus starved a load that
-    genuinely fitted (caught by
-    ``test_a_claim_on_another_phase_still_leaves_room_when_there_is_room``).
+    Pure function — unit-testable.
     """
     if not any(claims.values()):
         return None
-    total_claimed = sum(claims.values())
     if site.inverter_supports_asymmetric:
-        claimed = total_claimed / len(mask)
-    else:
-        claimed = total_claimed / (site.num_phases or 1)
-    return excess_start.get_available(mask) - claimed
+        # One shared total — the inverter can put its output on any leg, so
+        # every claim comes off that total and what is left spreads over this
+        # load's own legs.
+        return (excess_start.ABC - sum(claims.values())) / len(mask)
+    remaining = PhaseConstraints.from_per_phase(
+        excess_start.A - claims["A"],
+        excess_start.B - claims["B"],
+        excess_start.C - claims["C"],
+        netting=True,
+    )
+    return remaining.get_available(mask)
 
 
 def _distribute_per_phase_priority(
