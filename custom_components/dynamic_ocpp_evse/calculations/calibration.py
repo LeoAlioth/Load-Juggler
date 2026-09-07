@@ -285,6 +285,47 @@ def clip_pair(samples, threshold_w):
     return true_wh, block_wh
 
 
+# How close to the export limit the meter must sit before the site counts as
+# PHYSICALLY unable to place more. Small on purpose: the charge control's own
+# operating point is one Excess trigger margin under the limit (plus register
+# quantisation, ~370 W under it on a live site), so a band anywhere near that
+# margin would mark the controller working correctly as curtailment.
+CLIP_WALL_TOLERANCE_W = 100.0
+
+
+def export_is_clamped(export_w, export_limit_w, tolerance=CLIP_WALL_TOLERANCE_W):
+    """Whether the meter is sitting on the site's export wall.
+
+    The PHYSICAL curtailment test, and the one both observers gate on: at the
+    wall the inverter is clamping its own output, so every watt the array
+    could still make has nowhere to go. Below it the site is placing
+    everything it makes — in the grid, the battery or a managed load — and the
+    interval is honest evidence about the forecast.
+
+    Deliberately NOT the Excess verdict, which engages one trigger margin
+    BELOW the limit ("the export allowance is used up and the battery is
+    taking all it can"). Driving export onto that setpoint is exactly what the
+    charge control exists to do, and while it succeeds the battery is
+    absorbing the difference and nothing is being thrown away — so testing the
+    verdict marked the controller's own steady state as curtailment: on a live
+    site the gain observer skipped nearly every productive afternoon interval
+    and both the 9 kWp and the 4 kWp array published Unknown for days
+    (2026-09-07).
+
+    No export limit configured means the grid absorbs everything, so nothing
+    is ever clamped. Conservative where it is unsure: an unreadable export
+    reads as clamped, because admitting a curtailed interval teaches the gain
+    that the forecast reads high, while skipping a good one only slows it.
+
+    Pure function — unit-testable.
+    """
+    if not export_limit_w or float(export_limit_w) <= 0:
+        return False
+    if export_w is None:
+        return True
+    return float(export_w) >= float(export_limit_w) - abs(tolerance)
+
+
 def clipped_now(forecast_w, actual_w, saturated):
     """Watts being curtailed right now, or 0.0.
 

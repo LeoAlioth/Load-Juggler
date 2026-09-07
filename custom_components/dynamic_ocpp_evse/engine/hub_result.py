@@ -26,7 +26,7 @@ from .forecast_observers import (
     observe_gain,
     observe_peakiness,
 )
-from ..calculations.calibration import block_power_at
+from ..calculations.calibration import block_power_at, export_is_clamped
 from ..calculations import (
     merge_forecast_series,
     select_clipping_window,
@@ -72,7 +72,9 @@ def _compute_forecast_advice(
     site,
     battery_soc,
     members,
-    excess_on=False,
+    excess_on=False,  # noqa: ARG001 — kept for callers; the observers now
+    # gate on physical curtailment (``export_is_clamped``) rather than on the
+    # Excess verdict, which is a different question entirely.
     ctrl_site=None,
 ):
     """Advisory battery headroom from the PV clipping forecast.
@@ -452,14 +454,15 @@ def _compute_forecast_advice(
     # very thing being forecast. Excluded per INTERVAL, so a clipping day still
     # contributes its honest morning and evening (calibration.note_gain_sample).
     #
-    # The verdict is the EXCESS one, the same test the clipped-energy observer
-    # below uses — not "export is above the setpoint". The setpoint sits one
-    # trigger margin BELOW the real limit and driving export onto it is exactly
-    # what the charge control exists to do, so testing against it marked the
-    # controller's own operating point as curtailment: on a live site the gain
-    # observer skipped nearly every productive interval, never reached its
-    # minimum informative energy, and published Unknown all day (2026-08-31).
-    constrained = bool(excess_on)
+    # PHYSICAL curtailment — the meter on the export wall — not the Excess
+    # verdict. The verdict engages one trigger margin BELOW the limit, which is
+    # where this site's charge control deliberately parks export, and while it
+    # parks there the battery absorbs the surplus and nothing is thrown away.
+    # Gating on the verdict therefore skipped nearly every productive afternoon
+    # interval and left both arrays' accuracy Unknown for days (2026-09-07).
+    # The same flag serves the clipped-energy observer below, for the same
+    # reason: at the setpoint there is nothing being clipped to count.
+    constrained = export_is_clamped(site.total_export_power, export_limit)
 
     for m in members:
         if not m.forecast_device_ids:
@@ -500,7 +503,7 @@ def _compute_forecast_advice(
         local_day,
         block_power_at(series, now_local),
         fleet.solar_total(members, site.voltage),
-        excess_on,
+        constrained,
         dt_hours,
     )
 

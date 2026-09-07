@@ -15,6 +15,7 @@ from custom_components.dynamic_ocpp_evse.calculations.calibration import (
     GAIN_CLAMP_HIGH,
     GAIN_CLAMP_LOW,
     GAIN_HOUR_OFFSET_HIGH,
+    CLIP_WALL_TOLERANCE_W,
     block_power_at,
     block_start,
     clip_pair,
@@ -22,6 +23,7 @@ from custom_components.dynamic_ocpp_evse.calculations.calibration import (
     day_ratio,
     hourly_offsets,
     note_gain_sample,
+    export_is_clamped,
     prune_series,
     series_days,
     series_gain,
@@ -349,3 +351,26 @@ def test_series_days_counts_dates_with_comparable_energy():
     blocks = _blocks([(0, 12, 1.0), (0, 13, 1.0), (3, 12, 1.0)])
     blocks.append({"t": "2026-09-09T12:00:00+02:00", "f": 0.0, "a": 0.0, "s": 400.0})
     assert series_days(blocks) == 2
+
+
+# --- Physical curtailment, not the Excess verdict -----------------------------
+
+
+def test_export_is_clamped_only_at_the_wall():
+    """The live numbers: limit 8800, the charge control's setpoint 8300, its
+    real operating point ~8430. Only the wall counts as curtailment."""
+    assert export_is_clamped(8430.0, 8800.0) is False   # the controller working
+    assert export_is_clamped(8300.0, 8800.0) is False   # exactly on setpoint
+    assert export_is_clamped(8700.0, 8800.0) is True    # inside the tolerance
+    assert export_is_clamped(8800.0, 8800.0) is True
+    assert export_is_clamped(8900.0, 8800.0) is True
+    assert CLIP_WALL_TOLERANCE_W < 500.0, "must stay well under a trigger margin"
+
+
+def test_export_is_clamped_needs_a_limit_and_errs_on_the_safe_side():
+    # No export limit: the grid takes everything, nothing is ever clamped.
+    assert export_is_clamped(20000.0, 0) is False
+    assert export_is_clamped(20000.0, None) is False
+    # Unreadable export with a limit configured: assume clamped, since
+    # admitting a curtailed interval biases the gain and skipping one does not.
+    assert export_is_clamped(None, 8800.0) is True
