@@ -219,7 +219,7 @@ def test_two_excess_loads_on_an_empty_pool_only_the_first_starts():
     assert _close(second.allocated_current, 0.0)
 
 
-def _tank(eid="tank", watts=2100.0, priority=2, heating=True):
+def _tank(eid="tank", watts=2100.0, priority=2, heating=True, phase="A"):
     """A 2.1 kW binary tank (Freeze Protection: full-power behavior, tier 1)
     that is calling for heat — its draw is its rating while heating and 0 the
     cycle it has only just been permitted."""
@@ -235,8 +235,8 @@ def _tank(eid="tank", watts=2100.0, priority=2, heating=True):
         operating_mode="Freeze Protection",
         mode_behavior="full_power",
         mode_priority=1,
-        active_phases_mask="A",
-        l1_phase="A",
+        active_phases_mask=phase,
+        l1_phase=phase,
         l1_current=amps if heating else 0.0,
         rated_current=amps,
     )
@@ -269,6 +269,78 @@ def test_a_lower_ranked_excess_load_waits_behind_a_tank_that_takes_it_all():
         # allocation is its measured footprint (0 until the element responds).
         assert _close(tank.available_current, 2100.0 / V), f"heating={heating}"
         assert _close(station.allocated_current, 0.0), f"heating={heating}"
+
+
+def _site_3ph(export_w, loads=(), breaker=BREAKER, threshold=THRESHOLD):
+    """The same batteryless site on three phases, exporting ``export_w`` TOTAL.
+
+    Spread evenly, as a symmetric inverter does. The export limit the Excess
+    threshold stands for is a site total, so what the pool rations is the total
+    — which is the whole point of the test below.
+    """
+    per_phase = export_w / V / 3.0
+    return SiteContext(
+        voltage=V,
+        main_breaker_rating=breaker,
+        consumption=PhaseValues(0.0, 0.0, 0.0),
+        export_current=PhaseValues(per_phase, per_phase, per_phase),
+        grid_current=PhaseValues(-per_phase, -per_phase, -per_phase),
+        excess_export_threshold=threshold,
+        battery_soc=None,
+        battery_power=None,
+        battery_max_charge_power=None,
+        battery_max_discharge_power=None,
+        loads=list(loads),
+        circuit_groups=[],
+    )
+
+
+def test_a_claim_on_one_phase_counts_against_a_load_on_another():
+    """A claim anywhere is a claim against everyone, whatever the inverter's
+    phase symmetry, because the export limit it rations is a SITE TOTAL.
+
+    Live on 2026-09-07: the tank claimed 9.4 A on phase B and the station on
+    phase C still read its own pool as untouched, so both ran on the same site
+    headroom. ``_excess_ahead`` used to branch on
+    ``inverter_supports_asymmetric`` and, for a symmetric inverter, count only
+    the claims landing on this load's own phases — the per-phase view that is
+    correct for the INVERTER CAPACITY pool and wrong for this one.
+    """
+    tank = _tank(phase="B", heating=True)
+    station = _evse(
+        "station", min_current=0.9, max_current=10.4, priority=3, phase="C"
+    )
+    _prepare(_site_3ph(THRESHOLD + 300.0 - 2100.0, loads=[tank, station]))
+    assert _close(tank.available_current, 2100.0 / V)
+    # 300 W of site surplus, the tank's claim is 2.1 kW: nothing is left for
+    # the station even though no claim landed on phase C.
+    assert _close(station.allocated_current, 0.0)
+
+
+def test_a_claim_on_another_phase_still_leaves_room_when_there_is_room():
+    """The mirror: the scope change must not starve a load that genuinely fits.
+
+    3 kW of site surplus against the tank's 2.1 kW claim leaves 900 W, and the
+    station starts — on 1.3 A, which is the leftover spread over the site's
+    three phases (4.35 A of phase-C surplus less the claim's 3.04 A share),
+    not the 3.9 A that 900 W on one phase would be.
+
+    THAT UNDERSTATEMENT IS KNOWN AND CONSERVATIVE. The pool states its
+    availability per phase while the surplus it rations is a site total, so a
+    claim can only be spread evenly to be comparable — even though the tank
+    drew entirely on B and left phase C's own export untouched. Fixing it
+    properly means making the Excess pool a site-total budget, which is the
+    same change the sizing needs (dev/TODO.md); until then a load on another
+    phase is offered too little rather than, as before, the whole surplus
+    twice over.
+    """
+    tank = _tank(phase="B", heating=True)
+    station = _evse(
+        "station", min_current=0.9, max_current=10.4, priority=3, phase="C"
+    )
+    _prepare(_site_3ph(THRESHOLD + 3000.0 - 2100.0, loads=[tank, station]))
+    assert _close(tank.available_current, 2100.0 / V)
+    assert _close(station.allocated_current, 1.30)
 
 
 def test_a_running_lower_ranked_load_yields_when_the_tank_claims_the_surplus():

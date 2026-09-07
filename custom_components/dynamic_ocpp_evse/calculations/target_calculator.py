@@ -1416,15 +1416,41 @@ def _excess_ahead(
     excess_start: PhaseConstraints, claims: dict, mask: str, site: SiteContext
 ) -> "Optional[float]":
     """Excess surplus (A on ``mask``) left after the claims ahead — None while
-    nothing has been claimed. Symmetric pools are per phase, so the binding
-    claim is the heaviest phase in the mask; an asymmetric pool is one shared
-    total, so every claim anywhere counts, spread over this load's phases."""
+    nothing has been claimed.
+
+    EVERY claim counts, on whatever phase it was made. What this pool rations
+    is the surplus that cannot be EXPORTED, and the export limit is a site
+    total — so a claim on B is a claim against a load on C whatever the
+    inverter's phase symmetry says. The symmetric branch used to count only
+    the claims landing on this load's own phases
+    (``max(claims[phase] for phase in mask)``), which handed the same
+    site-wide headroom to two loads on different phases: live on 2026-09-07
+    the tank claimed 9.4 A on B and the station on C read its pool as
+    untouched, so both ran on one lot of surplus. That per-phase view is right
+    for the INVERTER CAPACITY pool — a different constraint, built in
+    ``_build_inverter_constraints`` — and wrong for this one.
+
+    The branch stays because the two pools STATE their availability
+    differently, and a claim can only be subtracted from a like quantity:
+
+    * symmetric — ``get_available`` is PER PHASE, so the site-total claim is
+      spread over the site's phases to be comparable;
+    * asymmetric — the pool is one shared total, which is what
+      ``get_available`` returns, so the claim comes off it whole (spread over
+      this load's own legs, unchanged from before).
+
+    Getting that wrong is a factor of ``num_phases``: charging a 2.1 kW claim
+    in full against one phase's third of the surplus starved a load that
+    genuinely fitted (caught by
+    ``test_a_claim_on_another_phase_still_leaves_room_when_there_is_room``).
+    """
     if not any(claims.values()):
         return None
+    total_claimed = sum(claims.values())
     if site.inverter_supports_asymmetric:
-        claimed = sum(claims.values()) / len(mask)
+        claimed = total_claimed / len(mask)
     else:
-        claimed = max(claims[phase] for phase in mask)
+        claimed = total_claimed / (site.num_phases or 1)
     return excess_start.get_available(mask) - claimed
 
 
