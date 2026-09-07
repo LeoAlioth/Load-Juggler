@@ -742,6 +742,20 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     # 5 kW of Excess allowance the site never had, and the same again on the
     # discharge side. None is what every consumer already reads as "no
     # battery here".
+    #
+    # The rule is ALL SIX battery fields, not only the ones a bug has been
+    # traced to, so that reading this constructor settles whether a phantom
+    # pack can reach the fleet — no walk over every consumer to see which ones
+    # happen to re-test. ``capacity_kwh`` is the one that could still bite:
+    # ``capacity_total`` sums it ungated and it is the divisor in the forecast
+    # reserve, where an inflated Σ reserves too FEW SOC percent for the same
+    # kWh, so the site under-reserves and clips while the reserve still looks
+    # like it is working. It is inert today only because
+    # DEFAULT_BATTERY_CAPACITY_KWH is 0 — the power fields default to 5000,
+    # which is exactly why they bit first — and prefilling a plausible pack
+    # size would bring it straight back. ``soc_full`` and ``soc_target`` are
+    # provably unreachable (their consumers need a SOC reading, or filter on
+    # has_battery themselves) and are gated for the uniformity, not a fix.
     has_battery = bool(soc_entity or power_entity)
 
     return fleet.FleetMember(
@@ -778,10 +792,16 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
             if has_battery
             else None
         ),
-        soc_full=get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL),
-        soc_target=soc_target,
-        capacity_kwh=get_entry_value(
-            entry, CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH
+        soc_full=(
+            get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL)
+            if has_battery
+            else None
+        ),
+        soc_target=soc_target if has_battery else None,
+        capacity_kwh=(
+            get_entry_value(entry, CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH)
+            if has_battery
+            else None
         ),
     )
 

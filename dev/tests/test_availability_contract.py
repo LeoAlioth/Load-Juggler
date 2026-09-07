@@ -39,6 +39,10 @@ load_pure_modules(engine_modules=("hub_calculation",))
 
 from custom_components.dynamic_ocpp_evse import units
 from custom_components.dynamic_ocpp_evse.const import (
+    CONF_BATTERY_CAPACITY_KWH,
+    CONF_BATTERY_MAX_CHARGE_POWER,
+    CONF_BATTERY_MAX_DISCHARGE_POWER,
+    CONF_BATTERY_SOC_FULL,
     CONF_CLIMATE_ENTITY_ID,
     CONF_CONNECTED_TO_PHASE,
     CONF_HEATING_ELEMENT_POWER,
@@ -500,6 +504,52 @@ def test_no_production_sensor_configured_is_not_a_fabrication():
     assert member.has_solar_entity is False
     assert member.solar_measured is None
     assert member.solar_assumed is False
+
+
+# ---------------------------------------------------------------------------
+# _read_fleet_member: no battery entity means no battery, whatever the options
+# ---------------------------------------------------------------------------
+#
+# The same shape as the solar contract above, one field group along: the
+# inverter form writes its battery defaults into EVERY entry, so the options
+# dict is not evidence of a pack — only the SOC/power entities are. Live
+# (2026-09-03) the 5000 W charge default on a PV-only entry took 53 % of the
+# charge-limit advice and widened the Excess allowance by the same 5 kW. The
+# guard covers all six battery fields rather than only the two that bit, so
+# this test is the whole rule at once: nothing a phantom pack could be summed,
+# weighted or split by survives the read.
+
+
+def test_a_pv_only_entry_hands_the_fleet_no_battery_figures():
+    entry = FakeInverterEntry(
+        {
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: _SOLAR,
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_BATTERY_SOC_FULL: 97,
+            CONF_BATTERY_CAPACITY_KWH: 20,
+        }
+    )
+    member = _read_fleet_member(
+        FakeHass({_SOLAR: FakeState("1800", unit="W")}),
+        entry,
+        {},
+        {},
+        V,
+        legacy=False,
+    )
+    assert member.has_battery is False
+    assert member.solar_measured == 1800.0  # the PV half still reads
+    assert member.charge_cap is None
+    assert member.discharge_cap is None
+    assert member.enforced_charge_limit is None
+    # capacity_total() sums this one UNGATED, and it is the divisor in the
+    # forecast reserve: 20 kWh of phantom pack reserves a fraction of the SOC
+    # band the real pack needs, so the site under-reserves and clips while the
+    # reserve still looks like it is working.
+    assert member.capacity_kwh is None
+    assert member.soc_full is None
+    assert member.soc_target is None
 
 
 # ---------------------------------------------------------------------------
