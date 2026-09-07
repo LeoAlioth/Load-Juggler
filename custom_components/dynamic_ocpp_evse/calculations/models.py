@@ -460,6 +460,29 @@ class PhaseConstraints:
                 per_phase["A"], per_phase["B"], per_phase["C"], netting=True
             )
 
+        # NEVER OVER-DRAW. ``current`` is the load's MEASURED footprint
+        # (``_pool_deduction``), so a device ignoring its permit can ask for
+        # more than the pool holds — and this is the only pool that can be
+        # over-drawn at all, since ``_deduct_from_sources`` caps solar and
+        # excess at ``min(current, available)``.
+        #
+        # Left uncapped, the over-draw landed on the phase AND on every
+        # combination containing it, and ``normalize``'s cascade then spread the
+        # deficit sideways: at (-1, 8, 8) a 1 A overshoot on A pulled B from
+        # 8 A to 6 A and C likewise, and (-5, 2, 2) zeroed all seven fields. The
+        # physical pool is per-phase independent — three breaker poles, each
+        # carrying its own phase — so an overshoot on one phase says nothing
+        # about another's headroom, and shedding loads there was wrong.
+        #
+        # Capping at what the mask can actually take floors every field at 0 for
+        # both pool shapes (a summed pool has ``AB = A + B >= A >= current``; a
+        # pooled one has ``AB = total >= A >= current``), so the pool stays a
+        # set of honest non-negative bounds and the cascade never meets a
+        # signed value. The over-draw itself is a fact about the DEVICE, not
+        # about what may be allocated next — the scenario suite's physical
+        # invariants are what surface it.
+        current = min(current, max(0.0, self.get_available(mask)))
+
         result = self.copy()
 
         # Deduct from individual phases

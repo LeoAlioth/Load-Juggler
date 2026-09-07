@@ -386,18 +386,30 @@ def test_an_importing_phase_does_not_bind_a_load_elsewhere():
     assert _close(gross.get_available("C"), 1.0)
 
 
-def test_a_claim_leaves_the_rest_of_the_site_total():
-    """A claim bigger than its own phase's share must not consume the other
-    phases. 4.348 A/phase (3 kW) less a 9.13 A claim on B leaves 3.91 A —
-    900 W of real surplus. The gross cascade zeroed every field, including
-    that."""
+def test_a_claim_bigger_than_its_phase_still_comes_off_the_site_total():
+    """The two paths treat an over-sized deduction differently, and both are
+    right for what they hold.
+
+    NET (the Excess pool): ``current`` is a CLAIM — what the load will draw
+    once it responds — so it comes off the total in full even though it exceeds
+    one phase's share. 4.348 A/phase (3 kW of surplus) less a 9.13 A tank claim
+    on B leaves 3.91 A, and that 900 W is what a load on another phase may have.
+
+    GROSS (the physical pool): ``current`` is a MEASURED draw, and the fields
+    are per-phase upper bounds, so it is capped at what the mask can actually
+    take. An over-draw is absorbed on its own phase and the others keep their
+    headroom — three breaker poles, each carrying its own phase, so a device
+    overshooting on B says nothing about A.
+    """
     pool = PhaseConstraints.from_per_phase(4.348, 4.348, 4.348, netting=True)
     after = pool.deduct(9.130, "B")
     assert _close(after.ABC, 3.914, tol=0.01)
     assert _close(after.get_available("C"), 3.914, tol=0.01)
 
-    gross_after = PhaseConstraints.from_per_phase(4.348, 4.348, 4.348).deduct(9.130, "B")
-    assert _close(gross_after.ABC, 0.0)
+    gross = PhaseConstraints.from_per_phase(4.348, 4.348, 4.348).deduct(9.130, "B")
+    assert _close(gross.B, 0.0)                       # absorbed on its own phase
+    assert _close(gross.get_available("A"), 4.348)    # A untouched
+    assert _close(gross.get_available("C"), 4.348)    # C untouched
 
 
 def test_the_netting_flag_survives_every_pool_operation():
