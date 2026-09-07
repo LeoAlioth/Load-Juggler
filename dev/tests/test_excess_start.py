@@ -422,9 +422,11 @@ def test_the_netting_flag_survives_every_pool_operation():
 
 
 def test_a_net_pool_is_never_reshaped_by_normalize():
-    """normalize()'s clamp-and-cascade is the symmetric-inverter rule — 5 A on
-    one leg consumes 5 A on all three. True of capacity, false of surplus, so a
-    net pool passes through untouched even with a phase deep in the negative."""
+    """normalize()'s clamp-and-cascade keeps a set of non-negative UPPER BOUNDS
+    mutually consistent, which is what a gross pool holds. A net pool's fields
+    are signed positions summing to its total, so it passes through untouched
+    even with a phase deep in the negative — clamping would discard the very
+    information the total is read from."""
     pool = PhaseConstraints.from_per_phase(-5.0, 4.0, 4.0, netting=True)
     assert pool.normalize() == pool
 

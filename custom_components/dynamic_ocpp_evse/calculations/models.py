@@ -310,8 +310,11 @@ class PhaseConstraints:
       1 A each and C exporting 2 A the site has nothing spare, so ``ABC`` is 0
       and a load on C may take nothing: taking C's 2 A would simply import.
       Under netting values stay signed and ``normalize``'s clamp-and-cascade is
-      skipped — it encodes the symmetric-inverter rule that 5 A on one leg
-      consumes 5 A on all three, which is true of capacity and false of surplus.
+      skipped. That cascade keeps a set of NON-NEGATIVE UPPER BOUNDS mutually
+      consistent (``A <= AB`` and ``AB <= A + B``), which is what a gross pool
+      holds. A net pool's fields are signed positions whose total is their
+      algebraic sum, already consistent by construction, and clamping them at
+      zero would throw away the very information the total is read from.
 
     ``get_available`` does NOT branch on the flag, and deliberately so. It once
     did, until the gross 1-phase rule was fixed to stop letting a two-phase
@@ -446,10 +449,10 @@ class PhaseConstraints:
 
         if self.netting:
             # Subtract from the named phases and rebuild the sums. No cascade
-            # (a claim on B does not consume A and C — that is the symmetric
-            # INVERTER's rule) and no clamp (the remaining site total must stay
-            # readable: a 9.13 A claim against a 4.35 A/phase pool leaves
-            # 3.91 A of site surplus, where the gross path zeroed every field).
+            # (a claim on B is not a claim on A and C) and no clamp (the
+            # remaining site total must stay readable: a 9.13 A claim against a
+            # 4.35 A/phase pool leaves 3.91 A of site surplus, where the gross
+            # path zeroed every field).
             per_phase = {p: getattr(self, p) for p in "ABC"}
             for phase in mask:
                 per_phase[phase] -= current
@@ -479,10 +482,8 @@ class PhaseConstraints:
         if self.netting:
             # Nothing to reconcile: a net pool's combinations are sums of its
             # phases by construction, so it is always already consistent. And
-            # the cascade below would destroy it — it clamps at zero and pushes
-            # an over-deduction on one phase into the others, which is the
-            # symmetric-inverter rule (5 A on B really does consume 5 A on all
-            # three legs) and is false of surplus.
+            # the cascade below would destroy it — it clamps at zero, which
+            # discards the signed position the total is read from.
             return self.copy()
 
         r = self.copy()
