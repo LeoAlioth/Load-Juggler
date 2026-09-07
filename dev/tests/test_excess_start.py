@@ -371,14 +371,19 @@ def test_the_pool_totals_its_phases():
 
 
 def test_an_importing_phase_does_not_bind_a_load_elsewhere():
-    """-2, 1, 2 nets to 1, and a load on C may take that 1 A. Under the gross
-    rule it would get 0: the two-phase field AC = -2 + 2 = 0 binds a load that
-    is not even on phase A. That is right for a breaker and wrong for
-    surplus."""
+    """-2, 1, 2 nets to 1, and a load on C may take that 1 A: its own phase
+    holds 2 A and the site has 1 A spare.
+
+    It used to get 0, because the two-phase field AC = -2 + 2 = 0 was applied
+    as a bound on a single-phase load that is not even on phase A. That was
+    never a gross-vs-net matter — a pair field bounds a load SPANNING those
+    phases and nothing else — so it was fixed in ``get_available`` itself and
+    both readings now agree. Asserted for both to keep it that way.
+    """
     net = PhaseConstraints.from_per_phase(-2.0, 1.0, 2.0, netting=True)
     gross = PhaseConstraints.from_per_phase(-2.0, 1.0, 2.0)
     assert _close(net.get_available("C"), 1.0)
-    assert _close(gross.get_available("C"), 0.0)
+    assert _close(gross.get_available("C"), 1.0)
 
 
 def test_a_claim_leaves_the_rest_of_the_site_total():

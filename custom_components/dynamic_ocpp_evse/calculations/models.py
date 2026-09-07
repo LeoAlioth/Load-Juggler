@@ -309,11 +309,18 @@ class PhaseConstraints:
       phase cancels an exporting one. Right for SURPLUS — with A and B importing
       1 A each and C exporting 2 A the site has nothing spare, so ``ABC`` is 0
       and a load on C may take nothing: taking C's 2 A would simply import.
-      Under netting the two-phase fields never bound a load that is not on them
-      (``AC = A + C`` goes negative when A imports and would otherwise refuse a
-      C-only load), values stay signed, and ``normalize``'s clamp-and-cascade is
+      Under netting values stay signed and ``normalize``'s clamp-and-cascade is
       skipped — it encodes the symmetric-inverter rule that 5 A on one leg
       consumes 5 A on all three, which is true of capacity and false of surplus.
+
+    ``get_available`` does NOT branch on the flag, and deliberately so. It once
+    did, until the gross 1-phase rule was fixed to stop letting a two-phase
+    field bound a load that is not on it (see below) — after which the two
+    readings are provably identical: the remaining pair terms cannot bind,
+    because ``(A + B) / 2 >= min(A, B)`` on a summed pool and
+    ``total / 2 >= total / 3`` on a pooled one. Verified exhaustively over
+    signed inputs. So the flag governs DEDUCTION and normalisation only, and a
+    branch there would be dead code claiming a distinction that does not exist.
     """
     A: float = 0.0
     B: float = 0.0
@@ -396,22 +403,22 @@ class PhaseConstraints:
             _LOGGER.warning("Unknown phase mask '%s', returning 0", mask)
             return 0
 
-        if self.netting:
-            # Own phase(s) and the site TOTAL, nothing else. The two-phase
-            # fields are sums here, so a negative phase would otherwise refuse
-            # a load that is not even on it: at (-2, 1, 2) a load on C is
-            # bounded by AC = 0 under the gross rule, where the site genuinely
-            # has 1 A spare for it.
-            own = min(getattr(self, phase) for phase in mask)
-            return min(own, self.ABC / len(mask))
-
         if len(mask) == 1:
-            phase = mask
-            two_phase_limits = []
-            for combo in ('AB', 'AC', 'BC'):
-                if phase in combo:
-                    two_phase_limits.append(getattr(self, combo))
-            return min(getattr(self, phase), *two_phase_limits, self.ABC)
+            # Own phase and the site TOTAL — not the two-phase fields. ``AC`` is
+            # a bound on a load spanning A and C; it is not a bound on a load on
+            # C alone. Including it is harmless only while every value is
+            # non-negative, where ``A + C >= C`` and the pair can never bind —
+            # and wrong the moment a phase can go negative. The SOLAR pool can:
+            # ``discharge_drain`` strips the pack's in-flight discharge out per
+            # phase, so a phase whose household exceeds its own solar reads
+            # negative, truthfully. On an evening site with export (0, 3, 4) A
+            # and the pack discharging 6 A, the pool is (-2, 1, 2) with a site
+            # total of 1 A, and a Solar Only load on C was refused outright
+            # because ``AC = -2 + 2 = 0`` — bound by phase A, which it is not on.
+            # Its own phase holds 2 A and the site has 1 A spare, so 1 A is the
+            # answer: enough to use the real surplus, not enough to drain the
+            # pack, which is what discharge_drain exists to prevent.
+            return min(getattr(self, mask), self.ABC)
 
         elif len(mask) == 2:
             return min(
