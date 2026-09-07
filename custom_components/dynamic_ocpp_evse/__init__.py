@@ -377,6 +377,31 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config_entries.async_update_entry(entry, options=options, minor_version=7)
         _LOGGER.info("Updated minor version to 7")
 
+    # 2.8: drop the pre-2.4 export threshold. The <4 step above derived
+    # ``grid_export_limit`` from it (limit = threshold + trigger margin) and
+    # nothing has read it since; it only survived because that step copied the
+    # options forward wholesale. Pruned AFTER the derivation, so a 2.1 entry
+    # still reaches 2.8 correctly in the one migration pass.
+    if entry.version == 2 and getattr(entry, "minor_version", 0) < 8:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        dropped = [
+            label
+            for store, label in ((data, "data"), (options, "options"))
+            if store.pop(CONF_EXCESS_EXPORT_THRESHOLD, None) is not None
+        ]
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, minor_version=8
+        )
+        if dropped:
+            _LOGGER.info(
+                "%s: dropped the legacy export threshold from %s — the export"
+                " limit has been its own setting since 2.4",
+                entry.title,
+                ", ".join(dropped),
+            )
+        _LOGGER.info("Updated minor version to 8")
+
     return True
 
 

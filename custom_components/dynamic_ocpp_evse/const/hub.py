@@ -9,7 +9,9 @@ CONF_INVERT_PHASES = "invert_phases"
 CONF_MAX_IMPORT_POWER_ENTITY_ID = "max_import_power_entity_id"
 CONF_ENABLE_MAX_IMPORT_POWER = "enable_max_import_power"  # Checkbox: create slider for max import power
 CONF_PHASE_VOLTAGE = "phase_voltage"
-CONF_EXCESS_EXPORT_THRESHOLD = "excess_export_threshold"  # LEGACY (pre-2.4) — replaced by
+CONF_EXCESS_EXPORT_THRESHOLD = "excess_export_threshold"  # LEGACY (pre-2.4) — read
+# ONLY by the migration: the <4 step derives CONF_GRID_EXPORT_LIMIT from it and
+# the 2.8 step then prunes it from the entry. Replaced by
 # CONF_GRID_EXPORT_LIMIT − CONF_EXCESS_TRIGGER_MARGIN; read only by the migration.
 CONF_SOLAR_PRODUCTION_ENTITY_ID = "solar_production_entity_id"  # Optional direct solar production sensor (W)
 
