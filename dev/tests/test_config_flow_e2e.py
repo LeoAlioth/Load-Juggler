@@ -2347,6 +2347,12 @@ async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
     # marker, so a dump still shows that something was there.
     assert "coordinator" not in diag["runtime"]["hub"]
     assert diag["runtime"]["hub"]["_unexpected_object"] == "<object>"
+    # Dataclasses carry readable numbers, so they are expanded, not marked.
+    from custom_components.dynamic_ocpp_evse.calculations.models import PhaseValues
+    hub_rt["_household_held"] = PhaseValues(1.0, 2.0, None)
+    diag = await async_get_config_entry_diagnostics(hass, mock_hub_entry)
+    json.dumps(diag)
+    assert diag["runtime"]["hub"]["_household_held"] == {"a": 1.0, "b": 2.0, "c": None}
     # The auto-imported inverter is a child, with its effective features.
     inv = next(
         c for c in diag["config"]["children"]

@@ -27,6 +27,7 @@ posting a dump in a public issue.
 
 from __future__ import annotations
 
+from dataclasses import fields, is_dataclass
 from datetime import date, datetime
 from typing import Any
 
@@ -75,6 +76,14 @@ def _jsonable(value: Any, depth: int = 0) -> Any:
         }
     if isinstance(value, (list, tuple, set)):
         return [_jsonable(v, depth + 1) for v in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        # PhaseValues and friends carry the numbers worth reading (the held
+        # household, per-phase readings), so expand them rather than printing
+        # "<PhaseValues>".
+        return {
+            f.name: _jsonable(getattr(value, f.name, None), depth + 1)
+            for f in fields(value)
+        }
     return f"<{type(value).__name__}>"
 
 

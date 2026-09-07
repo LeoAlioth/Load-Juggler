@@ -106,7 +106,7 @@
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
                     "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
-                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to disable the limit entirely.",
+                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to remove the slider — but note that an override sensor below, if set, still applies: it takes precedence over both the slider and this checkbox.",
                     "max_import_power_entity_id": "Advanced — use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider.",
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
@@ -533,7 +533,7 @@
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
                     "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
-                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to disable the limit entirely.",
+                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to remove the slider — but note that an override sensor below, if set, still applies: it takes precedence over both the slider and this checkbox.",
                     "max_import_power_entity_id": "Advanced — use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider.",
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
@@ -564,7 +564,7 @@
                     "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
-                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to disable the limit entirely.",
+                    "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to remove the slider — but note that an override sensor below, if set, still applies: it takes precedence over both the slider and this checkbox.",
                     "max_import_power_entity_id": "Advanced — use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider."
                 }
             },
