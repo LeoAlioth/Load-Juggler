@@ -2242,3 +2242,49 @@ async def test_the_overview_flags_export_over_the_limit(
     assert "Exporting: 8319 W" in text
     assert "Export with managed loads off: 8557 W ❗" in text
     assert "over the export limit" not in text
+
+
+async def test_the_inverter_overview_separates_battery_from_forecast(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    """The battery section and the array's forecast section are independent.
+
+    Regression: the forecast block's ``else`` bound to the wrong ``if``, so a
+    battery inverter with no forecast data yet printed "No battery configured"
+    directly under its own SOC and power lines (live 2026-09-07).
+    """
+    from datetime import datetime, timezone
+    from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
+    from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    inverter = next(
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+    )
+    assert inverter.options.get(CONF_BATTERY_SOC_ENTITY_ID)
+
+    def render(section):
+        hass.data[DOMAIN]["hub_data"] = {
+            mock_hub_entry.entry_id: {
+                "last_update": datetime.now(timezone.utc),
+                "inverters": {inverter.entry_id: section},
+            }
+        }
+        return _overview_text(hass, inverter.entry_id)
+
+    # A battery, no forecast observation yet: the battery section stands and
+    # the contradiction is gone.
+    text = render({"battery_soc": 68, "battery_power": -3372})
+    assert "SOC: 68 %" in text
+    assert "No battery configured" not in text
+    assert "This array's forecast" not in text
+
+    # A battery AND an observation: both sections, still no contradiction.
+    text = render({"battery_soc": 68, "forecast_accuracy_pct": 96.4, "forecast_gain": 0.81})
+    assert "SOC: 68 %" in text
+    assert "Accuracy today: 96 %" in text
+    assert "No battery configured" not in text

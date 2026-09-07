@@ -749,6 +749,14 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
             lines.append(
                 f"- Recommended charge limit: {_fmt(own.get('forecast_charge_limit_w'), 'W', 0)}{state}"
             )
+    else:
+        lines += ["", "- No battery configured on this inverter"]
+
+    # Independent of the battery: an array's own forecast observation exists
+    # wherever it has a forecast device, battery or not. (Its ``else`` used to
+    # bind to this ``if`` rather than the battery's, so a battery-less array
+    # printed "No battery configured" and a battery WITH no forecast data
+    # printed it under a fully populated Battery section — 2026-09-07.)
     if own.get("forecast_accuracy_pct") is not None or own.get("forecast_gain") is not None:
         lines += ["", "**☀️ This array's forecast**"]
         lines.append(
@@ -760,8 +768,6 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
                 else ""
             )
         )
-    else:
-        lines += ["", "- No battery configured on this inverter"]
     return lines
 
 
