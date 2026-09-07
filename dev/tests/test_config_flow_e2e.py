@@ -2384,3 +2384,45 @@ async def test_diagnostics_from_a_child_still_dumps_the_hub(
     assert diag["integration"]["requested_from"]["entry_id"] == plug.entry_id
     assert diag["integration"]["requested_from"]["is_hub"] is False
     assert plug.entry_id in {c["entry_id"] for c in diag["config"]["children"]}
+
+
+async def test_slider_backed_config_fields_say_the_slider_owns_them(hass: HomeAssistant):
+    """Every config field that merely SEEDS a runtime slider says so.
+
+    Editing one of these after setup changes nothing the device does — the
+    restored slider keeps its value — which cost a live site its intended
+    boiler setpoints (options said 30/80, the sliders held 20/75, 2026-09-07).
+    Pinned across all three translation files so a new field cannot be added
+    without the note, or the note lost in one language.
+    """
+    import json
+    from pathlib import Path
+
+    seeds_a_slider = {
+        "plug_power_rating", "tank_away_temperature", "tank_normal_temperature",
+        "tank_boost_temperature", "heating_element_power",
+        "station_min_charge_power", "station_max_charge_power",
+        "station_normal_reserve", "station_storm_reserve",
+        "evse_minimum_charge_current", "evse_maximum_charge_current",
+    }
+    marker = {"en": "slider", "sl": "drsnik"}
+    base = Path("custom_components/dynamic_ocpp_evse")
+    for name, lang in (
+        ("strings.json", "en"),
+        ("translations/en.json", "en"),
+        ("translations/sl.json", "sl"),
+    ):
+        data = json.loads((base / name).read_text())
+        seen = 0
+        for section in ("config", "options"):
+            for step, block in data[section]["step"].items():
+                for field in (block.get("data") or {}):
+                    if field not in seeds_a_slider:
+                        continue
+                    seen += 1
+                    help_text = (block.get("data_description") or {}).get(field)
+                    assert help_text, f"{name} {section}/{step}/{field}: no help text"
+                    assert marker[lang] in help_text.lower(), (
+                        f"{name} {section}/{step}/{field} does not mention the slider"
+                    )
+        assert seen == 22, f"{name}: found {seen} slider-backed fields, expected 22"
