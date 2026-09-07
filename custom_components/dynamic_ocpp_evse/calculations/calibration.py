@@ -326,6 +326,36 @@ def export_is_clamped(export_w, export_limit_w, tolerance=CLIP_WALL_TOLERANCE_W)
     return float(export_w) >= float(export_limit_w) - abs(tolerance)
 
 
+def battery_is_saturated(
+    charge_w, charge_cap_w, soc, soc_full, tolerance=CLIP_WALL_TOLERANCE_W
+):
+    """Off-grid curtailment: the pack can take no more.
+
+    With no meter there is no export wall to test, and off-grid the battery IS
+    the sink of last resort — so the array is being throttled exactly when the
+    pack is full or already taking its permitted rate. Either is enough:
+
+    * ``soc >= soc_full`` — nothing left to fill.
+    * ``charge_w >= charge_cap_w − tolerance`` — the pack is at its rate limit,
+      so anything more the array could make has nowhere to go.
+
+    Conservative where it is unsure, the same way ``export_is_clamped`` is: an
+    array producing exactly the charge cap is not really curtailed and is
+    excluded anyway, which only slows the gain. Unknown figures read as
+    saturated, because admitting a curtailed interval biases the gain while
+    skipping a good one does not.
+
+    Pure function — unit-testable.
+    """
+    if soc is not None and soc_full is not None and float(soc) >= float(soc_full):
+        return True
+    if charge_cap_w is None or float(charge_cap_w) <= 0:
+        return True
+    if charge_w is None:
+        return True
+    return float(charge_w) >= float(charge_cap_w) - abs(tolerance)
+
+
 def clipped_now(forecast_w, actual_w, saturated):
     """Watts being curtailed right now, or 0.0.
 

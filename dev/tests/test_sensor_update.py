@@ -6569,6 +6569,124 @@ async def test_the_accuracy_sensor_restores_the_gain_series(hass: HomeAssistant)
     assert offered["day"] == today
 
 
+def _off_grid_rig(hass, slug, *, soc="70", battery_w="-2000", solar_w="6542", forecast=None):
+    """An off-grid hub: a battery inverter with a forecast device, no grid CTs
+    and therefore no export limit."""
+    hub = MockConfigEntry(
+        domain=DOMAIN, version=2, minor_version=8, title=f"Off-grid {slug}",
+        data={CONF_NAME: f"Off-grid {slug}", CONF_ENTITY_ID: f"og_{slug}",
+              ENTRY_TYPE: ENTRY_TYPE_HUB},
+        options={CONF_MAIN_BREAKER_RATING: 40, CONF_PHASE_VOLTAGE: 230,
+                 CONF_BASE_CONSUMPTION: 250},
+    )
+    inverter = MockConfigEntry(
+        domain=DOMAIN, version=2, minor_version=8, title=f"Off-grid Inverter {slug}",
+        data={CONF_NAME: f"Off-grid Inverter {slug}",
+              CONF_ENTITY_ID: f"og_inv_{slug}", ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+              CONF_HUB_ENTRY_ID: hub.entry_id},
+        options={
+            CONF_BATTERY_SOC_ENTITY_ID: f"sensor.og_{slug}_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: f"sensor.og_{slug}_batt",
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: f"sensor.og_{slug}_solar",
+            CONF_BATTERY_CAPACITY_KWH: 9.5,
+            CONF_BATTERY_MAX_CHARGE_POWER: 4000,
+        },
+    )
+    for entry in (hub, inverter):
+        entry.add_to_hass(hass)
+    hass.data[DOMAIN] = {"hubs": {hub.entry_id: {"loads": []}}, "loads": {},
+                         "load_allocations": {}, "inverters": {}}
+    # A per-inverter forecast DEVICE, which is what the gain observer keys on
+    # (the hub's legacy entity list feeds the integral but no observer).
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    )
+    device_id = _forecast_device(
+        hass,
+        f"og_{slug}_array",
+        forecast if forecast is not None else {
+            "2026-08-14T10:00:00+00:00": 7000,
+            "2026-08-14T11:00:00+00:00": 0,
+        },
+    )
+    hass.config_entries.async_update_entry(
+        inverter,
+        options={**inverter.options, CONF_SOLAR_FORECAST_DEVICE_IDS: [device_id]},
+    )
+    hass.states.async_set(f"sensor.og_{slug}_soc", soc,
+                          {"device_class": "battery", "unit_of_measurement": "%"})
+    hass.states.async_set(f"sensor.og_{slug}_batt", battery_w,
+                          {"device_class": "power", "unit_of_measurement": "W"})
+    hass.states.async_set(f"sensor.og_{slug}_solar", solar_w,
+                          {"device_class": "power", "unit_of_measurement": "W"})
+    return hub, inverter
+
+
+async def test_off_grid_gets_the_clipping_figures_but_no_advice(hass: HomeAssistant):
+    """Off-grid, ``export_limit`` is 0 in the LITERAL sense — nothing can
+    leave — so everything forecast above the house must be stored or thrown
+    away, and the integral is exactly the right question. The reservation is
+    not: throttling the pack off-grid curtails the surplus on the spot, so the
+    ceiling and the rate cap are suppressed (2026-09-07)."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter = _off_grid_rig(hass, "figs")
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        result = run_hub_calculation(hass, hub)
+
+    # One hour at 7000 W over a 250 W house is 6.75 kWh with nowhere to go but
+    # the battery — the figure the old gate refused to compute at all.
+    assert result["forecast_clipped_kwh"] == pytest.approx(6.75, abs=0.01)
+    assert result["forecast_absorbable_kwh"] > 0
+    assert result["forecast_headroom_deficit_kwh"] is not None
+    # ...and no advice, on the hub or the inverter.
+    assert result["forecast_battery_max_soc"] is None
+    assert result["forecast_charge_limit_w"] is None
+    own = result["inverters"][inverter.entry_id]
+    assert own["forecast_battery_max_soc"] is None
+    assert own["forecast_charge_limit_w"] is None
+    # No latch state left behind for a later cycle to act on.
+    runtime = hass.data[DOMAIN]["hubs"][hub.entry_id]
+    assert "_forecast_max_soc" not in runtime
+    assert "_forecast_charge_limiting" not in runtime
+
+
+async def test_off_grid_curtailment_is_judged_on_the_battery(hass: HomeAssistant):
+    """The gain observer needs a curtailment test, and off-grid the export wall
+    cannot supply one: a full pack is what says the array is being throttled."""
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    # Pack full: the interval is curtailed, so nothing is learned from it.
+    def accumulators(soc, battery_w, slug):
+        """Two cycles a minute apart inside a forecast block — freezegun also
+        freezes time.monotonic(), so without the tick dt is 0 and the observer
+        accumulates nothing at all."""
+        hub, _inv = _off_grid_rig(hass, slug, soc=soc, battery_w=battery_w)
+        with freeze_time("2026-08-14 10:30:00+00:00") as frozen:
+            run_hub_calculation(hass, hub)
+            frozen.tick(60.0)
+            run_hub_calculation(hass, hub)
+        observer = hass.data[DOMAIN]["hubs"][hub.entry_id]["_forecast_gain_observer"]
+        return next(iter(observer.values()))["acc"]
+
+    # Pack full: curtailed, so the interval is skipped rather than learned from.
+    full = accumulators("100", "0", "full")
+    assert full.get("forecast_wh", 0) == 0, "a curtailed interval must not count"
+    assert full.get("skipped_wh", 0) > 0
+
+    # Room and rate to spare: an honest interval, and it counts.
+    room = accumulators("60", "-1000", "room")
+    assert room.get("forecast_wh", 0) > 0, "an honest off-grid interval must count"
+    assert room.get("actual_wh", 0) > 0
+    assert room.get("skipped_wh", 0) == 0
+
+
 async def test_an_off_grid_site_publishes_no_reconstructed_export(hass: HomeAssistant):
     """Off-grid the phase readings are synthetic zeros, so adding the managed
     draws back would report our own loads' consumption as export (a live

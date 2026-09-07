@@ -23,6 +23,7 @@ from custom_components.dynamic_ocpp_evse.calculations.calibration import (
     day_ratio,
     hourly_offsets,
     note_gain_sample,
+    battery_is_saturated,
     export_is_clamped,
     prune_series,
     series_days,
@@ -374,3 +375,22 @@ def test_export_is_clamped_needs_a_limit_and_errs_on_the_safe_side():
     # Unreadable export with a limit configured: assume clamped, since
     # admitting a curtailed interval biases the gain and skipping one does not.
     assert export_is_clamped(None, 8800.0) is True
+
+
+def test_battery_is_saturated_is_the_off_grid_curtailment_test():
+    """Off-grid there is no meter, so the pack decides: full, or already at its
+    permitted rate, means anything more the array could make is thrown away."""
+    # Room and rate to spare: an honest interval.
+    assert battery_is_saturated(1500.0, 4000.0, 70.0, 97.0) is False
+    # Full.
+    assert battery_is_saturated(0.0, 4000.0, 97.0, 97.0) is True
+    assert battery_is_saturated(0.0, 4000.0, 100.0, 97.0) is True
+    # At its rate limit (within the same small tolerance as the export wall).
+    assert battery_is_saturated(3950.0, 4000.0, 70.0, 97.0) is True
+    assert battery_is_saturated(4000.0, 4000.0, 70.0, 97.0) is True
+    # Unknown figures read as saturated — skipping a good interval only slows
+    # the gain, admitting a curtailed one biases it.
+    assert battery_is_saturated(None, 4000.0, 70.0, 97.0) is True
+    assert battery_is_saturated(1500.0, None, 70.0, 97.0) is True
+    # A discharging pack is not saturated.
+    assert battery_is_saturated(-800.0, 4000.0, 70.0, 97.0) is False

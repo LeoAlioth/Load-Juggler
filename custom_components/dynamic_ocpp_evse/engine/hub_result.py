@@ -26,7 +26,11 @@ from .forecast_observers import (
     observe_gain,
     observe_peakiness,
 )
-from ..calculations.calibration import block_power_at, export_is_clamped
+from ..calculations.calibration import (
+    battery_is_saturated,
+    block_power_at,
+    export_is_clamped,
+)
 from ..calculations import (
     merge_forecast_series,
     select_clipping_window,
@@ -213,7 +217,20 @@ def _compute_forecast_advice(
     legacy_entity_ids = (
         get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []
     )
-    if export_limit <= 0 or capacity_kwh <= 0 or not (device_ids or legacy_entity_ids):
+    # ``export_limit`` of 0 means two OPPOSITE things, and reading it as one
+    # silently switched this whole feature off on the site that needs it most.
+    # Grid-tied it means "no limit configured": the grid absorbs everything,
+    # nothing can ever clip, so the forecast has nothing to say. OFF-GRID it
+    # means nothing can leave at all — every watt above the house must be
+    # stored or curtailed — which is precisely the question the integral
+    # answers. ``clip_threshold`` below is then base consumption alone, with no
+    # further arithmetic needed. (2026-09-07.)
+    off_grid = bool(getattr(site, "is_off_grid", False))
+    if (
+        (export_limit <= 0 and not off_grid)
+        or capacity_kwh <= 0
+        or not (device_ids or legacy_entity_ids)
+    ):
         hub_runtime.pop("_forecast_max_soc", None)
         hub_runtime.pop("_forecast_reservation_due", None)
         hub_runtime.pop("_forecast_charge_limiting", None)
@@ -343,6 +360,25 @@ def _compute_forecast_advice(
         proposed = prev
     hub_runtime["_forecast_max_soc"] = proposed
 
+    # OFF-GRID THE ADVICE IS SUPPRESSED, the energy figures are not.
+    #
+    # Reserving headroom pays for itself only where the surplus has somewhere
+    # else to go: grid-tied, throttling the battery sends those watts out the
+    # meter and keeps room for the peak. Off-grid it sends them nowhere — a
+    # lower charge rate curtails the surplus on the spot — and holding SOC down
+    # to protect the afternoon just curtails the morning instead, for a day
+    # whose stored total is capped by capacity either way. So off-grid the
+    # optimal policy is "charge as fast as possible, always", and the ceiling
+    # and rate cap must not be published: a site with write control armed would
+    # otherwise act on them. The clippable / storable / deficit figures stay —
+    # they say how much surplus the day will waste, which is what load
+    # scheduling wants.
+    if off_grid:
+        hub_runtime.pop("_forecast_max_soc", None)
+        hub_runtime.pop("_forecast_reservation_due", None)
+        hub_runtime.pop("_forecast_charge_limiting", None)
+        hub_runtime.pop("_forecast_soc_yielding", None)
+
     deficit = headroom_deficit_kwh(fc.absorbable_kwh, capacity_kwh, battery_soc)
     # The two live plant figures the engaged advice is computed from, read once
     # — from the CHARGE-CONTROL VIEW of the site when the engine supplies one:
@@ -356,7 +392,7 @@ def _compute_forecast_advice(
     export_now_w = reconstructed_export_power(view)
     charge_limit = None
     limiting = False
-    if fleet_charge_cap:
+    if fleet_charge_cap and not off_grid:
         # Above the destination the battery is the absorber of LAST RESORT: the
         # Excess loads that exist to soak up surplus get it first, and the
         # battery takes what they cannot. Below it the battery comes first, as
@@ -412,6 +448,8 @@ def _compute_forecast_advice(
     # that ceiling, clamped to its own cap (fleet.split_charge_limit).
     per_inverter = {}
     hub_id = getattr(hub_entry, "entry_id", None)
+    # Off-grid publishes no ceiling either — see the suppression above.
+    published_soc = None if off_grid else proposed
     charge_shares = fleet.split_charge_limit(members, charge_limit, proposed)
     for m in members:
         if m.entry_id == hub_id or not m.has_battery or not (m.capacity_kwh or 0) > 0:
@@ -420,7 +458,7 @@ def _compute_forecast_advice(
         if m.entry_id in charge_shares:
             member_limit = round(charge_shares[m.entry_id], 0)
         per_inverter[m.entry_id] = {
-            "forecast_battery_max_soc": proposed,
+            "forecast_battery_max_soc": published_soc,
             "forecast_charge_limit_w": member_limit,
             # The GATE, not the value: the charge control needs to know a
             # protective regime transition (the cap engaging) from a
@@ -462,7 +500,16 @@ def _compute_forecast_advice(
     # interval and left both arrays' accuracy Unknown for days (2026-09-07).
     # The same flag serves the clipped-energy observer below, for the same
     # reason: at the setpoint there is nothing being clipped to count.
-    constrained = export_is_clamped(site.total_export_power, export_limit)
+    constrained = (
+        battery_is_saturated(
+            -(site.battery_power or 0.0),
+            site.battery_max_charge_power,
+            battery_soc,
+            site.battery_soc_full,
+        )
+        if off_grid
+        else export_is_clamped(site.total_export_power, export_limit)
+    )
 
     for m in members:
         if not m.forecast_device_ids:
@@ -539,7 +586,7 @@ def _compute_forecast_advice(
         "forecast_window_tomorrow": bool(window),
         "forecast_clipped_kwh": round(fc.clipped_kwh, 2),
         "forecast_absorbable_kwh": round(fc.absorbable_kwh, 2),
-        "forecast_battery_max_soc": proposed,
+        "forecast_battery_max_soc": published_soc,
         "forecast_headroom_deficit_kwh": round(deficit, 2),
         "forecast_charge_limit_w": (
             round(charge_limit, 0) if charge_limit is not None else None
