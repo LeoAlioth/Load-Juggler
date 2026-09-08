@@ -2291,6 +2291,117 @@ async def test_the_overview_omits_the_grid_lines_off_grid(
     assert "Importing" not in text and "Exporting" not in text
 
 
+async def test_the_overview_shows_the_pools_the_allocator_worked_from(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    """The watt figures in that section are re-derived from the site's headroom
+    terms; these are the PhaseConstraints the distribution actually consulted.
+    Publishing both is deliberate — when they disagree, the disagreement is the
+    bug (the Excess over-commitment of 2026-09-07)."""
+    from datetime import datetime, timezone
+    from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.data[DOMAIN]["hub_data"] = {
+        mock_hub_entry.entry_id: {
+            "last_update": datetime.now(timezone.utc),
+            "pool_detail": {
+                "phases": "ABC",
+                "physical": {
+                    "start": {"A": 28.7, "B": 28.7, "C": 28.7, "AB": 57.39,
+                              "AC": 57.39, "BC": 57.39, "ABC": 86.09,
+                              "netting": False},
+                    "left": {"A": 12.7, "B": 12.7, "C": 12.7, "AB": 25.39,
+                             "AC": 25.39, "BC": 25.39, "ABC": 38.09,
+                             "netting": False},
+                },
+                "solar": {
+                    # Pooled, not summed: the pair fields hold the shared total
+                    # because the inverter can move its output between legs.
+                    "start": {"A": 7.0, "B": 7.0, "C": 7.0, "AB": 7.0,
+                              "AC": 7.0, "BC": 7.0, "ABC": 7.0,
+                              "netting": False},
+                    "left": {"A": 0.0, "B": 0.0, "C": 0.0, "AB": 0.0,
+                             "AC": 0.0, "BC": 0.0, "ABC": 0.0,
+                             "netting": False},
+                },
+                "excess": {
+                    "start": {"A": -1.0, "B": -1.0, "C": 2.0, "AB": -2.0,
+                              "AC": 1.0, "BC": 1.0, "ABC": 0.0,
+                              "netting": True},
+                    "left": {"A": -1.0, "B": -1.0, "C": 2.0, "AB": -2.0,
+                             "AC": 1.0, "BC": 1.0, "ABC": 0.0,
+                             "netting": True},
+                },
+            },
+        }
+    }
+    text = _overview_text(hass, mock_hub_entry.entry_id)
+    assert "Physical pool (grid + inverter), gross" in text
+    assert "offered: A 28.7 · B 28.7 · C 28.7 · total 86.1 A" in text
+    assert "left, after measured draws: A 12.7 · B 12.7 · C 12.7 · total 38.1 A" in text
+    # The basis is named because the same seven fields mean different things
+    # under each, and the pooled note is why a 3-phase load may get more than
+    # the per-phase figures suggest.
+    assert "Solar pool, gross, pooled across phases" in text
+    assert "Excess pool (above the export trigger), net" in text
+    # Signed values survive: A and B importing while C exports, total 0 — the
+    # site has nothing spare and a load on C may take nothing.
+    assert "offered: A -1.0 · B -1.0 · C 2.0 · total 0.0 A" in text
+
+
+async def test_the_overview_pool_lines_name_only_the_site_phases(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    """A single-phase site would otherwise read as a three-phase one with two
+    dead legs — the pools carry a 0.0 for a phase that does not exist."""
+    from datetime import datetime, timezone
+    from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    fields = {"A": 27.52, "B": 0.0, "C": 0.0, "AB": 27.52, "AC": 27.52,
+              "BC": 0.0, "ABC": 27.52, "netting": False}
+    hass.data[DOMAIN]["hub_data"] = {
+        mock_hub_entry.entry_id: {
+            "last_update": datetime.now(timezone.utc),
+            "pool_detail": {
+                "phases": "A",
+                "physical": {"start": fields, "left": fields},
+            },
+        }
+    }
+    text = _overview_text(hass, mock_hub_entry.entry_id)
+    # One phase, and no second copy of the same number as a "total".
+    assert "offered: A 27.5 A" in text
+    assert "B 0.0" not in text
+    assert "total 27.5" not in text
+    # A pool absent from the snapshot is simply not rendered.
+    assert "Solar pool" not in text
+
+
+async def test_the_overview_survives_hub_data_without_the_pools(
+    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+):
+    """Held-over hub_data from before this key existed, and the first cycles
+    after a restart. A display path must never fail for a missing key."""
+    from datetime import datetime, timezone
+    from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.data[DOMAIN]["hub_data"] = {
+        mock_hub_entry.entry_id: {"last_update": datetime.now(timezone.utc)}
+    }
+    text = _overview_text(hass, mock_hub_entry.entry_id)
+    assert "Power pools" in text
+    assert "offered:" not in text
+
+
 async def test_the_inverter_overview_separates_battery_from_forecast(
     hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
 ):

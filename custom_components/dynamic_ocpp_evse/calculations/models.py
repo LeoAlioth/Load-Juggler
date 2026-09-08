@@ -252,6 +252,11 @@ class SiteContext:
     # calculate_all_load_targets around the distribution, consumed by the
     # pass-1 ledger (see LoadContext.excess_claim_current).
     excess_potential_claims: tuple = ()
+    # The three pools the allocator worked from this cycle, as plain rounded
+    # dicts — OBSERVABILITY ONLY. Written by calculate_all_load_targets, read
+    # by engine/hub_result.py for the Overview page and the diagnostics dump.
+    # Nothing in the calculation reads it back.
+    pool_snapshot: dict = field(default_factory=dict)
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
     is_off_grid: bool = False  # True when no grid CT sensors are configured
 
@@ -545,6 +550,11 @@ class PhaseConstraints:
         return replace(self)
 
     def __repr__(self) -> str:
+        # The basis is named only when it is the unusual one, so every gross
+        # pool's debug line stays byte-identical to what it has always been.
+        # It belongs here because the same fields mean different things under
+        # each basis, and a log without it cannot be read.
+        basis = ", net" if self.netting else ""
         return (f"PC(A={self.A:.1f}, B={self.B:.1f}, C={self.C:.1f}, "
                 f"AB={self.AB:.1f}, AC={self.AC:.1f}, BC={self.BC:.1f}, "
-                f"ABC={self.ABC:.1f})")
+                f"ABC={self.ABC:.1f}{basis})")

@@ -1026,6 +1026,11 @@ def _build_hub_result(
         "available_solar_current": round(solar_remaining_current, 1),
         "available_battery_current": round(battery_remaining_current, 1),
         "available_inverter_current": round(inverter_remaining_current, 1),
+        # The pools THEMSELVES, per phase and per combination, exactly as the
+        # allocator built them — where the four figures above are re-derived
+        # from the site's headroom terms. When the two disagree, this is the
+        # one that decided the allocation. Display and diagnostics only.
+        "pool_detail": site.pool_snapshot or {},
         "total_site_available_power": round(total_site_available, 0),
         "grid_power": published_grid_power,
         # The reconstructed export on the RAW meter basis: this cycle's meter

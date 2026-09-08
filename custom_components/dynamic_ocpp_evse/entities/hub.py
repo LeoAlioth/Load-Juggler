@@ -381,6 +381,10 @@ _HUB_REPUBLISH_KEYS = frozenset(
     # not, and the Overview shows this one because the raw rate integral runs
     # past the pack and is discarded before anything decides with it.
     "forecast_room_needed_kwh",
+    # The three allocator pools per phase — no hub sensor: seven signed fields
+    # per pool is a debugging structure, not a number to graph. Read by the
+    # Overview page and carried into the diagnostics dump.
+    "pool_detail",
 }
 
 

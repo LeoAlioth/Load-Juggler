@@ -12,6 +12,7 @@ Clear architecture:
 """
 
 import logging
+from dataclasses import asdict
 from typing import Optional
 
 from .models import (
@@ -136,6 +137,9 @@ def calculate_all_load_targets(site: SiteContext) -> None:
     # site.loads is temporarily narrowed to the active set; the try/finally
     # guarantees it is restored even if _distribute_power raises, so downstream
     # steps (circuit groups, hub result) still see every load.
+    # The pools left after distribution — the start pools when nothing was
+    # distributed, since then nothing was taken from them.
+    pools_left = (physical_pool, solar_pool, excess_pool)
     if active_loads:
         site.loads = active_loads
         # Loads the verdict is about to start but that are not active yet (a
@@ -147,10 +151,16 @@ def calculate_all_load_targets(site: SiteContext) -> None:
             if c.active_phases_mask and (c.excess_claim_current or 0) > 0
         )
         try:
-            _distribute_power(site, physical_pool, solar_pool, excess_pool)
+            pools_left = _distribute_power(
+                site, physical_pool, solar_pool, excess_pool
+            )
         finally:
             site.loads = all_loads
             site.excess_potential_claims = ()
+
+    site.pool_snapshot = _pool_snapshot(
+        site, (physical_pool, solar_pool, excess_pool), pools_left
+    )
 
     # Set inactive loads to 0 allocated
     for load in inactive_loads:
@@ -186,6 +196,46 @@ def calculate_all_load_targets(site: SiteContext) -> None:
             f"available={load.available_current:.1f}A | "
             f"draw={_draw:.1f}A (L1:{load.l1_current:.1f} L2:{load.l2_current:.1f} L3:{load.l3_current:.1f})"
         )
+
+
+def _pool_snapshot(
+    site: SiteContext,
+    start: tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints],
+    left: tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints],
+) -> dict:
+    """The three pools as plain rounded dicts — for display, never for maths.
+
+    It exists because the watt figures the publisher shows are RE-DERIVED from
+    the site's headroom terms, while these are the ``PhaseConstraints`` the
+    distribution actually consulted. The two have disagreed before, and only
+    one of them decided anything.
+
+    ``asdict`` rather than a hand-written field list, so a new
+    ``PhaseConstraints`` field reaches the dump without a second edit. The
+    site's phase letters travel along because a single-phase snapshot would
+    otherwise read as a three-phase site with two dead legs.
+    """
+    phases = "".join(
+        letter
+        for letter, value in zip(
+            "ABC", (site.consumption.a, site.consumption.b, site.consumption.c)
+        )
+        if value is not None
+    )
+
+    def fields(pool: PhaseConstraints) -> dict:
+        # 2 dp is ~5 W at 230 V: fine enough to catch a real discrepancy,
+        # coarse enough that the dump is not a wall of float noise. ``netting``
+        # is a bool and must survive un-rounded.
+        return {
+            key: value if isinstance(value, bool) else round(float(value), 2)
+            for key, value in asdict(pool).items()
+        }
+
+    snapshot = {"phases": phases}
+    for name, begin, end in zip(("physical", "solar", "excess"), start, left):
+        snapshot[name] = {"start": fields(begin), "left": fields(end)}
+    return snapshot
 
 
 def _set_available_current_for_loads(
@@ -1339,7 +1389,7 @@ def _distribute_power(
     physical_pool: PhaseConstraints,
     solar_pool: PhaseConstraints,
     excess_pool: PhaseConstraints,
-) -> None:
+) -> tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints]:
     """
     Step 4: Distribute power among loads using source-aware pools.
 
@@ -1356,7 +1406,7 @@ def _distribute_power(
     - Excess: excess pool + minimum guarantee while the verdict is on
     """
     if not site.loads:
-        return
+        return physical_pool, solar_pool, excess_pool
 
     _LOGGER.debug(f"Distribution — physical: {physical_pool}")
     _LOGGER.debug(f"Distribution — solar: {solar_pool}")
@@ -1375,16 +1425,15 @@ def _distribute_power(
     mode = site.distribution_mode.lower() if site.distribution_mode else "priority"
 
     if "priority" in mode:
-        _distribute_per_phase_priority(site, physical_pool, solar_pool, excess_pool)
-    elif "shared" in mode:
-        _distribute_per_phase_shared(site, physical_pool, solar_pool, excess_pool)
-    elif "strict" in mode:
-        _distribute_per_phase_strict(site, physical_pool, solar_pool, excess_pool)
-    elif "optimized" in mode:
-        _distribute_per_phase_optimized(site, physical_pool, solar_pool, excess_pool)
-    else:
-        _LOGGER.warning(f"Unknown distribution mode '{mode}', using priority")
-        _distribute_per_phase_priority(site, physical_pool, solar_pool, excess_pool)
+        return _distribute_per_phase_priority(site, physical_pool, solar_pool, excess_pool)
+    if "shared" in mode:
+        return _distribute_per_phase_shared(site, physical_pool, solar_pool, excess_pool)
+    if "strict" in mode:
+        return _distribute_per_phase_strict(site, physical_pool, solar_pool, excess_pool)
+    if "optimized" in mode:
+        return _distribute_per_phase_optimized(site, physical_pool, solar_pool, excess_pool)
+    _LOGGER.warning(f"Unknown distribution mode '{mode}', using priority")
+    return _distribute_per_phase_priority(site, physical_pool, solar_pool, excess_pool)
 
 
 def _allocate_minimums(
@@ -1533,7 +1582,7 @@ def _distribute_per_phase_priority(
     physical_pool: PhaseConstraints,
     solar_pool: PhaseConstraints,
     excess_pool: PhaseConstraints,
-) -> None:
+) -> tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints]:
     """
     PRIORITY mode: Pass 1 reserve minimums for all eligible loads,
     Pass 2 fill remainder by urgency+priority order.
@@ -1583,6 +1632,8 @@ def _distribute_per_phase_priority(
             solar_rem, excess_rem = _deduct_from_sources(
                 pool_delta, mask, solar_rem, excess_rem
             )
+
+    return remaining, solar_rem, excess_rem
 
 
 def _scale_source_increments(
@@ -1634,7 +1685,7 @@ def _distribute_per_phase_shared(
     physical_pool: PhaseConstraints,
     solar_pool: PhaseConstraints,
     excess_pool: PhaseConstraints,
-) -> None:
+) -> tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints]:
     """
     SHARED mode: Pass 1 reserve minimums for all eligible loads,
     Pass 2 split remainder equally among charging loads.
@@ -1657,7 +1708,9 @@ def _distribute_per_phase_shared(
     if not charging_loads:
         for load in site.loads:
             load.allocated_current = 0
-        return
+        # Pass 1 still ran, so these are the post-minimums pools, not the
+        # untouched ones handed in.
+        return remaining, solar_rem, excess_rem
 
     # Track each load's cumulative pool consumption so the loop can deduct
     # only the *real* draw, not the permit increment. A settled EVSE drawing
@@ -1745,13 +1798,15 @@ def _distribute_per_phase_shared(
         if load not in charging_loads:
             load.allocated_current = 0
 
+    return remaining, solar_rem, excess_rem
+
 
 def _distribute_per_phase_strict(
     site: SiteContext,
     physical_pool: PhaseConstraints,
     solar_pool: PhaseConstraints,
     excess_pool: PhaseConstraints,
-) -> None:
+) -> tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints]:
     """
     STRICT mode: Give first load up to max (or source limit), then next, etc.
     Sorted by (urgency, priority). No minimum reservation — sequential greedy.
@@ -1782,13 +1837,15 @@ def _distribute_per_phase_strict(
             draw, mask, solar_rem, excess_rem
         )
 
+    return remaining, solar_rem, excess_rem
+
 
 def _distribute_per_phase_optimized(
     site: SiteContext,
     physical_pool: PhaseConstraints,
     solar_pool: PhaseConstraints,
     excess_pool: PhaseConstraints,
-) -> None:
+) -> tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints]:
     """
     OPTIMIZED mode: Reduce higher priority loads to allow lower priority
     to charge at minimum. Sorted by (urgency, priority). Source-aware.
@@ -1846,4 +1903,4 @@ def _distribute_per_phase_optimized(
             draw, mask, solar_rem, excess_rem
         )
 
-
+    return remaining, solar_rem, excess_rem

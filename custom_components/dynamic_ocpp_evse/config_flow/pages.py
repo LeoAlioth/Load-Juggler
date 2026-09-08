@@ -137,6 +137,87 @@ def _fmt_age(seconds: float) -> str:
     return f"{seconds / 3600:.0f} h ago"
 
 
+# The allocator's three pools, in the order it builds them, with the sources
+# each one stands for spelled out — "physical" and "excess" mean nothing to
+# someone reading this page for the first time.
+# Each label says "pool" and names the sources it stands for: the watt lines
+# above are re-derivations of the SAME quantities, so a bare "Solar surplus"
+# would appear twice in one section meaning two different things.
+_POOL_LABELS = (
+    ("physical", "Physical pool (grid + inverter)"),
+    ("solar", "Solar pool"),
+    ("excess", "Excess pool (above the export trigger)"),
+)
+
+
+def _pool_phase_text(fields: dict, phases: str) -> str:
+    """"A 12.3 · B 8.1 · C 8.1 · total 28.5 A" for one pool's fields.
+
+    Only the phases the site actually has: a single-phase site would otherwise
+    read as a three-phase one with two dead legs. The unit goes on the total
+    alone, so the per-phase figures stay scannable.
+    """
+    letters = phases or "ABC"
+    parts = [f"{letter} {_fmt(fields.get(letter))}" for letter in letters]
+    if len(letters) > 1:
+        # On a single-phase site the total IS that phase, and printing it twice
+        # only invites the reader to look for a difference.
+        parts.append(f"total {_fmt(fields.get('ABC'), 'A')}")
+        return " · ".join(parts)
+    return f"{parts[0]} A"
+
+
+def _pool_pairs_are_sums(fields: dict) -> bool:
+    """False when the two-phase fields hold a SHARED total instead of a sum.
+
+    That is the asymmetric-inverter pool (``PhaseConstraints.from_pool``),
+    where a two-phase load may reach the whole pool because the inverter can
+    move its output between legs. Worth naming on the page: it is the reason
+    such a site offers a three-phase load more than its per-phase figures
+    suggest.
+    """
+    a, b, c = (fields.get(key) or 0.0 for key in ("A", "B", "C"))
+    return all(
+        abs((fields.get(pair) or 0.0) - expected) < 0.05
+        for pair, expected in (("AB", a + b), ("AC", a + c), ("BC", b + c))
+    )
+
+
+def _pool_detail_lines(hub_data: dict) -> list[str]:
+    """The three pools as the allocator built them, per phase.
+
+    The watt figures above this are re-derived from the site's headroom terms;
+    these are the objects the distribution actually consulted. Both are shown
+    because when they disagree, the disagreement is the bug.
+
+    "Left" is what survived each load's MEASURED draw, not its permit — a plug
+    that is switched off takes nothing from the pool however large a permit it
+    holds, so an untouched pool beside a granted permit is the normal reading,
+    not a missed deduction.
+    """
+    detail = hub_data.get("pool_detail") or {}
+    phases = detail.get("phases") or ""
+    lines = []
+    for key, label in _POOL_LABELS:
+        pool = detail.get(key) or {}
+        start = pool.get("start") or {}
+        if not start:
+            continue
+        # The basis decides how the fields are READ: gross means each phase
+        # stands alone, net means the total is the algebraic sum, so an
+        # importing phase cancels an exporting one.
+        basis = "net" if start.get("netting") else "gross"
+        if not _pool_pairs_are_sums(start):
+            basis += ", pooled across phases"
+        lines.append(f"- {label}, {basis}")
+        lines.append(f"  - offered: {_pool_phase_text(start, phases)}")
+        lines.append(
+            f"  - left, after measured draws: "
+            f"{_pool_phase_text(pool.get('left') or {}, phases)}"
+        )
+    return lines
+
+
 def _runtime(hass) -> dict:
     """The integration's runtime bucket (empty dict before setup)."""
     return hass.data.get(DOMAIN) or {}
@@ -586,6 +667,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
         f" · B {_fmt(hub_data.get('available_current_b'), 'A')}"
         f" · C {_fmt(hub_data.get('available_current_c'), 'A')}"
     )
+    lines += _pool_detail_lines(hub_data)
     lines.append(
         f"- Managed loads drawing: {_fmt(hub_data.get('total_evse_power'), 'W', 0)}"
     )
