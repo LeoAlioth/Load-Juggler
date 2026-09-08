@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "minor_version": 3,
+  "key": "energy",
+  "data": {
+    "energy_sources": [
+      {
+        "type": "grid",
+        "stat_energy_from": "sensor.sim_grid_import_energy",
+        "stat_energy_to": "sensor.sim_grid_export_energy",
+        "stat_cost": null,
+        "stat_compensation": null,
+        "entity_energy_price": null,
+        "number_energy_price": null,
+        "entity_energy_price_export": null,
+        "number_energy_price_export": null,
+        "cost_adjustment_day": 0.0,
+        "power_config": {
+          "stat_rate": "sensor.sim_grid_net_power"
+        },
+        "stat_rate": "sensor.sim_grid_net_power"
+      },
+      {
+        "type": "solar",
+        "stat_energy_from": "sensor.sim_solar_energy",
+        "config_entry_solar_forecast": null,
+        "stat_rate": "sensor.sim_solar_power"
+      },
+      {
+        "type": "battery",
+        "stat_energy_from": "sensor.sim_battery_discharge_energy",
+        "stat_energy_to": "sensor.sim_battery_charge_energy",
+        "power_config": {
+          "stat_rate": "sensor.sim_battery_rate"
+        },
+        "stat_rate": "sensor.sim_battery_rate",
+        "stat_soc": "sensor.sim_battery_soc"
+      }
+    ],
+    "device_consumption": [
+      {
+        "stat_consumption": "sensor.sim_plug_energy",
+        "stat_rate": "sensor.sim_plug_power",
+        "name": "Smart plug"
+      },
+      {
+        "stat_consumption": "sensor.sim_tank_energy",
+        "stat_rate": "sensor.sim_tank_power",
+        "name": "Hot water tank"
+      },
+      {
+        "stat_consumption": "sensor.sim_station_energy",
+        "stat_rate": "sensor.sim_station_ac_input",
+        "name": "Power station"
+      }
+    ],
+    "device_consumption_water": []
+  }
+}

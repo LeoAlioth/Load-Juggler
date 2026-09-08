@@ -104,6 +104,45 @@ rather than like arithmetic:
 Turn it off to isolate an engine question from a timing one. No real site is in
 that state.
 
+## The power flow diagram
+
+The Simulator page opens with a **Sankey** — `Grid → the site → each managed
+load`, ribbons proportional to what is actually flowing right now. It is Home
+Assistant's own `power-sankey` card, which means it reads the **Energy
+dashboard's** preferences rather than entities named in the card, so three
+things have to line up:
+
+1. **`energy:` in `configuration.yaml`.** The card subscribes to the energy
+   collection, and without that component the websocket command does not
+   exist — the card fails to subscribe and takes the whole dashboard view down
+   with it, blank, with nothing in the Home Assistant log. It would have come
+   in with `default_config:`, which is trimmed.
+2. **kWh statistics**, in `packages/energy.yaml`: a Riemann sum per source,
+   because the energy prefs want an ever-increasing meter. `max_sub_interval`
+   is load-bearing there — an integration sensor otherwise only advances when
+   its source CHANGES, and a simulated site sits perfectly still between
+   slider moves, so the totals would freeze exactly when you left the rig
+   running to watch it settle.
+3. **The preferences themselves**, which live in `.storage/energy` and so are
+   not in git. A committed copy is `energy-prefs.json`; install it into a fresh
+   instance with
+
+   ```bash
+   cp dev/ha-test/energy-prefs.json dev/ha-test/config/.storage/energy
+   ```
+
+   and restart. Or set it up by hand at **Settings → Dashboards → Energy**:
+   grid (import, export, and a *power* sensor — `Standard`, pointed at
+   `sensor.sim_grid_net_power`, which is positive when importing), solar, the
+   battery, and the three managed loads as individual devices. The devices are
+   what break the loads out of the single "house" block and make this a Load
+   Juggler view rather than a generic site one.
+
+Each source carries a **power** sensor beside its energy statistic. That is
+what the Sankey's live ribbons read; the energy statistics only feed the
+graphs, and they need a five-minute statistics window before they show
+anything.
+
 ## Working with it
 
 The engine's own cycle log is the fastest read on what it is thinking — faster

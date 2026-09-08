@@ -22,6 +22,12 @@ frontend:
 config:
 history:
 logbook:
+# The Energy dashboard's backend. Not optional for us: the `power-sankey` card
+# on the Simulator page subscribes to the energy collection, and without this
+# component that websocket command does not exist — the card fails to
+# subscribe and takes the whole dashboard view down with it, silently. It
+# would have come in with `default_config:`, which is trimmed above.
+energy:
 mobile_app:
 recorder:
   # A test instance's history is worth two days at most, and a small database

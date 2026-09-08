@@ -1,0 +1,146 @@
+# The kWh side of the simulated site, so the Energy dashboard — and the power
+# Sankey card on the Simulator page — have something to show.
+#
+# Home Assistant's energy preferences want an ever-increasing kWh statistic per
+# source, with an OPTIONAL power sensor beside it (`power_config`). The Sankey
+# reads the power sensors for its live ribbons and the kWh statistics for the
+# graphs, so both halves are needed: the templates below split the signed
+# quantities into the per-direction sensors the prefs expect, and a Riemann sum
+# turns each into energy.
+#
+# The split templates read the INSTANT grid values, not the lagged meter. The
+# Sankey is a physics view — "where is the power going right now" — and pairing
+# a lagged import with an instant solar figure would make the ribbons briefly
+# add up to something impossible.
+
+template:
+  - sensor:
+      # Grid, split by direction. `sim_grid_net_power` is positive when the
+      # site imports.
+      - name: Sim grid import power
+        unique_id: sim_grid_import_power
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ [states('sensor.sim_grid_net_power') | float(0), 0] | max | round(1) }}
+      - name: Sim grid export power
+        unique_id: sim_grid_export_power
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ [-(states('sensor.sim_grid_net_power') | float(0)), 0] | max | round(1) }}
+
+      # The pack. `sim_battery_power` is positive when CHARGING, which is the
+      # opposite of the polarity the energy prefs call "standard" — hence the
+      # two-sensor form rather than a single signed one.
+      - name: Sim battery charge power
+        unique_id: sim_battery_charge_power
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ [states('input_number.sim_battery_power') | float(0), 0] | max | round(1) }}
+      # A single SIGNED sensor with the polarity the energy prefs call
+      # "standard" for a battery: positive while discharging. Given this, the
+      # prefs can point `stat_rate` straight at it, where the two-sensor form
+      # would make Home Assistant generate a template sensor of its own to
+      # combine them — a moving part this rig does not need.
+      - name: Sim battery rate
+        unique_id: sim_battery_rate
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ -(states('input_number.sim_battery_power') | float(0)) | round(1) }}
+
+      - name: Sim battery discharge power
+        unique_id: sim_battery_discharge_power
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ [-(states('input_number.sim_battery_power') | float(0)), 0] | max | round(1) }}
+
+sensor:
+  # Riemann sums. `max_sub_interval` is load-bearing: without it an integration
+  # sensor only advances when its SOURCE changes, and a simulated site sits
+  # perfectly still between slider moves — so the energy totals would freeze
+  # exactly when you left the rig running to watch it settle.
+  - platform: integration
+    source: sensor.sim_grid_import_power
+    name: Sim grid import energy
+    unique_id: sim_grid_import_energy
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 3
+    max_sub_interval: "00:00:30"
+  - platform: integration
+    source: sensor.sim_grid_export_power
+    name: Sim grid export energy
+    unique_id: sim_grid_export_energy
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 3
+    max_sub_interval: "00:00:30"
+  - platform: integration
+    source: sensor.sim_solar_power
+    name: Sim solar energy
+    unique_id: sim_solar_energy
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 3
+    max_sub_interval: "00:00:30"
+  - platform: integration
+    source: sensor.sim_battery_charge_power
+    name: Sim battery charge energy
+    unique_id: sim_battery_charge_energy
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 3
+    max_sub_interval: "00:00:30"
+  - platform: integration
+    source: sensor.sim_battery_discharge_power
+    name: Sim battery discharge energy
+    unique_id: sim_battery_discharge_energy
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 3
+    max_sub_interval: "00:00:30"
+
+  # The managed loads, as individual devices — which is what breaks them out of
+  # the "house" block in the Sankey and makes it a Load Juggler view rather
+  # than a generic site one.
+  - platform: integration
+    source: sensor.sim_plug_power
+    name: Sim plug energy
+    unique_id: sim_plug_energy
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 3
+    max_sub_interval: "00:00:30"
+  - platform: integration
+    source: sensor.sim_tank_power
+    name: Sim tank energy
+    unique_id: sim_tank_energy
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 3
+    max_sub_interval: "00:00:30"
+  - platform: integration
+    source: sensor.sim_station_ac_input
+    name: Sim station energy
+    unique_id: sim_station_energy
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 3
+    max_sub_interval: "00:00:30"
