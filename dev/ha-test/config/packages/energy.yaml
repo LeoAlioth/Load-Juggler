@@ -1,5 +1,5 @@
-# The kWh side of the simulated site, so the Energy dashboard — and the power
-# Sankey card on the Simulator page — have something to show.
+# The kWh side of the simulated site, so the Energy dashboard - and the power
+# Sankey card on the Simulator page - have something to show.
 #
 # Home Assistant's energy preferences want an ever-increasing kWh statistic per
 # source, with an OPTIONAL power sensor beside it (`power_config`). The Sankey
@@ -9,7 +9,7 @@
 # turns each into energy.
 #
 # The split templates read the INSTANT grid values, not the lagged meter. The
-# Sankey is a physics view — "where is the power going right now" — and pairing
+# Sankey is a physics view - "where is the power going right now" - and pairing
 # a lagged import with an instant solar figure would make the ribbons briefly
 # add up to something impossible.
 
@@ -33,7 +33,7 @@ template:
           {{ [-(states('sensor.sim_grid_net_power') | float(0)), 0] | max | round(1) }}
 
       # The pack. `sim_battery_power` is positive when CHARGING, which is the
-      # opposite of the polarity the energy prefs call "standard" — hence the
+      # opposite of the polarity the energy prefs call "standard" - hence the
       # two-sensor form rather than a single signed one.
       - name: Sim battery charge power
         unique_id: sim_battery_charge_power
@@ -46,7 +46,7 @@ template:
       # "standard" for a battery: positive while discharging. Given this, the
       # prefs can point `stat_rate` straight at it, where the two-sensor form
       # would make Home Assistant generate a template sensor of its own to
-      # combine them — a moving part this rig does not need.
+      # combine them - a moving part this rig does not need.
       - name: Sim battery rate
         unique_id: sim_battery_rate
         device_class: power
@@ -66,7 +66,7 @@ template:
 sensor:
   # Riemann sums. `max_sub_interval` is load-bearing: without it an integration
   # sensor only advances when its SOURCE changes, and a simulated site sits
-  # perfectly still between slider moves — so the energy totals would freeze
+  # perfectly still between slider moves - so the energy totals would freeze
   # exactly when you left the rig running to watch it settle.
   - platform: integration
     source: sensor.sim_grid_import_power
@@ -114,7 +114,7 @@ sensor:
     round: 3
     max_sub_interval: "00:00:30"
 
-  # The managed loads, as individual devices — which is what breaks them out of
+  # The managed loads, as individual devices - which is what breaks them out of
   # the "house" block in the Sankey and makes it a Load Juggler view rather
   # than a generic site one.
   - platform: integration

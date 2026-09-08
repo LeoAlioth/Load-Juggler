@@ -48,7 +48,7 @@ async def check_profile_compliance(
 
     connector_status_state = sensor.hass.states.get(sensor._connector_status_entity)
     connector_status = units.state_or_unknown(connector_status_state)
-    # No car, or a status we cannot read — nothing to be compliant about.
+    # No car, or a status we cannot read - nothing to be compliant about.
     if connector_status == "Available" or units.is_unavailable_state(connector_status):
         sensor._mismatch_count = 0
         return
@@ -94,7 +94,7 @@ async def check_profile_compliance(
                 # Field-unvalidated firmware assumption: power_offered echoes the
                 # commanded TOTAL power. If a watts-mode charger reports per-phase
                 # or measured power instead, this comparison misfires (symptom:
-                # false mismatches → escalating resets on a compliant charger) —
+                # false mismatches → escalating resets on a compliant charger) -
                 # adjust only this decode to what that firmware actually echoes.
                 phases = sensor._car_active_phases or sensor._phases or 1
                 # Options-first (get_entry_value), exactly like the command side
@@ -124,7 +124,7 @@ async def check_profile_compliance(
                 pass
 
     # A NaN offered current would make every comparison below False and hide a
-    # real mismatch forever — treat it as no reading at all.
+    # real mismatch forever - treat it as no reading at all.
     if units.is_unusable_number(current_offered):
         return
 
@@ -133,7 +133,7 @@ async def check_profile_compliance(
     )
     tolerance = RAMP_DOWN_RATE * update_freq
 
-    # Skip while the commanded limit is still ramping — the charger's offered
+    # Skip while the commanded limit is still ramping - the charger's offered
     # current legitimately lags a ramp (up or down), which a single-sample diff
     # cannot tell apart from genuine non-compliance. The Schmitt trigger holds a
     # steady-state command within DEAD_BAND, so a larger change means a ramp.
@@ -207,7 +207,7 @@ async def check_profile_compliance(
 async def perform_hard_reset(sensor) -> None:
     """Perform an OCPP hard reset by pressing the charger's reset button entity."""
     # The OCPP reset button is named after the OCPP charge point ID, not the
-    # Load Juggler entity_id — same resolution as the connector/control
+    # Load Juggler entity_id - same resolution as the connector/control
     # entities in load.py and hub_calculation.py.
     charger_id = sensor.config_entry.data.get(
         CONF_CHARGER_ID
@@ -223,7 +223,7 @@ async def perform_hard_reset(sensor) -> None:
 
     if state is None:
         _LOGGER.warning(
-            "Hard reset entity %s not found for %s — falling back to profile reset",
+            "Hard reset entity %s not found for %s - falling back to profile reset",
             reset_entity_id,
             sensor._attr_name,
         )

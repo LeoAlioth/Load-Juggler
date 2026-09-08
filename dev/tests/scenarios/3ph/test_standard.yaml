@@ -3,7 +3,7 @@
 scenarios:
 
   - name: "3ph-1c-standard-no-bat-basic"
-    description: "Standard mode basic — charger limited by max_current"
+    description: "Standard mode basic - charger limited by max_current"
     human_verified: false
     site:
       voltage: 230
@@ -34,7 +34,7 @@ scenarios:
         allocated: 16.0  # 25A breaker - 3A = 22A per phase, capped at max 16A
 
   - name: "3ph-1c-standard-no-bat-asymmetric-consumption"
-    description: "Standard mode with asymmetric household load — worst phase limits"
+    description: "Standard mode with asymmetric household load - worst phase limits"
     human_verified: false
     site:
       voltage: 230
@@ -66,7 +66,7 @@ scenarios:
 
 
   - name: "3ph-1c-standard-no-bat-asymmetric-consumption-low-import-limit"
-    description: "Standard mode with asymmetric household load — worst phase limits and low total import limit"
+    description: "Standard mode with asymmetric household load - worst phase limits and low total import limit"
     human_verified: false
     site:
       voltage: 230

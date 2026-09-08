@@ -1,4 +1,4 @@
-"""The two forecast observers — accumulate, roll over daily, publish nothing else.
+"""The two forecast observers - accumulate, roll over daily, publish nothing else.
 
 Observe-only by construction: these functions return figures for the engine to
 publish and never touch the advice. What they measure, and why each is shaped
@@ -8,7 +8,7 @@ the per-cycle bookkeeping that a pure function cannot.
 STATE LIVES IN ``hub_runtime`` and is therefore lost on a restart, which is a
 deliberate limitation of the observe phase rather than an oversight. The datum
 that matters is each DAY's ratio, and that is published as the sensor's own
-state, so the recorder keeps the history whatever the process does — the running
+state, so the recorder keeps the history whatever the process does - the running
 average is a convenience on top. Applying a learned gain later needs it to
 survive restarts, and that is where ``helpers.storage.Store`` comes in (see
 dev/TODO.md); an observer does not.
@@ -36,13 +36,13 @@ _LOGGER = logging.getLogger(__name__)
 
 # Runtime keys. One dict per observer, keyed inside by inverter entry id for the
 # gain (an array's calibration is its own) and flat for peakiness (clipping is a
-# site question — every array competes for the same export headroom).
+# site question - every array competes for the same export headroom).
 _RT_GAIN = "_forecast_gain_observer"
 _RT_PEAK = "_forecast_peak_observer"
 
 # The window peakiness is measured over. Matched to the forecast's own
-# resolution — Open-Meteo Solar Forecast publishes 15-minute blocks in its
-# ``watts`` attribute — because the question is precisely "how much does
+# resolution - Open-Meteo Solar Forecast publishes 15-minute blocks in its
+# ``watts`` attribute - because the question is precisely "how much does
 # averaging over ONE FORECAST BLOCK understate the clip?".
 PEAK_WINDOW_MINUTES = 15
 
@@ -58,18 +58,18 @@ def observe_gain(
 ):
     """Fold one cycle into this inverter's gain observation.
 
-    Returns ``forecast_accuracy_pct`` (today's running energy ratio, percent —
+    Returns ``forecast_accuracy_pct`` (today's running energy ratio, percent -
     the published state; it moves through the day and settles by evening),
     ``forecast_gain`` (the overall gain from the stored 15-minute series),
     ``forecast_gain_hourly`` (per hour-of-day offsets ON that overall gain),
     ``forecast_gain_days`` (distinct days in the series),
     ``forecast_gain_blocks`` and ``forecast_gain_skipped_pct`` (how much of
-    today's forecast energy was excluded — the figure that tells a STARVED
+    today's forecast energy was excluded - the figure that tells a STARVED
     observer from a warming-up one, which otherwise look identical).
 
     Two ledgers. Today's accumulators feed the accuracy figure and are not
-    persisted anywhere. The SERIES of finished 15-minute blocks — forecast Wh,
-    measured Wh, skipped (constrained) Wh — is what the gain is computed from,
+    persisted anywhere. The SERIES of finished 15-minute blocks - forecast Wh,
+    measured Wh, skipped (constrained) Wh - is what the gain is computed from,
     on every block rollover, over ``GAIN_SERIES_DAYS``; it is carried across
     restarts by the accuracy sensor's restore data (``gain_state`` /
     ``restore_gain_state``). ``day`` is the LOCAL date so a day means the
@@ -94,7 +94,7 @@ def observe_gain(
             state["last_ratio"] = ratio
             _LOGGER.info(
                 "Forecast gain for %s: yesterday actual/forecast %.3f over"
-                " %.1f kWh of unconstrained forecast (%.1f kWh excluded) —"
+                " %.1f kWh of unconstrained forecast (%.1f kWh excluded) -"
                 " series gain %.3f over %d day(s)",
                 entry_id,
                 ratio,
@@ -155,7 +155,7 @@ def _recompute_gain(state):
 
 def gain_state(hub_runtime, entry_id):
     """This inverter's observer state, JSON-ready, for the accuracy sensor to
-    carry across a restart — or None before the observer has run."""
+    carry across a restart - or None before the observer has run."""
     state = (hub_runtime or {}).get(_RT_GAIN, {}).get(entry_id)
     if not state:
         return None
@@ -173,13 +173,13 @@ def restore_gain_state(hub_runtime, entry_id, saved, today):
     """Seed the observer from a sensor's restored data.
 
     The series always comes back (pruned against ``today``); the in-progress
-    day and block come back only when they belong to ``today`` — a restart
+    day and block come back only when they belong to ``today`` - a restart
     after midnight must not resume yesterday's accuracy.
 
     MERGES rather than refusing when the observer already exists. The hub's
     first calculation cycle usually beats this entity being added (separate
     config entries, and the hub coordinator refreshes on setup), so the
-    observer is already there with an EMPTY series — and a plain "already
+    observer is already there with an EMPTY series - and a plain "already
     present, skip" threw the restored history away on every restart, which is
     why a fortnight's series never grew past the current session (live
     2026-09-07: 3 blocks after 3 days). A live series with blocks in it is
@@ -224,7 +224,7 @@ def restore_gain_state(hub_runtime, entry_id, saved, today):
 def observe_peakiness(hub_runtime, now, day, threshold_w, production_w, dt_hours):
     """Fold one production sample into the site's peakiness observation.
 
-    Returns ``{"forecast_peakiness_pct", "forecast_peakiness_windows"}`` — how
+    Returns ``{"forecast_peakiness_pct", "forecast_peakiness_windows"}`` - how
     much more the site ACTUALLY clipped than a 15-minute average would have
     predicted, as a percentage (100 = the block average told the whole truth).
 

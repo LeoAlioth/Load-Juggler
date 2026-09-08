@@ -3,9 +3,9 @@
 The component's package root (``custom_components/dynamic_ocpp_evse/__init__.py``)
 imports ``homeassistant``, so the pure calculation/engine modules cannot be
 imported the normal way on a machine without Home Assistant. This module builds
-just enough of the package hierarchy in ``sys.modules`` — stub namespace
+just enough of the package hierarchy in ``sys.modules`` - stub namespace
 packages plus the real modules loaded straight from their files with their
-fully-qualified names — for the relative imports inside those modules
+fully-qualified names - for the relative imports inside those modules
 (``from .models``, ``from ..const``) to resolve.
 
 Shared by dev/tests/run_tests.py and every standalone-capable unit test file
@@ -14,7 +14,7 @@ Shared by dev/tests/run_tests.py and every standalone-capable unit test file
 
 Every load is guarded on ``sys.modules``: under the Docker/CI pytest tier the
 real package tree is already imported (dev/tests/conftest.py imports the
-component), so the loader is a no-op there — the test files just import the
+component), so the loader is a no-op there - the test files just import the
 already-real modules. It also keeps repeat calls from different test files in
 one pytest process from re-executing modules and forking class identities.
 
@@ -47,7 +47,7 @@ PKG_CALC = f"{PKG_COMP}.calculations"
 PKG_ENGINE = f"{PKG_COMP}.engine"
 PKG_CONTROL = f"{PKG_COMP}.control"
 
-# Dependency order — common is the leaf every other const module may import;
+# Dependency order - common is the leaf every other const module may import;
 # the aggregator __init__ loads last and re-exports every name.
 CONST_SUBMODULES = (
     "common",
@@ -156,7 +156,7 @@ def _ensure_ha_stubs():
     if "homeassistant.config_entries" not in sys.modules:
         config_entries = types.ModuleType("homeassistant.config_entries")
 
-        class ConfigEntry:  # placeholder — only referenced in annotations
+        class ConfigEntry:  # placeholder - only referenced in annotations
             pass
 
         config_entries.ConfigEntry = ConfigEntry
@@ -197,7 +197,7 @@ def load_pure_modules(
 
     Args:
         calc_modules: calculations/ modules to load, in dependency order
-            (subset of "models", "utils", "target_calculator" — models first).
+            (subset of "models", "utils", "target_calculator" - models first).
         engine_modules: engine/ modules to load (any of the names in
             _HUB_CALC_ENGINE_ORDER: "auto_detect", "fleet", "forecast_reader",
             "readers", "load_builders", "hub_result", "hub_calculation").
@@ -205,19 +205,19 @@ def load_pure_modules(
             the others plus helpers.py/units.py and the calc __init__)
             automatically.
         control_modules: control/ modules to load. Only the ones that import
-            nothing but const/helpers/units qualify — which is the actuation
+            nothing but const/helpers/units qualify - which is the actuation
             layer's own rule (see AGENTS.md), so "inverter" loads while the
             ones reaching for HA service helpers do not.
         root_modules: package-root modules to load directly, by bare name
             ("units", "helpers", "registry"). For tests whose subject IS one of
             them, rather than tests that reach them through engine/ or
-            control/. The package root's own __init__.py is never executed —
+            control/. The package root's own __init__.py is never executed -
             that is the file that hard-imports Home Assistant.
         load_calc_init: also execute calculations/__init__.py so the package
             itself re-exports the public names (needed by callers that do
             ``from ..calculations import X`` beyond PhaseValues).
 
-    The const package (all submodules + __init__) is always loaded — every
+    The const package (all submodules + __init__) is always loaded - every
     caller needs at least part of it and it is pure and cheap.
     """
     engine_modules = tuple(engine_modules)

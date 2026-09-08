@@ -1,4 +1,4 @@
-# Home Assistant writes its whole runtime into the config directory — the
+# Home Assistant writes its whole runtime into the config directory - the
 # database, .storage, logs, downloaded deps, the onboarding account. Only the
 # files we author belong in git, so ignore the directory's contents and name
 # the exceptions.
@@ -12,5 +12,5 @@
 /config/custom_components/*
 !/config/custom_components/.gitkeep
 
-# The long-lived access token for scenarios.py — a credential, never committed.
+# The long-lived access token for scenarios.py - a credential, never committed.
 /ha_token

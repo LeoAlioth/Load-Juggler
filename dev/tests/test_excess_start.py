@@ -1,10 +1,10 @@
-"""The Excess start edge — what a modulating Excess load is granted.
+"""The Excess start edge - what a modulating Excess load is granted.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 The rule: *the verdict starts the FIRST load, the pool only sizes it.* A
 modulating load (an EVSE) cannot run below its minimum current, so while Excess
-is engaged its minimum IS the floor — held there while the momentary pool is
+is engaged its minimum IS the floor - held there while the momentary pool is
 smaller than it, followed upward once the pool exceeds it. That is the start
 edge the binary Excess loads (plug, tank boost) have always had: they engage on
 threshold-hit even though their whole rating overshoots the pool.
@@ -12,22 +12,22 @@ threshold-hit even though their whole rating overshoots the pool.
 Behind the first consumer, Excess loads start IN RANK ORDER: each one only
 while the surplus left after the higher-ranked loads' claims (their permits,
 not their not-yet-measured draws) is still positive. It need not cover the
-load's own minimum — 500 W left after a 2.1 kW tank still starts a 1.4 kW EVSE
-at its floor — but nothing left means it waits, and a running one yields. Two
+load's own minimum - 500 W left after a 2.1 kW tank still starts a 1.4 kW EVSE
+at its floor - but nothing left means it waits, and a running one yields. Two
 2 kW steps no longer engage together on a 300 W surplus and flap (the EcoFlow +
 boiler site, 2026-09-03).
 
 Gating the start on the pool instead leaves a modulating load at 0 forever on
 the site the pool is smallest at: with our charge control tracking the export
-overshoot the standing margin sits AT the trigger — a pool of 0 amps, which is
-Excess by definition (nothing more can be absorbed) — peaking only between
+overshoot the standing margin sits AT the trigger - a pool of 0 amps, which is
+Excess by definition (nothing more can be absorbed) - peaking only between
 register writes.
 
 The floor is a floor on the *Excess allocation*, not a licence to overrun
 physical limits: the wire, the phase and a circuit-group breaker still stop a
 load that cannot be given its minimum. The last three tests are that boundary.
 
-Release is not this file's subject — the latch's hysteresis on the reconstructed
+Release is not this file's subject - the latch's hysteresis on the reconstructed
 margin owns it (see test_excess_stayon.py).
 
 Pure Python, no Home Assistant dependencies. Runnable two ways:
@@ -39,7 +39,7 @@ import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Module loading — shared stub loader (avoids the HA-importing package root)
+# Module loading - shared stub loader (avoids the HA-importing package root)
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from standalone_loader import load_pure_modules
@@ -62,7 +62,7 @@ from custom_components.dynamic_ocpp_evse.calculations.utils import (  # noqa: E4
 )
 
 V = 230.0
-# Export allowance — the trigger for these sites. A whole number of amps
+# Export allowance - the trigger for these sites. A whole number of amps
 # (15 A × 230 V) on purpose: the sites below are built to sit EXACTLY on it,
 # and a threshold that is not representable would land the margin a rounding
 # error either side of the verdict.
@@ -96,8 +96,8 @@ def _site(export_w, loads=(), breaker=BREAKER, threshold=THRESHOLD,
     """A single-phase, batteryless site exporting ``export_w`` watts.
 
     No battery means the whole verdict rides on the export term:
-    ``margin = export − threshold``. The readings are the PHYSICAL ones — what
-    the CT shows with ``loads`` running — so a running load's draw is already
+    ``margin = export − threshold``. The readings are the PHYSICAL ones - what
+    the CT shows with ``loads`` running - so a running load's draw is already
     missing from the export; ``_prepare`` puts it back the way the engine does.
     """
     export_a = export_w / V
@@ -122,8 +122,8 @@ def _prepare(site):
 
     Mirrors run_hub_calculation's order: the feedback loop takes the managed
     draws off the grid readings (``grid_without_managed_draws``, its pure core),
-    the latch settles ``site.excess_hysteresis`` — 0 here, since none of these
-    sites needs the release band — and the calculator runs last. Returns the
+    the latch settles ``site.excess_hysteresis`` - 0 here, since none of these
+    sites needs the release band - and the calculator runs last. Returns the
     margin the calculator saw.
     """
     draws = [0.0, 0.0, 0.0]
@@ -151,7 +151,7 @@ def _close(a, b, tol=0.05):
 
 def test_the_verdict_with_no_pool_at_all_starts_the_load_at_its_minimum():
     """The field case. Export sits exactly ON the allowance: the site cannot
-    place another watt — Excess by definition — and the pool that describes it
+    place another watt - Excess by definition - and the pool that describes it
     is 0 A. The load starts at its minimum anyway, exactly as a plug would."""
     load = _evse()
     margin = _prepare(_site(THRESHOLD, loads=[load]))
@@ -188,8 +188,8 @@ def test_the_verdict_off_allocates_nothing():
 
 def test_a_running_load_rides_a_pool_dip_at_its_minimum():
     """The load is already drawing its 6 A and the CT shows 1380 W less export
-    for it (9 A instead of 15 A). The reconstruction puts the draw back — export
-    reads the allowance, the verdict holds, the pool is 0 — and the load rides
+    for it (9 A instead of 15 A). The reconstruction puts the draw back - export
+    reads the allowance, the verdict holds, the pool is 0 - and the load rides
     the dip at its minimum rather than being dropped and restarted."""
     load = _evse(draw=6.0)
     margin = _prepare(_site(THRESHOLD - 6.0 * V, loads=[load]))
@@ -199,7 +199,7 @@ def test_a_running_load_rides_a_pool_dip_at_its_minimum():
 
 def test_the_floor_is_each_load_s_own_minimum():
     """Not a constant: a 10 A load floors at 10 A, a 6 A one at 6 A. 7 A of
-    pool: the first claims its 6 A floor, 1 A is left, so the second starts —
+    pool: the first claims its 6 A floor, 1 A is left, so the second starts -
     at ITS floor of 10 A, which the leftover need not cover."""
     small = _evse("small", min_current=6.0, priority=1)
     large = _evse("large", min_current=10.0, priority=2)
@@ -211,7 +211,7 @@ def test_the_floor_is_each_load_s_own_minimum():
 def test_two_excess_loads_on_an_empty_pool_only_the_first_starts():
     """The verdict starts the first consumer on a pool of 0 (the saturated
     site). The second sees nothing left after the first one's 6 A claim and
-    waits — it no longer rides the same verdict onto a surplus that cannot
+    waits - it no longer rides the same verdict onto a surplus that cannot
     feed it."""
     first = _evse("first", priority=1)
     second = _evse("second", priority=2)
@@ -222,7 +222,7 @@ def test_two_excess_loads_on_an_empty_pool_only_the_first_starts():
 
 def _tank(eid="tank", watts=2100.0, priority=2, heating=True, phase="A"):
     """A 2.1 kW binary tank (Freeze Protection: full-power behavior, tier 1)
-    that is calling for heat — its draw is its rating while heating and 0 the
+    that is calling for heat - its draw is its rating while heating and 0 the
     cycle it has only just been permitted."""
     amps = watts / V
     return LoadContext(
@@ -246,7 +246,7 @@ def _tank(eid="tank", watts=2100.0, priority=2, heating=True, phase="A"):
 def test_a_lower_ranked_evse_starts_on_what_the_tank_leaves():
     """Anže's example: a 2.5 kW surplus, a 2.1 kW tank ahead of a 1.4 kW-minimum
     EVSE. The tank takes its 2.1 kW, 400 W are left, and the EVSE still starts at
-    its 6 A floor — the leftover is positive, that is all the rule asks."""
+    its 6 A floor - the leftover is positive, that is all the rule asks."""
     tank = _tank(heating=True)
     evse = _evse("evse", min_current=6.0, priority=3)
     # Physical CT: the reconstructed surplus of 2500 W minus the tank's draw.
@@ -259,7 +259,7 @@ def test_a_lower_ranked_evse_starts_on_what_the_tank_leaves():
 def test_a_lower_ranked_excess_load_waits_behind_a_tank_that_takes_it_all():
     """The live pattern: a 300 W surplus, the tank's 2.1 kW step ahead of the
     station. Nothing is left after the tank's claim, so the station does not
-    start — with or without the tank already drawing (the claim is the permit,
+    start - with or without the tank already drawing (the claim is the permit,
     so the cycle the tank has only just been permitted counts the same)."""
     for heating in (True, False):
         tank = _tank(heating=heating)
@@ -276,7 +276,7 @@ def test_a_lower_ranked_excess_load_waits_behind_a_tank_that_takes_it_all():
 # The pool's size takes no hysteresis
 # ---------------------------------------------------------------------------
 #
-# The latch's release band belongs to the VERDICT — a running load rides a
+# The latch's release band belongs to the VERDICT - a running load rides a
 # momentary dip at its minimum instead of being cut. It must not size the pool:
 # a deadband on a decision is not surplus. Live 2026-09-07 the published margin
 # read 989 W where the reconstruction was 489 W over its threshold, the whole
@@ -313,7 +313,7 @@ def test_the_hysteresis_never_widens_the_pool():
 
 def test_the_release_band_still_keeps_a_running_load_alive():
     """The verdict keeps its hysteresis, so a load already running rides a dip
-    below the threshold at its minimum rather than being cut — the pool's size
+    below the threshold at its minimum rather than being cut - the pool's size
     losing the band must not cost the latch its job."""
     load = _evse("evse", min_current=0.9, max_current=10.4, draw=0.9)
     site = _site(THRESHOLD - 200.0 - 0.9 * V, loads=[load])
@@ -324,7 +324,7 @@ def test_the_release_band_still_keeps_a_running_load_alive():
 
 def _station(eid="station", min_w=200.0, max_w=2400.0, priority=2,
              phase="A", draw_w=0.0):
-    """A modulating power station — the same competitor an Excess EVSE is, but
+    """A modulating power station - the same competitor an Excess EVSE is, but
     commanded through ``available_current`` rather than an OCPP profile."""
     return LoadContext(
         load_id=eid, entity_id=eid,
@@ -341,12 +341,12 @@ def _station(eid="station", min_w=200.0, max_w=2400.0, priority=2,
 def test_a_station_is_permitted_what_it_was_sized_for_not_its_rating():
     """A power station is MODULATING and its permit is what the HA layer writes
     to the device, so the permit has to be the sizing. It used to take the
-    binary branch — pool headroom capped by the HARDWARE RATING — and so was
+    binary branch - pool headroom capped by the HARDWARE RATING - and so was
     commanded its full rating whenever it ran at all.
 
     Measured on the SE17K pair before this: 2 392 W against a surplus of 0 W,
     and the same 2 392 W at every surplus above it. It never modulated, which
-    is exactly what the site showed — "both Excess loads running flat out,
+    is exactly what the site showed - "both Excess loads running flat out,
     still exporting 10 kW".
 
     Asserted as rating-INDEPENDENCE rather than against a watt figure: two
@@ -364,7 +364,7 @@ def test_a_station_is_permitted_what_it_was_sized_for_not_its_rating():
 
 def test_a_station_at_a_bare_verdict_is_permitted_its_minimum():
     """The floor, not the ceiling. At a pool of exactly 0 the verdict still
-    starts a modulating load — and it must be handed its MINIMUM, which is the
+    starts a modulating load - and it must be handed its MINIMUM, which is the
     "or at least slow down to 200 W" the site was asked for."""
     station = _station(min_w=200.0, max_w=2400.0)
     _prepare(_site(THRESHOLD, loads=[station]))
@@ -375,7 +375,7 @@ def test_neither_modulating_device_type_is_permitted_its_rating():
     """The two modulating types must agree on the SHAPE of the answer: a permit
     that came from the surplus, not from the hardware.
 
-    They need not agree on the watt, and deliberately do not — an unsettled
+    They need not agree on the watt, and deliberately do not - an unsettled
     EVSE reserves its whole permit against the pools while a station reserves
     only its measured draw (``_pool_deduction``), so on the cycle a load starts
     the station sees its own minimum still unspent. That difference is the
@@ -400,7 +400,7 @@ def test_a_binary_load_starts_at_a_bare_verdict_like_a_modulating_one():
     modulating load ran and the higher-ranked binary one sat out.
 
     The threshold sits below the export limit by the trigger margin, so a pool
-    of zero still has real headroom in front of it — that is what the lead time
+    of zero still has real headroom in front of it - that is what the lead time
     is for.
     """
     tank = _tank(watts=2000.0, priority=1, heating=False)
@@ -415,7 +415,7 @@ def test_a_binary_load_starts_at_a_bare_verdict_like_a_modulating_one():
 
 def test_the_higher_ranked_binary_load_wins_at_the_threshold():
     """The inversion itself, pinned: the boosting tank outranks the station, so
-    at a pool of exactly 0 the TANK runs and the station yields — the same
+    at a pool of exactly 0 the TANK runs and the station yields - the same
     order it has at every surplus above zero."""
     tank = _tank(watts=2000.0, priority=1, heating=False, phase="A")
     tank.mode_behavior = "binary_excess"
@@ -429,7 +429,7 @@ def test_the_higher_ranked_binary_load_wins_at_the_threshold():
 
 def test_neither_behaviour_starts_on_a_phase_that_is_importing():
     """The other half of the one rule. A negative pool means these phases are
-    BUYING, which is the one thing an Excess load exists to avoid — so a load
+    BUYING, which is the one thing an Excess load exists to avoid - so a load
     that is not already drawing must not start, whatever the site-wide verdict
     says. Both behaviours, identically."""
     tank = _tank(watts=2000.0, priority=1, heating=False)
@@ -447,7 +447,7 @@ def test_neither_behaviour_starts_on_a_phase_that_is_importing():
 
 def test_a_running_binary_load_rides_the_release_band_too():
     """The half the binary behaviour did not have. A running load holds through
-    a dip below the threshold — that is what the verdict's hysteresis is for —
+    a dip below the threshold - that is what the verdict's hysteresis is for -
     where the old ``pool > 0`` test dropped it, so a plug chattered on the same
     dip a modulating load rode out.
 
@@ -483,8 +483,8 @@ def _unmanaged_plug(eid="plug", watts=2000.0, priority=1, phase="A", draw_w=0.0)
 
 def test_an_unmanaged_load_does_not_claim_the_surplus():
     """The one that bit. A plug switched OFF, drawing nothing, with Dynamic
-    Control off, was still allocated its minimum every cycle — ``FULL_POWER``
-    returns ``max_current`` unconditionally — and ``_claims_its_permit`` is
+    Control off, was still allocated its minimum every cycle - ``FULL_POWER``
+    returns ``max_current`` unconditionally - and ``_claims_its_permit`` is
     true for a plug (min == max), so it charged ``max(0, 8.7) = 8.7 A`` to the
     Excess start ledger. That reserved 2 kW of surplus indefinitely and a
     boosting tank on another phase flapped on and off against what was left
@@ -530,7 +530,7 @@ def test_a_running_load_is_dropped_when_its_phase_turns_to_import():
 
     There used to be a carve-out: a load already drawing bypassed the test, on
     the reasoning that a phase turning to import is a dip and cutting the load
-    would chatter. Too generous — a phase turns around because the household on
+    would chatter. Too generous - a phase turns around because the household on
     it grew, and it stays turned around. Found on the rig (2026-09-08): a tank
     started while phase B exported, the household on B was raised past the
     inverter's share of it, and the tank went on drawing 2 kW from the grid
@@ -545,9 +545,9 @@ def test_a_running_load_is_dropped_when_its_phase_turns_to_import():
     tank.mode_priority = 4
     tank.excess_claim_current = tank.max_current
     # Phase B imports while A and C export enough to keep the site over its
-    # threshold — the unbalanced shape the rig reproduced.
+    # threshold - the unbalanced shape the rig reproduced.
     site = _site_3ph(THRESHOLD + 1400.0, loads=[tank])
-    # The PHYSICAL meter, which includes the tank's own 8.7 A on B — 3.6 A of
+    # The PHYSICAL meter, which includes the tank's own 8.7 A on B - 3.6 A of
     # household import plus the tank. _prepare takes the managed draw back off,
     # leaving the household-only 3.6 A of import the guard has to see.
     site.consumption = PhaseValues(0.0, 3.6 + 2000.0 / V, 0.0)
@@ -562,7 +562,7 @@ def _site_3ph(export_w, loads=(), breaker=BREAKER, threshold=THRESHOLD):
 
     Spread evenly, as a symmetric inverter does. The export limit the Excess
     threshold stands for is a site total, so what the pool rations is the total
-    — which is the whole point of the test below.
+    - which is the whole point of the test below.
     """
     per_phase = export_w / V / 3.0
     return SiteContext(
@@ -593,14 +593,14 @@ def _site_3ph(export_w, loads=(), breaker=BREAKER, threshold=THRESHOLD):
 
 
 def test_the_pool_totals_its_phases():
-    """-1, -1, 2 sums to 0, so nothing is available anywhere — a load on C must
+    """-1, -1, 2 sums to 0, so nothing is available anywhere - a load on C must
     not see its own +2 while A and B are importing, because taking it would
     simply make the site import."""
     pool = PhaseConstraints.from_per_phase(-1.0, -1.0, 2.0, netting=True)
     assert _close(pool.ABC, 0.0)
     assert _close(pool.get_available("C"), 0.0)
     # A three-phase load is bound by its WEAKEST leg (-1), not by the total's
-    # share (0) — it cannot avoid drawing on the importing phases. Either way
+    # share (0) - it cannot avoid drawing on the importing phases. Either way
     # it is refused; the value says which constraint answered.
     assert _close(pool.get_available("ABC"), -1.0)
 
@@ -611,8 +611,8 @@ def test_an_importing_phase_does_not_bind_a_load_elsewhere():
 
     It used to get 0, because the two-phase field AC = -2 + 2 = 0 was applied
     as a bound on a single-phase load that is not even on phase A. That was
-    never a gross-vs-net matter — a pair field bounds a load SPANNING those
-    phases and nothing else — so it was fixed in ``get_available`` itself and
+    never a gross-vs-net matter - a pair field bounds a load SPANNING those
+    phases and nothing else - so it was fixed in ``get_available`` itself and
     both readings now agree. Asserted for both to keep it that way.
     """
     net = PhaseConstraints.from_per_phase(-2.0, 1.0, 2.0, netting=True)
@@ -625,15 +625,15 @@ def test_a_claim_bigger_than_its_phase_still_comes_off_the_site_total():
     """The two paths treat an over-sized deduction differently, and both are
     right for what they hold.
 
-    NET (the Excess pool): ``current`` is a CLAIM — what the load will draw
-    once it responds — so it comes off the total in full even though it exceeds
+    NET (the Excess pool): ``current`` is a CLAIM - what the load will draw
+    once it responds - so it comes off the total in full even though it exceeds
     one phase's share. 4.348 A/phase (3 kW of surplus) less a 9.13 A tank claim
     on B leaves 3.91 A, and that 900 W is what a load on another phase may have.
 
     GROSS (the physical pool): ``current`` is a MEASURED draw, and the fields
     are per-phase upper bounds, so it is capped at what the mask can actually
     take. An over-draw is absorbed on its own phase and the others keep their
-    headroom — three breaker poles, each carrying its own phase, so a device
+    headroom - three breaker poles, each carrying its own phase, so a device
     overshooting on B says nothing about A.
     """
     pool = PhaseConstraints.from_per_phase(4.348, 4.348, 4.348, netting=True)
@@ -648,7 +648,7 @@ def test_a_claim_bigger_than_its_phase_still_comes_off_the_site_total():
 
 
 def test_the_netting_flag_survives_every_pool_operation():
-    """A method that drops the flag silently reverts the pool to gross — a
+    """A method that drops the flag silently reverts the pool to gross - a
     wrong number with no error, so every operation is pinned."""
     base = PhaseConstraints.from_per_phase(1.0, 1.0, 1.0, netting=True)
     other = PhaseConstraints.from_per_phase(1.0, 1.0, 1.0, netting=True)
@@ -672,7 +672,7 @@ def test_a_net_pool_is_never_reshaped_by_normalize():
     """normalize()'s clamp-and-cascade keeps a set of non-negative UPPER BOUNDS
     mutually consistent, which is what a gross pool holds. A net pool's fields
     are signed positions summing to its total, so it passes through untouched
-    even with a phase deep in the negative — clamping would discard the very
+    even with a phase deep in the negative - clamping would discard the very
     information the total is read from."""
     pool = PhaseConstraints.from_per_phase(-5.0, 4.0, 4.0, netting=True)
     assert pool.normalize() == pool
@@ -686,7 +686,7 @@ def test_a_claim_on_one_phase_counts_against_a_load_on_another():
     phase C still read its own pool as untouched, so both ran on the same site
     headroom. ``_excess_ahead`` used to branch on
     ``inverter_supports_asymmetric`` and, for a symmetric inverter, count only
-    the claims landing on this load's own phases — the per-phase view that is
+    the claims landing on this load's own phases - the per-phase view that is
     correct for the INVERTER CAPACITY pool and wrong for this one.
     """
     tank = _tank(phase="B", heating=True)
@@ -704,7 +704,7 @@ def test_a_claim_on_another_phase_still_leaves_room_when_there_is_room():
     """The mirror: the scope change must not starve a load that genuinely fits.
 
     3 kW of site surplus against the tank's 2.1 kW claim leaves 900 W, and the
-    station starts — on 1.3 A, which is the leftover spread over the site's
+    station starts - on 1.3 A, which is the leftover spread over the site's
     three phases (4.35 A of phase-C surplus less the claim's 3.04 A share),
     not the 3.9 A that 900 W on one phase would be.
 
@@ -717,7 +717,7 @@ def test_a_claim_on_another_phase_still_leaves_room_when_there_is_room():
     C is then bound by C, not by the site total.
 
     Whether that is a defect depends on a question this test does not settle:
-    an Excess load may not drive its OWN phase into import (Anze, 2026-09-07 —
+    an Excess load may not drive its OWN phase into import (Anze, 2026-09-07 -
     a Standard load may, and does, because it reads the physical pool), and
     letting C reach the whole site total would do exactly that. So the 1.3 A is
     the conservative reading of a real constraint, not an accounting artifact.
@@ -734,7 +734,7 @@ def test_a_claim_on_another_phase_still_leaves_room_when_there_is_room():
 def test_a_running_lower_ranked_load_yields_when_the_tank_claims_the_surplus():
     """The station was charging at its 0.9 A floor when the tank engaged. With
     the tank's claim exceeding the 300 W surplus the station is cut, not held
-    at its floor — the rank above it owns the surplus."""
+    at its floor - the rank above it owns the surplus."""
     tank = _tank(heating=True)
     station = _evse("station", min_current=0.9, max_current=10.4, priority=3, draw=0.9)
     _prepare(_site(THRESHOLD + 300.0 - 2100.0 - 0.9 * V, loads=[tank, station]))
@@ -744,7 +744,7 @@ def test_a_running_lower_ranked_load_yields_when_the_tank_claims_the_surplus():
 
 def test_an_idle_tank_about_to_boost_claims_before_it_heats():
     """The verdict-on cycle: the tank's thermostat has not responded yet, so
-    the tank is INACTIVE — but it will boost, and it says so
+    the tank is INACTIVE - but it will boost, and it says so
     (excess_claim_current). The station behind it must not start on the 300 W
     the tank is about to take, on that very cycle."""
     tank = _tank(heating=False)
@@ -765,7 +765,7 @@ def test_an_idle_tank_about_to_boost_claims_before_it_heats():
     # not-yet-drawing tank has left untouched.
     assert _close(station2.allocated_current, 400.0 / V, tol=0.06)
 
-    # An idle tank that will NOT boost (already above its boost setpoint —
+    # An idle tank that will NOT boost (already above its boost setpoint -
     # claim 0) leaves the surplus to the station.
     tank3 = _tank(heating=False)
     tank3.connector_status = "Available"
@@ -792,7 +792,7 @@ def test_a_settled_grid_backed_evse_claims_only_its_draw():
 
 def test_the_pool_beyond_the_floors_follows_the_rank():
     """20 A of pool, two 6 A floors: the rest is the higher-ranked load's, and
-    the lower-ranked one stays at its floor. Ordering is unchanged — the same
+    the lower-ranked one stays at its floor. Ordering is unchanged - the same
     _rank the distributor has always served."""
     first = _evse("first", priority=1)
     second = _evse("second", priority=2)
@@ -829,7 +829,7 @@ def test_a_wire_that_cannot_fit_the_minimum_still_stops_the_load():
 
 def test_a_phase_the_site_does_not_have_still_stops_the_load():
     """The floor is per-phase current on the phases the load occupies. This site
-    has only phase A, so a load wired to B has no pool to floor — the
+    has only phase A, so a load wired to B has no pool to floor - the
     phase-mask arithmetic zeroes it while the verdict is on."""
     load = _evse(phase="B")
     margin = _prepare(_site(THRESHOLD, loads=[load]))
@@ -854,5 +854,5 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

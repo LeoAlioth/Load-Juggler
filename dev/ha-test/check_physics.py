@@ -1,13 +1,13 @@
 """Check the simulator's derived physics without booting a config flow.
 
 The grid CTs here are computed by a stack of Jinja templates, and a wrong sign
-or a missed phase would look like an engine bug rather than a rig bug — the
+or a missed phase would look like an engine bug rather than a rig bug - the
 kind of confusion that costs an afternoon. This renders those templates against
 stubbed states and checks the arithmetic against hand-computed answers.
 
 WHAT IT CANNOT CHECK, and this bit matters: it renders the templates itself,
 against its own fixed-point loop. Home Assistant's dependency TRACKING is not
-exercised at all — so a template that is arithmetically perfect but never
+exercised at all - so a template that is arithmetically perfect but never
 re-renders passes here and is broken in the instance. That is exactly what
 happened: the per-phase aggregates matched their sources with
 ``states.sensor | selectattr('object_id', ...)``, which gives Home Assistant no
@@ -16,7 +16,7 @@ script was green throughout. Only the running instance showed it (the aggregate
 sat 34 minutes stale while its source had moved 3 minutes earlier).
 
 The aggregates now name their sources with ``states('...')``, which is tracked.
-The test below pins the property that made the tidy version tempting — a
+The test below pins the property that made the tidy version tempting - a
 deleted device package still contributes 0 rather than breaking the sum.
 
 Run it inside the container, which already has jinja2 and PyYAML:
@@ -45,7 +45,7 @@ def collect():
 
     Returns (state-based, trigger-based): the first settle to a fixed point on
     every change, the second only advance when their trigger fires, and they
-    can read their own previous state — which is what makes a delay line
+    can read their own previous state - which is what makes a delay line
     possible at all, and what has to be simulated tick by tick.
     """
     plain, triggered = [], []
@@ -123,7 +123,7 @@ def tick(triggered, env):
     """One firing of the 5-second time pattern.
 
     `state` and `attributes` are both rendered against the entity's state
-    BEFORE the run and committed together — which is precisely what makes
+    BEFORE the run and committed together - which is precisely what makes
     `this.attributes.pending` the value from one tick ago rather than this
     one's. Rendering them in sequence, committing as you go, would collapse
     the delay to nothing and the rig would look instant again.
@@ -304,7 +304,7 @@ def main():
     # The engine derives phases from len(connected_to_phase) and spreads the
     # draw the same way, so a mask the rig splits evenly is exactly what it
     # expects. Pinned here because an exact-match phase test would silently
-    # report ZERO draw for "ABC" — the load would vanish from the physics
+    # report ZERO draw for "ABC" - the load would vanish from the physics
     # while still being granted power.
     STATE["input_select.sim_station_phase"] = "ABC"
     STATE["input_number.sim_station_charge_speed_raw"] = "3000"

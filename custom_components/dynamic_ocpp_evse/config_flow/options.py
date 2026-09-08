@@ -1,14 +1,14 @@
 """Load Juggler - the options flow: the single edit path after setup.
 
-``LoadJugglerOptionsFlow`` is what "Configure" opens on an existing entry —
+``LoadJugglerOptionsFlow`` is what "Configure" opens on an existing entry -
 a small menu that branches to the settings steps for whatever the entry is
 (hub, inverter, group or one of the load types) and to the two read-only pages.
 It owns no schemas of its own: every form it shows comes from ``schemas.py``,
 the same builders the create flow uses.
 
-Two executors carry the shape the steps share — ``_async_edit_page`` for a
+Two executors carry the shape the steps share - ``_async_edit_page`` for a
 page that saves on submit, ``_async_wizard_page`` for one that routes on to
-the next — so each step is left declaring only what makes it different. The
+the next - so each step is left declaring only what makes it different. The
 priority and circuit-group steps stay hand-written; see their docstrings.
 """
 import voluptuous as vol
@@ -139,7 +139,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     def _save(self) -> config_entries.FlowResult:
         """Write what the steps collected in ``self._data`` back to the entry.
 
-        Options only — the static ``data`` half is never edited after setup, so
+        Options only - the static ``data`` half is never edited after setup, so
         the previous options are the base every step merges onto.
         """
         return self.async_create_entry(
@@ -163,7 +163,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         The shape every single-page settings step shares. The stored config is
         the form's defaults; a submit normalizes the page's entity fields
-        (``entity_keys`` — omitted ones were cleared) and any multi-select
+        (``entity_keys`` - omitted ones were cleared) and any multi-select
         lists, validates units and whatever else the page demands, and saves.
         A failed validation re-shows the form over what the user just typed.
 
@@ -173,7 +173,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 pass to the form as the ``entity`` placeholder.
             finalize: last-moment rewrite of the data about to be stored.
 
-        The hub and charger wizards do NOT use this — their submit branch
+        The hub and charger wizards do NOT use this - their submit branch
         routes to the next step instead of saving, so they stay hand-written.
         """
         errors: dict[str, str] = {}
@@ -219,7 +219,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         """Run one page of a multi-step edit wizard: normalize → validate → on.
 
         The same skeleton as _async_edit_page, except a clean submit routes to
-        ``next_step`` instead of saving — the input piles up in ``self._data``
+        ``next_step`` instead of saving - the input piles up in ``self._data``
         until the wizard's final step calls _save(). A failed validation
         re-shows the form over the submitted input alone; the first show uses
         the stored config, or ``show_defaults`` where a page has to massage it.
@@ -266,7 +266,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """The one entry point for editing an entry — a small menu.
+        """The one entry point for editing an entry - a small menu.
 
         "Configure" is the single edit path (there is no reconfigure flow), so
         this menu also hosts the two read-only pages: a live Overview for every
@@ -275,7 +275,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         entry_type = self.config_entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
         if entry_type == ENTRY_TYPE_INVERTER:
             # An inverter's menu lists its pages directly: the features first,
-            # then one page per declared feature — each saves on its own.
+            # then one page per declared feature - each saves on its own.
             features = inverter_features(self.config_entry)
             menu_options = ["inverter_features", "inverter_core"]
             if INVERTER_FEATURE_SOLAR in features:
@@ -315,14 +315,14 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         Rendered as a MENU, not a form: a form's submit button is fixed to
         "Next"/"Submit" by HA, which reads as if something gets saved. Menu
-        options give real, labeled buttons instead — "Refresh" re-enters this
+        options give real, labeled buttons instead - "Refresh" re-enters this
         step (rebuilding the text from live data), "Back" returns to init.
         """
         try:
             text = _overview_text(self.hass, self.config_entry.entry_id)
-        except Exception:  # pragma: no cover — a display page must not break
+        except Exception:  # pragma: no cover - a display page must not break
             _LOGGER.exception("Could not build the overview page")
-            text = "⚠️ Could not read the live data — see the Home Assistant log."
+            text = "⚠️ Could not read the live data - see the Home Assistant log."
         return self.async_show_menu(
             step_id="overview",
             menu_options=["overview", "init"],
@@ -334,14 +334,14 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.FlowResult:
         """Read-only "how it decides" page (hub only).
 
-        A menu for the same reason as async_step_overview — the only action
+        A menu for the same reason as async_step_overview - the only action
         here is going back, and a form's "Next" button would misname it.
         """
         try:
             text = _summary_text(self.hass, self.config_entry.entry_id)
-        except Exception:  # pragma: no cover — a display page must not break
+        except Exception:  # pragma: no cover - a display page must not break
             _LOGGER.exception("Could not build the summary page")
-            text = "⚠️ Could not read the configuration — see the Home Assistant log."
+            text = "⚠️ Could not read the configuration - see the Home Assistant log."
         return self.async_show_menu(
             step_id="summary",
             menu_options=["init"],
@@ -352,7 +352,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Route to the editable pages for this entry type."""
-        # A pre-2.0 entry carries no entry_type — those are hubs (async_setup
+        # A pre-2.0 entry carries no entry_type - those are hubs (async_setup
         # stamps the type on load, so this only matters before the first load).
         entry_type = self.config_entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
 
@@ -480,7 +480,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.FlowResult:
         """Hub settings step 1: the grid connection and the site policy.
 
-        No auto-detection when editing an existing hub — only the initial
+        No auto-detection when editing an existing hub - only the initial
         install scans for entities. Re-detecting here can grab entities from an
         unrelated system (e.g. a second inverter in another building), silently
         adding phantom phases. The stored values are shown as-is.
@@ -497,7 +497,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         async def _next() -> config_entries.FlowResult:
             # Post-import the hardware (inverters, batteries, PV sensors and
-            # forecast sources) is edited on the inverter entries — the legacy
+            # forecast sources) is edited on the inverter entries - the legacy
             # hub pages are skipped entirely.
             if self.config_entry.data.get(MIGRATE_HUB_INVERTER_IMPORTED_FLAG):
                 return await self.async_step_priority()
@@ -576,7 +576,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_hub_inverter(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """LEGACY hub inverter page — reachable only while the hub still
+        """LEGACY hub inverter page - reachable only while the hub still
         carries those fields (i.e. before the one-time auto-import).
 
         No auto-detection when editing an existing hub: re-detecting the
@@ -587,7 +587,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         """
 
         def _battery_power_hint() -> dict[str, str]:
-            """Detected battery discharge power — form text only, sets nothing."""
+            """Detected battery discharge power - form text only, sets nothing."""
             hint = _auto_detect_entity_value(
                 self.hass, BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR
             )
@@ -625,7 +625,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_hub(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """LEGACY hub solar/battery page — reachable only while the hub still
+        """LEGACY hub solar/battery page - reachable only while the hub still
         carries those fields (i.e. before the one-time auto-import).
 
         No auto-detection here either: re-detecting can grab battery/solar
@@ -659,12 +659,12 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         Presents one ordered multi-select listing every load (EVSE, smart plug,
         hot-water tank) linked to this hub. The selection order becomes the
         served-first order: the first chip is priority 1, the next is 2, and so
-        on. This is the single place to set relative priority — the per-device
+        on. This is the single place to set relative priority - the per-device
         number is written back to each child entry from the chosen order.
         """
         devices = _controlled_devices(self.hass, self.config_entry.entry_id)
 
-        # No loads to order yet — just persist the hub settings and finish.
+        # No loads to order yet - just persist the hub settings and finish.
         if not devices:
             return self._save()
 
@@ -686,7 +686,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         """Options charger step 1: priority and the OCPP device behind it.
 
         The same device picker the create wizard's charger_info step offers,
-        instead of the free-text charge point id it replaces — an id nobody can
+        instead of the free-text charge point id it replaces - an id nobody can
         check, typed against a device the registry already knows by name.
 
         Pre-selected to whatever device claims the stored charge point id. When
@@ -731,7 +731,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 "charge_point_id": get_entry_value(
                     self.config_entry, CONF_OCPP_DEVICE_ID, None
                 )
-                or "—"
+                or "-"
             }
 
         def _apply_picked_device(
@@ -793,10 +793,10 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_charger_timing(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Options charger step 3: Units and timing (final — saves)."""
+        """Options charger step 3: Units and timing (final - saves)."""
 
         # A device picked on the charger page is not stored yet, so the pending
-        # charge point id wins — the detected-unit hint has to describe the
+        # charge point id wins - the detected-unit hint has to describe the
         # charger the user just pointed at, not the one being replaced. Then
         # options-first, since a previous edit lives in entry.options.
         ocpp_device_id = self._data.get(CONF_OCPP_DEVICE_ID) or get_entry_value(

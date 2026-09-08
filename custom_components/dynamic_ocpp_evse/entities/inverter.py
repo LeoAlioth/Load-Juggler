@@ -1,4 +1,4 @@
-"""Per-inverter entities — sensors on each inverter device.
+"""Per-inverter entities - sensors on each inverter device.
 
 An inverter config entry is a power source linked to a hub, optionally
 carrying its own battery. The engine aggregates the hub's inverter fleet each
@@ -113,7 +113,7 @@ INVERTER_SENSOR_DEFINITIONS = [
     },
     # OBSERVE-ONLY: how this array's forecast is actually performing, as
     # measured actual ÷ forecast energy over today's unconstrained intervals.
-    # 100% means the forecast is exactly right. Nothing acts on it — it exists
+    # 100% means the forecast is exactly right. Nothing acts on it - it exists
     # so a season of evidence can decide whether a learned gain is worth
     # applying (see calculations/calibration.py and dev/TODO.md). No
     # device_class: this is a ratio in percent, not a battery level, and
@@ -130,7 +130,7 @@ INVERTER_SENSOR_DEFINITIONS = [
         "decimals": 1,
         "requires_forecast_device": True,
         # This sensor carries the gain observer's 15-minute series across
-        # restarts (restore data, not attributes — the recorder must not copy
+        # restarts (restore data, not attributes - the recorder must not copy
         # a growing array on every state change) and publishes the learned
         # gain, its hourly offsets and the series size as attributes.
         "restores_gain": True,
@@ -145,7 +145,7 @@ class LoadJugglerInverterDataSensor(
 
     A pure reader of the hub's published fleet aggregate, so it is pushed by
     the hub coordinator and available only while that publication is fresh.
-    All of these are numeric instantaneous readings (W, %) — measurement.
+    All of these are numeric instantaneous readings (W, %) - measurement.
 
     One definition (``restores_gain``) also carries state: the forecast gain
     observer's series of 15-minute forecast/actual energy pairs rides along in
@@ -159,7 +159,7 @@ class LoadJugglerInverterDataSensor(
     # renaming the inverter device renames every sensor on it. The unique_id
     # (and therefore the entity_id) is unaffected by a rename. The entity half
     # comes from the translations (entity.sensor.<key>.name), keyed by the
-    # definition's unique_id_suffix — both are stable identifiers for the same
+    # definition's unique_id_suffix - both are stable identifiers for the same
     # sensor, so one field serves as both.
     _attr_has_entity_name = True
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -184,7 +184,7 @@ class LoadJugglerInverterDataSensor(
         """This cycle's figure, or unknown when this inverter has none.
 
         Same contract as the hub data sensors: None from the producer means "no
-        measurement this cycle" — this inverter's production sensor is
+        measurement this cycle" - this inverter's production sensor is
         unreadable with nothing to hold, so the fleet substituted 0 W for the
         calculation and refuses to publish it. Clearing shows `unknown`;
         holding the last value would freeze a stale reading that looks live,
@@ -204,7 +204,7 @@ class LoadJugglerInverterDataSensor(
     # --- The gain series: attributes out, restore data across restarts ------
 
     def _hub_runtime(self) -> dict:
-        """The hub's runtime bucket — where the observers keep their state."""
+        """The hub's runtime bucket - where the observers keep their state."""
         hub_id = self._site_hub_entry_id
         hubs = self.hass.data.setdefault(DOMAIN, {}).setdefault("hubs", {})
         return hubs.setdefault(hub_id, {}) if hub_id else {}
@@ -252,13 +252,13 @@ class LoadJugglerInverterDataSensor(
 class LoadJugglerInverterChargeControlSensor(
     SiteCycleWorkerMixin, InverterEntityMixin, SensorEntity
 ):
-    """The applied battery charge limit — and the loop that performs the writes.
+    """The applied battery charge limit - and the loop that performs the writes.
 
     A MEASUREMENT of the target register: the value the inverter's charge-limit
     number entity currently holds, in that register's own units (DC amps or
     watts, per ``CONF_CHARGE_LIMIT_UNIT``). That graphs the whole story
-    continuously — flat at the normal limit, dipping while the forecast holds the
-    battery back, restored on release — and earns long-term statistics, which the
+    continuously - flat at the normal limit, dipping while the forecast holds the
+    battery back, restored on release - and earns long-term statistics, which the
     text state it used to publish ("Limiting to 17.0A") could never do. The
     register is read once per cycle by the control below; None (unknown) when it
     cannot be read at all.
@@ -268,20 +268,20 @@ class LoadJugglerInverterChargeControlSensor(
     Releasing is a log line rather than a state, since a one-cycle status nobody
     sees is not worth the extra state.
 
-    Its per-cycle work is an AWAIT — a Modbus register write — not a read, so it
+    Its per-cycle work is an AWAIT - a Modbus register write - not a read, so it
     joins the site cycle as a *worker* rather than as a coordinator listener
     (see SiteCycleWorkerMixin). That keeps the writes on the same clock as the
     forecast that produces them, keeps exactly one place talking to the
     inverter's register, and gets the serialization the old platform poll used
     to provide: the coordinator awaits its workers one at a time.
 
-    Still unconditionally available, unlike every reader on this device — and now
+    Still unconditionally available, unlike every reader on this device - and now
     that it does publish a reading, that is a deliberate re-decision rather than
     the old answer carried over. The freshness gate exists because a stale
     *reading* lies: a held 0 W of solar reads as a live 0 W within seconds,
     because solar moves on its own. A charge-limit register does not. It changes
     only when something writes it, and while the control is armed we are the only
-    writer — so the last value we read stays factually true for as long as nobody
+    writer - so the last value we read stays factually true for as long as nobody
     writes it, which is exactly the property the gate assumes a reading lacks.
     The failure that does matter here, an unreadable register, is reported in the
     value itself (None → unknown) rather than by blanking the entity, and the
@@ -293,7 +293,7 @@ class LoadJugglerInverterChargeControlSensor(
 
     The residual: if the site cycle dies, nothing re-reads the register, so the
     last value is held and its statistics flatline until the integration is
-    reloaded — visible only as every other sensor on the device going unavailable
+    reloaded - visible only as every other sensor on the device going unavailable
     beside it.
     """
 
@@ -359,7 +359,7 @@ class LoadJugglerInverterChargeControlSensor(
         """Push this cycle's advice to the inverter, then report the outcome.
 
         Called by the hub coordinator once per site cycle, after the result has
-        been published — the advice this consumes is part of that publication.
+        been published - the advice this consumes is part of that publication.
         The directional pacing, deadband and the upward slew limit all live in
         ``control/inverter.py`` and are wall-clock based, so they are unaffected
         by how often this runs: a faster cadence feeds the downward persistence
@@ -370,14 +370,14 @@ class LoadJugglerInverterChargeControlSensor(
         ``control/power_station.py`` are handed the site voltage.
         """
         # None both when the forecast is off and when it has released the
-        # limit — the control treats them the same way, as "restore".
+        # limit - the control treats them the same way, as "restore".
         section = self._inverter_section(hub_data)
         advice_w = section.get("forecast_charge_limit_w")
         # The forecast's charge GATE, which the control's downward persistence
         # window needs in order to tell the cap ENGAGING (protective, written at
         # once) from a steady-state correction (paced). Missing means a hub that
         # published no gate state, and the control degrades to writing
-        # reductions immediately — see ``send_inverter_charge_limit``.
+        # reductions immediately - see ``send_inverter_charge_limit``.
         await send_inverter_charge_limit(
             self.hass,
             self.config_entry,
@@ -392,8 +392,8 @@ class LoadJugglerInverterChargeControlSensor(
         """Adopt the register value the control last read back for this inverter.
 
         Not a second read of the register: the control's own read is the only one,
-        recorded in the runtime dict on every call — including the calls the
-        pacing makes return early — so this stays a dict lookup. Missing (no
+        recorded in the runtime dict on every call - including the calls the
+        pacing makes return early - so this stays a dict lookup. Missing (no
         target entity configured, or before the first cycle) and unreadable both
         land on None, which HA renders as unknown; the standing that explains
         which one it is rides along in ``control_state``.
@@ -404,13 +404,13 @@ class LoadJugglerInverterChargeControlSensor(
         )
 
     async def async_update(self):
-        """Re-read the reported value — deliberately WITHOUT writing.
+        """Re-read the reported value - deliberately WITHOUT writing.
 
         Polling is off, so no clock calls this; it runs when someone invokes
         ``homeassistant.update_entity`` on this sensor, and when the HA test tier
         drives the entity directly. It only re-reads what the last cycle
         recorded. Writing here would put a second, unserialized writer on the
-        register that any automation could trigger at any rate — able to overlap
+        register that any automation could trigger at any rate - able to overlap
         the cycle's own write and to spend the min-interval budget outside the
         one place that owns it.
         """
@@ -420,31 +420,31 @@ class LoadJugglerInverterChargeControlSensor(
 class LoadJugglerInverterSocControlSensor(
     SiteCycleWorkerMixin, SiteFreshnessMixin, InverterEntityMixin, SensorEntity
 ):
-    """The battery SOC ceiling being enforced — and the loop that enforces it.
+    """The battery SOC ceiling being enforced - and the loop that enforces it.
 
     A percentage, matching the *Recommended Battery Max SOC* sensor's own device
     class and unit so the two can be read against each other on one axis: the
     recommendation, and what actually got enforced after the min() with the
-    normal ceiling. None (unknown) while the switch is off — nothing is being
+    normal ceiling. None (unknown) while the switch is off - nothing is being
     enforced then, and 100 would be a claim about the slots we are not making.
 
     Its own worker, not a passenger on the charge-control sensor's. The two
-    write-controls are configured independently — an inverter can expose TOU SOC
-    slots and no charge-current register, or the reverse — so an inverter that
+    write-controls are configured independently - an inverter can expose TOU SOC
+    slots and no charge-current register, or the reverse - so an inverter that
     configures only this one has no charge-control sensor to ride, and a control
     that silently never ticked would be the worst possible failure here. What the
     single-worker arrangement was protecting is preserved anyway, and by the
     coordinator rather than by luck: it awaits its workers one at a time, so no
     two writes are ever in flight together, exactly as it already does for the
     several workers a multi-inverter site has. The two controls write disjoint
-    entities and read disjoint advice, so their order does not matter — which is
+    entities and read disjoint advice, so their order does not matter - which is
     just as well, since worker order is insertion order and not promised.
 
     Like its sibling it does no entity-side reads of its own: the slots are read
     by ``control/inverter.py`` once per call and handed over through the runtime
     dict (``INVERTER_RT_SOC_*``).
 
-    Availability DOES follow the site cycle, unlike the charge-control sensor —
+    Availability DOES follow the site cycle, unlike the charge-control sensor -
     and for the reason that sensor spells out, in reverse. That one measures a
     device register, which stays factually true for as long as nobody writes it.
     This one reports *our own intention*, which exists only while the cycle
@@ -473,7 +473,7 @@ class LoadJugglerInverterSocControlSensor(
 
         The slot map is the fan-out made visible: which entities this control
         drives and what each of them last read back, so a slot the user forgot
-        to include — or one that is unavailable and being skipped — is visible
+        to include - or one that is unavailable and being skipped - is visible
         without reading the log.
         """
         inverter_rt = self._inverter_runtime()
@@ -503,7 +503,7 @@ class LoadJugglerInverterSocControlSensor(
         """Drive this cycle's SOC ceiling, then report what is being enforced.
 
         Called by the hub coordinator once per site cycle, after the result has
-        been published — the advice this consumes is part of that publication,
+        been published - the advice this consumes is part of that publication,
         and it is the same number the *Recommended Battery Max SOC* sensor
         beside us reports. None means the forecast has nothing to say, which for
         this control is not a release but "track the normal ceiling".
@@ -530,7 +530,7 @@ class LoadJugglerInverterSocControlSensor(
         self._attr_native_value = None if desired is None else round(float(desired), 1)
 
     async def async_update(self):
-        """Re-read what is being enforced — deliberately WITHOUT writing.
+        """Re-read what is being enforced - deliberately WITHOUT writing.
 
         Same contract as the charge-control sensor's: ``update_entity`` is a
         service any automation can call at any rate, and writing from here would

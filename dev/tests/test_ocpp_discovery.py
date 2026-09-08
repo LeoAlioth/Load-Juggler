@@ -1,9 +1,9 @@
-"""OCPP charger discovery — device-registry driven, not entity-name guessing.
+"""OCPP charger discovery - device-registry driven, not entity-name guessing.
 
 The scan used to take one ``sensor.*_current_import`` entity_id, strip the
 suffix off it and guess every sibling as ``sensor.{base}{suffix}``. These tests
 pin the replacement: siblings are found through the device the ocpp integration
-created, and the charge point id — the only handle its services accept — is
+created, and the charge point id - the only handle its services accept - is
 read off the device-registry identifier it stamps.
 
 Every case here is one the old prefix guess got wrong or could not see at all,
@@ -182,7 +182,7 @@ def _configured_load(hass, hub_entry_id, current_import_entity):
 async def test_charge_point_id_comes_from_the_device_identifier(
     hass: HomeAssistant, ocpp_entry: MockConfigEntry
 ):
-    """Renamed entity_ids AND foreign unique_ids — only the device knows.
+    """Renamed entity_ids AND foreign unique_ids - only the device knows.
 
     The old scan needed ``sensor.<cpid>_current_import`` to exist and then
     guessed its siblings off that string, so this charger was invisible to it.
@@ -215,7 +215,7 @@ async def test_charge_point_id_comes_from_the_device_identifier(
 async def test_siblings_match_by_unique_id_when_entity_ids_are_renamed(
     hass: HomeAssistant, ocpp_entry: MockConfigEntry
 ):
-    """No device at all, renamed entity_ids — the ocpp unique_id still names both."""
+    """No device at all, renamed entity_ids - the ocpp unique_id still names both."""
     for metric, object_id in (
         ("Current.Import", "shed_draw"),
         ("Current.Offered", "shed_cap"),
@@ -243,8 +243,8 @@ async def test_per_phase_sensors_on_connector_devices_join_one_charger(
     The ocpp integration puts connector sensors on ``<cpid>-conn<n>``
     sub-devices and names them ``sensor.<cpid>_connector_<n>_<metric>``. The old
     scan read that entity_id as base name "<cpid>_connector_1", then looked for
-    ``sensor.<cpid>_connector_1_current_offered`` — which lives on the charge
-    point, not the connector — found nothing offered, and skipped the charger.
+    ``sensor.<cpid>_connector_1_current_offered`` - which lives on the charge
+    point, not the connector - found nothing offered, and skipped the charger.
     """
     charge_point = _ocpp_device(hass, ocpp_entry, "abb_terra")
     conn1 = _ocpp_device(hass, ocpp_entry, "abb_terra", connector=1)
@@ -360,7 +360,7 @@ async def test_ocpp_shaped_sensors_without_the_ocpp_integration_still_scan(
 ):
     """Template sensors mirroring a charger keep working (entity_id fallback).
 
-    Neither an ocpp device nor an ocpp unique_id nor an OCPP metric name — the
+    Neither an ocpp device nor an ocpp unique_id nor an OCPP metric name - the
     entity_id suffix is all there is, which is exactly what the pre-device scan
     keyed on. The charge point id falls back to the entity base name.
     """
@@ -515,7 +515,7 @@ async def test_charger_info_offers_a_device_picker_not_a_text_field(
     marker, validator = _field(schema, FIELD_OCPP_DEVICE)
     assert validator.config.get("integration") == "ocpp"
     # Pre-filled with the device discovery matched, so leaving it alone is a
-    # no-op — and suggested_value rather than default, so it can be cleared.
+    # no-op - and suggested_value rather than default, so it can be cleared.
     assert marker.description == {"suggested_value": device.id}
 
 
@@ -548,7 +548,7 @@ async def test_picking_another_device_rewrites_the_charge_point_and_its_sensors(
     """Correcting a mis-matched charger moves every OCPP field at once.
 
     The picked device decides the stored charge point id and the whole sensor
-    set — one derivation, the scanner's. Only CONF_CHARGER_ID stays behind: the
+    set - one derivation, the scanner's. Only CONF_CHARGER_ID stays behind: the
     discovery unique_id was already claimed on it.
     """
     mock_hub_entry.add_to_hass(hass)
@@ -579,7 +579,7 @@ async def test_picking_another_device_rewrites_the_charge_point_and_its_sensors(
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     data = result["result"].data
-    # The charge point id, resolved off the picked device — not its UUID.
+    # The charge point id, resolved off the picked device - not its UUID.
     assert data[CONF_OCPP_DEVICE_ID] == "bravo_cp"
     assert bravo.id not in data.values()
     assert data[CONF_CHARGER_ID] == "alpha_cp"
@@ -658,7 +658,7 @@ async def test_picking_a_device_that_is_no_charger_re_shows_the_form(
 def _lj_charger(hass, *, charger_id, ocpp_device_id=None, options=None, runtime=True):
     """A stored Load Juggler EVSE entry, plus its runtime bucket.
 
-    ``charger_id`` is CONF_CHARGER_ID — the id the legacy name guess composed
+    ``charger_id`` is CONF_CHARGER_ID - the id the legacy name guess composed
     off, kept for exactly that fallback. ``ocpp_device_id`` overrides the
     canonical charge point id the resolver classifies by (options when passed
     inside ``options``, mirroring an options-flow edit).
@@ -685,7 +685,7 @@ async def test_status_entity_resolves_a_renamed_status_sensor(
 ):
     """The bug: a renamed status entity made the composed name point at nothing.
 
-    ``sensor.renamed_cp_status_connector`` does not exist here — the real
+    ``sensor.renamed_cp_status_connector`` does not exist here - the real
     sensor is ``sensor.garage_state``, and only the registry knows that.
     """
     device = _ocpp_device(hass, ocpp_entry, "renamed_cp")
@@ -709,7 +709,7 @@ async def test_status_entity_follows_the_connector_the_charger_is_built_from(
     """Multi-connector: the status must be the SAME connector's as the draw.
 
     The composed name (``sensor.abb_terra_status_connector``) exists on no
-    device at all here — every status sensor is per connector.
+    device at all here - every status sensor is per connector.
     """
     charge_point = _ocpp_device(hass, ocpp_entry, "abb_terra")
     conn1 = _ocpp_device(hass, ocpp_entry, "abb_terra", connector=1)
@@ -729,7 +729,7 @@ async def test_status_entity_follows_the_connector_the_charger_is_built_from(
 
     resolved = ocpp_connector_status_entity(hass, entry)
 
-    # Lowest connector wins, exactly like every other metric — so the status
+    # Lowest connector wins, exactly like every other metric - so the status
     # belongs to the connector whose current_import the scan configured.
     (charger,) = scan_ocpp_chargers(hass)
     assert charger["current_import_entity"] == first_import
@@ -793,7 +793,7 @@ async def test_status_entity_keeps_the_standard_single_connector_name(
 async def test_status_entity_falls_back_to_the_composed_name(
     hass: HomeAssistant
 ):
-    """Nothing classifiable in the registry — today's working sites must hold.
+    """Nothing classifiable in the registry - today's working sites must hold.
 
     An OCPP-shaped template sensor that only exists as a state (no registry
     entry at all) is the case the composed name still has to cover.
@@ -809,7 +809,7 @@ async def test_status_entity_falls_back_to_the_composed_name(
 async def test_status_sensor_never_enters_the_stored_payload(
     hass: HomeAssistant, ocpp_entry: MockConfigEntry
 ):
-    """Classifying it must not add a stored key — no migration, no new field."""
+    """Classifying it must not add a stored key - no migration, no new field."""
     _standard_charger(
         hass,
         ocpp_entry,
@@ -829,7 +829,7 @@ async def test_status_sensor_never_enters_the_stored_payload(
 async def test_status_entity_is_resolved_once_per_setup(
     hass: HomeAssistant, ocpp_entry: MockConfigEntry
 ):
-    """Cached in the load's runtime bucket — the engine cannot scan per cycle."""
+    """Cached in the load's runtime bucket - the engine cannot scan per cycle."""
     device = _ocpp_device(hass, ocpp_entry, "cache_cp")
     status = _ocpp_sensor(
         hass, ocpp_entry, device, "cache_cp", "Status.Connector",
@@ -936,7 +936,7 @@ async def test_options_charger_repoints_the_whole_ocpp_side(
     mock_charger_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Options can change which OCPP device backs the charger — and now the
+    """Options can change which OCPP device backs the charger - and now the
     charge point id AND every sensor entity move together.
 
     The rewrite of test_options_flow_charger_edits_ocpp_device_id: it used to
@@ -965,7 +965,7 @@ async def test_options_charger_repoints_the_whole_ocpp_side(
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     options = mock_charger_entry.options
-    # The charge point id, resolved off the picked device — never its UUID.
+    # The charge point id, resolved off the picked device - never its UUID.
     assert options[CONF_OCPP_DEVICE_ID] == "bravo_cp"
     assert bravo.id not in options.values()
     assert options[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID] == (
@@ -986,7 +986,7 @@ async def test_options_charger_repoints_the_whole_ocpp_side(
     assert FIELD_OCPP_DEVICE not in options
     assert FIELD_OCPP_DEVICE not in mock_charger_entry.data
 
-    # The data half is untouched — options shadow it (options-first reads),
+    # The data half is untouched - options shadow it (options-first reads),
     # which is what every runtime read of these keys now goes through.
     assert mock_charger_entry.data[CONF_OCPP_DEVICE_ID] == "device_wallbox_1"
     assert mock_charger_entry.data[CONF_EVSE_CURRENT_IMPORT_ENTITY_ID] == (
@@ -1008,7 +1008,7 @@ async def test_options_charger_keeps_its_config_with_no_ocpp_device(
     mock_charger_entry: MockConfigEntry,
     mock_setup,
 ):
-    """A template-sensor site has no device to pick — submit must still work.
+    """A template-sensor site has no device to pick - submit must still work.
 
     Nothing in the registry claims "device_wallbox_1", so the picker opens
     empty. Pressing submit keeps every stored value: that is the one thing the
@@ -1050,7 +1050,7 @@ async def test_options_charger_refuses_a_device_that_is_no_charger(
     mock_charger_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Same error path as the wizard — refused on the field, nothing stored."""
+    """Same error path as the wizard - refused on the field, nothing stored."""
     empty = _ocpp_device(hass, ocpp_entry, "empty_cp")
     await _live_charger(hass, mock_hub_entry, mock_charger_entry)
 
@@ -1074,7 +1074,7 @@ async def test_options_charger_refuses_a_device_that_is_no_charger(
 # ``chargepoint.py`` stamps ``{(ocpp, cp_id), (ocpp, cpid)}`` on the charge
 # point: the id the charger reports over the wire AND the one configured in
 # Home Assistant. Only the cpid names the sensors' unique_ids, the entity_ids
-# and the charge-control switch, so only the cpid may be resolved — and
+# and the charge-control switch, so only the cpid may be resolved - and
 # ``device.identifiers`` is a SET, so reading "the first" one answered
 # differently per process. Both orders are covered below by choosing a cp_id
 # that sorts BEFORE the cpid in one case and AFTER it in the other: code that
@@ -1124,7 +1124,7 @@ def test_dual_identifier_device_is_found_by_its_reported_cp_id_too(
     hass: HomeAssistant, ocpp_entry: MockConfigEntry
 ):
     """The device lookup is a membership question, so either identifier finds
-    it — what must not happen is the cp_id becoming the STORED id."""
+    it - what must not happen is the cp_id becoming the STORED id."""
     device = _dual_identifier_charger(hass, ocpp_entry, "charger", "129.168.1.4:9000")
     assert ocpp_device_for_charge_point(hass, "129.168.1.4:9000") == device.id
 
@@ -1204,7 +1204,7 @@ def test_a_stale_uuid_charge_point_id_is_repaired(hass: HomeAssistant, ocpp_entr
 
 
 def test_repairing_leaves_the_sensor_entities_alone(hass: HomeAssistant, ocpp_entry):
-    """A silent repair moves the id and nothing else — re-pointing a charger
+    """A silent repair moves the id and nothing else - re-pointing a charger
     rewrites every sensor key, but that is a deliberate user action."""
     _dual_identifier_charger(hass, ocpp_entry, "charger", "129.168.1.4:9000")
     entry = _load_entry_with_device_id(
@@ -1246,7 +1246,7 @@ def test_a_stale_id_in_options_is_repaired_too(hass: HomeAssistant, ocpp_entry):
 
 
 def test_an_unidentifiable_charger_is_not_guessed(hass: HomeAssistant, ocpp_entry):
-    """No charger owns that sensor — leave the entry alone and let the error
+    """No charger owns that sensor - leave the entry alone and let the error
     stand. A wrong rewrite is worse than a visible failure."""
     _dual_identifier_charger(hass, ocpp_entry, "charger", "129.168.1.4:9000")
     entry = _load_entry_with_device_id(
@@ -1316,7 +1316,7 @@ def test_charge_control_switch_prefers_the_charger_over_its_connectors(
 def test_charge_control_switch_falls_back_to_the_composed_name(
     hass: HomeAssistant, ocpp_entry
 ):
-    """A template-sensor site has no ocpp switch to classify — unchanged."""
+    """A template-sensor site has no ocpp switch to classify - unchanged."""
     entry = _load_entry_with_device_id(
         hass, "hub", "sensor.lj_wallbox_current_import", "lj_wallbox"
     )

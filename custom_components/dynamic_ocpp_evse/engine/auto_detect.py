@@ -1,7 +1,7 @@
 """Auto-detection of grid CT inversion and phase mapping misconfigurations.
 
 Called once per hub calculation cycle from dynamic_ocpp_evse.py.
-State lives in hub_runtime["_auto_detect"] — functions are stateless.
+State lives in hub_runtime["_auto_detect"] - functions are stateless.
 Returns notification payload dicts; the async caller fires them.
 """
 
@@ -73,7 +73,7 @@ def check_inversion(state: dict, smoothed_phases: list, loads: list,
 
             # Both sides need a floor. A significant draw change paired with a
             # near-zero grid change (solar or another load absorbed it) carries
-            # no directional information — its sign is noise, and counting it
+            # no directional information - its sign is noise, and counting it
             # would let arbitrarily small grid wobble fill the window.
             if (abs(delta_draw) >= _INV_MIN_DELTA_A
                     and abs(delta_grid) >= _INV_MIN_GRID_DELTA_A):
@@ -200,7 +200,7 @@ def _evaluate_score(score: dict, notify_threshold: float):
 
     Returns:
         str: best phase (e.g., "A") if confident and total >= threshold
-        False: inconclusive — caller should apply soft decay
+        False: inconclusive - caller should apply soft decay
         None: not enough data yet
     """
     total = sum(score.values())
@@ -239,7 +239,7 @@ def _handle_mismatch(cs: dict, load, hub_entry_id: str, cid: str,
                      line_key: str, detected_phase: str,
                      configured_phase: str, line_label: str,
                      best_score: float, notify_key: str) -> dict | None:
-    """Handle a detected phase mismatch — notify (stage 1) or auto-remap (stage 2).
+    """Handle a detected phase mismatch - notify (stage 1) or auto-remap (stage 2).
 
     Returns a notification dict, or None if waiting for more confidence.
     """
@@ -423,7 +423,7 @@ def _check_draw_phase_correlation(pm_state: dict,
         result_1ph = _evaluate_score(cs["score"], _PM_NOTIFY_SCORE)
         if result_1ph is False:
             # Soft decay instead of hard reset. notify_sent_1ph is intentionally
-            # NOT reset here — clearing it makes the same mismatch notification
+            # NOT reset here - clearing it makes the same mismatch notification
             # re-fire every time the score oscillates around the threshold.
             for p in cs["score"]:
                 cs["score"][p] *= _PM_DECAY_FACTOR

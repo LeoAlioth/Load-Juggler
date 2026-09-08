@@ -1,8 +1,8 @@
 # A test Home Assistant, with simulated hardware
 
 The real integration, on a real Home Assistant, reading simulated devices. It
-covers the half of the code the pure test tiers cannot reach — the readers, the
-config flow, entity publication, the control writers, real timing and restarts —
+covers the half of the code the pure test tiers cannot reach - the readers, the
+config flow, entity publication, the control writers, real timing and restarts -
 while the pytest and scenario suites stay the place for arithmetic.
 
 The grid CTs are **derived, not slider-driven**:
@@ -23,7 +23,7 @@ feedback loop would spend every cycle fighting you.
 docker compose -f dev/ha-test/docker-compose.yml up -d
 ```
 
-Then open <http://localhost:8124> — port 8124, not 8123, so it can never take
+Then open <http://localhost:8124> - port 8124, not 8123, so it can never take
 the port a real Home Assistant on this machine wants.
 
 **One manual step:** Home Assistant needs an owner account, and only you can
@@ -33,7 +33,7 @@ analytics → Finish.
 
 ## What is simulated, and how faithfully
 
-One package per device. Delete a file and that device is gone from the site —
+One package per device. Delete a file and that device is gone from the site -
 which is how you test a site with no battery, or with only a plug.
 
 | Package | Entities to pick in Load Juggler |
@@ -45,17 +45,17 @@ which is how you test a site with no battery, or with only a plug.
 
 **Real, in the sense that the device's own logic is in the loop:**
 
-* **The plug** presents exactly a smart plug's surface — a `switch` the engine
+* **The plug** presents exactly a smart plug's surface - a `switch` the engine
   opens and closes, and a power monitor that reads 0 until the relay closes.
 * **The tank** is an actual `generic_thermostat`. The engine writes a
   *setpoint*; Home Assistant's own thermostat decides whether that means
   heating; only then does the element draw; and the engine reads the result
   back as `hvac_action`, which is where its connector status comes from. A tank
-  whose thermostat is idle is an inactive load however high the setpoint went —
+  whose thermostat is idle is an inactive load however high the setpoint went -
   that whole chain is real here, not stubbed.
 * **The station** is the modulating path: two `number` registers the engine
   writes, and an AC input that ramps toward the register rather than stepping
-  to it (`sim_station_ramp` — 100% is a converter, 50% is a car, and the slow
+  to it (`sim_station_ramp` - 100% is a converter, 50% is a car, and the slow
   case is what the engine's settling test exists for). It clamps to 0 once the
   pack reads 100%, because a station that has finished charging stops drawing
   however high the register is set.
@@ -70,7 +70,7 @@ which is how you test a site with no battery, or with only a plug.
   *wiring*; the `connected to phase` field in Load Juggler is the engine's
   *belief* about the wiring. Being able to make them disagree is a test.
 
-**Knobs, not simulations — nothing integrates over time:**
+**Knobs, not simulations - nothing integrates over time:**
 
 * Water temperature does not rise while the element is on. Drag it below the
   setpoint to make the tank call for heat.
@@ -101,7 +101,7 @@ rather than like arithmetic:
   easy to get wrong and expensive when you do: the monitors used to be
   instantaneous while the CTs lagged, and the feedback loop then removed a
   managed draw from a CT that had not registered it yet. For one sample a
-  phase read 2 kW lighter than it was — enough to flip an importing phase into
+  phase read 2 kW lighter than it was - enough to flip an importing phase into
   an exporting one and let a load run where it should have been refused. Three
   separate "engine bugs" were chased before the cause turned out to be the rig.
   The physical draw and the measured draw are now separate entities per device.
@@ -109,8 +109,8 @@ rather than like arithmetic:
   ramp is its converter taking a few seconds to reach the setpoint
   (`sensor.sim_station_draw`), the lag is the meter on it
   (`sensor.sim_station_ac_input`).
-* The binary loads' *physical* draw does step the instant the relay closes — a
-  resistive element really does — it is only the measurement that lags.
+* The binary loads' *physical* draw does step the instant the relay closes - a
+  resistive element really does - it is only the measurement that lags.
 
 Turn it off to isolate an engine question from a timing one. No real site is in
 that state.
@@ -120,7 +120,7 @@ that state.
 **Site** is the hardware you are pretending to have: the household, array,
 pack and voltage sliders, the derived meter, and the power-flow diagram.
 
-**Loads** pairs each managed load with itself — *the engine* card holds Load
+**Loads** pairs each managed load with itself - *the engine* card holds Load
 Juggler's own controls (operating mode, dynamic control, rated power, charge
 bounds, reserves) and its verdicts; *the hardware* card holds the simulated
 device. Side by side, because a permit the device ignores, or a draw the engine
@@ -137,7 +137,7 @@ tank on phase B and a power station on phase C.
 
 ## The power flow diagram
 
-The Simulator page opens with a **Sankey** — `Grid → the site → each managed
+The Simulator page opens with a **Sankey** - `Grid → the site → each managed
 load`, ribbons proportional to what is actually flowing right now. It is Home
 Assistant's own `power-sankey` card, which means it reads the **Energy
 dashboard's** preferences rather than entities named in the card, so three
@@ -145,12 +145,12 @@ things have to line up:
 
 1. **`energy:` in `configuration.yaml`.** The card subscribes to the energy
    collection, and without that component the websocket command does not
-   exist — the card fails to subscribe and takes the whole dashboard view down
+   exist - the card fails to subscribe and takes the whole dashboard view down
    with it, blank, with nothing in the Home Assistant log. It would have come
    in with `default_config:`, which is trimmed.
 2. **kWh statistics**, in `packages/energy.yaml`: a Riemann sum per source,
    because the energy prefs want an ever-increasing meter. `max_sub_interval`
-   is load-bearing there — an integration sensor otherwise only advances when
+   is load-bearing there - an integration sensor otherwise only advances when
    its source CHANGES, and a simulated site sits perfectly still between
    slider moves, so the totals would freeze exactly when you left the rig
    running to watch it settle.
@@ -163,7 +163,7 @@ things have to line up:
    ```
 
    and restart. Or set it up by hand at **Settings → Dashboards → Energy**:
-   grid (import, export, and a *power* sensor — `Standard`, pointed at
+   grid (import, export, and a *power* sensor - `Standard`, pointed at
    `sensor.sim_grid_net_power`, which is positive when importing), solar, the
    battery, and the three managed loads as individual devices. The devices are
    what break the loads out of the single "house" block and make this a Load
@@ -183,13 +183,13 @@ what the config flow accepts:
 
 | Setting | Production default | Here | What it costs you at the default |
 |---|---|---|---|
-| Site sensor refresh (hub) | 2 s | **1 s** | — |
+| Site sensor refresh (hub) | 2 s | **1 s** | - |
 | Load update frequency | 15 s | **5 s** | three cycles before a change is even re-evaluated |
 | Minimum off time (plug, tank) | 5 min | **0** | a load that switches off cannot come back for five minutes |
 | Solar/Excess grace period | 5 min | **0** | a load coasts at its minimum for five minutes after conditions fail, so you never see the release |
 
 They live in the config entries, not in the packages, so a reset that keeps
-`.storage` keeps them — and one that wipes `.storage` puts the defaults back
+`.storage` keeps them - and one that wipes `.storage` puts the defaults back
 along with everything else.
 
 **Read the rig's cadence as the rig's, not the product's.** Behaviour that
@@ -205,7 +205,7 @@ cycles before reading anything.
 
 ## Working with it
 
-The engine's own cycle log is the fastest read on what it is thinking — faster
+The engine's own cycle log is the fastest read on what it is thinking - faster
 than the Overview page, which only re-renders when you reopen it:
 
 ```bash
@@ -236,15 +236,15 @@ Each case waits **160 s** before sampling, and that number is load-bearing. A
 binary load settles in well under a minute, but a modulating one rings and
 damps: measured from a cold start, the station's permit spread decayed
 552 → 414 → 345 → 207 → 0 W over 150 s. Sampling at 95 s catches the ring and
-reports it as sustained hunting — a mistake made and then corrected on
+reports it as sustained hunting - a mistake made and then corrected on
 2026-09-08. Statuses must be exactly constant to pass; permits are allowed one
 register step (100 W) of wobble, because that is the smallest change a device
 can actually be told about.
 
 **Testing a moving surplus.** The fixed-point scenarios are a poor test of the
 control loop, because at a fixed operating point the ring simply damps away.
-`moving_surplus.py` drives the array on a slow sinusoid instead — a passing
-cloud — and reports how well a modulating load tracks it:
+`moving_surplus.py` drives the array on a slow sinusoid instead - a passing
+cloud - and reports how well a modulating load tracks it:
 
 ```bash
 python3 dev/ha-test/moving_surplus.py
@@ -273,8 +273,8 @@ out (`control/smoothing.apply_smoothing`).
 
 Read that table carefully, because it does not say "each change made things
 better". The adaptive rate helped (719 -> 596). Making a filter time-based
-helped at a SLOW cadence and cost at a fast one, both times — 1 164 -> 991 and
-991 -> 717 at 10 s, 596 -> 766 -> 832 at 1 s — because at a 1 s refresh the old
+helped at a SLOW cadence and cost at a fast one, both times - 1 164 -> 991 and
+991 -> 717 at 10 s, 596 -> 766 -> 832 at 1 s - because at a 1 s refresh the old
 per-call weight was accidentally filtering *less* than the 2 s default
 intends, so the new number is the consistent one and the old fast behaviour
 was the anomaly.
@@ -290,14 +290,14 @@ The remaining 10 s vs 1 s gap runs the OTHER way (717 against 832) and is the
 rate limiter, not the EMA: `approach = min(RAMP_APPROACH_MAX, RAMP_APPROACH_RATE
 * site_freq)` is still a fraction per CYCLE, and it saturates at 0.9 for any
 interval past ~6 s. So a 10 s site closes 90% of the error per cycle (tau ~4.3 s)
-where a 1 s site closes 15% (tau ~6.2 s) — the same per-cycle-versus-per-second
+where a 1 s site closes 15% (tau ~6.2 s) - the same per-cycle-versus-per-second
 mistake the EMAs had, hiding behind the cap. Converting it the same way
 (`1 - exp(-site_freq / tau)`) is the obvious next step and has not been done.
 
 A CAVEAT ON EVERY ROW ABOVE, found on 2026-09-08 while reading the traces
 rather than the summaries. All the loads in this rig carry
 `solar_grace_period: 0`, set when the timers were shortened to make scenarios
-run quickly. For that particular timer 0 does not mean "short", it means OFF —
+run quickly. For that particular timer 0 does not mean "short", it means OFF -
 and the grace hold is the thing that bridges a permit collapse. Without it, the
 moment the station's permit dips under its 200 W minimum, `entities/load.py`
 starts a charge pause of `CHARGE_PAUSE_DURATION` (default **3 minutes**, never
@@ -305,9 +305,9 @@ configured here) and pins the command at 0 for the whole span however much
 surplus returns. Both 2026-09-08 runs show it: the permit recovers to 1 794 W
 while the register sits at 200 W for the rest of the window.
 
-That does not invalidate the comparison — the metric samples the PERMIT, which
+That does not invalidate the comparison - the metric samples the PERMIT, which
 keeps tracking throughout, and every row was measured under the same
-configuration — but it does mean the second half of each run exercises the
+configuration - but it does mean the second half of each run exercises the
 allocator without exercising the actuation, and the writes/min figures are
 lower than a properly configured site would show. Give the rig a non-zero grace
 period before reading anything into register churn.
@@ -319,7 +319,7 @@ error. Do not chase this number below ~600 W without first making the metric
 honest about that.
 
 With the constant slew the permit moved at exactly `RAMP_UP_RATE` /
-`RAMP_DOWN_RATE` the whole time — saturated, so it could not keep up. The
+`RAMP_DOWN_RATE` the whole time - saturated, so it could not keep up. The
 proportional term fixes that, and then going faster stops helping: past about
 0.15/s the bottleneck is the measurement chain (CT lag plus the engine's grid
 EMA), not the follower.
@@ -350,7 +350,7 @@ everything else Home Assistant writes there is ignored.
 
 **A template that iterates a domain is never re-rendered.** The per-phase
 aggregates used to gather their sources with
-`states.sensor | selectattr('object_id', 'match', ...)` — tidy, and silently
+`states.sensor | selectattr('object_id', 'match', ...)` - tidy, and silently
 broken: filtering a domain on an attribute gives Home Assistant no trackable
 entity dependency, so it rendered them once at startup and *never again*. The
 grid CTs are derived from those sums, so the whole simulated site froze at
@@ -361,7 +361,7 @@ which is tracked. Adding a device means adding a line to `site.yaml`.
 `check_physics.py` could not catch that and still cannot: it renders the
 templates itself, so it verifies the *arithmetic* and never Home Assistant's
 reactivity. When a figure looks stale, compare `last_updated` on the sensor
-against `last_updated` on its source — that is what exposed it.
+against `last_updated` on its source - that is what exposed it.
 
 **Renaming a template entity needs its `unique_id` changed too.** Home
 Assistant derives an `entity_id` from the name only at *first* registration and

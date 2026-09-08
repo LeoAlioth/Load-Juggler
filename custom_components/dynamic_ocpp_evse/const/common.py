@@ -1,4 +1,4 @@
-"""Shared constants — used across the hub and every device type.
+"""Shared constants - used across the hub and every device type.
 
 This is the leaf module of the ``const`` package: it imports nothing from its
 siblings, so the per-device modules (evse / plug / hot_water_tank) can safely
@@ -27,7 +27,7 @@ ENTRY_TYPE_INVERTER = "inverter"
 CONF_NAME = "name"
 CONF_ENTITY_ID = "entity_id"
 
-# Device type (load-level) — EVSE (OCPP), smart plug, hot water tank,
+# Device type (load-level) - EVSE (OCPP), smart plug, hot water tank,
 # portable power station, group
 CONF_DEVICE_TYPE = "device_type"
 DEVICE_TYPE_EVSE = "evse"
@@ -39,7 +39,7 @@ DEVICE_TYPE_INVERTER = "inverter"
 
 # Load-specific configuration keys shared by every device type
 CONF_HUB_ENTRY_ID = "hub_entry_id"
-# The OCPP charge-point identifier — EVSE-only, hence the name.
+# The OCPP charge-point identifier - EVSE-only, hence the name.
 CONF_CHARGER_ID = "charger_id"
 CONF_LOAD_PRIORITY = "load_priority"
 CONF_PRIORITY_ORDER = "priority_order"  # Transient form key: ordered list of device entry_ids (hub options)
@@ -48,7 +48,7 @@ CONF_UPDATE_FREQUENCY = "update_frequency"
 
 # sensor attributes
 CONF_PHASES = "phases"
-CONF_CHARGING_MODE = "charging_mode"  # Legacy key — kept for hub_data result dict backward compat
+CONF_CHARGING_MODE = "charging_mode"  # Legacy key - kept for hub_data result dict backward compat
 CONF_TOTAL_ALLOCATED_CURRENT = "total_allocated_current"
 CONF_PHASE_A_CURRENT = "phase_a_current"
 CONF_PHASE_B_CURRENT = "phase_b_current"
@@ -64,7 +64,7 @@ DEFAULT_PHASE_VOLTAGE = 230
 DEFAULT_UPDATE_FREQUENCY = 15
 DEFAULT_LOAD_PRIORITY = 1
 
-# Current ramp rates (A per second) — limits how fast the commanded current changes
+# Current ramp rates (A per second) - limits how fast the commanded current changes
 RAMP_UP_RATE = 0.1       # Max 0.1 A/s ramp up
 RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
 # Fraction of the REMAINING error a modulating load may close each second, on
@@ -74,30 +74,30 @@ RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
 # while the surplus turned over in 75 s, so the limiter was saturated the whole
 # time and the load absorbed 719 W less than was available, on average.
 #
-# Closing a FRACTION instead is fast when far from target and gentle near it —
-# the adaptive behaviour a constant rate cannot give — and because the step
+# Closing a FRACTION instead is fast when far from target and gentle near it -
+# the adaptive behaviour a constant rate cannot give - and because the step
 # always shrinks as the error shrinks it cannot overshoot. Cascaded with the
 # EMA above it stays overdamped, so this buys tracking without reintroducing
 # the ring the floors were there to damp.
 # 0.15/s measured best on the rig's moving-surplus test: mean tracking error
 # fell 719 -> 596 W against the old constant slew, with register writes
 # unchanged (3.2 -> 3.6 per minute). Raising it to 0.4/s made the error WORSE
-# (668 W), which is the useful result — past ~0.15/s this stage stops being the
+# (668 W), which is the useful result - past ~0.15/s this stage stops being the
 # bottleneck and the measurement chain upstream (the CT lag plus the engine's
 # own grid EMA) dominates. Tuning this number further buys nothing; closing the
 # remaining gap would need feed-forward from the solar reading rather than a
 # faster follower.
-RAMP_APPROACH_RATE = 0.15   # 1/s — ~6.7 s to close most of an error
+RAMP_APPROACH_RATE = 0.15   # 1/s - ~6.7 s to close most of an error
 RAMP_APPROACH_MAX = 0.9     # never close more than this much of it in one cycle
 
-# EMA smoothing — exponential moving average on engine output before rate limiting
+# EMA smoothing - exponential moving average on engine output before rate limiting
 EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothing)
 
 # The EMA's time constant, in SECONDS. ``EMA_ALPHA`` above is a weight per
 # CALL, so on its own the filter's speed is a hidden function of how often the
 # site refreshes: tau = interval / alpha. At the 2 s default that is ~6.7 s,
 # but a site polled every 60 s to be kind to its inverter's Modbus silently
-# gets tau ~200 s — longer than a cloud takes to pass, so every control loop
+# gets tau ~200 s - longer than a cloud takes to pass, so every control loop
 # on it is detuned by a setting that says nothing about filtering.
 #
 # Measured on the rig (2026-09-08) by changing NOTHING but the refresh: mean
@@ -107,7 +107,7 @@ EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothi
 # exactly EMA_ALPHA, leaving default-configured sites bit-identical:
 #     tau = -2 / ln(1 - 0.3) = 5.6 s
 # A first-order low-pass has a single REAL pole, so moving its time constant
-# can never make that pole complex — no value of tau can introduce oscillation.
+# can never make that pole complex - no value of tau can introduce oscillation.
 # That is what makes this safe to speed up, unlike an integral term.
 EMA_TAU_S = 5.6
 
@@ -119,7 +119,7 @@ def ema_alpha_for(dt: float) -> float:
     first-order lag, so the filter's behaviour in SECONDS is the same however
     often it is sampled. Clamped to (0, 1]: a dt of 0 or less would divide by
     nothing, and a very slow cadence tends to 1 (no smoothing left to do,
-    which is correct — there is nothing between the samples to smooth).
+    which is correct - there is nothing between the samples to smooth).
 
     It lives here, beside the time constant it converts, because BOTH tiers
     need it and they are not allowed to share code any other way: the readers
@@ -135,20 +135,20 @@ def ema_alpha_for(dt: float) -> float:
 
 # The battery charge controller reads export and battery power through its OWN
 # smoothers, which are DIRECTIONAL (engine/readers._smooth_directional): a move
-# toward a limit — deeper export, heavier import, or the mirror for battery
-# power — takes this weight; a move back toward zero keeps EMA_ALPHA. Two
+# toward a limit - deeper export, heavier import, or the mirror for battery
+# power - takes this weight; a move back toward zero keeps EMA_ALPHA. Two
 # readings to converge, not one: 1.0 passed every lensing spike straight into
 # the register and fed the register↔Excess-allowance loop (21 verdict flips on
 # the lensing+EVSE rig against 1), and a single reading is also how a motor's
 # start-up inrush looks. 0.6 gave back a third of the curtailment win. 0.8 kept
-# the verdict at 1 flip and halved curtailment — dev/tests/test_charge_control_loop.py.
+# the verdict at 1 flip and halved curtailment - dev/tests/test_charge_control_loop.py.
 CTRL_FAST_ALPHA = 0.8
 DEAD_BAND = 0.3          # Ignore changes smaller than this (Schmitt trigger, amps)
 GRID_STALE_TIMEOUT = 60  # Seconds of grid CT unavailability before falling to min_current
 INPUT_STALE_TIMEOUT = 60  # Seconds of solar/battery/inverter sensor unavailability before falling back to a safe value
 SUSPENDED_EV_IDLE_TIMEOUT = 60  # Seconds of SuspendedEV + near-zero draw before treating as inactive
 
-# Household hold — per-phase household is derived from the inverter output minus
+# Household hold - per-phase household is derived from the inverter output minus
 # the managed draws. The draw side (OCPP, sub-second) rises the moment a car
 # ramps, while the inverter output side lags 10-30 s (Modbus polling + input
 # EMA), so the subtraction transiently clamps household to 0 and the engine
@@ -157,25 +157,25 @@ SUSPENDED_EV_IDLE_TIMEOUT = 60  # Seconds of SuspendedEV + near-zero draw before
 # fall to HOUSEHOLD_HOLD_RESIDUAL of the held value over
 # HOUSEHOLD_HOLD_BRIDGE_SECONDS. Per-cycle factor:
 #     decay = HOUSEHOLD_HOLD_RESIDUAL ** (cycle_seconds / HOUSEHOLD_HOLD_BRIDGE_SECONDS)
-# (The reverse direction — an overstated household — is the safe direction and
+# (The reverse direction - an overstated household - is the safe direction and
 # needs no hold, hence the asymmetry.)
 HOUSEHOLD_HOLD_BRIDGE_SECONDS = 15.0  # Wall-clock length of the bridge window
 HOUSEHOLD_HOLD_RESIDUAL = 0.1         # Fraction of the held value left after the window
 
-# EVSE draw-settle detection — the measured draw is trusted as the EVSE's real
+# EVSE draw-settle detection - the measured draw is trusted as the EVSE's real
 # footprint (freeing the unused gap to lower-priority loads) only once it has
 # held steady for SETTLE_DRAW_CYCLES consecutive cycles within SETTLE_DRAW_TOLERANCE.
 # A car still ramping toward its permit keeps changing and stays "unsettled".
-SETTLE_DRAW_TOLERANCE = 0.5   # Amps — draw change below this counts as steady
+SETTLE_DRAW_TOLERANCE = 0.5   # Amps - draw change below this counts as steady
 SETTLE_DRAW_CYCLES = 3        # Consecutive steady cycles before the draw is trusted
 # An EVSE only counts as settled-and-capped when its draw is also measurably
-# below the permit we offered it last cycle — that is the under-drawing case
+# below the permit we offered it last cycle - that is the under-drawing case
 # the footprint model is meant to free. A car drawing essentially what we
 # offered (util ≈ 1.0) is using all of it, so the permit, not the draw, is
 # the correct pool footprint.
-SETTLE_PERMIT_MARGIN = 1.0    # Amps — draw must be this far below last permit
+SETTLE_PERMIT_MARGIN = 1.0    # Amps - draw must be this far below last permit
 
-# Auto-reset detection — triggers reset_ocpp_evse when charger ignores profiles
+# Auto-reset detection - triggers reset_ocpp_evse when charger ignores profiles
 AUTO_RESET_MISMATCH_THRESHOLD = 5    # consecutive mismatched cycles before reset
 AUTO_RESET_COOLDOWN_SECONDS = 120    # seconds to wait after reset before checking again
 ESCALATION_PROFILE_RESET_LIMIT = 3   # profile resets before escalating to hard reset
@@ -183,7 +183,7 @@ HARD_RESET_COOLDOWN_SECONDS = 300    # seconds to wait after hard reset (5 minut
 
 # Operating mode configuration (per-load). The shared pieces are only the
 # OperatingMode dataclass and the BEHAVIOR_* engine behaviors below. Each
-# device type defines its own operating modes independently — see
+# device type defines its own operating modes independently - see
 # const/evse.py, const/plug.py, const/hot_water_tank.py.
 CONF_OPERATING_MODE = "operating_mode"
 
@@ -194,19 +194,19 @@ MIGRATE_PLUG_SOLAR_ONLY_FLAG = "_migrate_plug_solar_only"
 
 # Set in a hub entry's data once its legacy hub-level inverter/battery fields
 # have been imported into a standalone inverter entry (or for new hubs, which
-# never had them) — makes the one-time auto-import idempotent across restarts.
+# never had them) - makes the one-time auto-import idempotent across restarts.
 MIGRATE_HUB_INVERTER_IMPORTED_FLAG = "_hub_inverter_imported"
 
-# Engine behaviors — how a load competes for power. The distribution engine
+# Engine behaviors - how a load competes for power. The distribution engine
 # switches on the behavior, never on the device type or the mode label. Which
 # behavior each operating mode uses is mapped centrally in const/modes.py
-# (BEHAVIOR_BY_MODE) — the const device modules stay free of engine concepts.
-# Modulating behaviors (EVSE — varies the current).
+# (BEHAVIOR_BY_MODE) - the const device modules stay free of engine concepts.
+# Modulating behaviors (EVSE - varies the current).
 BEHAVIOR_FULL_POWER = "full_power"          # draw at max from any source
 BEHAVIOR_SOLAR_PRIORITY = "solar_priority"  # follow solar, grid-backed minimum
 BEHAVIOR_SOLAR_ONLY = "solar_only"          # solar surplus only, no grid
 BEHAVIOR_EXCESS = "excess"                  # only run on excess export
-# Binary behaviors (smart plug — on/off, never grid; with a battery the SOC
+# Binary behaviors (smart plug - on/off, never grid; with a battery the SOC
 # band gates it, without a battery it falls back to live solar surplus).
 BEHAVIOR_BINARY_ABOVE_MIN = "binary_above_min"        # run while battery > minimum SOC
 
@@ -214,7 +214,7 @@ BEHAVIOR_BINARY_ABOVE_MIN = "binary_above_min"        # run while battery > mini
 # shed it, before any permit may switch it back on. Minutes; 0 disables it.
 #
 # It only ever delays switching ON, never a shed, so it cannot hold a load on
-# below a protective floor — which is what makes it safe to apply to every
+# below a protective floor - which is what makes it safe to apply to every
 # cause at once. What it bounds is CYCLE FREQUENCY: the appliance behind the
 # relay, not the relay, is usually the fragile part. An EV whose outlet is cut
 # mid-negotiation retries, and enough retries in a row lock its onboard charger
@@ -229,7 +229,7 @@ BEHAVIOR_BINARY_EXCESS = "binary_excess"              # run while battery near-f
 
 @dataclass(frozen=True, eq=False)
 class OperatingMode:
-    """One device-type operating mode — the user-facing definition.
+    """One device-type operating mode - the user-facing definition.
 
     key       stored string value (select entity state + runtime dict)
     label     user-facing display name
@@ -237,7 +237,7 @@ class OperatingMode:
     icon      mdi icon for the select entity
 
     The engine behavior a mode competes with is mapped separately in
-    const/modes.py, keyed by the mode object — so each module-level instance
+    const/modes.py, keyed by the mode object - so each module-level instance
     is a distinct mode. ``eq=False`` keeps identity equality/hashing: two
     device types whose modes coincide on every display field (e.g. EVSE and
     plug "Excess") are still distinct modes, never a collapsed dict key.

@@ -1,6 +1,6 @@
-"""The pool snapshot — what the Overview page and the diagnostics dump show.
+"""The pool snapshot - what the Overview page and the diagnostics dump show.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 Every watt figure the publisher shows for a pool is RE-DERIVED from the site's
 headroom terms: ``available_grid_power``, ``available_solar_power`` and the
@@ -11,8 +11,8 @@ works from three ``PhaseConstraints`` objects built in
 two chances to be right, and through the Excess over-commitment of 2026-09-07
 they were not: the page reported a surplus the distribution never saw.
 
-``SiteContext.pool_snapshot`` closes that by publishing the pools THEMSELVES —
-per phase, per combination, with the basis flag — so a dump answers "what did
+``SiteContext.pool_snapshot`` closes that by publishing the pools THEMSELVES -
+per phase, per combination, with the basis flag - so a dump answers "what did
 the allocator actually have?" instead of "what would this arithmetic say?".
 
 Two things about it are easy to misread, and both are pinned below:
@@ -23,7 +23,7 @@ Two things about it are easy to misread, and both are pinned below:
   snapshot.
 * **"Left" is measured, not permitted.** The pools are deducted by each load's
   real footprint (``_pool_deduction``), so an untouched pool beside a granted
-  permit is the normal reading for an idle plug — not a missed deduction.
+  permit is the normal reading for an idle plug - not a missed deduction.
 
 Pure Python, no Home Assistant dependencies. Runnable two ways:
   python3 dev/tests/test_pool_snapshot.py   (standalone, no pytest)
@@ -82,7 +82,7 @@ def _plug(**kwargs):
 
 def test_the_snapshot_names_only_the_phases_the_site_has():
     """A single-phase snapshot must not read as a three-phase site with two
-    dead legs — the pools carry a 0.0 for a phase that does not exist, which is
+    dead legs - the pools carry a 0.0 for a phase that does not exist, which is
     indistinguishable from a phase with nothing spare."""
     assert _site((5.0, 5.0, 5.0), (0.0, 0.0, 0.0)).pool_snapshot["phases"] == "ABC"
     assert _site((4.0, None, None), (0.0, None, None)).pool_snapshot["phases"] == "A"
@@ -118,7 +118,7 @@ def test_left_is_what_survived_the_measured_draws():
     last load get nothing?".
 
     A SETTLED EVSE holding 8 A below its 16 A permit is footprint-accounted at
-    8 A, and the 8 A it declined stays in the pool for lower-ranked loads —
+    8 A, and the 8 A it declined stays in the pool for lower-ranked loads -
     that gap is exactly what "left" exists to show.
     """
     site = _site(
@@ -170,7 +170,7 @@ def test_a_site_with_no_loads_still_reports_its_pools():
 def test_every_distribution_mode_hands_its_pools_back():
     """Each of the four modes returns what it did not spend, and the snapshot
     is built from that. A mode that forgot to return would zip against None and
-    raise — this pins the deduction actually arriving, mode by mode."""
+    raise - this pins the deduction actually arriving, mode by mode."""
     for mode in ("priority", "shared", "strict", "optimized"):
         site = _site(
             (5.0, 5.0, 5.0), (0.0, 0.0, 0.0),
@@ -184,7 +184,7 @@ def test_every_distribution_mode_hands_its_pools_back():
 def test_the_asymmetric_inverter_pool_keeps_its_shared_total():
     """``from_pool`` puts the SHARED total in the two-phase fields rather than
     a sum, because such an inverter can move its output between legs. The
-    snapshot must preserve that — it is what tells a reader why the site offers
+    snapshot must preserve that - it is what tells a reader why the site offers
     a three-phase load more than its per-phase figures suggest."""
     site = _site(
         (2.0, 2.0, 2.0), (5.0, 1.0, 1.0),
@@ -227,5 +227,5 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

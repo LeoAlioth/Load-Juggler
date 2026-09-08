@@ -1,11 +1,11 @@
 """The battery charge control, as a CLOSED LOOP through the production code.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 Everything else about this controller is tested a piece at a time: the value in
 ``test_forecast_clipping.py``, the engine wiring in ``test_sensor_update.py``,
 the register rules in ``test_inverter_control.py``. What none of those can show
-is the behaviour that only exists when the loop is closed — the advice moving
+is the behaviour that only exists when the loop is closed - the advice moving
 the register, the register moving the battery, the battery moving the meter, and
 the meter deciding the next advice.
 
@@ -17,7 +17,7 @@ So this rig runs the real cycle against a plant:
 The second line is the site the design exists for: an inverter that HARD-ENFORCES
 the export limit by curtailing its own PV, so production is masked while export
 sits on the wall and ``curtailed`` is the energy the site threw away. Every
-figure below is measured off that — no monkeypatches, no stand-in for
+figure below is measured off that - no monkeypatches, no stand-in for
 ``recommended_charge_limit`` or ``send_inverter_charge_limit``, the same
 ``run_hub_calculation`` → per-inverter advice → real ``number.set_value`` path
 production takes once per site cycle.
@@ -70,7 +70,7 @@ from custom_components.dynamic_ocpp_evse.const import (
 )
 
 LIMIT = 5000.0          # export limit, and the wall the inverter enforces
-MARGIN = 500.0          # Excess trigger margin — the register's slew step too
+MARGIN = 500.0          # Excess trigger margin - the register's slew step too
 BASE = 300.0            # configured base consumption (the ENERGY threshold's)
 SETPOINT = LIMIT - MARGIN          # 4500 W at the meter
 FULL_RATE = 4500.0                 # the battery's charge rating
@@ -338,7 +338,7 @@ async def test_a_cloudy_household_day_curtails_almost_nothing(hass):
     a margin low, plus a bounded integral trim) at ~370 Wh of curtailment on this
     day. Production measured ~51 Wh here when the controller read the site's
     symmetric EMA; with its own directional view of export and battery power
-    (2026-09-03) it measures ~22 Wh, and the budget below is 35 Wh — generous
+    (2026-09-03) it measures ~22 Wh, and the budget below is 35 Wh - generous
     enough not to be a fingerprint of the seed, tight enough that neither a
     return to a stateful value nor a return to the symmetric reading passes.
 
@@ -357,7 +357,7 @@ async def test_a_cloudy_household_day_curtails_almost_nothing(hass):
     assert curtailed <= 35.0, f"curtailed {curtailed:.1f} Wh"
     # 130: the absolute 100 W deadband (2026-08-31) cost writes over the old
     # 5 % one (132 against 120), and the controller's directional view of the
-    # plant (2026-09-03) gave some back — 113 measured — because a peak that is
+    # plant (2026-09-03) gave some back - 113 measured - because a peak that is
     # followed in two cycles is not chased for ten. The curtailment budget above
     # is what both trades buy and must not move.
     assert len(writes) <= 130, f"{len(writes)} writes in 8 h"
@@ -374,7 +374,7 @@ async def test_the_gate_engaging_lands_its_write_on_the_gate_cycle(hass):
     """The exemption, end to end: the pack crosses its destination at full rate.
 
     Without it the register would sit at full rate for a whole persistence
-    window with the pack already above where its owner sends it — the window is
+    window with the pack already above where its owner sends it - the window is
     for steady-state corrections, and this is not one.
     """
     writes = []
@@ -398,8 +398,8 @@ async def test_an_engaged_excess_load_takes_the_surplus_from_the_pack(hass):
     """Above the destination the battery is the absorber of LAST resort.
 
     A 3 kW Excess load runs behind the meter while the pack is parked above its
-    destination. The pack must give up its permit watt for watt — "theft" here is
-    the battery taking what the car could have had — and the reconstruction is
+    destination. The pack must give up its permit watt for watt - "theft" here is
+    the battery taking what the car could have had - and the reconstruction is
     what keeps the load's own draw from being read as an export shortfall.
     """
     def load(t, verdict):
@@ -424,8 +424,8 @@ async def test_the_register_follows_the_evening_ramp_down(hass):
     """Production falls 6800 → 0 over an hour with the gate engaged.
 
     The worry a peak-hold filter would have had here: a register held at the
-    day's maximum while the sun goes. Directional pacing has no such memory —
-    every window's maximum is a fresh measurement — so the register walks down
+    day's maximum while the sun goes. Directional pacing has no such memory -
+    every window's maximum is a fresh measurement - so the register walks down
     with the sun, one window at a time.
     """
     writes = []
@@ -453,9 +453,9 @@ async def test_a_kettle_costs_no_register_write_at_all(hass):
     """A 2 kW household step for 60 s: the window eats it whole.
 
     This is the guard the deleted integral trim's time constant used to provide,
-    and the reason the value is allowed to be memoryless. The advice DOES move —
+    and the reason the value is allowed to be memoryless. The advice DOES move -
     the meter really did drop by 2 kW, and pretending otherwise is what a
-    feedforward controller did — but a reduction that lasts one minute of a five
+    feedforward controller did - but a reduction that lasts one minute of a five
     minute window never reaches the register.
     """
     writes = []
@@ -466,7 +466,7 @@ async def test_a_kettle_costs_no_register_write_at_all(hass):
 
     settled = [row for row in trace if 300 <= row["i"] < 600]
     kettle_rows = [row for row in trace if 600 <= row["i"] < 630]
-    # The advice saw it — a bite as much as an assertion: a controller that
+    # The advice saw it - a bite as much as an assertion: a controller that
     # could not see a kettle at all would pass the register half of this test.
     assert min(row["advice"] for row in kettle_rows) <= (
         min(row["advice"] for row in settled) - 1500
@@ -487,7 +487,7 @@ async def test_a_burst_train_is_almost_free(hass):
     window means no burst shorter than itself reaches the register at all.
 
     At a 60 s window the same train costs several times the writes for a few
-    watt-hours less curtailment — which is why the setting's default is 300 s and
+    watt-hours less curtailment - which is why the setting's default is 300 s and
     why lowering it buys nothing. Not a test of its own: a configuration we
     advise against is not a contract, and the experiments' 60 s rows are the
     record of it.
@@ -513,7 +513,7 @@ async def test_a_burst_train_is_almost_free(hass):
 async def test_a_cloud_costs_little_and_leaves_nothing_behind(hass):
     """15 minutes at 500 W, gate engaged, then the sun returns.
 
-    Two things at once: the cloud itself is cheap, and the recovery is clean —
+    Two things at once: the cloud itself is cheap, and the recovery is clean -
     the register climbs back at one margin per cycle with no correction earned in
     the dark riding on top of it, and the site ends where it started.
     """
@@ -559,7 +559,7 @@ async def test_a_steady_plant_settles_and_stops_writing(hass):
 
 
 def _lensing_peaks():
-    """A plant just under the wall with 1–3 minute cloud-lensing peaks — the
+    """A plant just under the wall with 1–3 minute cloud-lensing peaks - the
     shape of a real export-limited afternoon (2026-09-02 on the maintainer's
     site: eight bursts of 300–600 W over the setpoint, none over 6 minutes)."""
     rnd = __import__("random").Random(20260902)
@@ -579,7 +579,7 @@ async def test_lensing_peaks_do_not_flap_the_excess_verdict(hass):
 
     The charge controller reads export and battery power through its own
     fast-toward-a-limit smoothers (engine/readers._smooth_directional), and the
-    Excess verdict counts the PERMITTED charge rate as allowance — so a register
+    Excess verdict counts the PERMITTED charge rate as allowance - so a register
     that follows every peak moves the margin by the same watts. Fully following
     the readings (weight 1.0) flapped this rig's verdict 21 times in two hours
     against 1 with the symmetric EMA; the 0.8 weight, scoped to the controller

@@ -71,7 +71,7 @@ def get_entry_value(entry: ConfigEntry, key: str, default=None):
 
 
 def hub_has_battery(hass, hub_entry: ConfigEntry) -> bool:
-    """True when any battery exists on this hub's fleet — on the hub's own
+    """True when any battery exists on this hub's fleet - on the hub's own
     (legacy) battery fields, or on any inverter entry linked to it.
 
     The single gate for every battery-dependent hub entity (SOC sensors and
@@ -147,7 +147,7 @@ def validate_offgrid_battery_requirement(
 
     A hub with no grid CT entities runs off-grid: the battery SOC drives the
     mode logic and battery power drives off-grid solar-surplus detection, so
-    both entities are mandatory — on the hub itself, or (when ``hass`` and
+    both entities are mandatory - on the hub itself, or (when ``hass`` and
     ``hub_entry_id`` are given, i.e. the hub already exists) on any inverter
     entry linked to it. Adds an error to ``errors`` in-place.
 
@@ -168,7 +168,7 @@ def validate_offgrid_battery_requirement(
         battery_data.get(CONF_BATTERY_SOC_ENTITY_ID)
         and battery_data.get(CONF_BATTERY_POWER_ENTITY_ID)
     ):
-        # A battery on a linked inverter entry satisfies the requirement —
+        # A battery on a linked inverter entry satisfies the requirement -
         # after the auto-import that is where the battery normally lives.
         if hass is not None and hub_entry_id:
             for entry in hass.config_entries.async_entries(DOMAIN):
@@ -226,7 +226,7 @@ def infer_inverter_features(options: dict) -> list:
     Solar when it names a production sensor or a forecast device; battery when
     it names an SOC or power entity; write-control when it names a charge
     register or SOC slots (which also implies the battery). Nothing is read
-    from the numeric fields on purpose — they carry the form's defaults on
+    from the numeric fields on purpose - they carry the form's defaults on
     every entry, which is the whole reason the list exists.
     """
     features = []
@@ -248,11 +248,11 @@ def infer_inverter_features(options: dict) -> list:
 
 
 def strip_unfeatured_inverter_options(options: dict, features, *, clear_all=False) -> dict:
-    """Clear every key of every feature NOT in ``features`` — in place, and
+    """Clear every key of every feature NOT in ``features`` - in place, and
     returned. Entities and numbers go to None, lists to [] (their readers
     iterate). By default only keys the dict actually holds are touched, so a
     migration adds nothing; ``clear_all`` writes every undeclared key, which
-    is what the options flow needs — its page dict never held the fields it
+    is what the options flow needs - its page dict never held the fields it
     did not show, and ``_save`` merges that page onto the stored options,
     where a missing key would leave the old value standing. None rather than
     a deletion for the same reason."""

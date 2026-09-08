@@ -1,6 +1,6 @@
-"""Tests for the hot water tank device type — setpoint resolution.
+"""Tests for the hot water tank device type - setpoint resolution.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 resolve_tank_setpoint is the core new logic: given the tank's operating mode,
 the three setpoints, the element power and the hub state, it picks which
@@ -17,8 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from standalone_loader import load_pure_modules  # noqa: E402
 
-# control/hot_water_tank.py imports nothing but const/helpers — the actuation
-# layer's own rule — so it loads without Home Assistant installed.
+# control/hot_water_tank.py imports nothing but const/helpers - the actuation
+# layer's own rule - so it loads without Home Assistant installed.
 load_pure_modules(calc_modules=(), control_modules=("hot_water_tank",))
 
 from custom_components.dynamic_ocpp_evse.control.hot_water_tank import (  # noqa: E402
@@ -42,7 +42,7 @@ ELEMENT_POWER = 2000.0
 def _hub(soc=None, soc_min=20, soc_target=80, export=0, excess=False):
     """Build a hub_data dict for resolve_tank_setpoint.
 
-    ``excess`` is the hub's excess verdict — the one number every Excess-mode
+    ``excess`` is the hub's excess verdict - the one number every Excess-mode
     load reads (see calculations.excess_margin). Pass None to simulate a
     hub that published no verdict, which exercises the element-power fallback.
     """
@@ -86,7 +86,7 @@ def test_freeze_protection_hub_excess_is_boost():
 
 def test_freeze_protection_export_without_excess_is_away():
     # Plenty of export in absolute terms, but the hub says the site can still
-    # absorb it (e.g. the battery has charge headroom) — no boost.
+    # absorb it (e.g. the battery has charge headroom) - no boost.
     result = resolve_tank_setpoint(
         TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
         _hub(soc=None, export=9999, excess=False),
@@ -95,7 +95,7 @@ def test_freeze_protection_export_without_excess_is_away():
 
 
 def test_freeze_protection_missing_verdict_falls_back_to_element_power():
-    # Hub published no verdict (stale hub_data) — degrade to the old export vs
+    # Hub published no verdict (stale hub_data) - degrade to the old export vs
     # element test rather than stranding the tank at its floor forever.
     assert resolve_tank_setpoint(
         TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
@@ -208,7 +208,7 @@ def test_normal_offgrid_full_battery_boosts_without_export():
 #
 # resolve_tank_mode_priority promotes a Solar Priority tank below its normal
 # temperature to the Normal urgency tier (1) so it outranks other solar-priority
-# loads. Only the tier changes — the behavior stays Solar Priority elsewhere.
+# loads. Only the tier changes - the behavior stays Solar Priority elsewhere.
 
 SOLAR = TANK_MODE_SOLAR_PRIORITY.key
 SOLAR_TIER = TANK_MODE_SOLAR_PRIORITY.priority   # 2
@@ -230,7 +230,7 @@ def test_promotion_warm_tank_keeps_tier():
 
 
 def test_promotion_at_normal_temp_is_not_elevated():
-    # Exactly at the setpoint counts as warm — only strictly below promotes.
+    # Exactly at the setpoint counts as warm - only strictly below promotes.
     assert resolve_tank_mode_priority(SOLAR, SOLAR_TIER, 45, 45, True) == (
         SOLAR_TIER,
         False,
@@ -262,7 +262,7 @@ def test_promotion_missing_temperature_keeps_tier():
 # --- Surplus demotion --------------------------------------------------------
 #
 # A tank aiming at its boost setpoint is heating past what its mode asks for, on
-# energy the site would otherwise dump — so it competes at the Excess tier (4)
+# energy the site would otherwise dump - so it competes at the Excess tier (4)
 # instead of its own, and yields the wire to every must-run load.
 
 FREEZE = TANK_MODE_FREEZE_PROTECTION.key
@@ -282,7 +282,7 @@ def test_boosting_normal_tank_drops_to_excess_tier():
 
 
 def test_boosting_solar_priority_tank_drops_to_excess_tier():
-    # Warm tank at/above target SOC — nothing urgent, so the surplus tier wins.
+    # Warm tank at/above target SOC - nothing urgent, so the surplus tier wins.
     assert resolve_tank_mode_priority(
         SOLAR, SOLAR_TIER, 47, 45, True, "boost"
     ) == (TANK_SURPLUS_URGENCY_TIER, False)
@@ -385,5 +385,5 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

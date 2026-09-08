@@ -105,7 +105,7 @@ async def test_charger_current_validation_min_exceeds_max(
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger_info"
 
-    # Step 1: charger_info — submit name/id/priority
+    # Step 1: charger_info - submit name/id/priority
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
@@ -117,7 +117,7 @@ async def test_charger_current_validation_min_exceeds_max(
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger_current"
 
-    # Step 2: charger_current — submit with min > max
+    # Step 2: charger_current - submit with min > max
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
@@ -166,7 +166,7 @@ async def test_charger_current_validation_min_exceeds_max(
         },
     )
 
-    # Step 2: charger_current — submit with min > max
+    # Step 2: charger_current - submit with min > max
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
@@ -231,7 +231,7 @@ async def test_charger_config_creates_entry(
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger_timing"
 
-    # Step 3: charger_timing — creates entry
+    # Step 3: charger_timing - creates entry
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
@@ -245,7 +245,7 @@ async def test_charger_config_creates_entry(
     )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    # Name already contains "Charger" — the type label is not appended again.
+    # Name already contains "Charger" - the type label is not appended again.
     assert result["title"] == "Valid Charger"
     assert result["data"][ENTRY_TYPE] == ENTRY_TYPE_LOAD
 
@@ -256,7 +256,7 @@ async def test_options_flow_hub_shows_menu(
     mock_setup,
 ):
     """An imported hub's options open on a menu of one page per question, plus
-    overview and how it decides — no priority page without loads."""
+    overview and how it decides - no priority page without loads."""
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
@@ -371,7 +371,7 @@ async def test_hub_grid_with_entities_without_device_class(
         },
     )
 
-    # Grid + site policy is the whole hub — all hardware lives on separate
+    # Grid + site policy is the whole hub - all hardware lives on separate
     # Inverter entries, so the flow finishes here.
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["title"] == "Test Hub"
@@ -453,7 +453,7 @@ async def test_inverter_battery_with_soc_sensor_without_device_class(
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
-    # Now add the inverter that owns the battery — the SOC sensor is offered
+    # Now add the inverter that owns the battery - the SOC sensor is offered
     # there, and a % unit alone is enough to qualify it.
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
@@ -555,7 +555,7 @@ async def test_power_sensors_with_watts_unit_without_device_class(
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     # The solar production sensor is picked on the inverter that owns the
-    # array — a W unit without device_class must still qualify it.
+    # array - a W unit without device_class must still qualify it.
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
@@ -588,9 +588,9 @@ async def test_power_sensors_with_watts_unit_without_device_class(
 
 
 # ---------------------------------------------------------------------------
-# Off-grid battery requirement — a hub with no grid CTs must configure a
+# Off-grid battery requirement - a hub with no grid CTs must configure a
 # battery (SOC + power). Hard block in the hub config and options
-# flows. Machine-authored tests — not yet human-reviewed.
+# flows. Machine-authored tests - not yet human-reviewed.
 # ---------------------------------------------------------------------------
 
 from custom_components.dynamic_ocpp_evse.helpers import (  # noqa: E402

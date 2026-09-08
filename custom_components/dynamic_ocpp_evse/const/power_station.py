@@ -1,18 +1,18 @@
-"""Portable power station constants — a modulating battery-charging load.
+"""Portable power station constants - a modulating battery-charging load.
 
 A portable power station (EcoFlow Delta and similar, via a local integration
 such as ha-ef-ble) exposes two knobs, and the device type uses both:
 
-- **AC charging speed** (W) — the rate ceiling. The engine's allocation is
+- **AC charging speed** (W) - the rate ceiling. The engine's allocation is
   written here, so the station modulates like an EVSE.
-- **Backup reserve** (%) — in the station's self-powered mode this is both the
+- **Backup reserve** (%) - in the station's self-powered mode this is both the
   SOC it grid-charges *up to* and the floor it discharges *down to*. It is
   therefore the real on/off gate: with the reserve below the current battery
   level the station draws nothing from the wall and instead serves its own
   loads from its battery, spending what it stored.
 
-The rate knob cannot express "stop" — a station with a 200 W minimum charge
-speed has no zero — so the reserve is what turns charging off. resolve_station_reserve()
+The rate knob cannot express "stop" - a station with a 200 W minimum charge
+speed has no zero - so the reserve is what turns charging off. resolve_station_reserve()
 owns that decision; the engine only decides how much power the station may take.
 
 Whatever is plugged *into* the station passes through to its outputs and is not
@@ -24,24 +24,24 @@ fallback when those sensors are missing.
 from .common import OperatingMode
 
 # --- Controlled entities (all resolved from the station's device) ---
-CONF_STATION_CHARGE_SPEED_ENTITY_ID = "station_charge_speed_entity_id"    # number, W — the rate ceiling
-CONF_STATION_RESERVE_ENTITY_ID = "station_reserve_entity_id"              # number, % — backup reserve
-CONF_STATION_BATTERY_LEVEL_ENTITY_ID = "station_battery_level_entity_id"  # sensor, % — SOC
-CONF_STATION_CHARGE_LIMIT_ENTITY_ID = "station_charge_limit_entity_id"    # number, % — max charge limit (read only)
-CONF_STATION_AC_INPUT_ENTITY_ID = "station_ac_input_entity_id"            # sensor, W — total wall draw
-CONF_STATION_AC_OUTPUT_ENTITY_ID = "station_ac_output_entity_id"          # sensor, W — pass-through + battery output
+CONF_STATION_CHARGE_SPEED_ENTITY_ID = "station_charge_speed_entity_id"    # number, W - the rate ceiling
+CONF_STATION_RESERVE_ENTITY_ID = "station_reserve_entity_id"              # number, % - backup reserve
+CONF_STATION_BATTERY_LEVEL_ENTITY_ID = "station_battery_level_entity_id"  # sensor, % - SOC
+CONF_STATION_CHARGE_LIMIT_ENTITY_ID = "station_charge_limit_entity_id"    # number, % - max charge limit (read only)
+CONF_STATION_AC_INPUT_ENTITY_ID = "station_ac_input_entity_id"            # sensor, W - total wall draw
+CONF_STATION_AC_OUTPUT_ENTITY_ID = "station_ac_output_entity_id"          # sensor, W - pass-through + battery output
 CONF_STATION_DEVICE_ID = "station_device_id"                              # device to resolve the above from
 
 # --- Charge rate bounds: configured, not read from the device, so the station
 # can be held below what its hardware allows. Runtime sliders override these.
 CONF_STATION_MIN_CHARGE_POWER = "station_min_charge_power"
 CONF_STATION_MAX_CHARGE_POWER = "station_max_charge_power"
-DEFAULT_STATION_MIN_CHARGE_POWER = 200   # W — EcoFlow Delta floor
+DEFAULT_STATION_MIN_CHARGE_POWER = 200   # W - EcoFlow Delta floor
 DEFAULT_STATION_MAX_CHARGE_POWER = 2400  # W
-STATION_CHARGE_POWER_STEP = 100          # W — device granularity; also the write deadband
+STATION_CHARGE_POWER_STEP = 100          # W - device granularity; also the write deadband
 # The ceiling the config form and the runtime slider both offer. 11 kW is a
 # three-phase 16 A supply, well past any real station (an EcoFlow Delta tops
-# out near 2.4 kW) — the headroom is there so this device type can also stand
+# out near 2.4 kW) - the headroom is there so this device type can also stand
 # in for a modulating EVSE, which is the shape it already has to the engine.
 #
 # ONE constant for both, deliberately: they were separate 5000s, and the
@@ -63,7 +63,7 @@ DEFAULT_STATION_CHARGE_LIMIT = 90
 # overrides the operating mode while it is on.
 CONF_STATION_STORM_RESERVE_ON = "station_storm_reserve_on"
 
-# Operating modes — priority is the distribution urgency tier (1-4). The station
+# Operating modes - priority is the distribution urgency tier (1-4). The station
 # modulates, so these are the EVSE behaviors; the mapping lives in const/modes.py.
 STATION_MODE_STANDARD = OperatingMode(
     key="Standard", label="Standard", priority=1, icon="mdi:flash",
@@ -91,13 +91,13 @@ def resolve_station_charge_speed(allocated_power, min_power, max_power, step=STA
     """Quantise an allocation (W) to a speed the station will accept.
 
     Returns ``None`` when the allocation cannot sustain the station's minimum
-    charge rate — the caller then drops the reserve instead of writing a speed,
+    charge rate - the caller then drops the reserve instead of writing a speed,
     because the rate knob has no zero.
 
     Floors to ``step`` so the engine never asks for more than it allocated: a
     station rounding 250 W up to 300 W would quietly overdraw the pool.
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     if allocated_power is None or allocated_power < min_power:
         return None
@@ -112,19 +112,19 @@ def resolve_station_reserve(
 
     The reserve is the gate. Three states:
 
-    - **storm** — storm reserve is on: hold ``storm_reserve``, filled from any
+    - **storm** - storm reserve is on: hold ``storm_reserve``, filled from any
       source, and don't discharge below it.
-    - **charging** — the engine found power for the station: raise the reserve to
+    - **charging** - the engine found power for the station: raise the reserve to
       the station's own max charge limit so it accepts the charge. Never above
       that limit; it is the user's battery-health cap.
-    - **normal** — nothing to absorb: drop to ``normal_reserve``. Below the
+    - **normal** - nothing to absorb: drop to ``normal_reserve``. Below the
       current SOC this stops the wall draw completely and lets the station spend
       what it stored on its own loads.
 
     ``storm`` wins over ``charging`` because a storm reserve that yields to a
     cloudy afternoon is not a reserve.
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     if storm_on:
         return storm_reserve, "storm"

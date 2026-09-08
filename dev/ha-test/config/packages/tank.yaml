@@ -5,7 +5,7 @@
 # SETPOINT (normal, away, or the boost it jumps to on surplus), the thermostat
 # decides whether that means heating, and only then does the element draw. The
 # engine reads the result back as the climate entity's hvac_action, which is
-# what its connector status is derived from — a tank whose thermostat is idle
+# what its connector status is derived from - a tank whose thermostat is idle
 # is an inactive load however high the setpoint went.
 #
 # Water temperature is a knob, not a simulation: drag it below the setpoint to
@@ -111,7 +111,7 @@ template:
       # removes a managed draw from a CT that has not registered it yet, so for
       # one sample the phase reads 2 kW lighter than it is. That inverted an
       # importing phase into an exporting one and let a load run on a phase it
-      # should have been refused (rig, 2026-09-08) — three separate false
+      # should have been refused (rig, 2026-09-08) - three separate false
       # symptoms chased before the cause was the rig, not the engine.
       #
       # Same delay line as the grid CTs: `this.attributes.pending` holds the

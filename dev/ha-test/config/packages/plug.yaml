@@ -1,10 +1,10 @@
 # A smart plug: a switch the engine turns on and off, and a power monitor that
-# reports what it draws. The simplest closed loop in the setup — the engine
+# reports what it draws. The simplest closed loop in the setup - the engine
 # grants it power, the relay closes, the draw appears, the grid CTs move.
 #
 # Configure it in Load Juggler as: switch = switch.sim_plug,
 # power monitor = sensor.sim_plug_power, and CONNECTED TO PHASE matching
-# input_select.sim_plug_phase below. Those two are deliberately separate — the
+# input_select.sim_plug_phase below. Those two are deliberately separate - the
 # select is the WIRING, the config field is the engine's BELIEF about the
 # wiring, and being able to make them disagree is a test in its own right.
 
@@ -85,7 +85,7 @@ template:
       # removes a managed draw from a CT that has not registered it yet, so for
       # one sample the phase reads 2 kW lighter than it is. That inverted an
       # importing phase into an exporting one and let a load run on a phase it
-      # should have been refused (rig, 2026-09-08) — three separate false
+      # should have been refused (rig, 2026-09-08) - three separate false
       # symptoms chased before the cause was the rig, not the engine.
       #
       # Same delay line as the grid CTs: `this.attributes.pending` holds the

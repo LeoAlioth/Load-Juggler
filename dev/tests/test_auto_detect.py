@@ -1,4 +1,4 @@
-"""Unit tests for auto_detect.py — grid CT inversion and phase mapping detection.
+"""Unit tests for auto_detect.py - grid CT inversion and phase mapping detection.
 
 Pure Python, no Home Assistant dependencies.
 """
@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Module loading — shared stub loader (avoids the HA-importing package root)
+# Module loading - shared stub loader (avoids the HA-importing package root)
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from standalone_loader import load_pure_modules
@@ -109,7 +109,7 @@ class TestInversionDetection:
         """Charger draw change below threshold doesn't grow window."""
         state = {}
         for i in range(25):
-            # Tiny draws — all below _INV_MIN_DELTA_A = 1.0A per cycle
+            # Tiny draws - all below _INV_MIN_DELTA_A = 1.0A per cycle
             draw = 0.05 * i
             charger = _make_charger(
                 l1_current=draw / 3, l2_current=draw / 3, l3_current=draw / 3,
@@ -156,7 +156,7 @@ class TestInversionDetection:
 # ===========================================================================
 
 class TestPhaseMappingDetection:
-    """Tests for check_phase_mapping() — guards and detection."""
+    """Tests for check_phase_mapping() - guards and detection."""
 
     def test_not_charging_skipped(self):
         """Charger in Available state is not evaluated."""
@@ -451,7 +451,7 @@ class TestTwoPhaseDetection:
         """1-phase car confirms L1, then 2-phase car confirms L3 → full verification."""
         state = {}
 
-        # Phase 1: single-phase car — L1 draws on phase A (correct)
+        # Phase 1: single-phase car - L1 draws on phase A (correct)
         for i in range(20):
             draw = max(0, (i - 2) * 2.0)
             charger = _make_charger(
@@ -467,7 +467,7 @@ class TestTwoPhaseDetection:
         assert cs["confirmed_1ph"] is True
         assert cs["confirmed_2ph"] is False
 
-        # Phase 2: two-phase car — L3 inactive, non-correlating on C (correct)
+        # Phase 2: two-phase car - L3 inactive, non-correlating on C (correct)
         for i in range(20):
             draw = max(0, (i - 2) * 2.0)
             charger = _make_charger(
@@ -504,7 +504,7 @@ class TestTwoPhaseDetection:
         # Car 1 (correct mapping, L3→C) accumulated on phase C
         assert cs["score_2ph"]["C"] > 0
 
-        # Car 2: L2 inactive — different inactive line triggers reset
+        # Car 2: L2 inactive - different inactive line triggers reset
         for i in range(3):
             draw = 5.0 + i * 2.0
             charger = _make_charger(
@@ -540,7 +540,7 @@ class TestTwoPhaseDetection:
 if __name__ == "__main__":
     # Deliberately pytest-free: the pure tier has to run on the developer's
     # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    # Tests here live in Test* classes, so the runner walks those too — a
+    # Tests here live in Test* classes, so the runner walks those too - a
     # fresh instance per test method, matching pytest's isolation.
     failed = []
 
@@ -560,5 +560,5 @@ if __name__ == "__main__":
             for _meth in sorted(dir(_obj)):
                 if _meth.startswith("test_"):
                     _run(f"{_name}.{_meth}", getattr(_obj(), _meth))
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

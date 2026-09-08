@@ -1,4 +1,4 @@
-"""Hot water tank constants — climate-entity-driven binary heating load.
+"""Hot water tank constants - climate-entity-driven binary heating load.
 
 The climate entity owns all temperature regulation; Load Juggler only gates
 power and writes the setpoint.
@@ -15,7 +15,7 @@ CONF_TANK_NORMAL_TEMPERATURE = "tank_normal_temperature"  # Baseline setpoint
 CONF_TANK_BOOST_TEMPERATURE = "tank_boost_temperature"    # High setpoint (surplus available)
 # When on, a Solar Priority tank that has dropped below its normal temperature
 # is promoted to the Normal urgency tier so it wins contention against other
-# solar-priority loads — without changing its source behavior, so it still
+# solar-priority loads - without changing its source behavior, so it still
 # won't drain the battery below its minimum SOC.
 CONF_TANK_PRIORITIZE_BELOW_NORMAL = "tank_prioritize_below_normal"
 DEFAULT_HEATING_ELEMENT_POWER = 2000      # W
@@ -53,22 +53,22 @@ DEFAULT_OPERATING_MODE_HOT_WATER_TANK = TANK_MODE_NORMAL
 def tank_boost_is_opportunistic(
     mode_key, setpoint_label, current_temp, floor_temp
 ) -> bool:
-    """Is this tank's BOOST heating opportunistic — surplus only, refusable?
+    """Is this tank's BOOST heating opportunistic - surplus only, refusable?
 
     The companion to ``resolve_tank_mode_priority``'s surplus demotion below,
     which already drops a boosting tank to the Excess tier. That moved the
     tank's URGENCY but not its behavior: Freeze Protection and Normal both map
     to ``BEHAVIOR_FULL_POWER``, whose whole body is ``return max_current``, so a
     boosting tank took its element's full rating from the physical pool however
-    little surplus existed. It claimed against the Excess ledger — reducing what
-    lower-ranked loads were offered — while never being subject to the pool
+    little surplus existed. It claimed against the Excess ledger - reducing what
+    lower-ranked loads were offered - while never being subject to the pool
     itself (measured live 2026-09-07: a 74 W margin, a 2 kW element, and the
     station behind it starved). True here, the caller reads
     ``BEHAVIOR_BINARY_EXCESS`` instead: still all-or-nothing at the full
     rating, but gated on the surplus actually existing.
 
     THE FLOOR GUARD IS THE POINT. ``resolve_tank_setpoint`` returns "boost" on
-    the surplus verdict alone, with NO temperature test — so a tank at 25 °C
+    the surplus verdict alone, with NO temperature test - so a tank at 25 °C
     with the verdict on is labelled "boost" too. Gating that on the pool would
     deny power to a FROST-PROTECTION element. So the boost only counts as
     opportunistic once the tank has already reached the temperature its mode
@@ -78,10 +78,10 @@ def tank_boost_is_opportunistic(
     An unknown temperature reads as NOT opportunistic, deliberately: a missing
     reading must never be what gates a must-run element.
 
-    Solar Priority is absent on purpose — it is ``BEHAVIOR_SOLAR_PRIORITY``
+    Solar Priority is absent on purpose - it is ``BEHAVIOR_SOLAR_PRIORITY``
     already, and its boost is SOC-driven rather than surplus-driven.
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     if setpoint_label != "boost":
         return False
@@ -104,19 +104,19 @@ def resolve_tank_mode_priority(
 
     Two adjustments, in precedence order:
 
-    1. Cold promotion — a Solar Priority tank that has dropped below its normal
+    1. Cold promotion - a Solar Priority tank that has dropped below its normal
        setpoint is promoted to the Normal urgency tier so it outranks other
        solar-priority loads when power is contended. Only the tier changes; the
        caller keeps the Solar Priority *behavior*, so the tank still draws from
        solar + above-minimum battery and never deep-cycles the bank below its
        minimum SOC.
-    2. Surplus demotion — a tank aiming at its *boost* setpoint is heating past
+    2. Surplus demotion - a tank aiming at its *boost* setpoint is heating past
        the temperature its mode actually asks for, on energy the site would
        otherwise dump. That is opportunistic, so it drops to the Excess tier and
        yields the wire to every must-run load. A cold tank (1) keeps its
        promotion: needing heat outranks having free energy.
 
-    Pure function — unit-testable. Returns ``(effective_priority, elevated)``.
+    Pure function - unit-testable. Returns ``(effective_priority, elevated)``.
     """
     if (
         prioritize_cold

@@ -1,4 +1,4 @@
-"""Inverter battery write-control — charge rate, and the SOC ceiling.
+"""Inverter battery write-control - charge rate, and the SOC ceiling.
 
 The clipping forecast says how fast this battery may fill so the midday peak
 still has somewhere to go. This module turns that number into a write to the
@@ -11,42 +11,42 @@ register rather than a software knob:
    Charge Control switch on. A mis-picked entity should be harmless.
 2. **Paced DIRECTIONALLY** (:func:`down_window_value`). The advice is now
    memoryless direct feedback (see ``calculations.forecast``), so it moves with
-   the plant every cycle and the pacing is where the volatility is absorbed —
+   the plant every cycle and the pacing is where the volatility is absorbed -
    asymmetrically, because the two directions cost different things:
 
-   * **Upward** — eligible on every site cycle. A rise is a permission to
+   * **Upward** - eligible on every site cycle. A rise is a permission to
      refill, it is already bounded to one Excess trigger margin per write by
      rule 3, and it is the direction the masked-site self-creep escapes in
      (one margin per cycle). Nothing waits for a clock.
-   * **Downward** — a reduction must PERSIST for a whole window before it is
+   * **Downward** - a reduction must PERSIST for a whole window before it is
      written, and the window is ``CONF_CHARGE_CONTROL_INTERVAL`` (300 s by
      default). Every sample in the window must agree that the register is too
-     high, and the value written is the window's MAXIMUM — the least reduction
+     high, and the value written is the window's MAXIMUM - the least reduction
      all of them agree on, so the instant the window fills cannot pick a
      momentary dip. Any sample back at the register clears the window: the
      reduction did not persist. This is what a kettle, a passing cloud or a car
      plugging in runs into, and it is why they cost no register traffic.
-   * **Exempt** — the cycle the forecast's charge gate ENGAGES (``limiting``
+   * **Exempt** - the cycle the forecast's charge gate ENGAGES (``limiting``
      False → True: the destination hold or the reservation taking hold) writes
      down at once. That is a protective regime transition, not a steady-state
      correction, and only steady-state corrections are made lazy.
 
    Some firmwares commit these registers to EEPROM, and the measured cost of
    the whole arrangement is ~54 writes a day against the ~31 of the design it
-   replaced — for ~62 Wh of curtailment a cloudy household day instead of
+   replaced - for ~62 Wh of curtailment a cloudy household day instead of
    ~370 Wh.
 3. **Slew-limited upward, instant downward** (:func:`slew_limited`). Lowering
    the limit is the protection direction and lands in one write. Raising it is
    a permission to refill, and the written value may climb by at most one
-   Excess trigger margin's worth of watts per write — because a battery handed
+   Excess trigger margin's worth of watts per write - because a battery handed
    its full rate in a single step drinks the whole clipping reserve out of
    exportable power in minutes, which is the reserve's own purpose reversed.
-4. **Restored, once it gets there.** When the advice releases — evening, no
-   clipping expected — the normal value is the ramp's destination rather than
+4. **Restored, once it gets there.** When the advice releases - evening, no
+   clipping expected - the normal value is the ramp's destination rather than
    its first step: each write climbs by the slew step, and only when the ramp
    lands does the applied-state marker clear, so a released limit stops being
    written for the rest of the night. That unwind keeps the interval as a plain
-   minimum time between writes — it is not a steady-state correction being
+   minimum time between writes - it is not a steady-state correction being
    paced, it is a finite ramp with somewhere to arrive, and the reserve it is
    handing back is exactly what a faster ramp would spend. Switching the
    control OFF is the one restore that is still a single write: while disarmed
@@ -57,12 +57,12 @@ One optional clamp sits on top of them: a configured **minimum charge limit**
 (:func:`resolve_minimum_value`) is the lowest value ever written while the
 advice is engaged. It exists because a hard 0 stops the battery charging
 altogether, so the pack starts serving the house and drifts down off the ceiling
-the advice was holding it at. Engaged writes only — a release restores full rate
-and can never be "too low" — and nothing upstream is affected: the forecast's
+the advice was holding it at. Engaged writes only - a release restores full rate
+and can never be "too low" - and nothing upstream is affected: the forecast's
 own numbers, and the sensors publishing them, stay unclamped.
 
-Single reader, too. The register is read back once per call — before any branch,
-so the paced-out calls and the release path read it as well — both to compare
+Single reader, too. The register is read back once per call - before any branch,
+so the paced-out calls and the release path read it as well - both to compare
 against what we are about to write and to be republished as the charge-control
 sensor's own numeric state. That sensor therefore measures the register without
 ever touching it: everything it reports comes from the runtime dict this module
@@ -71,7 +71,7 @@ records (``INVERTER_RT_*``).
 That same read-back has a second consumer, and it is not a sensor: while the
 limit is engaged, the register value is *the rate the battery is permitted to
 take*, so it is republished in watts as ``INVERTER_RT_ENFORCED_CHARGE_W`` for
-the calculation engine — which narrows the Excess verdict's battery charge
+the calculation engine - which narrows the Excess verdict's battery charge
 allowance to it instead of the configured nameplate rate (see
 ``engine/fleet.charge_power_total``). A clipping window is exactly when the site
 has surplus it cannot place, so the verdict must not go on counting a charge
@@ -79,18 +79,18 @@ rate this module is actively forbidding. None means nothing is being held back.
 
 Single writer: the one caller is the inverter's charge-control sensor, which the
 hub coordinator awaits once per site cycle as a site-cycle worker (see
-``entities/inverter.py``). Nothing else — no poll, no service call — may write
+``entities/inverter.py``). Nothing else - no poll, no service call - may write
 this register, which is what makes "one write in flight at a time" true. The
 pacing above is measured in wall-clock seconds (``now_mono``), never in cycles,
 so the site's cadence changes how often the *check* runs and not how often the
 register is actually written.
 
 The second half of the module is the **SOC ceiling** control
-(``send_inverter_soc_limit``). Same three rules — opt-in via its own switch,
+(``send_inverter_soc_limit``). Same three rules - opt-in via its own switch,
 paced, and driven by exactly one site-cycle worker (its own sensor, so that a
 site which configures the SOC ceiling and no charge-current register still gets
 a tick; the coordinator awaits its workers one at a time, so a single write in
-flight holds across both) — and two differences that come straight from the
+flight holds across both) - and two differences that come straight from the
 hardware:
 
 * **It fans out.** On a Deye the ceiling is not one register but one per
@@ -102,12 +102,12 @@ hardware:
   write: as the advice self-heals to 100 % through the afternoon the min() hands
   the slots straight back, and while no advice exists the control simply tracks
   the normal entity. That is why the charge-rate control's "restored exactly
-  once" rule has no twin here — there is no state to unwind.
+  once" rule has no twin here - there is no state to unwind.
 
 Under FLOOR semantics (``CONF_SOC_LIMIT_SEMANTICS``) the same memoryless value
 is written, but only in each state's own safe direction: a reservation
-(desired below the normal) may only LOWER a slot — on a floor register that
-write means "the house may drain to here", the just-in-time pre-clip drop —
+(desired below the normal) may only LOWER a slot - on a floor register that
+write means "the house may drain to here", the just-in-time pre-clip drop -
 and tracking the normal may only RAISE one back toward the source value. The
 two cross-cases are both harm on a floor register (raising defends charge the
 owner never asked defended, and on a Deye grid-charges toward it; lowering an
@@ -115,7 +115,7 @@ owner-raised slot drops protection they set by hand), so they are skipped.
 Because raising stops at the source and lowering at the recommendation, the
 release still needs no memory: the slots we dropped overnight climb back to
 the source in one deadband-gated write when the advice self-heals. Floor
-writes also carry two hard prerequisites — a configured normal source (the
+writes also carry two hard prerequisites - a configured normal source (the
 100-default written into a floor register would mean "never discharge"), and
 that source must not itself be one of the managed slots (writing the reserve
 into it would drag the destination, and the restore anchor, down with it).
@@ -167,10 +167,10 @@ _LOGGER = logging.getLogger(__name__)
 # The three standings either control can be in, as its sensor publishes them
 # (``control_state`` attribute). Lowercase and value-like on purpose: the
 # sensors' own states are numbers, so this is data to filter and template on,
-# not a sentence to display. Shared by both controls — the words mean the same
+# not a sentence to display. Shared by both controls - the words mean the same
 # thing about each, and one definition keeps an automation's `== "limiting"`
 # test working against either sensor.
-CONTROL_STATE_OFF = "off"  # the switch is not armed — we write nothing
+CONTROL_STATE_OFF = "off"  # the switch is not armed - we write nothing
 CONTROL_STATE_IDLE = "idle"  # armed, but nothing to hold back right now
 CONTROL_STATE_LIMITING = "limiting"  # a forecast limit is being held
 
@@ -185,7 +185,7 @@ INVERTER_RT_RECOMMENDED = "charge_control_recommended"  # what we want it at
 
 # The downward persistence window's own state, and the gate state it needs to
 # spot an engagement. Both are per inverter, both live only in the runtime dict
-# (so a reload simply restarts the persistence — the safe-conservative
+# (so a reload simply restarts the persistence - the safe-conservative
 # direction: a fresh window can only defer a reduction, never invent one), and
 # both are in the TARGET REGISTER's units like the three above.
 #
@@ -195,11 +195,11 @@ INVERTER_RT_RECOMMENDED = "charge_control_recommended"  # what we want it at
 INVERTER_RT_DOWN_SAMPLES = "charge_control_down_samples"
 INVERTER_RT_GATE = "charge_control_gate"  # the forecast's ``limiting``, last cycle
 
-# The same, for the SOC ceiling control. Every one of these is a percentage —
+# The same, for the SOC ceiling control. Every one of these is a percentage -
 # one unit for the whole set, unlike the charge-rate keys above.
 INVERTER_RT_SOC_NORMAL = "soc_control_normal"  # the live normal ceiling, or 100
 INVERTER_RT_SOC_RECOMMENDED = "soc_control_recommended"  # the forecast's advice
-INVERTER_RT_SOC_DESIRED = "soc_control_desired"  # min() of the two — what we enforce
+INVERTER_RT_SOC_DESIRED = "soc_control_desired"  # min() of the two - what we enforce
 INVERTER_RT_SOC_SLOTS = "soc_control_slots"  # {entity_id: read-back or None}
 # Throttle marker for the "cannot read the normal ceiling" warning: a misconfigured
 # normal entity would otherwise log once per site cycle, forever.
@@ -211,7 +211,7 @@ SOC_NORMAL_WARN_INTERVAL = 300.0  # s between repeats of that warning
 def _read_number(hass, entity_id, unit=None):
     """Current numeric state of ``entity_id``, or None if unusable.
 
-    ``unit`` converts through units.py — needed for the battery voltage, whose
+    ``unit`` converts through units.py - needed for the battery voltage, whose
     sensor may publish millivolts. Left None for the target register itself: it
     is read in whatever unit that register uses, both to compare against the
     value we are about to write and to be republished as the charge-control
@@ -249,7 +249,7 @@ def _entity_step(hass, entity_id):
     6. Harmless on its own, but the write decision compares against the
     register's LIVE value, so the 0.2 A it silently dropped is a standing
     disagreement between what we want and what we read. Larger than the
-    deadband, that disagreement is a write every cycle, for ever — which is
+    deadband, that disagreement is a write every cycle, for ever - which is
     exactly the Modbus and EEPROM churn the deadband exists to prevent, caused
     by the deadband being smaller than the device's own resolution.
 
@@ -270,8 +270,8 @@ def _entity_step(hass, entity_id):
 def quantise(value, step):
     """``value`` snapped to the register's own grid, rounding DOWN.
 
-    Down, not nearest: every value this module writes is a permit — a ceiling
-    on what the battery may draw — so the rounding direction has a meaning.
+    Down, not nearest: every value this module writes is a permit - a ceiling
+    on what the battery may draw - so the rounding direction has a meaning.
     Rounding up would hand out a few watts more than the advice allowed, which
     on the reservation path is headroom the forecast was trying to keep.
 
@@ -322,7 +322,7 @@ def resolve_normal_value(hass, entry, target_entity):
 
     A configured normal wins (stored in the target's own units); 0 means "the
     register's own maximum", which is where an unmanaged inverter sits.
-    Returns None when neither is knowable — in that case a release simply
+    Returns None when neither is knowable - in that case a release simply
     leaves the register alone rather than guessing a number.
     """
     configured = get_entry_value(
@@ -342,7 +342,7 @@ def resolve_minimum_value(entry, normal):
     was reserving and the recharge that follows is a sawtooth. A couple of amps
     lets the battery cover the house draw and sit still.
 
-    ``normal`` is the value a release restores — full rate, by definition — and
+    ``normal`` is the value a release restores - full rate, by definition - and
     so is the ceiling of the floor. Clamping happens here rather than at config
     time because the normal may be the register's own live maximum. A normal
     that is not knowable (None) leaves the configured floor as it stands: there
@@ -369,7 +369,7 @@ def should_write(current, desired, previous_applied, deadband, deadband_up=None)
     covers the case where the register cannot be read back at all.
 
     DIRECTIONAL, for the same reason the pacing is. The configured deadband is a
-    percentage of the NORMAL value, which is the right scale for a reduction —
+    percentage of the NORMAL value, which is the right scale for a reduction -
     that is where register churn costs something, and the persistence window
     already gates those. It is the wrong scale for a rise: while the limit is
     engaged the advice lives between zero and one Excess trigger margin (the
@@ -379,7 +379,7 @@ def should_write(current, desired, previous_applied, deadband, deadband_up=None)
     at 4–6 A against a 4.2 A deadband left the register at 0 for fifty minutes
     while export sat ~470 W above its setpoint.
 
-    A rise is the cheap direction to get wrong — it permits absorption, and the
+    A rise is the cheap direction to get wrong - it permits absorption, and the
     approach is self-terminating, since export reaching the setpoint takes the
     error to zero and no further rise is asked for. Coming back down is what the
     window is for. ``deadband_up`` of None keeps the old symmetric behaviour.
@@ -389,7 +389,7 @@ def should_write(current, desired, previous_applied, deadband, deadband_up=None)
     amount for ever, and the deadband cannot close that gap because the whole
     remaining distance is smaller than it (live 2026-09-04: 1 A ≈ 51 W against
     a 100 W deadband, stuck indefinitely). A configured minimum charge limit
-    keeps its own floor — it never asks for 0 in the first place — so this
+    keeps its own floor - it never asks for 0 in the first place - so this
     exemption only fires where 0 is genuinely what the advice means.
     """
     reference = current if current is not None else previous_applied
@@ -406,7 +406,7 @@ def should_write(current, desired, previous_applied, deadband, deadband_up=None)
 def slew_margin_w(hub_entry) -> float:
     """How many watts the written value may RISE per write.
 
-    The site's **Excess trigger margin**, read from the HUB entry — these
+    The site's **Excess trigger margin**, read from the HUB entry - these
     controls are handed the inverter's own entry, and this is a site-level
     number, so the caller threads its hub alongside it exactly as
     ``control/ocpp.py`` and ``control/power_station.py`` are given the site
@@ -418,7 +418,7 @@ def slew_margin_w(hub_entry) -> float:
     production the advice self-creeps upward by about one margin per write (see
     ``engine/hub_result``'s anchoring comment). A ramp bounded at exactly that
     number therefore lets the escape-from-masking through untouched, while
-    still refusing the one thing this exists to refuse — a step from a held-down
+    still refusing the one thing this exists to refuse - a step from a held-down
     limit to full rate.
 
     A hub that cannot be resolved falls back to the default, which is the number
@@ -442,8 +442,8 @@ def slew_step(margin_w, unit, voltage, deadband):
     would be this module deciding site policy.
 
     Never smaller than the deadband. A step the deadband would swallow is not a
-    slower ramp, it is *no* ramp — every write suppressed and the register left
-    where it was — so a release would never complete and the battery would stay
+    slower ramp, it is *no* ramp - every write suppressed and the register left
+    where it was - so a release would never complete and the battery would stay
     held down for the rest of the day. The floor makes the ramp's own steps
     always worth writing.
     """
@@ -460,7 +460,7 @@ def slew_limited(desired, baseline, step):
     the protection direction: engaging a limit is what this control exists for
     and it lands in one write. Upward is a permission to refill, and a
     permission granted all at once has the battery absorb the clipping reserve
-    from exportable power in a few minutes — the reserve spent on precisely the
+    from exportable power in a few minutes - the reserve spent on precisely the
     energy it was being kept for.
 
     No baseline (nothing written yet, unreadable register) or no step means
@@ -480,7 +480,7 @@ def note_reduction(samples, now_mono, value, window_s):
     ``window ÷ site cycle + 1`` and the oldest retained stamp is still what
     :func:`down_window_value` measures the window against.
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     kept = list(samples or [])
     kept.append((now_mono, value))
@@ -493,7 +493,7 @@ def note_reduction(samples, now_mono, value, window_s):
 def down_window_value(samples, now_mono, window_s):
     """The reduction a full window agrees on, or None while it is still filling.
 
-    The window is full when its oldest sample is at least ``window_s`` old —
+    The window is full when its oldest sample is at least ``window_s`` old -
     every sample in it is below the register by construction, since the caller
     clears the window on any sample that is not (a reduction that did not
     persist is not a reduction). The value returned is the MAXIMUM of them: the
@@ -501,7 +501,7 @@ def down_window_value(samples, now_mono, window_s):
     a momentary deep dip and the register is never driven below what the plant
     sustained for the whole window.
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     if not samples:
         return None
@@ -532,7 +532,7 @@ async def send_inverter_charge_limit(
     """Apply (or release) this inverter's battery charge limit.
 
     ``advice_w`` is the forecast's recommended charge limit in watts, or None
-    when the forecast has nothing to say — which is also the release signal.
+    when the forecast has nothing to say - which is also the release signal.
     ``hub_entry`` is the inverter's hub, carrying the site-level Excess trigger
     margin that sets the upward slew step (:func:`slew_margin_w`).
 
@@ -541,8 +541,8 @@ async def send_inverter_charge_limit(
     and it is not a duplicate of it: the downward persistence window has to tell
     a protective regime transition (the gate engaging) from a steady-state
     correction, and only the second is made lazy. None means the caller has no
-    gate state to offer — a hub that publishes none, or a call from a test of
-    something else — and then every reduction is treated as protective and
+    gate state to offer - a hub that publishes none, or a call from a test of
+    something else - and then every reduction is treated as protective and
     written at once, which is the pre-window behaviour and errs toward writing.
     """
     target_entity = get_entry_value(entry, CONF_CHARGE_LIMIT_ENTITY_ID, None)
@@ -562,8 +562,8 @@ async def send_inverter_charge_limit(
 
     # The one read of the register per call, taken before any branch: it is both
     # what the deadband compares against (below) and what the charge-control
-    # sensor publishes as its measurement. Reading it on every call — including
-    # the release path and the paced-out calls that return early — is what makes
+    # sensor publishes as its measurement. Reading it on every call - including
+    # the release path and the paced-out calls that return early - is what makes
     # that sensor a continuous graph instead of a value that only moves when we
     # happen to write. It is a hass.states lookup, not device traffic; the actual
     # Modbus polling belongs to whoever owns the number entity.
@@ -582,7 +582,7 @@ async def send_inverter_charge_limit(
     deadband_w = get_entry_value(
         entry, CONF_CHARGE_CONTROL_DEADBAND_W, DEFAULT_CHARGE_CONTROL_DEADBAND_W
     )
-    # Watts in, the register's own unit out — the same conversion the slew step
+    # Watts in, the register's own unit out - the same conversion the slew step
     # makes, so one setting means the same physical thing whether this register
     # counts DC amps or watts. It used to be a percentage of the normal value,
     # which scaled it to the register's full span rather than to the band the
@@ -606,14 +606,14 @@ async def send_inverter_charge_limit(
     # The divisor is calibrated, not chosen: it is the smallest that keeps every
     # write budget in dev/tests/test_charge_control_loop.py (a two-hour burst
     # train inside 10 writes, a cloudy day inside 120). A tenth cost 70 % more
-    # writes than those budgets allow — these registers go over Modbus and some
+    # writes than those budgets allow - these registers go over Modbus and some
     # firmwares put them in EEPROM. See ``should_write`` for why up and down
     # want different bands at all.
     deadband_up = deadband if step is None else min(deadband, abs(step) / 3.0)
     baseline = ramp_baseline(applied, current)
     releasing = not enabled or advice_w is None
     # The gate edge the exemption keys on. Tracked here rather than handed in as
-    # an event because this module is the only thing that needs the edge — and a
+    # an event because this module is the only thing that needs the edge - and a
     # reload starting from "nothing known" makes the first engaged cycle after it
     # an engagement, which is right: the register's standing is unknown then too,
     # so the protective write should land rather than wait out a window.
@@ -629,7 +629,7 @@ async def send_inverter_charge_limit(
         )
         inverter_rt[INVERTER_RT_RECOMMENDED] = None
         # Nothing is being held back, so the battery is permitted its full
-        # nameplate rate again — which is what None tells the engine. Set on the
+        # nameplate rate again - which is what None tells the engine. Set on the
         # way out rather than beside the write, which happens on some released
         # cycles and not others, while this must be true on all of them. The ramp
         # below does still hold the register down for a few minutes, and the
@@ -647,7 +647,7 @@ async def send_inverter_charge_limit(
             return
 
         if not enabled:
-            # Disarmed — a user event, and a terminal one: from the next cycle
+            # Disarmed - a user event, and a terminal one: from the next cycle
             # this control writes nothing at all, so the unwind cannot be spread
             # over a ramp it would have no standing to finish. One write, now,
             # and the register is theirs again.
@@ -657,7 +657,7 @@ async def send_inverter_charge_limit(
             inverter_rt[INVERTER_RT_APPLIED] = None
             inverter_rt[INVERTER_RT_LAST_WRITE] = now_mono
             _LOGGER.info(
-                "%s: charge control switched off — restored %s to %.1f%s",
+                "%s: charge control switched off - restored %s to %.1f%s",
                 entry.title,
                 target_entity,
                 normal,
@@ -667,12 +667,12 @@ async def send_inverter_charge_limit(
 
         # Armed, and the forecast has let go: ramp back to full rate rather than
         # stepping to it. "Less reserve needed, you may refill" must not mean
-        # "refill at maximum, starting now" — the advice self-heals upward as the
+        # "refill at maximum, starting now" - the advice self-heals upward as the
         # clip burns down, and each self-heal used to hand the battery the whole
         # normal value for one burst of exportable power.
         # Against the QUANTISED normal, not the raw one. quantise rounds down,
         # so a normal value off the register's grid (84.5 on a whole-amp
-        # register) is unreachable — and "landed" is what ends the ramp, so
+        # register) is unreachable - and "landed" is what ends the ramp, so
         # comparing against the raw value would hold the release open for ever,
         # writing nothing and never clearing its marker.
         normal_q = quantise(normal, reg_step)
@@ -691,7 +691,7 @@ async def send_inverter_charge_limit(
             await _write(hass, entry, target_entity, target, unit)
             inverter_rt[INVERTER_RT_LAST_WRITE] = now_mono
             _LOGGER.info(
-                "%s: charge limit released — %s %s to %.1f%s of %.1f%s",
+                "%s: charge limit released - %s %s to %.1f%s of %.1f%s",
                 entry.title,
                 "restored" if landed else "ramping",
                 target_entity,
@@ -702,7 +702,7 @@ async def send_inverter_charge_limit(
             )
         else:
             _LOGGER.debug(
-                "%s: charge limit released — %s is already within the deadband "
+                "%s: charge limit released - %s is already within the deadband "
                 "of its %.1f%s normal, nothing left to restore",
                 entry.title,
                 target_entity,
@@ -710,16 +710,16 @@ async def send_inverter_charge_limit(
                 unit,
             )
         # The marker is what makes a finished release stop writing for the rest
-        # of the night, so it clears only once the ramp has reached full rate —
+        # of the night, so it clears only once the ramp has reached full rate -
         # including the case just above, where the register already sits close
         # enough to it that a write is not worth making.
         inverter_rt[INVERTER_RT_APPLIED] = None if landed else target
         return
 
-    # The floor applies to the ENGAGED value only, and after the conversion —
+    # The floor applies to the ENGAGED value only, and after the conversion -
     # it is stored in the register's own units, so it cannot be folded into the
     # watt advice. The release path above is deliberately untouched: restoring
-    # full rate is never "too low". Nothing upstream sees this — the advice
+    # full rate is never "too low". Nothing upstream sees this - the advice
     # pipeline and the published forecast_charge_limit_w sensors stay unclamped.
     desired = max(
         to_target_units(advice_w, unit, voltage),
@@ -728,7 +728,7 @@ async def send_inverter_charge_limit(
     # The ramp applies here too, and for the same reason: an engaged limit that
     # self-heals upward (98 → 99 → 100 % of the ceiling, as the clip burns down)
     # is the same "you may refill" in smaller words. Rounded AFTER the slew, so a
-    # rise of exactly one margin — the masked-site self-creep — is not shaved by
+    # rise of exactly one margin - the masked-site self-creep - is not shaved by
     # a hundredth and passes through untouched.
     target = round(quantise(slew_limited(desired, baseline, step), reg_step), 1)
     inverter_rt[INVERTER_RT_STATUS] = CONTROL_STATE_LIMITING
@@ -739,11 +739,11 @@ async def send_inverter_charge_limit(
     # What the battery is PERMITTED to take right now, in watts, for the
     # calculation engine's Excess verdict (see INVERTER_RT_ENFORCED_CHARGE_W).
     # The register's live value, not our desired one: until the write below
-    # actually lands — the pacing can defer it for a whole interval — the
+    # actually lands - the pacing can defer it for a whole interval - the
     # battery really may still take the full rate the register still holds, and
     # narrowing the allowance before that would engage Excess against a battery
     # that has not been held back yet. Only when the register cannot be read at
-    # all does the value we are driving it to stand in for it — the ramp's next
+    # all does the value we are driving it to stand in for it - the ramp's next
     # step, since that is what we are actually driving it to.
     inverter_rt[INVERTER_RT_ENFORCED_CHARGE_W] = from_target_units(
         target if current is None else current, unit, voltage
@@ -770,7 +770,7 @@ async def send_inverter_charge_limit(
             return
     elif not reducing:
         # A rise, a move inside the deadband, or a protective transition. The
-        # window is about one standing reduction and this is not it — and a rise
+        # window is about one standing reduction and this is not it - and a rise
         # is not paced at all: it is bounded by the slew step above, and the
         # masked-site self-creep escapes at one margin per cycle.
         inverter_rt[INVERTER_RT_DOWN_SAMPLES] = []
@@ -785,7 +785,7 @@ async def send_inverter_charge_limit(
             # which is the higher (charge-favouring) value.
             _LOGGER.debug(
                 "%s: %.1f%s is below the register but has held for only %.0fs of"
-                " %ss — deferring the reduction",
+                " %ss - deferring the reduction",
                 entry.title,
                 desired,
                 unit,
@@ -806,7 +806,7 @@ async def send_inverter_charge_limit(
     # concluded, it has been acted on.
     inverter_rt[INVERTER_RT_DOWN_SAMPLES] = []
     _LOGGER.info(
-        "%s: forecast advises %.0f W — wrote %.1f%s%s to %s (was %s)",
+        "%s: forecast advises %.0f W - wrote %.1f%s%s to %s (was %s)",
         entry.title,
         advice_w,
         target,
@@ -840,7 +840,7 @@ def resolve_normal_soc(hass, entry):
     the slots idle at. Returns:
 
     * the entity's value, when one is configured and readable;
-    * :data:`DEFAULT_SOC_LIMIT_NORMAL` (100) when none is configured — the
+    * :data:`DEFAULT_SOC_LIMIT_NORMAL` (100) when none is configured - the
       ceiling an unmanaged battery sits at, and a constant rather than a read of
       the slots themselves, which we may have written ourselves and would then
       ratchet the normal down to our own last limit;
@@ -857,8 +857,8 @@ def desired_soc(normal, advice_soc) -> float:
     """The ceiling to enforce: the lower of the normal and the recommendation.
 
     The whole control, in one line. min() is what makes it safe to point at
-    entities somebody else owns — we can only ever hold the battery lower than
-    they asked, never higher — and it is also the release mechanism: the
+    entities somebody else owns - we can only ever hold the battery lower than
+    they asked, never higher - and it is also the release mechanism: the
     forecast's advice climbs back to 100 % as the production peak passes, at
     which point the min() is the normal again and the slots are the user's.
     """
@@ -871,12 +871,12 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
     """Drive every configured SOC-ceiling entity toward the desired ceiling.
 
     ``advice_soc`` is the forecast's recommended battery max SOC in percent, or
-    None when the forecast has nothing to say — which, unlike the charge-rate
+    None when the forecast has nothing to say - which, unlike the charge-rate
     control, is not a release event but simply "track the normal".
 
     Read-then-write, with the reads recorded for the SOC-control sensor on every
-    call — including the ones the pacing makes return early and the ones taken
-    while the switch is off — so that sensor reports what the slots hold without
+    call - including the ones the pacing makes return early and the ones taken
+    while the switch is off - so that sensor reports what the slots hold without
     ever touching them itself.
     """
     targets = soc_targets(entry)
@@ -889,7 +889,7 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
     enabled = inverter_rt.get(INVERTER_RT_SOC_CONTROL_ENABLED, False)
     normal = resolve_normal_soc(hass, entry)
 
-    # One read per target per call, before any branch — same reasoning as the
+    # One read per target per call, before any branch - same reasoning as the
     # charge-rate register above: these are hass.states lookups, and a value
     # that only refreshed when we wrote would make the sensor a step function.
     slots = {entity_id: _read_number(hass, entity_id) for entity_id in targets}
@@ -905,7 +905,7 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
     if normal is None:
         # A configured normal entity that is unavailable right now. Writing
         # anything here would be inventing the user's own setting, so defer the
-        # whole cycle — the slots keep whatever they hold, which is the last
+        # whole cycle - the slots keep whatever they hold, which is the last
         # thing either we or their owner deliberately put there.
         inverter_rt[INVERTER_RT_SOC_STATUS] = CONTROL_STATE_IDLE
         inverter_rt[INVERTER_RT_SOC_DESIRED] = None
@@ -921,7 +921,7 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
         # register, both fatal rather than degraded:
         #
         # * A configured source. Without one the normal is the 100 constant,
-        #   and 100 written into a floor register means "never discharge" —
+        #   and 100 written into a floor register means "never discharge" -
         #   the battery would defend a full pack against the house all night.
         # * The source must not be one of the managed slots. The reservation
         #   write-down would then land in the entity the destination is read
@@ -939,7 +939,7 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
     desired = round(desired_soc(normal, advice_soc), 1)
     inverter_rt[INVERTER_RT_SOC_DESIRED] = desired
     # "limiting" is specifically "we are holding it below what its owner asked
-    # for". Tracking the normal — no advice, or advice at or above it — is idle,
+    # for". Tracking the normal - no advice, or advice at or above it - is idle,
     # even though the writes that keep the slots there are real writes.
     inverter_rt[INVERTER_RT_SOC_STATUS] = (
         CONTROL_STATE_LIMITING if desired < normal else CONTROL_STATE_IDLE
@@ -955,14 +955,14 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
 
     # Per-target deadband: the fan-out's whole point is that the slots are
     # independent, so one slot already at the ceiling must not spend the other
-    # slots' write. An unreadable slot is skipped rather than written blind —
+    # slots' write. An unreadable slot is skipped rather than written blind -
     # its siblings are still driven, so a single dead entity degrades this to
     # partial control instead of none.
     due = []
     for entity_id, current in slots.items():
         if current is None:
             _LOGGER.debug(
-                "%s: SOC slot %s is unreadable — skipping it this cycle",
+                "%s: SOC slot %s is unreadable - skipping it this cycle",
                 entry.title,
                 entity_id,
             )
@@ -972,14 +972,14 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
         if floor_semantics and (desired < normal) != (current > desired):
             # A floor register is only ever written in the state's own safe
             # direction. Limiting (desired below the normal) may only LOWER a
-            # slot — "the house may drain to here", the pre-clip drop — and
+            # slot - "the house may drain to here", the pre-clip drop - and
             # tracking the normal may only RAISE one back toward the source.
             # The cross-cases are both harm on a floor: raising a slot that
             # already sits below the reserve defends charge the owner never
             # asked defended (and on a Deye, grid-charges toward it), and
             # lowering an owner-raised slot (a storm hold at 100) drops
             # protection they set by hand. A ceiling register keeps the
-            # unconditional tracking — "stop charging at" is safe to write in
+            # unconditional tracking - "stop charging at" is safe to write in
             # either direction, and clamping an above-normal slot down IS the
             # control there.
             continue
@@ -996,7 +996,7 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
     inverter_rt[INVERTER_RT_SOC_LAST_WRITE] = now_mono
     _LOGGER.info(
         "%s: holding battery SOC ceiling at %.1f%% (normal %.1f%%, forecast %s) "
-        "— wrote %d of %d slot(s): %s",
+        "- wrote %d of %d slot(s): %s",
         entry.title,
         desired,
         normal,
@@ -1016,7 +1016,7 @@ def _warn_floor_misconfig(entry, inverter_rt, now_mono, normal_entity) -> None:
     if not normal_entity:
         _LOGGER.warning(
             "%s: SOC entities are declared a discharge floor but no normal "
-            "source is configured — deferring all SOC writes (the 100%% "
+            "source is configured - deferring all SOC writes (the 100%% "
             "fallback written into a floor register would mean 'never "
             "discharge'). Point the Normal SOC ceiling source at the value "
             "the slots should idle at.",
@@ -1025,7 +1025,7 @@ def _warn_floor_misconfig(entry, inverter_rt, now_mono, normal_entity) -> None:
     else:
         _LOGGER.warning(
             "%s: the normal SOC source (%s) is itself one of the managed "
-            "slots — deferring all SOC writes, since writing the reserve into "
+            "slots - deferring all SOC writes, since writing the reserve into "
             "it would drag the destination and the restore anchor down with "
             "it. Point the source at a separate helper (an input_number "
             "holding the everyday value) instead.",
@@ -1041,7 +1041,7 @@ def _warn_unreadable_normal(entry, inverter_rt, now_mono) -> None:
         return
     inverter_rt[INVERTER_RT_SOC_WARNED] = now_mono
     _LOGGER.warning(
-        "%s: normal battery SOC ceiling entity %s is unavailable — deferring SOC "
+        "%s: normal battery SOC ceiling entity %s is unavailable - deferring SOC "
         "writes rather than guessing a ceiling",
         entry.title,
         get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None),
@@ -1064,7 +1064,7 @@ async def _write(hass, entry, entity_id, value, unit) -> None:
             {"entity_id": entity_id, "value": value},
             blocking=False,
         )
-    except Exception as err:  # noqa: BLE001 — a dead inverter must not stop the loop
+    except Exception as err:  # noqa: BLE001 - a dead inverter must not stop the loop
         _LOGGER.warning(
             "Write failed for %s (%s = %.1f%s): %s",
             entry.title,

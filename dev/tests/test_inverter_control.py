@@ -1,6 +1,6 @@
-"""Tests for the inverter battery write-controls — control.inverter.
+"""Tests for the inverter battery write-controls - control.inverter.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 Two controls, one contract each.
 
@@ -11,12 +11,12 @@ once.
 
 The recommended **max SOC** is fanned out across every configured time-of-use
 slot, each with its own deadband, and is always ``min(normal, recommendation)``
-— so it has no release event at all, and the "normal" side is a live entity that
+- so it has no release event at all, and the "normal" side is a live entity that
 external automations keep owning. Its section is further down the file.
 
 **Who calls this** changed and these tests did not have to: the control used to
 be ticked by the charge-control sensor's 10 s platform poll, and is now awaited
-once per site cycle (default 2 s) as a site-cycle worker — see
+once per site cycle (default 2 s) as a site-cycle worker - see
 ``entities/mixins.SiteCycleWorkerMixin``. The pacing is wall-clock, so the two
 cadences are the same contract; the section at the bottom drives the control at
 both of them and pins that. The entity-level half of the change (registration
@@ -39,8 +39,8 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from standalone_loader import load_pure_modules  # noqa: E402
 
-# control/inverter.py imports nothing but const/helpers/units — the actuation
-# layer's own rule — so it loads without Home Assistant installed.
+# control/inverter.py imports nothing but const/helpers/units - the actuation
+# layer's own rule - so it loads without Home Assistant installed.
 load_pure_modules(calc_modules=(), control_modules=("inverter",))
 
 from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
@@ -144,7 +144,7 @@ def _entry(options=None):
 
 
 def _hub(margin=None):
-    """The inverter's hub entry — it carries the site's Excess trigger margin.
+    """The inverter's hub entry - it carries the site's Excess trigger margin.
 
     That margin is the upward slew step, so every call into the charge-limit
     control needs a hub beside the inverter entry. None leaves it unconfigured,
@@ -192,7 +192,7 @@ def test_a_zero_target_is_never_swallowed_by_the_deadband():
 
     The gap between a token 1 A and 0 is smaller than any useful deadband
     (1 A ~ 51 W against a 100 W band), so without the exemption the register
-    sat at 1 A for ever under a 0 W advice — observed live 2026-09-04.
+    sat at 1 A for ever under a 0 W advice - observed live 2026-09-04.
     """
     # Stuck case: register 1, advice 0, deadband far wider than the gap.
     assert should_write(1.0, 0.0, None, 100.0, 20.0) is True
@@ -202,7 +202,7 @@ def test_a_zero_target_is_never_swallowed_by_the_deadband():
     # Unreadable register falls back to what was applied, same rule.
     assert should_write(None, 0.0, 1.0, 100.0, 20.0) is True
     assert should_write(None, 0.0, 0.0, 100.0, 20.0) is False
-    # And the exemption is for 0 alone — a small NON-zero target is still
+    # And the exemption is for 0 alone - a small NON-zero target is still
     # gated, in both directions.
     assert should_write(1.0, 0.5, None, 100.0, 20.0) is False
     assert should_write(0.0, 1.0, None, 100.0, 20.0) is False
@@ -292,7 +292,7 @@ def test_armed_control_writes_the_converted_limit():
     assert rt[INVERTER_RT_APPLIED] == 50.0
     assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_LIMITING
     # The value the charge-control sensor publishes as its recommendation, in the
-    # register's own units — the "Limiting to 50.0A" string used to carry it.
+    # register's own units - the "Limiting to 50.0A" string used to carry it.
     assert rt[INVERTER_RT_RECOMMENDED] == 50.0
 
 
@@ -329,7 +329,7 @@ def test_write_resumes_after_the_interval():
 
 
 def test_release_ramps_back_to_the_normal_value_and_then_stops():
-    """The release is a ramp, not a step — the section near the bottom of this
+    """The release is a ramp, not a step - the section near the bottom of this
     file is about the ramp itself; this pins the standing it leaves behind.
 
     Restored exactly once still holds, just at the END of the ramp: the marker
@@ -360,8 +360,8 @@ def test_release_ramps_back_to_the_normal_value_and_then_stops():
         now += 10.0
 
     # 1 A short of the 100 A normal, and that last amp stays unwritten: rises
-    # take the small directional deadband — a third of the 9.77 A step, so
-    # 3.26 A — not the 5 A reduction one. The ramp therefore lands within a
+    # take the small directional deadband - a third of the 9.77 A step, so
+    # 3.26 A - not the 5 A reduction one. The ramp therefore lands within a
     # rise band of full rate rather than within a full 5 % of it, and only a
     # residual genuinely smaller than that band is left on the table.
     assert hass.services.calls[-1][2]["value"] == 99.0
@@ -376,7 +376,7 @@ def test_release_ramps_back_to_the_normal_value_and_then_stops():
 
 
 def test_release_without_a_prior_write_leaves_the_register_alone():
-    """A register we never touched is the user's — never 'restore' it."""
+    """A register we never touched is the user's - never 'restore' it."""
     hass = _hass_with_target(current=42.0, maximum=100.0)
     entry = _entry()
     rt = _arm(hass, entry)
@@ -413,7 +413,7 @@ def test_no_target_entity_is_a_no_op():
 
 
 def test_deadband_is_a_percentage_of_the_normal_value():
-    """5 % of a 100 A normal is 5 A — a 2 A move is not worth a Modbus write."""
+    """5 % of a 100 A normal is 5 A - a 2 A move is not worth a Modbus write."""
     hass = _hass_with_target(current=100.0, maximum=100.0)
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
@@ -437,7 +437,7 @@ def test_deadband_is_a_percentage_of_the_normal_value():
 # sits below the export threshold and the battery is already at the reserved
 # ceiling. Written as a hard 0 A the battery stops charging and serves the house
 # from its own cells, so the SOC sags a few points, the forecast latch releases,
-# the inverter recharges at full rate — a sawtooth (71↔75 % was the observation)
+# the inverter recharges at full rate - a sawtooth (71↔75 % was the observation)
 # instead of a hold. A couple of amps is enough to cover the house draw.
 #
 # The floor is stored in the TARGET REGISTER's units, like the normal value, and
@@ -452,7 +452,7 @@ def test_the_floor_is_zero_by_default_and_clamped_to_the_normal():
     assert resolve_minimum_value(_entry({CONF_CHARGE_LIMIT_MINIMUM: 120}), 100.0) == 100.0
     # A negative stored value is not a ceiling-raiser either way.
     assert resolve_minimum_value(_entry({CONF_CHARGE_LIMIT_MINIMUM: -5}), 100.0) == 0.0
-    # Nothing to clamp against — the configured number stands as the user typed it.
+    # Nothing to clamp against - the configured number stands as the user typed it.
     assert resolve_minimum_value(_entry({CONF_CHARGE_LIMIT_MINIMUM: 2}), None) == 2.0
 
 
@@ -503,7 +503,7 @@ def test_an_advice_above_the_floor_is_untouched():
 
 
 def test_the_floor_does_not_apply_to_the_release_write():
-    """A release climbs back to full rate — the floor is a lower bound on how far
+    """A release climbs back to full rate - the floor is a lower bound on how far
     we hold the battery back, never a cap on handing it back.
 
     It climbs there rather than jumping (see the ramp section), so what this pins
@@ -547,13 +547,13 @@ def test_a_floor_above_the_normal_value_is_clamped_to_it():
 
     asyncio.run(_send(hass, entry, 0.0, 0.0))
 
-    # 60, the normal — never the 90 the user asked for, which would hold the
+    # 60, the normal - never the 90 the user asked for, which would hold the
     # battery HIGHER than a release would.
     assert hass.services.calls[-1][2]["value"] == 60.0
 
 
 def test_the_floor_is_in_the_registers_own_units_on_a_watt_register():
-    """Watts on a watt register, amps on an amp register — the same convention
+    """Watts on a watt register, amps on an amp register - the same convention
     as the normal value, and the reason the clamp is after the conversion."""
     hass = _hass_with_target(current=6000.0, maximum=6000.0)
     entry = _entry({
@@ -567,7 +567,7 @@ def test_the_floor_is_in_the_registers_own_units_on_a_watt_register():
     assert hass.services.calls[-1][2]["value"] == 100.0
 
     # And a real advice above it still passes through in watts. A 2 kW margin
-    # keeps the upward slew out of the way — this test is about the units, and
+    # keeps the upward slew out of the way - this test is about the units, and
     # the ramp has its own section.
     hass.states.set(TARGET, 100.0, max=6000.0)
     asyncio.run(_send(hass, entry, 2000.0, 10.0, hub_entry=_hub(margin=2000)))
@@ -578,7 +578,7 @@ def test_the_floor_is_in_the_registers_own_units_on_a_watt_register():
 #
 # That sensor's state is a MEASUREMENT of the target register, and this is where
 # the register is read: once per call, before any branch. The point of these is
-# that the read is NOT conditional on a write happening — a value that only moved
+# that the read is NOT conditional on a write happening - a value that only moved
 # when we wrote would be a step function, not a graph.
 
 
@@ -590,7 +590,7 @@ def test_the_register_read_back_is_recorded_for_the_sensor():
     asyncio.run(_send(hass, entry, 2560.0, 0.0))
 
     # Read BEFORE the write, so it is the register's value as the inverter last
-    # reported it — not an optimistic echo of what we just asked for.
+    # reported it - not an optimistic echo of what we just asked for.
     assert rt[INVERTER_RT_REGISTER] == 100.0
     assert rt[INVERTER_RT_NORMAL] == 100.0
 
@@ -604,7 +604,7 @@ def test_the_register_read_back_is_recorded_for_the_sensor():
 
 
 def test_the_read_back_is_refreshed_while_the_switch_is_off():
-    """The register still holds a real value when our control is off — that is
+    """The register still holds a real value when our control is off - that is
     the half of the graph the sensor would otherwise lose."""
     hass = _hass_with_target(current=80.0, maximum=100.0)
     entry = _entry()
@@ -618,7 +618,7 @@ def test_the_read_back_is_refreshed_while_the_switch_is_off():
 
 
 def test_an_unreadable_register_records_none():
-    """None is how the sensor says "unknown" — never a stale number, and never 0.
+    """None is how the sensor says "unknown" - never a stale number, and never 0.
     A 0 A charge limit is a real, very different claim."""
     hass = _Hass()
     hass.states.set(TARGET, "unavailable")
@@ -686,7 +686,7 @@ def test_an_unreadable_register_falls_back_to_the_driven_value():
 
 def test_the_floor_is_part_of_the_enforced_rate():
     """The minimum charge limit raises what is actually written, so the battery is
-    permitted more than the advice asked for — and the engine must hear that."""
+    permitted more than the advice asked for - and the engine must hear that."""
     hass = _hass_with_target(current=100.0, maximum=100.0)
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
@@ -710,7 +710,7 @@ def test_nothing_is_enforced_while_the_switch_is_off():
 
     asyncio.run(_send(hass, entry, 2560.0, 0.0))
 
-    # The register may well sit at 50 A — but it is the user's own setting, not a
+    # The register may well sit at 50 A - but it is the user's own setting, not a
     # limit we are holding, so the nameplate rate is what the engine should count.
     assert rt[INVERTER_RT_ENFORCED_CHARGE_W] is None
 
@@ -738,23 +738,23 @@ def test_the_release_clears_the_enforced_rate():
 # Why it exists, from the maintainer's live site on 2026-08-24: every time the
 # forecast ceiling self-healed upward (98 → 99 → 100 % as the clip burned down)
 # the latch disarmed, the release wrote the full normal value in ONE step, and
-# the battery drank ~10 kW out of exportable power for ten minutes — the
+# the battery drank ~10 kW out of exportable power for ten minutes - the
 # clipping reserve spent on exactly the energy it was being kept for, ahead of
 # the peak it was kept for.
 #
 # The release SEMANTICS were right ("less reserve needed, you may refill"); the
 # step response was the defect. So the written value may climb by at most one
 # Excess trigger margin's worth of watts per write, converted into the target
-# register's own units, while a DOWNWARD move — engaging the limit, the
-# protection direction — still lands in a single write.
+# register's own units, while a DOWNWARD move - engaging the limit, the
+# protection direction - still lands in a single write.
 #
 # The bound is the trigger margin and not a knob of its own by construction: the
 # engaged advice is anchored one margin below the export limit, so a masked site
 # self-creeps upward by about one margin per write (commit 91aa5ed). A ramp
-# bounded at exactly that lets the creep through untouched — proved below rather
+# bounded at exactly that lets the creep through untouched - proved below rather
 # than argued.
 
-SITE_NORMAL = 187.0  # A — the maintainer's register at full rate, ~9.6 kW
+SITE_NORMAL = 187.0  # A - the maintainer's register at full rate, ~9.6 kW
 SITE_VOLTAGE = 51.2
 SITE_INTERVAL = 60.0  # s between writes, as that site is configured
 MARGIN_AMPS = DEFAULT_EXCESS_TRIGGER_MARGIN / SITE_VOLTAGE  # 9.77 A per write
@@ -782,7 +782,7 @@ def _cycle(hass, entry, advice_w, now, hub_entry=None):
     """One cycle with the inverter APPLYING whatever we last wrote.
 
     The register following our writes is what the ramp is measured against in
-    real life — the read-back feeds the deadband — so these tests apply it
+    real life - the read-back feeds the deadband - so these tests apply it
     rather than leaving the register frozen.
     """
     if hass.services.calls:
@@ -815,14 +815,14 @@ def test_an_unresolvable_hub_falls_back_to_the_default_margin():
 
 def test_no_trigger_margin_at_all_means_no_rate_limit():
     """A site with no margin has no natural step to borrow, and this module does
-    not get to invent one — None is 'the value stands'."""
+    not get to invent one - None is 'the value stands'."""
     assert slew_step(0.0, "A", 51.2, deadband=5) is None
     assert slew_step(-100.0, "W", 51.2, deadband=5) is None
     assert slew_limited(100.0, 10.0, None) == 100.0
 
 
 def test_the_step_is_never_smaller_than_the_deadband():
-    """A step the deadband would swallow is not a slower ramp — it is no ramp,
+    """A step the deadband would swallow is not a slower ramp - it is no ramp,
     every write suppressed and the register left held down for the day."""
     assert slew_step(500.0, "W", 51.2, deadband=800) == 800.0
     assert slew_step(500.0, "W", 51.2, deadband=100) == 500.0
@@ -842,7 +842,7 @@ def test_the_ramp_is_measured_from_the_last_value_we_wrote():
     """Our own write, not the read-back: a ramp that waited for the register to
     catch up would stall on a slow poll and leave the battery limited."""
     assert ramp_baseline(applied=50.0, current=187.0) == 50.0
-    # Except when there is no memory to use — the first write after a reload.
+    # Except when there is no memory to use - the first write after a reload.
     assert ramp_baseline(applied=None, current=187.0) == 187.0
     assert ramp_baseline(applied=None, current=None) is None
 
@@ -866,8 +866,8 @@ def test_a_release_ramps_to_full_rate_one_margin_at_a_time():
 
     ramp = _written(hass)[1:]
     # Nineteen writes, one a minute, landing ON the normal value. The climb is a
-    # RISE, so it takes the small directional deadband: the final 8.6 A — inside
-    # the 9.35 A reduction deadband (5 % of 187) — is now worth its write, and
+    # RISE, so it takes the small directional deadband: the final 8.6 A - inside
+    # the 9.35 A reduction deadband (5 % of 187) - is now worth its write, and
     # the register no longer rests a few percent short of full rate after every
     # release (see should_write).
     assert len(ramp) == 19
@@ -877,7 +877,7 @@ def test_a_release_ramps_to_full_rate_one_margin_at_a_time():
     # Every step is one margin, never more, and always upward.
     steps = [b - a for a, b in zip([2.0] + ramp, ramp)]
     assert all(0 < step <= MARGIN_AMPS + 0.05 for step in steps), steps
-    # Restored exactly once still holds — at the END of the ramp.
+    # Restored exactly once still holds - at the END of the ramp.
     assert rt[INVERTER_RT_APPLIED] is None
     assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_IDLE
 
@@ -888,7 +888,7 @@ def test_the_release_ramp_respects_the_write_interval():
     hass, entry, _rt = _accepting_site()
 
     _cycle(hass, entry, 0.0, 0.0)
-    # 30 site cycles at 2 s — a whole minute of them, inside the 60 s window.
+    # 30 site cycles at 2 s - a whole minute of them, inside the 60 s window.
     now = 2.0
     while now < SITE_INTERVAL:
         _cycle(hass, entry, None, now)
@@ -920,13 +920,13 @@ def test_a_release_interrupted_by_re_engagement_writes_down_instantly():
     assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_LIMITING
 
     # What the reserve actually paid for those ten minutes: the mean of the ramp
-    # rather than the full rate — under a third of the old one-step burst.
+    # rather than the full rate - under a third of the old one-step burst.
     burst = sum(ramp) / len(ramp)
     assert burst < SITE_NORMAL / 3
 
 
 def test_engaging_deeper_is_never_rate_limited():
-    """Downward from anywhere, at any depth, in one write — the slew must not be
+    """Downward from anywhere, at any depth, in one write - the slew must not be
     able to delay protection."""
     hass, entry, _rt = _accepting_site()
 
@@ -938,7 +938,7 @@ def test_engaging_deeper_is_never_rate_limited():
 
 def test_the_final_approach_lands_on_the_normal_value():
     """The last sliver of the climb IS worth a write, now that rises take the
-    small directional deadband — otherwise the register rests a few percent
+    small directional deadband - otherwise the register rests a few percent
     under full rate after every release, for the rest of the day. What must
     still hold either way is that the ramp ENDS here rather than looping."""
     hass = _hass_with_target(current=96.0, maximum=100.0)
@@ -947,7 +947,7 @@ def test_the_final_approach_lands_on_the_normal_value():
         CONF_CHARGE_CONTROL_INTERVAL: 1,
     })
     rt = _arm(hass, entry)
-    # Pretend we wrote the 96 A the register holds — 4 A short of the normal,
+    # Pretend we wrote the 96 A the register holds - 4 A short of the normal,
     # inside the 5 A deadband (5 % of 100).
     rt[INVERTER_RT_APPLIED] = 96.0
 
@@ -963,9 +963,9 @@ def test_the_final_approach_lands_on_the_normal_value():
 def test_the_engaged_self_creep_passes_the_slew_without_delay():
     """The construction argument, as a replay.
 
-    The masked-site trajectory from commit 91aa5ed's own tests — the advice
+    The masked-site trajectory from commit 91aa5ed's own tests - the advice
     climbing by exactly one Excess trigger margin per write while export is
-    pinned at the limit — driven through the control layer. Every advice is
+    pinned at the limit - driven through the control layer. Every advice is
     written in full on the cycle it arrives: the ramp bound IS that step, so the
     escape from masking is not slowed by a single write.
     """
@@ -981,7 +981,7 @@ def test_the_engaged_self_creep_passes_the_slew_without_delay():
 
     written = _written(hass)
     assert len(written) == len(trajectory)
-    # Each write is the advice itself, converted — never a shaved-down step.
+    # Each write is the advice itself, converted - never a shaved-down step.
     assert written == [round(w / SITE_VOLTAGE, 1) for w in trajectory]
 
 
@@ -1005,7 +1005,7 @@ def test_a_creep_faster_than_one_margin_is_the_one_that_gets_held():
 # Since the destination became a standing ceiling, an advice of "the floor" is
 # reached on days that reserve nothing at all: the pack parks at its destination
 # and waits. This is the regime that hold operates in, and none of the mechanics
-# below are new — the point is that the parked case is served by exactly the same
+# below are new - the point is that the parked case is served by exactly the same
 # LIMITING branch, ramp and enforcement publication as a reserved one.
 
 
@@ -1013,7 +1013,7 @@ def test_a_parked_battery_ramps_up_when_a_better_day_appears():
     """Parked on the floor, then production beats the forecast's anchor.
 
     Upward is still a permission to refill, so the overshoot arrives over
-    several writes rather than in one burst — and the moment it goes (a cloud)
+    several writes rather than in one burst - and the moment it goes (a cloud)
     the register is back on the floor in a single write.
     """
     hass, entry, rt = _accepting_site()
@@ -1024,7 +1024,7 @@ def test_a_parked_battery_ramps_up_when_a_better_day_appears():
     assert _written(hass) == [2.0]
     assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_LIMITING
     # The enforcement the Excess verdict reads is the register's own value, so it
-    # is one cycle behind the write by design — the battery really may still take
+    # is one cycle behind the write by design - the battery really may still take
     # what the register still holds. It lands on the floor once the register has
     # followed us there.
     assert rt[INVERTER_RT_ENFORCED_CHARGE_W] == SITE_NORMAL * SITE_VOLTAGE
@@ -1040,7 +1040,7 @@ def test_a_parked_battery_ramps_up_when_a_better_day_appears():
     assert written[1] == round(2.0 + MARGIN_AMPS, 1)
     for previous, nxt in zip(written[1:], written[2:]):
         assert round(nxt - previous, 1) == round(MARGIN_AMPS, 1)
-    # Still climbing — 4 kW is 78 A, and one margin is 9.8 A a minute.
+    # Still climbing - 4 kW is 78 A, and one margin is 9.8 A a minute.
     assert written[-1] < 4000.0 / SITE_VOLTAGE
 
     # The cloud: the overshoot is gone and the floor lands in one write.
@@ -1054,18 +1054,18 @@ def test_a_parked_battery_ramps_up_when_a_better_day_appears():
 # it moves with the plant on every site cycle and this layer is where the
 # volatility is absorbed. Asymmetrically:
 #
-#   * upward — eligible every cycle, already bounded to one margin per write;
-#   * downward — written only once EVERY sample in a full window agrees, and
+#   * upward - eligible every cycle, already bounded to one margin per write;
+#   * downward - written only once EVERY sample in a full window agrees, and
 #     then only by the amount they all agree on (the window's maximum);
-#   * the gate ENGAGING — written at once, because that is a protective regime
+#   * the gate ENGAGING - written at once, because that is a protective regime
 #     transition and not a steady-state correction.
 #
 # The window is CONF_CHARGE_CONTROL_INTERVAL, whose meaning is exactly that:
 # how long a reduction must hold. At the 300 s default a kettle, a passing cloud
 # and a car plugging in all cost nothing at the register.
 
-DEEP_W = 5000.0        # 97.7 A — a reduction well past the 9.35 A deadband
-SHALLOW_W = 2000.0     # 39.1 A — a deeper dip, to be swallowed by the maximum
+DEEP_W = 5000.0        # 97.7 A - a reduction well past the 9.35 A deadband
+SHALLOW_W = 2000.0     # 39.1 A - a deeper dip, to be swallowed by the maximum
 FULL_W = SITE_NORMAL * SITE_VOLTAGE  # the advice that asks for full rate
 
 
@@ -1084,7 +1084,7 @@ def _engaged_site():
     """An armed site whose gate is already engaged and settled at full rate.
 
     The first cycle is the engagement, and it is deliberately handed an advice
-    that asks for full rate so the exemption has nothing to write — what it
+    that asks for full rate so the exemption has nothing to write - what it
     leaves behind is the gate marker, which is the state the window rules need.
     """
     hass, entry, rt = _accepting_site()
@@ -1106,7 +1106,7 @@ def test_the_window_is_full_only_after_a_whole_interval_of_samples():
 
 
 def test_the_window_hands_back_the_maximum_its_samples_agreed_on():
-    """The least reduction all of them agree on — never a momentary deep dip."""
+    """The least reduction all of them agree on - never a momentary deep dip."""
     samples = []
     for stamp, value in ((0.0, 100.0), (20.0, 40.0), (40.0, 90.0), (60.0, 50.0)):
         samples = note_reduction(samples, stamp, value, 60.0)
@@ -1173,7 +1173,7 @@ def test_a_sample_back_at_the_register_clears_the_window():
     _gated(hass, entry, FULL_W, 50.0)
     assert rt[INVERTER_RT_DOWN_SAMPLES] == []
 
-    # A whole interval later there is still nothing written — the old samples
+    # A whole interval later there is still nothing written - the old samples
     # cannot combine with new ones to reach a window's worth.
     for n in range(6, 12):
         _gated(hass, entry, DEEP_W, n * 10.0)
@@ -1251,7 +1251,7 @@ def test_a_rise_is_written_on_the_cycle_it_arrives():
     """Three consecutive rises inside ONE interval, each one written.
 
     The rise is already bounded to a margin per write, and this is the direction
-    the masked-site self-creep escapes in — one margin per CYCLE, not per
+    the masked-site self-creep escapes in - one margin per CYCLE, not per
     interval.
     """
     hass, entry, _rt = _accepting_site()
@@ -1342,7 +1342,7 @@ def test_a_watt_register_ramps_in_watts_with_no_conversion():
 
 def test_the_first_write_after_a_reload_ramps_from_the_register():
     """No applied marker survives a reload, so the register's own read-back is
-    the baseline — otherwise the very cycle after a restart would be the
+    the baseline - otherwise the very cycle after a restart would be the
     full-rate step this whole thing exists to prevent."""
     hass = _hass_with_target(current=20.0, maximum=SITE_NORMAL)
     entry = _site_entry()
@@ -1355,7 +1355,7 @@ def test_the_first_write_after_a_reload_ramps_from_the_register():
 
 
 def test_an_unreadable_register_and_no_marker_writes_the_advice():
-    """Nothing to ramp from at all — a guessed baseline would be worse than
+    """Nothing to ramp from at all - a guessed baseline would be worse than
     none, so the value stands (and the deadband has nothing to compare either)."""
     hass = _Hass()
     hass.states.set(TARGET, "unavailable")
@@ -1372,7 +1372,7 @@ def test_an_unreadable_register_and_no_marker_writes_the_advice():
 
 def test_the_margin_is_read_from_the_hub_not_the_inverter_entry():
     """The slew step is a SITE-level number, so it is threaded in from the hub
-    beside the inverter entry — the same way the site voltage reaches
+    beside the inverter entry - the same way the site voltage reaches
     control/ocpp.py. A margin stored on the inverter entry is not a setting at
     all and must not be picked up as one.
     """
@@ -1382,7 +1382,7 @@ def test_the_margin_is_read_from_the_hub_not_the_inverter_entry():
 
     asyncio.run(_send(hass, entry, 9574.0, 0.0, hub_entry=_hub(margin=1024)))
 
-    # 1024 W at 51.2 V is a 20 A step from the register's 20 A — the hub's
+    # 1024 W at 51.2 V is a 20 A step from the register's 20 A - the hub's
     # number, not the inverter's 5000 W and not the 500 W default.
     assert hass.services.calls[-1][2]["value"] == 40.0
 
@@ -1402,7 +1402,7 @@ def test_a_hub_with_the_margin_switched_off_writes_in_one_step():
 # --- Cadence independence -----------------------------------------------------
 #
 # The check moved from a 10 s platform poll to the site cycle, whose default is
-# 2 s — five times as many checks. What must NOT change is how often the
+# 2 s - five times as many checks. What must NOT change is how often the
 # register is actually written, because that is what wears EEPROM. The pacing is
 # measured in wall-clock seconds (``now_mono``), never in cycles, and these
 # drive the same hour at several cadences to hold it to that.
@@ -1417,7 +1417,7 @@ def _write_times(cadence_s, duration_s, interval=WRITE_INTERVAL, advice_w=2560.0
 
     Returns the times at which a register write actually happened. The fake
     register never moves (nothing applies the write), so the deadband always
-    passes and the interval is the only thing pacing the writes — exactly the
+    passes and the interval is the only thing pacing the writes - exactly the
     worst case for a fast cadence.
     """
     hass = _hass_with_target(current=100.0, maximum=100.0)
@@ -1474,7 +1474,7 @@ def test_the_switch_gate_holds_for_every_cycle_of_an_hour():
 # time-of-use slots, one number entity each), and it never restores anything:
 # the value written is always min(normal, recommendation), so the advice climbing
 # back to 100 % through the afternoon hands the slots back by itself. The
-# "normal" side is a live entity the user's own automations keep owning — an
+# "normal" side is a live entity the user's own automations keep owning - an
 # unconfigured one means a constant 100, an unreadable one means we write nothing
 # at all rather than invent their setting.
 
@@ -1498,7 +1498,7 @@ def _soc_entry(options=None, targets=None):
             # 1 s, not 0: a 0 reads as "unset" and falls back to the 300 s
             # default (the ``or`` in the control, shared with the charge-rate
             # side). A one-second window keeps the pacing out of the way of the
-            # tests that are not about pacing — they step now_mono by 10.
+            # tests that are not about pacing - they step now_mono by 10.
             CONF_CHARGE_CONTROL_INTERVAL: 1,
             **(options or {}),
         },
@@ -1531,7 +1531,7 @@ def _soc_writes(hass):
 
 def test_desired_is_the_lower_of_the_normal_and_the_advice():
     assert desired_soc(100.0, 80.0) == 80.0
-    # Advice ABOVE the normal changes nothing — we may only ever hold it lower
+    # Advice ABOVE the normal changes nothing - we may only ever hold it lower
     # than whoever owns the slots asked for.
     assert desired_soc(80.0, 90.0) == 80.0
     # No advice at all: track the normal. This is also the release path, since
@@ -1542,7 +1542,7 @@ def test_desired_is_the_lower_of_the_normal_and_the_advice():
 def test_normal_defaults_to_one_hundred_with_no_entity_configured():
     """The developer's explicit choice: a constant, not a read of the slots.
 
-    Reading the slots would ratchet — they may hold a limit WE wrote, so the
+    Reading the slots would ratchet - they may hold a limit WE wrote, so the
     'normal' would follow our own last limit down and never come back up.
     """
     assert resolve_normal_soc(_soc_hass(), _soc_entry()) == DEFAULT_SOC_LIMIT_NORMAL
@@ -1556,7 +1556,7 @@ def test_normal_is_read_live_from_the_configured_entity():
 
 
 def test_normal_is_none_when_the_configured_entity_cannot_be_read():
-    """None is not a value — the caller defers rather than guessing."""
+    """None is not a value - the caller defers rather than guessing."""
     hass = _soc_hass()
     hass.states.set(NORMAL_ENTITY, "unavailable")
     entry = _soc_entry({CONF_SOC_LIMIT_NORMAL_ENTITY_ID: NORMAL_ENTITY})
@@ -1600,13 +1600,13 @@ def test_advice_above_the_normal_writes_the_normal():
     asyncio.run(send_inverter_soc_limit(hass, entry, 95.0, 0.0))
 
     assert _soc_writes(hass) == [(eid, 80.0) for eid in SOC_SLOTS]
-    # Tracking the owner's own ceiling is not "limiting" — we are holding it
+    # Tracking the owner's own ceiling is not "limiting" - we are holding it
     # exactly where they asked, which is the idle standing.
     assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_IDLE
 
 
 def test_idle_tracking_propagates_a_change_of_the_normal_entity():
-    """With no advice at all the slots still follow the normal entity — that is
+    """With no advice at all the slots still follow the normal entity - that is
     what 'external automations keep owning it' means in practice."""
     hass = _soc_hass(normal=90)
     entry = _soc_entry({CONF_SOC_LIMIT_NORMAL_ENTITY_ID: NORMAL_ENTITY})
@@ -1626,7 +1626,7 @@ def test_idle_tracking_propagates_a_change_of_the_normal_entity():
 
 def test_the_advice_self_healing_to_full_hands_the_slots_back():
     """There is no release event. As the peak passes, the advice climbs to 100
-    and the min() is the normal again — no marker, no once-only write."""
+    and the min() is the normal again - no marker, no once-only write."""
     hass = _soc_hass()
     entry = _soc_entry()
     _arm_soc(hass, entry)
@@ -1653,11 +1653,11 @@ def test_the_default_hundred_is_what_gets_enforced_without_a_normal_entity():
 
 
 def test_a_slot_already_at_the_ceiling_is_skipped_while_its_siblings_are_written():
-    """The deadband is applied PER TARGET — the slots are independent, so one of
+    """The deadband is applied PER TARGET - the slots are independent, so one of
     them being right must not spend the others' write, and vice versa."""
     hass = _soc_hass(
         slots={
-            SOC_SLOTS[0]: 70.4,  # within 1.0 point of the desired 70 — spare it
+            SOC_SLOTS[0]: 70.4,  # within 1.0 point of the desired 70 - spare it
             SOC_SLOTS[1]: 100,
             SOC_SLOTS[2]: 85,
         }
@@ -1698,7 +1698,7 @@ def test_every_slot_at_the_ceiling_writes_nothing_at_all():
 
 def test_the_interval_gates_the_whole_fan_out():
     """One clock for the set: when the window opens every due slot goes, and the
-    next window starts from there — not one clock per slot."""
+    next window starts from there - not one clock per slot."""
     hass = _soc_hass()
     entry = _soc_entry({CONF_CHARGE_CONTROL_INTERVAL: 300})
     rt = _arm_soc(hass, entry)
@@ -1735,7 +1735,7 @@ def test_a_whole_interval_of_cycles_produces_one_fan_out():
 
 def test_an_unreadable_normal_defers_every_write():
     """Never write a guess for somebody else's setting. The slots keep whatever
-    they hold — the last thing either we or their owner deliberately put there."""
+    they hold - the last thing either we or their owner deliberately put there."""
     hass = _soc_hass()
     hass.states.set(NORMAL_ENTITY, "unavailable")
     entry = _soc_entry({CONF_SOC_LIMIT_NORMAL_ENTITY_ID: NORMAL_ENTITY})
@@ -1746,7 +1746,7 @@ def test_an_unreadable_normal_defers_every_write():
     assert _soc_writes(hass) == []
     assert rt[INVERTER_RT_SOC_DESIRED] is None
     assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_IDLE
-    # The read-backs are still recorded — the sensor keeps reporting the slots
+    # The read-backs are still recorded - the sensor keeps reporting the slots
     # through a failure of the normal entity beside them.
     assert rt[INVERTER_RT_SOC_SLOTS] == {eid: 100.0 for eid in SOC_SLOTS}
     assert rt[INVERTER_RT_SOC_NORMAL] is None
@@ -1776,7 +1776,7 @@ def test_nothing_is_written_while_the_soc_switch_is_off():
     assert _soc_writes(hass) == []
     assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_OFF
     assert rt[INVERTER_RT_SOC_DESIRED] is None
-    # Still reading, though — that is the half of the graph the sensor would
+    # Still reading, though - that is the half of the graph the sensor would
     # otherwise lose while the control is disarmed.
     assert rt[INVERTER_RT_SOC_SLOTS] == {eid: 100.0 for eid in SOC_SLOTS}
 
@@ -1796,7 +1796,7 @@ def test_an_unarmed_control_is_off_even_before_the_switch_exists():
 
 def test_no_soc_targets_is_a_no_op():
     """An inverter that only uses the charge-rate control must be untouched by
-    this one — including its runtime dict, which stays free of SOC keys."""
+    this one - including its runtime dict, which stays free of SOC keys."""
     hass = _soc_hass()
     entry = _soc_entry(targets=[])
 
@@ -1849,7 +1849,7 @@ def test_the_slot_read_backs_are_taken_before_the_write():
 # the destination blocks overnight self-consumption and imports toward it
 # (observed live 2026-08-25). Under CONF_SOC_LIMIT_SEMANTICS = floor, a
 # reservation may only LOWER a slot (the pre-clip "the house may drain to
-# here" drop) and tracking the normal may only RAISE one back to the source —
+# here" drop) and tracking the normal may only RAISE one back to the source -
 # which is also what makes the release memoryless: the restore is a plain
 # raise toward the live source value, needing no record of what we dropped.
 
@@ -1879,7 +1879,7 @@ def test_floor_reservation_lowers_the_slots():
 
 
 def test_floor_reservation_never_raises_a_slot_already_below_the_reserve():
-    """A slot the owner keeps lower than the reserve already satisfies it —
+    """A slot the owner keeps lower than the reserve already satisfies it -
     raising it would defend charge nobody asked defended, and on a Deye
     grid-charge toward it."""
     slots = {SOC_SLOTS[0]: 90, SOC_SLOTS[1]: 70, SOC_SLOTS[2]: 90}
@@ -1894,7 +1894,7 @@ def test_floor_reservation_never_raises_a_slot_already_below_the_reserve():
 
 def test_floor_release_restores_the_source_with_no_memory():
     """Slots we dropped overnight climb back to the live source value on
-    release — from a FRESH runtime dict, which is the restart-mid-window case:
+    release - from a FRESH runtime dict, which is the restart-mid-window case:
     nothing about the restore depends on remembering that we wrote the drop."""
     hass = _soc_hass(slots={eid: 82 for eid in SOC_SLOTS}, normal=90)
     entry = _floor_entry()
@@ -1920,7 +1920,7 @@ def test_floor_idle_never_lowers_an_owner_raised_slot():
 
 def test_ceiling_semantics_keeps_the_unconditional_tracking():
     """The paired rig: the same owner-raised slots under explicit CEILING
-    semantics are clamped down to the normal — that clamp IS the control on a
+    semantics are clamped down to the normal - that clamp IS the control on a
     register that means 'stop charging at'."""
     hass = _soc_hass(slots={eid: 100 for eid in SOC_SLOTS}, normal=90)
     entry = _soc_entry(
@@ -1947,14 +1947,14 @@ def test_floor_holds_dropped_slots_through_the_daytime_climb():
     asyncio.run(send_inverter_soc_limit(hass, entry, 84.0, 0.0))
 
     assert _soc_writes(hass) == []
-    # Still the enforced intent — the sensor reports 84 while the slots hold 82.
+    # Still the enforced intent - the sensor reports 84 while the slots hold 82.
     assert rt[INVERTER_RT_SOC_DESIRED] == 84.0
     assert rt[INVERTER_RT_SOC_STATUS] == CONTROL_STATE_LIMITING
 
 
 def test_floor_without_a_source_defers_all_writes():
     """The 100 fallback written into a floor register would mean 'never
-    discharge below 100' — so floor semantics with no source writes nothing."""
+    discharge below 100' - so floor semantics with no source writes nothing."""
     hass = _soc_hass(slots={eid: 90 for eid in SOC_SLOTS})
     entry = _soc_entry({CONF_SOC_LIMIT_SEMANTICS: SOC_LIMIT_SEMANTICS_FLOOR})
     rt = _arm_soc(hass, entry)
@@ -1967,8 +1967,8 @@ def test_floor_without_a_source_defers_all_writes():
 
 
 def test_floor_source_among_the_managed_slots_defers_all_writes():
-    """Writing the reserve into the entity the destination is read from — and
-    the restore is anchored to — would ratchet both down to our own last limit.
+    """Writing the reserve into the entity the destination is read from - and
+    the restore is anchored to - would ratchet both down to our own last limit.
     A managed slot as the source is a misconfiguration, not a degraded mode."""
     hass = _soc_hass(slots={eid: 90 for eid in SOC_SLOTS})
     entry = _soc_entry(
@@ -2085,7 +2085,7 @@ def test_the_worker_mixin_turns_polling_off():
 
 def test_async_update_refreshes_the_state_and_awaits_nothing():
     """``homeassistant.update_entity`` is a service any automation can call at
-    any rate. If it wrote, it would be a second writer on the register — able to
+    any rate. If it wrote, it would be a second writer on the register - able to
     overlap the cycle's own write and to spend the min-interval budget outside
     the one place that owns it. So it awaits nothing at all."""
     method = _method(
@@ -2124,7 +2124,7 @@ def test_only_a_site_cycle_worker_writes_the_soc_slots():
     Its own rather than the charge-control sensor's: an inverter may configure
     the SOC slots and no charge-current register, and a control that quietly
     never ticked would be the worst failure available here. Nothing is given up
-    — the coordinator awaits its workers one at a time, which is the same thing
+    - the coordinator awaits its workers one at a time, which is the same thing
     that already serializes the several workers of a multi-inverter site.
     """
     callers = _callers_of("send_inverter_soc_limit")
@@ -2133,7 +2133,7 @@ def test_only_a_site_cycle_worker_writes_the_soc_slots():
 
 def test_the_soc_control_sensor_is_a_site_cycle_worker():
     """And the mixin precedes SensorEntity, so its ``_attr_should_poll = False``
-    wins the MRO — a poll would be a second, unserialized writer."""
+    wins the MRO - a poll would be a second, unserialized writer."""
     tree = _parse("entities", "inverter.py")
     cls = next(
         node
@@ -2151,7 +2151,7 @@ def test_the_soc_control_sensor_is_a_site_cycle_worker():
 
 
 def test_the_soc_control_sensor_reads_no_entity_state_itself():
-    """Everything it reports comes from the runtime dict the control records —
+    """Everything it reports comes from the runtime dict the control records -
     a second reader of the slots would be a second reader of the device."""
     source = (COMPONENT / "entities" / "inverter.py").read_text()
     assert "hass.states" not in source, "an entity is reading states directly"
@@ -2194,14 +2194,14 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)
 
 
 # --- The deadband is directional ---------------------------------------------
 #
 # Observed live 2026-08-30: while the battery sat at its destination the advice
-# was the export overshoot above the setpoint — 245–378 W — and the register
+# was the export overshoot above the setpoint - 245–378 W - and the register
 # stayed at 0 A for fifty minutes, because the deadband was then 5 % of the
 # NORMAL value (4.2 A on that site) and the advice straddled it. Two changes
 # came out of it: the deadband became absolute watts, and rises take a band
@@ -2220,7 +2220,7 @@ _ASYM = {                      # 400 W ≈ 7.8 A down, a third of the step up
 
 def test_a_small_rise_from_zero_is_written():
     """The live case, on a site whose deadband is wide enough to have caused it:
-    400 W is 7.8 A down, while up is a third of the 9.77 A step — 3.26 A. A 4 A
+    400 W is 7.8 A down, while up is a third of the 9.77 A step - 3.26 A. A 4 A
     advice clears the second and not the first, and it is the one that decides.
     """
     hass = _hass_with_target(current=0.0, maximum=100.0)
@@ -2240,14 +2240,14 @@ def test_the_same_move_downward_is_still_swallowed():
     entry = _entry(dict(_ASYM))
     _arm(hass, entry)
 
-    # 5 A below the register — past the 3.26 A rise band, inside the 7.8 A one.
+    # 5 A below the register - past the 3.26 A rise band, inside the 7.8 A one.
     asyncio.run(_send(hass, entry, 4.0 * 51.2, 100.0))
 
     assert _written(hass) == []
 
 
 def test_a_rise_below_the_rise_band_is_still_swallowed():
-    """Not zero either — sub-band jitter must not reach the register, or a
+    """Not zero either - sub-band jitter must not reach the register, or a
     Modbus write lands on every cycle the advice wobbles."""
     hass = _hass_with_target(current=4.0, maximum=100.0)
     entry = _entry(dict(_ASYM))
@@ -2304,7 +2304,7 @@ def test_the_default_deadband_needs_no_asymmetry_at_all():
 # (observed live 2026-08-31). The write decision compares against the register's
 # LIVE value, so that silently-dropped 0.2 A is a standing disagreement between
 # what we want and what we read. Wider than the deadband it would be a write
-# every cycle for ever — the exact churn the deadband exists to prevent, caused
+# every cycle for ever - the exact churn the deadband exists to prevent, caused
 # by the deadband being narrower than the device's resolution. Snapping the
 # target to the register's grid removes the disagreement at its source.
 
@@ -2331,7 +2331,7 @@ def test_a_written_value_is_snapped_to_the_register_step():
 
 def test_snapping_rounds_DOWN_because_the_value_is_a_permit():
     """Every value this module writes is a ceiling on what the battery may
-    draw, so rounding up would hand out more than the advice allowed — on the
+    draw, so rounding up would hand out more than the advice allowed - on the
     reservation path, headroom the forecast was trying to keep."""
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
@@ -2364,7 +2364,7 @@ def test_the_release_still_completes_when_normal_is_off_the_grid():
     """The trap snapping introduces: quantise rounds DOWN, so a normal value
     off the register's grid (84.5 on a whole-amp register) is unreachable. The
     ramp ends on "landed", so comparing against the RAW normal would hold the
-    release open for ever — writing nothing, never clearing its marker.
+    release open for ever - writing nothing, never clearing its marker.
     """
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,

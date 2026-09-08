@@ -1,4 +1,4 @@
-# Load Juggler test instance — see dev/ha-test/README.md.
+# Load Juggler test instance - see dev/ha-test/README.md.
 homeassistant:
   name: Load Juggler test
   # Ljubljana: the live sites are in Slovenia, so the sun position and the
@@ -10,7 +10,7 @@ homeassistant:
   currency: EUR
   time_zone: Europe/Ljubljana
   # One file per simulated thing. Delete a package and that device is simply
-  # gone from the site — which is how you test a site without a battery, or
+  # gone from the site - which is how you test a site without a battery, or
   # with only a plug.
   packages: !include_dir_named packages
 
@@ -24,14 +24,14 @@ history:
 logbook:
 # The Energy dashboard's backend. Not optional for us: the `power-sankey` card
 # on the Simulator page subscribes to the energy collection, and without this
-# component that websocket command does not exist — the card fails to
+# component that websocket command does not exist - the card fails to
 # subscribe and takes the whole dashboard view down with it, silently. It
 # would have come in with `default_config:`, which is trimmed above.
 energy:
 mobile_app:
 recorder:
   # A test instance's history is worth two days at most, and a small database
-  # keeps restarts fast — you will do a lot of them.
+  # keeps restarts fast - you will do a lot of them.
   purge_keep_days: 2
 
 logger:
@@ -39,7 +39,7 @@ logger:
   logs:
     # The engine's own cycle log: the three pools, every load's permit and
     # measured draw, and the distribution's reasoning, once per site cycle.
-    # This is the fastest read on what the engine is thinking — faster than
+    # This is the fastest read on what the engine is thinking - faster than
     # the Overview page, which only re-renders when you reopen it.
     custom_components.dynamic_ocpp_evse: debug
 

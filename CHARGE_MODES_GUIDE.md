@@ -1,4 +1,4 @@
-# Load Juggler — Operating Modes Guide
+# Load Juggler - Operating Modes Guide
 
 For distribution modes (Shared, Priority, Optimized, Strict), see [DISTRIBUTION_MODES_GUIDE.md](DISTRIBUTION_MODES_GUIDE.md).
 For circuit groups (shared breaker limits), see [DISTRIBUTION_MODES_GUIDE.md](DISTRIBUTION_MODES_GUIDE.md#circuit-groups).
@@ -18,7 +18,7 @@ For circuit groups (shared breaker limits), see [DISTRIBUTION_MODES_GUIDE.md](DI
 
 ## Operating Modes Overview
 
-Load Juggler provides per-load operating modes — each managed load chooses its own mode independently. This allows mixing modes across your loads (e.g., daily driver on Standard while a pool heater runs on Solar Only).
+Load Juggler provides per-load operating modes - each managed load chooses its own mode independently. This allows mixing modes across your loads (e.g., daily driver on Standard while a pool heater runs on Solar Only).
 
 ### Mode Urgency
 
@@ -40,7 +40,7 @@ Within the same mode, the load's priority number decides who gets power first.
 ### Smart Plug Modes
 
 A smart plug is a binary on/off load, so its modes resolve to a simple on/off
-decision. It has **four** modes that form a ladder — each one drains the home
+decision. It has **four** modes that form a ladder - each one drains the home
 **battery** to a progressively higher SOC floor, and none of them (bar
 Continuous, and bar the grace window noted below) ever use the grid:
 
@@ -52,17 +52,17 @@ Continuous, and bar the grace window noted below) ever use the grid:
 | **Excess** | near-full | On while battery SOC is **at/above the "full" SOC** (default 97%), or the site has run out of absorption capacity | On when grid export reaches the export allowance |
 
 **Why the battery changes things:** with a battery, the battery *is* the
-surplus buffer — it stores solar. Each mode decides how deep into that buffer
+surplus buffer - it stores solar. Each mode decides how deep into that buffer
 the plug may dig:
 
-- **Continuous** — a must-run load: drains the battery to its minimum SOC,
+- **Continuous** - a must-run load: drains the battery to its minimum SOC,
   then pulls from the grid, and stops only if neither can supply it.
-- **Solar Priority** — drains the battery to its minimum SOC, then stops.
-  Never uses the grid: this mode has **no grace ride-through** (by design —
+- **Solar Priority** - drains the battery to its minimum SOC, then stops.
+  Never uses the grid: this mode has **no grace ride-through** (by design -
   a grace hold would also bridge minimum-SOC sheds, and the minimum SOC is a
   protective floor that must act immediately), so it sheds at once on
   inverter saturation.
-- **Solar Only** — drains only the band *above the target* SOC (genuine stored
+- **Solar Only** - drains only the band *above the target* SOC (genuine stored
   surplus), then stops. Doesn't use the grid beyond the grace window described
   below.
 
@@ -71,12 +71,12 @@ the plug may dig:
 > the inverter is already putting out its rated power (other loads saturate it),
 > that stored energy has no path to the plug and the shortfall would come from
 > the grid. So the plug additionally needs the inverter's rating to cover its
-> own draw, judged as if the plug were off — a plug whose own draw is what fills
+> own draw, judged as if the plug were off - a plug whose own draw is what fills
 > the inverter keeps running, it is never asked to shed itself.
 >
 > **Saturation shorter than the Solar grace period rides through.** While the
 > grace window runs the plug stays on, and on a grid-tied site that means it is
-> briefly grid-assisted — the honest price of not flapping the relay on every
+> briefly grid-assisted - the honest price of not flapping the relay on every
 > passing peak. Saturation that outlasts the window sheds the plug. Set the
 > grace period to how long you are willing to import for: 0 sheds immediately.
 > Off grid there is nothing to import from, and the same shed protects the
@@ -84,15 +84,15 @@ the plug may dig:
 >
 > Sites with no inverter capacity configured cannot be checked and behave as
 > before: SOC alone decides.
-- **Excess** — runs only when the battery is essentially full (the configurable
+- **Excess** - runs only when the battery is essentially full (the configurable
   "full" SOC, default 97%) *and* the inverter can pass the plug's draw, or the
-  site can no longer absorb its production — export at its allowance *and* the
+  site can no longer absorb its production - export at its allowance *and* the
   battery already charging as fast as it can. The absorption verdict needs no
   inverter check of its own: power the site is exporting is already on the AC
   bus, and the plug only redirects it.
   See [Excess Mode](#excess-mode) for the single comparison behind that.
 
-This is the same on a hybrid grid-tied site and an off-grid site — only the
+This is the same on a hybrid grid-tied site and an off-grid site - only the
 presence of a battery matters, not the grid connection.
 
 Without a battery there is no buffer: **Solar Priority** and **Solar Only**
@@ -101,11 +101,11 @@ only on a battery system), and **Excess** needs grid export above the
 configured threshold.
 
 A plug's solar mode competes for power at the same urgency tier as the
-matching EVSE mode — Solar Priority at tier 2, Solar Only at tier 3 — so a
+matching EVSE mode - Solar Priority at tier 2, Solar Only at tier 3 - so a
 plug and an EVSE in the same mode are ordered by their configured priority
 numbers.
 
-> EVSEs are unaffected by this — they modulate charge current to the available
+> EVSEs are unaffected by this - they modulate charge current to the available
 > solar/excess power rather than switching fully on/off.
 
 ---
@@ -115,7 +115,7 @@ numbers.
 **Available for:** EVSE
 
 ### Purpose
-Maximum speed charging — charge as fast as possible within available power limits.
+Maximum speed charging - charge as fast as possible within available power limits.
 
 ### Without Battery
 
@@ -194,7 +194,7 @@ Always-on operation. The load stays powered whenever it is connected.
 ### Purpose
 Economical charging that prioritizes solar production and minimizes grid export while maintaining a minimum charging rate. Formerly known as "Eco" mode.
 
-> For a **smart plug** this mode is a binary on/off — see [Smart Plug Modes](#smart-plug-modes) for how the battery SOC band gates it. The sections below describe the EVSE's modulating behaviour.
+> For a **smart plug** this mode is a binary on/off - see [Smart Plug Modes](#smart-plug-modes) for how the battery SOC band gates it. The sections below describe the EVSE's modulating behaviour.
 
 ### Without Battery
 
@@ -306,16 +306,16 @@ Battery discharges to provide full speed charging
 **Available for:** EVSE, Smart Plug
 
 ### Purpose
-Pure solar charging — stricter than Solar Priority about using only solar power (no grid import, no battery discharge below target SOC).
+Pure solar charging - stricter than Solar Priority about using only solar power (no grid import, no battery discharge below target SOC).
 
-> For a **smart plug** this mode is a binary on/off — see [Smart Plug Modes](#smart-plug-modes) for how the battery SOC band gates it. The sections below describe the EVSE's modulating behaviour.
+> For a **smart plug** this mode is a binary on/off - see [Smart Plug Modes](#smart-plug-modes) for how the battery SOC band gates it. The sections below describe the EVSE's modulating behaviour.
 
 ### Without Battery
 
 **Behavior:**
 - Only charges when solar is available (exporting to grid)
 - Uses export power for EV charging
-- Zero grid import — stops charging if grid import would be required
+- Zero grid import - stops charging if grid import would be required
 - Stops charging when solar production drops below minimum current
 
 **When to use:**
@@ -377,13 +377,13 @@ Result: No charging (prioritize battery charging)
 ### Purpose
 Threshold-based charging that starts when excess export exceeds a configured threshold, preventing excessive solar export while managing battery capacity.
 
-> For a **smart plug** this mode is a binary on/off — see [Smart Plug Modes](#smart-plug-modes) for how it is gated (battery near-full, or the site exporting). The sections below describe the EVSE's modulating behaviour.
+> For a **smart plug** this mode is a binary on/off - see [Smart Plug Modes](#smart-plug-modes) for how it is gated (battery near-full, or the site exporting). The sections below describe the EVSE's modulating behaviour.
 
 ### Without Battery
 
 **Behavior:**
 - Threshold-based charging that uses excess export above threshold
-- Starts charging once `export_power >= threshold` — at the load's **minimum
+- Starts charging once `export_power >= threshold` - at the load's **minimum
   current**, even when the excess is smaller than that minimum
 - Charging rate: `max(min_current, (export_power - threshold) / voltage)`
 
@@ -397,13 +397,13 @@ Else:
 
 **The threshold starts the load; the excess only sizes it.** A car cannot be
 charged below the EVSE's minimum current, so a permit cut to the size of the
-momentary excess would be a permit the hardware cannot express — and gating the
+momentary excess would be a permit the hardware cannot express - and gating the
 start on it would leave the load off on exactly the site that needs it most: with
 the inverter's **Battery Charge Control** holding export just under the limit,
 the excess sits *at* the threshold and peaks only between register writes. The
 minimum is therefore a floor for as long as the threshold is met, which is the
 same threshold-hit engagement a smart plug in this mode has always had (its whole
-rating overshoots the excess too). Above the minimum nothing changes — the rate
+rating overshoots the excess too). Above the minimum nothing changes - the rate
 follows the excess.
 
 **When to use:**
@@ -425,24 +425,24 @@ Result: Charge at max(6A, 8.7A) = 8.7A
 
 Excess means the site can no longer absorb its own production anywhere else. A
 battery is a second sink alongside grid export, so both are summed into a single
-comparison — one number decides Excess for every load:
+comparison - one number decides Excess for every load:
 
 ```
 margin = (solar export + battery charge power + our own managed load draws)
        - (export allowance + battery charge allowance)
 
-Excess is on when  margin >= 0   — and the margin IS the excess pool, in watts
+Excess is on when  margin >= 0   - and the margin IS the excess pool, in watts
 ```
 
 A sink contributes its allowance only while it can actually absorb:
 
 | Sink | Allowance | Zeroed when |
 | ---- | --------- | ----------- |
-| Grid export | **Grid Export Limit − Excess Trigger Margin** | The site is off-grid — nothing can leave. (No limit configured = infinite allowance: the grid absorbs everything, so grid-side Excess never triggers.) |
-| Battery charging | **Battery Max Charge Power** — or the lower rate the inverter's **Battery Charge Control** is actually enforcing | No battery is configured, **or** SOC is at/above the **Battery Full SOC** |
+| Grid export | **Grid Export Limit − Excess Trigger Margin** | The site is off-grid - nothing can leave. (No limit configured = infinite allowance: the grid absorbs everything, so grid-side Excess never triggers.) |
+| Battery charging | **Battery Max Charge Power** - or the lower rate the inverter's **Battery Charge Control** is actually enforcing | No battery is configured, **or** SOC is at/above the **Battery Full SOC** |
 
 The margin (default 500 W) exists because an inverter curtails slightly *under*
-the export limit — a trigger exactly at the limit would never fire. Enter your
+the export limit - a trigger exactly at the limit would never fire. Enter your
 real physical/contract limit; the trigger takes care of itself.
 
 **Only solar export counts.** The export in that sum is the site's own
@@ -453,7 +453,7 @@ battery serving the **house** has nothing at the meter to take away, a battery
 **selling** to the grid is taken away in full, and a **charging or idle** battery
 changes nothing at all. Without it, an inverter in a sell mode (Deye "Selling
 First", a time-of-use slot with sell semantics) would push the meter past the
-trigger on stored energy and start an Excess load on the house battery — charging
+trigger on stored energy and start an Excess load on the house battery - charging
 the car from the battery, at a loss. On a site whose work mode keeps the battery
 off the meter (Zero-Export-to-CT and every equivalent self-consumption mode) this
 changes nothing at all.
@@ -466,7 +466,7 @@ that isn't there.
 **A battery held below its rating** is the same rule one step short of full. When
 an inverter's **Battery Charge Control** is armed and the PV clipping forecast
 has it holding the charge register at, say, 6.5 kW of a 10 kW rating, the missing
-3.5 kW is not a place this site can put production either — so the allowance is
+3.5 kW is not a place this site can put production either - so the allowance is
 the rate the battery is *permitted* to take, not its plate rating. Counting the
 plate would put the trigger 3.5 kW out of reach for the whole clipping window,
 which is precisely when the site has surplus it cannot place and Excess loads are
@@ -476,32 +476,32 @@ the inverter) really does still charge at its plate, and in a multi-inverter fle
 only the enforcing inverter's share narrows.
 
 **Multiple batteries** (inverter entries): each battery's charge rating counts
-toward the allowance only while *that* battery is below *its own* Full SOC —
+toward the allowance only while *that* battery is below *its own* Full SOC -
 one full battery drops out of the allowance while an empty sibling keeps
 absorbing. The SOC the SOC-gated modes read (Solar Priority bands, plug
 above-min/above-target) is the capacity-weighted fleet SOC, and the discharge
 capacity offered to loads excludes any battery below the site minimum SOC,
 however high the fleet average sits.
 
-Zero counts as on, because it is the saturated case — export sitting at the
+Zero counts as on, because it is the saturated case - export sitting at the
 allowance *and* the battery pulling its maximum charge rate is precisely "nothing
 more can be absorbed". A margin of zero is a pool of zero amps, and a modulating
-load (EVSE, power station) still starts — at its **minimum**, on the strength of
+load (EVSE, power station) still starts - at its **minimum**, on the strength of
 the verdict alone, the same floor the batteryless threshold above describes. The
 pool only sizes the rate above that minimum.
 
 A site with no allowance at all therefore sits exactly at the trigger: off-grid
-with a full battery. That is correct — a full battery cannot take another watt,
+with a full battery. That is correct - a full battery cannot take another watt,
 and an off-grid inverter in that state is curtailing. The loads that read the
 plain verdict run there: the hot water tank's boost setpoint, a plug on its
 near-full trigger, a modulating load at its minimum. It self-corrects rather than
-self-limits — if production cannot cover them the battery discharges, SOC leaves
+self-limits - if production cannot cover them the battery discharges, SOC leaves
 "full", its charge allowance returns and the verdict clears.
 
 **Why a battery below its maximum blocks Excess.** If the battery still has
 charge headroom, that surplus belongs in the battery, not in an opportunistic
-load. On an ideal hybrid inverter the two are equivalent — the battery takes
-everything first, so export only appears once it is saturated — but on real sites
+load. On an ideal hybrid inverter the two are equivalent - the battery takes
+everything first, so export only appears once it is saturated - but on real sites
 export and an unsaturated battery do coexist (export-limit curtailment, SOC
 tapering, AC-coupled inverters), and this is what stops a load from stealing
 charge the battery wanted.
@@ -513,23 +513,23 @@ disengages, so a load doesn't chatter at the trigger point.
 the comparison, so a load already running on excess does not disqualify itself by
 consuming the surplus that started it. Grid-tied the feedback loop does this by
 adding the draws back into export, which makes the margin equal *production minus
-household* — invariant to our loads, and invariant to whether the inverter serves
+household* - invariant to our loads, and invariant to whether the inverter serves
 them by cutting export or by throttling battery charging. In meter terms a load
 drawing *P* keeps running until the meter reads `allowance - 500 W - P`.
 
 Off-grid there is no grid reading to add them back to, so the margin adds the
 draws itself. That turns a running load into a **probe**: a curtailing inverter
 ramps up to serve it, and the margin settles at the site's true surplus, which is
-otherwise invisible — an off-grid inverter never reports the headroom it isn't
+otherwise invisible - an off-grid inverter never reports the headroom it isn't
 using. A 2 kW load on an array with 3 kW curtailed lifts the margin to 2 kW; on an
 array with only 1 kW spare it settles at 1 kW, the amount that was genuinely free.
 
 No SOC floor guards this, and none is needed. A **discharging** battery
-contributes nothing to the absorbed side — and grid-tied its discharge comes off
-the export term as well (see *Only solar export counts* above) — so the moment a
+contributes nothing to the absorbed side - and grid-tied its discharge comes off
+the export term as well (see *Only solar export counts* above) - so the moment a
 load pushes the battery past charging and into discharge, the margin collapses
 and Excess clears on its own. While the margin does hold, the worst a load can do is make the battery
-charge more slowly — it can never drain it. Beyond the full-battery rule, SOC
+charge more slowly - it can never drain it. Beyond the full-battery rule, SOC
 plays no part in the Excess decision on any site.
 
 A **smart plug** in Excess mode has one extra trigger: it also turns on at/above
@@ -542,7 +542,7 @@ the Battery Full SOC even with no export at all.
 Battery SOC: 60%, charging at 2000W
 Export at the CT: 13000W
 absorbed = 13000 + 2000 = 15000W   capacity = 13000 + 5000 = 18000W
-Result: No charging — the battery has 3000W of headroom, so this is not surplus
+Result: No charging - the battery has 3000W of headroom, so this is not surplus
 ```
 
 *Scenario 2: Both sinks saturated*
@@ -555,7 +555,7 @@ Result: Charging starts
 
 *Scenario 3: Battery full*
 ```
-Battery SOC: 98% — absorbs nothing, so its allowance drops out
+Battery SOC: 98% - absorbs nothing, so its allowance drops out
 Export at the CT: 13600W
 absorbed = 13600W   capacity = 13000W
 Result: Charge on the 600W above the allowance
@@ -566,7 +566,7 @@ Result: Charge on the 600W above the allowance
 No grid CTs, so the export allowance is 0
 Battery SOC: 90% (above the 80% target), charging at its full 5000W
 margin = 5000 - 5000 = 0
-Result: Excess triggers — previously impossible off-grid, where export is always 0
+Result: Excess triggers - previously impossible off-grid, where export is always 0
 ```
 
 *Scenario 5: Off-grid, the load probes for curtailed production*
@@ -583,16 +583,16 @@ Result: Stays on, and reports the 1000W that was genuinely spare. Without the
 Production can no longer cover household + our 2000W load, so the battery is
 discharging 1000W to help. Discharge counts as absorbing nothing.
 margin = 0 (charge) + 2000 (our load) - 5000 = -3000W
-Result: Excess clears — no SOC floor needed, the formula self-corrects
+Result: Excess clears - no SOC floor needed, the formula self-corrects
 ```
 
 *Scenario 7: Grid-tied, the battery is selling to the grid*
 ```
-Battery SOC: 98% — full, so its charge allowance drops out
+Battery SOC: 98% - full, so its charge allowance drops out
 Battery discharging 3000W, which leaves the site through the meter
 Export at the CT: 14000W, of which only 11000W is the array's
 absorbed = 14000 - 3000 = 11000W   capacity = 13000W
-Result: No charging — stored energy is not surplus, whatever the meter reads.
+Result: No charging - stored energy is not surplus, whatever the meter reads.
         Counting it would start a load on the house battery
 ```
 
@@ -602,11 +602,11 @@ Result: No charging — stored energy is not surplus, whatever the meter reads.
 
 **Available for:** Hot Water Tank
 
-A hot water tank is a binary (on/off) load driven through a Home Assistant `climate` entity — for example a [Generic Thermostat](https://www.home-assistant.io/integrations/generic_thermostat/). The climate entity owns all temperature regulation (hysteresis, minimum cycle duration, the temperature sensor). Load Juggler only decides **when** heating is allowed and **which target temperature** to write.
+A hot water tank is a binary (on/off) load driven through a Home Assistant `climate` entity - for example a [Generic Thermostat](https://www.home-assistant.io/integrations/generic_thermostat/). The climate entity owns all temperature regulation (hysteresis, minimum cycle duration, the temperature sensor). Load Juggler only decides **when** heating is allowed and **which target temperature** to write.
 
 ### Setpoints
 
-The tank has three configurable target temperatures — set during setup and adjustable afterwards as number sliders:
+The tank has three configurable target temperatures - set during setup and adjustable afterwards as number sliders:
 
 | Setpoint | Typical use |
 | -------- | ----------- |
@@ -620,7 +620,7 @@ The operating mode decides which setpoint the tank targets, based on conditions:
 
 | Mode | Target setpoint | Power source |
 | ---- | --------------- | ------------ |
-| **Freeze Protection** | `Away`, raised to `Boost` when there is surplus — the hub reports **Excess** (see [Excess Mode](#excess-mode)), or the home battery is above its target SOC | Any source (Continuous urgency at the floor, Excess urgency while boosting) |
+| **Freeze Protection** | `Away`, raised to `Boost` when there is surplus - the hub reports **Excess** (see [Excess Mode](#excess-mode)), or the home battery is above its target SOC | Any source (Continuous urgency at the floor, Excess urgency while boosting) |
 | **Normal** | `Normal`, raised to `Boost` on the same surplus test | Any source (Continuous urgency at the floor, Excess urgency while boosting) |
 | **Solar Priority** | `Away` below the battery minimum SOC, `Normal` up to the battery target SOC, `Boost` at/above the target SOC | Solar surplus, with a grid-backed minimum below target SOC (Solar Priority urgency) |
 
@@ -628,31 +628,31 @@ The operating mode decides which setpoint the tank targets, based on conditions:
 
 - Load Juggler reads the climate entity's `hvac_action`. When the thermostat reports `idle` (water already at temperature), the tank frees its reserved power for other loads.
 - When heating is allowed, Load Juggler sets the climate entity to `heat` and writes the resolved setpoint; when not, it sets the entity to `off`.
-- To the power-distribution engine the tank behaves like a smart load — a fixed-power binary draw — so it competes for power with EVSEs and smart plugs by mode urgency, then priority. Freeze Protection and Normal compete at **Continuous** urgency (must-run); Solar Priority competes at **Solar Priority** urgency, so it yields to must-run loads but still outranks Solar Only / Excess loads.
+- To the power-distribution engine the tank behaves like a smart load - a fixed-power binary draw - so it competes for power with EVSEs and smart plugs by mode urgency, then priority. Freeze Protection and Normal compete at **Continuous** urgency (must-run); Solar Priority competes at **Solar Priority** urgency, so it yields to must-run loads but still outranks Solar Only / Excess loads.
 - **Surplus demotion:** whichever mode is selected, a tank aiming at its `Boost` setpoint drops to the **Excess** urgency tier for as long as it is boosting. Heating past the temperature the mode actually asks for is opportunistic, so it must not outrank must-run loads. The cold-tank promotion takes precedence: a Solar Priority tank below its Normal temperature keeps tier 1 even while boosting.
-- Every tank mode always keeps heating *permitted* — the mode moves the target temperature, and the grid may cover the floor. A tank is only starved of power by contention (its tier losing out), never by its mode.
-- **What counts as surplus:** the hub's single Excess verdict — grid export plus battery charging measured against what the site is allowed to absorb, hysteresis band included. The tank reads the same verdict an Excess-mode EVSE or plug triggers on, so "there is real surplus" is defined in exactly one place. See [Excess Mode](#excess-mode) for the comparison, including the managed-draw add-back that keeps a boosting tank from disqualifying itself.
-- On an **off-grid** system there is no grid export, so the export allowance is zero and Excess is decided entirely by the battery — it triggers once the battery is charging at its maximum rate. The battery-above-target clause still lifts the boost as well, and the Solar Priority SOC bands work unchanged.
-- On a **no-battery grid-tied** system every SOC clause drops out: Freeze Protection and Normal become purely export-driven (the battery term is zero on both sides of the Excess comparison), and Solar Priority has no band to follow — it stays at `Normal` and never boosts.
+- Every tank mode always keeps heating *permitted* - the mode moves the target temperature, and the grid may cover the floor. A tank is only starved of power by contention (its tier losing out), never by its mode.
+- **What counts as surplus:** the hub's single Excess verdict - grid export plus battery charging measured against what the site is allowed to absorb, hysteresis band included. The tank reads the same verdict an Excess-mode EVSE or plug triggers on, so "there is real surplus" is defined in exactly one place. See [Excess Mode](#excess-mode) for the comparison, including the managed-draw add-back that keeps a boosting tank from disqualifying itself.
+- On an **off-grid** system there is no grid export, so the export allowance is zero and Excess is decided entirely by the battery - it triggers once the battery is charging at its maximum rate. The battery-above-target clause still lifts the boost as well, and the Solar Priority SOC bands work unchanged.
+- On a **no-battery grid-tied** system every SOC clause drops out: Freeze Protection and Normal become purely export-driven (the battery term is zero on both sides of the Excess comparison), and Solar Priority has no band to follow - it stays at `Normal` and never boosts.
 
 ### Example Scenarios
 
 *Scenario 1: Normal mode, sunny afternoon, battery full*
 ```
 Mode: Normal | Battery SOC: 90% (target 80%)
-Result: Target = Boost — the full battery signals surplus energy
+Result: Target = Boost - the full battery signals surplus energy
 ```
 
 *Scenario 2: Solar Priority, battery still charging*
 ```
 Mode: Solar Priority | Battery SOC: 55% (min 20%, target 80%)
-Result: Target = Normal — heat to the baseline, from solar surplus only
+Result: Target = Normal - heat to the baseline, from solar surplus only
 ```
 
 *Scenario 3: Solar Priority, battery depleted*
 ```
 Mode: Solar Priority | Battery SOC: 15% (min 20%)
-Result: Target = Away — frost protection only; let solar refill the battery first
+Result: Target = Away - frost protection only; let solar refill the battery first
 ```
 
 ---
@@ -664,7 +664,7 @@ Result: Target = Away — frost protection only; let solar refill the battery fi
 A portable power station (EcoFlow Delta and similar, via a local integration such
 as [ha-ef-ble](https://github.com/rabits/ha-ef-ble)) is a battery you can charge
 at a commandable rate. To the engine it is an EVSE without the OCPP: it modulates,
-so it uses the **same four modes and the same behaviors** — see [Excess
+so it uses the **same four modes and the same behaviors** - see [Excess
 Mode](#excess-mode), which is the default and the point of the device type.
 
 ### Two knobs, two jobs
@@ -672,13 +672,13 @@ Mode](#excess-mode), which is the default and the point of the device type.
 | Knob | Entity | What Load Juggler does with it |
 | ---- | ------ | ------------------------------ |
 | **AC charging speed** | `number`, W | The engine's allocation, floored to the device's 100 W step |
-| **Backup reserve** | `number`, % | The on/off gate — see below |
+| **Backup reserve** | `number`, % | The on/off gate - see below |
 
 The charge-rate knob has no zero: a station with a 200 W minimum cannot be told
 "don't charge". What stops it is the **backup reserve**. In the station's
 self-powered mode the reserve is both the SOC it grid-charges *up to* and the
 floor it discharges *down to*, so dropping it below the current battery level
-stops the wall draw completely — and the station then spends what it stored on its
+stops the wall draw completely - and the station then spends what it stored on its
 own loads until it reaches that floor.
 
 So the reserve is resolved every command cycle, like a hot water tank's setpoint:
@@ -689,7 +689,7 @@ So the reserve is resolved every command cycle, like a hot water tank's setpoint
 | Engine allocated ≥ the minimum charge power | The station's own **Max Charge Limit** | Accepts the charge, at the allocated rate |
 | **Storm Reserve** switch on | **Storm Reserve** (default 80%) | Charges from any source at full rate and holds it |
 
-The reserve is never raised above the station's own Max Charge Limit — that is
+The reserve is never raised above the station's own Max Charge Limit - that is
 your battery-health cap, read and respected rather than overwritten. Storm reserve
 overrides the operating mode (the station competes as a must-run load while it is
 on), because a backup reserve that may only be filled from surplus is not a
@@ -709,7 +709,7 @@ sensors configured the commanded speed is used instead.
 Minimum and Maximum Charge Power are set during configuration and adjustable as
 sliders afterwards. They are deliberately *not* read from the device: a station
 whose hardware accepts 2400 W can be held to less. The minimum matters more than
-it sounds — an allocation below it cannot be expressed at all, so it is the floor
+it sounds - an allocation below it cannot be expressed at all, so it is the floor
 the station charges at for as long as its mode says charge (in Excess mode, for as
 long as the verdict holds, however small the momentary surplus). Only when the
 mode itself says stop does the reserve drop instead of a rate being written.
@@ -739,14 +739,14 @@ Result: Charge at 900W (floored to 900), reserve raised to the 90% charge limit
 *Scenario 2: Excess mode, margin smaller than the minimum*
 ```
 Mode: Excess | Margin: 150W (below the 200W minimum)
-Result: Charge at 200W — the verdict is what starts the station, and 200 W is the
+Result: Charge at 200W - the verdict is what starts the station, and 200 W is the
         smallest rate it can express, so the minimum is the floor
 ```
 
 *Scenario 3: Excess mode, no verdict*
 ```
 Mode: Excess | Margin: -900W (the site can still place its production)
-Result: Not charging — reserve dropped to 30%, wall draw goes to zero, and the
+Result: Not charging - reserve dropped to 30%, wall draw goes to zero, and the
         station runs its own loads from its battery
 ```
 
@@ -762,7 +762,7 @@ Result: Reserve 80%, charge speed at maximum, competing as a must-run load
 The Storm Reserve switch is deliberately a plain switch, so *when* to hold a
 reserve is your decision rather than something baked into the integration. The
 natural trigger is a severe-weather warning, which is issued precisely because
-disruption is expected — a better predictor of an outage than any forecast
+disruption is expected - a better predictor of an outage than any forecast
 condition or gust threshold.
 
 Be aware what you are automating: the switch forces the station to charge from
@@ -772,7 +772,7 @@ warning-based triggers over "the forecast mentions thunder".
 
 **Official warnings (recommended).** In the EU, [MeteoAlarm](https://www.home-assistant.io/integrations/meteoalarm/)
 covers most countries but is YAML-configured. Where a national integration exists
-it is usually both UI-configurable and more detailed — for Slovenia,
+it is usually both UI-configurable and more detailed - for Slovenia,
 [the ARSO integration](https://github.com/andrejs2/slovenian_weather_integration)
 exposes a warning binary sensor whose `najvisja_stopnja` attribute is the highest
 active warning level (1 minor → 4 extreme):
@@ -800,7 +800,7 @@ mode: single
 
 Level 3 (orange/severe) is roughly where outage risk becomes real; level 2 fires
 often enough that you would be grid-charging on most summer afternoons. The
-two-hour `for:` on stand-down matters — warnings flap at their edges, and each
+two-hour `for:` on stand-down matters - warnings flap at their edges, and each
 flip swings the station between full-rate charging and idling.
 
 **Forecast-based, without a warnings integration.** Forecasts are no longer
@@ -834,7 +834,7 @@ template:
           {{ stormy | count > 0 or (g and g | max > 70) }}
 ```
 
-Check what your provider actually returns before trusting the gust test — call
+Check what your provider actually returns before trusting the gust test - call
 `weather.get_forecasts` in Developer Tools → Actions and read the response.
 `wind_gust_speed` is missing from some providers' hourly forecasts, and the
 `defined` guard then silently leaves you with condition-matching only. Gusts are
@@ -845,7 +845,7 @@ level is well under an hour at full charge rate. The longer window mainly buys a
 chance to fill from surplus before falling back to the grid.
 
 Prefer keeping this in an **automation** rather than a template sensor if you want
-to stay UI-managed — trigger-based template sensors cannot be created through
+to stay UI-managed - trigger-based template sensors cannot be created through
 Helpers, but an automation can hold the same trigger, action and template
 condition, and lives in Home Assistant's own storage.
 
@@ -865,13 +865,13 @@ condition, and lives in Home Assistant's own storage.
 | **Battery SOC Min** | Minimum battery SOC for charging (%) | 20% | All modes (with battery) |
 | **Battery SOC Target** | Target battery SOC (%) | 80% | Solar Priority, Solar Only |
 | **Battery SOC Hysteresis** | SOC hysteresis to prevent oscillation (%) | 3% | Solar Priority, Solar Only |
-| **Battery Full SOC** | SOC at/above which the battery counts as full (%) | 97% | Excess mode — zeroes the battery's absorption capacity; also the Smart Plug on-trigger |
+| **Battery Full SOC** | SOC at/above which the battery counts as full (%) | 97% | Excess mode - zeroes the battery's absorption capacity; also the Smart Plug on-trigger |
 | **Battery Max Charge Power** | Maximum battery charging power (W) | 5000W | Excess mode (the battery's share of the absorption capacity) |
 | **Battery Max Discharge Power** | Maximum battery discharge power (W) | 5000W | Standard, Solar Priority |
 | **Power Buffer** | Safety buffer in Standard mode (W) | 0W | Standard mode |
 | **Allow Grid Charging** | Enable/disable grid import | ON | Standard, Solar Priority |
 | **Distribution Mode** | How to allocate between loads | Priority | Multi-load |
-| **Circuit Group Limit** | Max current per phase for a group of loads (A) | — | Multi-load |
+| **Circuit Group Limit** | Max current per phase for a group of loads (A) | - | Multi-load |
 
 ### Off-Grid Sites
 
@@ -879,7 +879,7 @@ All operating modes work on off-grid sites (no grid CT entities configured). The
 - **Series topology**: solar = inverter output - battery power
 - **Parallel topology**: solar = inverter output
 
-Standard and Solar Priority modes work identically — the grid portion of available power is simply 0. Solar Only and Excess modes rely on solar production, which is derived from inverter output sensors instead of grid export.
+Standard and Solar Priority modes work identically - the grid portion of available power is simply 0. Solar Only and Excess modes rely on solar production, which is derived from inverter output sensors instead of grid export.
 
 ### Load-Level Configuration
 
@@ -930,7 +930,7 @@ Standard and Solar Priority modes work identically — the grid portion of avail
 - **Guest Charger Priority**: 2
 - **Why**: Main vehicle gets priority, guest gets remainder
 
-### Scenario 5: Mixed Loads — Daily Driver + Pool Heater
+### Scenario 5: Mixed Loads - Daily Driver + Pool Heater
 **Setup:** EV charger for daily commute, smart plug for pool heater
 
 **Recommended Settings:**
@@ -991,7 +991,7 @@ Falling (once above):
 ### Solar Only Not Charging
 
 **With Battery:**
-- **Check:** Battery SOC — must be at or above target
+- **Check:** Battery SOC - must be at or above target
 - **Check:** Is solar actually producing? (battery charging or exporting?)
 
 **Without Battery:**
@@ -1012,14 +1012,14 @@ Falling (once above):
 ### Hub Status Shows "No power measurement"
 
 **Cause:** No grid CTs, no inverter output entities, and no solar entity are configured. The system has no way to measure power flow.
-**Solution:** Configure at least one power measurement source — grid CT entities, inverter output entities, or a solar production entity.
+**Solution:** Configure at least one power measurement source - grid CT entities, inverter output entities, or a solar production entity.
 
 ---
 
 ## Best Practices
 
 1. **Start with Standard mode** to verify basic operation
-2. **Set realistic battery SOC limits** — don't set min too high
+2. **Set realistic battery SOC limits** - don't set min too high
 3. **Use Power Buffer** in Standard mode if experiencing frequent stops
 4. **Monitor for a full day** before adjusting thresholds
 5. **Solar Priority** is usually the best general-purpose mode for solar systems

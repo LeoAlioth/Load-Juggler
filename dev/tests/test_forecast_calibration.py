@@ -1,4 +1,4 @@
-"""Forecast calibration arithmetic — calculations/calibration.py.
+"""Forecast calibration arithmetic - calculations/calibration.py.
 
 Two observers, two different errors. The tests that matter are the ones pinning
 WHY each measurement is shaped the way it is: energy-weighting rather than a
@@ -56,7 +56,7 @@ def test_before_the_series_starts_is_unknown():
 
 
 def test_past_the_end_is_unknown_not_zero():
-    """A forecast that has run out is different from a forecast of nothing —
+    """A forecast that has run out is different from a forecast of nothing -
     counting it as 0 W would feed the learner a free perfect-overestimate."""
     s = _series(1000.0, 2000.0)
     assert block_power_at(s, T0 + timedelta(minutes=30)) is None
@@ -79,7 +79,7 @@ def test_an_empty_dict_is_a_valid_fresh_day():
 
 def test_constrained_intervals_are_excluded_from_both_sums():
     """While curtailing, production is suppressed by the very thing being
-    forecast — counting it would teach the learner the forecast reads high
+    forecast - counting it would teach the learner the forecast reads high
     exactly when it matters."""
     st = note_gain_sample({}, 4000.0, 2500.0, 0.25, True)
     assert st["forecast_wh"] == 0.0
@@ -194,8 +194,8 @@ def test_a_broken_window_clips_where_the_average_says_nothing():
 
 
 def test_the_gap_is_one_directional():
-    """Troughs never cancel peaks — power below the limit is not negative
-    clipping — so the measured truth can only ever exceed the block figure."""
+    """Troughs never cancel peaks - power below the limit is not negative
+    clipping - so the measured truth can only ever exceed the block figure."""
     for peak, trough in ((9000.0, 1000.0), (6000.0, 4000.0), (5001.0, 4999.0)):
         true_wh, block_wh = clip_pair(
             [(0.125, peak), (0.125, trough)], 5000.0
@@ -205,7 +205,7 @@ def test_the_gap_is_one_directional():
 
 def test_a_window_entirely_above_the_limit_has_no_gap():
     """Where the whole window clips the function is linear, so averaging costs
-    nothing — which is why the gap concentrates at the limit."""
+    nothing - which is why the gap concentrates at the limit."""
     samples = [(0.125, 9000.0), (0.125, 7000.0)]
     true_wh, block_wh = clip_pair(samples, 5000.0)
     assert round(true_wh, 6) == round(block_wh, 6)
@@ -218,7 +218,7 @@ def test_an_empty_window_measures_nothing():
 
 # --- Clipped energy: the ground truth, estimated ---------------------------
 #
-# Curtailed energy cannot be metered — the inverter never produces it — so the
+# Curtailed energy cannot be metered - the inverter never produces it - so the
 # only route is the forecast's excess over measured production, counted while
 # the site is saturated. Honest about the one direction it errs in.
 
@@ -237,7 +237,7 @@ def test_the_forecast_shortfall_is_the_clip_while_saturated():
 
 def test_production_above_forecast_is_not_negative_clipping():
     """A pessimistic forecast means the day beat it, not that clipping ran
-    backwards — the estimate floors at zero."""
+    backwards - the estimate floors at zero."""
     assert clipped_now(6000.0, 9000.0, saturated=True) == 0.0
 
 
@@ -275,7 +275,7 @@ def test_genuine_saturation_is_still_excluded():
 
 def test_a_day_of_pure_saturation_reports_nothing_rather_than_a_wrong_number():
     """The degenerate case the exclusion implies: if every interval is
-    curtailed there is no honest measurement, and None is the right answer —
+    curtailed there is no honest measurement, and None is the right answer -
     not a ratio built from suppressed production."""
     st = {}
     for _ in range(8):
@@ -286,7 +286,7 @@ def test_a_day_of_pure_saturation_reports_nothing_rather_than_a_wrong_number():
 # --- Saying so, rather than looking like a fresh start -------------------------
 #
 # The exclusion above is correct, and on an off-grid site whose pack fills by
-# mid-morning it can discard nearly the whole day — correctly. What that leaves
+# mid-morning it can discard nearly the whole day - correctly. What that leaves
 # behind is indistinguishable from a warming-up observer or a failed restore:
 # gain 1.0, 0 days, 0 blocks in all three cases. Live on the off-grid site
 # (2026-09-07, kozolec): 300.6 Wh skipped, nothing measured, accuracy null.
@@ -344,7 +344,7 @@ def test_close_block_records_energy_and_skips_empty_blocks():
     assert close_block([], "t0", {}) == []
     series = close_block([], "t0", {"forecast_wh": 250.0, "actual_wh": 240.0, "skipped_wh": 0.0})
     assert series == [{"t": "t0", "f": 250.0, "a": 240.0, "s": 0.0}]
-    # A fully constrained block is kept — its skipped energy is information.
+    # A fully constrained block is kept - its skipped energy is information.
     series = close_block(series, "t1", {"skipped_wh": 300.0})
     assert series[-1] == {"t": "t1", "f": 0.0, "a": 0.0, "s": 300.0}
 
@@ -367,7 +367,7 @@ def test_series_gain_is_one_ratio_of_two_sums_clamped():
 
 def test_hourly_offsets_ride_on_the_overall_gain():
     """Mornings read 0.6 of forecast, afternoons 1.2: the overall gain is 0.9
-    and the hours carry only their departure from it — not independent gains."""
+    and the hours carry only their departure from it - not independent gains."""
     blocks = _blocks(
         [(d, 8, 0.6) for d in range(3)] + [(d, 14, 1.2) for d in range(3)]
     )
@@ -376,7 +376,7 @@ def test_hourly_offsets_ride_on_the_overall_gain():
     offsets = hourly_offsets(blocks, overall, min_wh=2000.0)
     assert abs(offsets[8] - 0.6 / 0.9) < 1e-3
     assert abs(offsets[14] - 1.2 / 0.9) < 1e-3
-    # Effective gain per hour = overall × offset — recovers each hour's ratio.
+    # Effective gain per hour = overall × offset - recovers each hour's ratio.
     assert abs(overall * offsets[8] - 0.6) < 1e-3
 
 
@@ -429,7 +429,7 @@ def test_battery_is_saturated_is_the_off_grid_curtailment_test():
     # At its rate limit (within the same small tolerance as the export wall).
     assert battery_is_saturated(3950.0, 4000.0, 70.0, 97.0) is True
     assert battery_is_saturated(4000.0, 4000.0, 70.0, 97.0) is True
-    # Unknown figures read as saturated — skipping a good interval only slows
+    # Unknown figures read as saturated - skipping a good interval only slows
     # the gain, admitting a curtailed one biases it.
     assert battery_is_saturated(None, 4000.0, 70.0, 97.0) is True
     assert battery_is_saturated(1500.0, None, 70.0, 97.0) is True

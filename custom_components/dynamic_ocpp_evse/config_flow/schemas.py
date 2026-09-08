@@ -6,7 +6,7 @@ per-device-type forms for EVSE / plug / hot water tank / power station, and the
 entity-selector plumbing behind them.
 
 Functions rather than a mixin: the only handler state a builder ever read was
-``hass``, for the entity registry, so it is simply a parameter — and only on
+``hass``, for the entity registry, so it is simply a parameter - and only on
 the builders that offer entity selectors. The rest take nothing but their
 ``defaults`` dict. That is what lets the create flow and the options flow each
 call them directly instead of one borrowing the other's handler instance.
@@ -172,7 +172,7 @@ from .helpers import (
 # The site phases a LOAD may occupy, in the order every picker shows them.
 #
 # ONE list, because there were three: the plug's and the tank's carried all
-# seven masks while the station's carried only the three single-phase ones —
+# seven masks while the station's carried only the three single-phase ones -
 # even though ``_build_power_station_load`` has always derived
 # ``phases = len(connected_to_phase)`` and ``_phase_draw`` has always spread a
 # draw across whatever mask it is given. A picker offering less than the engine
@@ -226,7 +226,7 @@ def _optional_entity_field(key: str, default_val):
     """Create vol.Optional with suggested_value so the user can truly clear it.
 
     Using suggested_value instead of default lets the entity selector
-    be cleared with X — vol.Optional(default=...) would silently
+    be cleared with X - vol.Optional(default=...) would silently
     re-fill the default on clear.
     """
     val = normalize_optional_entity(default_val)
@@ -514,7 +514,7 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
 
 
 def _build_inverter_solar_schema(hass, defaults: dict | None = None) -> list[tuple]:
-    """PV fields for an INVERTER entry — the array behind this inverter.
+    """PV fields for an INVERTER entry - the array behind this inverter.
 
     Its production sensor and its Open-Meteo forecast device(s) belong to
     the inverter, not the site: a hybrid and an AC-coupled string inverter
@@ -541,13 +541,13 @@ def _build_inverter_solar_schema(hass, defaults: dict | None = None) -> list[tup
             ),
         ),
         (
-            # One forecast DEVICE per PV array — the Open-Meteo Solar
+            # One forecast DEVICE per PV array - the Open-Meteo Solar
             # Forecast integration creates one device per array, and
             # several of its sensors carry the same watts series, so
             # letting the user pick sensors risks double-counting.
             vol.Optional(
                 CONF_SOLAR_FORECAST_DEVICE_IDS,
-                # suggested_value, NOT default — same clearing rule as
+                # suggested_value, NOT default - same clearing rule as
                 # CONF_SOC_LIMIT_ENTITY_IDS (_normalize_forecast_list).
                 description={
                     "suggested_value": defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS)
@@ -567,7 +567,7 @@ def _build_inverter_solar_schema(hass, defaults: dict | None = None) -> list[tup
 
 
 def _build_hub_battery_schema(hass, defaults: dict | None = None) -> list[tuple]:
-    """LEGACY hub solar/battery fields — shown only while a hub still
+    """LEGACY hub solar/battery fields - shown only while a hub still
     carries them, i.e. before the one-time auto-import moves them onto an
     inverter entry. New hubs never see this page: their solar sensor,
     forecast devices and battery hardware are configured per inverter, and
@@ -685,13 +685,13 @@ def _build_hub_battery_schema(hass, defaults: dict | None = None) -> list[tuple]
         # Active only when the grid export limit (hub grid step), a battery
         # capacity and at least one forecast entity are all set.
         (
-            # One forecast DEVICE per PV array — the Open-Meteo Solar
+            # One forecast DEVICE per PV array - the Open-Meteo Solar
             # Forecast integration creates one device per array, and
             # several of its sensors carry the same watts series, so
             # letting the user pick sensors risks double-counting.
             vol.Optional(
                 CONF_SOLAR_FORECAST_DEVICE_IDS,
-                # suggested_value, NOT default — same clearing rule as
+                # suggested_value, NOT default - same clearing rule as
                 # CONF_SOC_LIMIT_ENTITY_IDS (_normalize_forecast_list).
                 description={
                     "suggested_value": defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS)
@@ -757,7 +757,7 @@ def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple
                 CONF_INVERTER_MAX_POWER,
                 # "0 means not configured" is STORED as None
                 # (_normalize_inverter_power_caps), and dict.get's fallback
-                # does not cover a key that exists holding None — while
+                # does not cover a key that exists holding None - while
                 # voluptuous validates defaults, so a None default fails
                 # the NumberSelector the moment the field is left empty.
                 # `or 0` restores the None↔0 round-trip.
@@ -832,7 +832,7 @@ def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple
 
 
 def _build_inverter_battery_schema(hass, defaults: dict | None = None) -> list[tuple]:
-    """Battery fields for an INVERTER entry — the battery physically behind
+    """Battery fields for an INVERTER entry - the battery physically behind
     this inverter. Reuses the hub-level key names (see ENTRY_TYPE_INVERTER
     in const/common.py), but deliberately excludes the hub-policy fields
     (SOC target/min sliders, hysteresis) and the hub-scoped solar
@@ -952,13 +952,13 @@ def _build_inverter_battery_schema(hass, defaults: dict | None = None) -> list[t
 
 
 def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[tuple]:
-    """Write-control fields for an INVERTER entry — optional throughout.
+    """Write-control fields for an INVERTER entry - optional throughout.
 
     With no target entity the inverter stays advisory: the forecast's
     recommended charge limit is published as a sensor and nothing is
     written. Naming a register adds the opt-in switch that starts writes.
 
-    Two independent controls share this page — the charge RATE (one register)
+    Two independent controls share this page - the charge RATE (one register)
     and the SOC CEILING (a list of time-of-use slot entities). Each gets its
     own switch, and configuring one does not imply the other.
     """
@@ -1122,7 +1122,7 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
         ),
         (
             # The live "normal" ceiling. An entity rather than a number so
-            # whatever already owns the slots keeps owning them — we only
+            # whatever already owns the slots keeps owning them - we only
             # ever push below it. sensor is allowed too: a template sensor
             # deriving the ceiling from a schedule is a normal way to do it.
             _optional_entity_field(
@@ -1134,7 +1134,7 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
             ),
         ),
         (
-            # What a WRITE to the entities above means on this hardware — the
+            # What a WRITE to the entities above means on this hardware - the
             # flag the floor-aware SOC fan-out keys on. It never changes what
             # is READ: the destination always comes from the ceiling source
             # when that is set (a floor whose value is not the target leaves
@@ -1151,11 +1151,11 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
                         "options": [
                             {
                                 "value": SOC_LIMIT_SEMANTICS_CEILING,
-                                "label": "Charge ceiling — the battery stops charging there",
+                                "label": "Charge ceiling - the battery stops charging there",
                             },
                             {
                                 "value": SOC_LIMIT_SEMANTICS_FLOOR,
-                                "label": "Discharge floor — grid-defense level (Deye TOU slot)",
+                                "label": "Discharge floor - grid-defense level (Deye TOU slot)",
                             },
                         ],
                         "mode": "dropdown",
@@ -1217,7 +1217,7 @@ def _inverter_config_schema(hass, defaults: dict | None = None, features=None):
 
 
 def _has_feature(features, feature) -> bool:
-    """None means "everything" — the pre-features shape of these pages."""
+    """None means "everything" - the pre-features shape of these pages."""
     return features is None or feature in features
 
 
@@ -1337,7 +1337,7 @@ def _charger_info_schema(defaults: dict | None = None) -> vol.Schema:
     # pointing at the right one instead of by typing an id nobody can check.
     # Optional and pre-filled with the discovered device: leaving it alone
     # keeps exactly what discovery found. Filtered to the ocpp integration, so
-    # it is empty (and skippable) when that integration is not the source —
+    # it is empty (and skippable) when that integration is not the source -
     # OCPP-shaped template sensors have no device to offer.
     # suggested_value, not default, for the same reason the entity fields use
     # it: a default would silently re-fill the picker when the user clears it.
@@ -1362,7 +1362,7 @@ def _charger_current_schema(
     Only shows L2/L3 phase mapping fields when the hub has 2+/3+ phases.
     """
     defaults = defaults or {}
-    # One site phase per charger LEG — not a phase mask. L1/L2/L3 each land on
+    # One site phase per charger LEG - not a phase mask. L1/L2/L3 each land on
     # exactly one phase, so the multi-phase combinations that the load pickers
     # offer (PHASE_MASK_OPTIONS) would be meaningless here.
     leg_phase_options = [
@@ -1797,8 +1797,8 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
 
     The charge bounds are configured rather than read from the device, so a
     station whose hardware accepts more can be held below that. The reserve
-    is the station's on/off gate — dropped below its current battery level it
-    stops drawing from the wall — so both the day-to-day and the storm level
+    is the station's on/off gate - dropped below its current battery level it
+    stops drawing from the wall - so both the day-to-day and the storm level
     are set here.
     """
     defaults = defaults or {}

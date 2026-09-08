@@ -10,7 +10,7 @@ scenarios:
 
   # Baseline: correct 1-phase charger on 1-phase site
   - name: "1ph-1c-standard-phases1-baseline"
-    description: "Baseline — 1-phase charger on 1-phase site, correctly configured"
+    description: "Baseline - 1-phase charger on 1-phase site, correctly configured"
     human_verified: true
     site:
       voltage: 230
@@ -42,13 +42,13 @@ scenarios:
   # This is what the debug log shows (mask=A, phases=3). It works because
   # sorted({"A","A","A"}) = "A", so the engine treats it as single-phase.
   - name: "1ph-1c-standard-phases3-all-mapped-to-A"
-    description: "phases=3 with all L1/L2/L3 mapped to A — works because mask becomes 'A'"
+    description: "phases=3 with all L1/L2/L3 mapped to A - works because mask becomes 'A'"
     human_verified: true
     # UNDECIDED SEMANTICS, surfaced by the physical-invariant check 2026-09-07
     # (dev/TODO.md): a three-leg charger with every leg mapped to phase A is a
     # misconfiguration, and this scenario only pins that the engine reduces the
     # mask to "A" instead of crashing. But it then permits 16 A, and a device
-    # with three legs on one phase would draw 48 A there — 53 A with the 5 A
+    # with three legs on one phase would draw 48 A there - 53 A with the 5 A
     # household, against a 35 A breaker. Either the permit should be divided by
     # the legs sharing the phase, or the config should be refused at setup. Not
     # a regression: the permit is what it always was.
@@ -88,7 +88,7 @@ scenarios:
   # site but the config flow allows phases=3 (charger hardware capability).
   # The engine gives 0A because min(A=30, B=0, C=0) = 0.
   - name: "1ph-1c-standard-phases3-misconfigured"
-    description: "BUG: 3-phase charger config on 1-phase site — engine gives 0A, charger cannot charge"
+    description: "BUG: 3-phase charger config on 1-phase site - engine gives 0A, charger cannot charge"
     human_verified: true
     site:
       voltage: 230
@@ -117,11 +117,11 @@ scenarios:
         l3_phase: "C"
     expected:
       load_1:
-        allocated: 0  # min(A=30, B=0, C=0) = 0 — cannot charge!
+        allocated: 0  # min(A=30, B=0, C=0) = 0 - cannot charge!
 
-  # Same scenario with non-default phase mapping — still broken
+  # Same scenario with non-default phase mapping - still broken
   - name: "1ph-1c-standard-phases3-rotated-mapping"
-    description: "BUG: 3-phase charger with rotated mapping on 1-phase site — still 0A"
+    description: "BUG: 3-phase charger with rotated mapping on 1-phase site - still 0A"
     human_verified: true
     site:
       voltage: 230
@@ -152,9 +152,9 @@ scenarios:
       load_1:
         allocated: 0  # sorted({'B','C','A'}) = "ABC", still min(A=30, B=0, C=0) = 0
 
-  # 2-phase charger on 1-phase site — also broken
+  # 2-phase charger on 1-phase site - also broken
   - name: "1ph-1c-standard-phases2-misconfigured"
-    description: "BUG: 2-phase charger config on 1-phase site — engine gives 0A"
+    description: "BUG: 2-phase charger config on 1-phase site - engine gives 0A"
     human_verified: true
     site:
       voltage: 230

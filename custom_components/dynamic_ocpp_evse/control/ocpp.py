@@ -76,7 +76,7 @@ async def send_ocpp_command(
     connector_status = units.state_or_unknown(connector_state)
     if connector_status in ("Finishing", "Faulted"):
         _LOGGER.debug(
-            "Skipping OCPP command for %s — connector is %s",
+            "Skipping OCPP command for %s - connector is %s",
             sensor._attr_name,
             connector_status,
         )
@@ -237,7 +237,7 @@ async def send_ocpp_command(
 
     try:
         # blocking=True so a dispatch/execution failure raises here and is
-        # caught — with blocking=False the call returns before running and the
+        # caught - with blocking=False the call returns before running and the
         # command would be recorded as sent even when it never reached the
         # charger, causing the compliance checker to trigger spurious resets.
         await sensor.hass.services.async_call(

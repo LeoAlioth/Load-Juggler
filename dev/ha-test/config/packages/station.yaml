@@ -9,7 +9,7 @@
 # of the remaining gap every 5 seconds (the ramp-rate knob), which is why the
 # engine will not trust a draw until it has settled. It is
 # also clamped to 0 once the pack is full, because a station that has finished
-# charging stops drawing however high the register is set — and an engine that
+# charging stops drawing however high the register is set - and an engine that
 # budgets for a draw that never arrives is a bug worth being able to see.
 #
 # The register range goes to 11 kW so the same device can stand in for an EVSE:
@@ -41,7 +41,7 @@ input_number:
   sim_station_ramp:
     # How much of the remaining gap the load closes every 5 seconds. 100 means
     # it arrives next sample, which is a converter; 50 takes a few samples,
-    # which is a car — and the slow case is the one `draw_settled` exists for,
+    # which is a car - and the slow case is the one `draw_settled` exists for,
     # so it is the default.
     name: Station ramp rate
     min: 10
@@ -64,7 +64,7 @@ input_select:
   sim_station_phase:
     # The full mask set, matching the plug and the tank. Load Juggler's own
     # station picker currently offers A/B/C only, though its engine handles any
-    # mask — so the multi-phase options here are ready for the day that picker
+    # mask - so the multi-phase options here are ready for the day that picker
     # catches up, and meanwhile a mask the engine was told nothing about is a
     # wiring/belief mismatch you can deliberately create.
     name: Station wired to phase
@@ -148,18 +148,18 @@ template:
              | round(1) if 'C' in mask else 0 }}
 
   # ------------------------------------------------------------------
-  # What it really pulls — the engine's power monitor for this load.
+  # What it really pulls - the engine's power monitor for this load.
   #
   # A first-order ramp: it closes `sim_station_ramp` percent of the remaining
   # gap every 5 seconds, and snaps the last 50 W so it arrives rather than
   # creeping at it forever. 50 W is well under anything the engine reacts to,
-  # and without the snap a halving ramp never gets there — it just runs out of
+  # and without the snap a halving ramp never gets there - it just runs out of
   # patience before you do.
   #
   # The point of ramping at all is that the engine must hold a load's whole
   # permit against the pools until the draw settles: a modulating load that
   # arrives instantly would make that logic untestable. The binary loads (plug,
-  # tank element) are deliberately NOT ramped — a resistive load really does
+  # tank element) are deliberately NOT ramped - a resistive load really does
   # step the instant its relay closes.
   - trigger:
       - trigger: time_pattern
@@ -187,7 +187,7 @@ template:
   # Two stages on purpose, and they are different physics. The ramp above is
   # the converter genuinely taking a few seconds to reach its setpoint. This is
   # the METER on it, and like the site CTs it is 5–10 s behind. Collapsing the
-  # two — an instantaneous monitor beside a lagging CT — is what let the
+  # two - an instantaneous monitor beside a lagging CT - is what let the
   # feedback loop remove a draw the CT had not yet seen, and an importing phase
   # read as exporting for one sample.
   - trigger:

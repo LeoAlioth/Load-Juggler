@@ -182,7 +182,7 @@ class _EVSECurrentSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     bucket is the cross-check (issue #38).
 
     Behavior on a crossing set: the value being SET is clamped to the sibling's
-    current value; the sibling is never moved. Rationale — the alternative
+    current value; the sibling is never moved. Rationale - the alternative
     (pushing the sibling along) silently rewrites a second entity the user did
     not touch, and would let one drag reconfigure the whole range. Clamping is
     also what the widget already does at the native_min/native_max ends, so the
@@ -226,7 +226,7 @@ class _EVSECurrentSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
             )
             if crossed:
                 _LOGGER.info(
-                    "%s: %.1fA would %s %s (%.1fA) — clamped to %.1fA",
+                    "%s: %.1fA would %s %s (%.1fA) - clamped to %.1fA",
                     self._attr_name,
                     value,
                     "exceed" if self._sibling_is_upper_bound else "fall below",
@@ -301,7 +301,7 @@ class LoadPowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
         self._attr_unique_id = f"{entity_id}_device_power"
         default_power = get_entry_value(config_entry, conf_key, default)
         # A managed load can be anything from a small pump to a 3-phase
-        # heater, so the range is wide and the step fine — the value is
+        # heater, so the range is wide and the step fine - the value is
         # mostly auto-learned from the power-measurement entity anyway.
         self._attr_native_min_value = 10
         self._attr_native_max_value = max(default_power, 30000)
@@ -343,7 +343,7 @@ class TankTemperatureSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     ):
         self.hass = hass
         self.config_entry = config_entry
-        # Instance-level data key — matches what hot_water_tank.py reads back.
+        # Instance-level data key - matches what hot_water_tank.py reads back.
         self._load_data_key = f"tank_{kind}_temperature"
         self._attr_name = f"{name} {label} Temperature"
         self._attr_unique_id = f"{entity_id}_tank_{kind}_temperature"
@@ -369,7 +369,7 @@ class StationChargePowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     """Slider for a power station's min/max charge power in Watts.
 
     These bound what the engine may allocate, deliberately *configured* rather
-    than read from the device — a station whose hardware accepts 2400 W can be
+    than read from the device - a station whose hardware accepts 2400 W can be
     held to less. The engine reads them back from the runtime dict, so a change
     takes effect on the next cycle without a reconfigure.
     """
@@ -382,7 +382,7 @@ class StationChargePowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     ):
         self.hass = hass
         self.config_entry = config_entry
-        # Instance-level key — matches what power_station.py reads back.
+        # Instance-level key - matches what power_station.py reads back.
         self._load_data_key = f"station_{kind}_charge_power"
         self._attr_name = f"{name} {label}"
         self._attr_unique_id = f"{entity_id}_station_{kind}_charge_power"

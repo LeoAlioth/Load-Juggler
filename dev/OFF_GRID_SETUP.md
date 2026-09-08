@@ -3,7 +3,7 @@
 My physical off-grid installation that this integration runs against.
 
 ## Inverter
-- **Victron MultiPlus/Quattro 5000/24** — 5 kVA, 24 V system
+- **Victron MultiPlus/Quattro 5000/24** - 5 kVA, 24 V system
 
 ## Battery
 - **10 kWh** total battery capacity (24 V bank)

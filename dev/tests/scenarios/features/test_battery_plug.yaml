@@ -12,7 +12,7 @@
 #
 # All scenarios use a dedicated solar entity (solar_production_direct: true) so
 # battery discharge is added to the inverter pool, and night-time solar (0 W)
-# so the plug must run off the battery — the point of SOC-based control.
+# so the plug must run off the battery - the point of SOC-based control.
 
 scenarios:
 

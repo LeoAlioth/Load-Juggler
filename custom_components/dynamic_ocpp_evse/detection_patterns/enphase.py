@@ -1,7 +1,7 @@
 """Enphase Envoy detection patterns.
 
 Official HA Core integration via local Envoy gateway.
-Per-phase sensors disabled by default — must be enabled in entity settings.
+Per-phase sensors disabled by default - must be enabled in entity settings.
 CT clamps required for consumption data.  Battery support for Encharge series.
 """
 

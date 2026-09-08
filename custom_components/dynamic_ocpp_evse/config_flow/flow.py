@@ -224,7 +224,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Initial step: choose what to add — hub, EVSE, smart load, group, inverter."""
+        """Initial step: choose what to add - hub, EVSE, smart load, group, inverter."""
         errors: dict[str, str] = {}
 
         # Check if any hubs exist
@@ -348,7 +348,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_hub_grid(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Hub step 2: grid, electrical and site policy — creates the entry.
+        """Hub step 2: grid, electrical and site policy - creates the entry.
 
         A NEW hub carries no hardware of its own: inverters, batteries, PV
         production sensors and PV forecast sources all live on Inverter
@@ -381,7 +381,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_NAME: self._data.get(CONF_NAME),
                     CONF_ENTITY_ID: self._data.get(CONF_ENTITY_ID),
                     ENTRY_TYPE: ENTRY_TYPE_HUB,
-                    # Born without legacy inverter/battery fields — nothing to
+                    # Born without legacy inverter/battery fields - nothing to
                     # auto-import, and the legacy hub pages stay hidden.
                     MIGRATE_HUB_INVERTER_IMPORTED_FLAG: True,
                 }
@@ -476,7 +476,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle integration discovery of OCPP chargers."""
         # Store discovery info. The payload is a scan_ocpp_chargers() dict (see
         # __init__._discover_and_notify_chargers), so every entity key the
-        # manual flow stores is carried through to the created entry — a
+        # manual flow stores is carried through to the created entry - a
         # discovered charger must not end up with None for its per-phase
         # current/power entities just because it came in through discovery.
         self._data[CONF_HUB_ENTRY_ID] = discovery_info["hub_entry_id"]
@@ -485,7 +485,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "name": discovery_info["charger_name"],
             "device_id": discovery_info.get("device_id"),
             # The HA device-registry UUID, for the charger_info device picker
-            # only — never stored, and never handed to an ocpp service.
+            # only - never stored, and never handed to an ocpp service.
             "ha_device_id": discovery_info.get("ha_device_id"),
             "current_import_entity": discovery_info["current_import_entity"],
             "current_import_l1_entity": discovery_info.get("current_import_l1_entity"),
@@ -578,10 +578,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         the same page three times over: name and entity_id on top of the
         device's own fields, and a submit that checks the entity_id is free and
         splits what was collected into the static ``data`` half (identity, type,
-        hub and the entities the device is defined by — ``static_keys``) and the
+        hub and the entities the device is defined by - ``static_keys``) and the
         editable ``options`` half (everything else).
 
-        The EVSE charger does NOT use this — it comes with a discovery step and
+        The EVSE charger does NOT use this - it comes with a discovery step and
         a three-page wizard. Hooks: ``prepare`` rewrites the submitted data
         before the checks, ``validate`` adds device-specific ones.
         """
@@ -881,7 +881,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Inverter step 0: what this inverter has.
 
         The declared features decide which of the pages after this one are
-        shown at all — a PV-only string inverter never sees a battery page,
+        shown at all - a PV-only string inverter never sees a battery page,
         and never stores a battery cap it does not have.
         """
         errors: dict[str, str] = {}
@@ -913,7 +913,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_inverter_config(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Inverter step 1: name, capacity, topology, output — and the PV
+        """Inverter step 1: name, capacity, topology, output - and the PV
         sensors when the solar feature is declared."""
         errors: dict[str, str] = {}
         bad_forecast_entity = None
@@ -974,7 +974,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_inverter_battery(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Inverter step 2: the battery behind this inverter (all optional) —
+        """Inverter step 2: the battery behind this inverter (all optional) -
         creates the entry."""
         errors: dict[str, str] = {}
 
@@ -1001,7 +1001,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_inverter_control(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Inverter step 3: optional battery write-control — creates the entry.
+        """Inverter step 3: optional battery write-control - creates the entry.
 
         Skip it (submit empty) to keep the inverter advisory: the clipping
         forecast still publishes its recommended charge limit and max SOC as
@@ -1060,7 +1060,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         options_data.pop(CONF_DEVICE_TYPE, None)
 
         # The hub's entity gating (battery sliders/switch, forecast
-        # sensors) depends on which inverter entries exist — nothing
+        # sensors) depends on which inverter entries exist - nothing
         # reloads a hub when a child appears, so schedule it here.
         # Only when the hub is actually loaded: reloading a not-yet-
         # loaded entry raises, and during startup it reloads anyway.
@@ -1109,7 +1109,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _blank_hub_legacy_inverter_fields(self, hub_entry) -> None:
         """Strip the imported fields from the hub entry and set the imported
-        flag — the hub must stop acting as the implicit legacy fleet member
+        flag - the hub must stop acting as the implicit legacy fleet member
         the moment the standalone inverter entry represents the hardware."""
         new_data = dict(hub_entry.data)
         new_data[MIGRATE_HUB_INVERTER_IMPORTED_FLAG] = True
@@ -1129,7 +1129,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         The hub's own name makes a poor inverter name ("Site Load Management
         Inverter"), so look at the device behind the first hardware entity
-        being imported — usually the inverter's integration device, which is
+        being imported - usually the inverter's integration device, which is
         already called something like "Deye Hybrid" or "SolarEdge SE17K".
         Falls back to plain "Inverter", the same default the manual flow uses.
         """
@@ -1168,7 +1168,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         merged into it rather than creating a second one.
 
         Idempotency: the unique_id makes a duplicate entry impossible, and the
-        hub is blanked-and-flagged BEFORE the already-configured abort — so a
+        hub is blanked-and-flagged BEFORE the already-configured abort - so a
         restart between entry creation and blanking still converges instead of
         double-counting the battery (the engine's implicit legacy member and
         the entry would otherwise both exist).
@@ -1185,7 +1185,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         unique_id = f"{hub_entry_id}_inverter_import"
         await self.async_set_unique_id(unique_id)
 
-        # Snapshot the legacy fields, then blank the hub — in this order, and
+        # Snapshot the legacy fields, then blank the hub - in this order, and
         # before the duplicate check, so every path leaves the hub clean.
         imported = {
             key: get_entry_value(hub_entry, key, None)
@@ -1201,7 +1201,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         strip_unfeatured_inverter_options(imported, imported_features)
 
         # An entry from an earlier import round already represents this
-        # hardware — merge the fields this round found onto it. Existing
+        # hardware - merge the fields this round found onto it. Existing
         # values win: the user may have edited them on the inverter since.
         existing = next(
             (
@@ -1331,7 +1331,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors[FIELD_OCPP_DEVICE] = "ocpp_device_not_usable"
                 else:
                     # Everything about the charger's OCPP side follows the
-                    # picked device — charge point id and every sensor entity,
+                    # picked device - charge point id and every sensor entity,
                     # from the same derivation the discovery scan uses. Only
                     # "id" stays put: the discovery unique_id and
                     # CONF_CHARGER_ID were already claimed on it.
@@ -1464,7 +1464,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_charger_timing(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Charger step 3c: Units and timing configuration (final — creates entry)."""
+        """Charger step 3c: Units and timing configuration (final - creates entry)."""
         errors: dict[str, str] = {}
 
         # The OCPP device ID may have been edited on the charger_info step

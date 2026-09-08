@@ -1,6 +1,6 @@
-"""Exhaustive unit-conversion matrix — units.py.
+"""Exhaustive unit-conversion matrix - units.py.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 Every unit the config flow accepts for a field has to survive the trip to the
 engine's canonical domain. The bug that motivated this: a grid CT configured
@@ -53,7 +53,7 @@ def test_case_and_whitespace_in_the_unit_are_tolerated():
 
 
 def test_unknown_unit_is_passed_through_as_already_canonical():
-    """A sensor with no unit is nearly always already in the wanted unit —
+    """A sensor with no unit is nearly always already in the wanted unit -
     converting would be a guess, and this matches the historical behaviour."""
     assert units.to_amps(6.0, None, V) == 6.0
     assert units.to_amps(6.0, "", V) == 6.0
@@ -61,7 +61,7 @@ def test_unknown_unit_is_passed_through_as_already_canonical():
 
 
 def test_sign_survives_every_conversion():
-    """Export is a negative grid reading — losing the sign loses the meaning."""
+    """Export is a negative grid reading - losing the sign loses the meaning."""
     for value, unit in SIX_AMPS:
         assert units.to_amps(-value, unit, V) < 0, unit
         assert units.to_watts(-value, unit, V) < 0, unit
@@ -98,5 +98,5 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

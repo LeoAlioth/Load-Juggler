@@ -71,8 +71,8 @@ scenarios:
   # --- ISSUES.md #41: the Excess verdict must survive its own load ---------
   #
   # Both scenarios put a binary Excess plug on a phase that IMPORTS while the
-  # other two export. Export stays gross and per-phase clamped — the import on
-  # A buys no headroom for the export on B and C — so what has to hold is the
+  # other two export. Export stays gross and per-phase clamped - the import on
+  # A buys no headroom for the export on B and C - so what has to hold is the
   # latch: the margin an engaged load reads must equal the margin the same site
   # would read with that load off. It failed when the inverter served the load
   # by charging the battery slower, because the draw was subtracted from one
@@ -80,11 +80,11 @@ scenarios:
 
   - name: "3ph-bat-excess-plug-unbalanced-battery-displaced-stays-on"
     description: >
-      A PACK WITH HEADROOM LEFT IS NOT A SITE WITH SURPLUS — the case that
+      A PACK WITH HEADROOM LEFT IS NOT A SITE WITH SURPLUS - the case that
       inverted when the Excess verdict went net (2026-09-07).
       Household 10 A on phase A, 10 A/phase of solar, the battery taking 4.6 kW
       of its 5 kW allowance: the meter reads +6.67 A on A and -3.33 A on B and
-      C. Read GROSS that was 1533 W of export — 133 W past the 1 kW trigger —
+      C. Read GROSS that was 1533 W of export - 133 W past the 1 kW trigger -
       because it counted the 3.33 A leaving on B and C and ignored the 6.67 A
       arriving on A. Read NET the site's position is exactly zero, so the
       margin is 0 + 4600 - (1000 + 5000) = -1400 W and the plug stays off.
@@ -95,8 +95,8 @@ scenarios:
       needs solar - household >= threshold + charge allowance, and a site with
       that much surplus has already filled the pack to its allowance. So under
       the net verdict a battery site shows Excess only once its pack is
-      SATURATED — which is the sibling scenario below.
-      What this scenario was written for (ISSUES.md #41 — a running load must
+      SATURATED - which is the sibling scenario below.
+      What this scenario was written for (ISSUES.md #41 - a running load must
       not suppress its own verdict) still holds here: the margin reads -1400 W
       with the plug off and -1400 W with it running. It is exercised with the
       plug actually ON by the export-displaced sibling below, and pinned
@@ -144,7 +144,7 @@ scenarios:
       Read NET (2026-09-07) the site position is -2.25 + 7.75 + 7.75 = 13.25 A
       = 3047 W, so the margin is 3047 + 5000 - 7000 = +1047 W and Excess is
       still on. But this plug sits on phase A, the one IMPORTING 2.25 A, and an
-      Excess load may not drive its own phase into import — that is precisely
+      Excess load may not drive its own phase into import - that is precisely
       the power it exists to avoid buying. So it gets nothing here, and the
       export-displaced stay-on property is exercised by the phase-B twin below.
       A STANDARD load on this phase would still run: it reads the physical pool
@@ -177,19 +177,19 @@ scenarios:
         l1_phase: "A"
     expected:
       plug_1:
-        allocated: 0.0  # Excess load on the importing phase — refused
+        allocated: 0.0  # Excess load on the importing phase - refused
 
   - name: "3ph-bat-excess-plug-on-an-exporting-phase-stays-on"
     description: >
       The export-displaced stay-on property (ISSUES.md #41) with the plug where
-      an Excess load is allowed to run: the SAME unbalanced site as above —
+      an Excess load is allowed to run: the SAME unbalanced site as above -
       15 A/phase of solar, 10 A of household on phase A, the battery pinned at
-      its 5 kW charge allowance, a 2 kW trigger — but the plug on phase B,
+      its 5 kW charge allowance, a 2 kW trigger - but the plug on phase B,
       which exports 7.75 A rather than importing.
       Net margin -2.25 + 7.75 + 7.75 = 13.25 A = 3047 W, plus 5000 W of charge
       against a 7000 W allowance = +1047 W, so Excess is on and phase B's own
       position is comfortably positive. The plug is binary, so it takes its
-      whole 2 kW rating even though the pool is smaller — accepted, because the
+      whole 2 kW rating even though the pool is smaller - accepted, because the
       overshoot costs export and never import.
       Its draw comes off export (the battery has no headroom to give any back),
       the reconstruction hands the whole 2 kW back, and the margin reads +1047 W
@@ -221,7 +221,7 @@ scenarios:
         l1_phase: "B"
     expected:
       plug_1:
-        allocated: 8.7  # 2000 W / 230 V — on, and stays on
+        allocated: 8.7  # 2000 W / 230 V - on, and stays on
 
   # --- The start edge: the verdict starts the load, the pool only sizes it ----
 
@@ -229,7 +229,7 @@ scenarios:
     description: >
       The live site the start-at-minimum rule is for. 20 A/phase of solar,
       1 A/phase of household, and the battery pinned at the 4830 W its charge
-      limit permits — everything the site can absorb — leaves 36 A of export
+      limit permits - everything the site can absorb - leaves 36 A of export
       against a 36 A allowance. The margin is 0: Excess is on (nothing more can
       be placed) and yet the pool it hands out is 0 A.
       The EVSE cannot charge below 6 A, so a pool-sized permit would leave it at
@@ -246,7 +246,7 @@ scenarios:
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
       phase_c_consumption: 1.0
-      excess_export_threshold: 8280  # 36 A — exactly the export
+      excess_export_threshold: 8280  # 36 A - exactly the export
       battery_soc: 70
       battery_soc_min: 20
       battery_soc_target: 80

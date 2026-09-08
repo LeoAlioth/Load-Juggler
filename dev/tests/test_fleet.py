@@ -1,6 +1,6 @@
-"""Tests for the inverter fleet aggregation — engine.fleet.
+"""Tests for the inverter fleet aggregation - engine.fleet.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 Many inverter entries reduce to the single-inverter/single-battery scalars
 SiteContext expects. The per-member gating the scalar form cannot express
@@ -112,7 +112,7 @@ def test_battery_power_none_without_any_power_sensor():
 # --- Charge capacity: per-member full gating -----------------------------------
 
 def test_charge_cap_excludes_full_member():
-    # One battery full, one empty: only the empty one's cap counts — the
+    # One battery full, one empty: only the empty one's cap counts - the
     # scalar fleet form could never express this.
     members = [
         _battery("full", soc=98, full=97, charge=5000),
@@ -137,8 +137,8 @@ def test_single_member_charge_cap_passthrough_below_full():
 #
 # The sum is the allowance the Excess verdict compares the site's placed power
 # against, so it must be the rate each battery MAY take. While our own charge
-# control holds a member's register below its nameplate rate — the PV clipping
-# forecast reserving room for the afternoon — the difference is not a place the
+# control holds a member's register below its nameplate rate - the PV clipping
+# forecast reserving room for the afternoon - the difference is not a place the
 # site can put production. Only enforcement narrows: a member that is merely
 # advised a lower rate (its switch off) still charges at its rating.
 
@@ -150,7 +150,7 @@ def test_an_enforced_limit_narrows_that_members_share():
 
 def test_an_advice_only_member_keeps_its_nameplate_rate():
     # Nothing is written to this inverter, so it really does still charge at its
-    # rating — narrowing here would under-report the allowance and over-trigger.
+    # rating - narrowing here would under-report the allowance and over-trigger.
     members = [_battery(soc=70, charge=10000, enforced_charge_limit=None)]
     assert charge_power_total(members) == 10000
 
@@ -172,7 +172,7 @@ def test_an_enforced_limit_above_the_rating_is_not_a_lift():
 
 def test_an_enforced_zero_leaves_no_allowance_at_all():
     # A hard 0 A charge limit: the battery is not a sink, so the export
-    # allowance alone stands between the site and Excess. Not None — the member
+    # allowance alone stands between the site and Excess. Not None - the member
     # is still there with a configured cap, it is just permitted nothing.
     members = [_battery(soc=70, charge=10000, enforced_charge_limit=0)]
     assert charge_power_total(members) == 0
@@ -224,7 +224,7 @@ def test_soc_target_single_battery_is_its_own():
 
 
 def test_soc_target_all_unconfigured_is_a_hundred():
-    # No ceiling source anywhere — every battery is heading for 100 %, which is
+    # No ceiling source anywhere - every battery is heading for 100 %, which is
     # the pre-destination behaviour of every site that never configured one.
     members = [_battery("a", capacity=10), _battery("b", capacity=5)]
     assert soc_target_weighted(members) == 100.0
@@ -251,7 +251,7 @@ def test_soc_target_unconfigured_member_contributes_a_hundred():
 
 def test_soc_target_ignores_members_without_a_battery_or_capacity():
     # A PV-only inverter has no destination, and a battery with no configured
-    # capacity contributes no headroom — neither may drag the mean.
+    # capacity contributes no headroom - neither may drag the mean.
     members = [
         _battery("a", capacity=20, soc_target=95.0),
         _battery("b", capacity=0, soc_target=50.0),
@@ -319,7 +319,7 @@ def test_solar_production_sensor_wins_over_output():
 
 
 def test_solar_mixed_measured_and_derived_are_summed():
-    """One inverter with a production sensor, one with only outputs — the
+    """One inverter with a production sensor, one with only outputs - the
     fleet total is the sum, which is why derivation is per member."""
     measured = _member("m", has_solar_entity=True, solar_measured=3000.0)
     derived = _member("d", output=PhaseValues(a=10.0, b=None, c=None))
@@ -340,8 +340,8 @@ def test_an_invented_zero_is_not_published_as_production():
 
     ``solar_assumed`` is set by the reader when the configured sensor is
     unreadable and there is nothing to hold, so the 0 W in ``solar_measured``
-    was invented rather than measured. The calculation keeps using it — 0 W is
-    the conservative figure and the household maths cannot take None — but the
+    was invented rather than measured. The calculation keeps using it - 0 W is
+    the conservative figure and the household maths cannot take None - but the
     member's published production is None, so its device sensor reads unknown
     instead of a confident 0 W in full sun.
     """
@@ -367,7 +367,7 @@ def test_a_derived_member_is_never_assumed():
     """No production sensor configured is not a fabrication.
 
     Such a member derives its production from its inverter output (or the site
-    falls back to grid export), and nothing there is invented — so a site with
+    falls back to grid export), and nothing there is invented - so a site with
     no solar sensor at all publishes exactly what it always did.
     """
     derived = _member("d", output=PhaseValues(a=10.0, b=None, c=None))
@@ -380,7 +380,7 @@ def test_one_dead_member_keeps_its_sibling_honest_and_silences_the_total():
     """Per-member publication, fleet-total suppression.
 
     Each inverter publishes a production sensor of its OWN, so the healthy
-    member keeps reporting its real figure — that is a measurement worth
+    member keeps reporting its real figure - that is a measurement worth
     keeping. The fleet TOTAL is a sum containing one invented term, which
     makes the whole sum fabricated (the rule the grid phases already follow).
     """
@@ -395,7 +395,7 @@ def test_one_dead_member_keeps_its_sibling_honest_and_silences_the_total():
 
 
 def test_forecast_device_ids_merge_and_dedupe():
-    """Each PV array belongs to an inverter, but clipping is site-wide — the
+    """Each PV array belongs to an inverter, but clipping is site-wide - the
     fleet's devices merge into one list, with shared devices counted once."""
     a = _member("a", forecast_device_ids=("east", "west"))
     b = _member("b", forecast_device_ids=("west", "north"))
@@ -476,7 +476,7 @@ def test_capacity_total():
 
 
 # ---------------------------------------------------------------------------
-# split_charge_limit — the fleet advice divided by remaining headroom
+# split_charge_limit - the fleet advice divided by remaining headroom
 # ---------------------------------------------------------------------------
 def _pack(entry_id, soc, capacity, charge=5000.0):
     return _battery(entry_id, soc=soc, capacity=capacity, charge=charge, power=0.0)
@@ -502,7 +502,7 @@ def test_split_follows_remaining_headroom_not_charge_cap():
 
 
 def test_split_clamps_at_the_cap_and_refills_the_rest():
-    # b would want 1500 but its charger only does 1000 — a takes the rest.
+    # b would want 1500 but its charger only does 1000 - a takes the rest.
     shares = split_charge_limit(
         [_pack("a", 90, 10), _pack("b", 80, 10, charge=1000.0)], 2000.0, 95
     )
@@ -565,5 +565,5 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

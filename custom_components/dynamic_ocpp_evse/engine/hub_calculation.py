@@ -96,19 +96,19 @@ def _managed_phase_draws(site, ema_inputs=None):
     would the site export with our loads off", and that answer is only stable
     while both halves move together. With a smoothed grid reading and a raw
     draw, every change in a load's draw moved the reconstruction before the
-    grid term caught up — the margin overshot, the permit chased it, and a
+    grid term caught up - the margin overshot, the permit chased it, and a
     modulating load rang around its target instead of settling (measured on
     the rig, 2026-09-08: a station hunting 299-828 W against a 600 W target,
     seven register writes a minute).
 
     Callers that work on the RAW grid basis must leave ``ema_inputs`` unset and
-    get raw draws, so their pairing stays consistent too —
+    get raw draws, so their pairing stays consistent too -
     ``engine/hub_result.py`` adds draws back to ``raw_phases`` and wants raw
     on both sides.
 
     A load whose Dynamic Control is OFF is skipped. Subtracting its draw would
-    add that draw back into the reconstruction — telling the engine the site
-    could export it if only our loads stood down — when the whole point of the
+    add that draw back into the reconstruction - telling the engine the site
+    could export it if only our loads stood down - when the whole point of the
     switch is that this load does not stand down for us. Left in, it is
     household consumption, which is what an unmanaged load is.
     """
@@ -132,7 +132,7 @@ def _managed_phase_draws(site, ema_inputs=None):
 def _charge_control_view(site, consumption, export, battery_power, ema_inputs=None):
     """The site as the battery CHARGE CONTROLLER reads it.
 
-    Same loads, same allowance, same feedback subtraction as ``site`` — only
+    Same loads, same allowance, same feedback subtraction as ``site`` - only
     the grid phases and the battery power come from the DIRECTIONAL smoothers
     (``readers._smooth_directional``): export moving toward the limit and
     charging falling both reach the controller in two cycles, while the moves
@@ -140,7 +140,7 @@ def _charge_control_view(site, consumption, export, battery_power, ema_inputs=No
     Excess verdict and the allocation stay on the symmetric site, which is what
     keeps a responsive register from flapping the verdict through the
     allowance term (measured: 21 flips when the shared readings were made
-    fast, 1 with the view scoped here — dev/tests/test_charge_control_loop.py).
+    fast, 1 with the view scoped here - dev/tests/test_charge_control_loop.py).
 
     Built AFTER ``_apply_feedback_loop`` ran on the site, so the same
     managed-draw subtraction is applied to these phases here; off-grid the
@@ -163,7 +163,7 @@ def _apply_feedback_loop(site, solar_is_derived, members, ema_inputs=None):
     in-place.
     """
     # Off-grid: the grid phase readings are synthetic zeros (no CTs exist) and
-    # never contained the load draws — subtracting them here would fabricate
+    # never contained the load draws - subtracting them here would fabricate
     # export equal to each load's own draw. Solar was already derived from
     # the inverter output upstream, so nothing needs re-deriving either.
     if site.is_off_grid:
@@ -203,7 +203,7 @@ def _apply_feedback_loop(site, solar_is_derived, members, ema_inputs=None):
     site.export_current = new_export
 
     # Update derived solar after feedback. Same per-member derivation as the
-    # first pass — only the export term changes, so a fleet where every member
+    # first pass - only the export term changes, so a fleet where every member
     # measures its own production has nothing to redo (solar_is_derived False).
     solar_note = ""
     if solar_is_derived:
@@ -231,7 +231,7 @@ def _apply_feedback_loop(site, solar_is_derived, members, ema_inputs=None):
 def _mixed_household_per_phase(site, members):
     """Per-phase household for a mixed-topology fleet: the parallel formula on
     the parallel members' summed outputs plus the series formula on the series
-    members' — grid-bus loads show on the CT + parallel outputs, behind-series
+    members' - grid-bus loads show on the CT + parallel outputs, behind-series
     loads show in the series outputs. Best-effort superposition; uniform
     fleets never come here and keep the exact single-formula path."""
     original = site.inverter_output_per_phase
@@ -296,7 +296,7 @@ def _read_hub_config(hub_entry):
     """The hub's own scalar settings, read once per cycle.
 
     Returns ``(voltage, main_breaker_rating, excess_hysteresis,
-    excess_threshold)`` — the site electricals plus the Excess trigger
+    excess_threshold)`` - the site electricals plus the Excess trigger
     point and release band derived from the configured export limit.
     """
     # --- Read hub config values ---
@@ -312,7 +312,7 @@ def _read_hub_config(hub_entry):
     # Excess trigger, derived from the physical export limit: engage once
     # export is within the trigger margin of the limit (an inverter curtails
     # slightly under the limit, so a trigger exactly AT it would never fire).
-    # No limit configured (0) means the grid can absorb everything — the
+    # No limit configured (0) means the grid can absorb everything - the
     # allowance is infinite, grid-side Excess never triggers, and only the
     # battery side of excess_margin() remains.
     grid_export_limit = (
@@ -344,19 +344,19 @@ def _read_site_phases(hass, hub_entry, voltage):
     """
     # --- Read per-phase grid current (raw, signed; W/kW converted to A) ---
     # Entries are floats, None (no CT on that phase) or the _UNAVAILABLE
-    # sentinel (CT configured but unreadable) — _resolve_grid_phases below is
+    # sentinel (CT configured but unreadable) - _resolve_grid_phases below is
     # the only thing allowed to substitute a number for the sentinel. Until
     # then, every test here has to be on None, never on truthiness or 0.
     raw_phases = _read_grid_phases(hass, hub_entry, voltage)
     has_grid_cts = any(r is not None for r in raw_phases)
 
     # A site phase exists if it has EITHER a grid CT or an inverter output
-    # sensor configured — the phase count is the combination of both. For a
+    # sensor configured - the phase count is the combination of both. For a
     # phase with an inverter sensor but no grid CT (an off-grid site, or a
     # partially grid-metered one), grid current is taken as 0 A so the phase
     # still counts. Without this a 1-phase off-grid site would look 3-phase
     # and per-phase figures would be split across phantom phases. A phase whose
-    # CT is merely unreadable is NOT 0 A — the sentinel is not None, so it falls
+    # CT is merely unreadable is NOT 0 A - the sentinel is not None, so it falls
     # through to the holdover instead.
     inv_phase_confs = (
         CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
@@ -366,7 +366,7 @@ def _read_site_phases(hass, hub_entry, voltage):
     for i, conf in enumerate(inv_phase_confs):
         if raw_phases[i] is None and get_entry_value(hub_entry, conf, None):
             raw_phases[i] = 0.0
-    # Nothing configured at all — fall back to a single phase.
+    # Nothing configured at all - fall back to a single phase.
     if all(r is None for r in raw_phases):
         raw_phases = [0.0, None, None]
     return raw_phases, has_grid_cts
@@ -377,14 +377,14 @@ def _read_max_import_power(hass, hub_entry):
 
     The ENABLE FLAG COMES FIRST, then a configured entity, then the hub's own
     slider. The flag used to be tested last, so an entity left behind from
-    when the limit was enabled went on being read after it was switched off —
+    when the limit was enabled went on being read after it was switched off -
     and a site with the limit disabled and a stale entity had that sensor's
     dropouts reported on the hub status, taking the whole site to a warning
     state ten times a day for a feature it was not using (live 2026-09-07:
     ``enable_max_import_power: false`` beside
     ``max_import_power_entity_id: sensor.current_block_power_limit``).
     Disabled means disabled, on every one of the three code paths that read
-    this pair — see ``_check_entity_availability`` and ``number.py``.
+    this pair - see ``_check_entity_availability`` and ``number.py``.
     """
     # --- Max grid import power (disabled → entity override → hub slider) ---
     if not get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True):
@@ -413,9 +413,9 @@ def _apply_soc_hysteresis(
     returned rather than mutated in place, so the caller can see exactly
     which values the rest of the cycle runs on. Returns
     ``(battery_soc_target, battery_soc_min, now_above_target,
-    now_above_min)`` — the last two feed the debug line's hysteresis marks.
+    now_above_min)`` - the last two feed the debug line's hysteresis marks.
     """
-    # Apply SOC hysteresis — adjust thresholds so engine stays stateless
+    # Apply SOC hysteresis - adjust thresholds so engine stays stateless
     now_above_target = False
     now_above_min = False
     if (
@@ -438,13 +438,13 @@ def _apply_soc_hysteresis(
         # the floor is protective, so discharge stops AT the configured floor
         # and only resumes once the battery has recovered a full hysteresis
         # above it (floor 20, hysteresis 3 → stop at 20, resume at 23). The
-        # target's band sits below its setting for the same reason in reverse —
+        # target's band sits below its setting for the same reason in reverse -
         # charging never overshoots the configured ceiling.
         #
         # STRICTLY above, because "stop AT the floor" is what the consumers
         # mean by it: the SOC-gated binary modes run while ``soc > soc_min``
         # (calculations.target_calculator._source_limit). Latching on ``>=``
-        # here disagreed with them at exactly the floor — the latch read "still
+        # here disagreed with them at exactly the floor - the latch read "still
         # above", so it never widened the threshold, while the gate read "not
         # above" and shed the load. The band was then unreachable: the load
         # switched off AT the floor, the battery recovered one percent, the load
@@ -519,13 +519,13 @@ def _apply_excess_latch(hub_runtime, site, excess_hysteresis):
     # exceeds everything it is allowed to absorb (export allowance + battery
     # charge allowance); >= 0 means on. Once engaged, the band widens by the
     # hub's Excess hysteresis so a load doesn't chatter at the trigger point.
-    # The latch lives here so the calculator stays stateless — it just reads
+    # The latch lives here so the calculator stays stateless - it just reads
     # site.excess_hysteresis. The per-sink breakdown goes to excess_margin()'s
     # own debug line.
     #
     # Evaluated on POST-feedback figures: the pools compare export with load
     # draws added back, and pre-feedback export is already eaten by the Excess
-    # load's own draw — the band would never engage exactly when a load is running.
+    # load's own draw - the band would never engage exactly when a load is running.
     was_excess_on = hub_runtime.get("_excess_on", False)
     margin = excess_margin(site, excess_hysteresis if was_excess_on else 0)
     excess_on = margin >= 0
@@ -600,7 +600,7 @@ def _apply_household_figures(
             decay,
         )
     else:
-        # No inverter output data at all — nothing to hold, and the held value
+        # No inverter output data at all - nothing to hold, and the held value
         # must be dropped so it cannot resurrect on a later cycle.
         hub_runtime.pop("_household_held", None)
 
@@ -608,14 +608,14 @@ def _apply_household_figures(
 def _apply_grid_stale_fallback(site, grid_stale_duration):
     """Override the calculated permits once the grid CTs have been blind too long.
 
-    Returns whether the timeout has been exceeded — the hub status and the
+    Returns whether the timeout has been exceeded - the hub status and the
     published result both report it.
     """
     # --- Grid stale fallback: force min_current after timeout ---
     grid_stale = grid_stale_duration > GRID_STALE_TIMEOUT
     if grid_stale:
         _LOGGER.warning(
-            "Grid CT unavailable for %.0fs (>%ds) — charging EVSEs falling to "
+            "Grid CT unavailable for %.0fs (>%ds) - charging EVSEs falling to "
             "minimum current, binary loads switched off",
             grid_stale_duration,
             GRID_STALE_TIMEOUT,
@@ -623,7 +623,7 @@ def _apply_grid_stale_fallback(site, grid_stale_duration):
         for load in site.loads:
             # Only an EVSE already charging keeps a minimum-current permit (a
             # hard stop mid-charge is worse than 6 A on a blind site). Binary
-            # loads (plugs/tanks) and idle EVSEs get no permit — a permit > 0
+            # loads (plugs/tanks) and idle EVSEs get no permit - a permit > 0
             # switches a binary load ON, and energizing a load the engine had
             # deliberately shed while it cannot see the site is unsafe.
             if (
@@ -679,7 +679,7 @@ def _run_auto_detection(hub_entry, auto_detect_state, smoothed_phases, site):
 
     Returns the notifications to publish. Any phase remap it works out is
     stored in ``auto_detect_state`` for the NEXT cycle to apply (see
-    _apply_phase_remaps) — never mid-calculation.
+    _apply_phase_remaps) - never mid-calculation.
     """
     # --- Auto-detection (inversion + phase mapping) ---
     # auto_detect_state is initialized by the caller before the first use.
@@ -750,26 +750,26 @@ def _build_hub_status(
         )
     elif not has_grid_cts:
         # Off-grid: no grid CTs, so the battery is the primary state source.
-        # Any fleet member's battery satisfies the requirement — the battery
+        # Any fleet member's battery satisfies the requirement - the battery
         # may live on the hub's legacy fields or on an inverter entry.
         hub_warnings.append("Off-grid mode (no grid CTs)")
         if not any(m.battery_soc is not None or m.has_battery for m in members):
             hub_status = "Setup incomplete"
             hub_warnings.append(
-                "Off-grid hub needs a battery SOC sensor — it drives the "
+                "Off-grid hub needs a battery SOC sensor - it drives the "
                 "operating-mode logic. Set it on the hub or an inverter entry."
             )
         if not any(m.has_battery_power_entity for m in members):
             hub_status = "Setup incomplete"
             hub_warnings.append(
-                "Off-grid hub needs a battery power sensor — it is used to "
+                "Off-grid hub needs a battery power sensor - it is used to "
                 "detect available solar surplus. Set it on the hub or an "
                 "inverter entry."
             )
         if not has_inverter_output and not has_solar_entity:
             hub_warnings.append(
                 "Off-grid hub has no inverter output or solar production "
-                "sensor — available solar can only be inferred from battery "
+                "sensor - available solar can only be inferred from battery "
                 "charging. Add one for an accurate measurement."
             )
 
@@ -806,7 +806,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     Run the hub calculation: read HA states, build SiteContext, calculate targets.
 
     This is the ONE site calculation for a hub, run once per site cycle by the
-    hub's DataUpdateCoordinator (see sensor.py). It takes no entity — every
+    hub's DataUpdateCoordinator (see sensor.py). It takes no entity - every
     cycle-counted mechanism inside (settle counters, input EMAs, power-stable
     counts) advances exactly once per call, so a site with N loads no longer
     advances them N times per interval.
@@ -840,7 +840,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # Every _smooth call this cycle uses a weight derived from how often this
     # site actually refreshes, so the filter's behaviour is fixed in SECONDS
     # rather than in cycles. Without this a site polled slowly was silently
-    # filtered far harder than one polled quickly — see EMA_TAU_S.
+    # filtered far harder than one polled quickly - see EMA_TAU_S.
     set_ema_interval(
         ema_inputs,
         get_entry_value(
@@ -851,8 +851,8 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # --- Resolve unreadable grid CTs (the only place allowed to substitute) ---
     # ``grid_assumed_phases`` marks the phases standing on the main-breaker
     # worst case rather than on a reading or a held EMA value. The allocation
-    # below runs on the assumption exactly as before — that is what keeps a
-    # blind site from handing out headroom — but the PUBLISHED grid
+    # below runs on the assumption exactly as before - that is what keeps a
+    # blind site from handing out headroom - but the PUBLISHED grid
     # measurements must not carry it (see _build_hub_result).
     raw_phases, any_grid_stale, grid_assumed_phases = _resolve_grid_phases(
         raw_phases, ema_inputs, main_breaker_rating
@@ -888,7 +888,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # --- Inverter fleet (inverter entries + legacy hub-level fields) ---
     # Every battery/inverter scalar below is a fleet aggregate. With a single
     # member (the classic setup) each aggregate reduces to exactly the old
-    # singleton value — see engine/fleet.py for the per-member gating rules.
+    # singleton value - see engine/fleet.py for the per-member gating rules.
     members = _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage)
 
     # --- Solar production (unified for grid and off-grid) ---
@@ -919,7 +919,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # nameplate rate: while our own Battery Charge Control holds a member's
     # register below that rate, the difference is not somewhere this site can
     # place production (see fleet.charge_power_total). This scalar has exactly
-    # one consumer, the Excess verdict — calculations.excess_margin — so the
+    # one consumer, the Excess verdict - calculations.excess_margin - so the
     # narrowing reaches nothing else. Discharge is summed after the SOC-min
     # hysteresis latch below.
     battery_max_charge_power = fleet.charge_power_total(members)
@@ -931,7 +931,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # member EMA keys). The topology scalar is 'series' if ANY member is
     # series: the series solar formula on the summed outputs with the summed
     # battery power is exact for any mix, because parallel members contribute
-    # no battery term — so the post-feedback re-derivation stays correct.
+    # no battery term - so the post-feedback re-derivation stays correct.
     (
         inverter_max_power,
         inverter_max_power_per_phase,
@@ -946,7 +946,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # aggregation the display headroom uses, but taken HERE, before the feedback
     # loop: post-feedback the derived solar has the managed draws folded back
     # into it, which inflates the estimate by exactly the draw the gate then has
-    # to discount — the two errors would cancel the load-off add-back and the
+    # to discount - the two errors would cancel the load-off add-back and the
     # gate would suppress itself (issue #41).
     inverter_output_total = fleet.output_power_total(
         members,
@@ -955,7 +955,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         battery_power_w=battery_power,
     )
     # Signed net grid flow (+ import / − export) from the smoothed phases. Off
-    # grid every phase reads 0, so this is 0 — correct: nothing to import.
+    # grid every phase reads 0, so this is 0 - correct: nothing to import.
     net_grid_power = sum(r for r in smoothed_phases if r is not None) * voltage
 
     # --- Runtime state from shared hub data (hub_runtime already fetched above) ---
@@ -968,7 +968,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     battery_soc_min = hub_runtime.get("battery_soc_min", DEFAULT_BATTERY_SOC_MIN)
     # With exactly one battery this is its real full-SOC (classic behavior,
     # including the calculations-level gates that read it); a multi-battery
-    # fleet passes None — its full gating already happened per member in
+    # fleet passes None - its full gating already happened per member in
     # fleet.charge_power_total(), and a fleet-SOC gate would be wrong.
     battery_soc_full = fleet.soc_full_scalar(members)
 
@@ -986,7 +986,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     )
 
     # Discharge capacity sums only members whose OWN battery is at/above the
-    # (hysteresis-adjusted) hub minimum — a battery below the floor cannot be
+    # (hysteresis-adjusted) hub minimum - a battery below the floor cannot be
     # counted dischargeable because a full sibling lifts the fleet SOC.
     battery_max_discharge_power = fleet.discharge_power_total(members, battery_soc_min)
 
@@ -994,7 +994,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     if max_grid_import_power is not None and power_buffer > 0:
         max_grid_import_power = max(0, max_grid_import_power - power_buffer)
 
-    # (Excess-export hysteresis is applied after the feedback loop below — it
+    # (Excess-export hysteresis is applied after the feedback loop below - it
     # must see the same post-feedback export figure the engine's excess pool
     # compares against the threshold.)
 
@@ -1123,7 +1123,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         ctrl_export_pv,
         float(battery_power_ctrl) if battery_power_ctrl is not None else None,
         # Its phases come from the DIRECTIONAL smoothers, but the draw it
-        # subtracts is the same smoothed term the site view used — one EMA
+        # subtracts is the same smoothed term the site view used - one EMA
         # state, so the two views cannot disagree about what our loads draw.
         ema_inputs,
     )
@@ -1149,7 +1149,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     load_available = {c.load_id: c.available_current for c in site.loads}
     load_names = {c.load_id: c.entity_id for c in site.loads}
 
-    # Persist this cycle's permit for next-cycle settle detection — an EVSE
+    # Persist this cycle's permit for next-cycle settle detection - an EVSE
     # only counts as "settled and under-drawing" when its measured draw stays
     # below the permit we last offered it.
     loads_rt = hass.data[DOMAIN].get("loads", {})
@@ -1176,12 +1176,12 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
 
     # --- Per-inverter data for the inverter-entry sensors ---
     # The legacy implicit member (the hub's own fields) has no device of its
-    # own — its values already show on the hub's fleet sensors.
+    # own - its values already show on the hub's fleet sensors.
     inverters_data = {
         m.entry_id: {
             "name": m.name,
             # None while this member's own production sensor is unreadable with
-            # nothing to hold — its device sensor reads unknown rather than a
+            # nothing to hold - its device sensor reads unknown rather than a
             # confident 0 W. A healthy sibling keeps publishing its own figure.
             "solar_w": fleet.member_solar_published(m, voltage),
             "battery_soc": m.battery_soc,

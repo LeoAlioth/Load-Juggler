@@ -10,7 +10,7 @@ charger wizard asks the charger, and the hub phase count derived from the
 configured grid CTs. The OCPP registry scan itself lives in the package-root
 ``ocpp_discovery.py``, where the engine can reach it too.
 
-Anything both handlers need lives here rather than on either of them — the
+Anything both handlers need lives here rather than on either of them - the
 unit maps below are the create/options twins' single shared declaration, and
 that is what lets the create flow and the options flow stay unaware of each
 other's handler class.
@@ -116,7 +116,7 @@ _BATTERY_UNIT_MAP = {
 }
 _WRITE_CONTROL_UNIT_MAP = {
     # The charge-limit register is NOT here: it is written in whatever unit the
-    # user chose (CONF_CHARGE_LIMIT_UNIT), so it has no fixed physical domain —
+    # user chose (CONF_CHARGE_LIMIT_UNIT), so it has no fixed physical domain -
     # _validate_charge_limit_unit checks it against the choice instead.
     CONF_BATTERY_VOLTAGE_ENTITY_ID: _VOLTAGE_UNITS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID: _SOC_UNITS,
@@ -128,7 +128,7 @@ def _validate_charge_limit_unit(hass, user_input: dict, errors: dict) -> None:
 
     The register is written raw in the unit the user declared
     (CONF_CHARGE_LIMIT_UNIT: DC amps on a Deye, watts elsewhere), so unlike the
-    physical-domain fields there is no canonical unit to convert into — an "A"
+    physical-domain fields there is no canonical unit to convert into - an "A"
     register configured as watts is exactly the mistake this catches. Skips
     like _validate_entity_units: no entity, no state, or no unit → no error.
     """
@@ -153,7 +153,7 @@ def _validate_entity_units(
     """Validate that provided entities report expected measurement units.
 
     Silently skips when an entity's state is unavailable/unknown or has no
-    unit_of_measurement attribute — the user is never blocked by missing state.
+    unit_of_measurement attribute - the user is never blocked by missing state.
     Only flags an error when a unit is present and clearly wrong.
     """
     for field_key, valid_units in field_unit_map.items():
@@ -175,7 +175,7 @@ def _validate_forecast_devices(hass, user_input: dict, errors: dict) -> str | No
     array) exposes several sensors; the clipping forecast reads the ``watts``
     attribute (a mapping of block-start timestamps to average watts) from one
     of them. A device with sensor entities but none of their states loaded
-    yet never blocks the user — mirroring _validate_entity_units — but a
+    yet never blocks the user - mirroring _validate_entity_units - but a
     device whose loaded sensors carry no watts mapping is the wrong device.
 
     Returns the offending device's display name so the step can name it in
@@ -190,7 +190,7 @@ def _validate_forecast_devices(hass, user_input: dict, errors: dict) -> str | No
         ]
         states = [s for s in (hass.states.get(eid) for eid in sensors) if s is not None]
         if sensors and not states:
-            continue  # states not loaded yet — never block on missing state
+            continue  # states not loaded yet - never block on missing state
         if any(isinstance(s.attributes.get("watts"), dict) for s in states):
             continue
         errors[CONF_SOLAR_FORECAST_DEVICE_IDS] = "forecast_device_no_watts"
@@ -261,7 +261,7 @@ def _normalize_optional_inputs(
     ):
         if key in normalized:
             normalized[key] = normalize_optional_entity(normalized.get(key))
-    # Entity selectors omit unselected fields — explicitly clear them
+    # Entity selectors omit unselected fields - explicitly clear them
     if step_entity_keys:
         for key in step_entity_keys:
             if key not in normalized:
@@ -276,7 +276,7 @@ def _normalize_forecast_list(data: dict) -> dict:
     multi-device selector yields a list and omits the key entirely when
     cleared, so an emptied selection must become [] (feature off), not a
     stale stored value. Submitting the form also drops any legacy
-    directly-configured sensor list — the device selection replaces it.
+    directly-configured sensor list - the device selection replaces it.
     """
     data[CONF_SOLAR_FORECAST_DEVICE_IDS] = [
         d for d in (data.get(CONF_SOLAR_FORECAST_DEVICE_IDS) or []) if d
@@ -290,8 +290,8 @@ def _normalize_soc_limit_list(data: dict) -> dict:
 
     Same reason as the forecast list above and not the scalar path: a
     multi-entity selector yields a list and omits the key entirely once the
-    user clears it, so an emptied selection must become [] — which is what
-    removes the Battery SOC Control switch and sensor again — rather than
+    user clears it, so an emptied selection must become [] - which is what
+    removes the Battery SOC Control switch and sensor again - rather than
     leaving the previously stored slots armed.
     """
     data[CONF_SOC_LIMIT_ENTITY_IDS] = [
@@ -376,7 +376,7 @@ def _auto_detect_entity_value(
     """Auto-detect an entity and read its numeric state value.
 
     Returns int(state * factor), or None if not found / not numeric. Scans the
-    registry itself — the one caller (a form hint) detects exactly once.
+    registry itself - the one caller (a form hint) detects exactly once.
     """
     entity_id = _auto_detect_entity(_entity_registry_ids(hass), pattern_sets)
     if not entity_id:
@@ -406,7 +406,7 @@ def _compose_entry_title(name: str, type_label: str) -> str:
     """Compose a config-entry title without doubling the device-type label.
 
     The type label is appended only when the user's name doesn't already
-    contain it — so a device left at its default name (e.g. "Hot Water Tank")
+    contain it - so a device left at its default name (e.g. "Hot Water Tank")
     becomes just "Hot Water Tank", not "Hot Water Tank Hot Water Tank", while
     a custom name like "Kitchen" still becomes "Kitchen Hot Water Tank".
     """
@@ -472,7 +472,7 @@ def _apply_priority_order(hass, devices: list, chosen: list) -> None:
 
     Devices the user left out keep their current ranking at the end. Only the
     per-device priority number is touched, so the distribution engine is
-    unchanged — it still sorts by (mode urgency, priority).
+    unchanged - it still sorts by (mode urgency, priority).
     """
     placed = list(chosen)
     for entry in _devices_by_priority(devices):
@@ -498,7 +498,7 @@ async def _detect_charge_rate_unit(hass, ocpp_device_id: str) -> str | None:
         "A" for Amperes, "W" for Watts, None if detection fails.
     """
     if not ocpp_device_id:
-        _LOGGER.debug("No OCPP device ID — cannot detect charge rate unit")
+        _LOGGER.debug("No OCPP device ID - cannot detect charge rate unit")
         return None
 
     if not hass.services.has_service("ocpp", "get_configuration"):
@@ -521,7 +521,7 @@ async def _detect_charge_rate_unit(hass, ocpp_device_id: str) -> str | None:
             _LOGGER.debug("Empty response from ocpp.get_configuration")
             return None
 
-        # Parse the response — handle multiple possible formats
+        # Parse the response - handle multiple possible formats
         value = None
         if isinstance(response, dict):
             # Direct key-value: {"ChargingScheduleAllowedChargingRateUnit": "Current"}
@@ -551,7 +551,7 @@ async def _detect_charge_rate_unit(hass, ocpp_device_id: str) -> str | None:
         _LOGGER.info("OCPP ChargingScheduleAllowedChargingRateUnit = %s", value)
 
         if "current" in value_lower and "power" in value_lower:
-            return CHARGE_RATE_UNIT_AMPS  # Both supported — prefer Amps
+            return CHARGE_RATE_UNIT_AMPS  # Both supported - prefer Amps
         elif "power" in value_lower:
             return CHARGE_RATE_UNIT_WATTS
         elif "current" in value_lower:
@@ -630,8 +630,8 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
 
     A site phase exists when it has a grid CT or an inverter output sensor
     (mirrors ``run_hub_calculation``'s phase derivation). The inverter output
-    entities may live on the hub's own legacy fields OR — after the one-time
-    auto-import — on any of its inverter child entries, so the whole fleet is
+    entities may live on the hub's own legacy fields OR - after the one-time
+    auto-import - on any of its inverter child entries, so the whole fleet is
     consulted. Without that, an off-grid 3-phase site collapses to 1 phase
     post-import, hiding the L2/L3 mapping fields and force-mapping every
     charger leg onto L1's phase.
@@ -655,7 +655,7 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
     if count > 0:
         return count
     # Off-grid fallback: infer from the inverter output entities of the whole
-    # fleet — the hub's own (pre-import) fields plus every inverter child
+    # fleet - the hub's own (pre-import) fields plus every inverter child
     # entry. A phase counts once, no matter how many members feed it.
     sources = [opts] + [
         {**inverter.data, **inverter.options}
@@ -674,7 +674,7 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
 
 
 def _normalize_features_list(data: dict) -> dict:
-    """The features multi-select omits its key when emptied — store []."""
+    """The features multi-select omits its key when emptied - store []."""
     normalized = dict(data)
     normalized[CONF_INVERTER_FEATURES] = list(normalized.get(CONF_INVERTER_FEATURES) or [])
     return normalized

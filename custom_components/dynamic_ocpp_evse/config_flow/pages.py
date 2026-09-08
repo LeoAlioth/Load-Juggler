@@ -94,7 +94,7 @@ from .helpers import (
 # Read-only pages: "Overview" (live) and "How it decides" (configuration)
 # ---------------------------------------------------------------------------
 #
-# Both are one options step whose form carries an EMPTY schema — the whole body
+# Both are one options step whose form carries an EMPTY schema - the whole body
 # arrives through description_placeholders. HA renders markdown in flow
 # descriptions, so these builders emit short lines, bold labels and hyphen
 # lists; markdown TABLES are not rendered, so there are none.
@@ -104,7 +104,7 @@ from .helpers import (
 # setup-confirmation page).
 
 _STALE_AFTER_SECONDS = 90  # hub_data older than this is called out as stale
-_DASH = "—"
+_DASH = "-"
 
 _DEVICE_TYPE_LABELS = {
     DEVICE_TYPE_EVSE: "EVSE",
@@ -129,7 +129,7 @@ def _fmt(value, unit: str = "", decimals: int = 1) -> str:
 
 
 def _fmt_age(seconds: float) -> str:
-    """A rough age: seconds, minutes or hours — whichever reads best."""
+    """A rough age: seconds, minutes or hours - whichever reads best."""
     if seconds < 90:
         return f"{seconds:.0f} s ago"
     if seconds < 5400:
@@ -138,7 +138,7 @@ def _fmt_age(seconds: float) -> str:
 
 
 # The allocator's three pools, in the order it builds them, with the sources
-# each one stands for spelled out — "physical" and "excess" mean nothing to
+# each one stands for spelled out - "physical" and "excess" mean nothing to
 # someone reading this page for the first time.
 # Each label says "pool" and names the sources it stands for: the watt lines
 # above are re-derivations of the SAME quantities, so a bare "Solar surplus"
@@ -190,7 +190,7 @@ def _pool_detail_lines(hub_data: dict) -> list[str]:
     these are the objects the distribution actually consulted. Both are shown
     because when they disagree, the disagreement is the bug.
 
-    "Left" is what survived each load's MEASURED draw, not its permit — a plug
+    "Left" is what survived each load's MEASURED draw, not its permit - a plug
     that is switched off takes nothing from the pool however large a permit it
     holds, so an untouched pool beside a granted permit is the normal reading,
     not a missed deduction.
@@ -228,13 +228,13 @@ def _live_hub_data(hass, hub_entry_id: str | None) -> tuple[dict, str]:
 
     hub_data is written every cycle by whichever entity ran the calculation
     (the loads, or the hub sensor itself when a hub has no loads). Missing or
-    old data is reported in the text rather than raised — these pages must
+    old data is reported in the text rather than raised - these pages must
     never fail just because the engine has not run yet.
     """
     data = (_runtime(hass).get("hub_data") or {}).get(hub_entry_id) or {}
     if not data:
         return {}, (
-            "⏳ **No live data yet** — the engine has not completed a "
+            "⏳ **No live data yet** - the engine has not completed a "
             "calculation cycle for this site. Try again in a minute."
         )
     last_update = data.get("last_update")
@@ -248,10 +248,10 @@ def _live_hub_data(hass, hub_entry_id: str | None) -> tuple[dict, str]:
         return data, "Live values (age unknown)."
     # A clock time, not an age: this page is a snapshot that never re-renders
     # until Refresh is pressed, so "0 s ago" would sit there as a frozen
-    # counter. The stale line keeps the age — that one is the point.
+    # counter. The stale line keeps the age - that one is the point.
     stamp = dt_util.as_local(last_update).strftime("%H:%M:%S")
     if age > _STALE_AFTER_SECONDS:
-        return data, f"⚠️ **Stale** — last calculated at {stamp} ({_fmt_age(age)})."
+        return data, f"⚠️ **Stale** - last calculated at {stamp} ({_fmt_age(age)})."
     return data, f"Refreshed: {stamp}"
 
 
@@ -292,7 +292,7 @@ def _entry_sensor_value(hass, entry, unique_id_suffix: str):
             except (TypeError, ValueError):
                 return state.state  # a status string is a legitimate answer here
             return None if units.is_unusable_number(value) else value
-    except Exception:  # pragma: no cover — a display path must never raise
+    except Exception:  # pragma: no cover - a display path must never raise
         _LOGGER.debug("Could not read %s for %s", unique_id_suffix, entry.entry_id)
     return None
 
@@ -378,7 +378,7 @@ def _phase_mapping_text(hass, load_entry) -> str:
 
 
 def _whole(value):
-    """A priority or rank as the integer it is — never ``2.0``."""
+    """A priority or rank as the integer it is - never ``2.0``."""
     if value is None:
         return None
     try:
@@ -433,7 +433,7 @@ def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
 
     parts.append(f"permitted {_fmt(_load_permit(hass, load_entry, hub_data), 'A')}")
 
-    # The MEASURED draw (what "Managed loads drawing" sums), not the permit —
+    # The MEASURED draw (what "Managed loads drawing" sums), not the permit -
     # a station trickling at its 200 W floor on a 0 A permit reads as such.
     load_draw = hub_data.get("load_draw")
     if isinstance(load_draw, dict) and load_entry.entry_id in load_draw:
@@ -489,7 +489,7 @@ def _unmanaged_household_w(hub_data):
     deliberately published no household figure, because one of the terms it
     would be built from was a substituted value rather than a reading (see
     engine/hub_result.py). Re-deriving it here from those same terms would put
-    the fabrication back on the page — so the em dash stands.
+    the fabrication back on the page - so the em dash stands.
     """
     household = hub_data.get("household_power")
     if isinstance(household, (int, float)):
@@ -508,7 +508,7 @@ def _unmanaged_household_w(hub_data):
 
 
 def _forecast_overview_lines(hub_data: dict) -> list[str]:
-    """The PV clipping forecast as the hub sees it — empty when it is off.
+    """The PV clipping forecast as the hub sees it - empty when it is off.
 
     The energy figures describe the NEXT clipping window: the rest of today
     while today still has clip left, tomorrow's peak once it has integrated
@@ -518,7 +518,7 @@ def _forecast_overview_lines(hub_data: dict) -> list[str]:
     if hub_data.get("forecast_clipped_kwh") is None:
         return []
     window = "tomorrow" if hub_data.get("forecast_window_tomorrow") else "today"
-    lines = ["", f"**☀️ PV forecast — next clipping window ({window})**"]
+    lines = ["", f"**☀️ PV forecast - next clipping window ({window})**"]
     lines.append(
         f"- Clippable: {_fmt(hub_data.get('forecast_clipped_kwh'), 'kWh', 2)}"
         f" · battery room needed: {_fmt(hub_data.get('forecast_room_needed_kwh'), 'kWh', 2)}"
@@ -584,7 +584,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             from ..engine.readers import _read_grid_phases
 
             grid_phases = _read_grid_phases(hass, entry, voltage)
-        except Exception:  # pragma: no cover — display path
+        except Exception:  # pragma: no cover - display path
             _LOGGER.debug("Could not read grid phases for the overview", exc_info=True)
         for label, entity_id, value in zip(("A", "B", "C"), configured_cts, grid_phases):
             if not entity_id:
@@ -599,10 +599,10 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             lines.append(f"- Phase {label}: {_fmt(abs(value), 'A')} {flow}")
         off_grid = False
     else:
-        lines.append("- No grid CTs configured — off-grid site")
+        lines.append("- No grid CTs configured - off-grid site")
         off_grid = True
     # Both grid lines on the RAW meter basis: the reading, and the reading
-    # with the managed loads' draws added back — so they differ by exactly
+    # with the managed loads' draws added back - so they differ by exactly
     # those draws. (The engine itself works on smoothed values; that figure
     # belongs to the grid power / export sensors, not to this page.)
     # Off-grid there is no meter and no export: both lines below would be a
@@ -627,7 +627,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             f"- Export with managed loads off: {_fmt(loads_off, 'W', 0)}{over}"
         )
     if hub_data.get("grid_stale"):
-        lines.append("- ⚠️ Grid readings are stale — holding the last known values")
+        lines.append("- ⚠️ Grid readings are stale - holding the last known values")
 
     lines += ["", "**☀️ Solar & battery**"]
     lines.append(f"- Solar production: {_fmt(hub_data.get('solar_power'), 'W', 0)}")
@@ -684,7 +684,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
         entry, CONF_DISTRIBUTION_MODE, DEFAULT_DISTRIBUTION_MODE
     )
     loads = _devices_by_priority(_controlled_devices(hass, entry.entry_id))
-    lines += ["", f"**🔌 Loads** — distribution: {distribution}"]
+    lines += ["", f"**🔌 Loads** - distribution: {distribution}"]
     if not loads:
         lines.append("- No loads configured yet")
     for load in loads:
@@ -747,7 +747,7 @@ def _load_overview_lines(hass, entry) -> list[str]:
         lines.append(f"- Drawing on phases: {mask}")
     load_runtime = (runtime.get("loads") or {}).get(entry.entry_id) or {}
     if load_runtime.get("dynamic_control") is False:
-        lines.append("- ⚠️ Dynamic control is OFF — Load Juggler is not limiting this load")
+        lines.append("- ⚠️ Dynamic control is OFF - Load Juggler is not limiting this load")
 
     cap = _group_cap_for(hass, hub_entry_id, entry.entry_id)
     lines += ["", "**⛓ Circuit group**"]
@@ -801,7 +801,7 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
                 )
             else:
                 phase_lines.append(f"- Phase {label}: {_fmt(value, 'A')}")
-    except Exception:  # pragma: no cover — display path
+    except Exception:  # pragma: no cover - display path
         _LOGGER.debug("Could not read inverter output for the overview", exc_info=True)
     lines += phase_lines or ["- No per-phase output sensors configured"]
     lines.append(f"- Solar production: {_fmt(own.get('solar_w'), 'W', 0)}")
@@ -843,7 +843,7 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
     # wherever it has a forecast device, battery or not. (Its ``else`` used to
     # bind to this ``if`` rather than the battery's, so a battery-less array
     # printed "No battery configured" and a battery WITH no forecast data
-    # printed it under a fully populated Battery section — 2026-09-07.)
+    # printed it under a fully populated Battery section - 2026-09-07.)
     if own.get("forecast_accuracy_pct") is not None or own.get("forecast_gain") is not None:
         lines += ["", "**☀️ This array's forecast**"]
         lines.append(
@@ -928,7 +928,7 @@ def _summary_text(hass, hub_entry_id: str) -> str:
     voltage = get_entry_value(entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
     lines = [f"### {entry.title}", ""]
 
-    # 1 — site basics
+    # 1 - site basics
     lines.append("**🏠 Site**")
     lines.append(f"- ✓ {phases}-phase site at {_fmt(voltage, 'V', 0)}")
     grid_cts = [
@@ -948,7 +948,7 @@ def _summary_text(hass, hub_entry_id: str) -> str:
         if get_entry_value(entry, CONF_INVERT_PHASES, False):
             lines.append("- ✓ Grid readings are inverted before use")
     else:
-        lines.append("- ✓ Off-grid — phases are inferred from inverter output")
+        lines.append("- ✓ Off-grid - phases are inferred from inverter output")
     if get_entry_value(entry, CONF_ENABLE_MAX_IMPORT_POWER, False) or get_entry_value(
         entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None
     ):
@@ -957,7 +957,7 @@ def _summary_text(hass, hub_entry_id: str) -> str:
     if export_limit:
         lines.append(f"- ✓ Export limited to {_fmt(export_limit, 'W', 0)}")
 
-    # 2 — inverter fleet and batteries
+    # 2 - inverter fleet and batteries
     inverters = get_inverters_for_hub(hass, hub_entry_id)
     lines += ["", "**🔆 Power sources**"]
     if inverters:
@@ -988,9 +988,9 @@ def _summary_text(hass, hub_entry_id: str) -> str:
                 bits.append("PV forecast active")
             lines.append(f"- {' · '.join(bits)}")
     else:
-        lines.append("- No inverter configured — grid capacity only")
+        lines.append("- No inverter configured - grid capacity only")
 
-    # 3 — distribution
+    # 3 - distribution
     hub_runtime = (_runtime(hass).get("hubs") or {}).get(hub_entry_id) or {}
     distribution = hub_runtime.get("distribution_mode") or get_entry_value(
         entry, CONF_DISTRIBUTION_MODE, DEFAULT_DISTRIBUTION_MODE
@@ -999,7 +999,7 @@ def _summary_text(hass, hub_entry_id: str) -> str:
     lines.append(f"- ✓ Distribution mode: {distribution}")
     lines.append("- ✓ Served by mode urgency first, then by priority number")
 
-    # 4 — loads, in the order the engine serves them
+    # 4 - loads, in the order the engine serves them
     loads = _controlled_devices(hass, hub_entry_id)
     ordered = sorted(
         loads,
@@ -1037,7 +1037,7 @@ def _summary_text(hass, hub_entry_id: str) -> str:
             bits.append(f"⛓ {cap}")
         lines.append(f"- {' · '.join(bits)}")
 
-    # 5 — post-distribution capping
+    # 5 - post-distribution capping
     groups = _groups_for_hub(hass, hub_entry_id)
     if groups:
         lines += ["", "**⛓ Circuit groups (applied last)**"]

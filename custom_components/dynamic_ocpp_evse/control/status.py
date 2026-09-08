@@ -28,7 +28,7 @@ def determine_charging_status(
     Returns a status string like "Charging", "Paused: 30s", "Insufficient Solar", etc.
     """
     # "Available" is OCPP for "no car"; an unreadable status is treated the same
-    # way — we cannot claim a car is plugged in on a status we cannot read.
+    # way - we cannot claim a car is plugged in on a status we cannot read.
     if connector_status == "Available" or units.is_unavailable_state(connector_status):
         return "Unplugged"
     if not dynamic_control_on:

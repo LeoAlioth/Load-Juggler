@@ -4,7 +4,7 @@ These are tried last, after all brand-specific patterns.
 They use broad naming conventions common across many inverter brands.
 """
 
-# Negative lookahead fragment — excludes phones, tablets, laptops, watches.
+# Negative lookahead fragment - excludes phones, tablets, laptops, watches.
 # Sony Xperia model numbers start with xq_ (e.g. xq_cq54, xq_es44, xq_ge54).
 _NOT_MOBILE = (
     r'(?!.*(?:phone|pixel|iphone|ipad|galaxy|oneplus|xiaomi|xperia|xq_|sm_'
@@ -25,12 +25,12 @@ INVERTER_OUTPUT = [
 BATTERY_SOC = [
     {"name": "Generic", "pattern": r'sensor\.' + _NOT_MOBILE + r'.*battery_soc$'},
     {"name": "Generic (broad)", "pattern": r'sensor\.' + _NOT_MOBILE + r'.*battery.*(?:soc|state_of_charge).*'},
-    # Note: battery_level$ excluded — matches phones/tablets/laptops.
+    # Note: battery_level$ excluded - matches phones/tablets/laptops.
 ]
 
 BATTERY_POWER = [
     {"name": "Generic", "pattern": r'sensor\.' + _NOT_MOBILE + r'.*(?:_battery_power|battery_charge.*power)$'},
-    # Note: broad battery.*power excluded — matches non-energy devices.
+    # Note: broad battery.*power excluded - matches non-energy devices.
 ]
 
 BATTERY_MAX_CHARGE_POWER = [

@@ -23,7 +23,7 @@ def hold_per_phase_floor(
 ) -> PhaseValues | None:
     """Asymmetric per-phase floor hold: fast to rise, slow to fall.
 
-    Per phase the result is ``max(new, held * decay)`` — a rise is passed
+    Per phase the result is ``max(new, held * decay)`` - a rise is passed
     through instantly, a fall is bounded by the decayed previous value.
 
     None is pass-through in both directions: a phase that is None in ``new``
@@ -68,7 +68,7 @@ def grid_without_managed_draws(
     load's own draw comes off it and the result is re-split into the
     import/export pair the engine works with.
 
-    Phases that are None (not present on this site) stay None. Pure function —
+    Phases that are None (not present on this site) stay None. Pure function -
     the caller owns the logging and writes the result back onto the site.
     """
     from .models import PhaseValues  # Local import to avoid circular

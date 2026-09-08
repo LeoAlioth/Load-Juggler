@@ -28,7 +28,7 @@ def base(solar, hb=300, plug_relay=False, plug_managed=False,
     num("input_number.sim_station_battery", 50)
     # Zero the station's charge register before each scenario. Left alone it
     # keeps whatever was last written to it and the simulated station goes on
-    # drawing — which confounded S1 on the previous run, showing 300 W of
+    # drawing - which confounded S1 on the previous run, showing 300 W of
     # phantom load that pushed the site under its threshold.
     num("input_number.sim_station_charge_speed_raw", 0)
     num("input_number.sim_station_ramp", 100)
@@ -47,7 +47,7 @@ CASES = [
      "nothing runs; recon 9 900 W is under the 10 500 W threshold",
      lambda: base(10800)),
     ("S3  sequential start (solar 14 000)",
-     "tank ON, station ALSO on and MODULATING — permit well under its 2 400 W",
+     "tank ON, station ALSO on and MODULATING - permit well under its 2 400 W",
      lambda: base(14000)),
     ("S4  phase B importing, site exporting (solar 20 000, house B 7 500)",
      "tank on B REFUSED (its phase buys); station on C runs",

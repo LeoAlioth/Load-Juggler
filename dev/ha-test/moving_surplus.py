@@ -2,7 +2,7 @@
 
 At a FIXED operating point the station's permit rings and then damps to a
 steady value (measured 2026-09-08: spread 552 -> 0 W over 150 s). That makes
-the fixed-point case a poor test of the control loop — the interesting question
+the fixed-point case a poor test of the control loop - the interesting question
 is what happens when the surplus never stops moving, which is what a real site
 does under passing cloud.
 

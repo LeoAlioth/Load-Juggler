@@ -54,7 +54,7 @@ scenarios:
         l1_phase: "B"
     expected:
       load_a:
-        allocated: 6.0   # phase A exhausted by the household — minimum only
+        allocated: 6.0   # phase A exhausted by the household - minimum only
       load_b:
         allocated: 16.0  # fills its max from the 12 A free on phase B
 
@@ -63,7 +63,7 @@ scenarios:
   - name: "shared-solar-pair-overshoot-scaled"
     description: >
       Two Solar Only EVSEs share phase A while a Standard EVSE sits on phase C,
-      whose household draw leaves it no solar at all — the case that used to
+      whose household draw leaves it no solar at all - the case that used to
       switch the overshoot guard OFF (min_solar = 0).
       Solar 13800/3 = 20 A per phase; household A = B = 2 A, C = 22 A. Export
       per phase is therefore 20 - 2 = 18 A on A and B, and 20 - 22 < 0 on C,
@@ -73,7 +73,7 @@ scenarios:
       solar_1 takes 6 A (solar A 18 -> 12), solar_2 takes 6 A (12 -> 6).
       Pass 2 round 1: physical headroom is ample, so the equal share exceeds
       every load's own ceiling. Each Solar Only load is individually offered
-      min(16, 6 + 6) - 6 = 6 A — both fit the 6 A left on phase A on their own,
+      min(16, 6 + 6) - 6 = 6 A - both fit the 6 A left on phase A on their own,
       but 6 + 6 = 12 A is double the pool. Per-source scaling multiplies only
       those two increments by 6/12 = 0.5, giving +3 A each; the Standard load's
       increment is untouched and it fills to 16 A.
@@ -82,7 +82,7 @@ scenarios:
       Before the fix the guard "total > min_solar > 0" saw min_solar = 0 from
       the Standard load's solar-free phase C and skipped scaling entirely, so
       both Solar Only loads took their full 6 A increment and ended at 12.0 A
-      each — 24 A of solar drawn against an 18 A surplus.
+      each - 24 A of solar drawn against an 18 A surplus.
     human_verified: false
     site:
       voltage: 230
@@ -128,7 +128,7 @@ scenarios:
       and a Standard EVSE sits on phase C, whose household draw leaves it
       importing.
       Solar 24150/3 = 35 A per phase; household A = B = 2 A, C = 45 A. The
-      per-phase position is therefore 33/33/-10 A — phase C imports, because
+      per-phase position is therefore 33/33/-10 A - phase C imports, because
       its 45 A of household exceeds its 35 A of solar. The verdict and the pool
       read that NET (2026-09-07): 56 A = 12880 W, which is the site's true
       position (24150 W of solar less 11270 W of household), so against a
@@ -137,21 +137,21 @@ scenarios:
       (-16/3 A here) the pool is 27.67/27.67/-15.33 A, summing to the 40 A
       margin.
       Pass 1: the Standard load on C takes 6 A from the PHYSICAL pool and
-      leaves the excess pool alone — a grid-backed load is meant to import, so
+      leaves the excess pool alone - a grid-backed load is meant to import, so
       phase C being negative does not stop it. excess_1 takes 6 A (excess A
       27.67 -> 21.67), excess_2 takes 6 A (21.67 -> 15.67).
       Pass 2 round 1: each Excess load is individually offered
-      min(16, 6 + 15.67) - 6 = 10 A — each fits the 15.67 A left on phase A on
+      min(16, 6 + 15.67) - 6 = 10 A - each fits the 15.67 A left on phase A on
       its own, but 10 + 10 = 20 A is more than that. Per-source scaling
       multiplies only those two increments by 15.67/20 = 0.783, giving +7.83 A
       each; the Standard load's increment is untouched and it fills to 16 A.
       Expected: excess_1 = excess_2 = 6 + 7.83 = 13.8 A, load_std = 16.0 A.
-      Before the fix there was no excess-overshoot check at all — the only
+      Before the fix there was no excess-overshoot check at all - the only
       batch check was against the solar pool, and it was disabled here anyway
-      (min_solar = 0 on the Standard load's phase C) — so both Excess loads
+      (min_solar = 0 on the Standard load's phase C) - so both Excess loads
       took their full increment and overdrew the pool.
       Read GROSS this site would show 66 A of export (phase C's 10 A of import
-      clamped away), which is still the right figure for the export LIMIT — a
+      clamped away), which is still the right figure for the export LIMIT - a
       contractual limit counts exported flow per phase. It is the wrong figure
       for SURPLUS, which is what this pool rations: a load cannot take the 10 A
       phase C is pulling in. With no battery here there is no charge headroom

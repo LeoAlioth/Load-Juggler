@@ -1,5 +1,5 @@
 # The site: what the house draws, what the array makes, what the pack is doing
-# — and the grid CTs DERIVED from all three.
+# - and the grid CTs DERIVED from all three.
 #
 # Deriving the meter rather than making it a fourth slider is the whole point.
 # On a real site the CTs are downstream of the physics: grant a load 3 kW and
@@ -21,7 +21,7 @@
 # the measurement delay entirely, a 5 °C tank. Those keep an `initial:`.
 #
 # The rest deliberately do NOT, because `initial:` also means the value is
-# RESET on every restart — and you restart often while editing the component,
+# RESET on every restart - and you restart often while editing the component,
 # which was quietly wiping the scenario each time. Without it Home Assistant
 # restores what you last set, and the minimum (0 W of solar, 0 W of household)
 # is a perfectly sane fresh-config starting point anyway.
@@ -93,14 +93,14 @@ input_boolean:
     initial: "on"
     # Whether the measurements lag the physics, as real ones do. Off makes the
     # CTs report the current sample instead of the previous one, and the
-    # station's input jump straight to its register — useful for isolating an
+    # station's input jump straight to its register - useful for isolating an
     # engine question from a timing one, but not a state any real site is in.
     name: Measurements lag the physics
     icon: mdi:timer-sand
 
 input_select:
   sim_inverter_phases:
-    # Which phases the inverter feeds — NOT which phases the site has (that is
+    # Which phases the inverter feeds - NOT which phases the site has (that is
     # decided by the CTs you pick in the config flow). Set it to A with the
     # grid on ABC to reproduce a single-phase array on a three-phase service.
     name: Inverter output phases
@@ -110,7 +110,7 @@ input_select:
 
 template:
   - sensor:
-      # The managed loads' draw per phase — every device package's contribution,
+      # The managed loads' draw per phase - every device package's contribution,
       # named ONE BY ONE and deliberately so.
       #
       # This used to match them with `states.sensor | selectattr('object_id',
@@ -118,7 +118,7 @@ template:
       # and filtering on an attribute gives Home Assistant no trackable entity
       # dependency, so it rendered these once at startup and NEVER AGAIN. The
       # grid CTs are derived from them, so the whole simulated site silently
-      # froze at whatever was drawing when HA booted — a tank that switched on
+      # froze at whatever was drawing when HA booted - a tank that switched on
       # later simply did not exist to the meter.
       #
       # `states('...')` is a tracked access, so each of these updates the
@@ -203,7 +203,7 @@ template:
           {{ (total / mask | length) | round(1) if 'C' in mask else 0 }}
 
       # The site's TRUE per-phase position, computed the instant anything
-      # moves. Not what the engine reads — the sampled, lagging CTs further
+      # moves. Not what the engine reads - the sampled, lagging CTs further
       # down are, and these are the truth they lag behind.
       - name: Sim grid instant A
         unique_id: sim_grid_instant_a
@@ -240,7 +240,7 @@ template:
           {{ (w / v) | round(2) if v > 0 else 0 }}
 
       # Plain mirrors of the knobs, carrying the device_class and unit the
-      # config flow's pickers filter on — an input_number is not offered for a
+      # config flow's pickers filter on - an input_number is not offered for a
       # grid CT or a solar sensor however it is labelled.
       - name: Sim solar power
         unique_id: sim_solar_power
@@ -270,7 +270,7 @@ template:
       # A read-out for your own benefit: the site's net position in watts, so
       # you can see at a glance whether the site imports or exports without
       # doing the three-phase arithmetic in your head. On the TRUE basis, so it
-      # moves the moment a load does — compare it with the engine's own grid
+      # moves the moment a load does - compare it with the engine's own grid
       # power sensor to watch the meter catch up.
       - name: Sim grid net power
         unique_id: sim_grid_net_power
@@ -287,7 +287,7 @@ template:
   # The grid CTs the ENGINE reads. These are what you pick as phase A/B/C
   # current in the config flow.
   #
-  # Sampled every 5 seconds, and each sample publishes the PREVIOUS one — so
+  # Sampled every 5 seconds, and each sample publishes the PREVIOUS one - so
   # the meter is 5 to 10 seconds behind the physics. That lag is not a detail:
   # it is the whole reason the engine smooths its readings, waits for a load's
   # draw to settle before trusting it, and can over-commit by granting power

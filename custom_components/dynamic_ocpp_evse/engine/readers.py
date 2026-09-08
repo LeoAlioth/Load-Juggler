@@ -103,7 +103,7 @@ def _smooth(ema_dict: dict, key: str, raw, alpha: float | None = None):
     if raw is None:
         return None
     if raw is _UNAVAILABLE:
-        # Sensor unavailable — hold last known EMA value
+        # Sensor unavailable - hold last known EMA value
         return ema_dict.get(key)
     try:
         val = float(raw)
@@ -126,8 +126,8 @@ def _smooth_directional(ema_dict: dict, key: str, raw, fast_away: bool,
                         alpha: float | None = None, fast_alpha: float | None = None):
     """An EMA whose weight depends on which way the reading is moving.
 
-    ``fast_away=True``: a move AWAY from zero — deeper export, heavier import,
-    a sign flip — takes ``fast_alpha``; a move back toward zero keeps ``alpha``.
+    ``fast_away=True``: a move AWAY from zero - deeper export, heavier import,
+    a sign flip - takes ``fast_alpha``; a move back toward zero keeps ``alpha``.
     ``fast_away=False`` is the mirror, for battery power: fast toward zero,
     slow away. The two are a matched pair for the charge controller's feedback
     law ``battery + (export − setpoint)``: a permit cut is battery↓ and export↑
@@ -135,17 +135,17 @@ def _smooth_directional(ema_dict: dict, key: str, raw, fast_away: bool,
     read the transition twice and overshoot (the steady rig hunted through nine
     writes with the export side alone; the mirrored pair settles in one).
 
-    Everything else is ``_smooth``'s contract — None passes through, an
-    unavailable reading holds the last value, the first reading seeds — which
+    Everything else is ``_smooth``'s contract - None passes through, an
+    unavailable reading holds the last value, the first reading seeds - which
     is why this only chooses the weight and delegates.
 
     Both weights are time-based like ``_smooth``'s, and the FAST one keeps its
-    ratio to the slow one rather than being a fixed number — otherwise the
+    ratio to the slow one rather than being a fixed number - otherwise the
     matched pair above stops being matched as soon as a site changes its
     refresh cadence, and the charge controller's feedback law reads a
     transition twice on one side and once on the other.
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     if alpha is None:
         alpha = ema_dict.get(_ALPHA_KEY, EMA_ALPHA)
@@ -170,7 +170,7 @@ def _smooth_directional(ema_dict: dict, key: str, raw, fast_away: bool,
 def _stale_guard(hub_runtime: dict, ema_dict: dict, key: str, raw, fallback):
     """Bound how long an unavailable sensor may coast on its held EMA value.
 
-    While `raw` is _UNAVAILABLE the EMA downstream holds the last known value —
+    While `raw` is _UNAVAILABLE the EMA downstream holds the last known value -
     fine for a brief dropout, but a sensor that died at 8 kW must not feed
     phantom power forever. After INPUT_STALE_TIMEOUT seconds of continuous
     unavailability this clears the EMA state and returns `fallback` instead,
@@ -184,7 +184,7 @@ def _stale_guard(hub_runtime: dict, ema_dict: dict, key: str, raw, fallback):
         if elapsed > INPUT_STALE_TIMEOUT:
             if ema_dict.pop(key, None) is not None:
                 _LOGGER.warning(
-                    "Input '%s' unavailable for %.0fs (>%ds) — falling back to %s",
+                    "Input '%s' unavailable for %.0fs (>%ds) - falling back to %s",
                     key,
                     elapsed,
                     INPUT_STALE_TIMEOUT,
@@ -213,7 +213,7 @@ def _clamp_reported_phase_draw(charger, entry, charger_entity_id, max_current):
     """Clamp a charger's reported per-phase draws at its max_current.
 
     Some OCPP integrations put the *total* current where a per-phase figure is
-    expected — 24 A total on a 3-phase charger booked as 24 A on each line adds
+    expected - 24 A total on a 3-phase charger booked as 24 A on each line adds
     up to 72 A. The feedback loop then subtracts three times the real draw from
     grid consumption, fabricates export, and the engine hands out phantom
     surplus. Applies to every path that derives all phases from one number.
@@ -229,7 +229,7 @@ def _clamp_reported_phase_draw(charger, entry, charger_entity_id, max_current):
         val = getattr(charger, attr)
         if val > clamp_threshold:
             _LOGGER.warning(
-                "EVSE %s: %s=%.1fA exceeds max_current=%.1fA — "
+                "EVSE %s: %s=%.1fA exceeds max_current=%.1fA - "
                 "clamping (charger may be reporting total instead of per-phase)",
                 charger_entity_id,
                 attr,
@@ -246,7 +246,7 @@ def _read_entity(hass, entity_id: str, default=0, unit: str = None, voltage: flo
         hass: Home Assistant instance
         entity_id: The entity ID to read
         default: Default value if entity not configured
-        unit: Canonical unit wanted — "A", "W" or "V". None reads the raw
+        unit: Canonical unit wanted - "A", "W" or "V". None reads the raw
               number (percentages, and entities we ourselves wrote).
         voltage: Site phase voltage, required for A↔W conversions.
 
@@ -255,7 +255,7 @@ def _read_entity(hass, entity_id: str, default=0, unit: str = None, voltage: flo
         _UNAVAILABLE: The entity is configured but currently unavailable/unknown.
         default: The entity_id is not provided (not configured).
 
-    Conversion lives in units.py — every accepted unit is handled there, in
+    Conversion lives in units.py - every accepted unit is handled there, in
     one place, so no caller has to remember a half-done conversion. So does the
     availability predicate: ``units.is_unavailable`` is the one definition of
     an unusable state, and ``units.is_unusable_number`` catches the readings
@@ -339,7 +339,7 @@ def _check_entity_availability(hass, hub_entry) -> list:
     # Only while the limit is ENABLED. A disabled max-import limit is not read
     # by the engine (``_read_max_import_power`` returns None before it looks at
     # the entity), so reporting its sensor missing would put the whole site
-    # into a warning state over a feature it is not using — measured on the
+    # into a warning state over a feature it is not using - measured on the
     # live site 2026-09-07: ten "Sensor unavailable: Max import power sensor"
     # episodes in a morning, every load's sensors going unavailable with the
     # hub, against ``enable_max_import_power: false``.
@@ -352,7 +352,7 @@ def _check_entity_availability(hass, hub_entry) -> list:
         if units.is_unavailable(hass.states.get(entity_id)):
             unavailable.append((label, entity_id))
     # Per-inverter entries: their output and battery sensors feed the fleet
-    # aggregation, which fails open member-by-member — the status sensor is
+    # aggregation, which fails open member-by-member - the status sensor is
     # where a dropout becomes visible, named per inverter.
     inverter_entries = get_inverters_for_hub(hass, hub_entry.entry_id)
     for inv_entry in inverter_entries:
@@ -372,7 +372,7 @@ def _check_entity_availability(hass, hub_entry) -> list:
             if units.is_unavailable(hass.states.get(entity_id)):
                 unavailable.append((label, entity_id))
 
-    # Forecast sources fail open in the clipping maths — the status sensor is
+    # Forecast sources fail open in the clipping maths - the status sensor is
     # the only place a dropout is visible. A configured forecast DEVICE with
     # no watts-bearing sensor right now (integration down, states missing)
     # counts as unavailable; legacy directly-configured sensors are checked
@@ -413,7 +413,7 @@ def _fv2(raw, smoothed):
 def _read_grid_phase(hass, entity_id, voltage):
     """One grid phase in amps, SIGNED (A/mA/W/kW all accepted).
 
-    Sign is the whole point of this reading — negative means export — so
+    Sign is the whole point of this reading - negative means export - so
     unlike the inverter-output reader this one must not take an absolute
     value. A meter's power entity is usually the only signed option it
     publishes (its current entity is often magnitude-only), which is why
@@ -431,13 +431,13 @@ def _read_grid_phases(hass, hub_entry, voltage=DEFAULT_PHASE_VOLTAGE):
     """Read per-phase grid current and apply inversion.
 
     Returns a 3-list, one entry per phase:
-      * ``None``          — no CT configured on this phase
-      * ``_UNAVAILABLE``  — CT configured but its reading is not usable
-      * ``float``         — signed amps (negative means export)
+      * ``None``          - no CT configured on this phase
+      * ``_UNAVAILABLE``  - CT configured but its reading is not usable
+      * ``float``         - signed amps (negative means export)
 
     The sentinel is NOT coerced to 0 A here, and that is the whole point. 0 A on
     a grid phase means "the house is importing nothing", which grants the entire
-    main breaker as headroom — the single most dangerous value this function
+    main breaker as headroom - the single most dangerous value this function
     could invent. It used to return exactly that and rely on a separate stale
     block downstream to overwrite it, i.e. on two independently hand-rolled
     "is this usable?" tests agreeing forever. Propagating the sentinel instead
@@ -465,7 +465,7 @@ def _read_grid_phases(hass, hub_entry, voltage=DEFAULT_PHASE_VOLTAGE):
             continue
         raw = _read_grid_phase(hass, entity, voltage)
         if units.is_unusable_number(raw):
-            # Sentinel (or anything else non-numeric) passes straight through —
+            # Sentinel (or anything else non-numeric) passes straight through -
             # inverting or defaulting it here would destroy the information the
             # caller's holdover needs.
             raw_phases.append(_UNAVAILABLE)
@@ -494,7 +494,7 @@ def _resolve_grid_phases(raw_phases, ema_inputs, main_breaker_rating):
     ``any_stale`` flag through _track_grid_stale.
 
     ``assumed_phases`` is a per-phase tuple of bools marking ONLY the second
-    case — the phases standing on the breaker assumption rather than on a
+    case - the phases standing on the breaker assumption rather than on a
     reading or a held EMA value. It exists because the two substitutes are
     different kinds of number: a held EMA value is a legitimate estimate of
     what the phase was doing a moment ago and is fine to publish as a
@@ -509,7 +509,7 @@ def _resolve_grid_phases(raw_phases, ema_inputs, main_breaker_rating):
 
     Driven by the READINGS, not by a second walk over the config keys. The
     sentinel is the single source of truth for "this CT is unreadable", so there
-    is no membership list here that can drift away from the reader's — which is
+    is no membership list here that can drift away from the reader's - which is
     what made the old coerce-to-0 arrangement a landmine rather than merely a
     duplication.
 
@@ -544,7 +544,7 @@ def _track_grid_stale(hub_runtime, any_stale, now):
     if any_stale:
         if "grid_stale_since" not in hub_runtime:
             hub_runtime["grid_stale_since"] = now
-            _LOGGER.warning("Grid CT sensor(s) unavailable — holding last known values")
+            _LOGGER.warning("Grid CT sensor(s) unavailable - holding last known values")
         return now - hub_runtime["grid_stale_since"]
     if "grid_stale_since" in hub_runtime:
         _LOGGER.info(
@@ -581,7 +581,7 @@ def _read_inverter_config(hass, hub_entry, voltage):
             CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
         )
     ]
-    # Each configured phase is read independently — a B/C-only configuration
+    # Each configured phase is read independently - a B/C-only configuration
     # is valid, and one phase being momentarily unavailable must not discard
     # the others. Unavailable phases carry the _UNAVAILABLE sentinel, which
     # the EMA smoothing downstream resolves to the last known value.
@@ -651,9 +651,9 @@ def _read_enforced_charge_limit(hass, entry):
     because it is the only place that knows whether the switch is armed, what the
     register actually reads back, and what unit that register counts in.
 
-    None whenever nothing is being held back — switch off, no advice, released,
+    None whenever nothing is being held back - switch off, no advice, released,
     no register configured at all, or simply before the first write pass of a
-    fresh start — and None is exactly what leaves the member at its nameplate
+    fresh start - and None is exactly what leaves the member at its nameplate
     charge rate in ``fleet.charge_power_total()``. The legacy hub member has no
     charge control of its own (it is a per-inverter-entry feature), so it lands
     on None through the same lookup rather than through a special case.
@@ -689,7 +689,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     if solar_entity:
         raw_solar = _read_entity(hass, solar_entity, 0, unit="W")  # kW→W if needed
         # A dead solar sensor must not keep feeding its last reading forever
-        # (e.g. 8 kW held into the night) — fall back to 0 W after timeout.
+        # (e.g. 8 kW held into the night) - fall back to 0 W after timeout.
         guarded_solar = _stale_guard(
             hub_runtime, ema_inputs, solar_key, raw_solar, 0.0
         )
@@ -701,7 +701,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         solar_assumed = raw_solar is _UNAVAILABLE and guarded_solar is not _UNAVAILABLE
         solar_measured = _smooth(ema_inputs, solar_key, guarded_solar)
         # _smooth returns None when the entity is unavailable and there is no
-        # EMA history yet (a fresh start at night) — 0 W, not None, since the
+        # EMA history yet (a fresh start at night) - 0 W, not None, since the
         # household maths downstream cannot take None. Flagged for the same
         # reason as above: nothing measured this, so it must not be PUBLISHED
         # as a solar reading (see fleet.FleetMember.solar_assumed).
@@ -726,7 +726,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         _smooth(ema_inputs, power_key, raw_power) if power_entity else None
     )
     # The charge controller's view of the same reading: the mirror of its
-    # export view — fast when charging falls, slow when it rises — under its
+    # export view - fast when charging falls, slow when it rises - under its
     # own EMA key, so the symmetric value above is untouched for every other
     # consumer (see _smooth_directional for why the pair must be matched).
     battery_power_ctrl = (
@@ -735,14 +735,14 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         else None
     )
 
-    # This member's battery DESTINATION — the live value of the same "normal SOC
+    # This member's battery DESTINATION - the live value of the same "normal SOC
     # ceiling source" entity the SOC write-control idles its slots at. The
     # clipping reserve is carved out below it rather than below 100 %
     # (fleet.soc_target_weighted → calculations.battery_max_soc).
     #
     # HELD while unreadable, not stale-guarded: this is a SETPOINT, not a
     # measurement. "The user asked for 95 %" stays true through a brief
-    # unavailability, where a held power reading would be a phantom kilowatt —
+    # unavailability, where a held power reading would be a phantom kilowatt -
     # and letting it snap back to 100 % would instead raise the published
     # ceiling, which the ratchet would then resist lowering again for the rest
     # of the day. None only while no entity is configured, or one is and has
@@ -755,11 +755,11 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     # WRITE to the slot registers means, never where the pack should go. On a
     # floor inverter whose slot value doubles as the owner's charge target (a
     # Deye slot at 90 doing both jobs), pointing this source at the slot is
-    # exactly right — the reserve is carved below 90 and the 90–100 % band
+    # exactly right - the reserve is carved below 90 and the 90–100 % band
     # stays the export-holding buffer the standing ceiling's feedback fills
     # (``recommended_charge_limit``). A floor whose value is NOT the target
     # (a cheap-tariff 20 %) simply leaves this source unset and anchors at
-    # 100 % — that knob already existed, so the flag must not duplicate it.
+    # 100 % - that knob already existed, so the flag must not duplicate it.
     soc_target_entity = get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
     soc_target = None
     if soc_target_entity:
@@ -774,7 +774,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     # A member with no battery entity has no battery, whatever its options
     # carry: the inverter form saves *Battery max charge power* at its default
     # even on a PV-only entry, and letting that number through gave the
-    # phantom pack a share of everything summed over the fleet — 53 % of the
+    # phantom pack a share of everything summed over the fleet - 53 % of the
     # charge-limit advice (4500 W Deye against a 5000 W default, measured live
     # 2026-09-03: the register sat at 5 A while the inverter curtailed 500 W),
     # 5 kW of Excess allowance the site never had, and the same again on the
@@ -783,14 +783,14 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     #
     # The rule is ALL SIX battery fields, not only the ones a bug has been
     # traced to, so that reading this constructor settles whether a phantom
-    # pack can reach the fleet — no walk over every consumer to see which ones
+    # pack can reach the fleet - no walk over every consumer to see which ones
     # happen to re-test. ``capacity_kwh`` is the one that could still bite:
     # ``capacity_total`` sums it ungated and it is the divisor in the forecast
     # reserve, where an inflated Σ reserves too FEW SOC percent for the same
     # kWh, so the site under-reserves and clips while the reserve still looks
     # like it is working. It is inert today only because
-    # DEFAULT_BATTERY_CAPACITY_KWH is 0 — the power fields default to 5000,
-    # which is exactly why they bit first — and prefilling a plausible pack
+    # DEFAULT_BATTERY_CAPACITY_KWH is 0 - the power fields default to 5000,
+    # which is exactly why they bit first - and prefilling a plausible pack
     # size would bring it straight back. ``soc_full`` and ``soc_target`` are
     # provably unreachable (their consumers need a SOC reading, or filter on
     # has_battery themselves) and are gated for the uniformity, not a fix.

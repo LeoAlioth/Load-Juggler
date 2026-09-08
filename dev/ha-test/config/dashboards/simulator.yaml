@@ -41,7 +41,7 @@ views:
   - type: grid
     cards:
     - type: entities
-      title: Grid — truth, then what the engine reads
+      title: Grid - truth, then what the engine reads
       entities:
       - entity: sensor.sim_grid_instant_a
         name: A
@@ -90,7 +90,7 @@ views:
     cards:
     - type: markdown
       content: '**The grid CTs are derived**: `grid = household + managed loads − inverter`. Move a value
-        and the meter follows, the way it does on a real site — there is no way to set an impossible state.
+        and the meter follows, the way it does on a real site - there is no way to set an impossible state.
 
 
         They also **lag** by 5–10 s, which is what the engine''s smoothing, its settling test and its
@@ -235,13 +235,13 @@ views:
   - type: grid
     cards:
     - type: markdown
-      content: 'Each load shows **the engine''s half above the divider** — mode, limits and its verdicts
-        — and **the simulated hardware below**, so a permit the device ignores, or a draw the engine never
+      content: 'Each load shows **the engine''s half above the divider** - mode, limits and its verdicts
+        - and **the simulated hardware below**, so a permit the device ignores, or a draw the engine never
         granted, is visible in one place.
 
 
         **Permitted** is what the engine grants the device to draw, and for a modulating load it is literally
-        the setpoint written to it. **Footprint** is its measured draw — what other loads are budgeted
+        the setpoint written to it. **Footprint** is its measured draw - what other loads are budgeted
         against. A load starting this cycle has a permit but no footprint yet, and a settled device drawing
         under its permit keeps the two apart deliberately.
 

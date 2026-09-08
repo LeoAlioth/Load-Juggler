@@ -1,4 +1,4 @@
-# Two Excess loads on one site — do they start in rank order?
+# Two Excess loads on one site - do they start in rank order?
 #
 # The SE17K case (2026-09-07). A hot water tank boosting on surplus and a
 # portable power station, both competing in the Excess urgency tier, started
@@ -7,8 +7,8 @@
 # the FIRST Excess consumer, and a lower-ranked one starts only while the
 # surplus left after the higher-ranked load's CLAIM is still positive.
 #
-# The tank is what makes these scenarios worth having. It is in Normal mode —
-# heating to 45 °C from any source — but with the verdict on, the control layer
+# The tank is what makes these scenarios worth having. It is in Normal mode -
+# heating to 45 °C from any source - but with the verdict on, the control layer
 # raises its setpoint to boost and `tank_boost_is_opportunistic` turns it into
 # a BINARY_EXCESS load competing at the Excess tier. Until this file the
 # harness never resolved that label at all, so a tank was always must-run and
@@ -59,7 +59,7 @@ scenarios:
         l1_phase: "C"
     expected:
       tank:
-        allocated: 8.7      # 2000 W / 230 V — the whole element
+        allocated: 8.7      # 2000 W / 230 V - the whole element
       station:
         allocated: 0.0      # nothing left after the tank's claim
 
@@ -67,7 +67,7 @@ scenarios:
     description: >
       Solar 16 000 W → reconstruction 15 100 W → a margin of +4600 W. The tank
       takes its 2 kW and 2 600 W survives its claim, so the station starts too
-      — and is SIZED by what is left rather than handed its rating. Phase C's
+      - and is SIZED by what is left rather than handed its rating. Phase C's
       own third of the net pool is what bounds it here, which is why it settles
       below its 2 400 W maximum.
     human_verified: false
@@ -106,7 +106,7 @@ scenarios:
       station:
         # 6.7 A = 1 541 W: sized by the surplus, NOT its 10.43 A rating. Under
         # the old permit branch a station was handed pool headroom capped by
-        # its hardware, so this read 10.4 A at every surplus down to zero — it
+        # its hardware, so this read 10.4 A at every surplus down to zero - it
         # never modulated, which is what "both Excess loads running flat out"
         # meant on the live site.
         allocated: 6.7

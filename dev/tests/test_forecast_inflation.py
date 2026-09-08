@@ -1,10 +1,10 @@
-"""Per-inverter forecast optimism — the clip integral only.
+"""Per-inverter forecast optimism - the clip integral only.
 
 Open-Meteo's clear-day error is a few percent and is not uniform across arrays,
 so each inverter may bias its own forecast up before the clip is integrated.
 Two properties matter and neither is obvious:
 
-* the factor is applied PER ARRAY, before the merge — summing scaled arrays is
+* the factor is applied PER ARRAY, before the merge - summing scaled arrays is
   not the same as scaling the summed site series once any two arrays differ;
 * it reaches the clip integral ONLY. The overnight drop's deadline reads the
   raw series, because that estimate already carries its own early bias
@@ -36,7 +36,7 @@ def _series(*watts, hours=1):
 
 
 def test_zero_returns_the_same_object():
-    """An unconfigured site must cost nothing at all — not even a rebuild."""
+    """An unconfigured site must cost nothing at all - not even a rebuild."""
     s = _series(1000.0, 2000.0)
     assert scale_forecast_series(s, 0) is s
     assert scale_forecast_series(s, None) is s
@@ -122,7 +122,7 @@ def test_inflation_can_surface_a_clip_the_raw_forecast_misses():
 
 def test_the_production_deadline_is_computed_on_the_raw_series():
     """The deadline must not move. A block that is below base consumption raw
-    and above it inflated would hand the overnight drop an earlier deadline —
+    and above it inflated would hand the overnight drop an earlier deadline -
     two safety margins stacked on one number."""
     raw = _series(250.0, 4000.0)
     base = 300.0
@@ -131,7 +131,7 @@ def test_the_production_deadline_is_computed_on_the_raw_series():
     assert first_production_at(raw, base, T0, T0 + timedelta(hours=3)) == T0 + timedelta(
         hours=1
     )
-    # Inflated 30%, that first block reads 325 W and would cross immediately —
+    # Inflated 30%, that first block reads 325 W and would cross immediately -
     # which is precisely why the engine hands this function the raw series.
     inflated = scale_forecast_series(raw, 30)
     assert first_production_at(inflated, base, T0, T0 + timedelta(hours=3)) == T0
@@ -161,7 +161,7 @@ def test_each_array_carries_its_own_factor():
 
 
 def test_a_shared_device_is_claimed_once():
-    """Same de-duplication rule as forecast_device_ids — first member wins —
+    """Same de-duplication rule as forecast_device_ids - first member wins -
     so a device configured on two inverters cannot be biased twice."""
     members = [_member("a", ["shared"], 20), _member("b", ["shared"], 5)]
     assert fleet.forecast_inflation_by_device(members) == {"shared": 20.0}

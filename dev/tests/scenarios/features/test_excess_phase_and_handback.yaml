@@ -3,14 +3,14 @@
 #
 # 1. It never runs on a phase that is BUYING, whatever the site total says.
 #    The guard used to be asked of the phase's slice of the surplus pool, and
-#    that slice is the residue of a 200:1 cancellation — at a small margin it
+#    that slice is the residue of a 200:1 cancellation - at a small margin it
 #    is a few hundredths of an amp and its SIGN is noise. Asked of the phase's
 #    own flow instead, the question is answered in amps.
 #
 # 2. A load whose Dynamic Control is off is part of the HOUSE. The engine had
 #    no idea about that switch: it still allocated such a load, published a
 #    permit, charged its rating to the Excess start ledger and subtracted its
-#    draw from the grid readings — so a plug switched off and handed back
+#    draw from the grid readings - so a plug switched off and handed back
 #    reserved its whole 2 kW of surplus indefinitely.
 
 scenarios:
@@ -19,7 +19,7 @@ scenarios:
     description: >
       20 kW of solar over three phases (6.67 kW each) with 7.5 kW of household
       on phase B alone. The site exports 11.9 kW against a 10.5 kW threshold,
-      so the verdict is on and there is real surplus — but phase B is BUYING
+      so the verdict is on and there is real surplus - but phase B is BUYING
       833 W, and the tank sits on B. It must get nothing: buying power is the
       one thing an Excess load exists to avoid. The station on phase C, which
       exports 6.37 kW, runs on the same surplus.
@@ -61,7 +61,7 @@ scenarios:
     description: >
       A plug switched off with Dynamic Control OFF, and a boosting tank on
       another phase with only 600 W of surplus to share. The plug must claim
-      nothing — it is not the engine's to start — so the tank takes its whole
+      nothing - it is not the engine's to start - so the tank takes its whole
       2 kW rating, the overshoot a binary Excess load is allowed. Before the
       fix the plug charged max(draw, min_current) = 2 kW to the ledger while
       drawing nothing, and the tank was refused.
@@ -105,8 +105,8 @@ scenarios:
     description: >
       The counterpart, so the fix above cannot be read as "an off load never
       claims". The SAME site with the plug's Dynamic Control ON: the engine is
-      about to switch it on, so its 2 kW claim is real and the tank — ranked
-      behind it — must yield. This is what stops two loads starting on one
+      about to switch it on, so its 2 kW claim is real and the tank - ranked
+      behind it - must yield. This is what stops two loads starting on one
       load's worth of surplus.
     human_verified: false
     site:

@@ -1,6 +1,6 @@
 """Drive the Docker rig through its REST API and report what settles.
 
-Companion to scenarios.py. Needs a long-lived access token — see TOKEN
+Companion to scenarios.py. Needs a long-lived access token - see TOKEN
 below. Everything here talks to localhost only.
 """
 import json, os, subprocess, sys, time
@@ -102,7 +102,7 @@ def show(name, expectation, result):
             continue
         stable = False
     print(f"\n{'='*70}\n{name}\n  expect: {expectation}")
-    print(f"  {'STABLE' if stable else 'UNSTABLE — values moved during the window'}")
+    print(f"  {'STABLE' if stable else 'UNSTABLE - values moved during the window'}")
     for k in ("grid_W", "managed_W", "plug", "plug_A",
               "tank", "tank_A", "stn", "stn_A"):
         val, ok, spread = result[k]

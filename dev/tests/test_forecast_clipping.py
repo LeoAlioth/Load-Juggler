@@ -1,6 +1,6 @@
-"""Tests for the PV clipping forecast — calculations.forecast.
+"""Tests for the PV clipping forecast - calculations.forecast.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 The forecast is a mapping of block-start timestamps to average watts; each
 block is constant power for its duration, so the maths is a plain sum:
@@ -12,7 +12,7 @@ with ``T = export limit + base consumption``. Block width comes from
 consecutive timestamps, the block containing ``now`` is prorated, and blocks
 at or beyond ``until`` (the start of the next local day) are excluded so
 tomorrow's peak is not reserved for twice. Arrays are summed *before*
-clipping — the nonlinearity is site-level.
+clipping - the nonlinearity is site-level.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -89,7 +89,7 @@ def test_last_block_inherits_previous_width():
 # --- The window: now and until -----------------------------------------------
 
 def test_in_progress_block_is_prorated():
-    # now is 30 min into an 8 kW block — only half of it remains.
+    # now is 30 min into an 8 kW block - only half of it remains.
     fc = _fc(_series([8000, 0]), now=T0 + timedelta(minutes=30))
     assert fc.clipped_kwh == 1.0
 
@@ -145,7 +145,7 @@ def test_power_cap_limits_summed_series():
 # --- Multi-array merge: sum before clipping ----------------------------------
 
 def test_two_arrays_summed_before_clipping():
-    # Two 4 kW arrays against T = 6 kW clip 2 kW — clipping each alone clips 0.
+    # Two 4 kW arrays against T = 6 kW clip 2 kW - clipping each alone clips 0.
     merged = merge_forecast_series([_series([4000, 0]), _series([4000, 0])])
     fc = _fc(merged)
     assert fc.clipped_kwh == 2.0
@@ -235,8 +235,8 @@ def test_lookahead_stops_one_day_out():
 
 
 def test_a_float_dust_tail_does_not_hold_the_window_on_today():
-    # 1 mWh of clip left today — below the epsilon, and below what the kWh
-    # sensors can even show — must not stop the search reaching tomorrow.
+    # 1 mWh of clip left today - below the epsilon, and below what the kWh
+    # sensors can even show - must not stop the search reaching tomorrow.
     now = datetime(2026, 8, 14, 18, 0, tzinfo=timezone.utc)
     series = _three_day_series()
     series[datetime(2026, 8, 14, 19, 0, tzinfo=timezone.utc)] = THRESHOLD + 0.001
@@ -267,7 +267,7 @@ def test_window_selection_with_no_windows_is_empty():
 #
 # The deadline the overnight floor drop is scheduled against: the moment
 # forecast production overtakes base consumption, which is when the battery
-# would stop discharging — NOT first light.
+# would stop discharging - NOT first light.
 
 BASE_W = 300.0
 
@@ -321,7 +321,7 @@ def test_production_start_respects_the_power_cap():
 # The maintainer's worked example throughout: destination 95 %, tomorrow's clip
 # 2 kWh, a 20 kWh pack, 300 W base consumption, production from 08:30. The
 # reserve is 85 %, so a full pack has 2 kWh to shed at 300 W = 6 h 40 min, and
-# the early-start factor asks for 8 h — putting the drop at 00:30.
+# the early-start factor asks for 8 h - putting the drop at 00:30.
 
 PRODUCTION_AT = datetime(2026, 8, 15, 8, 30, tzinfo=timezone.utc)
 RESERVED = 85.0
@@ -352,7 +352,7 @@ def test_the_worked_example_holds_the_evening_and_drops_at_half_past_midnight():
         now = datetime(2026, 8, 14, hour, 0, tzinfo=timezone.utc)
         assert _due(now) == (False, False), f"dropped early at {hour}:00"
     assert _due(datetime(2026, 8, 15, 0, 0, tzinfo=timezone.utc)) == (False, False)
-    # 00:29 is 8 h 1 min out — one minute too soon.
+    # 00:29 is 8 h 1 min out - one minute too soon.
     assert _due(datetime(2026, 8, 15, 0, 29, tzinfo=timezone.utc)) == (False, False)
     # 00:30 is exactly 8 h = 6 h 40 min × 1.2. The drop lands here.
     assert _due(datetime(2026, 8, 15, 0, 30, tzinfo=timezone.utc)) == (True, True)
@@ -364,7 +364,7 @@ def test_the_early_start_factor_is_what_moves_the_drop_before_the_arithmetic():
     assert PRODUCTION_AT - timedelta(hours=plain_hours) == datetime(
         2026, 8, 15, 1, 50, tzinfo=timezone.utc
     )
-    # The factor buys 1 h 20 min of slack, and buys it EARLIER — 00:30, not
+    # The factor buys 1 h 20 min of slack, and buys it EARLIER - 00:30, not
     # later. Arriving full costs clipped kWh; arriving early costs nothing.
     factored = PRODUCTION_AT - timedelta(
         hours=plain_hours * FORECAST_EARLY_START_FACTOR
@@ -375,14 +375,14 @@ def test_the_early_start_factor_is_what_moves_the_drop_before_the_arithmetic():
 
 def test_a_night_already_too_short_drops_at_once():
     # Today's clip zeroes at 04:00 with a full pack and production at 08:30:
-    # 4.5 h left against 8 h needed. Nothing to schedule — drop now.
+    # 4.5 h left against 8 h needed. Nothing to schedule - drop now.
     assert _due(datetime(2026, 8, 15, 4, 0, tzinfo=timezone.utc)) == (True, True)
 
 
 def test_the_drop_stays_dropped_when_the_pack_empties_faster_than_base():
     # Dropped at 00:30. An hour later the house has taken twice base, so the
-    # UNLATCHED arithmetic would say "not yet" — 7.5 h left against 1.2 × 5.33 h
-    # = 6.4 h — and the advice would climb back to the destination in the dark.
+    # UNLATCHED arithmetic would say "not yet" - 7.5 h left against 1.2 × 5.33 h
+    # = 6.4 h - and the advice would climb back to the destination in the dark.
     later = datetime(2026, 8, 15, 1, 30, tzinfo=timezone.utc)
     assert _due(later, soc=93.4) == (False, False)
     assert _due(later, soc=93.4, was_due=True) == (True, True)
@@ -390,7 +390,7 @@ def test_the_drop_stays_dropped_when_the_pack_empties_faster_than_base():
 
 def test_the_shed_completing_early_keeps_the_reservation():
     # The pack reaches the reserve at 04:00, hours before dawn: the floor holds
-    # it there and the house moves to the grid — the recommendation must not
+    # it there and the house moves to the grid - the recommendation must not
     # drift back up.
     early = datetime(2026, 8, 15, 4, 0, tzinfo=timezone.utc)
     assert _due(early, soc=85.0, was_due=True) == (True, True)
@@ -410,7 +410,7 @@ def test_an_unknown_soc_holds_at_the_destination():
 
 
 def test_nothing_to_shed_is_due_immediately():
-    # The pack is already below the reserve, so the drop costs nothing — and
+    # The pack is already below the reserve, so the drop costs nothing - and
     # holding at the destination would invite the inverter to charge up to it.
     evening = datetime(2026, 8, 14, 20, 0, tzinfo=timezone.utc)
     assert _due(evening, soc=70.0) == (True, True)
@@ -537,7 +537,7 @@ def test_max_soc_destination_below_the_floor_still_respects_the_floor():
 
 def test_max_soc_destination_heals_toward_the_destination_not_a_hundred():
     # Fixed series, advancing now: as the remaining clip burns down the ceiling
-    # rises to the DESTINATION and stops there — the band above it is the
+    # rises to the DESTINATION and stops there - the band above it is the
     # site's buffer against a forecast under-read, never advice.
     series = _series([8000, 10000, 8000, 0])
     previous = -1.0
@@ -582,8 +582,8 @@ def test_deficit_unknown_soc_is_zero():
 #     desired = battery_charge_now + (export_now − export_setpoint)
 #
 # so every engaged assertion below fixes the two live figures and reads the
-# arithmetic. ``_SETPOINT`` is watts AT THE METER — the export limit less the
-# Excess trigger margin — and there is no production threshold and no base
+# arithmetic. ``_SETPOINT`` is watts AT THE METER - the export limit less the
+# Excess trigger margin - and there is no production threshold and no base
 # consumption anywhere in this path.
 
 _SETPOINT = 4500.0     # export limit 5000 − trigger margin 500
@@ -596,7 +596,7 @@ def _at(export_over_setpoint, battery_w=0.0):
 
 
 def test_cap_released_when_nothing_to_clip():
-    # BELOW the destination (at_destination False, the default) — above it the
+    # BELOW the destination (at_destination False, the default) - above it the
     # standing ceiling holds whatever the forecast says.
     assert recommended_charge_limit(
         0.0, 90.0, 100.0, _FULL, *_at(0.0), _SETPOINT, 2.0, at_destination=False
@@ -621,7 +621,7 @@ def test_cap_released_below_the_band():
 
 def test_cap_permits_the_export_error_at_the_ceiling():
     # At the ceiling, permit exactly what the meter says is going out over the
-    # setpoint — with the battery taking nothing yet, that IS the whole error.
+    # setpoint - with the battery taking nothing yet, that IS the whole error.
     assert recommended_charge_limit(
         4.0, 60.0, 60.0, _FULL, *_at(2000.0), _SETPOINT, 2.0
     ) == (2000.0, True)
@@ -631,7 +631,7 @@ def test_cap_permits_what_the_battery_already_takes_plus_the_error():
     """The feedback form, in one assertion: the value is not the error alone.
 
     A pack already absorbing 3 kW with export still 500 W over the setpoint may
-    take 3.5 kW — that is the rate at which the meter lands ON the setpoint. Read
+    take 3.5 kW - that is the rate at which the meter lands ON the setpoint. Read
     as the error alone it would collapse to 500 W and give the surplus away.
     """
     assert recommended_charge_limit(
@@ -652,7 +652,7 @@ def test_cap_floors_at_zero_when_export_is_under_the_setpoint():
 
     A pack taking 1 kW while the meter sits 3 kW UNDER the setpoint is 2 kW past
     what the site can spare, and the arithmetic asks for a discharge. A charge
-    cap cannot force one, so it floors at 0 — no freeze rule, no special case.
+    cap cannot force one, so it floors at 0 - no freeze rule, no special case.
     """
     assert recommended_charge_limit(
         4.0, 60.0, 60.0, _FULL, *_at(-3000.0, battery_w=1000.0), _SETPOINT, 2.0
@@ -686,7 +686,7 @@ def test_no_battery_power_sensor_degrades_to_the_error_alone():
     """The documented degradation: the caller hands in 0 for an unknown pack.
 
     The value is then the export error by itself, so a genuine surplus is
-    admitted only as fast as the meter shows it — conservative, and never a
+    admitted only as fast as the meter shows it - conservative, and never a
     fabricated permit.
     """
     assert recommended_charge_limit(
@@ -703,8 +703,8 @@ def test_cap_latch_holds_through_an_integer_soc_flap():
     An integer SOC sat on the single old boundary (ceiling 100, hysteresis 2 →
     98) while partly-cloudy sun ticked it 97↔98. Each tick flipped the gate,
     and each flip was a Modbus/EEPROM write to the Deye register: ~12
-    engage/release cycles in two hours. The feedback is structural — the cap
-    suppresses the very charging that raised SOC over the boundary — so only a
+    engage/release cycles in two hours. The feedback is structural - the cap
+    suppresses the very charging that raised SOC over the boundary - so only a
     real band can break it.
 
     Export alternates on and just under the setpoint, so while engaged the cap
@@ -717,7 +717,7 @@ def test_cap_latch_holds_through_an_integer_soc_flap():
     assert (limit, limiting) == (0.0, True), "SOC 98 must engage the cap"
 
     # Two hours of the observed alternation. Not one release, and the setpoint
-    # never returns to full rate — nothing to pace, nothing to write.
+    # never returns to full rate - nothing to pace, nothing to write.
     for i, (soc, over) in enumerate([(97.0, -900.0), (98.0, 0.0)] * 12):
         limit, limiting = recommended_charge_limit(
             4.0, soc, 100.0, 10000.0, *_at(over), _SETPOINT, 2.0, limiting
@@ -741,7 +741,7 @@ def test_cap_latch_releases_a_full_band_below_the_engage_threshold():
 
 
 def test_cap_latch_does_not_re_engage_below_the_engage_threshold():
-    # Released at 95, the gate stays open until SOC is back at 98 — an integer
+    # Released at 95, the gate stays open until SOC is back at 98 - an integer
     # tick at the release threshold cannot flip it either.
     limit, limiting = recommended_charge_limit(
         4.0, 96.0, 100.0, 10000.0, *_at(-900.0), _SETPOINT, 2.0, False
@@ -784,7 +784,7 @@ def test_cap_latch_follows_a_moving_ceiling():
 
 _LIMIT = 8700.0        # the site's export limit, W
 _MARGIN = 500.0        # Excess trigger margin (DEFAULT_EXCESS_TRIGGER_MARGIN)
-_SP = _LIMIT - _MARGIN  # 8200 — the export setpoint, watts at the meter
+_SP = _LIMIT - _MARGIN  # 8200 - the export setpoint, watts at the meter
 _HOUSE = 300.0         # actual house draw right now
 _FULL_RATE = 10000.0   # battery charge rating
 _POTENTIAL = 15000.0   # what the array could make if nothing curtailed it
@@ -806,7 +806,7 @@ def _next_allowance(allowance, setpoint=_SP, house=_HOUSE,
     """Measure, advise, and hand the advice back as the next permit.
 
     SOC pinned at the ceiling and 4 kWh still to clip, so the latch is engaged
-    throughout — these are about the value, not the gate.
+    throughout - these are about the value, not the gate.
     """
     battery, export = _plant(allowance, house, potential, limit)
     limit_w, limiting = recommended_charge_limit(
@@ -834,7 +834,7 @@ def test_the_masked_site_self_creeps_off_the_hard_limit():
         1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 3500.0,
         4000.0, 4500.0, 5000.0, 5500.0, 6000.0, 6500.0,
     ]
-    # Monotone throughout — the permit never falls back into the masked state.
+    # Monotone throughout - the permit never falls back into the masked state.
     assert all(b >= a for a, b in zip(trajectory, trajectory[1:]))
 
     # Export is unpinned once the permit reaches the equilibrium: the array's
@@ -856,8 +856,8 @@ def test_the_equilibrium_is_the_setpoint_for_any_house_draw():
     This is the whole reason the integral trim is gone. The old feedforward
     value carried ``(base − house)`` into the equilibrium, so a base 200 W low
     parked export 200 W under the trigger for ever and a trim had to walk it
-    back. Here the meter is the input, so every house draw — including the ones
-    a base consumption setting would have got wrong by kilowatts — settles on
+    back. Here the meter is the input, so every house draw - including the ones
+    a base consumption setting would have got wrong by kilowatts - settles on
     the setpoint itself, and in ONE cycle.
     """
     for house in (0.0, 300.0, 1200.0, 4000.0):
@@ -876,14 +876,14 @@ def test_a_house_step_is_corrected_on_the_next_cycle():
 
     The house jumps 300 → 1300 W under a settled loop. The meter shows the
     kilowatt at once, the next value gives it back, and export is inside 50 W of
-    the setpoint one cycle later — with nothing carried and no time constant to
+    the setpoint one cycle later - with nothing carried and no time constant to
     wait out. (The register's own pacing then decides whether that reduction is
     worth a write; see ``control/inverter.py``, where a step this short-lived is
     exactly what the downward window eats.)
 
     The recovery is deliberately NOT symmetric. Giving the kilowatt back pins
     export at the wall again, and from there the permit climbs one margin per
-    cycle — protection is instant, permission is paced.
+    cycle - protection is instant, permission is paced.
     """
     settled = _POTENTIAL - _HOUSE - _SP
     battery, export = _plant(settled, house=1300.0)
@@ -932,7 +932,7 @@ def test_yield_engages_at_the_destination_and_releases_a_band_below_it():
     assert yields_to_excess(94.0, 95.0, 2.0, True) is True
     assert yields_to_excess(93.0, 95.0, 2.0, True) is True
     assert yields_to_excess(92.0, 95.0, 2.0, True) is False
-    # An unknown SOC holds the previous answer — a sensor dropout must not
+    # An unknown SOC holds the previous answer - a sensor dropout must not
     # release the destination hold (nor engage it).
     assert yields_to_excess(None, 95.0, 2.0, True) is True
     assert yields_to_excess(None, 95.0, 2.0, False) is False
@@ -943,7 +943,7 @@ def test_yield_engages_at_the_destination_and_releases_a_band_below_it():
 
 def test_yield_latch_holds_through_an_integer_soc_flap_at_the_destination():
     # The crossing decides a step of kilowatts in the advice, so an SOC register
-    # ticking 94↔95 must not flip it — the same failure the charge gate's latch
+    # ticking 94↔95 must not flip it - the same failure the charge gate's latch
     # was built for, at a different boundary.
     yielding = yields_to_excess(95.0, 95.0, 2.0, False)
     assert yielding is True
@@ -953,7 +953,7 @@ def test_yield_latch_holds_through_an_integer_soc_flap_at_the_destination():
 
 
 def test_yield_holds_without_an_soc_and_is_off_without_a_destination():
-    # An unknown SOC keeps whatever the latch said last cycle — both ways.
+    # An unknown SOC keeps whatever the latch said last cycle - both ways.
     assert yields_to_excess(None, 95.0, 2.0, True) is True
     assert yields_to_excess(None, 95.0, 2.0, False) is False
     # No destination is never "above it", whatever the latch was.
@@ -965,7 +965,7 @@ def test_an_engaged_excess_load_displaces_the_battery_above_the_destination():
     3500 W the car cannot, watt for watt.
 
     The draw is subtracted rather than left to the feedback because the
-    reconstruction credits it back into the export figure on purpose — without
+    reconstruction credits it back into the export figure on purpose - without
     this term the battery and the car would both be permitted the same watts.
     """
     battery, export = 0.0, _SP + 6500.0
@@ -984,7 +984,7 @@ def test_an_engaged_excess_load_displaces_the_battery_above_the_destination():
 
 def test_with_nothing_engaged_the_battery_takes_the_whole_surplus():
     # Above the destination and no Excess load able to absorb: unchanged from
-    # before this rule — the battery keeps buffering toward 100 %.
+    # before this rule - the battery keeps buffering toward 100 %.
     assert recommended_charge_limit(
         4.0, 96.0, 90.0, _FULL_RATE, 0.0, _SP + 6500.0, _SP, 2.0, True,
         excess_draw_w=0.0, at_destination=True,
@@ -1008,14 +1008,14 @@ def test_below_the_destination_the_battery_is_served_first():
 # 95 at 08:55 UTC and ran to 98 at the BMS's own 80 A with the advice at full
 # rate. The destination gate now applies regardless of the clip.
 
-_DEST = 95.0            # the site's normal SOC ceiling — where the pack heads
+_DEST = 95.0            # the site's normal SOC ceiling - where the pack heads
 _HYST = 2.0             # FORECAST_SOC_HYSTERESIS
-_BMS_RATE = 4096.0      # 80 A × 51.2 V — what the pack takes when unmanaged
+_BMS_RATE = 4096.0      # 80 A × 51.2 V - what the pack takes when unmanaged
 
 
 def test_the_destination_holds_with_nothing_forecast_to_clip():
     """The bug's own case: absorbable 0, export under the setpoint, SOC at the
-    destination. Engaged, and the advice is the floor — nothing to spare."""
+    destination. Engaged, and the advice is the floor - nothing to spare."""
     assert recommended_charge_limit(
         0.0, _DEST, _DEST, _BMS_RATE, 0.0, _SP - 5000.0, _SP, _HYST, False,
         at_destination=True,
@@ -1025,7 +1025,7 @@ def test_the_destination_holds_with_nothing_forecast_to_clip():
 def test_the_hold_admits_the_surplus_a_better_day_actually_makes():
     """The very case the buffer exists for: the forecast under-read the day.
 
-    Nothing was reserved (absorbable 0), the pack is parked at 95 — and the site
+    Nothing was reserved (absorbable 0), the pack is parked at 95 - and the site
     is exporting 1500 W more than it may. Those watts cannot leave, so the
     battery climbs above the destination on that surplus alone.
     """
@@ -1061,10 +1061,10 @@ def test_below_the_destination_nothing_to_clip_is_still_full_rate():
 
 def test_the_live_event_replay_holds_at_the_destination_and_releases_below_it():
     """Destination 95, a 20 kWh pack, nothing forecast to clip, export under the
-    setpoint — the maintainer's morning, replayed.
+    setpoint - the maintainer's morning, replayed.
 
     Full rate up to the crossing, the floor from 95 on with the latch engaged,
-    and a release only a full hysteresis band below the destination — where full
+    and a release only a full hysteresis band below the destination - where full
     rate is right again, because that is under the ceiling.
     """
     yielding = False
@@ -1081,7 +1081,7 @@ def test_the_live_event_replay_holds_at_the_destination_and_releases_below_it():
     assert seen == [
         (93.0, _BMS_RATE, False),   # below the destination: refill
         (94.0, _BMS_RATE, False),
-        (95.0, 0.0, True),          # the crossing — this is what ran to 98 %
+        (95.0, 0.0, True),          # the crossing - this is what ran to 98 %
         (96.0, 0.0, True),
         (97.0, 0.0, True),
     ]
@@ -1102,7 +1102,7 @@ def test_a_clip_appearing_while_parked_hands_over_to_the_reservation():
     """Two engagement sources, one latch state, no step in the advice.
 
     Parked at the destination with nothing to clip, then a forecast refresh
-    reserves 2 kWh of a 20 kWh pack — the ceiling drops to 85. The hold was
+    reserves 2 kWh of a 20 kWh pack - the ceiling drops to 85. The hold was
     already engaged, so the reservation simply takes over: same formula, same
     latch, and the release the pack then falls to is the reservation's own
     (85 − 2 × 2 = 81), not the destination's.
@@ -1113,7 +1113,7 @@ def test_a_clip_appearing_while_parked_hands_over_to_the_reservation():
     )
     assert held == (0.0, True)
 
-    # The clip appears while the pack sits at 95 — still at the destination, so
+    # The clip appears while the pack sits at 95 - still at the destination, so
     # nothing moves.
     limit, limiting = recommended_charge_limit(
         2.0, _DEST, 85.0, _BMS_RATE, 0.0, _SP - 5000.0, _SP, _HYST, held[1],
@@ -1139,9 +1139,9 @@ def test_a_clip_appearing_while_parked_hands_over_to_the_reservation():
 
 
 def test_an_unknown_soc_keeps_the_reservations_ordering():
-    """No reading is no destination crossing to detect — ``yields_to_excess``
+    """No reading is no destination crossing to detect - ``yields_to_excess``
     HOLDS its previous answer without an SOC (a dropout must not release a
-    hold that was on, nor engage one that was off) — and below the hold the
+    hold that was on, nor engage one that was off) - and below the hold the
     unknown case sits where it always sat.
 
     Nothing to clip: full rate, because a dead SOC sensor must not strand the
@@ -1165,7 +1165,7 @@ def test_a_site_with_no_ceiling_source_is_unchanged():
     only engage at SOC 100, so nothing below it moves at all.
 
     Byte-equivalence against the old early return across the SOC range, with
-    nothing to clip — the one case the reorder could have disturbed.
+    nothing to clip - the one case the reorder could have disturbed.
     """
     for soc in range(0, 100):
         yielding = yields_to_excess(float(soc), 100.0, _HYST, False)
@@ -1175,7 +1175,7 @@ def test_a_site_with_no_ceiling_source_is_unchanged():
             False, at_destination=yielding,
         ) == (_BMS_RATE, False), f"SOC {soc} was held"
     # At 100 the pack IS at its destination, and holding a full battery on the
-    # floor is what "standing ceiling" means — it cannot charge either way.
+    # floor is what "standing ceiling" means - it cannot charge either way.
     assert yields_to_excess(100.0, 100.0, _HYST, False) is True
     assert recommended_charge_limit(
         0.0, 100.0, 100.0, _BMS_RATE, 0.0, _SP - 5000.0, _SP, _HYST, False,

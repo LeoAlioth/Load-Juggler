@@ -1,4 +1,4 @@
-"""Hot water tank control — setpoint resolution and climate-entity commands.
+"""Hot water tank control - setpoint resolution and climate-entity commands.
 
 The climate entity owns all temperature regulation (hysteresis, min cycle,
 sensor). Load Juggler only gates power (hvac_mode heat/off) and writes the
@@ -38,10 +38,10 @@ def resolve_tank_setpoint(
 ) -> tuple[float, str]:
     """Return (setpoint_temperature, label) for the tank's operating mode.
 
-    Pure function — unit-testable. ``label`` is "away" / "normal" / "boost".
+    Pure function - unit-testable. ``label`` is "away" / "normal" / "boost".
 
     - Freeze Protection: the away setpoint, raised to boost when the hub reports
-      excess — the site can't absorb its own production anywhere else — or the
+      excess - the site can't absorb its own production anywhere else - or the
       battery is over its target SOC (ride free energy whenever it's available).
     - Solar Priority: away below battery-min SOC, normal up to battery-target
       SOC, boost at/above target SOC.
@@ -56,7 +56,7 @@ def resolve_tank_setpoint(
     # "There is real surplus" is decided once, by the hub's excess gate
     # (calculations.excess_margin + its hysteresis latch), and every
     # Excess-mode load reads that same verdict. Fall back to comparing export
-    # against the element's own draw only if the hub published no verdict —
+    # against the element's own draw only if the hub published no verdict -
     # a stale hub_data shouldn't strand the tank at its floor forever.
     excess_available = hub_data.get("excess_available")
     if excess_available is None:
@@ -87,7 +87,7 @@ async def send_hot_water_tank_command(
 ) -> None:
     """Drive a hot water tank's climate entity: gate heating and set the target.
 
-    ``limit`` is the engine's allocated current after smoothing — > 0 means the
+    ``limit`` is the engine's allocated current after smoothing - > 0 means the
     engine found power for the tank, so heating is permitted.
     """
     climate_entity = sensor.config_entry.data.get(CONF_CLIMATE_ENTITY_ID)
@@ -132,7 +132,7 @@ async def send_hot_water_tank_command(
 
     # Clamp to the climate entity's own limits. HA hard-rejects an
     # out-of-range set_temperature, and with blocking=False that rejection is
-    # invisible here — the thermostat would silently keep its previous target
+    # invisible here - the thermostat would silently keep its previous target
     # (e.g. a 90 °C boost against a 75 °C max_temp leaves it at the away
     # setpoint and the tank never heats). Warn once per offending setpoint.
     climate_state = sensor.hass.states.get(climate_entity)
@@ -152,7 +152,7 @@ async def send_hot_water_tank_command(
                 load_rt["_tank_clamp_warned_for"] = setpoint
                 _LOGGER.warning(
                     "Hot water tank %s: %s setpoint %.0f°C is outside %s's "
-                    "supported range (%s–%s°C) — clamped to %.0f°C. Adjust the "
+                    "supported range (%s–%s°C) - clamped to %.0f°C. Adjust the "
                     "setpoint slider or the thermostat's limits.",
                     sensor._attr_name,
                     label,
@@ -183,7 +183,7 @@ async def send_hot_water_tank_command(
         "permitted" if heating_permitted else "forbidden",
     )
 
-    # The integration is the master controller — re-assert each command cycle.
+    # The integration is the master controller - re-assert each command cycle.
     try:
         if heating_permitted:
             await sensor.hass.services.async_call(

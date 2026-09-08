@@ -175,7 +175,7 @@ jobs:
         run: |
           # Safety: abort if VERSION is empty to avoid deleting all releases
           if [ -z "$VERSION" ]; then
-            echo "ERROR: VERSION is empty — aborting cleanup to prevent deleting all releases"
+            echo "ERROR: VERSION is empty - aborting cleanup to prevent deleting all releases"
             exit 1
           fi
 
@@ -354,7 +354,7 @@ jobs:
           echo "GitHub pre-release created successfully!"
 
       - name: Tell Home Assistant to download the new build
-        # Optional — skipped unless a webhook is configured. Fires a webhook per
+        # Optional - skipped unless a webhook is configured. Fires a webhook per
         # instance so HACS downloads this exact tag instead of waiting for its own
         # update check. See dev/HA_AUTO_UPDATE.md for the receiving automation.
         #
@@ -367,7 +367,7 @@ jobs:
         run: |
           URLS="${HA_WEBHOOK_URLS:-$HA_WEBHOOK_URL}"
           if [ -z "$URLS" ]; then
-            echo "No HA webhook secret set — skipping."
+            echo "No HA webhook secret set - skipping."
             exit 0
           fi
 
@@ -377,7 +377,7 @@ jobs:
 
           # Word-splitting on whitespace/newlines is what lets one secret carry
           # several URLs. Never fail the release over an unreachable instance
-          # (it may be restarting, or off) — the build itself succeeded.
+          # (it may be restarting, or off) - the build itself succeeded.
           for url in $URLS; do
             case "$url" in ''|\#*) continue ;; esac
             host=$(printf '%s' "$url" | sed -E 's#^[a-z]+://([^/]+).*#\1#')
@@ -386,6 +386,6 @@ jobs:
                  -d "{\"version\": \"$TAG_NAME\"}"; then
               echo "Notified $host: $TAG_NAME"
             else
-              echo "Notify failed for $host — download $TAG_NAME manually in HACS"
+              echo "Notify failed for $host - download $TAG_NAME manually in HACS"
             fi
           done

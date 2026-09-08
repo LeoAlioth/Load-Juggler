@@ -3,7 +3,7 @@
 scenarios:
 
   - name: "1ph-1c-standard-bat-above-target"
-    description: "Standard mode with battery above target — max from all sources"
+    description: "Standard mode with battery above target - max from all sources"
     human_verified: false
     site:
       voltage: 230
@@ -32,7 +32,7 @@ scenarios:
         allocated: 32.0  # Standard: grid(35A) + solar(10A) + battery(20A) - consumption(3A) = 62A, capped at max 32A
 
   - name: "1ph-1c-standard-bat-night"
-    description: "Standard mode at night with battery — grid + battery"
+    description: "Standard mode at night with battery - grid + battery"
     human_verified: false
     site:
       voltage: 230

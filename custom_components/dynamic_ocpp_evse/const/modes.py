@@ -1,7 +1,7 @@
 """Central operating-mode registry.
 
 The per-device-type modules (evse.py / plug.py / hot_water_tank.py) define each
-device type's modes as user-facing catalogs — name, urgency priority, icon.
+device type's modes as user-facing catalogs - name, urgency priority, icon.
 This module is the single place that bridges those modes to the engine: it
 maps every mode to the BEHAVIOR_* it competes with, and resolves a stored mode
 key back to its OperatingMode. Keeping the mapping here keeps the device
@@ -54,7 +54,7 @@ from .power_station import (
 )
 
 # The one place every operating mode is mapped to its engine behavior.
-# Multiple modes — across device types — may map to the same behavior.
+# Multiple modes - across device types - may map to the same behavior.
 BEHAVIOR_BY_MODE = {
     EVSE_MODE_STANDARD: BEHAVIOR_FULL_POWER,
     EVSE_MODE_SOLAR_PRIORITY: BEHAVIOR_SOLAR_PRIORITY,

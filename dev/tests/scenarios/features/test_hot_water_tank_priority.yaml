@@ -7,7 +7,7 @@
 #   - hot water tank (boiler,  2 kW,   priority 3)
 #
 # All three share the Solar Priority urgency tier, so the configured priority
-# number (1/2/3) normally decides who wins when power is short — leaving the
+# number (1/2/3) normally decides who wins when power is short - leaving the
 # tank, at priority 3, to lose. The cold-tank promotion changes that: a Solar
 # Priority tank BELOW its normal temperature is bumped to the Normal urgency
 # tier, so it outranks the other solar-priority loads until it warms up.
@@ -16,7 +16,7 @@
 # 50% (above its 20% minimum, so the SOC-gated smart plugs are eligible to run)
 # and the inverter per-phase output is capped so the three loads cannot all be
 # served at once. ~2 kW of throughput is enough for the two plugs OR the tank
-# alone — forcing the contest the promotion is meant to resolve.
+# alone - forcing the contest the promotion is meant to resolve.
 
 scenarios:
 
@@ -67,7 +67,7 @@ scenarios:
         l1_phase: "A"
     expected:
       water_tank:
-        allocated: 8.7    # 2000 W / 230 V — promoted tank takes the pool first
+        allocated: 8.7    # 2000 W / 230 V - promoted tank takes the pool first
       pond_pump:
         allocated: 0.0
       power_strip:
@@ -122,7 +122,7 @@ scenarios:
       pond_pump:
         allocated: 6.1    # 1400 W
       power_strip:
-        allocated: 0.9    # 200 W — fits in remaining pool
+        allocated: 0.9    # 200 W - fits in remaining pool
       water_tank:
         allocated: 0.0    # 2 kW does not fit after pond + strip
 

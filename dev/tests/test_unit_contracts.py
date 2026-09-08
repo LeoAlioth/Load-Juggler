@@ -1,6 +1,6 @@
 """Contract guards against the "read an entity, forget its unit" bug class.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 test_units.py checks the converters. These two check that the converters are
 actually *reached*, which is where the real bugs were:
@@ -11,7 +11,7 @@ actually *reached*, which is where the real bugs were:
    units.py about millivolts fails here rather than in production.
 
 2. No new hand-rolled ``float(state.state)`` parsing. Each one of those is a
-   place where a unit can be forgotten — the grid-phase reader was exactly
+   place where a unit can be forgotten - the grid-phase reader was exactly
    that, for months, while the config flow advertised "A or W, auto-converted".
    New occurrences must either go through units.py or be added to the
    allowlist below with a reason.
@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from standalone_loader import load_pure_modules  # noqa: E402
 
-# Only const/ and units.py are needed, and neither imports Home Assistant —
+# Only const/ and units.py are needed, and neither imports Home Assistant -
 # the config-flow half of the contract is checked by reading its source.
 load_pure_modules(calc_modules=(), root_modules=("units",))
 
@@ -71,13 +71,13 @@ def test_every_declared_unit_converts_to_its_canonical_domain():
         for unit in accepted:
             assert unit in probes, (
                 f"{conf_key} accepts {unit!r} but this test has no probe for it "
-                f"in domain {domain!r} — add one, and make sure units.py can "
+                f"in domain {domain!r} - add one, and make sure units.py can "
                 f"convert it"
             )
             got = _convert(probes[unit], unit, domain)
             assert abs(got - _EXPECTED[domain]) < 1e-6, (
                 f"{conf_key}: {probes[unit]}{unit} converted to {got}, expected "
-                f"{_EXPECTED[domain]}{domain} — units.py cannot handle a unit "
+                f"{_EXPECTED[domain]}{domain} - units.py cannot handle a unit "
                 f"the config flow accepts"
             )
 
@@ -112,7 +112,7 @@ def test_config_flow_unit_validation_matches_the_declared_contracts():
         conf_value = getattr(const, const_name)
         assert conf_value in units.ENTITY_UNIT_CONTRACTS, (
             f"{const_name} is unit-validated in the config flow but missing from "
-            f"units.ENTITY_UNIT_CONTRACTS — declare its canonical domain so the "
+            f"units.ENTITY_UNIT_CONTRACTS - declare its canonical domain so the "
             f"conversion is covered"
         )
         declared, _domain = units.ENTITY_UNIT_CONTRACTS[conf_value]
@@ -122,7 +122,7 @@ def test_config_flow_unit_validation_matches_the_declared_contracts():
             f"ENTITY_UNIT_CONTRACTS"
         )
         seen += 1
-    assert seen > 5, "unit-validation lines not found — did the pattern drift?"
+    assert seen > 5, "unit-validation lines not found - did the pattern drift?"
 
 
 # A ratchet, not an allowlist: exempting whole files would have exempted
@@ -132,7 +132,7 @@ _RAW_PARSE_BUDGET = {
     # Our own min/max-current number entities, in our own amps.
     "__init__.py": 1,
     # One each since config_flow became a package (the total is unchanged).
-    # The battery discharge power hint in the hub_inverter form description —
+    # The battery discharge power hint in the hub_inverter form description -
     # only this detected preview text is unit-naive and never stored; the value
     # the user then types into the field is a real engine input, user-vetted.
     # It moved from flow.py to helpers.py with _auto_detect_entity_value, when
@@ -161,7 +161,7 @@ _RAW_PARSE_BUDGET = {
     # resolved (ISSUES.md #31).
     "engine/readers.py": 1,
     # The station status sensor reading the power station's external battery
-    # SOC and charge-limit entities — both percentages, so no unit conversion
+    # SOC and charge-limit entities - both percentages, so no unit conversion
     # applies.
     "entities/load_sensors.py": 1,
     # RestoreEntity state restoration of values we published ourselves. Was 2
@@ -175,7 +175,7 @@ def test_no_new_hand_rolled_state_parsing():
     """Every ``float(x.state)`` is a place a unit can be forgotten.
 
     New ones must go through units.py. If a new raw parse is genuinely
-    correct, lower some other count or add an entry here with the reason —
+    correct, lower some other count or add an entry here with the reason -
     the point is that it takes a deliberate edit, not silence.
     """
     over_budget = {}
@@ -191,7 +191,7 @@ def test_no_new_hand_rolled_state_parsing():
         if len(hits) > budget:
             over_budget[key] = f"{len(hits)} found, budget {budget}"
     assert not over_budget, (
-        f"new hand-rolled entity parsing: {over_budget} — read through units.py "
+        f"new hand-rolled entity parsing: {over_budget} - read through units.py "
         f"(to_amps/to_watts/to_volts) so the sensor's unit is honoured, or "
         f"update _RAW_PARSE_BUDGET with the reason it is safe"
     )
@@ -214,5 +214,5 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

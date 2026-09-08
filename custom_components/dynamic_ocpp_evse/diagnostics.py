@@ -2,19 +2,19 @@
 
 Home Assistant puts a **Download diagnostics** button on every device of a
 config entry that provides this platform. Downloading from ANY Load Juggler
-device — the hub or any load, group or inverter — yields the same
+device - the hub or any load, group or inverter - yields the same
 site-wide dump, because a child entry resolves to its hub first: debugging a
 load almost always needs the hub's thresholds and its siblings' priorities.
 
 What is in it, and why each part:
 
-* ``config`` — every entry on the site, ``data`` and ``options`` verbatim.
+* ``config`` - every entry on the site, ``data`` and ``options`` verbatim.
   This is the part worth having: reproducing a report otherwise means asking
   for a dozen screenshots of option pages.
-* ``live`` — the last published site result (the same dict the Overview page
+* ``live`` - the last published site result (the same dict the Overview page
   renders), so the numbers the engine decided on are next to the settings
   that produced them.
-* ``runtime`` — the carried state: the Excess and SOC latches, the input
+* ``runtime`` - the carried state: the Excess and SOC latches, the input
   EMAs, and the forecast observers including each array's stored 15-minute
   gain series. Filtered to JSON-safe values (see ``_jsonable``) because these
   buckets also hold entity objects and callables.
@@ -45,7 +45,7 @@ from .const import (
 )
 from .helpers import inverter_features
 
-# Runtime keys that hold live HA objects rather than state — dumping them adds
+# Runtime keys that hold live HA objects rather than state - dumping them adds
 # pages of reprs and nothing to debug with.
 _RUNTIME_SKIP = frozenset({"entry", "loads", "coordinator", "listeners"})
 
@@ -101,7 +101,7 @@ def _entry_dump(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         "options": _jsonable(dict(entry.options)),
     }
     # The declared inverter features decide which option pages exist at all,
-    # and an entry that predates the list has them inferred — so record what
+    # and an entry that predates the list has them inferred - so record what
     # the integration actually acts on, not only what is stored.
     if entry.data.get(ENTRY_TYPE) == "inverter":
         dump["features_effective"] = list(inverter_features(entry))
@@ -116,7 +116,7 @@ async def async_get_config_entry_diagnostics(
 
     # The RELEASE that produced these numbers, from manifest.json. Not the
     # same question as the ``version`` in each entry dump below, which is the
-    # config-schema revision the migrations count — hence the separate key.
+    # config-schema revision the migrations count - hence the separate key.
     # Asking "which build is this?" cost two round trips in one day
     # (2026-09-07), which is exactly the round trip this file exists to avoid.
     # Guarded because a diagnostics download must never fail to render.

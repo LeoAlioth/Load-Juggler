@@ -182,7 +182,7 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
             CONF_BATTERY_SOC_HYSTERESIS: 3,
         },
     )
-    # Grid + site policy is the whole hub — no hardware pages at all.
+    # Grid + site policy is the whole hub - no hardware pages at all.
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["title"] == "My Solar Hub"
 
@@ -243,7 +243,7 @@ def _make_forecast_device(hass, slug, watts=True, name=None):
 
 
 def _bare_hub(hass, name="Forecast Hub", slug="forecast_hub", **options):
-    """A hub with no hardware of its own — the post-slimming shape."""
+    """A hub with no hardware of its own - the post-slimming shape."""
     from custom_components.dynamic_ocpp_evse.const import (
         MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
     )
@@ -316,7 +316,7 @@ async def test_inverter_forecast_devices_validated(hass: HomeAssistant):
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={}
     )
-    # Write-control is the optional last page — submitting it empty keeps the
+    # Write-control is the optional last page - submitting it empty keeps the
     # inverter advisory.
     assert result["step_id"] == "inverter_control"
     result = await hass.config_entries.flow.async_configure(
@@ -337,7 +337,7 @@ async def test_inverter_forecast_devices_validated(hass: HomeAssistant):
 
 
 async def test_inverter_empty_forecast_selection_accepted(hass: HomeAssistant):
-    """Leaving the forecast selector empty is valid — the feature is simply off."""
+    """Leaving the forecast selector empty is valid - the feature is simply off."""
 
     _bare_hub(hass, name="Plain Hub", slug="plain_hub")
 
@@ -360,7 +360,7 @@ async def test_inverter_empty_forecast_selection_accepted(hass: HomeAssistant):
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={}
     )
-    # Write-control is the optional last page — submitting it empty keeps the
+    # Write-control is the optional last page - submitting it empty keeps the
     # inverter advisory.
     assert result["step_id"] == "inverter_control"
     result = await hass.config_entries.flow.async_configure(
@@ -470,7 +470,7 @@ async def test_charger_discovery_creates_entry(
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger_info"
 
-    # Step 1: charger_info — name, entity_id, priority
+    # Step 1: charger_info - name, entity_id, priority
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
@@ -482,7 +482,7 @@ async def test_charger_discovery_creates_entry(
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger_current"
 
-    # Step 2: charger_current — current limits and phase mapping
+    # Step 2: charger_current - current limits and phase mapping
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
@@ -496,7 +496,7 @@ async def test_charger_discovery_creates_entry(
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger_timing"
 
-    # Step 3: charger_timing — creates entry
+    # Step 3: charger_timing - creates entry
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         user_input={
@@ -646,8 +646,8 @@ async def test_options_flow_hub_saves_changes(
         {"device_class": "power", "unit_of_measurement": "W"},
     )
 
-    # The imported hub's menu: one page per question, no hardware fields —
-    # those moved to the inverter entry the setup above auto-created — and no
+    # The imported hub's menu: one page per question, no hardware fields -
+    # those moved to the inverter entry the setup above auto-created - and no
     # priority page, since this hub has no loads to order.
     menu = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
     assert menu["type"] == FlowResultType.MENU
@@ -736,7 +736,7 @@ def _schema_has(data_schema, key) -> bool:
 
 
 def _selector_config(data_schema, key) -> dict:
-    """The selector config behind a field — e.g. to assert `multiple: True`."""
+    """The selector config behind a field - e.g. to assert `multiple: True`."""
     for marker, validator in data_schema.schema.items():
         if getattr(marker, "schema", None) == key:
             return getattr(validator, "config", {}) or {}
@@ -784,7 +784,7 @@ async def test_inverter_options_does_not_autodetect_phases(
     await hass.async_block_till_done()
 
     # Setting the hub up auto-imports its legacy battery config onto an
-    # inverter entry — that entry is where the inverter page lives now.
+    # inverter entry - that entry is where the inverter page lives now.
     inverter = next(
         e
         for e in hass.config_entries.async_entries(DOMAIN)
@@ -796,7 +796,7 @@ async def test_inverter_options_does_not_autodetect_phases(
         hass.states.async_set(ent, "5.0", {"device_class": "current", "unit_of_measurement": "A"})
     hass.states.async_set("sensor.grid_power_limit", "8050", {"device_class": "power", "unit_of_measurement": "W"})
 
-    # An UNRELATED 3-phase SolarEdge inverter in another building — matches
+    # An UNRELATED 3-phase SolarEdge inverter in another building - matches
     # INVERTER_OUTPUT_PATTERNS, so the old auto-detect would have grabbed it.
     for phase in ("a", "b", "c"):
         hass.states.async_set(
@@ -826,7 +826,7 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
     The clearing half is the one that matters: a multi-entity selector omits its
     key entirely once the user removes the last entity, so without the explicit
     normalization the previously stored slots would stay armed while the form
-    showed none — Load Juggler would keep writing entities the user believes it
+    showed none - Load Juggler would keep writing entities the user believes it
     has released.
     """
     from custom_components.dynamic_ocpp_evse.const import (
@@ -866,7 +866,7 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
     assert _schema_has(schema, CONF_SOC_LIMIT_NORMAL_ENTITY_ID)
     assert _selector_config(schema, CONF_SOC_LIMIT_ENTITY_IDS).get("multiple") is True
 
-    # The frontend never submits a field it renders empty — a stored None
+    # The frontend never submits a field it renders empty - a stored None
     # (e.g. the imported inverter's unset per-phase limit) arrives as an
     # omitted key, letting the schema default fill it.
     submitted = {
@@ -920,8 +920,8 @@ async def test_inverter_options_round_trip_the_minimum_charge_limit(
     """The floor under the engaged charge limit is editable from the options
     page, and stores in the target register's own units.
 
-    It sits beside the normal value on the same form and shares its convention —
-    amps on an amps register, watts on a watts register — so a number field is
+    It sits beside the normal value on the same form and shares its convention -
+    amps on an amps register, watts on a watts register - so a number field is
     the whole surface: no entity picker, and therefore no unit contract.
     """
     from custom_components.dynamic_ocpp_evse.const import (
@@ -955,7 +955,7 @@ async def test_inverter_options_round_trip_the_minimum_charge_limit(
     assert result["step_id"] == "inverter_control"
     schema = result["data_schema"]
     assert _schema_has(schema, CONF_CHARGE_LIMIT_MINIMUM)
-    # Never negative, and defaulting to 0 — which is "no floor at all", the
+    # Never negative, and defaulting to 0 - which is "no floor at all", the
     # behaviour that existed before the field.
     assert _selector_config(schema, CONF_CHARGE_LIMIT_MINIMUM).get("min") == 0
     assert DEFAULT_CHARGE_LIMIT_MINIMUM == 0
@@ -1025,7 +1025,7 @@ async def test_options_flow_charger_saves_changes(
         },
     )
 
-    # Step 3: charger_timing — saves
+    # Step 3: charger_timing - saves
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger_timing"
 
@@ -1075,7 +1075,7 @@ async def test_options_flow_charger_validates(
         },
     )
 
-    # Step 2: charger_current — submit invalid: min > max
+    # Step 2: charger_current - submit invalid: min > max
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger_current"
 
@@ -1141,7 +1141,7 @@ async def test_options_flow_priority_reorders_devices(
 
 # ── Read-only pages: Overview + "How it decides" ───────────────────────
 #
-# Machine-authored tests — not yet human-reviewed.
+# Machine-authored tests - not yet human-reviewed.
 
 
 async def test_overview_page_survives_no_live_data(
@@ -1159,7 +1159,7 @@ async def test_overview_page_survives_no_live_data(
 
     text = _overview_text(hass, mock_hub_entry.entry_id)
     assert "No live data yet" in text
-    # The static sections still render — the page is never empty.
+    # The static sections still render - the page is never empty.
     assert "Grid" in text
     assert "Loads" in text
 
@@ -1226,7 +1226,7 @@ async def test_overview_page_reports_live_values(
             "load_draw": {plug.entry_id: 4.3},
         }
     }
-    # The allocation is NOT what the line shows — the measured draw is.
+    # The allocation is NOT what the line shows - the measured draw is.
     hass.data[DOMAIN]["load_allocations"] = {plug.entry_id: 9.9}
     hass.data[DOMAIN]["load_status"] = {plug.entry_id: "Charging"}
 
@@ -1289,7 +1289,7 @@ async def test_overview_page_shows_the_forecast_when_it_is_on(
         }
     }
     text = _overview_text(hass, mock_hub_entry.entry_id)
-    assert "PV forecast — next clipping window (today)" in text
+    assert "PV forecast - next clipping window (today)" in text
     assert "Clippable: 3.25 kWh" in text
     # The room the reserve was SIZED on, not the raw rate integral: on a pack
     # smaller than the day's surplus the integral is clamped away before
@@ -1327,7 +1327,7 @@ async def test_overview_page_for_a_load_entry(
     assert "6 A–16 A" in text
     assert "Not in a circuit group" in text
 
-    # The same single step serves it — no per-device-type duplicate.
+    # The same single step serves it - no per-device-type duplicate.
     result = await _open_options(hass, mock_charger_entry.entry_id, step="overview")
     assert result["step_id"] == "overview"
     assert "This load" in result["description_placeholders"]["overview"]
@@ -1444,7 +1444,7 @@ async def test_migration_seeds_grid_export_limit_in_one_pass(hass: HomeAssistant
 
 
 async def test_migration_leaves_offgrid_hub_unlimited(hass: HomeAssistant):
-    """An off-grid hub (no grid CTs) gets no export limit seeded — its Excess
+    """An off-grid hub (no grid CTs) gets no export limit seeded - its Excess
     is battery-side only, and a seeded limit would wrongly enable the
     clipping forecast maths."""
     from custom_components.dynamic_ocpp_evse import async_migrate_entry
@@ -1531,7 +1531,7 @@ async def test_migration_of_stored_charger_strings_is_idempotent(
     migrated_options = dict(entry.options)
 
     # Re-run from the same minor_version the first pass produced, and again
-    # from below it — neither may reintroduce or lose anything.
+    # from below it - neither may reintroduce or lose anything.
     assert await async_migrate_entry(hass, entry)
     assert dict(entry.data) == migrated_data
     assert dict(entry.options) == migrated_options
@@ -1544,7 +1544,7 @@ async def test_migration_of_stored_charger_strings_is_idempotent(
 
 
 async def test_migration_leaves_non_load_entries_alone(hass: HomeAssistant):
-    """A hub entry carries neither string — only its minor_version moves."""
+    """A hub entry carries neither string - only its minor_version moves."""
     from custom_components.dynamic_ocpp_evse import async_migrate_entry
 
     entry = MockConfigEntry(
@@ -1573,7 +1573,7 @@ async def test_migrated_load_entry_sets_up(hass: HomeAssistant, mock_hub_entry):
     """A 2.4-shaped plug entry migrates and then actually sets up.
 
     The end-to-end half: the rename touches the entry_type that drives the
-    whole setup dispatch, so proving the shape is not enough — the entry has
+    whole setup dispatch, so proving the shape is not enough - the entry has
     to reach ConfigEntryState.LOADED through the real setup path and land in
     the runtime buckets under their renamed keys.
     """
@@ -1688,14 +1688,14 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
     assert result["step_id"] == "inverter_control"
 
     # Both write-controls are configured on this one page. The SOC side is a
-    # LIST — a Deye's ceiling lives in its time-of-use slots, one entity each —
+    # LIST - a Deye's ceiling lives in its time-of-use slots, one entity each -
     # with the everyday ceiling coming from an entity the user's own automations
     # keep owning.
     schema = result["data_schema"]
     assert _schema_has(schema, CONF_SOC_LIMIT_ENTITY_IDS)
     assert _schema_has(schema, CONF_SOC_LIMIT_NORMAL_ENTITY_ID)
     assert _selector_config(schema, CONF_SOC_LIMIT_ENTITY_IDS).get("multiple") is True
-    # The floor under the engaged charge limit — a plain number in the target
+    # The floor under the engaged charge limit - a plain number in the target
     # register's own units, beside the normal value that uses the same
     # convention, and never an entity picker.
     assert _schema_has(schema, CONF_CHARGE_LIMIT_MINIMUM)
@@ -1789,14 +1789,14 @@ async def test_hub_inverter_auto_import(hass: HomeAssistant):
     assert inverter.data[ENTRY_TYPE] == ENTRY_TYPE_INVERTER
     assert inverter.data[CONF_HUB_ENTRY_ID] == hub.entry_id
     assert inverter.data["imported_from_hub"] is True
-    # Named for the hardware, not the hub — none of the imported entities
+    # Named for the hardware, not the hub - none of the imported entities
     # belongs to a device here, so it falls back to the plain default.
     assert inverter.data[CONF_NAME] == "Inverter"
     assert inverter.title == "Inverter"
     assert inverter.options[CONF_INVERTER_MAX_POWER] == 17000
     assert inverter.options[CONF_BATTERY_SOC_ENTITY_ID] == "sensor.batt_soc"
     assert inverter.options[CONF_BATTERY_CAPACITY_KWH] == 10
-    # The PV array belongs to the inverter too — sensor and forecast device.
+    # The PV array belongs to the inverter too - sensor and forecast device.
     assert inverter.options[CONF_SOLAR_PRODUCTION_ENTITY_ID] == "sensor.pv_power"
     assert inverter.options[CONF_SOLAR_FORECAST_DEVICE_IDS] == ["dev_east"]
 
@@ -1812,7 +1812,7 @@ async def test_hub_inverter_auto_import(hass: HomeAssistant):
 
 async def test_hub_inverter_auto_import_names_after_the_device(hass: HomeAssistant):
     """The auto-created entry takes its name from the device behind the
-    imported entities — "Site Load Management Inverter" is the hub wearing a
+    imported entities - "Site Load Management Inverter" is the hub wearing a
     hat, while the integration already calls the hardware something useful."""
     from homeassistant.helpers import device_registry as dr, entity_registry as er
 
@@ -1854,7 +1854,7 @@ async def test_hub_inverter_auto_import_names_after_the_device(hass: HomeAssista
 
 async def test_hub_inverter_auto_import_is_idempotent(hass: HomeAssistant):
     """A second import run (restart between entry creation and blanking)
-    aborts on the unique_id but STILL blanks the re-appeared hub fields —
+    aborts on the unique_id but STILL blanks the re-appeared hub fields -
     the double-count window must close on every path."""
     from custom_components.dynamic_ocpp_evse.const import (
         MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
@@ -1909,7 +1909,7 @@ async def test_hub_inverter_auto_import_is_idempotent(hass: HomeAssistant):
 async def test_hub_inverter_import_merges_later_fields(hass: HomeAssistant):
     """A hub migrated by an earlier release still holds the fields that later
     releases move (here the solar sensor and forecast devices). The next
-    import round merges them onto the SAME inverter entry — no second entry,
+    import round merges them onto the SAME inverter entry - no second entry,
     and values already edited on the inverter are not overwritten."""
     from custom_components.dynamic_ocpp_evse.const import (
         ENTRY_TYPE_INVERTER,
@@ -1989,8 +1989,8 @@ async def test_hub_inverter_import_merges_later_fields(hass: HomeAssistant):
 async def test_pv_only_inverter_skips_the_battery_pages_and_stores_no_battery(
     hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
 ):
-    """Solar only: inverter_config creates the entry directly — no battery
-    page, no write-control page — and the entry carries no battery cap. That
+    """Solar only: inverter_config creates the entry directly - no battery
+    page, no write-control page - and the entry carries no battery cap. That
     default (5000 W on a PV-only entry) is the phantom that took 53 % of the
     charge advice on a live site."""
     mock_hub_entry.add_to_hass(hass)
@@ -2207,7 +2207,7 @@ async def test_migration_infers_features_and_drops_the_phantom_battery(
 
 async def test_the_overview_reads_only_republished_keys(hass: HomeAssistant):
     """Every hub_data key the Overview page reads must survive the hub's
-    republish whitelist — a key missing there silently falls back (the raw
+    republish whitelist - a key missing there silently falls back (the raw
     reconstructed export fell back to the smoothed one, 2026-09-04)."""
     import re
     from pathlib import Path
@@ -2220,7 +2220,7 @@ async def test_the_overview_reads_only_republished_keys(hass: HomeAssistant):
         "custom_components/dynamic_ocpp_evse/config_flow/pages.py"
     ).read_text()
     read = set(re.findall(r"""hub_data(?:\.get\(|\[)["']([a-z_]+)["']""", pages))
-    assert read, "the scan found nothing — the page's access pattern changed"
+    assert read, "the scan found nothing - the page's access pattern changed"
     always = {"last_update", "grid_stale", "group_data", "hub_status", "hub_warnings"}
     missing = read - set(_HUB_REPUBLISH_KEYS) - always
     assert not missing, f"Overview reads keys the hub does not republish: {sorted(missing)}"
@@ -2296,7 +2296,7 @@ async def test_the_overview_shows_the_pools_the_allocator_worked_from(
 ):
     """The watt figures in that section are re-derived from the site's headroom
     terms; these are the PhaseConstraints the distribution actually consulted.
-    Publishing both is deliberate — when they disagree, the disagreement is the
+    Publishing both is deliberate - when they disagree, the disagreement is the
     bug (the Excess over-commitment of 2026-09-07)."""
     from datetime import datetime, timezone
     from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
@@ -2347,7 +2347,7 @@ async def test_the_overview_shows_the_pools_the_allocator_worked_from(
     # the per-phase figures suggest.
     assert "Solar pool, gross, pooled across phases" in text
     assert "Excess pool (above the export trigger), net" in text
-    # Signed values survive: A and B importing while C exports, total 0 — the
+    # Signed values survive: A and B importing while C exports, total 0 - the
     # site has nothing spare and a load on C may take nothing.
     assert "offered: A -1.0 · B -1.0 · C 2.0 · total 0.0 A" in text
 
@@ -2356,7 +2356,7 @@ async def test_the_overview_pool_lines_name_only_the_site_phases(
     hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
 ):
     """A single-phase site would otherwise read as a three-phase one with two
-    dead legs — the pools carry a 0.0 for a phase that does not exist."""
+    dead legs - the pools carry a 0.0 for a phase that does not exist."""
     from datetime import datetime, timezone
     from custom_components.dynamic_ocpp_evse.config_flow import _overview_text
 
@@ -2455,7 +2455,7 @@ async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
     hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
 ):
     """Downloading from the hub yields every entry's config, the live result
-    and the carried runtime — and the whole thing is JSON-serialisable, which
+    and the carried runtime - and the whole thing is JSON-serialisable, which
     the runtime buckets are not on their own (they hold entity objects)."""
     import json
     from datetime import datetime, timezone
@@ -2492,7 +2492,7 @@ async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
 
     assert diag["config"]["hub"]["entry_id"] == mock_hub_entry.entry_id
     assert diag["integration"]["requested_from"]["is_hub"] is True
-    # The build, from manifest.json — a separate question from the entry's
+    # The build, from manifest.json - a separate question from the entry's
     # config-schema version, and the one a dump used to leave us guessing at.
     manifest = json.loads(
         (
@@ -2507,7 +2507,7 @@ async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
     ids = {c["entry_id"] for c in diag["config"]["children"]}
     assert plug.entry_id in ids
     assert diag["config"]["child_count"] == len(diag["config"]["children"])
-    # Options are dumped verbatim — that is the point of the file.
+    # Options are dumped verbatim - that is the point of the file.
     hub_opts = diag["config"]["hub"]["options"]
     assert hub_opts["main_breaker_rating"] == mock_hub_entry.options["main_breaker_rating"]
     # Live result and carried state came along; the live object did not.
@@ -2557,8 +2557,8 @@ async def test_diagnostics_from_a_child_still_dumps_the_hub(
 async def test_slider_backed_config_fields_say_the_slider_owns_them(hass: HomeAssistant):
     """Every config field that merely SEEDS a runtime slider says so.
 
-    Editing one of these after setup changes nothing the device does — the
-    restored slider keeps its value — which cost a live site its intended
+    Editing one of these after setup changes nothing the device does - the
+    restored slider keeps its value - which cost a live site its intended
     boiler setpoints (options said 30/80, the sliders held 20/75, 2026-09-07).
     Pinned across all three translation files so a new field cannot be added
     without the note, or the note lost in one language.

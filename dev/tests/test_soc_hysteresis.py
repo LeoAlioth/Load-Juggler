@@ -1,4 +1,4 @@
-"""The battery SOC hysteresis latch — engine/hub_calculation._apply_soc_hysteresis.
+"""The battery SOC hysteresis latch - engine/hub_calculation._apply_soc_hysteresis.
 
 The latch widens a threshold once it has been crossed so the SOC-gated modes
 cannot chatter around it. Its answer has to agree with the gates that consume
@@ -39,7 +39,7 @@ def _gate_is_on(soc, floor):
 
 def test_sitting_exactly_on_the_floor_arms_the_band():
     """The case that chattered: at the floor the gate sheds, so the latch has
-    to agree and widen — otherwise the load switches off at the floor, the
+    to agree and widen - otherwise the load switches off at the floor, the
     battery recovers one percent, and it switches straight back on."""
     runtime = {"_soc_above_min": True}
     floor, above_min = _apply(runtime, FLOOR)
@@ -50,7 +50,7 @@ def test_sitting_exactly_on_the_floor_arms_the_band():
 
 
 def test_the_band_holds_the_load_off_through_the_recovery():
-    """One percent back is not enough — that was the whole 1% oscillation."""
+    """One percent back is not enough - that was the whole 1% oscillation."""
     runtime = {"_soc_above_min": True}
     _apply(runtime, FLOOR)
 
@@ -72,7 +72,7 @@ def test_a_full_hysteresis_above_the_floor_resumes():
 
 
 def test_above_the_floor_nothing_is_widened():
-    """The band is not a permanent offset — it applies only while shed."""
+    """The band is not a permanent offset - it applies only while shed."""
     runtime = {"_soc_above_min": True}
     floor, above_min = _apply(runtime, FLOOR + 5)
     assert above_min is True
@@ -81,7 +81,7 @@ def test_above_the_floor_nothing_is_widened():
 
 def test_one_full_cycle_spans_the_whole_band():
     """End to end: the load runs from resume down to the floor and stops, and
-    the next start needs the full band again — no 1% window anywhere in it."""
+    the next start needs the full band again - no 1% window anywhere in it."""
     runtime = {"_soc_above_min": True}
     on_at = []
     # Draining from well above the floor down through it.
@@ -177,7 +177,7 @@ def test_modulating_loads_are_untouched():
 #
 # The dwell that bounds how OFTEN a binary load may cycle. It can only ever
 # withhold a permit, never grant or hold one, so it cannot keep a load running
-# past a protective shed — which is why it needs no notion of cause at all.
+# past a protective shed - which is why it needs no notion of cause at all.
 
 from custom_components.dynamic_ocpp_evse.entities.load import (  # noqa: E402
     min_off_hold,
@@ -213,7 +213,7 @@ def test_a_load_already_running_is_untouched():
 
 
 def test_zero_disables_it():
-    """0 restores the previous behaviour exactly — permit honoured at once."""
+    """0 restores the previous behaviour exactly - permit honoured at once."""
     permit, off_since, _held = min_off_hold(16.0, 1000.0, 1000.5, 0)
     assert permit == 16.0
     assert off_since is None
@@ -234,7 +234,7 @@ def test_the_dwell_runs_from_the_shed_not_from_the_last_attempt():
 def test_the_live_case_would_have_collapsed_to_one_cycle():
     """The 2026-08-29 trace: a permit that recovered roughly every 45 s. Over a
     quarter of an hour that is ten switch-ons; with a ten-minute dwell it is
-    one — long enough for the car to finish negotiating."""
+    one - long enough for the car to finish negotiating."""
     off_since = None
     switch_ons = 0
     raw_ons = 0

@@ -44,7 +44,7 @@ def apply_smoothing(
         sensor._rate_limited_current = raw_allocated
         if mode_changed:
             _LOGGER.debug(
-                "Mode changed for %s — smoothing reset (allocated=%.1fA)",
+                "Mode changed for %s - smoothing reset (allocated=%.1fA)",
                 sensor._attr_name,
                 raw_allocated,
             )
@@ -55,7 +55,7 @@ def apply_smoothing(
         # the step is safe by construction, and crawling up would waste surplus.
         # The ramp exists to damp oscillation, not to protect anything; the
         # compliance checker's "ramping" skip tolerates the step. Every
-        # modulating load type goes through this identically — the power
+        # modulating load type goes through this identically - the power
         # station used to resume at its minimum instead, which only delayed
         # its absorption of a surplus it had already been granted.
         sensor._ema_current = raw_allocated

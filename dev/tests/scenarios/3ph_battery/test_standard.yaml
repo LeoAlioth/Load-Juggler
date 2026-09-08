@@ -55,7 +55,7 @@ scenarios:
     human_verified: false
     # KNOWN BUG, found by the physical-invariant check 2026-09-07 (dev/TODO.md):
     # _calculate_site_limit credits the inverter's output TWICE on a phase that
-    # nets to export while still carrying household load — once by netting
+    # nets to export while still carrying household load - once by netting
     # `consumption` down to 0 (so the grid pool is the whole breaker) and again
     # as the separate inverter pool. Phase A here carries 8 A of household
     # against 4.33 A/phase of solar and 6 A/phase of battery discharge, so it
