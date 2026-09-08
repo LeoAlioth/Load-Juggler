@@ -35,9 +35,13 @@ from custom_components.dynamic_ocpp_evse.const.modes import (
     resolve_operating_mode,
     behavior_for,
     BEHAVIOR_EXCESS,
+    BEHAVIOR_BINARY_EXCESS,
 )
 from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
+    DEFAULT_TANK_AWAY_TEMPERATURE,
+    TANK_MODE_FREEZE_PROTECTION,
     resolve_tank_mode_priority,
+    tank_boost_is_opportunistic,
     DEFAULT_TANK_NORMAL_TEMPERATURE,
 )
 from custom_components.dynamic_ocpp_evse.const import DEFAULT_BATTERY_SOC_FULL, DEFAULT_PLUG_MAX_CURRENT
@@ -361,7 +365,7 @@ def load_scenarios(yaml_file):
     return data['scenarios']
 
 
-def build_site_from_scenario(scenario):
+def build_site_from_scenario(scenario, excess_on=False):
     """Build SiteContext from scenario dict.
 
     YAML values represent physical reality:
@@ -371,6 +375,12 @@ def build_site_from_scenario(scenario):
 
     The simulation loop converts these to grid CT values before feeding
     to the engine, matching the production data flow.
+
+    ``excess_on`` is LAST cycle's Excess verdict, and a tank needs it: the
+    control layer writes the tank's setpoint from that verdict, and the builder
+    reads the resulting label back one cycle stale to decide whether the tank
+    is boosting. Without it every tank here was must-run and the boost path —
+    the whole reason a tank competes as an Excess load — was unreachable.
     """
     site_data = scenario['site']
     voltage = site_data.get('voltage', 230)
@@ -478,14 +488,42 @@ def build_site_from_scenario(scenario):
         # is bumped to the Normal urgency tier (behavior unchanged). Mirrors the
         # production builder in engine/hub_calculation.py.
         mode_priority = _mode.priority
+        mode_behavior = behavior_for(_mode)
         if device_type == "hot_water_tank":
+            # The setpoint label, as control/hot_water_tank.py resolves it:
+            # Freeze Protection and Normal both ride surplus up to the boost
+            # setpoint, and every other mode keeps its own.
+            current_temp = load_data.get("current_temperature")
+            normal_temp = load_data.get(
+                "normal_temperature", DEFAULT_TANK_NORMAL_TEMPERATURE
+            )
+            away_temp = load_data.get("away_temperature", DEFAULT_TANK_AWAY_TEMPERATURE)
+            setpoint_label = None
+            if _mode.key in (TANK_MODE_FREEZE_PROTECTION.key, "Normal"):
+                setpoint_label = "boost" if excess_on else (
+                    "away" if _mode.key == TANK_MODE_FREEZE_PROTECTION.key else "normal"
+                )
             mode_priority, _ = resolve_tank_mode_priority(
                 _mode.key,
                 _mode.priority,
-                load_data.get("current_temperature"),
-                load_data.get("normal_temperature", DEFAULT_TANK_NORMAL_TEMPERATURE),
+                current_temp,
+                normal_temp,
                 load_data.get("prioritize_below_normal", True),
+                setpoint_label,
             )
+            # ...and the behavior from the same label, mirroring
+            # engine/load_builders.py: a tank heating past what its mode asks
+            # for, on energy the site would otherwise dump, is opportunistic
+            # and competes as an Excess load. Below its mode's own floor it
+            # stays unconditional — that guard is what keeps frost protection
+            # from ever being gated.
+            if tank_boost_is_opportunistic(
+                _mode.key,
+                setpoint_label,
+                current_temp,
+                away_temp if _mode.key == TANK_MODE_FREEZE_PROTECTION.key else normal_temp,
+            ):
+                mode_behavior = BEHAVIOR_BINARY_EXCESS
 
         load = LoadContext(
             load_id=f"load_{idx}",
@@ -496,7 +534,7 @@ def build_site_from_scenario(scenario):
             priority=load_data.get("priority", idx),
             device_type=device_type,
             operating_mode=_mode.key,
-            mode_behavior=behavior_for(_mode),
+            mode_behavior=mode_behavior,
             mode_priority=mode_priority,
             l1_phase=load_data.get("l1_phase", "A"),
             l2_phase=load_data.get("l2_phase", "B"),
@@ -699,7 +737,9 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
 
     for cycle in range(TOTAL_CYCLES):
         # 1. Build site from YAML (household consumption, solar production, battery)
-        site = build_site_from_scenario(scenario)
+        # Last cycle's verdict, so a tank's boost setpoint (and therefore its
+        # behavior) is resolved the way the control layer does it.
+        site = build_site_from_scenario(scenario, excess_on=excess_on)
 
         # 2. Scale household + solar for cold-start ramp-up (cycles 0-4)
         if cycle < RAMP_UP_CYCLES:

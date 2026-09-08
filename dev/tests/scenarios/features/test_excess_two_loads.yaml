@@ -1,0 +1,112 @@
+# Two Excess loads on one site — do they start in rank order?
+#
+# The SE17K case (2026-09-07). A hot water tank boosting on surplus and a
+# portable power station, both competing in the Excess urgency tier, started
+# TOGETHER on a 74 W margin and committed 4.1 kW three times in fifteen
+# minutes under steady production. The rule they now obey: the verdict starts
+# the FIRST Excess consumer, and a lower-ranked one starts only while the
+# surplus left after the higher-ranked load's CLAIM is still positive.
+#
+# The tank is what makes these scenarios worth having. It is in Normal mode —
+# heating to 45 °C from any source — but with the verdict on, the control layer
+# raises its setpoint to boost and `tank_boost_is_opportunistic` turns it into
+# a BINARY_EXCESS load competing at the Excess tier. Until this file the
+# harness never resolved that label at all, so a tank was always must-run and
+# this whole path was unreachable.
+#
+# Site: 11 kW export limit less a 500 W trigger margin → a 10 500 W threshold,
+# 900 W of household spread over three phases, no battery. Margin therefore
+# works out to (solar − 900) − 10 500, which is what each case's solar picks.
+
+scenarios:
+
+  - name: "excess-two-loads-thin-surplus-only-the-tank-starts"
+    description: >
+      Solar 11 600 W → reconstruction 10 700 W → a margin of +200 W. The tank
+      outranks the station and claims its whole 2 kW element (a claim is the
+      permit, not the not-yet-measured draw), so what is left for the station
+      is 200 − 2000 < 0 and it must wait. This is the SE17K failure exactly:
+      before the rank ledger both engaged here and committed 4.1 kW on 200 W.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      distribution_mode: priority
+      solar_production: 11600
+      solar_production_direct: true
+      phase_a_consumption: 1.3
+      phase_b_consumption: 1.3
+      phase_c_consumption: 1.3
+      excess_export_threshold: 10500
+    loads:
+      - entity_id: "tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Normal"
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        current_temperature: 45
+        normal_temperature: 45
+        boost_temperature: 65
+        l1_phase: "B"
+      - entity_id: "station"
+        device_type: "power_station"
+        operating_mode: "Excess"
+        min_current: 0.87
+        max_current: 10.43
+        phases: 1
+        priority: 2
+        l1_phase: "C"
+    expected:
+      tank:
+        allocated: 8.7      # 2000 W / 230 V — the whole element
+      station:
+        allocated: 0.0      # nothing left after the tank's claim
+
+  - name: "excess-two-loads-wide-surplus-both-run-and-the-station-modulates"
+    description: >
+      Solar 16 000 W → reconstruction 15 100 W → a margin of +4600 W. The tank
+      takes its 2 kW and 2 600 W survives its claim, so the station starts too
+      — and is SIZED by what is left rather than handed its rating. Phase C's
+      own third of the net pool is what bounds it here, which is why it settles
+      below its 2 400 W maximum.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      distribution_mode: priority
+      solar_production: 16000
+      solar_production_direct: true
+      phase_a_consumption: 1.3
+      phase_b_consumption: 1.3
+      phase_c_consumption: 1.3
+      excess_export_threshold: 10500
+    loads:
+      - entity_id: "tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Normal"
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        current_temperature: 45
+        normal_temperature: 45
+        boost_temperature: 65
+        l1_phase: "B"
+      - entity_id: "station"
+        device_type: "power_station"
+        operating_mode: "Excess"
+        min_current: 0.87
+        max_current: 10.43
+        phases: 1
+        priority: 2
+        l1_phase: "C"
+    expected:
+      tank:
+        allocated: 8.7
+      station:
+        # 6.7 A = 1 541 W: sized by the surplus, NOT its 10.43 A rating. Under
+        # the old permit branch a station was handed pool headroom capped by
+        # its hardware, so this read 10.4 A at every surplus down to zero — it
+        # never modulated, which is what "both Excess loads running flat out"
+        # meant on the live site.
+        allocated: 6.7
