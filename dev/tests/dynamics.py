@@ -281,6 +281,24 @@ class Sim:
 
 # -- drivers --------------------------------------------------------------
 def sine(mean_w=14700.0, amplitude_w=1100.0, period_s=150.0, periods=2, dt=1.0):
+    """A slow swell in production.
+
+    Refuses to run when ``dt`` cannot resolve ``period_s``, because the metrics
+    do not fail loudly when it cannot - they just get quieter. The default
+    150 s period sampled every 60 s is five points per cycle, and on
+    2026-09-08 that reported ZERO curtailment at a 60 s refresh, which read as
+    the best result in the table; measured against a period it could actually
+    resolve, the same cadence curtails 109 W. Twelve samples per cycle is not a
+    rigorous bound, just far enough from Nyquist that a peak cannot hide
+    between two samples.
+    """
+    per_cycle = period_s / dt
+    if per_cycle < 12:
+        raise ValueError(
+            f"{per_cycle:.0f} samples per cycle: a {period_s:.0f} s period at a "
+            f"{dt:.0f} s cadence is aliased, and the metrics will flatter it. "
+            f"Raise period_s to at least {dt * 12:.0f} s."
+        )
     for i in range(int(period_s * periods / dt)):
         yield mean_w + amplitude_w * math.sin(2 * math.pi * (i * dt) / period_s)
 
