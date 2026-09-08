@@ -178,6 +178,9 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # the tz-aware values written later is a comparison landmine.
         self._last_update = None
         self._pause_started_at = None
+        # Has this load ever held a RUNNABLE permit in this process? The charge
+        # pause may only arm once it has — see the pause branch for why.
+        self._had_runnable_permit = False
         self._grace_started_at = None
         # Binary-load grace state: the last permit the engine actually granted
         # (what the hold re-offers) and a latch so a spent grace window cannot
@@ -728,11 +731,28 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 )
                 * 60
             )
-            if self._pause_started_at is None:
+            # The pause bounds cycle FREQUENCY (see the minimum-off-time
+            # comment below for why that is the quantity that matters), and a
+            # cycle needs a previous ON: a load that has never held a runnable
+            # permit in this process cannot be cycling. Arming on the cold
+            # start read absence of information as a shed — after a restart the
+            # engine's permit is 0 only because the CT EMAs have no history and
+            # the hub has not published a cycle yet — and then withheld the
+            # permit for the whole dwell once it arrived. Measured on the rig
+            # (2026-09-08): a power station sat commanded-off through 3 minutes
+            # of 1.1 kW surplus after every restart, and an options change
+            # reloads the entry, so it was not a rare event. Withholding a
+            # permit is only meaningful once there was one to withhold.
+            if self._pause_started_at is None and self._had_runnable_permit:
                 self._pause_started_at = time.monotonic()
                 _LOGGER.debug("Charge pause started for %s", self._attr_name)
             limit = 0
         else:
+            # Reaching here means the permit is runnable, which is what lets a
+            # later collapse arm the pause at all (see above). Set before the
+            # dwell test, so a load that is currently serving one still counts
+            # as having held a permit.
+            self._had_runnable_permit = True
             pause_duration_s = (
                 get_entry_value(
                     self.config_entry,

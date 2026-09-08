@@ -913,6 +913,12 @@ async def test_charge_pause_starts_when_below_minimum(
     Uses Solar mode with grid importing (no export surplus). The charger
     is active (connector_status=Charging) but gets 0A because there is
     no solar power available — triggering the pause logic.
+
+    The prior runnable permit is seeded deliberately. This test used to run a
+    single cycle on a fresh sensor, which is the COLD START, not a shed — and
+    that is the case the pause must now leave alone (see
+    test_a_cold_start_does_not_arm_the_charge_pause). What is under test here
+    is unchanged: a load that was running and loses its permit pauses.
     """
     _set_ha_states(hass, hub_entry)
     # Override to Solar Only mode — with grid importing there is no solar surplus
@@ -921,6 +927,7 @@ async def test_charge_pause_starts_when_below_minimum(
     sensor = LoadJugglerDeviceSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
+    sensor._had_runnable_permit = True
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         await _run_site_cycle(hass, hub_entry, sensor)
@@ -930,6 +937,87 @@ async def test_charge_pause_starts_when_below_minimum(
         "Pause should start when allocated current (0) < min_current (6)"
     )
     assert sensor.extra_state_attributes["pause_active"] is True
+
+
+async def test_a_cold_start_does_not_arm_the_charge_pause(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """A permit of 0 on the first cycle is missing information, not a shed.
+
+    After a restart the engine's permit is 0 because the CT EMAs have no
+    history and the hub has not published a cycle yet. Arming the pause on it
+    withheld the permit for the whole dwell once it did arrive — on the rig a
+    power station sat commanded-off through 3 minutes of 1.1 kW surplus after
+    every restart, and an options change reloads the entry.
+    """
+    _set_ha_states(hass, hub_entry)
+    hass.data[DOMAIN]["loads"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
+
+    sensor = LoadJugglerDeviceSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
+    )
+    assert sensor._had_runnable_permit is False, "fresh sensor, nothing granted yet"
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await _run_site_cycle(hass, hub_entry, sensor)
+
+    assert sensor._pause_started_at is None, (
+        "A load that has never held a permit cannot be cycling, so there is "
+        "nothing for the pause to bound"
+    )
+    assert sensor.extra_state_attributes["pause_active"] is False
+    # The command is still 0 — that comes from the permit being below the
+    # minimum, not from the pause. Only RECOVERY was ever at stake.
+    assert sensor._available_current < 6.0
+
+
+async def test_a_permit_after_a_cold_start_is_not_withheld(
+    hass,
+    hub_entry,
+    charger_entry,
+    setup_domain_data,
+):
+    """The whole point of the guard: recovery is immediate, not after a dwell.
+
+    Cold start with no surplus, then surplus arrives. Without the guard the
+    first cycle armed a 3-minute dwell and this second cycle still commanded 0.
+    """
+    _set_ha_states(hass, hub_entry)
+    hass.data[DOMAIN]["loads"][charger_entry.entry_id]["operating_mode"] = "Solar Only"
+
+    sensor = LoadJugglerDeviceSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
+    )
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await _run_site_cycle(hass, hub_entry, sensor)
+    assert sensor._pause_started_at is None
+
+    # Surplus arrives: back to the default mode, which the rig's states grant.
+    hass.data[DOMAIN]["loads"][charger_entry.entry_id]["operating_mode"] = "Standard"
+    # The per-load update_frequency gate RETURNS before the limit and pause
+    # block, so a cycle this soon after the last send would skip the decision
+    # entirely and prove nothing. Backdating the last send is what a real site
+    # gets for free by waiting out its own update frequency.
+    sensor._last_command_time -= 10_000
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await _run_site_cycle(hass, hub_entry, sensor)
+
+    # Asserted on the DECISION rather than the OCPP call: the per-load
+    # update_frequency gate suppresses a send this soon after the last one, so
+    # back-to-back cycles dispatch nothing and the call list would be empty
+    # whatever the pause did. No armed pause plus a runnable permit is exactly
+    # what makes the limit branch return the permit (`limit =
+    # round(self._available_current, 1)`), so this pins the same thing.
+    assert sensor._pause_started_at is None, (
+        "no dwell may stand between the load and a permit it never lost"
+    )
+    assert sensor.extra_state_attributes["pause_active"] is False
+    assert sensor._available_current >= 6.0, sensor._available_current
+    assert sensor._had_runnable_permit is True
 
 
 async def test_charge_pause_holds_at_zero(
@@ -2607,6 +2695,10 @@ async def test_charge_pause_cancelled_on_charging_mode_change(
     sensor = LoadJugglerDeviceSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
+    # Seeded: these tests are about a load that HAD a permit and lost it.
+    # Without it they would be exercising the cold start, which no longer
+    # arms the pause (test_a_cold_start_does_not_arm_the_charge_pause).
+    sensor._had_runnable_permit = True
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         # First update: Solar Only mode, no surplus → pause starts
@@ -2644,6 +2736,10 @@ async def test_charge_pause_cancelled_on_distribution_mode_change(
     sensor = LoadJugglerDeviceSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
+    # Seeded: these tests are about a load that HAD a permit and lost it.
+    # Without it they would be exercising the cold start, which no longer
+    # arms the pause (test_a_cold_start_does_not_arm_the_charge_pause).
+    sensor._had_runnable_permit = True
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         # First update: Solar Only mode → pause starts
@@ -2677,6 +2773,10 @@ async def test_charge_pause_remaining_seconds_attribute(
     sensor = LoadJugglerDeviceSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
+    # Seeded: these tests are about a load that HAD a permit and lost it.
+    # Without it they would be exercising the cold start, which no longer
+    # arms the pause (test_a_cold_start_does_not_arm_the_charge_pause).
+    sensor._had_runnable_permit = True
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         await _run_site_cycle(hass, hub_entry, sensor)
