@@ -255,11 +255,28 @@ error** (surplus the load failed to absorb) and **register writes per minute**
 (churn inflicted on the device). Measurements on 2026-09-08, solar 15 kW ± 2.5 kW
 over 150 s:
 
-| rate limiting | mean error | peak | writes/min |
-|---|---|---|---|
-| constant slew (before) | 719 W | 2 055 W | 3.2 |
-| adaptive, 0.15/s | **596 W** | 2 009 W | 3.6 |
-| adaptive, 0.40/s | 668 W | 2 147 W | 2.8 |
+| site refresh | rate limiting | EMA | mean error | writes/min |
+|---|---|---|---|---|
+| 1 s | constant slew | per-cycle, tau 3.3 s | 719 W | 3.2 |
+| 1 s | adaptive 0.15/s | per-cycle, tau 3.3 s | 596 W | 3.6 |
+| 1 s | adaptive 0.40/s | per-cycle, tau 3.3 s | 668 W | 2.8 |
+| 10 s | adaptive 0.15/s | per-cycle, **tau 33 s** | 1 164 W | 3.4 |
+| 10 s | adaptive 0.15/s | time-based, tau 5.6 s | 991 W | 3.8 |
+| 1 s | adaptive 0.15/s | time-based, tau 5.6 s | 766 W | 1.2 |
+
+Read that table carefully, because it does not say "each change made things
+better". The adaptive rate helped (719 -> 596). Making the EMA time-based
+helped at a SLOW cadence (1 164 -> 991) and cost at a fast one (596 -> 766,
+for a third of the register writes) — because at a 1 s refresh the old
+per-call weight was accidentally filtering *less* than the 2 s default
+intends, so the new number is the consistent one and the old fast behaviour
+was the anomaly.
+
+Note also how much of the remaining error is the METRIC rather than the loop:
+`ideal` is clamped at 0 whenever the surplus falls below the station's 200 W
+minimum, so a permit correctly decaying through 500 W is scored as 500 W of
+error. Do not chase this number below ~600 W without first making the metric
+honest about that.
 
 With the constant slew the permit moved at exactly `RAMP_UP_RATE` /
 `RAMP_DOWN_RATE` the whole time — saturated, so it could not keep up. The

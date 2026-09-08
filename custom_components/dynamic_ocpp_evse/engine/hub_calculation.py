@@ -79,6 +79,7 @@ from .readers import (
     _read_grid_phases,
     _resolve_grid_phases,
     _smooth,
+    set_ema_interval,
     _smooth_directional,
     _track_grid_stale,
 )
@@ -836,6 +837,16 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # --- Input EMA smoothing (grid CT, solar, battery power) ---
     hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
     ema_inputs = hub_runtime.setdefault("_ema_inputs", {})
+    # Every _smooth call this cycle uses a weight derived from how often this
+    # site actually refreshes, so the filter's behaviour is fixed in SECONDS
+    # rather than in cycles. Without this a site polled slowly was silently
+    # filtered far harder than one polled quickly — see EMA_TAU_S.
+    set_ema_interval(
+        ema_inputs,
+        get_entry_value(
+            hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
+        ),
+    )
 
     # --- Resolve unreadable grid CTs (the only place allowed to substitute) ---
     # ``grid_assumed_phases`` marks the phases standing on the main-breaker

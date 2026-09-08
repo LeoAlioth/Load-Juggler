@@ -91,6 +91,24 @@ RAMP_APPROACH_MAX = 0.9     # never close more than this much of it in one cycle
 
 # EMA smoothing — exponential moving average on engine output before rate limiting
 EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothing)
+
+# The EMA's time constant, in SECONDS. ``EMA_ALPHA`` above is a weight per
+# CALL, so on its own the filter's speed is a hidden function of how often the
+# site refreshes: tau = interval / alpha. At the 2 s default that is ~6.7 s,
+# but a site polled every 60 s to be kind to its inverter's Modbus silently
+# gets tau ~200 s — longer than a cloud takes to pass, so every control loop
+# on it is detuned by a setting that says nothing about filtering.
+#
+# Measured on the rig (2026-09-08) by changing NOTHING but the refresh: mean
+# tracking error on a moving surplus went 596 W at 1 s to 1 164 W at 10 s.
+#
+# Chosen so that at DEFAULT_SITE_UPDATE_FREQUENCY (2 s) the effective weight is
+# exactly EMA_ALPHA, leaving default-configured sites bit-identical:
+#     tau = -2 / ln(1 - 0.3) = 5.6 s
+# A first-order low-pass has a single REAL pole, so moving its time constant
+# can never make that pole complex — no value of tau can introduce oscillation.
+# That is what makes this safe to speed up, unlike an integral term.
+EMA_TAU_S = 5.6
 # The battery charge controller reads export and battery power through its OWN
 # smoothers, which are DIRECTIONAL (engine/readers._smooth_directional): a move
 # toward a limit — deeper export, heavier import, or the mirror for battery

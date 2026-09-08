@@ -59,6 +59,7 @@ from ..const import (
     DOMAIN,
     CTRL_FAST_ALPHA,
     EMA_ALPHA,
+    EMA_TAU_S,
     INPUT_STALE_TIMEOUT,
     INVERTER_RT_ENFORCED_CHARGE_W,
 )
@@ -78,7 +79,35 @@ _PHASE_LABELS = ("A", "B", "C")
 # Sentinel: sensor is configured but currently unavailable/unknown
 _UNAVAILABLE = object()
 
-def _smooth(ema_dict: dict, key: str, raw, alpha: float = EMA_ALPHA):
+# Where the per-cycle weight for this site is stashed, so every _smooth call
+# picks it up without threading the refresh interval through a dozen
+# signatures. Set once per cycle by set_ema_interval(); absent it falls back to
+# the historic fixed weight.
+_ALPHA_KEY = "_ema_alpha"
+
+
+def ema_alpha_for(dt: float) -> float:
+    """The EMA weight that gives EMA_TAU_S of smoothing at a ``dt`` s cadence.
+
+    ``1 - exp(-dt/tau)`` is the exact discrete equivalent of a continuous
+    first-order lag, so the filter's behaviour in SECONDS is the same however
+    often it is sampled. Clamped to (0, 1]: a dt of 0 or less would divide by
+    nothing, and a very slow cadence tends to 1 (no smoothing left to do,
+    which is correct — there is nothing between the samples to smooth).
+    """
+    if not dt or dt <= 0:
+        return EMA_ALPHA
+    return min(1.0, max(1e-3, 1.0 - math.exp(-float(dt) / EMA_TAU_S)))
+
+
+def set_ema_interval(ema_dict: dict, dt: float) -> float:
+    """Record this site's refresh cadence for the cycle. Returns the weight."""
+    alpha = ema_alpha_for(dt)
+    ema_dict[_ALPHA_KEY] = alpha
+    return alpha
+
+
+def _smooth(ema_dict: dict, key: str, raw, alpha: float | None = None):
     """Apply EMA smoothing to a sensor reading. Returns smoothed value.
 
     State is stored in ema_dict[key] between calls.
@@ -96,6 +125,8 @@ def _smooth(ema_dict: dict, key: str, raw, alpha: float = EMA_ALPHA):
         return ema_dict.get(key)
     if not math.isfinite(val):
         return ema_dict.get(key)
+    if alpha is None:
+        alpha = ema_dict.get(_ALPHA_KEY, EMA_ALPHA)
     prev = ema_dict.get(key)
     if prev is None:
         ema_dict[key] = val
@@ -106,7 +137,7 @@ def _smooth(ema_dict: dict, key: str, raw, alpha: float = EMA_ALPHA):
 
 
 def _smooth_directional(ema_dict: dict, key: str, raw, fast_away: bool,
-                        alpha: float = EMA_ALPHA, fast_alpha: float = CTRL_FAST_ALPHA):
+                        alpha: float | None = None, fast_alpha: float | None = None):
     """An EMA whose weight depends on which way the reading is moving.
 
     ``fast_away=True``: a move AWAY from zero — deeper export, heavier import,
@@ -122,8 +153,20 @@ def _smooth_directional(ema_dict: dict, key: str, raw, fast_away: bool,
     unavailable reading holds the last value, the first reading seeds — which
     is why this only chooses the weight and delegates.
 
+    Both weights are time-based like ``_smooth``'s, and the FAST one keeps its
+    ratio to the slow one rather than being a fixed number — otherwise the
+    matched pair above stops being matched as soon as a site changes its
+    refresh cadence, and the charge controller's feedback law reads a
+    transition twice on one side and once on the other.
+
     Pure function — unit-testable.
     """
+    if alpha is None:
+        alpha = ema_dict.get(_ALPHA_KEY, EMA_ALPHA)
+    if fast_alpha is None:
+        # The historic pair was CTRL_FAST_ALPHA against EMA_ALPHA; hold that
+        # ratio against whatever the slow weight now is, capped at 1.
+        fast_alpha = min(1.0, alpha * (CTRL_FAST_ALPHA / EMA_ALPHA))
     prev = ema_dict.get(key)
     if prev is None or raw is None or raw is _UNAVAILABLE:
         return _smooth(ema_dict, key, raw, alpha)

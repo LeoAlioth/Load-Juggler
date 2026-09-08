@@ -994,6 +994,85 @@ def test_directional_keeps_the_smoothing_contract():
     # Its own key: the symmetric grid_0 state is untouched by the ctrl view.
     assert "grid_0" not in ema
 
+def test_the_smoothing_time_constant_does_not_depend_on_the_refresh_rate():
+    """A filter's speed must be fixed in SECONDS, not in cycles.
+
+    ``EMA_ALPHA`` is a weight per CALL, so on its own tau = interval / alpha
+    and the filter silently retunes whenever someone changes how often the
+    site refreshes. Measured on the rig (2026-09-08) by changing nothing but
+    the refresh: mean tracking error on a moving surplus went 596 W at a 1 s
+    cadence to 1 164 W at 10 s.
+
+    ``ema_alpha_for`` fixes the behaviour in seconds instead. Asserted as a
+    PROPERTY — feed the same physical ramp at three cadences and the smoothed
+    value after a given number of SECONDS must agree — rather than against a
+    table of weights, which would just restate the formula.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.readers import (
+        ema_alpha_for, set_ema_interval, _smooth,
+    )
+
+    def ramp_for(seconds, dt):
+        """Feed a 0 -> 10 step through the filter for `seconds` at `dt` cadence."""
+        ema = {}
+        set_ema_interval(ema, dt)
+        _smooth(ema, "x", 0.0)               # seed
+        steps = int(round(seconds / dt))
+        for _ in range(steps):
+            out = _smooth(ema, "x", 10.0)
+        return out
+
+    settled = [ramp_for(10.0, dt) for dt in (0.5, 1.0, 2.0)]
+    assert max(settled) - min(settled) < 0.3, settled
+    # And it is genuinely most of the way there after ~2 time constants.
+    assert 8.0 < settled[0] < 9.9, settled
+
+    # The historic weight is preserved at the default cadence, so a
+    # default-configured site behaves exactly as it always did.
+    assert abs(ema_alpha_for(2) - 0.3) < 0.005, ema_alpha_for(2)
+
+
+def test_a_slow_refresh_no_longer_means_a_slow_filter():
+    """The case that motivated it. At a 60 s cadence the old per-call weight
+    gave tau = 60/0.3 = 200 s — longer than a cloud takes to pass, so the loop
+    could never track. Time-based, one sample at 60 s covers many time
+    constants and is nearly unfiltered, which is correct: there is nothing
+    between samples that far apart left to smooth."""
+    from custom_components.dynamic_ocpp_evse.engine.readers import ema_alpha_for
+
+    assert ema_alpha_for(60) > 0.99, ema_alpha_for(60)
+    assert ema_alpha_for(10) > 0.8, ema_alpha_for(10)
+    # A cadence FASTER than the time constant smooths more, not less.
+    assert ema_alpha_for(1) < 0.3, ema_alpha_for(1)
+    # Degenerate cadences fall back rather than dividing by nothing.
+    assert ema_alpha_for(0) == 0.3
+    assert ema_alpha_for(-5) == 0.3
+
+
+def test_the_directional_pair_keeps_its_ratio_at_any_refresh_rate():
+    """``_smooth_directional``'s fast weight was a fixed number against a
+    fixed slow one. Once the slow weight became time-based, a fixed fast one
+    would break the matched pair the charge controller depends on — export
+    fast and battery slow reads one transition twice. The ratio is what has to
+    hold, so it is derived rather than declared."""
+    from custom_components.dynamic_ocpp_evse.engine.readers import (
+        _smooth_directional, ema_alpha_for, set_ema_interval,
+    )
+    from custom_components.dynamic_ocpp_evse.const import CTRL_FAST_ALPHA, EMA_ALPHA
+
+    for dt in (1, 2, 10):
+        ema = {}
+        set_ema_interval(ema, dt)
+        _smooth_directional(ema, "g", -4.0, fast_away=True)   # seed
+        # A move further from zero takes the fast weight.
+        out = _smooth_directional(ema, "g", -8.0, fast_away=True)
+        expected_fast = min(1.0, ema_alpha_for(dt) * (CTRL_FAST_ALPHA / EMA_ALPHA))
+        assert abs(out - (expected_fast * -8.0 + (1 - expected_fast) * -4.0)) < 0.02, (
+            dt, out
+        )
+        assert expected_fast >= ema_alpha_for(dt), dt
+
+
 if __name__ == "__main__":
     # Deliberately pytest-free: the pure tier has to run on the developer's
     # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
