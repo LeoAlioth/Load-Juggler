@@ -1288,9 +1288,7 @@ def _excess_phase_is_importing(load: LoadContext, site: SiteContext) -> bool:
     return False
 
 
-def _excess_permits(
-    load: LoadContext, site: SiteContext, pool: float, running: bool
-) -> bool:
+def _excess_permits(load: LoadContext, site: SiteContext, pool: float) -> bool:
     """May this Excess load run? ONE rule for both Excess behaviors.
 
     They used to differ by a watt, and that watt inverted the rank order at the
@@ -1299,11 +1297,19 @@ def _excess_permits(
     modulating load while the higher-ranked binary one sat out — and a single
     watt of surplus swapped them back.
 
-    A load not yet running is refused on a phase that is already buying: that
-    is the one thing an Excess load exists to avoid. One already running is
-    not, because a phase turning to import is a dip, and cutting a load on a
-    dip is the chattering the verdict's release band exists to prevent — the
-    band then decides, through the hysteresis in ``_excess_verdict``.
+An Excess load is refused on a phase that is BUYING — starting or already
+    running. Buying power is the one thing it exists to avoid, and a phase that
+    has turned around is not a momentary dip: it stays turned around until the
+    household on it changes.
+
+    The running carve-out that used to sit here was too generous. A tank that
+    started while its phase exported kept drawing 2 kW from the grid
+    indefinitely once the household on that phase grew past the inverter's
+    share of it (rig, 2026-09-08: phase B importing 18.8 A with the tank
+    happily heating on it). The release band is a SITE-level idea and is
+    handled where it belongs — the hysteresis inside ``_excess_verdict`` — so
+    a running load still rides a dip in the site's margin without needing to
+    ride its own phase into import.
 
     Otherwise the SITE's verdict decides, not the phase's slice of the pool. A
     binary load's whole rating overshoots the pool by design, so an empty pool
@@ -1312,7 +1318,7 @@ def _excess_permits(
     pool of zero there is still real headroom in front of it, which is what
     that lead time is for.
     """
-    if not running and _excess_phase_is_importing(load, site):
+    if _excess_phase_is_importing(load, site):
         return False
     return pool > 0 or _excess_verdict(site)
 
@@ -1401,7 +1407,7 @@ def _source_limit(
         if excess_ahead is not None and excess_ahead <= 0:
             return 0
         pool = excess.get_available(mask) if excess_ahead is None else excess_ahead
-        if not _excess_permits(load, site, pool, _measured_draw(load) > 0):
+        if not _excess_permits(load, site, pool):
             return 0
         return load.max_current
 
@@ -1455,7 +1461,7 @@ def _source_limit(
             # load must not be handed the surplus it is about to take. In pass
             # 2 ``base`` is already this load's own reserved share of it.
             e_avail = min(e_avail, max(0.0, excess_ahead - base))
-        if not _excess_permits(load, site, e_avail, _measured_draw(load) > 0):
+        if not _excess_permits(load, site, e_avail):
             return 0
         return max(load.min_current, base + e_avail)
 

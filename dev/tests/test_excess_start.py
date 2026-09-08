@@ -525,6 +525,38 @@ def test_a_managed_load_still_claims_its_permit():
     assert tank.available_current == 0
 
 
+def test_a_running_load_is_dropped_when_its_phase_turns_to_import():
+    """The import guard applies to a RUNNING load, not just a starting one.
+
+    There used to be a carve-out: a load already drawing bypassed the test, on
+    the reasoning that a phase turning to import is a dip and cutting the load
+    would chatter. Too generous — a phase turns around because the household on
+    it grew, and it stays turned around. Found on the rig (2026-09-08): a tank
+    started while phase B exported, the household on B was raised past the
+    inverter's share of it, and the tank went on drawing 2 kW from the grid
+    indefinitely.
+
+    The release band is a SITE-level idea and lives in ``_excess_verdict``'s
+    hysteresis, so a running load still rides a dip in the site's margin
+    without having to ride its own phase into import.
+    """
+    tank = _tank(watts=2000.0, priority=1, heating=True, phase="B")
+    tank.mode_behavior = "binary_excess"
+    tank.mode_priority = 4
+    tank.excess_claim_current = tank.max_current
+    # Phase B imports while A and C export enough to keep the site over its
+    # threshold — the unbalanced shape the rig reproduced.
+    site = _site_3ph(THRESHOLD + 1400.0, loads=[tank])
+    # The PHYSICAL meter, which includes the tank's own 8.7 A on B — 3.6 A of
+    # household import plus the tank. _prepare takes the managed draw back off,
+    # leaving the household-only 3.6 A of import the guard has to see.
+    site.consumption = PhaseValues(0.0, 3.6 + 2000.0 / V, 0.0)
+    site.export_current = PhaseValues(30.0, 0.0, 27.0)
+    _prepare(site)
+    assert tank.allocated_current == 0
+    assert tank.available_current == 0
+
+
 def _site_3ph(export_w, loads=(), breaker=BREAKER, threshold=THRESHOLD):
     """The same batteryless site on three phases, exporting ``export_w`` TOTAL.
 
