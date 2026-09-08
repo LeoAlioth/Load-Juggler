@@ -32,6 +32,7 @@ from ..const import (
     BEHAVIOR_BINARY_EXCESS,
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
+    DEVICE_TYPE_POWER_STATION,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -270,12 +271,24 @@ def _set_available_current_for_loads(
     # Active loads, in distribution order.
     for load in _sort_loads(active_loads):
         mask = load.active_phases_mask
-        if load.device_type == DEVICE_TYPE_EVSE:
-            # EVSE: available_current is the signalled current.
+        if load.device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION):
+            # A MODULATING load's permit is the current it was signalled.
+            #
+            # The permit is not merely informational for these two: it is what
+            # the HA layer writes to the device (``entities/load.py`` commands
+            # on ``available_current``), and a modulating device obeys the
+            # number it is given. Handing one the pool headroom instead would
+            # discard the sizing the distribution just did — which is exactly
+            # what a power station used to get, taking the branch below and so
+            # being commanded its full rating whenever it ran at all. Measured
+            # on the SE17K pair: 2 392 W against a surplus of 0 W, and the same
+            # 2 392 W at every surplus above it. It never modulated.
             load.available_current = round(load.allocated_current, 1)
         elif mask and load.allocated_current > 0:
-            # Plug / tank the engine powered: pool headroom, capped by the
-            # device's hardware rating.
+            # A BINARY load the engine powered (plug, tank): pool headroom,
+            # capped by the device's hardware rating. Informational here — the
+            # command is on/off, so an over-generous figure costs nothing but
+            # tells the user what the phase could still give.
             cap = load.rated_current or load.max_current
             load.available_current = round(
                 max(0, min(remaining.get_available(mask), cap)), 1
@@ -1215,6 +1228,42 @@ def _inverter_covers_load(load: LoadContext, site: SiteContext) -> bool:
     return covered
 
 
+def _excess_pool_permits(pool: float, site: SiteContext, running: bool) -> bool:
+    """May an Excess load run against this much surplus on its own phases?
+
+    ONE rule for both Excess behaviors. They used to differ by a watt, and that
+    watt inverted the rank order at the threshold: the modulating behavior
+    started on the verdict, the binary one demanded ``pool > 0``, so a pool of
+    exactly 0 started the LOWER-ranked modulating load while the higher-ranked
+    binary one sat out — and a single watt of surplus swapped them back.
+
+    * **Positive** — run. The pool exists only while the verdict is on.
+    * **Zero** — run, if the verdict is on. A binary load's whole rating
+      overshoots the pool by design, so an empty pool is no more of an
+      objection at 0 W than at 1 W, and the threshold sits deliberately below
+      the export limit (by ``excess_trigger_margin``): at a pool of zero there
+      is still real headroom before anything is wasted, which is what that lead
+      time is for.
+    * **Negative** — these phases are IMPORTING, and then it depends on whether
+      the load is already drawing.
+
+      A load NOT yet running must not start: buying power is the one thing an
+      Excess load exists to avoid, and on an unbalanced site the net total can
+      be positive while this load's own phase is not
+      (``3ph_battery/test_excess.yaml`` pins that case).
+
+      One ALREADY running holds instead — that dip is exactly what the
+      verdict's hysteresis is for, and cutting the load on it is the chattering
+      the release band exists to prevent. This is the half the binary behavior
+      did not have: a running plug used to be dropped by the same ``pool > 0``
+      test that (correctly) refused to start it, so it chattered where a
+      modulating load rode the dip. Unifying gives both the band.
+    """
+    if pool < 0:
+        return running
+    return pool > 0 or _excess_verdict(site)
+
+
 def _source_limit(
     load: LoadContext,
     site: SiteContext,
@@ -1296,8 +1345,12 @@ def _source_limit(
             and _inverter_covers_load(load, site)
         ):
             return load.max_current
+        if excess_ahead is not None and excess_ahead <= 0:
+            return 0
         pool = excess.get_available(mask) if excess_ahead is None else excess_ahead
-        return load.max_current if pool > 0 else 0
+        if not _excess_pool_permits(pool, site, _measured_draw(load) > 0):
+            return 0
+        return load.max_current
 
     if behavior == BEHAVIOR_FULL_POWER:
         return load.max_current
@@ -1349,7 +1402,7 @@ def _source_limit(
             # load must not be handed the surplus it is about to take. In pass
             # 2 ``base`` is already this load's own reserved share of it.
             e_avail = min(e_avail, max(0.0, excess_ahead - base))
-        if e_avail <= 0 and not _excess_verdict(site):
+        if not _excess_pool_permits(e_avail, site, _measured_draw(load) > 0):
             return 0
         return max(load.min_current, base + e_avail)
 

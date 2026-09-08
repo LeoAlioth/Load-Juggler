@@ -322,6 +322,147 @@ def test_the_release_band_still_keeps_a_running_load_alive():
     assert _close(load.allocated_current, 0.9)
 
 
+def _station(eid="station", min_w=200.0, max_w=2400.0, priority=2,
+             phase="A", draw_w=0.0):
+    """A modulating power station — the same competitor an Excess EVSE is, but
+    commanded through ``available_current`` rather than an OCPP profile."""
+    return LoadContext(
+        load_id=eid, entity_id=eid,
+        min_current=min_w / V, max_current=max_w / V,
+        phases=1, priority=priority,
+        device_type="power_station", operating_mode="Excess",
+        mode_behavior="excess", mode_priority=4,
+        active_phases_mask=phase, l1_phase=phase, l1_current=draw_w / V,
+        rated_current=max_w / V, excess_claim_current=min_w / V,
+        connector_status="Charging",
+    )
+
+
+def test_a_station_is_permitted_what_it_was_sized_for_not_its_rating():
+    """A power station is MODULATING and its permit is what the HA layer writes
+    to the device, so the permit has to be the sizing. It used to take the
+    binary branch — pool headroom capped by the HARDWARE RATING — and so was
+    commanded its full rating whenever it ran at all.
+
+    Measured on the SE17K pair before this: 2 392 W against a surplus of 0 W,
+    and the same 2 392 W at every surplus above it. It never modulated, which
+    is exactly what the site showed — "both Excess loads running flat out,
+    still exporting 10 kW".
+
+    Asserted as rating-INDEPENDENCE rather than against a watt figure: two
+    stations differing only in their rating, on the same surplus, must be
+    permitted the same thing. Under the old branch each got its own rating,
+    which is precisely the bug.
+    """
+    small = _station(eid="small", min_w=200.0, max_w=1200.0)
+    large = _station(eid="large", min_w=200.0, max_w=4800.0)
+    for load in (small, large):
+        _prepare(_site(THRESHOLD + 600.0, loads=[load]))
+        assert load.available_current < load.max_current, load.entity_id
+    assert _close(small.available_current, large.available_current, tol=0.01)
+
+
+def test_a_station_at_a_bare_verdict_is_permitted_its_minimum():
+    """The floor, not the ceiling. At a pool of exactly 0 the verdict still
+    starts a modulating load — and it must be handed its MINIMUM, which is the
+    "or at least slow down to 200 W" the site was asked for."""
+    station = _station(min_w=200.0, max_w=2400.0)
+    _prepare(_site(THRESHOLD, loads=[station]))
+    assert _close(station.available_current, 200.0 / V, tol=0.05)
+
+
+def test_neither_modulating_device_type_is_permitted_its_rating():
+    """The two modulating types must agree on the SHAPE of the answer: a permit
+    that came from the surplus, not from the hardware.
+
+    They need not agree on the watt, and deliberately do not — an unsettled
+    EVSE reserves its whole permit against the pools while a station reserves
+    only its measured draw (``_pool_deduction``), so on the cycle a load starts
+    the station sees its own minimum still unspent. That difference is the
+    footprint premise, not this branch.
+    """
+    evse = _station(eid="a", min_w=200.0, max_w=2400.0)
+    evse.device_type = "evse"
+    station = _station(eid="b", min_w=200.0, max_w=2400.0)
+    for load in (evse, station):
+        _prepare(_site(THRESHOLD + 600.0, loads=[load]))
+        assert 0 < load.available_current < load.max_current, load.device_type
+
+
+# ---------------------------------------------------------------------------
+# One start edge for both Excess behaviours
+# ---------------------------------------------------------------------------
+
+def test_a_binary_load_starts_at_a_bare_verdict_like_a_modulating_one():
+    """The two behaviours used to differ by a watt, and that watt inverted the
+    rank order: at a pool of exactly 0 the modulating behaviour started on the
+    verdict while the binary one demanded ``pool > 0``, so the LOWER-ranked
+    modulating load ran and the higher-ranked binary one sat out.
+
+    The threshold sits below the export limit by the trigger margin, so a pool
+    of zero still has real headroom in front of it — that is what the lead time
+    is for.
+    """
+    tank = _tank(watts=2000.0, priority=1, heating=False)
+    tank.mode_behavior = "binary_excess"
+    tank.mode_priority = 4
+    tank.excess_claim_current = tank.max_current
+    _prepare(_site(THRESHOLD, loads=[tank]))
+    # The PERMIT: a load starting this cycle is not drawing yet, and
+    # allocated_current is its measured footprint (step 7), so it reads 0.
+    assert _close(tank.available_current, 2000.0 / V)
+
+
+def test_the_higher_ranked_binary_load_wins_at_the_threshold():
+    """The inversion itself, pinned: the boosting tank outranks the station, so
+    at a pool of exactly 0 the TANK runs and the station yields — the same
+    order it has at every surplus above zero."""
+    tank = _tank(watts=2000.0, priority=1, heating=False, phase="A")
+    tank.mode_behavior = "binary_excess"
+    tank.mode_priority = 4
+    tank.excess_claim_current = tank.max_current
+    station = _station(eid="station", priority=2, phase="A")
+    _prepare(_site(THRESHOLD, loads=[tank, station]))
+    assert _close(tank.available_current, 2000.0 / V)
+    assert station.available_current == 0
+
+
+def test_neither_behaviour_starts_on_a_phase_that_is_importing():
+    """The other half of the one rule. A negative pool means these phases are
+    BUYING, which is the one thing an Excess load exists to avoid — so a load
+    that is not already drawing must not start, whatever the site-wide verdict
+    says. Both behaviours, identically."""
+    tank = _tank(watts=2000.0, priority=1, heating=False)
+    tank.mode_behavior = "binary_excess"
+    tank.mode_priority = 4
+    station = _station(eid="station", priority=2, draw_w=0.0)
+    for load in (tank, station):
+        # 300 W below the threshold, and the release band is closed, so the
+        # verdict is off and the pool is negative.
+        site = _site(THRESHOLD - 300.0, loads=[load])
+        _prepare(site)
+        assert load.allocated_current == 0, load.mode_behavior
+        assert load.available_current == 0, load.mode_behavior
+
+
+def test_a_running_binary_load_rides_the_release_band_too():
+    """The half the binary behaviour did not have. A running load holds through
+    a dip below the threshold — that is what the verdict's hysteresis is for —
+    where the old ``pool > 0`` test dropped it, so a plug chattered on the same
+    dip a modulating load rode out.
+
+    This is the flapping the SE17K site showed: on and off three times in
+    fifteen minutes under steady production.
+    """
+    tank = _tank(watts=2000.0, priority=1, heating=True)
+    tank.mode_behavior = "binary_excess"
+    tank.mode_priority = 4
+    site = _site(THRESHOLD - 200.0 - 2000.0, loads=[tank])
+    site.excess_hysteresis = 500.0
+    _prepare(site)
+    assert _close(tank.allocated_current, 2000.0 / V)
+
+
 def _site_3ph(export_w, loads=(), breaker=BREAKER, threshold=THRESHOLD):
     """The same batteryless site on three phases, exporting ``export_w`` TOTAL.
 
