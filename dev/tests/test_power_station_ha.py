@@ -491,3 +491,93 @@ async def test_missing_control_entities_write_nothing(
     _set_states(hass)
     written = await _send(hass, hub_entry, entry, 900 / 230)
     assert written == {}
+
+
+async def test_the_form_and_the_slider_offer_the_same_ceiling(hass: HomeAssistant):
+    """The runtime slider OWNS the charge bounds once the device exists, so a
+    config form that accepted more than the slider would clamp the user's
+    setting straight back down with nothing said.
+
+    They were two independent literals until the ceiling became a constant.
+    Asserted against the schema and the entity rather than against 11000, so
+    raising the ceiling stays a one-line change.
+    """
+    from custom_components.dynamic_ocpp_evse.const import STATION_CHARGE_POWER_MAX
+    from custom_components.dynamic_ocpp_evse.config_flow.schemas import (
+        _power_station_schema,
+    )
+    from custom_components.dynamic_ocpp_evse.number import StationChargePowerSlider
+
+    schema = _power_station_schema()
+    maxima = {
+        str(key): validator.config["max"]
+        for key, validator in schema.schema.items()
+        if getattr(validator, "config", {}).get("unit_of_measurement") == "W"
+    }
+    assert maxima, "the scan found no watt fields — the schema's shape changed"
+    assert set(maxima.values()) == {STATION_CHARGE_POWER_MAX}, maxima
+
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_NAME: "S"}, options={})
+    entry.add_to_hass(hass)
+    slider = StationChargePowerSlider(
+        hass, entry, "S", "s", "max", "station_max_charge_power", 2400, "Max"
+    )
+    assert slider.native_max_value == STATION_CHARGE_POWER_MAX
+
+    # And the clamp really does use it: a value above the ceiling comes back
+    # AT the ceiling, not silently at 5000. (The state write is patched out —
+    # the slider is built by hand here, so it has no platform to write to.)
+    with patch.object(StationChargePowerSlider, "async_write_ha_state"), \
+            patch.object(StationChargePowerSlider, "_write_to_load_data"):
+        await slider.async_set_native_value(STATION_CHARGE_POWER_MAX + 500)
+    assert slider.native_value == STATION_CHARGE_POWER_MAX
+
+
+async def test_every_load_picker_offers_every_phase_mask():
+    """The station's picker used to carry only A/B/C while the plug's and the
+    tank's carried all seven — three copies of one list, and the odd one out
+    silently forbade a wiring its own engine builder has always handled
+    (``phases = len(connected_to_phase)``).
+
+    Asserted against ``VALID_PHASE_MASKS`` — the set the engine will actually
+    accept — so a picker can never again offer less, or more, than that.
+    """
+    from custom_components.dynamic_ocpp_evse.calculations.models import (
+        VALID_PHASE_MASKS,
+    )
+    from custom_components.dynamic_ocpp_evse.config_flow.schemas import (
+        _hot_water_tank_schema,
+        _plug_schema,
+        _power_station_schema,
+    )
+
+    for name, builder in (
+        ("plug", _plug_schema),
+        ("tank", _hot_water_tank_schema),
+        ("station", _power_station_schema),
+    ):
+        offered = {
+            option["value"]
+            for key, validator in builder().schema.items()
+            if str(key) == CONF_CONNECTED_TO_PHASE
+            for option in validator.config["options"]
+        }
+        assert offered == set(VALID_PHASE_MASKS), (name, sorted(offered))
+
+
+async def test_a_charger_leg_still_maps_to_a_single_phase():
+    """The counterpart, and why the two lists stay separate: L1/L2/L3 each land
+    on exactly ONE site phase, so a mask like "AB" is meaningless for a leg.
+    Sharing the load pickers' list here would offer nonsense."""
+    from custom_components.dynamic_ocpp_evse.config_flow.schemas import (
+        _charger_current_schema,
+    )
+
+    legs = {
+        str(key): {option["value"] for option in validator.config["options"]}
+        for key, validator in _charger_current_schema().schema.items()
+        if str(key).endswith("_phase")
+    }
+    assert legs, "the scan found no leg mapping fields — the schema changed"
+    for key, offered in legs.items():
+        assert offered == {"A", "B", "C"}, (key, sorted(offered))

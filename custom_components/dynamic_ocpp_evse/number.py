@@ -39,6 +39,7 @@ from .const import (
     DEFAULT_STATION_MAX_CHARGE_POWER,
     DEFAULT_STATION_NORMAL_RESERVE,
     DEFAULT_STATION_STORM_RESERVE,
+    STATION_CHARGE_POWER_MAX,
     STATION_CHARGE_POWER_STEP,
     CONF_TANK_AWAY_TEMPERATURE,
     CONF_TANK_NORMAL_TEMPERATURE,
@@ -386,7 +387,7 @@ class StationChargePowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
         self._attr_name = f"{name} {label}"
         self._attr_unique_id = f"{entity_id}_station_{kind}_charge_power"
         self._attr_native_min_value = 0
-        self._attr_native_max_value = 5000
+        self._attr_native_max_value = STATION_CHARGE_POWER_MAX
         self._attr_native_step = STATION_CHARGE_POWER_STEP
         self._attr_native_value = get_entry_value(config_entry, conf_key, default)
         self._attr_native_unit_of_measurement = "W"

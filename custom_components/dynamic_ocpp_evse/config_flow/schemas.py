@@ -150,6 +150,7 @@ from ..const import (
     OCPP_INTEGRATION_DOMAIN,
     PROFILE_VALIDITY_MODE_ABSOLUTE,
     PROFILE_VALIDITY_MODE_RELATIVE,
+    STATION_CHARGE_POWER_MAX,
     STATION_CHARGE_POWER_STEP,
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
@@ -166,6 +167,23 @@ from .helpers import (
     _SOC_UNITS,
     _VOLTAGE_UNITS,
 )
+
+
+# The site phases a LOAD may occupy, in the order every picker shows them.
+#
+# ONE list, because there were three: the plug's and the tank's carried all
+# seven masks while the station's carried only the three single-phase ones —
+# even though ``_build_power_station_load`` has always derived
+# ``phases = len(connected_to_phase)`` and ``_phase_draw`` has always spread a
+# draw across whatever mask it is given. A picker offering less than the engine
+# supports is a picker bug, not a limit.
+#
+# Labels are derived from the masks so the two cannot drift. Distinct from the
+# charger LEG mapping in _charger_current_schema, which is one phase per leg.
+PHASE_MASK_OPTIONS = [
+    {"value": mask, "label": f"Phase {'+'.join(mask)}"}
+    for mask in ("A", "B", "C", "AB", "BC", "AC", "ABC")
+]
 
 
 def _entity_ids_for(
@@ -1344,7 +1362,10 @@ def _charger_current_schema(
     Only shows L2/L3 phase mapping fields when the hub has 2+/3+ phases.
     """
     defaults = defaults or {}
-    phase_options = [
+    # One site phase per charger LEG — not a phase mask. L1/L2/L3 each land on
+    # exactly one phase, so the multi-phase combinations that the load pickers
+    # offer (PHASE_MASK_OPTIONS) would be meaningless here.
+    leg_phase_options = [
         {"value": "A", "label": "Phase A"},
         {"value": "B", "label": "Phase B"},
         {"value": "C", "label": "Phase C"},
@@ -1385,7 +1406,7 @@ def _charger_current_schema(
         vol.Required(
             CONF_CHARGER_L1_PHASE,
             default=defaults.get(CONF_CHARGER_L1_PHASE, "A"),
-        ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
+        ): selector({"select": {"options": leg_phase_options, "mode": "dropdown"}}),
     }
     if hub_phases >= 2:
         fields[
@@ -1393,14 +1414,14 @@ def _charger_current_schema(
                 CONF_CHARGER_L2_PHASE,
                 default=defaults.get(CONF_CHARGER_L2_PHASE, "B"),
             )
-        ] = selector({"select": {"options": phase_options, "mode": "dropdown"}})
+        ] = selector({"select": {"options": leg_phase_options, "mode": "dropdown"}})
     if hub_phases >= 3:
         fields[
             vol.Required(
                 CONF_CHARGER_L3_PHASE,
                 default=defaults.get(CONF_CHARGER_L3_PHASE, "C"),
             )
-        ] = selector({"select": {"options": phase_options, "mode": "dropdown"}})
+        ] = selector({"select": {"options": leg_phase_options, "mode": "dropdown"}})
     return vol.Schema(fields)
 
 
@@ -1534,15 +1555,6 @@ def _charger_timing_schema(
 def _plug_schema(defaults: dict | None = None) -> vol.Schema:
     """Build schema for smart load configuration."""
     defaults = defaults or {}
-    phase_options = [
-        {"value": "A", "label": "Phase A"},
-        {"value": "B", "label": "Phase B"},
-        {"value": "C", "label": "Phase C"},
-        {"value": "AB", "label": "Phase A+B"},
-        {"value": "BC", "label": "Phase B+C"},
-        {"value": "AC", "label": "Phase A+C"},
-        {"value": "ABC", "label": "Phase A+B+C"},
-    ]
     return vol.Schema(
         {
             vol.Required(
@@ -1584,7 +1596,7 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
             vol.Required(
                 CONF_CONNECTED_TO_PHASE,
                 default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
-            ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
+            ): selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
             vol.Required(
                 CONF_LOAD_PRIORITY,
                 default=defaults.get(
@@ -1650,15 +1662,6 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
 def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
     """Build schema for hot water tank configuration."""
     defaults = defaults or {}
-    phase_options = [
-        {"value": "A", "label": "Phase A"},
-        {"value": "B", "label": "Phase B"},
-        {"value": "C", "label": "Phase C"},
-        {"value": "AB", "label": "Phase A+B"},
-        {"value": "BC", "label": "Phase B+C"},
-        {"value": "AC", "label": "Phase A+C"},
-        {"value": "ABC", "label": "Phase A+B+C"},
-    ]
 
     def _temp_selector():
         return selector(
@@ -1723,7 +1726,7 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
             vol.Required(
                 CONF_CONNECTED_TO_PHASE,
                 default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
-            ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
+            ): selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
             vol.Required(
                 CONF_LOAD_PRIORITY,
                 default=defaults.get(
@@ -1799,18 +1802,12 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
     are set here.
     """
     defaults = defaults or {}
-    phase_options = [
-        {"value": "A", "label": "Phase A"},
-        {"value": "B", "label": "Phase B"},
-        {"value": "C", "label": "Phase C"},
-    ]
-
     def _power_selector():
         return selector(
             {
                 "number": {
                     "min": 0,
-                    "max": 5000,
+                    "max": STATION_CHARGE_POWER_MAX,
                     "step": STATION_CHARGE_POWER_STEP,
                     "mode": "box",
                     "unit_of_measurement": "W",
@@ -1886,7 +1883,7 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
             vol.Required(
                 CONF_CONNECTED_TO_PHASE,
                 default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
-            ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
+            ): selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
             vol.Required(
                 CONF_LOAD_PRIORITY,
                 default=defaults.get(

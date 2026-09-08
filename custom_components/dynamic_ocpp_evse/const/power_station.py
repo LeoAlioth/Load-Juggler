@@ -39,6 +39,16 @@ CONF_STATION_MAX_CHARGE_POWER = "station_max_charge_power"
 DEFAULT_STATION_MIN_CHARGE_POWER = 200   # W — EcoFlow Delta floor
 DEFAULT_STATION_MAX_CHARGE_POWER = 2400  # W
 STATION_CHARGE_POWER_STEP = 100          # W — device granularity; also the write deadband
+# The ceiling the config form and the runtime slider both offer. 11 kW is a
+# three-phase 16 A supply, well past any real station (an EcoFlow Delta tops
+# out near 2.4 kW) — the headroom is there so this device type can also stand
+# in for a modulating EVSE, which is the shape it already has to the engine.
+#
+# ONE constant for both, deliberately: they were separate 5000s, and the
+# slider OWNS the value once the device exists. A config form that accepted
+# more than the slider would have clamped the user's setting straight back
+# down with nothing said.
+STATION_CHARGE_POWER_MAX = 11000         # W
 
 # --- Reserve levels ---
 CONF_STATION_NORMAL_RESERVE = "station_normal_reserve"  # % held in reserve day to day
