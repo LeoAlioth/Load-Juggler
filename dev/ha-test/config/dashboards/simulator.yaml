@@ -202,10 +202,32 @@ views:
       - entity: sensor.sim_station_ac_input
         name: What it actually pulls
   - type: grid
-    column_span: 3
     cards:
     - type: entities
-      title: Hot water tank — hardware only
+      title: Hot water tank — the engine
+      entities:
+      - select.hot_water_tank_operating_mode
+      - switch.hot_water_tank_dynamic_control
+      - &id002
+        type: divider
+      - entity: number.hot_water_tank_element_power
+        name: Element power
+      - entity: number.hot_water_tank_away_temperature
+        name: Away setpoint
+      - entity: number.hot_water_tank_normal_temperature
+        name: Normal setpoint
+      - entity: number.hot_water_tank_boost_temperature
+        name: Boost setpoint
+      - *id002
+      - sensor.hot_water_tank_tank_status
+      - entity: sensor.hot_water_tank_available_current
+        name: Permitted
+      - entity: sensor.hot_water_tank_allocated_current
+        name: Counted against the budget
+      - entity: sensor.hot_water_tank_effective_priority
+        name: Served in position
+    - type: entities
+      title: Hot water tank — the hardware
       entities:
       - entity: climate.sim_water_tank
         name: Thermostat

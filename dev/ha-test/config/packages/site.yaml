@@ -32,6 +32,7 @@ input_number:
     max: 11000
     step: 50
     initial: 300
+    mode: box
     unit_of_measurement: W
     icon: mdi:home-lightning-bolt
   sim_household_b:
@@ -40,6 +41,7 @@ input_number:
     max: 11000
     step: 50
     initial: 300
+    mode: box
     unit_of_measurement: W
     icon: mdi:home-lightning-bolt
   sim_household_c:
@@ -48,6 +50,7 @@ input_number:
     max: 11000
     step: 50
     initial: 300
+    mode: box
     unit_of_measurement: W
     icon: mdi:home-lightning-bolt
 
@@ -57,6 +60,7 @@ input_number:
     max: 25000
     step: 100
     initial: 0
+    mode: box
     unit_of_measurement: W
     icon: mdi:solar-power-variant
 
@@ -66,6 +70,7 @@ input_number:
     max: 100
     step: 1
     initial: 50
+    mode: box
     unit_of_measurement: "%"
     icon: mdi:battery-70
   sim_battery_power:
@@ -74,6 +79,7 @@ input_number:
     max: 15000
     step: 100
     initial: 0
+    mode: box
     unit_of_measurement: W
     icon: mdi:battery-charging
 
@@ -83,6 +89,7 @@ input_number:
     max: 250
     step: 1
     initial: 230
+    mode: box
     unit_of_measurement: V
     icon: mdi:sine-wave
 

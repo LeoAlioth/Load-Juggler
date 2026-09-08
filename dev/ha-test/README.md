@@ -121,11 +121,8 @@ engine grants the device to draw; **counted against the budget** is its
 measured footprint, which is what other loads are budgeted against. For a
 settled device drawing under its permit the two differ, deliberately.
 
-The hot water tank appears with its hardware only — it is defined in
-`packages/tank.yaml` but not yet added to Load Juggler as a load. Add it
-(Settings → Devices → Load Juggler → Add device → Hot Water Tank, climate =
-`climate.sim_water_tank`, power = `sensor.sim_tank_power`) and give it an
-engine card to match.
+All four devices are configured: the site, a smart plug on phase A, a hot water
+tank on phase B and a power station on phase C.
 
 ## The power flow diagram
 
