@@ -463,6 +463,68 @@ def test_a_running_binary_load_rides_the_release_band_too():
     assert _close(tank.allocated_current, 2000.0 / V)
 
 
+# ---------------------------------------------------------------------------
+# A load handed back to the user competes for nothing
+# ---------------------------------------------------------------------------
+
+def _unmanaged_plug(eid="plug", watts=2000.0, priority=1, phase="A", draw_w=0.0):
+    """A Continuous plug whose Dynamic Control switch the user turned OFF."""
+    amps = watts / V
+    load = LoadContext(
+        load_id=eid, entity_id=eid, min_current=amps, max_current=amps,
+        phases=1, priority=priority, device_type="plug",
+        operating_mode="Continuous", mode_behavior="full_power", mode_priority=1,
+        active_phases_mask=phase, l1_phase=phase, l1_current=draw_w / V,
+        rated_current=amps, connector_status="Charging",
+    )
+    load.dynamic_control = False
+    return load
+
+
+def test_an_unmanaged_load_does_not_claim_the_surplus():
+    """The one that bit. A plug switched OFF, drawing nothing, with Dynamic
+    Control off, was still allocated its minimum every cycle — ``FULL_POWER``
+    returns ``max_current`` unconditionally — and ``_claims_its_permit`` is
+    true for a plug (min == max), so it charged ``max(0, 8.7) = 8.7 A`` to the
+    Excess start ledger. That reserved 2 kW of surplus indefinitely and a
+    boosting tank on another phase flapped on and off against what was left
+    (Docker rig, 2026-09-08: a 16 second cycle while the site exported
+    8.6 kW).
+    """
+    plug = _unmanaged_plug(phase="A", draw_w=0.0)
+    tank = _tank(watts=2000.0, priority=2, heating=False, phase="B")
+    tank.mode_behavior = "binary_excess"
+    tank.mode_priority = 4
+    tank.excess_claim_current = tank.max_current
+    # 600 W of surplus: nowhere near the plug's 2 kW rating, so if the plug
+    # claims it the tank is refused.
+    _prepare(_site_3ph(THRESHOLD + 600.0, loads=[plug, tank]))
+    assert _close(tank.available_current, 2000.0 / V)
+
+
+def test_an_unmanaged_load_is_allocated_and_permitted_nothing():
+    """0 and 0 is the honest report of "Load Juggler is not deciding this"."""
+    plug = _unmanaged_plug(draw_w=2000.0)
+    _prepare(_site_3ph(THRESHOLD + 4000.0, loads=[plug]))
+    assert plug.allocated_current == 0
+    assert plug.available_current == 0
+
+
+def test_a_managed_load_still_claims_its_permit():
+    """The counterpart, so the fix cannot be read as "off loads never claim":
+    a plug the engine IS managing claims its rating even before it draws,
+    because the engine is about to switch it on. That is what stops two loads
+    starting on one load's worth of surplus."""
+    plug = _unmanaged_plug(draw_w=0.0)
+    plug.dynamic_control = True
+    tank = _tank(watts=2000.0, priority=2, heating=False, phase="B")
+    tank.mode_behavior = "binary_excess"
+    tank.mode_priority = 4
+    tank.excess_claim_current = tank.max_current
+    _prepare(_site_3ph(THRESHOLD + 600.0, loads=[plug, tank]))
+    assert tank.available_current == 0
+
+
 def _site_3ph(export_w, loads=(), breaker=BREAKER, threshold=THRESHOLD):
     """The same batteryless site on three phases, exporting ``export_w`` TOTAL.
 

@@ -87,9 +87,18 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _managed_phase_draws(site):
-    """Σ managed-load draw per site phase (A), the feedback loop's subtrahend."""
+    """Σ managed-load draw per site phase (A), the feedback loop's subtrahend.
+
+    A load whose Dynamic Control is OFF is skipped. Subtracting its draw would
+    add that draw back into the reconstruction — telling the engine the site
+    could export it if only our loads stood down — when the whole point of the
+    switch is that this load does not stand down for us. Left in, it is
+    household consumption, which is what an unmanaged load is.
+    """
     total_draws = [0.0, 0.0, 0.0]
     for c in site.loads:
+        if not c.dynamic_control:
+            continue
         a_draw, b_draw, c_draw = c.get_site_phase_draw()
         total_draws[0] += a_draw
         total_draws[1] += b_draw

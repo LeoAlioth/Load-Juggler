@@ -173,6 +173,8 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
         phases=phases,
         priority=priority,
         connector_status=connector_status,
+        # "Hands off" reaches the calculation too — see LoadContext.
+        dynamic_control=load_rt.get("dynamic_control", True),
         operating_mode=mode.key,
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
@@ -514,6 +516,8 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
         priority=priority,
         active_phases_mask=connected_to_phase,
         connector_status=connector_status,
+        # "Hands off" reaches the calculation too — see LoadContext.
+        dynamic_control=load_rt.get("dynamic_control", True),
         device_type=DEVICE_TYPE_PLUG,
         operating_mode=mode.key,
         mode_behavior=behavior_for(mode),
@@ -681,6 +685,8 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
         priority=priority,
         active_phases_mask=connected_to_phase,
         connector_status=connector_status,
+        # "Hands off" reaches the calculation too — see LoadContext.
+        dynamic_control=load_rt.get("dynamic_control", True),
         device_type=DEVICE_TYPE_POWER_STATION,
         operating_mode=mode.key,
         mode_behavior=behavior_for(mode),
@@ -855,6 +861,8 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         priority=priority,
         active_phases_mask=connected_to_phase,
         connector_status=connector_status,
+        # "Hands off" reaches the calculation too — see LoadContext.
+        dynamic_control=load_rt.get("dynamic_control", True),
         device_type=DEVICE_TYPE_HOT_WATER_TANK,
         operating_mode=mode.key,
         mode_behavior=mode_behavior,

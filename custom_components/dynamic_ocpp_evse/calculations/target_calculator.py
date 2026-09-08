@@ -105,13 +105,21 @@ def calculate_all_load_targets(site: SiteContext) -> None:
     # read (engine/hub_result.py) — without the plug carve-out, which is a
     # distribution rule rather than a statement about drawing power.
     all_loads = site.loads
+    # A load with Dynamic Control OFF competes for nothing. The HA layer
+    # already declines to command it; leaving it in the distribution had it
+    # allocated, published a permit, deducted from every pool and — the part
+    # that bit — charging its full rating to the Excess start ledger while
+    # switched off and drawing nothing, starving loads on other phases. Its
+    # draw is household (see engine/hub_calculation._managed_phase_draws).
+    managed = [c for c in all_loads if c.dynamic_control]
+    unmanaged = [c for c in all_loads if not c.dynamic_control]
     active_loads = [
-        c for c in all_loads
+        c for c in managed
         if c.device_type == DEVICE_TYPE_PLUG
         or c.connector_status not in INACTIVE_STATUSES
     ]
     inactive_loads = [
-        c for c in all_loads
+        c for c in managed
         if c.device_type != DEVICE_TYPE_PLUG
         and c.connector_status in INACTIVE_STATUSES
     ]
@@ -167,13 +175,19 @@ def calculate_all_load_targets(site: SiteContext) -> None:
     for load in inactive_loads:
         load.allocated_current = 0
 
+    # An unmanaged load gets nothing and is told nothing: 0 allocated and 0
+    # permitted is the honest report of "Load Juggler is not deciding this".
+    for load in unmanaged:
+        load.allocated_current = 0
+        load.available_current = 0
+
     # Step 6: Enforce circuit group limits (post-distribution capping)
     if site.circuit_groups:
         _enforce_circuit_groups(site)
 
-    # Step 5: Calculate available current for all loads (the permit ceiling)
+    # Step 5: Calculate available current for the loads we actually manage.
     _set_available_current_for_loads(
-        all_loads, active_loads, inactive_loads,
+        managed, active_loads, inactive_loads,
         physical_pool, solar_pool, excess_pool, site,
     )
 
@@ -188,6 +202,10 @@ def calculate_all_load_targets(site: SiteContext) -> None:
             load.allocated_current = round(
                 _pool_deduction(load, load.allocated_current), 1
             )
+    # The unmanaged loads' 0s must survive step 5, which only walks `managed`.
+    for load in unmanaged:
+        load.allocated_current = 0
+        load.available_current = 0
 
     for load in all_loads:
         _draw = load.l1_current + load.l2_current + load.l3_current

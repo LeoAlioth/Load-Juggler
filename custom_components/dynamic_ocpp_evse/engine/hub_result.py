@@ -753,11 +753,15 @@ def _build_hub_result(
     else:
         battery_rated_discharge = 0
 
-    # Total EVSE power = sum of actual load draws
+    # Total managed power = sum of actual load draws, for the loads we actually
+    # manage. A load with Dynamic Control off is reported as household instead
+    # (the feedback loop leaves its draw in the grid figure for the same
+    # reason), so that the two published totals still add up to the meter.
     total_evse_power = round(
         sum(
             (c.l1_current + c.l2_current + c.l3_current) * voltage
             for c in site.loads
+            if c.dynamic_control
         ),
         0,
     )
@@ -768,6 +772,8 @@ def _build_hub_result(
     # phase adds no export — the same clamp the engine's reconstruction uses).
     _draws = [0.0, 0.0, 0.0]
     for c in site.loads:
+        if not c.dynamic_control:
+            continue          # unmanaged: its draw is household, not ours
         for i, d in enumerate(c.get_site_phase_draw()):
             _draws[i] += d
     # Off-grid there is nothing to export to and the phase readings are

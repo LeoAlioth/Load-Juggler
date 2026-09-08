@@ -46,6 +46,22 @@ class LoadContext:
     # Active car connection (detected from OCPP or configured)
     active_phases_mask: str = None  # "A", "AB", "ABC", "B", "BC", "C", "AC"
     connector_status: str = "Charging"  # OCPP status: Default to active for backward compatibility
+
+    # False when the user has turned this load's Dynamic Control switch OFF.
+    #
+    # "Hands off" has to mean hands off in the CALCULATION too, not just in the
+    # command. The HA layer already skips writing to such a load, but the
+    # engine had no idea: it still allocated it, published a permit, deducted
+    # it from every pool, charged its rating to the Excess start ledger, and
+    # subtracted its draw from the grid readings as though the draw were ours
+    # to move. A plug switched off and handed back therefore reserved its whole
+    # 2 kW of surplus indefinitely, and a boosting tank on another phase
+    # flapped on and off against what was left (measured on the Docker rig,
+    # 2026-09-08).
+    #
+    # An unmanaged load is part of the HOUSE: its draw belongs in the household
+    # figure and it competes for nothing.
+    dynamic_control: bool = True
     
     def __post_init__(self):
         """Set default phase mask from L1/L2/L3 → site phase mapping.
