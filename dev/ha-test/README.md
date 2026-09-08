@@ -311,6 +311,46 @@ same 5.6 s: it is derived independently (the old 0.15/s over the 2 s default
 closes 0.30, and tau = -2 / ln(1 - 0.30) = 5.6 s), and the ramp and the input
 filter are different design decisions that should be retunable apart.
 
+### The inverter curtails, so unabsorbed surplus is LOST
+
+Added 2026-09-08. `Sim inverter delivered` caps the array at
+`household + managed loads + export limit`, which is what a real inverter does:
+it holds its own export limit by throttling, and the production sensor reads the
+lower figure. Nothing on a site exports past its limit and apologises
+afterwards. `Sim curtailed power` is the meter for what is being thrown away,
+and `Inverter curtails to the export limit` turns the whole thing off if you
+want to see what the array COULD have made.
+
+This changes what the rig measures, and for the better. Before it, the rig
+exported 12.9 kW against an 11 kW limit and the excess was scored as "tracking
+error" - a quantity no real site can even produce. With it, export is pinned at
+the limit by the inverter and the unabsorbed surplus shows up where it belongs:
+as production that never happened. That is the number Excess mode exists to
+drive to zero.
+
+It also makes the engine's difficulty visible. Curtailed power is invisible from
+the meter - the export reading sits at the limit whether 0 W or 2 kW is being
+wasted behind it - which is exactly why the pool is sized from a loads-off
+RECONSTRUCTION rather than from export directly.
+
+Baseline with curtailment on, solar 14.7 kW +/- 1.1 kW, 1 s refresh
+(2026-09-08):
+
+| measure | value |
+|---|---|
+| tracking error mean/max | 608 / 1 220 W |
+| curtailed mean/max | 186 / 955 W |
+| export mean/min/max | 10 516 / 9 147 / 11 001 W |
+| cycles over the 11 kW limit | 4 of 80, by 1 W |
+| register writes | 41 (8.2 per minute), range 200-2 300 W |
+
+Read the export row rather than the tracking row for anything that matters. The
+site never exceeded its limit, because the inverter will not let it; what it did
+was dip 1 853 W BELOW the limit at the top of the cycle, which is the station
+still drawing 2 392 W against a 1 527 W ideal. Over-absorption costs exported
+energy, under-absorption costs curtailed energy, and only the second is
+recoverable by anything the engine does.
+
 A CAVEAT ON EVERY ROW ABOVE, found on 2026-09-08 while reading the traces
 rather than the summaries. All the loads in this rig carry
 `solar_grace_period: 0`, set when the timers were shortened to make scenarios

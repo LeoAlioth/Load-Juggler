@@ -51,6 +51,19 @@ input_number:
     unit_of_measurement: W
     icon: mdi:home-lightning-bolt
 
+  sim_export_limit:
+    name: Export limit
+    min: 0
+    max: 25000
+    step: 100
+    mode: box
+    unit_of_measurement: W
+    icon: mdi:transmission-tower-export
+    # Carries an `initial:` because the minimum is actively misleading: a 0 W
+    # limit curtails the array to the household's own draw, which reads as a
+    # broken inverter rather than a fresh config.
+    initial: 11000
+
   sim_solar:
     name: Solar production
     min: 0
@@ -97,6 +110,13 @@ input_boolean:
     # engine question from a timing one, but not a state any real site is in.
     name: Measurements lag the physics
     icon: mdi:timer-sand
+  sim_curtail:
+    initial: "on"
+    # Whether the inverter holds its own export limit by throttling the array,
+    # as a real one does. Off lets the site export past its limit, which no
+    # site does - useful only to see what the array COULD have made.
+    name: Inverter curtails to the export limit
+    icon: mdi:solar-power-variant
 
 input_select:
   sim_inverter_phases:
@@ -169,8 +189,64 @@ template:
              + states('sensor.sim_managed_tank_c') | float(0)
              + states('sensor.sim_managed_station_c') | float(0)) | round(1) }}
 
-      # The inverter's AC output per phase: solar less whatever the pack is
-      # absorbing, spread over the phases it actually feeds.
+      # What the array COULD make, less whatever the pack is absorbing. The
+      # potential, not the delivery - see the curtailment below.
+      - name: Sim inverter potential
+        unique_id: sim_inverter_potential
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ (states('input_number.sim_solar') | float(0)
+             - states('input_number.sim_battery_power') | float(0)) | round(1) }}
+
+      # What the inverter ACTUALLY delivers, which is what a real one does: it
+      # holds its own export limit by throttling the array. No site exports
+      # past its limit and apologises afterwards - the inverter simply stops
+      # making the power, and the production sensor reads the lower figure.
+      #
+      # This is the physics that gives Excess mode its point. Without it the
+      # rig exported 12.9 kW against an 11 kW limit and the difference was
+      # scored as "tracking error", when a real site would have thrown it
+      # away. With it, the surplus a load absorbs is power the site was about
+      # to LOSE, and `Sim curtailed power` is the meter for what is still lost.
+      #
+      # Reads `Sim managed load total` deliberately: the inverter throttles
+      # against total demand, so a managed load coming on is exactly what lets
+      # it stop throttling. The dependency runs one way (register and relay ->
+      # managed totals -> delivered -> legs -> CTs), so there is no loop.
+      - name: Sim inverter delivered
+        unique_id: sim_inverter_delivered
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {% set potential = states('sensor.sim_inverter_potential') | float(0) %}
+          {% set demand = states('input_number.sim_household_a') | float(0)
+                        + states('input_number.sim_household_b') | float(0)
+                        + states('input_number.sim_household_c') | float(0)
+                        + states('sensor.sim_managed_load_total') | float(0) %}
+          {% set cap = [demand + states('input_number.sim_export_limit') | float(0), 0] | max %}
+          {% if is_state('input_boolean.sim_curtail', 'on') %}
+            {{ [potential, cap] | min | round(1) }}
+          {% else %}
+            {{ potential | round(1) }}
+          {% endif %}
+
+      # Production the site is throwing away. Invisible from the meter on a
+      # real site, which is the whole difficulty: the engine cannot see this
+      # number and has to infer surplus from how close export sits to a limit.
+      - name: Sim curtailed power
+        unique_id: sim_curtailed_power
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ [states('sensor.sim_inverter_potential') | float(0)
+             - states('sensor.sim_inverter_delivered') | float(0), 0] | max | round(1) }}
+
+      # The inverter's AC output per phase: the DELIVERED total spread over the
+      # phases it actually feeds.
       - name: Sim inverter output A
         unique_id: sim_inverter_output_a
         device_class: power
@@ -178,8 +254,7 @@ template:
         state_class: measurement
         state: >
           {% set mask = states('input_select.sim_inverter_phases') %}
-          {% set total = states('input_number.sim_solar') | float(0)
-                       - states('input_number.sim_battery_power') | float(0) %}
+          {% set total = states('sensor.sim_inverter_delivered') | float(0) %}
           {{ (total / mask | length) | round(1) if 'A' in mask else 0 }}
       - name: Sim inverter output B
         unique_id: sim_inverter_output_b
@@ -188,8 +263,7 @@ template:
         state_class: measurement
         state: >
           {% set mask = states('input_select.sim_inverter_phases') %}
-          {% set total = states('input_number.sim_solar') | float(0)
-                       - states('input_number.sim_battery_power') | float(0) %}
+          {% set total = states('sensor.sim_inverter_delivered') | float(0) %}
           {{ (total / mask | length) | round(1) if 'B' in mask else 0 }}
       - name: Sim inverter output C
         unique_id: sim_inverter_output_c
@@ -198,8 +272,7 @@ template:
         state_class: measurement
         state: >
           {% set mask = states('input_select.sim_inverter_phases') %}
-          {% set total = states('input_number.sim_solar') | float(0)
-                       - states('input_number.sim_battery_power') | float(0) %}
+          {% set total = states('sensor.sim_inverter_delivered') | float(0) %}
           {{ (total / mask | length) | round(1) if 'C' in mask else 0 }}
 
       # The site's TRUE per-phase position, computed the instant anything

@@ -31,6 +31,12 @@ views:
         name: Solar
       - entity: input_select.sim_inverter_phases
         name: Feeds phases
+      - entity: input_number.sim_export_limit
+        name: Export limit
+      - entity: input_boolean.sim_curtail
+        name: Inverter curtails
+      - entity: sensor.sim_curtailed_power
+        name: Being thrown away
       - entity: input_number.sim_battery_soc
         name: Battery SOC
       - entity: input_number.sim_battery_power
@@ -83,6 +89,8 @@ views:
       - sensor.sim_solar_power
       - entity: sensor.sim_managed_load_total
         name: Managed load total
+      - entity: sensor.sim_curtailed_power
+        name: Curtailed
       - entity: sensor.sim_ct_lag_error
         name: Meter lag
     column_span: 3
