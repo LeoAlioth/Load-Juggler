@@ -104,6 +104,29 @@ rather than like arithmetic:
 Turn it off to isolate an engine question from a timing one. No real site is in
 that state.
 
+## The two pages
+
+**Site** is the hardware you are pretending to have: the household, array,
+pack and voltage sliders, the derived meter, and the power-flow diagram.
+
+**Loads** pairs each managed load with itself — *the engine* card holds Load
+Juggler's own controls (operating mode, dynamic control, rated power, charge
+bounds, reserves) and its verdicts; *the hardware* card holds the simulated
+device. Side by side, because a permit the device ignores, or a draw the engine
+never granted, is then visible at a glance rather than pieced together from two
+pages.
+
+Two figures on the engine side are easy to conflate. **Permitted** is what the
+engine grants the device to draw; **counted against the budget** is its
+measured footprint, which is what other loads are budgeted against. For a
+settled device drawing under its permit the two differ, deliberately.
+
+The hot water tank appears with its hardware only — it is defined in
+`packages/tank.yaml` but not yet added to Load Juggler as a load. Add it
+(Settings → Devices → Load Juggler → Add device → Hot Water Tank, climate =
+`climate.sim_water_tank`, power = `sensor.sim_tank_power`) and give it an
+engine card to match.
+
 ## The power flow diagram
 
 The Simulator page opens with a **Sankey** — `Grid → the site → each managed

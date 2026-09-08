@@ -78,31 +78,144 @@ views:
 - title: Loads
   path: loads
   icon: mdi:power-plug
-  cards:
-  - type: entities
-    title: Plug
-    entities:
-    - switch.sim_plug
-    - input_number.sim_plug_power
-    - input_select.sim_plug_phase
-    - sensor.sim_plug_power
-  - type: entities
-    title: Hot water tank
-    entities:
-    - climate.sim_water_tank
-    - input_number.sim_tank_temperature
-    - input_number.sim_tank_element_power
-    - input_select.sim_tank_phase
-    - input_boolean.sim_tank_element
-    - sensor.sim_tank_power
-  - type: entities
-    title: Power station
-    entities:
-    - number.sim_station_charge_speed
-    - number.sim_station_reserve
-    - input_number.sim_station_battery
-    - input_select.sim_station_phase
-    - entity: sensor.sim_station_input_target
-      name: Register target
-    - entity: sensor.sim_station_ac_input
-      name: What it actually pulls
+  type: sections
+  max_columns: 3
+  sections:
+  - type: grid
+    column_span: 3
+    cards:
+    - type: markdown
+      content: 'Every load appears **twice**: what Load Juggler decides, and what the hardware does about
+        it. A permit the device ignores, or a draw the engine never granted, shows up side by side instead
+        of having to be pieced together from two pages.
+
+
+        Two figures are easy to conflate. **Permitted** is what the engine grants the device to draw.
+        **Counted against the budget** is its measured footprint — what other loads are budgeted against
+        — and for a settled device drawing under its permit the two differ, deliberately.
+
+
+        **Headroom A/B/C** is computed from *unmanaged* consumption, so on a phase already carrying one
+        of our loads it reads higher than what is physically left there. The site''s Overview page (⚙
+        → Overview) shows the allocator''s actual pools beside it.'
+  - type: grid
+    cards:
+    - type: entities
+      title: Site
+      entities:
+      - select.site_load_management_distribution_mode
+      - number.site_load_management_max_import_power
+      - number.site_load_management_power_buffer
+      - &id001
+        type: divider
+      - sensor.site_load_management_status
+      - entity: sensor.site_load_management_current_grid_power
+        name: Grid (− exporting)
+      - entity: sensor.site_load_management_current_solar_power
+        name: Solar
+      - entity: sensor.site_load_management_current_managed_power
+        name: Managed loads drawing
+      - *id001
+      - entity: sensor.site_load_management_remaining_current_a
+        name: Headroom A
+      - entity: sensor.site_load_management_remaining_current_b
+        name: Headroom B
+      - entity: sensor.site_load_management_remaining_current_c
+        name: Headroom C
+      - *id001
+      - entity: sensor.site_load_management_grid_remaining_current
+        name: Grid pool
+      - entity: sensor.site_load_management_solar_remaining_current
+        name: Solar pool
+      - entity: sensor.site_load_management_inverter_remaining_current
+        name: Inverter pool
+  - type: grid
+    cards:
+    - type: entities
+      title: Smart plug — the engine
+      entities:
+      - select.smart_load_operating_mode
+      - switch.smart_load_dynamic_control
+      - entity: number.smart_load_device_power
+        name: Rated power
+      - *id001
+      - sensor.smart_load_status
+      - entity: sensor.smart_load_available_current
+        name: Permitted
+      - entity: sensor.smart_load_allocated_current
+        name: Counted against the budget
+      - entity: sensor.smart_load_effective_priority
+        name: Served in position
+    - type: entities
+      title: Smart plug — the hardware
+      entities:
+      - entity: switch.sim_plug
+        name: Relay (the engine writes this)
+      - entity: input_number.sim_plug_power
+        name: Draw when on
+      - entity: input_select.sim_plug_phase
+        name: Wired to phase
+      - entity: sensor.sim_plug_power
+        name: Power monitor
+  - type: grid
+    cards:
+    - type: entities
+      title: Power station — the engine
+      entities:
+      - select.power_station_operating_mode
+      - switch.power_station_dynamic_control
+      - switch.power_station_storm_reserve
+      - *id001
+      - entity: number.power_station_minimum_charge_power
+        name: Minimum charge power
+      - entity: number.power_station_maximum_charge_power
+        name: Maximum charge power
+      - entity: number.power_station_normal_reserve
+        name: Normal reserve
+      - entity: number.power_station_storm_reserve
+        name: Storm reserve
+      - *id001
+      - sensor.power_station_status
+      - entity: sensor.power_station_available_current
+        name: Permitted
+      - entity: sensor.power_station_allocated_current
+        name: Counted against the budget
+      - entity: sensor.power_station_effective_priority
+        name: Served in position
+    - type: entities
+      title: Power station — the hardware
+      entities:
+      - entity: number.sim_station_charge_speed
+        name: Charge register (engine writes)
+      - entity: number.sim_station_reserve
+        name: Reserve register (engine writes)
+      - *id001
+      - entity: input_number.sim_station_battery
+        name: Pack level
+      - entity: input_number.sim_station_ramp
+        name: Ramp rate
+      - entity: input_select.sim_station_phase
+        name: Wired to phase
+      - *id001
+      - entity: sensor.sim_station_input_target
+        name: Register target
+      - entity: sensor.sim_station_ac_input
+        name: What it actually pulls
+  - type: grid
+    column_span: 3
+    cards:
+    - type: entities
+      title: Hot water tank — hardware only
+      entities:
+      - entity: climate.sim_water_tank
+        name: Thermostat
+      - entity: input_number.sim_tank_temperature
+        name: Water temperature
+      - entity: input_number.sim_tank_element_power
+        name: Element power
+      - entity: input_select.sim_tank_phase
+        name: Wired to phase
+      - entity: input_boolean.sim_tank_element
+        name: Element (thermostat writes)
+      - entity: sensor.sim_tank_power
+        name: Power monitor
