@@ -6,6 +6,7 @@ import the shared ``OPERATING_MODE_*`` keys, ``BEHAVIOR_*`` constants and the
 ``OperatingMode`` dataclass from here.
 """
 
+import math
 from dataclasses import dataclass
 
 DOMAIN = "dynamic_ocpp_evse"
@@ -109,6 +110,29 @@ EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothi
 # can never make that pole complex — no value of tau can introduce oscillation.
 # That is what makes this safe to speed up, unlike an integral term.
 EMA_TAU_S = 5.6
+
+
+def ema_alpha_for(dt: float) -> float:
+    """The EMA weight that gives EMA_TAU_S of smoothing at a ``dt`` s cadence.
+
+    ``1 - exp(-dt/tau)`` is the exact discrete equivalent of a continuous
+    first-order lag, so the filter's behaviour in SECONDS is the same however
+    often it is sampled. Clamped to (0, 1]: a dt of 0 or less would divide by
+    nothing, and a very slow cadence tends to 1 (no smoothing left to do,
+    which is correct — there is nothing between the samples to smooth).
+
+    It lives here, beside the time constant it converts, because BOTH tiers
+    need it and they are not allowed to share code any other way: the readers
+    filter the site's inputs and ``control/smoothing`` filters the permit that
+    comes back out, but the actuation layer may import only const/helpers/units
+    (AGENTS.md), never engine. A second copy of the formula would let the pair
+    drift apart with nothing to notice.
+    """
+    if not dt or dt <= 0:
+        return EMA_ALPHA
+    return min(1.0, max(1e-3, 1.0 - math.exp(-float(dt) / EMA_TAU_S)))
+
+
 # The battery charge controller reads export and battery power through its OWN
 # smoothers, which are DIRECTIONAL (engine/readers._smooth_directional): a move
 # toward a limit — deeper export, heavier import, or the mirror for battery

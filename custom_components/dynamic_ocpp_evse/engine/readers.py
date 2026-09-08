@@ -59,7 +59,7 @@ from ..const import (
     DOMAIN,
     CTRL_FAST_ALPHA,
     EMA_ALPHA,
-    EMA_TAU_S,
+    ema_alpha_for,
     INPUT_STALE_TIMEOUT,
     INVERTER_RT_ENFORCED_CHARGE_W,
 )
@@ -84,20 +84,6 @@ _UNAVAILABLE = object()
 # signatures. Set once per cycle by set_ema_interval(); absent it falls back to
 # the historic fixed weight.
 _ALPHA_KEY = "_ema_alpha"
-
-
-def ema_alpha_for(dt: float) -> float:
-    """The EMA weight that gives EMA_TAU_S of smoothing at a ``dt`` s cadence.
-
-    ``1 - exp(-dt/tau)`` is the exact discrete equivalent of a continuous
-    first-order lag, so the filter's behaviour in SECONDS is the same however
-    often it is sampled. Clamped to (0, 1]: a dt of 0 or less would divide by
-    nothing, and a very slow cadence tends to 1 (no smoothing left to do,
-    which is correct — there is nothing between the samples to smooth).
-    """
-    if not dt or dt <= 0:
-        return EMA_ALPHA
-    return min(1.0, max(1e-3, 1.0 - math.exp(-float(dt) / EMA_TAU_S)))
 
 
 def set_ema_interval(ema_dict: dict, dt: float) -> float:

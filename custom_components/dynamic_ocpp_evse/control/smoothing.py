@@ -1,7 +1,7 @@
 import logging
 from ..const import (
-    EMA_ALPHA,
     DEAD_BAND,
+    ema_alpha_for,
     RAMP_APPROACH_MAX,
     RAMP_APPROACH_RATE,
     RAMP_UP_RATE,
@@ -19,8 +19,20 @@ def apply_smoothing(
 ) -> float:
     """Apply EMA smoothing → Schmitt trigger → rate limiting pipeline.
 
+    Every stage runs on the same TIME basis: the site interval sets both the
+    EMA weight and the ramp step, so the pipeline delivers the same seconds of
+    smoothing whether the site polls every second or every minute. Weighting
+    the EMA per CYCLE instead coupled the two, and the coupling was invisible:
+    at the 60 s interval a slow inverter needs, the permit filter carried a
+    200 s time constant, so a load crawled for minutes toward a surplus it had
+    already been granted.
+
     Returns the final rate-limited current to send to the load.
     """
+    site_freq = get_entry_value(
+        hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
+    )
+
     if sensor._schmitt_current is None and sensor._ema_current is not None:
         sensor._schmitt_current = sensor._rate_limited_current
         sensor._schmitt_state = "rising"
@@ -51,8 +63,13 @@ def apply_smoothing(
         sensor._schmitt_state = "rising"
         sensor._rate_limited_current = raw_allocated
     else:
+        # EMA_TAU_S of smoothing at whatever cadence this site runs at. The
+        # conversion is the readers' own, shared rather than restated: the
+        # input filter and this one are tuned as a pair, and a second copy of
+        # the formula would let them drift apart silently.
+        alpha = ema_alpha_for(site_freq)
         sensor._ema_current = round(
-            EMA_ALPHA * raw_allocated + (1 - EMA_ALPHA) * sensor._ema_current, 2
+            alpha * raw_allocated + (1 - alpha) * sensor._ema_current, 2
         )
 
         ema = sensor._ema_current
@@ -90,9 +107,6 @@ def apply_smoothing(
                     prev,
                 )
 
-        site_freq = get_entry_value(
-            hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
-        )
         target = sensor._schmitt_current
         delta = target - sensor._rate_limited_current
 

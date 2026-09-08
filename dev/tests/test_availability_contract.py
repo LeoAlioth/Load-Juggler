@@ -35,7 +35,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from standalone_loader import load_pure_modules
 
-load_pure_modules(engine_modules=("hub_calculation",))
+load_pure_modules(
+    engine_modules=("hub_calculation",), control_modules=("smoothing",)
+)
 
 from custom_components.dynamic_ocpp_evse import units
 from custom_components.dynamic_ocpp_evse.const import (
@@ -1072,6 +1074,53 @@ def test_the_directional_pair_keeps_its_ratio_at_any_refresh_rate():
         )
         assert expected_fast >= ema_alpha_for(dt), dt
 
+
+def test_the_permit_filter_smooths_in_seconds_not_in_cycles():
+    """``apply_smoothing``'s EMA weighted per CYCLE, so its time constant was
+    the site interval divided by the weight — 200 s at the 60 s refresh a slow
+    inverter needs. The input filter was fixed first and this one was missed,
+    which left the same hidden coupling on the output side: the readings
+    tracked the sun while the permit crawled.
+
+    Under test is the property, not the arithmetic: the SAME wall-clock span
+    must close the same fraction of the error at any cadence."""
+    from types import SimpleNamespace
+    from custom_components.dynamic_ocpp_evse.control.smoothing import apply_smoothing
+    from custom_components.dynamic_ocpp_evse.const import CONF_SITE_UPDATE_FREQUENCY
+
+    span_s = 20.0
+    closed = {}
+    for dt in (1, 2, 5, 10):
+        entry = SimpleNamespace(options={CONF_SITE_UPDATE_FREQUENCY: dt}, data={})
+        sensor = SimpleNamespace(
+            _attr_name="t", _ema_current=0.0, _schmitt_current=0.0,
+            _schmitt_state="rising", _rate_limited_current=0.0,
+        )
+        # Seed above zero: a rate_limited_current of 0 takes the fast-start
+        # branch, which bypasses the filter entirely and by design.
+        sensor._ema_current = sensor._schmitt_current = 6.0
+        sensor._rate_limited_current = 6.0
+        for _ in range(int(span_s / dt)):
+            apply_smoothing(sensor, 16.0, False, entry)
+        closed[dt] = (sensor._ema_current - 6.0) / 10.0
+
+    # ~20 s at tau 5.6 s is e^-20/5.6 left, so about 97% closed either way.
+    for dt, frac in closed.items():
+        assert 0.9 < frac < 1.0, (dt, frac)
+    spread = max(closed.values()) - min(closed.values())
+    assert spread < 0.06, closed
+
+
+def test_the_permit_filter_and_the_input_filter_share_one_time_constant():
+    """The two are tuned as a pair, so the conversion is imported rather than
+    restated — a second copy of the formula would let them drift apart with no
+    test to notice."""
+    import inspect
+    from custom_components.dynamic_ocpp_evse.control import smoothing
+
+    src = inspect.getsource(smoothing)
+    assert "ema_alpha_for" in src, "the control EMA must use the shared conversion"
+    assert "EMA_ALPHA *" not in src, "a per-cycle weight is back in the permit filter"
 
 if __name__ == "__main__":
     # Deliberately pytest-free: the pure tier has to run on the developer's

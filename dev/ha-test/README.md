@@ -255,22 +255,62 @@ error** (surplus the load failed to absorb) and **register writes per minute**
 (churn inflicted on the device). Measurements on 2026-09-08, solar 15 kW ± 2.5 kW
 over 150 s:
 
-| site refresh | rate limiting | EMA | mean error | writes/min |
-|---|---|---|---|---|
-| 1 s | constant slew | per-cycle, tau 3.3 s | 719 W | 3.2 |
-| 1 s | adaptive 0.15/s | per-cycle, tau 3.3 s | 596 W | 3.6 |
-| 1 s | adaptive 0.40/s | per-cycle, tau 3.3 s | 668 W | 2.8 |
-| 10 s | adaptive 0.15/s | per-cycle, **tau 33 s** | 1 164 W | 3.4 |
-| 10 s | adaptive 0.15/s | time-based, tau 5.6 s | 991 W | 3.8 |
-| 1 s | adaptive 0.15/s | time-based, tau 5.6 s | 766 W | 1.2 |
+There are TWO exponential filters in series, and they were fixed one at a
+time, so the table separates them: the **input** EMA on the site's readings
+(`engine/readers._smooth`) and the **permit** EMA on the answer that comes back
+out (`control/smoothing.apply_smoothing`).
+
+| site refresh | rate limiting | input EMA | permit EMA | mean error | writes/min |
+|---|---|---|---|---|---|
+| 1 s | constant slew | per-cycle, tau 3.3 s | per-cycle, tau 3.3 s | 719 W | 3.2 |
+| 1 s | adaptive 0.15/s | per-cycle, tau 3.3 s | per-cycle, tau 3.3 s | 596 W | 3.6 |
+| 1 s | adaptive 0.40/s | per-cycle, tau 3.3 s | per-cycle, tau 3.3 s | 668 W | 2.8 |
+| 10 s | adaptive 0.15/s | per-cycle, **tau 33 s** | per-cycle, **tau 33 s** | 1 164 W | 3.4 |
+| 10 s | adaptive 0.15/s | time-based, tau 5.6 s | per-cycle, **tau 33 s** | 991 W | 3.8 |
+| 1 s | adaptive 0.15/s | time-based, tau 5.6 s | per-cycle, tau 3.3 s | 766 W | 1.2 |
+| 10 s | adaptive 0.15/s | time-based, tau 5.6 s | time-based, tau 5.6 s | **717 W** | 2.0 |
+| 1 s | adaptive 0.15/s | time-based, tau 5.6 s | time-based, tau 5.6 s | **832 W** | 1.6 |
 
 Read that table carefully, because it does not say "each change made things
-better". The adaptive rate helped (719 -> 596). Making the EMA time-based
-helped at a SLOW cadence (1 164 -> 991) and cost at a fast one (596 -> 766,
-for a third of the register writes) — because at a 1 s refresh the old
+better". The adaptive rate helped (719 -> 596). Making a filter time-based
+helped at a SLOW cadence and cost at a fast one, both times — 1 164 -> 991 and
+991 -> 717 at 10 s, 596 -> 766 -> 832 at 1 s — because at a 1 s refresh the old
 per-call weight was accidentally filtering *less* than the 2 s default
 intends, so the new number is the consistent one and the old fast behaviour
 was the anomaly.
+
+What the last two rows buy is not a smaller number, it is the DISAPPEARANCE OF
+THE SETTING'S SIDE EFFECT. Before, moving the site refresh from 1 s to 10 s
+cost 225 W of tracking (766 -> 991) that nothing in the UI warned about. After,
+the two cadences land within run-to-run noise of each other, and the slower one
+is no longer the loser. A refresh rate is a politeness setting for the
+inverter's Modbus; it should not be a control-loop tuning knob.
+
+The remaining 10 s vs 1 s gap runs the OTHER way (717 against 832) and is the
+rate limiter, not the EMA: `approach = min(RAMP_APPROACH_MAX, RAMP_APPROACH_RATE
+* site_freq)` is still a fraction per CYCLE, and it saturates at 0.9 for any
+interval past ~6 s. So a 10 s site closes 90% of the error per cycle (tau ~4.3 s)
+where a 1 s site closes 15% (tau ~6.2 s) — the same per-cycle-versus-per-second
+mistake the EMAs had, hiding behind the cap. Converting it the same way
+(`1 - exp(-site_freq / tau)`) is the obvious next step and has not been done.
+
+A CAVEAT ON EVERY ROW ABOVE, found on 2026-09-08 while reading the traces
+rather than the summaries. All the loads in this rig carry
+`solar_grace_period: 0`, set when the timers were shortened to make scenarios
+run quickly. For that particular timer 0 does not mean "short", it means OFF —
+and the grace hold is the thing that bridges a permit collapse. Without it, the
+moment the station's permit dips under its 200 W minimum, `entities/load.py`
+starts a charge pause of `CHARGE_PAUSE_DURATION` (default **3 minutes**, never
+configured here) and pins the command at 0 for the whole span however much
+surplus returns. Both 2026-09-08 runs show it: the permit recovers to 1 794 W
+while the register sits at 200 W for the rest of the window.
+
+That does not invalidate the comparison — the metric samples the PERMIT, which
+keeps tracking throughout, and every row was measured under the same
+configuration — but it does mean the second half of each run exercises the
+allocator without exercising the actuation, and the writes/min figures are
+lower than a properly configured site would show. Give the rig a non-zero grace
+period before reading anything into register churn.
 
 Note also how much of the remaining error is the METRIC rather than the loop:
 `ideal` is clamped at 0 whenever the surplus falls below the station's 200 W
