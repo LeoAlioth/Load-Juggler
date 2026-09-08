@@ -252,10 +252,20 @@ python3 dev/ha-test/moving_surplus.py
 
 Two numbers matter and they trade against each other: the mean **tracking
 error** (surplus the load failed to absorb) and **register writes per minute**
-(churn inflicted on the device). Baseline on 2026-09-08, solar 15 kW ± 2.5 kW
-over 150 s: **719 W mean error, 2 055 W peak, 3.2 writes/minute**. The permit
-moved at exactly `RAMP_UP_RATE` / `RAMP_DOWN_RATE` the entire time, so the rate
-limiter — not the measurement lag — is what stops it keeping up.
+(churn inflicted on the device). Measurements on 2026-09-08, solar 15 kW ± 2.5 kW
+over 150 s:
+
+| rate limiting | mean error | peak | writes/min |
+|---|---|---|---|
+| constant slew (before) | 719 W | 2 055 W | 3.2 |
+| adaptive, 0.15/s | **596 W** | 2 009 W | 3.6 |
+| adaptive, 0.40/s | 668 W | 2 147 W | 2.8 |
+
+With the constant slew the permit moved at exactly `RAMP_UP_RATE` /
+`RAMP_DOWN_RATE` the whole time — saturated, so it could not keep up. The
+proportional term fixes that, and then going faster stops helping: past about
+0.15/s the bottleneck is the measurement chain (CT lag plus the engine's grid
+EMA), not the follower.
 
 **Checking the rig itself**, when a number looks wrong and you need to know
 whether it is the engine or the simulator:

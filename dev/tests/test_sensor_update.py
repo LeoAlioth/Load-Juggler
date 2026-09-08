@@ -2203,13 +2203,23 @@ async def test_rate_limit_ramp_up_capped(
 ):
     """Test that ramp-up is capped by the smoothing pipeline (EMA + dead band + rate limit).
 
-    With EMA_ALPHA=0.3, DEAD_BAND=0.3, site_update_frequency=2s, RAMP_UP_RATE=0.1 A/s:
-    - Previous output was 6A, engine wants 16A.
-    - EMA: 0.3*16 + 0.7*6 = 9.0A
-    - Dead band: |9.0 - 6.0| = 3.0 > 0.3 → passes
-    - Rate limit: max_up = 0.1 * 2 = 0.2A → capped at 6.2A
+    Previous output 6A, engine wants 16A, site_update_frequency 2s. The EMA
+    lands at 9.0A, the dead band passes, and the step is the LARGER of the
+    fixed floor (RAMP_UP_RATE * 2 = 0.2A) and a fraction of the error still to
+    close (3.0A * RAMP_APPROACH_RATE * 2 = 0.9A) - so 6.9A.
+
+    The bound moved when the constant slew gained that proportional term: a
+    fixed 0.2A per cycle could not track a moving surplus, leaving 719 W
+    unabsorbed on average (rig, 2026-09-08). What is under test is unchanged -
+    the pipeline still caps the change far below the 16A the engine asked for.
     """
-    from custom_components.dynamic_ocpp_evse.const import RAMP_UP_RATE, DEFAULT_SITE_UPDATE_FREQUENCY
+    from custom_components.dynamic_ocpp_evse.const import (
+        DEFAULT_SITE_UPDATE_FREQUENCY,
+        EMA_ALPHA,
+        RAMP_APPROACH_MAX,
+        RAMP_APPROACH_RATE,
+        RAMP_UP_RATE,
+    )
 
     _set_ha_states(hass, hub_entry)
 
@@ -2233,12 +2243,17 @@ async def test_rate_limit_ramp_up_capped(
         profile = ocpp_calls[0][0][2]["custom_profile"]
         limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
 
-        # Engine would allocate 16A (max), but smoothing pipeline caps the change
-        max_allowed = 6.0 + RAMP_UP_RATE * DEFAULT_SITE_UPDATE_FREQUENCY
-        assert limit <= max_allowed, (
+        # Engine would allocate 16A (max), but the smoothing pipeline caps it.
+        freq = DEFAULT_SITE_UPDATE_FREQUENCY
+        ema = EMA_ALPHA * 16.0 + (1 - EMA_ALPHA) * 6.0
+        approach = min(RAMP_APPROACH_MAX, RAMP_APPROACH_RATE * freq)
+        step = max(RAMP_UP_RATE * freq, abs(ema - 6.0) * approach)
+        max_allowed = 6.0 + step
+        assert limit <= max_allowed + 0.05, (
             f"Rate-limited ramp-up should be <= {max_allowed}A, got {limit}A"
         )
         assert limit > 6.0, f"Limit should have increased from 6A, got {limit}A"
+        assert limit < 16.0, f"The change must still be capped, got {limit}A"
 
 
 async def test_rate_limit_ramp_down_capped(
@@ -2252,7 +2267,13 @@ async def test_rate_limit_ramp_down_capped(
     Previous output was 16A, engine wants 6A (Eco min).
     EMA pulls toward 6A, dead band passes, rate limit caps the per-cycle drop.
     """
-    from custom_components.dynamic_ocpp_evse.const import RAMP_DOWN_RATE, DEFAULT_SITE_UPDATE_FREQUENCY
+    from custom_components.dynamic_ocpp_evse.const import (
+        DEFAULT_SITE_UPDATE_FREQUENCY,
+        EMA_ALPHA,
+        RAMP_APPROACH_MAX,
+        RAMP_APPROACH_RATE,
+        RAMP_DOWN_RATE,
+    )
 
     _set_ha_states(hass, hub_entry)
     sensor = LoadJugglerDeviceSensor(
@@ -2281,8 +2302,14 @@ async def test_rate_limit_ramp_down_capped(
         limit = profile["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"]
 
         # Engine wants 6A (eco min), but ramp-down caps the per-cycle drop
-        min_allowed = 16.0 - RAMP_DOWN_RATE * DEFAULT_SITE_UPDATE_FREQUENCY
-        assert limit >= min_allowed, (
+        # at the larger of the fixed floor and a fraction of the remaining
+        # error - see test_rate_limit_ramp_up_capped for why.
+        freq = DEFAULT_SITE_UPDATE_FREQUENCY
+        ema = EMA_ALPHA * 6.0 + (1 - EMA_ALPHA) * 16.0
+        approach = min(RAMP_APPROACH_MAX, RAMP_APPROACH_RATE * freq)
+        step = max(RAMP_DOWN_RATE * freq, abs(16.0 - ema) * approach)
+        min_allowed = 16.0 - step
+        assert limit >= min_allowed - 0.05, (
             f"Rate-limited ramp-down should be >= {min_allowed}A, got {limit}A"
         )
         assert limit < 16.0, f"Limit should have decreased from 16A, got {limit}A"

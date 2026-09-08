@@ -2,6 +2,8 @@ import logging
 from ..const import (
     EMA_ALPHA,
     DEAD_BAND,
+    RAMP_APPROACH_MAX,
+    RAMP_APPROACH_RATE,
     RAMP_UP_RATE,
     RAMP_DOWN_RATE,
     CONF_SITE_UPDATE_FREQUENCY,
@@ -91,14 +93,23 @@ def apply_smoothing(
         site_freq = get_entry_value(
             hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
         )
-        max_up = RAMP_UP_RATE * site_freq
-        max_down = RAMP_DOWN_RATE * site_freq
         target = sensor._schmitt_current
         delta = target - sensor._rate_limited_current
+
+        # The allowed step is the LARGER of a fixed floor and a fraction of the
+        # error still to close, so this is never slower than the old constant
+        # slew and is much faster while far from target. Shrinking with the
+        # error is what makes it self-damping: it approaches asymptotically
+        # rather than driving through at a constant rate.
+        approach = min(RAMP_APPROACH_MAX, RAMP_APPROACH_RATE * site_freq)
+        proportional = abs(delta) * approach
+        max_up = max(RAMP_UP_RATE * site_freq, proportional)
+        max_down = max(RAMP_DOWN_RATE * site_freq, proportional)
+
         if delta > max_up:
             target = sensor._rate_limited_current + max_up
             _LOGGER.debug(
-                "Ramp UP for %s: %.1fA → %.1fA (schmitt=%.1fA, max +%.1fA/cycle)",
+                "Ramp UP for %s: %.1fA → %.1fA (schmitt=%.1fA, max +%.2fA/cycle)",
                 sensor._attr_name,
                 sensor._rate_limited_current,
                 target,
@@ -108,7 +119,7 @@ def apply_smoothing(
         elif delta < -max_down:
             target = sensor._rate_limited_current - max_down
             _LOGGER.debug(
-                "Ramp DOWN for %s: %.1fA → %.1fA (schmitt=%.1fA, max -%.1fA/cycle)",
+                "Ramp DOWN for %s: %.1fA → %.1fA (schmitt=%.1fA, max -%.2fA/cycle)",
                 sensor._attr_name,
                 sensor._rate_limited_current,
                 target,

@@ -66,6 +66,28 @@ DEFAULT_LOAD_PRIORITY = 1
 # Current ramp rates (A per second) — limits how fast the commanded current changes
 RAMP_UP_RATE = 0.1       # Max 0.1 A/s ramp up
 RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
+# Fraction of the REMAINING error a modulating load may close each second, on
+# top of the fixed floors above. The floors alone are a constant slew, and a
+# constant slew cannot track a moving surplus: measured on the rig
+# (2026-09-08), a permit chasing a 0 -> 2 400 W swing needed 104 s at 0.1 A/s
+# while the surplus turned over in 75 s, so the limiter was saturated the whole
+# time and the load absorbed 719 W less than was available, on average.
+#
+# Closing a FRACTION instead is fast when far from target and gentle near it —
+# the adaptive behaviour a constant rate cannot give — and because the step
+# always shrinks as the error shrinks it cannot overshoot. Cascaded with the
+# EMA above it stays overdamped, so this buys tracking without reintroducing
+# the ring the floors were there to damp.
+# 0.15/s measured best on the rig's moving-surplus test: mean tracking error
+# fell 719 -> 596 W against the old constant slew, with register writes
+# unchanged (3.2 -> 3.6 per minute). Raising it to 0.4/s made the error WORSE
+# (668 W), which is the useful result — past ~0.15/s this stage stops being the
+# bottleneck and the measurement chain upstream (the CT lag plus the engine's
+# own grid EMA) dominates. Tuning this number further buys nothing; closing the
+# remaining gap would need feed-forward from the solar reading rather than a
+# faster follower.
+RAMP_APPROACH_RATE = 0.15   # 1/s — ~6.7 s to close most of an error
+RAMP_APPROACH_MAX = 0.9     # never close more than this much of it in one cycle
 
 # EMA smoothing — exponential moving average on engine output before rate limiting
 EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothing)
