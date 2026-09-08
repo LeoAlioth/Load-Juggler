@@ -241,6 +241,22 @@ reports it as sustained hunting — a mistake made and then corrected on
 register step (100 W) of wobble, because that is the smallest change a device
 can actually be told about.
 
+**Testing a moving surplus.** The fixed-point scenarios are a poor test of the
+control loop, because at a fixed operating point the ring simply damps away.
+`moving_surplus.py` drives the array on a slow sinusoid instead — a passing
+cloud — and reports how well a modulating load tracks it:
+
+```bash
+python3 dev/ha-test/moving_surplus.py
+```
+
+Two numbers matter and they trade against each other: the mean **tracking
+error** (surplus the load failed to absorb) and **register writes per minute**
+(churn inflicted on the device). Baseline on 2026-09-08, solar 15 kW ± 2.5 kW
+over 150 s: **719 W mean error, 2 055 W peak, 3.2 writes/minute**. The permit
+moved at exactly `RAMP_UP_RATE` / `RAMP_DOWN_RATE` the entire time, so the rate
+limiter — not the measurement lag — is what stops it keeping up.
+
 **Checking the rig itself**, when a number looks wrong and you need to know
 whether it is the engine or the simulator:
 
