@@ -60,8 +60,13 @@ input_number:
 
 input_select:
   sim_station_phase:
+    # The full mask set, matching the plug and the tank. Load Juggler's own
+    # station picker currently offers A/B/C only, though its engine handles any
+    # mask — so the multi-phase options here are ready for the day that picker
+    # catches up, and meanwhile a mask the engine was told nothing about is a
+    # wiring/belief mismatch you can deliberately create.
     name: Station wired to phase
-    options: ["A", "B", "C"]
+    options: ["A", "B", "C", "AB", "BC", "AC", "ABC"]
     initial: "C"
     icon: mdi:transmission-tower
 
@@ -120,22 +125,25 @@ template:
         device_class: power
         unit_of_measurement: W
         state: >
-          {{ states('sensor.sim_station_ac_input') | float(0)
-             if is_state('input_select.sim_station_phase', 'A') else 0 }}
+          {% set mask = states('input_select.sim_station_phase') %}
+          {{ (states('sensor.sim_station_ac_input') | float(0) / mask | length)
+             | round(1) if 'A' in mask else 0 }}
       - name: Sim managed station b
         unique_id: sim_managed_station_b
         device_class: power
         unit_of_measurement: W
         state: >
-          {{ states('sensor.sim_station_ac_input') | float(0)
-             if is_state('input_select.sim_station_phase', 'B') else 0 }}
+          {% set mask = states('input_select.sim_station_phase') %}
+          {{ (states('sensor.sim_station_ac_input') | float(0) / mask | length)
+             | round(1) if 'B' in mask else 0 }}
       - name: Sim managed station c
         unique_id: sim_managed_station_c
         device_class: power
         unit_of_measurement: W
         state: >
-          {{ states('sensor.sim_station_ac_input') | float(0)
-             if is_state('input_select.sim_station_phase', 'C') else 0 }}
+          {% set mask = states('input_select.sim_station_phase') %}
+          {{ (states('sensor.sim_station_ac_input') | float(0) / mask | length)
+             | round(1) if 'C' in mask else 0 }}
 
   # ------------------------------------------------------------------
   # What it really pulls — the engine's power monitor for this load.

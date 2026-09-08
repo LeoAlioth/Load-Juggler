@@ -54,9 +54,17 @@ which is how you test a site with no battery, or with only a plug.
   whose thermostat is idle is an inactive load however high the setpoint went —
   that whole chain is real here, not stubbed.
 * **The station** is the modulating path: two `number` registers the engine
-  writes, and an AC input that follows the register — and clamps to 0 once the
+  writes, and an AC input that ramps toward the register rather than stepping
+  to it (`sim_station_ramp` — 100% is a converter, 50% is a car, and the slow
+  case is what the engine's settling test exists for). It clamps to 0 once the
   pack reads 100%, because a station that has finished charging stops drawing
   however high the register is set.
+
+  It stands in for a modulating EVSE, with two limits worth knowing: Load
+  Juggler caps a station at **5 kW** of charge power, so it cannot play an
+  11 kW charger; and its phase picker offers A/B/C only, so it is single-phase
+  *to the engine* even though the engine's own station builder handles any mask
+  and the rig here offers the full set.
 * **Phase wiring.** Each device has an `input_select` for the phase(s) it is
   wired to, and a multi-phase load splits its draw evenly. That select is the
   *wiring*; the `connected to phase` field in Load Juggler is the engine's
@@ -71,10 +79,30 @@ which is how you test a site with no battery, or with only a plug.
 * The inverter does not decide anything: its charge/discharge split is the
   `sim_battery_power` slider, so curtailment at the export limit is not
   modelled. Reproduce curtailment by pulling `sim_solar` down yourself.
-* The CTs respond instantly. Real CTs lag several seconds, which is the
-  smoothing and settling the engine is built around — the one omission that
-  matters for testing the feedback loop specifically.
+* Nothing models the CTs' *noise*, only their delay. They lag 5–10 s (see
+  below) but report the lagged value exactly, where a real CT jitters.
 * No EVSE: that needs the OCPP integration and a charger to talk to.
+
+## The measurements lag, on purpose
+
+`input_boolean.sim_lag` (on by default) makes the rig behave like instruments
+rather than like arithmetic:
+
+* **The grid CTs are 5–10 s behind.** Sampled every 5 seconds, and each sample
+  publishes the *previous* one. That lag is not a detail: it is why the engine
+  smooths its readings, why it waits for a load's draw to settle before
+  trusting it, and how it can over-commit by granting power twice against a
+  surplus the first grant already spent. With instant CTs none of that is
+  reachable, and the rig would quietly pass a site the real one fails.
+* **`sensor.sim_ct_lag_error`** is how far behind the meter currently is, in
+  watts. When the engine over-commits, that is the number it over-committed
+  against.
+* **The station ramps** toward its register instead of stepping to it.
+* The binary loads do **not** — a resistive element really does step the
+  instant its relay closes.
+
+Turn it off to isolate an engine question from a timing one. No real site is in
+that state.
 
 ## Working with it
 

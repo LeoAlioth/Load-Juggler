@@ -286,6 +286,29 @@ def main():
     else:
         print("  ok  ramp is monotonic")
 
+    print("\n--- a three-phase station splits its draw ---")
+    # The engine derives phases from len(connected_to_phase) and spreads the
+    # draw the same way, so a mask the rig splits evenly is exactly what it
+    # expects. Pinned here because an exact-match phase test would silently
+    # report ZERO draw for "ABC" — the load would vanish from the physics
+    # while still being granted power.
+    STATE["input_select.sim_station_phase"] = "ABC"
+    STATE["input_number.sim_station_charge_speed_raw"] = "3000"
+    STATE["input_number.sim_station_ramp"] = "100"
+    settle(exprs, env)
+    tick(triggered, env); settle(exprs, env)
+    check("draws its register", g("sensor.sim_station_ac_input"), 3000.0, 0.1)
+    for letter in "abc":
+        check(f"one third on {letter.upper()}",
+              g(f"sensor.sim_managed_station_{letter}"), 1000.0, 0.1)
+    STATE["input_select.sim_station_phase"] = "C"
+    STATE["input_number.sim_station_charge_speed_raw"] = "1000"
+    settle(exprs, env)
+    tick(triggered, env); settle(exprs, env)
+    check("single phase puts it all on C",
+          g("sensor.sim_managed_station_c"), 1000.0, 0.1)
+    check("and nothing on A", g("sensor.sim_managed_station_a"), 0.0, 0.1)
+
     print("\n--- lag off: measurements are instant again ---")
     STATE["input_boolean.sim_lag"] = "off"
     STATE["input_number.sim_station_charge_speed_raw"] = "300"
