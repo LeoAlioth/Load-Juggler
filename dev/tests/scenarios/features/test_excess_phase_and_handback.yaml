@@ -1,0 +1,142 @@
+# Two properties an Excess load has to obey, both found on the Docker rig
+# (2026-09-08) and neither previously covered end to end.
+#
+# 1. It never runs on a phase that is BUYING, whatever the site total says.
+#    The guard used to be asked of the phase's slice of the surplus pool, and
+#    that slice is the residue of a 200:1 cancellation — at a small margin it
+#    is a few hundredths of an amp and its SIGN is noise. Asked of the phase's
+#    own flow instead, the question is answered in amps.
+#
+# 2. A load whose Dynamic Control is off is part of the HOUSE. The engine had
+#    no idea about that switch: it still allocated such a load, published a
+#    permit, charged its rating to the Excess start ledger and subtracted its
+#    draw from the grid readings — so a plug switched off and handed back
+#    reserved its whole 2 kW of surplus indefinitely.
+
+scenarios:
+
+  - name: "excess-tank-refused-on-an-importing-phase"
+    description: >
+      20 kW of solar over three phases (6.67 kW each) with 7.5 kW of household
+      on phase B alone. The site exports 11.9 kW against a 10.5 kW threshold,
+      so the verdict is on and there is real surplus — but phase B is BUYING
+      833 W, and the tank sits on B. It must get nothing: buying power is the
+      one thing an Excess load exists to avoid. The station on phase C, which
+      exports 6.37 kW, runs on the same surplus.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 20000
+      solar_production_direct: true
+      phase_a_consumption: 1.3
+      phase_b_consumption: 32.6
+      phase_c_consumption: 1.3
+      excess_export_threshold: 10500
+    loads:
+      - entity_id: "tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Normal"
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        current_temperature: 45
+        normal_temperature: 45
+        boost_temperature: 65
+        l1_phase: "B"
+      - entity_id: "station"
+        device_type: "power_station"
+        operating_mode: "Excess"
+        min_current: 0.87
+        max_current: 10.43
+        phases: 1
+        priority: 2
+        l1_phase: "C"
+    expected:
+      tank:
+        allocated: 0.0      # its phase is importing
+
+  - name: "excess-handed-back-load-claims-nothing"
+    description: >
+      A plug switched off with Dynamic Control OFF, and a boosting tank on
+      another phase with only 600 W of surplus to share. The plug must claim
+      nothing — it is not the engine's to start — so the tank takes its whole
+      2 kW rating, the overshoot a binary Excess load is allowed. Before the
+      fix the plug charged max(draw, min_current) = 2 kW to the ledger while
+      drawing nothing, and the tank was refused.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      distribution_mode: priority
+      solar_production: 12000
+      solar_production_direct: true
+      phase_a_consumption: 1.3
+      phase_b_consumption: 1.3
+      phase_c_consumption: 1.3
+      excess_export_threshold: 10500
+    loads:
+      - entity_id: "handed_back_plug"
+        device_type: "plug"
+        operating_mode: "Continuous"
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        dynamic_control: false
+        l1_phase: "A"
+      - entity_id: "tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Normal"
+        power_rating: 2000
+        phases: 1
+        priority: 2
+        current_temperature: 45
+        normal_temperature: 45
+        boost_temperature: 65
+        l1_phase: "B"
+    expected:
+      handed_back_plug:
+        allocated: 0.0      # not managed, so not allocated
+      tank:
+        allocated: 8.7      # gets the surplus the plug used to reserve
+
+  - name: "excess-a-managed-plug-still-reserves-its-rating"
+    description: >
+      The counterpart, so the fix above cannot be read as "an off load never
+      claims". The SAME site with the plug's Dynamic Control ON: the engine is
+      about to switch it on, so its 2 kW claim is real and the tank — ranked
+      behind it — must yield. This is what stops two loads starting on one
+      load's worth of surplus.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      distribution_mode: priority
+      solar_production: 12000
+      solar_production_direct: true
+      phase_a_consumption: 1.3
+      phase_b_consumption: 1.3
+      phase_c_consumption: 1.3
+      excess_export_threshold: 10500
+    loads:
+      - entity_id: "managed_plug"
+        device_type: "plug"
+        operating_mode: "Continuous"
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Normal"
+        power_rating: 2000
+        phases: 1
+        priority: 2
+        current_temperature: 45
+        normal_temperature: 45
+        boost_temperature: 65
+        l1_phase: "B"
+    expected:
+      tank:
+        allocated: 0.0      # the plug's claim leaves nothing

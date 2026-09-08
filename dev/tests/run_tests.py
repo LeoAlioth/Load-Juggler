@@ -545,6 +545,10 @@ def build_site_from_scenario(scenario, excess_on=False):
             l2_current=load_data.get("l2_current", 0),
             l3_current=load_data.get("l3_current", 0),
             unmetered=load_data.get("unmetered", False),
+            # A scenario can hand a load back to the user, as the Dynamic
+            # Control switch does: its draw becomes household and it competes
+            # for nothing.
+            dynamic_control=load_data.get("dynamic_control", True),
             rated_current=rated_current,
         )
         site.loads.append(load)
