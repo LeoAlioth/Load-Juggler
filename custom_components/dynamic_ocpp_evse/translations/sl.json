@@ -78,7 +78,7 @@
                     "entity_id": "Predpona ID entitete za ustvarjene entitete"
                 },
                 "data_description": {
-                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power)."
+                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.[predpona]_power)."
                 }
             },
             "hub_grid": {
@@ -169,7 +169,7 @@
                     "wiring_topology": "Vzporedno: ta razsmernik napaja omrežno zbiralko neposredno (AC-sklopljena sončna, brez baterije). Zaporedno: moč teče skozi ta razsmernik (hibrid z DC-sklopljeno baterijo).",
                     "solar_production_entity_id": "Neobvezno — če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
                     "solar_forecast_device_ids": "Naprave iz integracije Open-Meteo Solar Forecast — ta ustvari po eno napravo za vsako PV polje, zato izberite napravo vsakega polja. Skupaj z omejitvijo izvoza in kapaciteto baterije omogoči svetovalne senzorje, ki priporočajo, kako polna sme biti baterija pred opoldanskim vrhom proizvodnje.",
-                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power)."
+                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.[predpona]_power)."
                 }
             },
             "inverter_battery": {
@@ -242,18 +242,18 @@
                     "plug_power_rating": "Nazivna moč",
                     "plug_max_current": "Nazivni maksimalni tok",
                     "connected_to_phase": "Priključena na fazo",
-                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "load_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "binary_min_off_time": "Najkrajši čas izklopa"
                 },
                 "data_description": {
-                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power).",
+                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.[predpona]_power).",
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "plug_max_current": "Nazivni tok vtičnice — zgornja omejitev toka, ki ga vtičnica/rele prenese. Ločeno od zgoraj nastavljene moči.",
                     "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, zmogljivost katere faze se uporabi v izračunih.",
-                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "load_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
@@ -278,7 +278,7 @@
                     "station_normal_reserve": "Običajna rezerva",
                     "station_storm_reserve": "Rezerva za nevihto",
                     "connected_to_phase": "Priklopljeno na fazo",
-                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "load_priority": "Prioriteta (1 = najvišja)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess"
                 },
@@ -296,7 +296,7 @@
                     "station_storm_reserve": "Vzdrževana, ko je stikalo Rezerva za nevihto vklopljeno — polni se iz katerega koli vira in se ne prazni pod to raven. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji Solar/Excess niso več izpolnjeni.",
                     "connected_to_phase": "Na katero fazo (ali faze) je priklopljen izmenični vhod postaje. Določa, iz katere fazne kapacitete se črpa njeno polnjenje.",
-                    "charger_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
+                    "load_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
                     "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje."
                 }
             },
@@ -313,7 +313,7 @@
                     "tank_boost_temperature": "Povišana temperatura",
                     "tank_prioritize_below_normal": "Prednost pred drugimi porabniki v načinu Prednost sonca, ko je pod normalno temperaturo",
                     "connected_to_phase": "Priključeno na fazo",
-                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "load_priority": "Prioriteta (1 = najvišja)",
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
                     "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
@@ -328,7 +328,7 @@
                     "tank_normal_temperature": "Osnovna ciljna temperatura. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "tank_boost_temperature": "Višja ciljna temperatura ob presežku energije ali ko je baterija nad ciljno napolnjenostjo. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
-                    "charger_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "load_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa — uporabljen namesto fiksne moči, kadar je prisoten.",
                     "tank_power_device_id": "Lahko izberete pametni rele/vtičnico, ki napaja grelnik; njen senzor moči se poišče samodejno.",
                     "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
@@ -353,12 +353,12 @@
                 "data": {
                     "name": "Ime polnilne postaje",
                     "entity_id": "Predpona ID entitete",
-                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "load_priority": "Prioriteta (1 = najvišja)",
                     "ocpp_device": "Naprava OCPP polnilne postaje"
                 },
                 "data_description": {
-                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power).",
-                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.[predpona]_power).",
+                    "load_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "ocpp_device": "Naprava, ki jo je za to polnilno postajo ustvarila integracija OCPP. Iz nje se preberejo ID polnilne točke (charge point id) ter senzorji toka in moči — zamenjajte jo le, če je bila prepoznana napačna polnilna postaja."
                 }
             },
@@ -412,7 +412,7 @@
                 },
                 "data_description": {
                     "circuit_group_current_limit": "Nazivni tok varovalke, ki si jo delijo porabniki. Dodelitve bodo omejene, da skupna poraba nikoli ne preseže te omejitve na nobeni fazi.",
-                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.<predpona>_power)."
+                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.[predpona]_power)."
                 }
             },
             "group_members": {
@@ -749,7 +749,7 @@
                     "plug_power_rating": "Nazivna moč",
                     "plug_max_current": "Nazivni maksimalni tok",
                     "connected_to_phase": "Priključena na fazo",
-                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "load_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
@@ -759,7 +759,7 @@
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "plug_max_current": "Nazivni tok vtičnice — zgornja omejitev toka, ki ga vtičnica/rele prenese. Ločeno od zgoraj nastavljene moči.",
                     "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, zmogljivost katere faze se uporabi v izračunih.",
-                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "load_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
@@ -782,7 +782,7 @@
                     "station_normal_reserve": "Običajna rezerva",
                     "station_storm_reserve": "Rezerva za nevihto",
                     "connected_to_phase": "Priklopljeno na fazo",
-                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "load_priority": "Prioriteta (1 = najvišja)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess"
                 },
@@ -799,7 +799,7 @@
                     "station_storm_reserve": "Vzdrževana, ko je stikalo Rezerva za nevihto vklopljeno — polni se iz katerega koli vira in se ne prazni pod to raven. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji Solar/Excess niso več izpolnjeni.",
                     "connected_to_phase": "Na katero fazo (ali faze) je priklopljen izmenični vhod postaje. Določa, iz katere fazne kapacitete se črpa njeno polnjenje.",
-                    "charger_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
+                    "load_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
                     "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje."
                 }
             },
@@ -814,7 +814,7 @@
                     "tank_boost_temperature": "Povišana temperatura",
                     "tank_prioritize_below_normal": "Prednost pred drugimi porabniki v načinu Prednost sonca, ko je pod normalno temperaturo",
                     "connected_to_phase": "Priključeno na fazo",
-                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "load_priority": "Prioriteta (1 = najvišja)",
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
                     "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
@@ -829,7 +829,7 @@
                     "tank_boost_temperature": "Višja ciljna temperatura ob presežku energije ali ko je baterija nad ciljno napolnjenostjo. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sonca, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni — bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije.",
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
-                    "charger_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "load_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa — uporabljen namesto fiksne moči, kadar je prisoten.",
                     "tank_power_device_id": "Lahko izberete pametni rele/vtičnico, ki napaja grelnik; njen senzor moči se poišče samodejno.",
                     "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
@@ -841,11 +841,11 @@
                 "title": "Posodobi polnilno postajo",
                 "description": "Posodobite prioriteto polnilne postaje in napravo OCPP, na kateri temelji.\n\nTrenutni ID polnilne točke (charge point id): {charge_point_id}",
                 "data": {
-                    "charger_priority": "Prioriteta (1 = najvišja)",
+                    "load_priority": "Prioriteta (1 = najvišja)",
                     "ocpp_device": "Naprava OCPP polnilne postaje"
                 },
                 "data_description": {
-                    "charger_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "load_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "ocpp_device": "Naprava, ki jo je za to polnilno postajo ustvarila integracija OCPP. Če izberete drugo, se na njo prenesejo ID polnilne točke (charge point id) in vsi senzorji toka in moči. Pustite jo nespremenjeno, da ohranite trenutno polnilno postajo — ostane prazna, če integracija OCPP za njo ni ustvarila naprave."
                 }
             },
