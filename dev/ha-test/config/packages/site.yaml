@@ -134,6 +134,22 @@ template:
           {{ (states('sensor.sim_managed_plug_a') | float(0)
              + states('sensor.sim_managed_tank_a') | float(0)
              + states('sensor.sim_managed_station_a') | float(0)) | round(1) }}
+      # The three phases summed, for plotting against solar and net export on
+      # one axis - the per-phase split answers "which leg", this answers "how
+      # much of the surplus did the loads actually take". Reads the phase
+      # totals rather than the nine device sensors so it cannot drift from
+      # them, and by explicit entity id so each access is tracked (a template
+      # that ITERATES a domain gets no dependency and renders once - that bug
+      # left these aggregates 34 minutes stale).
+      - name: Sim managed load total
+        unique_id: sim_managed_load_total
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ (states('sensor.sim_site_load_a') | float(0)
+             + states('sensor.sim_site_load_b') | float(0)
+             + states('sensor.sim_site_load_c') | float(0)) | round(1) }}
       - name: Sim site load B
         unique_id: sim_site_load_b
         device_class: power

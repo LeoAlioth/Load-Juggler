@@ -81,6 +81,8 @@ views:
       entities:
       - sensor.sim_grid_net_power
       - sensor.sim_solar_power
+      - entity: sensor.sim_managed_load_total
+        name: Managed load total
       - entity: sensor.sim_ct_lag_error
         name: Meter lag
     column_span: 3
