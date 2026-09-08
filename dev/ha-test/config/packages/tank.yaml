@@ -74,15 +74,6 @@ template:
         state: "{{ states('input_number.sim_tank_temperature') | float(45) | round(1) }}"
 
       # The element's draw, as the engine reads it.
-      - name: Sim tank power
-        unique_id: sim_tank_power
-        device_class: power
-        unit_of_measurement: W
-        state_class: measurement
-        state: >
-          {{ states('input_number.sim_tank_element_power') | float(0)
-             if is_state('input_boolean.sim_tank_element', 'on') else 0 }}
-
       - name: Sim managed tank a
         unique_id: sim_managed_tank_a
         device_class: power
@@ -110,3 +101,40 @@ template:
           {% set on = is_state('input_boolean.sim_tank_element', 'on') %}
           {{ (states('input_number.sim_tank_element_power') | float(0) / mask | length)
              | round(1) if on and 'C' in mask else 0 }}
+
+  # ------------------------------------------------------------------
+      # The MEASURED draw, lagging the physical one by 5–10 s.
+      #
+      # A real site measures a load's draw with a meter, and that meter lags
+      # much like the site CTs do. This one used to be instantaneous while the
+      # CTs lagged, and the mismatch manufactured bugs: the feedback loop
+      # removes a managed draw from a CT that has not registered it yet, so for
+      # one sample the phase reads 2 kW lighter than it is. That inverted an
+      # importing phase into an exporting one and let a load run on a phase it
+      # should have been refused (rig, 2026-09-08) — three separate false
+      # symptoms chased before the cause was the rig, not the engine.
+      #
+      # Same delay line as the grid CTs: `this.attributes.pending` holds the
+      # value from one tick ago while `pending` re-renders to the current one,
+      # and Home Assistant commits both together.
+  - trigger:
+      - trigger: time_pattern
+        seconds: "/5"
+    sensor:
+      - name: Sim tank power
+        unique_id: sim_tank_power
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {% set now = states('input_number.sim_tank_element_power') | float(0)
+             if is_state('input_boolean.sim_tank_element', 'on') else 0 %}
+          {% if is_state('input_boolean.sim_lag', 'on') and this is not none %}
+            {{ this.attributes.get('pending', now) | float(now) }}
+          {% else %}
+            {{ now }}
+          {% endif %}
+        attributes:
+          pending: >
+            {{ states('input_number.sim_tank_element_power') | float(0)
+             if is_state('input_boolean.sim_tank_element', 'on') else 0 }}

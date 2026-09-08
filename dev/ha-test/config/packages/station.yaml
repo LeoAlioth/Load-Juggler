@@ -128,7 +128,7 @@ template:
         unit_of_measurement: W
         state: >
           {% set mask = states('input_select.sim_station_phase') %}
-          {{ (states('sensor.sim_station_ac_input') | float(0) / mask | length)
+          {{ (states('sensor.sim_station_draw') | float(0) / mask | length)
              | round(1) if 'A' in mask else 0 }}
       - name: Sim managed station b
         unique_id: sim_managed_station_b
@@ -136,7 +136,7 @@ template:
         unit_of_measurement: W
         state: >
           {% set mask = states('input_select.sim_station_phase') %}
-          {{ (states('sensor.sim_station_ac_input') | float(0) / mask | length)
+          {{ (states('sensor.sim_station_draw') | float(0) / mask | length)
              | round(1) if 'B' in mask else 0 }}
       - name: Sim managed station c
         unique_id: sim_managed_station_c
@@ -144,7 +144,7 @@ template:
         unit_of_measurement: W
         state: >
           {% set mask = states('input_select.sim_station_phase') %}
-          {{ (states('sensor.sim_station_ac_input') | float(0) / mask | length)
+          {{ (states('sensor.sim_station_draw') | float(0) / mask | length)
              | round(1) if 'C' in mask else 0 }}
 
   # ------------------------------------------------------------------
@@ -165,8 +165,8 @@ template:
       - trigger: time_pattern
         seconds: "/5"
     sensor:
-      - name: Sim station ac input
-        unique_id: sim_station_ac_input
+      - name: Sim station draw
+        unique_id: sim_station_draw
         device_class: power
         unit_of_measurement: W
         state_class: measurement
@@ -180,3 +180,31 @@ template:
             {{ target if (target - prev) | abs < 50
                else (prev + (target - prev) * rate) | round(0) }}
           {% endif %}
+
+  # ------------------------------------------------------------------
+  # What the station REPORTS drawing, which lags what it is drawing.
+  #
+  # Two stages on purpose, and they are different physics. The ramp above is
+  # the converter genuinely taking a few seconds to reach its setpoint. This is
+  # the METER on it, and like the site CTs it is 5–10 s behind. Collapsing the
+  # two — an instantaneous monitor beside a lagging CT — is what let the
+  # feedback loop remove a draw the CT had not yet seen, and an importing phase
+  # read as exporting for one sample.
+  - trigger:
+      - trigger: time_pattern
+        seconds: "/5"
+    sensor:
+      - name: Sim station ac input
+        unique_id: sim_station_ac_input
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {% set now = states('sensor.sim_station_draw') | float(0) %}
+          {% if is_state('input_boolean.sim_lag', 'on') and this is not none %}
+            {{ this.attributes.get('pending', now) | float(now) }}
+          {% else %}
+            {{ now }}
+          {% endif %}
+        attributes:
+          pending: "{{ states('sensor.sim_station_draw') | float(0) }}"

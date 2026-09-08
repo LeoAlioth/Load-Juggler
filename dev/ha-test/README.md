@@ -97,9 +97,20 @@ rather than like arithmetic:
 * **`sensor.sim_ct_lag_error`** is how far behind the meter currently is, in
   watts. When the engine over-commits, that is the number it over-committed
   against.
-* **The station ramps** toward its register instead of stepping to it.
-* The binary loads do **not** — a resistive element really does step the
-  instant its relay closes.
+* **Every load's power monitor lags too**, by the same 5–10 s. This one is
+  easy to get wrong and expensive when you do: the monitors used to be
+  instantaneous while the CTs lagged, and the feedback loop then removed a
+  managed draw from a CT that had not registered it yet. For one sample a
+  phase read 2 kW lighter than it was — enough to flip an importing phase into
+  an exporting one and let a load run where it should have been refused. Three
+  separate "engine bugs" were chased before the cause turned out to be the rig.
+  The physical draw and the measured draw are now separate entities per device.
+* **The station ramps as well as lags**, and the two are different physics: the
+  ramp is its converter taking a few seconds to reach the setpoint
+  (`sensor.sim_station_draw`), the lag is the meter on it
+  (`sensor.sim_station_ac_input`).
+* The binary loads' *physical* draw does step the instant the relay closes — a
+  resistive element really does — it is only the measurement that lags.
 
 Turn it off to isolate an engine question from a timing one. No real site is in
 that state.
