@@ -31,19 +31,28 @@ STATE = {}          # entity_id -> string state
 
 
 def collect():
-    """Pull every template sensor/switch/number out of the packages."""
-    items = []
+    """Pull every template entity out of the packages.
+
+    Returns (state-based, trigger-based): the first settle to a fixed point on
+    every change, the second only advance when their trigger fires, and they
+    can read their own previous state — which is what makes a delay line
+    possible at all, and what has to be simulated tick by tick.
+    """
+    plain, triggered = [], []
     for path in sorted(glob.glob(f"{CFG}/packages/*.yaml")):
         doc = yaml.safe_load(open(path))
         for block in doc.get("template") or []:
+            bucket = triggered if "trigger" in block else plain
             for kind in ("sensor", "switch", "number"):
                 for ent in block.get(kind) or []:
                     obj = ent["name"].lower().replace(" ", "_")
-                    items.append((f"{kind}.{obj}", ent.get("state"), path))
+                    bucket.append(
+                        (f"{kind}.{obj}", ent.get("state"), ent.get("attributes") or {})
+                    )
         for domain in ("input_number", "input_boolean", "input_select"):
             for obj in (doc.get(domain) or {}):
-                items.append((f"{domain}.{obj}", None, path))
-    return items
+                plain.append((f"{domain}.{obj}", None, {}))
+    return plain, triggered
 
 
 def make_env():
@@ -62,7 +71,7 @@ def make_env():
     return env
 
 
-def render(expr, env):
+def render(expr, env, this=None):
     def states(eid=None):
         if eid is None:
             return None
@@ -85,13 +94,50 @@ def render(expr, env):
     return env.from_string(expr).render(
         states=States(),
         is_state=lambda e, v: STATE.get(e) == v,
+        this=this,
     ).strip()
+
+
+ATTRS = {}   # entity_id -> {attribute: value}, as the delay lines keep them
+
+
+def settle(exprs, env, rounds=8):
+    """Drive the state-based templates to a fixed point, as HA's own
+    change-propagation does."""
+    for _ in range(rounds):
+        for eid, expr in exprs.items():
+            STATE[eid] = render(expr, env)
+
+
+def tick(triggered, env):
+    """One firing of the 5-second time pattern.
+
+    `state` and `attributes` are both rendered against the entity's state
+    BEFORE the run and committed together — which is precisely what makes
+    `this.attributes.pending` the value from one tick ago rather than this
+    one's. Rendering them in sequence, committing as you go, would collapse
+    the delay to nothing and the rig would look instant again.
+    """
+    pending = {}
+    for eid, expr, attr_exprs in triggered:
+        this = SimpleNamespace(
+            entity_id=eid,
+            state=STATE.get(eid, "unknown"),
+            attributes=ATTRS.get(eid, {}),
+        ) if eid in STATE else None
+        pending[eid] = (
+            render(expr, env, this=this),
+            {k: render(v, env, this=this) for k, v in attr_exprs.items()},
+        )
+    for eid, (state, attrs) in pending.items():
+        STATE[eid] = state
+        ATTRS[eid] = attrs
 
 
 def main():
     env = make_env()
-    items = collect()
-    exprs = {e: s for e, s, _ in items if s}
+    plain, triggered = collect()
+    exprs = {e: s for e, s, _ in plain if s}
 
     # --- the scenario -------------------------------------------------
     STATE.update({
@@ -114,16 +160,21 @@ def main():
         "input_number.sim_station_charge_speed_raw": "0",
         "input_number.sim_station_reserve_raw": "20",
         "input_select.sim_station_phase": "C",
+        "input_number.sim_station_ramp": "50",
+        "input_boolean.sim_lag": "on",
     })
 
-    # Resolve in dependency order by iterating to a fixed point.
-    for _ in range(8):
-        for eid, expr in exprs.items():
-            try:
-                STATE[eid] = render(expr, env)
-            except Exception as exc:
-                print(f"RENDER FAIL {eid}: {type(exc).__name__}: {exc}")
-                return 1
+    try:
+        settle(exprs, env)
+        # Enough ticks for the delay lines to reach steady state, so the checks
+        # below are about the physics rather than about start-up transients.
+        for _ in range(8):
+            tick(triggered, env)
+            settle(exprs, env)
+    except Exception as exc:
+        print(f"RENDER FAIL: {type(exc).__name__}: {exc}")
+        import traceback; traceback.print_exc()
+        return 1
 
     def g(e):
         return float(STATE[e])
@@ -131,7 +182,7 @@ def main():
     print("--- scenario: 1 kW house on A, 6 kW solar on ABC, 2 kW plug on A ---")
     for e in sorted(STATE):
         if e.startswith(("sensor.sim_grid", "sensor.sim_site_load",
-                         "sensor.sim_inverter")):
+                         "sensor.sim_inverter", "sensor.sim_ct")):
             print(f"  {e:38s} {STATE[e]}")
 
     fails = []
@@ -169,14 +220,81 @@ def main():
     print("\n--- tank switched on, on phase A too ---")
     STATE["input_boolean.sim_tank_element"] = "on"
     STATE["input_select.sim_tank_phase"] = "A"
+    settle(exprs, env)
     for _ in range(8):
-        for eid, expr in exprs.items():
-            STATE[eid] = render(expr, env)
+        tick(triggered, env)
+        settle(exprs, env)
     check("site load A (plug + tank)", g("sensor.sim_site_load_a"), 4000.0, 0.1)
     # 1000 + 4000 - 2000 = 3000 W -> 13.04 A import on A
     check("grid A", g("sensor.sim_grid_current_a"), 3000 / 230)
     # 6000 - 1000 - 4000 = 1000 W exported
     check("net power", g("sensor.sim_grid_net_power"), -1000.0, 5)
+
+    # --- the transient, which is the whole reason the lag exists ----------
+    # A step change must reach the engine LATE. If it arrives the same tick,
+    # the rig cannot reproduce an over-commitment: the engine would always see
+    # the effect of its own last grant before deciding the next one.
+    print("\n--- one tick of CT delay ---")
+    STATE["input_boolean.sim_tank_element"] = "off"
+    settle(exprs, env)
+    for _ in range(6):
+        tick(triggered, env)
+        settle(exprs, env)
+    before = g("sensor.sim_grid_current_a")
+
+    # The step: the tank's 2 kW element closes on phase A.
+    STATE["input_boolean.sim_tank_element"] = "on"
+    STATE["input_select.sim_tank_phase"] = "A"
+    settle(exprs, env)
+    check("truth moved at once", g("sensor.sim_grid_instant_a"), before + 2000 / 230)
+    check("meter has not moved yet", g("sensor.sim_grid_current_a"), before)
+
+    tick(triggered, env); settle(exprs, env)
+    check("still one tick behind", g("sensor.sim_grid_current_a"), before)
+    check("and the lag is visible", g("sensor.sim_ct_lag_error"), 2000.0, 5)
+
+    tick(triggered, env); settle(exprs, env)
+    check("caught up on the next tick",
+          g("sensor.sim_grid_current_a"), before + 2000 / 230)
+    check("lag back to zero", g("sensor.sim_ct_lag_error"), 0.0, 5)
+
+    print("\n--- the station's converter ramps rather than steps ---")
+    STATE["input_number.sim_station_charge_speed_raw"] = "1000"
+    settle(exprs, env)
+    check("register target", g("sensor.sim_station_input_target"), 1000.0, 0.1)
+    seen = []
+    for _ in range(6):
+        tick(triggered, env)
+        settle(exprs, env)
+        seen.append(g("sensor.sim_station_ac_input"))
+    print(f"  ramp: {seen}")
+    # Half the remaining gap each tick, then snapped once inside 10 W.
+    check("first tick is halfway", seen[0], 500.0, 1)
+    check("second tick is three quarters", seen[1], 750.0, 1)
+    # The last 50 W is snapped, so it arrives instead of creeping forever.
+    check("arrives at the target", seen[-1], 1000.0, 0.1)
+
+    print("\n--- ramp rate 100: a converter, not a car ---")
+    STATE["input_number.sim_station_ramp"] = "100"
+    STATE["input_number.sim_station_charge_speed_raw"] = "1500"
+    settle(exprs, env)
+    tick(triggered, env); settle(exprs, env)
+    check("there in one tick", g("sensor.sim_station_ac_input"), 1500.0, 0.1)
+    if not all(b >= a for a, b in zip(seen, seen[1:])):
+        print("  FAIL ramp is not monotonic")
+        fails.append("ramp monotonic")
+    else:
+        print("  ok  ramp is monotonic")
+
+    print("\n--- lag off: measurements are instant again ---")
+    STATE["input_boolean.sim_lag"] = "off"
+    STATE["input_number.sim_station_charge_speed_raw"] = "300"
+    STATE["input_boolean.sim_tank_element"] = "off"
+    settle(exprs, env)
+    tick(triggered, env); settle(exprs, env)
+    check("meter equals the truth",
+          g("sensor.sim_grid_current_a"), g("sensor.sim_grid_instant_a"))
+    check("station jumps to its register", g("sensor.sim_station_ac_input"), 300.0, 0.1)
 
     print(f"\n{'FAILED: ' + ', '.join(fails) if fails else 'ALL CHECKS PASSED'}")
     return 1 if fails else 0

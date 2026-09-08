@@ -12,6 +12,11 @@ views:
           The grid CTs are **derived**: `grid = household + managed loads −
           inverter`. Move a slider and the meter follows, the same way it does
           on a real site. There is no way to set an impossible state.
+
+
+          They also **lag**, by 5 to 10 seconds — which is what the engine's
+          smoothing, its settling test and its over-commitment all live or die
+          on. Turn the lag off to isolate an engine question from a timing one.
       - type: entities
         title: What the house draws
         entities:
@@ -27,24 +32,34 @@ views:
           - input_number.sim_battery_power
           - input_number.sim_voltage
       - type: entities
-        title: The meter that follows from it
+        title: The truth
         entities:
-          - sensor.sim_grid_current_a
-          - sensor.sim_grid_current_b
-          - sensor.sim_grid_current_c
+          - sensor.sim_grid_instant_a
+          - sensor.sim_grid_instant_b
+          - sensor.sim_grid_instant_c
           - sensor.sim_grid_net_power
           - type: divider
           - sensor.sim_site_load_a
           - sensor.sim_site_load_b
           - sensor.sim_site_load_c
+      - type: entities
+        title: The meter the engine reads
+        entities:
+          - input_boolean.sim_lag
+          - type: divider
+          - sensor.sim_grid_current_a
+          - sensor.sim_grid_current_b
+          - sensor.sim_grid_current_c
+          - entity: sensor.sim_ct_lag_error
+            name: How far behind the meter is
       - type: history-graph
         title: The last hour
         hours_to_show: 1
         entities:
           - sensor.sim_grid_net_power
           - sensor.sim_solar_power
-          - entity: sensor.sim_site_load_a
-            name: Site load A
+          - entity: sensor.sim_ct_lag_error
+            name: Meter lag
 
   - title: Loads
     path: loads
@@ -73,4 +88,7 @@ views:
           - number.sim_station_reserve
           - input_number.sim_station_battery
           - input_select.sim_station_phase
-          - sensor.sim_station_ac_input
+          - entity: sensor.sim_station_input_target
+            name: Register target
+          - entity: sensor.sim_station_ac_input
+            name: What it actually pulls

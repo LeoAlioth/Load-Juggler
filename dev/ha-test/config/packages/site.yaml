@@ -68,6 +68,15 @@ input_number:
     unit_of_measurement: V
     icon: mdi:sine-wave
 
+input_boolean:
+  sim_lag:
+    # Whether the measurements lag the physics, as real ones do. Off makes the
+    # CTs report the current sample instead of the previous one, and the
+    # station's input jump straight to its register — useful for isolating an
+    # engine question from a timing one, but not a state any real site is in.
+    name: Measurements lag the physics
+    icon: mdi:timer-sand
+
 input_select:
   sim_inverter_phases:
     # Which phases the inverter feeds — NOT which phases the site has (that is
@@ -154,10 +163,11 @@ template:
                        - states('input_number.sim_battery_power') | float(0) %}
           {{ (total / mask | length) | round(1) if 'C' in mask else 0 }}
 
-      # The grid CTs. These are what you pick as phase A/B/C current in the
-      # config flow.
-      - name: Sim grid current A
-        unique_id: sim_grid_current_a
+      # The site's TRUE per-phase position, computed the instant anything
+      # moves. Not what the engine reads — the sampled, lagging CTs further
+      # down are, and these are the truth they lag behind.
+      - name: Sim grid instant A
+        unique_id: sim_grid_instant_a
         device_class: current
         unit_of_measurement: A
         state_class: measurement
@@ -167,8 +177,8 @@ template:
                    + states('sensor.sim_site_load_a') | float(0)
                    - states('sensor.sim_inverter_output_a') | float(0) %}
           {{ (w / v) | round(2) if v > 0 else 0 }}
-      - name: Sim grid current B
-        unique_id: sim_grid_current_b
+      - name: Sim grid instant B
+        unique_id: sim_grid_instant_b
         device_class: current
         unit_of_measurement: A
         state_class: measurement
@@ -178,8 +188,8 @@ template:
                    + states('sensor.sim_site_load_b') | float(0)
                    - states('sensor.sim_inverter_output_b') | float(0) %}
           {{ (w / v) | round(2) if v > 0 else 0 }}
-      - name: Sim grid current C
-        unique_id: sim_grid_current_c
+      - name: Sim grid instant C
+        unique_id: sim_grid_instant_c
         device_class: current
         unit_of_measurement: A
         state_class: measurement
@@ -220,7 +230,9 @@ template:
 
       # A read-out for your own benefit: the site's net position in watts, so
       # you can see at a glance whether the site imports or exports without
-      # doing the three-phase arithmetic in your head.
+      # doing the three-phase arithmetic in your head. On the TRUE basis, so it
+      # moves the moment a load does — compare it with the engine's own grid
+      # power sensor to watch the meter catch up.
       - name: Sim grid net power
         unique_id: sim_grid_net_power
         device_class: power
@@ -228,6 +240,86 @@ template:
         state_class: measurement
         state: >
           {% set v = states('input_number.sim_voltage') | float(230) %}
-          {{ ((states('sensor.sim_grid_current_a') | float(0)
-             + states('sensor.sim_grid_current_b') | float(0)
-             + states('sensor.sim_grid_current_c') | float(0)) * v) | round(0) }}
+          {{ ((states('sensor.sim_grid_instant_a') | float(0)
+             + states('sensor.sim_grid_instant_b') | float(0)
+             + states('sensor.sim_grid_instant_c') | float(0)) * v) | round(0) }}
+
+  # ------------------------------------------------------------------
+  # The grid CTs the ENGINE reads. These are what you pick as phase A/B/C
+  # current in the config flow.
+  #
+  # Sampled every 5 seconds, and each sample publishes the PREVIOUS one — so
+  # the meter is 5 to 10 seconds behind the physics. That lag is not a detail:
+  # it is the whole reason the engine smooths its readings, waits for a load's
+  # draw to settle before trusting it, and can over-commit by granting power
+  # twice against a surplus the first grant already spent. With instant CTs
+  # none of that is reachable, and the rig would quietly pass a site the real
+  # one fails.
+  #
+  # `this` is the entity's state BEFORE this run, so `this.attributes.pending`
+  # holds the value computed one sample ago while `pending` is re-rendered to
+  # the current one. That is the delay line, in two lines of Jinja.
+  - trigger:
+      - trigger: time_pattern
+        seconds: "/5"
+    sensor:
+      - name: Sim grid current A
+        unique_id: sim_grid_current_a
+        device_class: current
+        unit_of_measurement: A
+        state_class: measurement
+        state: >
+          {% set now = states('sensor.sim_grid_instant_a') | float(0) %}
+          {% if is_state('input_boolean.sim_lag', 'on') and this is not none %}
+            {{ this.attributes.get('pending', now) | float(now) }}
+          {% else %}
+            {{ now }}
+          {% endif %}
+        attributes:
+          pending: "{{ states('sensor.sim_grid_instant_a') | float(0) }}"
+      - name: Sim grid current B
+        unique_id: sim_grid_current_b
+        device_class: current
+        unit_of_measurement: A
+        state_class: measurement
+        state: >
+          {% set now = states('sensor.sim_grid_instant_b') | float(0) %}
+          {% if is_state('input_boolean.sim_lag', 'on') and this is not none %}
+            {{ this.attributes.get('pending', now) | float(now) }}
+          {% else %}
+            {{ now }}
+          {% endif %}
+        attributes:
+          pending: "{{ states('sensor.sim_grid_instant_b') | float(0) }}"
+      - name: Sim grid current C
+        unique_id: sim_grid_current_c
+        device_class: current
+        unit_of_measurement: A
+        state_class: measurement
+        state: >
+          {% set now = states('sensor.sim_grid_instant_c') | float(0) %}
+          {% if is_state('input_boolean.sim_lag', 'on') and this is not none %}
+            {{ this.attributes.get('pending', now) | float(now) }}
+          {% else %}
+            {{ now }}
+          {% endif %}
+        attributes:
+          pending: "{{ states('sensor.sim_grid_instant_c') | float(0) }}"
+
+  # How far behind the meter currently is, in watts. When the engine
+  # over-commits, this is the number it over-committed against.
+  - sensor:
+      - name: Sim ct lag error
+        unique_id: sim_ct_lag_error
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {% set v = states('input_number.sim_voltage') | float(230) %}
+          {% set truth = states('sensor.sim_grid_instant_a') | float(0)
+                       + states('sensor.sim_grid_instant_b') | float(0)
+                       + states('sensor.sim_grid_instant_c') | float(0) %}
+          {% set seen = states('sensor.sim_grid_current_a') | float(0)
+                      + states('sensor.sim_grid_current_b') | float(0)
+                      + states('sensor.sim_grid_current_c') | float(0) %}
+          {{ ((truth - seen) * v) | round(0) }}

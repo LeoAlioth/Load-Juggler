@@ -5,10 +5,17 @@
 # so it is the one that exercises the modulating path: the engine sizes it
 # against a pool, writes a watts figure, and reads back what it actually pulls.
 #
-# Its AC input FOLLOWS the charge speed — clamped to 0 once the pack is full,
-# because a station that has finished charging stops drawing however high the
-# register is set, and an engine that budgets for a draw that never arrives is
-# a bug worth being able to see.
+# Its AC input FOLLOWS the charge speed, but not instantly: it closes a share
+# of the remaining gap every 5 seconds (the ramp-rate knob), which is why the
+# engine will not trust a draw until it has settled. It is
+# also clamped to 0 once the pack is full, because a station that has finished
+# charging stops drawing however high the register is set — and an engine that
+# budgets for a draw that never arrives is a bug worth being able to see.
+#
+# The register range goes to 11 kW so the same device can stand in for an EVSE:
+# a modulating load whose draw is a continuous variable is the shape both have,
+# and the realistic ceiling belongs in Load Juggler's own min/max charge power
+# fields, which is where a real deployment sets it too.
 #
 # Configure it in Load Juggler as: charge speed = number.sim_station_charge_speed,
 # reserve = number.sim_station_reserve, battery level = sensor.sim_station_battery,
@@ -20,7 +27,7 @@ input_number:
     # below; this is where the value lands.
     name: Station charge speed register
     min: 0
-    max: 1800
+    max: 11000
     step: 50
     unit_of_measurement: W
     icon: mdi:battery-charging-high
@@ -31,6 +38,18 @@ input_number:
     step: 5
     unit_of_measurement: "%"
     icon: mdi:battery-lock
+  sim_station_ramp:
+    # How much of the remaining gap the load closes every 5 seconds. 100 means
+    # it arrives next sample, which is a converter; 50 takes a few samples,
+    # which is a car — and the slow case is the one `draw_settled` exists for,
+    # so it is the default.
+    name: Station ramp rate
+    min: 10
+    max: 100
+    step: 10
+    unit_of_measurement: "%"
+    icon: mdi:chart-timeline-variant
+
   sim_station_battery:
     name: Station battery level
     min: 0
@@ -55,7 +74,7 @@ template:
         unique_id: sim_station_charge_speed
         unit_of_measurement: W
         min: 0
-        max: 1800
+        max: 11000
         step: 50
         state: "{{ states('input_number.sim_station_charge_speed_raw') | float(0) }}"
         set_value:
@@ -86,9 +105,9 @@ template:
         state_class: measurement
         state: "{{ states('input_number.sim_station_battery') | float(0) | round(0) }}"
 
-      # What it really pulls: the register, unless the pack is full.
-      - name: Sim station ac input
-        unique_id: sim_station_ac_input
+      # The register's target, before the converter gets to it.
+      - name: Sim station input target
+        unique_id: sim_station_input_target
         device_class: power
         unit_of_measurement: W
         state_class: measurement
@@ -117,3 +136,37 @@ template:
         state: >
           {{ states('sensor.sim_station_ac_input') | float(0)
              if is_state('input_select.sim_station_phase', 'C') else 0 }}
+
+  # ------------------------------------------------------------------
+  # What it really pulls — the engine's power monitor for this load.
+  #
+  # A first-order ramp: it closes `sim_station_ramp` percent of the remaining
+  # gap every 5 seconds, and snaps the last 50 W so it arrives rather than
+  # creeping at it forever. 50 W is well under anything the engine reacts to,
+  # and without the snap a halving ramp never gets there — it just runs out of
+  # patience before you do.
+  #
+  # The point of ramping at all is that the engine must hold a load's whole
+  # permit against the pools until the draw settles: a modulating load that
+  # arrives instantly would make that logic untestable. The binary loads (plug,
+  # tank element) are deliberately NOT ramped — a resistive load really does
+  # step the instant its relay closes.
+  - trigger:
+      - trigger: time_pattern
+        seconds: "/5"
+    sensor:
+      - name: Sim station ac input
+        unique_id: sim_station_ac_input
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {% set target = states('sensor.sim_station_input_target') | float(0) %}
+          {% if is_state('input_boolean.sim_lag', 'off') or this is none %}
+            {{ target }}
+          {% else %}
+            {% set prev = this.state | float(target) %}
+            {% set rate = states('input_number.sim_station_ramp') | float(50) / 100 %}
+            {{ target if (target - prev) | abs < 50
+               else (prev + (target - prev) * rate) | round(0) }}
+          {% endif %}
