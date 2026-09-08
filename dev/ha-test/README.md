@@ -220,6 +220,27 @@ and restart Home Assistant (Developer tools → YAML → Restart). No rebuild, a
 no second copy of the component to drift from the one the test suites run
 against.
 
+**Running the scenario set.** `scenarios.py` drives the site through six
+states and reports whether each settled, using Home Assistant's REST API
+rather than the browser:
+
+```bash
+python3 dev/ha-test/scenarios.py            # all six
+CASES=2,3 python3 dev/ha-test/scenarios.py  # just those
+```
+
+It needs a long-lived access token (Home Assistant → profile → Security →
+Create token), in `dev/ha-test/ha_token` (gitignored) or `$HA_TOKEN`.
+
+Each case waits **160 s** before sampling, and that number is load-bearing. A
+binary load settles in well under a minute, but a modulating one rings and
+damps: measured from a cold start, the station's permit spread decayed
+552 → 414 → 345 → 207 → 0 W over 150 s. Sampling at 95 s catches the ring and
+reports it as sustained hunting — a mistake made and then corrected on
+2026-09-08. Statuses must be exactly constant to pass; permits are allowed one
+register step (100 W) of wobble, because that is the smallest change a device
+can actually be told about.
+
 **Checking the rig itself**, when a number looks wrong and you need to know
 whether it is the engine or the simulator:
 

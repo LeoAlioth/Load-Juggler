@@ -11,3 +11,6 @@
 !/config/custom_components/
 /config/custom_components/*
 !/config/custom_components/.gitkeep
+
+# The long-lived access token for scenarios.py — a credential, never committed.
+/ha_token
