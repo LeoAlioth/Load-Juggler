@@ -27,6 +27,7 @@ input_number:
     min: 5
     max: 85
     step: 1
+    initial: 45
     unit_of_measurement: "°C"
     icon: mdi:thermometer-water
   sim_tank_element_power:
@@ -34,6 +35,7 @@ input_number:
     min: 500
     max: 6000
     step: 100
+    initial: 2000
     unit_of_measurement: W
     icon: mdi:flash
 

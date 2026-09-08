@@ -14,12 +14,24 @@
 # Positive = importing, which is the sign convention the engine reads (there is
 # an "invert phases" option for sites wired the other way).
 
+# Every knob below carries an explicit `initial:`, and that is load-bearing.
+# Without one, Home Assistant starts an input_number at its MINIMUM on a fresh
+# config — which gave this site a phantom 15 kW battery DISCHARGE at 200 V on
+# first boot, and left `sim_lag` off so the measurement delay was disabled by
+# default. A rig whose starting state is an artefact of its own slider bounds
+# is worse than no rig.
+#
+# The cost is that a restart resets the scenario rather than restoring it, and
+# you restart often while editing the component. That is usually what you
+# want after a code change; delete a knob's `initial:` line if you would
+# rather that one survived.
 input_number:
   sim_household_a:
     name: Household phase A
     min: 0
     max: 11000
     step: 50
+    initial: 300
     unit_of_measurement: W
     icon: mdi:home-lightning-bolt
   sim_household_b:
@@ -27,6 +39,7 @@ input_number:
     min: 0
     max: 11000
     step: 50
+    initial: 300
     unit_of_measurement: W
     icon: mdi:home-lightning-bolt
   sim_household_c:
@@ -34,6 +47,7 @@ input_number:
     min: 0
     max: 11000
     step: 50
+    initial: 300
     unit_of_measurement: W
     icon: mdi:home-lightning-bolt
 
@@ -42,6 +56,7 @@ input_number:
     min: 0
     max: 25000
     step: 100
+    initial: 0
     unit_of_measurement: W
     icon: mdi:solar-power-variant
 
@@ -50,6 +65,7 @@ input_number:
     min: 0
     max: 100
     step: 1
+    initial: 50
     unit_of_measurement: "%"
     icon: mdi:battery-70
   sim_battery_power:
@@ -57,6 +73,7 @@ input_number:
     min: -15000
     max: 15000
     step: 100
+    initial: 0
     unit_of_measurement: W
     icon: mdi:battery-charging
 
@@ -65,11 +82,13 @@ input_number:
     min: 200
     max: 250
     step: 1
+    initial: 230
     unit_of_measurement: V
     icon: mdi:sine-wave
 
 input_boolean:
   sim_lag:
+    initial: "on"
     # Whether the measurements lag the physics, as real ones do. Off makes the
     # CTs report the current sample instead of the previous one, and the
     # station's input jump straight to its register — useful for isolating an
