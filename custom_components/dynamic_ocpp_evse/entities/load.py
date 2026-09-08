@@ -422,38 +422,13 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 self, raw_permit, mode_changed, hub_entry
             )
         elif device_type == DEVICE_TYPE_POWER_STATION:
-            # The station's charge speed is rate-limited like an EVSE's
-            # current — a saturated Excess pool would otherwise command
-            # 0 → max in a single cycle. One divergence: the pipeline
-            # resumes from 0 at the full permit (right for an EVSE coming
-            # back from a pause); the station instead resumes at its
-            # MINIMUM charge power and ramps up from there.
-            if (
-                self._rate_limited_current == 0
-                and raw_permit > 0
-                and not mode_changed
-            ):
-                load_rt = self._load_runtime()
-                min_power = load_rt.get(
-                    "station_min_charge_power"
-                ) or get_entry_value(
-                    self.config_entry,
-                    CONF_STATION_MIN_CHARGE_POWER,
-                    DEFAULT_STATION_MIN_CHARGE_POWER,
-                )
-                voltage = get_entry_value(
-                    hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE
-                )
-                phases_count = len(
-                    get_entry_value(self.config_entry, CONF_CONNECTED_TO_PHASE, "A")
-                    or "A"
-                )
-                resume_current = min(
-                    raw_permit, min_power / (voltage * phases_count)
-                )
-                self._ema_current = resume_current
-                self._schmitt_current = resume_current
-                self._rate_limited_current = resume_current
+            # Identical to the EVSE, including the fast start from 0. The
+            # station used to resume at its MINIMUM charge power instead and
+            # ramp up from there, on the reasoning that its permit comes from
+            # the volatile Excess pool. But the permit was computed inside
+            # every site constraint either way, so the step is as safe here as
+            # it is for a charger — and crawling up from the minimum wastes the
+            # surplus the load exists to absorb, for as long as the ramp takes.
             self._available_current = apply_smoothing(
                 self, raw_permit, mode_changed, hub_entry
             )

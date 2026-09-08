@@ -40,9 +40,10 @@ def apply_smoothing(
         # the minimum. The permit was computed inside every site constraint, so
         # the step is safe by construction, and crawling up would waste surplus.
         # The ramp exists to damp oscillation, not to protect anything; the
-        # compliance checker's "ramping" skip tolerates the step. The power
-        # station deliberately diverges (resumes at its minimum — see
-        # entities/load.py) because its permit is the volatile excess pool.
+        # compliance checker's "ramping" skip tolerates the step. Every
+        # modulating load type goes through this identically — the power
+        # station used to resume at its minimum instead, which only delayed
+        # its absorption of a surplus it had already been granted.
         sensor._ema_current = raw_allocated
         sensor._schmitt_current = raw_allocated
         sensor._schmitt_state = "rising"

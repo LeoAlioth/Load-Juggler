@@ -86,8 +86,24 @@ from .readers import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def _managed_phase_draws(site):
+def _managed_phase_draws(site, ema_inputs=None):
     """Σ managed-load draw per site phase (A), the feedback loop's subtrahend.
+
+    SMOOTHED on the same EMA as the grid phases it is subtracted from, when
+    ``ema_inputs`` is supplied. The two terms are subtracted from each other,
+    so they have to be on one time basis: the reconstruction answers "what
+    would the site export with our loads off", and that answer is only stable
+    while both halves move together. With a smoothed grid reading and a raw
+    draw, every change in a load's draw moved the reconstruction before the
+    grid term caught up — the margin overshot, the permit chased it, and a
+    modulating load rang around its target instead of settling (measured on
+    the rig, 2026-09-08: a station hunting 299-828 W against a 600 W target,
+    seven register writes a minute).
+
+    Callers that work on the RAW grid basis must leave ``ema_inputs`` unset and
+    get raw draws, so their pairing stays consistent too —
+    ``engine/hub_result.py`` adds draws back to ``raw_phases`` and wants raw
+    on both sides.
 
     A load whose Dynamic Control is OFF is skipped. Subtracting its draw would
     add that draw back into the reconstruction — telling the engine the site
@@ -103,10 +119,16 @@ def _managed_phase_draws(site):
         total_draws[0] += a_draw
         total_draws[1] += b_draw
         total_draws[2] += c_draw
-    return total_draws
+    if ema_inputs is None:
+        return total_draws
+    # Same alpha, same shape as readers._smooth on grid_0..2.
+    return [
+        _smooth(ema_inputs, f"managed_draw_{i}", d) or 0.0
+        for i, d in enumerate(total_draws)
+    ]
 
 
-def _charge_control_view(site, consumption, export, battery_power):
+def _charge_control_view(site, consumption, export, battery_power, ema_inputs=None):
     """The site as the battery CHARGE CONTROLLER reads it.
 
     Same loads, same allowance, same feedback subtraction as ``site`` — only
@@ -123,7 +145,7 @@ def _charge_control_view(site, consumption, export, battery_power):
     managed-draw subtraction is applied to these phases here; off-grid the
     phases are synthetic zeros on both views and there is nothing to subtract.
     """
-    draws = _managed_phase_draws(site)
+    draws = _managed_phase_draws(site, ema_inputs)
     if not site.is_off_grid and any(d > 0 for d in draws):
         consumption, export = grid_without_managed_draws(consumption, export, draws)
     return replace(
@@ -131,7 +153,7 @@ def _charge_control_view(site, consumption, export, battery_power):
     )
 
 
-def _apply_feedback_loop(site, solar_is_derived, members):
+def _apply_feedback_loop(site, solar_is_derived, members, ema_inputs=None):
     """Subtract load draws from grid readings to prevent double-counting.
 
     Grid CTs measure total site current INCLUDING load draws. Without this
@@ -146,7 +168,7 @@ def _apply_feedback_loop(site, solar_is_derived, members):
     if site.is_off_grid:
         return
 
-    total_draws = _managed_phase_draws(site)
+    total_draws = _managed_phase_draws(site, ema_inputs)
     if not any(d > 0 for d in total_draws):
         return
 
@@ -1083,12 +1105,16 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     _apply_phase_remaps(site, auto_detect_state)
 
     # --- Feedback loop ---
-    _apply_feedback_loop(site, solar_is_derived, members)
+    _apply_feedback_loop(site, solar_is_derived, members, ema_inputs)
     ctrl_site = _charge_control_view(
         site,
         ctrl_consumption_pv,
         ctrl_export_pv,
         float(battery_power_ctrl) if battery_power_ctrl is not None else None,
+        # Its phases come from the DIRECTIONAL smoothers, but the draw it
+        # subtracts is the same smoothed term the site view used — one EMA
+        # state, so the two views cannot disagree about what our loads draw.
+        ema_inputs,
     )
 
     excess_on, margin = _apply_excess_latch(hub_runtime, site, excess_hysteresis)
