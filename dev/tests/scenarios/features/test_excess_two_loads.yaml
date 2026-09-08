@@ -63,13 +63,21 @@ scenarios:
       station:
         allocated: 0.0      # nothing left after the tank's claim
 
-  - name: "excess-two-loads-wide-surplus-both-run-and-the-station-modulates"
+  - name: "excess-two-loads-wide-surplus-both-run-flat-out"
     description: >
       Solar 16 000 W → reconstruction 15 100 W → a margin of +4600 W. The tank
-      takes its 2 kW and 2 600 W survives its claim, so the station starts too
-      - and is SIZED by what is left rather than handed its rating. Phase C's
-      own third of the net pool is what bounds it here, which is why it settles
-      below its 2 400 W maximum.
+      takes its 2 kW and 2 600 W survives its claim, which COVERS the station's
+      2 399 W rating with 204 W to spare, so it runs flat out.
+      It used to settle at 6.7 A, and this description used to explain that as
+      "phase C's own third of the net pool". That third was the defect: the
+      export threshold is a site TOTAL, so charging phase C a third of it
+      bounded the load by a quantity that does not exist. Phase C really
+      exports 5 034 W here and still exports 2 635 W with the station at its
+      maximum, so nothing was protecting anything - 851 W of surplus was simply
+      left unabsorbed.
+      The modulating case this scenario used to cover moved to
+      excess-two-loads-narrow-surplus-sizes-the-station, where the surplus is
+      genuinely smaller than the station's rating.
     human_verified: false
     site:
       voltage: 230
@@ -104,9 +112,53 @@ scenarios:
       tank:
         allocated: 8.7
       station:
-        # 6.7 A = 1 541 W: sized by the surplus, NOT its 10.43 A rating. Under
-        # the old permit branch a station was handed pool headroom capped by
-        # its hardware, so this read 10.4 A at every surplus down to zero - it
-        # never modulated, which is what "both Excess loads running flat out"
-        # meant on the live site.
-        allocated: 6.7
+        # Its full 10.43 A rating, because 2 600 W of surplus survives the
+        # tank's claim and the station can only take 2 399 W of it.
+        allocated: 10.4
+
+  - name: "excess-two-loads-narrow-surplus-sizes-the-station"
+    description: >
+      The modulating half, kept from the scenario above once a wide surplus
+      stopped exercising it. Solar 14 900 W → reconstruction 14 003 W → a
+      margin of 3 503 W = 15.23 A. The tank claims 8.70 A and 6.53 A survives,
+      which is well under the station's 10.43 A rating, so the station is SIZED
+      by what is left rather than handed its maximum.
+      Phase C is not the constraint and is asserted not to be: it exports
+      4 668 W = 20.3 A, three times what the station receives. The SITE TOTAL
+      after the tank's claim is what binds, which is the whole point of the
+      pool carrying its total as its own quantity.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      distribution_mode: priority
+      solar_production: 14900
+      solar_production_direct: true
+      phase_a_consumption: 1.3
+      phase_b_consumption: 1.3
+      phase_c_consumption: 1.3
+      excess_export_threshold: 10500
+    loads:
+      - entity_id: "tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Normal"
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        current_temperature: 45
+        normal_temperature: 45
+        boost_temperature: 65
+        l1_phase: "B"
+      - entity_id: "station"
+        device_type: "power_station"
+        operating_mode: "Excess"
+        min_current: 0.87
+        max_current: 10.43
+        phases: 1
+        priority: 2
+        l1_phase: "C"
+    expected:
+      tank:
+        allocated: 8.7
+      station:
+        allocated: 6.5

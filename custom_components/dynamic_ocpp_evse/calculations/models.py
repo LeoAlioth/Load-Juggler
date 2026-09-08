@@ -469,16 +469,34 @@ class PhaseConstraints:
             return self.copy()
 
         if self.netting:
-            # Subtract from the named phases and rebuild the sums. No cascade
+            # Subtract from the named phases and from the site total. No cascade
             # (a claim on B is not a claim on A and C) and no clamp (the
             # remaining site total must stay readable: a 9.13 A claim against a
             # 4.35 A/phase pool leaves 3.91 A of site surplus, where the gross
             # path zeroed every field).
+            #
+            # ``ABC`` is carried as its OWN quantity rather than rebuilt from
+            # the phase sum. For a netted pool the phases and the total answer
+            # different questions - "how much can THIS phase absorb before it
+            # buys" against "how much surplus does the site have" - and only on
+            # a pool whose phases happen to sum to its total are the two the
+            # same number. Rebuilding it assumed that identity, so on any pool
+            # without it a deduction INFLATED the site total: the excess pool
+            # for an asymmetric inverter is ``from_pool(t, t, t, t)``, where one
+            # 9.13 A claim took ABC from 13.04 A to 16.52 A and every later load
+            # sized itself on a surplus 3x larger than the site had.
             per_phase = {p: getattr(self, p) for p in "ABC"}
             for phase in mask:
                 per_phase[phase] -= current
-            return PhaseConstraints.from_per_phase(
-                per_phase["A"], per_phase["B"], per_phase["C"], netting=True
+            a, b, c = per_phase["A"], per_phase["B"], per_phase["C"]
+            # A claim on n phases draws ``current`` on each, so n x current
+            # leaves the site. The pair fields stay plain sums of their phases;
+            # they can never bind a load that spans them once A, B and ABC do.
+            return PhaseConstraints(
+                A=a, B=b, C=c,
+                AB=a + b, AC=a + c, BC=b + c,
+                ABC=self.ABC - current * len(mask),
+                netting=True,
             )
 
         # NEVER OVER-DRAW. ``current`` is the load's MEASURED footprint

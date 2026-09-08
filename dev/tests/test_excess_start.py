@@ -647,6 +647,83 @@ def test_a_claim_bigger_than_its_phase_still_comes_off_the_site_total():
     assert _close(gross.get_available("C"), 4.348)    # C untouched
 
 
+def test_a_deduction_never_inflates_the_site_total():
+    """``deduct`` used to rebuild ``ABC`` from the sum of the phases, which is
+    only the site total on a pool whose phases happen to sum to it.
+
+    The Excess pool for an ASYMMETRIC inverter is ``from_pool(t, t, t, t)`` -
+    every phase may reach the whole total - so the sum is 3t. One 9.13 A claim
+    then took ABC from 13.04 A to 3 x 13.04 - 9.13 = 16.52 A: a DEDUCTION that
+    left the site with more surplus than it started with, and every later load
+    sized itself on it. ABC is now carried as its own quantity.
+    """
+    pool = PhaseConstraints.from_pool(13.04, 13.04, 13.04, 13.04)
+    pool.netting = True
+    after = pool.deduct(9.13, "B")
+    assert after.ABC < pool.ABC, (pool.ABC, after.ABC)
+    assert _close(after.ABC, 3.91, tol=0.01)
+    # A three-phase claim takes its current off EVERY leg, so the site loses
+    # three times the per-phase figure.
+    assert _close(pool.deduct(2.0, "ABC").ABC, 13.04 - 6.0, tol=0.01)
+
+
+def test_a_single_phase_load_may_reach_the_whole_site_surplus():
+    """The export limit is a site TOTAL, so a phase is not charged a third of
+    it. Anze, 2026-09-08: a 3x25 A connection exporting 15/20/25 A is
+    compliant; it is not pegged at 20/20/20.
+
+    1.5 kW of surplus on a balanced three-phase site, one 1ph station on C and
+    nothing else: it takes the whole 1.5 kW (6.52 A). It used to get 2.17 A,
+    which is that phase's 7.17 A of export less a third of the allowance.
+
+    The surplus is deliberately smaller than a single phase's export here, so
+    that the SITE TOTAL is the binding term and the phase bound is slack. The
+    mirror case - a phase with less export than the site surplus - is
+    test_a_phase_is_still_capped_by_its_own_export, and between them the two
+    pin both halves of ``min(total, flow)``.
+    """
+    station = _evse("station", min_current=0.9, max_current=20.0, phase="C")
+    _prepare(_site_3ph(THRESHOLD + 1500.0, loads=[station]))
+    assert _close(station.allocated_current, 1500.0 / V, tol=0.05), (
+        station.allocated_current
+    )
+
+
+def test_a_phase_is_still_capped_by_its_own_export():
+    """The other half of ``min(total, flow)``, and the reason the per-phase
+    bound is kept rather than dropped for the site total alone.
+
+    The site has 6 kW of surplus but phase C only exports 1 kW of it (the
+    other phases carry the rest). A station on C may take 1 kW - taking more
+    would drive C into BUYING, which is the one thing an Excess load exists to
+    avoid, and ``_excess_permits`` only notices that after the fact.
+    """
+    station = _evse("station", min_current=0.9, max_current=30.0, phase="C")
+    site = _site_3ph(THRESHOLD + 6000.0, loads=[station])
+    # Re-lay the export so C carries 1 kW of it and A/B carry the rest.
+    c = 1000.0 / V
+    rest = (site.export_current.a * 3) - c
+    site.export_current = PhaseValues(rest / 2, rest / 2, c)
+    site.grid_current = PhaseValues(-rest / 2, -rest / 2, -c)
+    _prepare(site)
+    assert _close(station.allocated_current, c, tol=0.05), station.allocated_current
+
+
+def test_the_new_bound_only_ever_adds_headroom():
+    """The invariant that makes this change safe to land on a live site: for a
+    balanced site at any surplus, the phase bound is never TIGHTER than the
+    even third it replaced.
+
+    Swept rather than spot-checked, because "only ever" is the claim.
+    """
+    for surplus in (100.0, 500.0, 1000.0, 3000.0, 6000.0, 12000.0):
+        site = _site_3ph(THRESHOLD + surplus)
+        total = surplus / V
+        flow = site.export_current.a - (site.consumption.a or 0.0)
+        was = flow + (total - 3 * flow) / 3.0      # the old even spread
+        now = min(total, max(0.0, flow))           # the bound in its place
+        assert now >= was - 1e-9, (surplus, was, now)
+
 def test_the_netting_flag_survives_every_pool_operation():
     """A method that drops the flag silently reverts the pool to gross - a
     wrong number with no error, so every operation is pinned."""
@@ -704,31 +781,39 @@ def test_a_claim_on_another_phase_still_leaves_room_when_there_is_room():
     """The mirror: the scope change must not starve a load that genuinely fits.
 
     3 kW of site surplus against the tank's 2.1 kW claim leaves 900 W, and the
-    station starts - on 1.3 A, which is the leftover spread over the site's
-    three phases (4.35 A of phase-C surplus less the claim's 3.04 A share),
-    not the 3.9 A that 900 W on one phase would be.
+    station takes all 900 W of it (3.9 A).
 
-    THE CAUSE IS NOT THE CLAIM ACCOUNTING, which was the first guess and is
-    now gone: the pool is per-phase and net, and ``_excess_ahead`` re-deducts
-    the claims through the pool itself with no divisor. The figure did not
-    move. It is the LOADS-OFF RECONSTRUCTION that decides this: the tank's
-    2.1 kW is credited back onto phase B, the phase it draws on, so B is where
-    the surplus appears and phase C is left with only its own share. A load on
-    C is then bound by C, not by the site total.
+    IT USED TO GET 1.3 A, and this test recorded that as "the conservative
+    reading of a real constraint", pending a question it could not settle: may
+    an Excess load reach the site total when the total lives on other phases?
+    Settled, 2026-09-08 (Anze) - the export limit is contractually a site
+    TOTAL. A 3x25 A connection exporting 15/20/25 A is compliant; it is not
+    pegged at 20/20/20. So charging phase C a third of the allowance was
+    bounding it by a quantity that does not exist.
 
-    Whether that is a defect depends on a question this test does not settle:
-    an Excess load may not drive its OWN phase into import (Anze, 2026-09-07 -
-    a Standard load may, and does, because it reads the physical pool), and
-    letting C reach the whole site total would do exactly that. So the 1.3 A is
-    the conservative reading of a real constraint, not an accounting artifact.
+    Two bounds are real, and both are checked here. Phase C's OWN FLOW is
+    6.3 A, so 3.9 A never drives C into import - which is the constraint that
+    was being approximated, and it is now measured instead of divided. The SITE
+    TOTAL after the tank's claim is 3.91 A, and that is what binds. The old
+    1.3 A was neither: it was 4.35 A of evenly-spread pool less the claim's
+    3.04 A share, and it left 600 W of usable surplus on the table.
+
+    The loads-off reconstruction still puts the tank's 2.1 kW back on phase B,
+    exactly as the old docstring described. That is correct and no longer
+    limits anything: B is where B's surplus appears, and the site total is a
+    separate field that a load on C may draw against.
     """
     tank = _tank(phase="B", heating=True)
     station = _evse(
         "station", min_current=0.9, max_current=10.4, priority=3, phase="C"
     )
-    _prepare(_site_3ph(THRESHOLD + 3000.0 - 2100.0, loads=[tank, station]))
+    site = _site_3ph(THRESHOLD + 3000.0 - 2100.0, loads=[tank, station])
+    _prepare(site)
     assert _close(tank.available_current, 2100.0 / V)
-    assert _close(station.allocated_current, 1.30)
+    assert _close(station.allocated_current, 3.90, tol=0.02)
+    # The bound that did NOT bind, asserted so a future change cannot quietly
+    # make it the binding one: C could have absorbed 6.3 A without buying.
+    assert station.allocated_current < 6.30
 
 
 def test_a_running_lower_ranked_load_yields_when_the_tank_claims_the_surplus():

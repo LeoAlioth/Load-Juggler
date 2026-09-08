@@ -1126,16 +1126,47 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
         # The inverter can put its output on any leg, so the site total is the
         # only bound and a single-phase load may reach all of it. Same shape as
         # the gross asymmetric pool; ``netting`` only changes how it is read.
+        #
+        # Deliberately NOT bounded by the phase's own measured flow, which is
+        # what the symmetric arm below does. That bound assumes the leg's share
+        # of production is fixed, so its present flow is its headroom. An
+        # asymmetric inverter answers a load appearing on one leg by sending
+        # more output THERE, so its headroom exceeds what that leg happens to
+        # be exporting now, and measuring it would under-allocate. Two arms,
+        # two different physics; do not unify them.
         constraints = PhaseConstraints.from_pool(total, total, total, total)
         constraints.netting = True
     else:
-        # Symmetric: each phase carries its OWN signed position, plus an even
-        # share of the terms that belong to no phase (the battery's flow and
-        # the allowance - one pack, one contractual limit). Sums back to
-        # ``margin`` by construction, which is the invariant the tests pin, so
-        # a balanced site is bit-identical to the old even spread and only an
-        # unbalanced one moves.
-        grid = [
+        # Symmetric: each phase is bounded by its OWN export flow, and the site
+        # total is bounded by the allowance. Two bounds, both physical, neither
+        # derived from the other.
+        #
+        # It used to charge every phase a THIRD of the allowance
+        # (``flow[i] + (total - sum(flows)) / 3``), so a single-phase load could
+        # reach only a third of the site's surplus however much its own phase
+        # was exporting. A third of the allowance is not a bound that exists:
+        # the export limit is contractually a site TOTAL, and a 3x25 A
+        # connection exporting 15/20/25 A is compliant rather than pegged at
+        # 20/20/20. Measured on the rig (2026-09-08): a 2 400 W station on
+        # phase C was held to 1 564 W while C exported 4 965 W and the site had
+        # 4 394 W of surplus, and every unabsorbed watt showed up one-for-one
+        # as net grid swing - 1 974 W of it against a 2 188 W solar swing.
+        #
+        # The phase's own flow prevents import BY CONSTRUCTION: readings are
+        # post-feedback, so this is the phase's position WITHOUT the load, and
+        # taking all of it brings that phase to exactly zero export, never
+        # below. ``_excess_permits`` reads the same expression, so the bound and
+        # the guard cannot disagree - which returns the guard to the job it
+        # describes, catching the deliberate overshoot a BINARY load takes.
+        #
+        # The battery needs no share here. Its flow reaches the phases through
+        # the inverter, so a measured grid flow already contains it; only the
+        # site TOTAL has to account for it, and ``margin`` does.
+        #
+        # ``total`` is deliberately not clamped: inside the verdict's release
+        # band the margin can be negative, every phase then reads negative, and
+        # ``_excess_permits`` is what keeps a running load alive on the verdict.
+        flows = [
             None if exp is None else (exp or 0.0) - (cons or 0.0)
             for exp, cons in (
                 (site.export_current.a, site.consumption.a),
@@ -1143,11 +1174,11 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
                 (site.export_current.c, site.consumption.c),
             )
         ]
-        present = [g for g in grid if g is not None]
-        share = (total - sum(present)) / (len(present) or 1)
-        constraints = PhaseConstraints.from_per_phase(
-            *[0.0 if g is None else g + share for g in grid], netting=True
-        )
+        phases = [
+            0.0 if f is None else min(total, max(0.0, f)) for f in flows
+        ]
+        constraints = PhaseConstraints.from_pool(*phases, total)
+        constraints.netting = True
     _LOGGER.debug(
         f"Excess constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}, net): {constraints}"
     )
