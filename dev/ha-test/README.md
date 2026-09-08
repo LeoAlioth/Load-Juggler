@@ -204,11 +204,22 @@ everything else Home Assistant writes there is ignored.
 
 ## Two traps
 
+**A template that iterates a domain is never re-rendered.** The per-phase
+aggregates used to gather their sources with
+`states.sensor | selectattr('object_id', 'match', ...)` — tidy, and silently
+broken: filtering a domain on an attribute gives Home Assistant no trackable
+entity dependency, so it rendered them once at startup and *never again*. The
+grid CTs are derived from those sums, so the whole simulated site froze at
+whatever happened to be drawing when HA booted; a tank that switched on later
+did not exist to the meter. They now name each source with `states('...')`,
+which is tracked. Adding a device means adding a line to `site.yaml`.
+
+`check_physics.py` could not catch that and still cannot: it renders the
+templates itself, so it verifies the *arithmetic* and never Home Assistant's
+reactivity. When a figure looks stale, compare `last_updated` on the sensor
+against `last_updated` on its source — that is what exposed it.
+
 **Renaming a template entity needs its `unique_id` changed too.** Home
 Assistant derives an `entity_id` from the name only at *first* registration and
 the registry keeps it thereafter, so a name-only edit leaves the old
-`entity_id` in place — and the site package's per-phase sums match on name.
-
-**The aggregates must not be called `sim_managed_*`.** `sensor.sim_site_load_a`
-sums every `sensor.sim_managed_<device>_a`; naming it `sim_managed_draw_a` made
-it a sum of itself. `check_physics.py` pins this.
+`entity_id` in place and the references to it silently miss.

@@ -5,9 +5,19 @@ or a missed phase would look like an engine bug rather than a rig bug — the
 kind of confusion that costs an afternoon. This renders those templates against
 stubbed states and checks the arithmetic against hand-computed answers.
 
-It also pins the naming rule the site package depends on: the per-phase
-aggregate sums every ``sensor.sim_managed_<device>_<phase>``, so an aggregate
-named that way would sum itself.
+WHAT IT CANNOT CHECK, and this bit matters: it renders the templates itself,
+against its own fixed-point loop. Home Assistant's dependency TRACKING is not
+exercised at all — so a template that is arithmetically perfect but never
+re-renders passes here and is broken in the instance. That is exactly what
+happened: the per-phase aggregates matched their sources with
+``states.sensor | selectattr('object_id', ...)``, which gives Home Assistant no
+trackable entity, so it rendered them once at startup and never again. This
+script was green throughout. Only the running instance showed it (the aggregate
+sat 34 minutes stale while its source had moved 3 minutes earlier).
+
+The aggregates now name their sources with ``states('...')``, which is tracked.
+The test below pins the property that made the tidy version tempting — a
+deleted device package still contributes 0 rather than breaking the sum.
 
 Run it inside the container, which already has jinja2 and PyYAML:
 
@@ -207,14 +217,18 @@ def main():
     check("plug power monitor", g("sensor.sim_plug_power"), 2000.0, 0.1)
     check("tank power (element off)", g("sensor.sim_tank_power"), 0.0, 0.1)
 
-    # The self-reference guard: the aggregate must NOT include itself.
-    print("\n--- the self-sum guard ---")
-    STATE["sensor.sim_site_load_a"] = "999999"
+    # Deleting a device package must not break the site's physics: the
+    # aggregate names each contribution explicitly, and `float(0)` turns a
+    # missing entity into a 0 rather than an error or an "unknown".
+    print("\n--- a deleted device package contributes 0 ---")
+    del STATE["sensor.sim_managed_tank_a"]
+    del STATE["sensor.sim_managed_station_a"]
     again = float(render(exprs["sensor.sim_site_load_a"], env))
-    ok = abs(again - 2000.0) < 0.1
-    print(f"  {'ok ' if ok else 'FAIL'} aggregate ignores its own state: {again}")
+    ok = abs(again - 2000.0) < 0.1      # the plug's 2 kW, and nothing else
+    print(f"  {'ok ' if ok else 'FAIL'} aggregate survives missing sources: {again}")
     if not ok:
-        fails.append("self-sum")
+        fails.append("missing-source")
+    settle(exprs, env)
 
     # A second load on the same phase must add.
     print("\n--- tank switched on, on phase A too ---")

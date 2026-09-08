@@ -115,46 +115,48 @@ input_select:
 
 template:
   - sensor:
-      # The managed loads' draw per phase — the sum of every device package's
-      # own contribution. Matched by name rather than listed, so deleting a
-      # device package removes it from the physics with no edit here: any
-      # `sensor.sim_managed_<device>_<phase>` is picked up automatically.
+      # The managed loads' draw per phase — every device package's contribution,
+      # named ONE BY ONE and deliberately so.
       #
-      # `match` anchors at the start of the object_id, and these aggregates are
-      # deliberately named `sim_site_load_*` instead. A `sim_managed_*` name
-      # here would match the pattern and make the sum a sum of itself.
+      # This used to match them with `states.sensor | selectattr('object_id',
+      # 'match', ...)`, which was tidy and completely broken: iterating a domain
+      # and filtering on an attribute gives Home Assistant no trackable entity
+      # dependency, so it rendered these once at startup and NEVER AGAIN. The
+      # grid CTs are derived from them, so the whole simulated site silently
+      # froze at whatever was drawing when HA booted — a tank that switched on
+      # later simply did not exist to the meter.
       #
-      # Renaming one of these needs the unique_id changed too: Home Assistant
-      # derives an entity_id from the name only at FIRST registration and the
-      # registry keeps it thereafter, so a name-only edit leaves the old
-      # entity_id in place and the templates below silently miss it.
+      # `states('...')` is a tracked access, so each of these updates the
+      # instant its source does. Adding a device means adding a line here; the
+      # `float(0)` default keeps the delete-a-package property, since a missing
+      # entity contributes 0 rather than breaking the sum.
       - name: Sim site load A
         unique_id: sim_site_load_a
         device_class: power
         unit_of_measurement: W
         state_class: measurement
         state: >
-          {{ states.sensor
-             | selectattr('object_id', 'match', 'sim_managed_.*_a$')
-             | map(attribute='state') | map('float', 0) | sum | round(1) }}
+          {{ (states('sensor.sim_managed_plug_a') | float(0)
+             + states('sensor.sim_managed_tank_a') | float(0)
+             + states('sensor.sim_managed_station_a') | float(0)) | round(1) }}
       - name: Sim site load B
         unique_id: sim_site_load_b
         device_class: power
         unit_of_measurement: W
         state_class: measurement
         state: >
-          {{ states.sensor
-             | selectattr('object_id', 'match', 'sim_managed_.*_b$')
-             | map(attribute='state') | map('float', 0) | sum | round(1) }}
+          {{ (states('sensor.sim_managed_plug_b') | float(0)
+             + states('sensor.sim_managed_tank_b') | float(0)
+             + states('sensor.sim_managed_station_b') | float(0)) | round(1) }}
       - name: Sim site load C
         unique_id: sim_site_load_c
         device_class: power
         unit_of_measurement: W
         state_class: measurement
         state: >
-          {{ states.sensor
-             | selectattr('object_id', 'match', 'sim_managed_.*_c$')
-             | map(attribute='state') | map('float', 0) | sum | round(1) }}
+          {{ (states('sensor.sim_managed_plug_c') | float(0)
+             + states('sensor.sim_managed_tank_c') | float(0)
+             + states('sensor.sim_managed_station_c') | float(0)) | round(1) }}
 
       # The inverter's AC output per phase: solar less whatever the pack is
       # absorbing, spread over the phases it actually feeds.
