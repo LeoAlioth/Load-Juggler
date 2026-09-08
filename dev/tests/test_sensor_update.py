@@ -2305,6 +2305,7 @@ async def test_rate_limit_ramp_up_capped(
     from custom_components.dynamic_ocpp_evse.const import (
         DEFAULT_SITE_UPDATE_FREQUENCY,
         EMA_ALPHA,
+        PERMIT_TAU_S,
         RAMP_APPROACH_MAX,
         RAMP_TAU_S,
         ema_alpha_for,
@@ -2335,9 +2336,12 @@ async def test_rate_limit_ramp_up_capped(
 
         # Engine would allocate 16A (max), but the smoothing pipeline caps it.
         freq = DEFAULT_SITE_UPDATE_FREQUENCY
-        ema = EMA_ALPHA * 16.0 + (1 - EMA_ALPHA) * 6.0
+        ema = ema_alpha_for(freq, PERMIT_TAU_S) * 16.0 + (1 - ema_alpha_for(freq, PERMIT_TAU_S)) * 6.0
         approach = min(RAMP_APPROACH_MAX, ema_alpha_for(freq, RAMP_TAU_S))
-        step = max(RAMP_UP_RATE * freq, abs(ema - 6.0) * approach)
+        # Of the RAW error (16 - 6), not of the distance to the smoothed
+        # target: the filter holds that inside the floor, so taking the
+        # fraction of it meant the floor always won and this stage never acted.
+        step = max(RAMP_UP_RATE * freq, abs(16.0 - 6.0) * approach)
         max_allowed = 6.0 + step
         assert limit <= max_allowed + 0.05, (
             f"Rate-limited ramp-up should be <= {max_allowed}A, got {limit}A"
@@ -2360,6 +2364,7 @@ async def test_rate_limit_ramp_down_capped(
     from custom_components.dynamic_ocpp_evse.const import (
         DEFAULT_SITE_UPDATE_FREQUENCY,
         EMA_ALPHA,
+        PERMIT_TAU_S,
         RAMP_APPROACH_MAX,
         RAMP_TAU_S,
         ema_alpha_for,
@@ -2396,9 +2401,10 @@ async def test_rate_limit_ramp_down_capped(
         # at the larger of the fixed floor and a fraction of the remaining
         # error - see test_rate_limit_ramp_up_capped for why.
         freq = DEFAULT_SITE_UPDATE_FREQUENCY
-        ema = EMA_ALPHA * 6.0 + (1 - EMA_ALPHA) * 16.0
+        ema = ema_alpha_for(freq, PERMIT_TAU_S) * 6.0 + (1 - ema_alpha_for(freq, PERMIT_TAU_S)) * 16.0
         approach = min(RAMP_APPROACH_MAX, ema_alpha_for(freq, RAMP_TAU_S))
-        step = max(RAMP_DOWN_RATE * freq, abs(16.0 - ema) * approach)
+        # Of the RAW error (6 - 16), for the reason given in the ramp-up test.
+        step = max(RAMP_DOWN_RATE * freq, abs(6.0 - 16.0) * approach)
         min_allowed = 16.0 - step
         assert limit >= min_allowed - 0.05, (
             f"Rate-limited ramp-down should be >= {min_allowed}A, got {limit}A"

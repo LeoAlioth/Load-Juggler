@@ -1088,7 +1088,7 @@ def test_the_permit_filter_smooths_in_seconds_not_in_cycles():
     from custom_components.dynamic_ocpp_evse.control.smoothing import apply_smoothing
     from custom_components.dynamic_ocpp_evse.const import CONF_SITE_UPDATE_FREQUENCY
 
-    span_s = 20.0
+    span_s = 10.0
     closed = {}
     for dt in (1, 2, 5, 10):
         entry = SimpleNamespace(options={CONF_SITE_UPDATE_FREQUENCY: dt}, data={})
@@ -1104,11 +1104,24 @@ def test_the_permit_filter_smooths_in_seconds_not_in_cycles():
             apply_smoothing(sensor, 16.0, False, entry)
         closed[dt] = (sensor._ema_current - 6.0) / 10.0
 
-    # ~20 s at tau 5.6 s is e^-20/5.6 left, so about 97% closed either way.
+    # The invariance is EXACT, not approximate: what remains after the span is
+    # (1 - alpha)^n = exp(-n*dt/tau) = exp(-span/tau) whatever dt was, so every
+    # cadence lands on the same figure and only the 2 dp rounding of
+    # ``_ema_current`` separates them.
+    #
+    # Derived from PERMIT_TAU_S rather than written as a number. A bound tuned
+    # to one time constant silently becomes a test OF that constant: this
+    # asserted "> 0.95", which held at 2.0 s and failed the moment the constant
+    # went back to 5.6 - reporting a filter regression where the only thing
+    # that had changed was the tuning it was pinned to.
+    import math
+    from custom_components.dynamic_ocpp_evse.const import PERMIT_TAU_S
+
+    expected = 1.0 - math.exp(-span_s / PERMIT_TAU_S)
     for dt, frac in closed.items():
-        assert 0.9 < frac < 1.0, (dt, frac)
+        assert abs(frac - expected) < 0.02, (dt, frac, expected)
     spread = max(closed.values()) - min(closed.values())
-    assert spread < 0.06, closed
+    assert spread < 0.01, closed
 
 
 def test_the_ramp_closes_the_same_error_in_the_same_seconds_at_any_cadence():
@@ -1134,10 +1147,13 @@ def test_the_ramp_closes_the_same_error_in_the_same_seconds_at_any_cadence():
         closed[dt] = (sensor._rate_limited_current - 6.0) / 10.0
 
     for dt, frac in closed.items():
-        assert 0.5 < frac < 1.0, (dt, frac)
+        assert 0.5 < frac <= 1.0, (dt, frac)
     # Two cascaded lags (EMA then ramp) leave a wider spread than the EMA alone,
-    # but the ORDERING must not invert: a slower cadence may not close more.
-    assert max(closed.values()) - min(closed.values()) < 0.20, closed
+    # because the ramp's floor is a per-second rate the proportional term only
+    # sometimes beats. What must hold is that the ORDERING does not invert: a
+    # slower cadence may not close MORE of the error than a faster one, which
+    # is exactly what the per-cycle version did.
+    assert max(closed.values()) - min(closed.values()) < 0.25, closed
     assert closed[10] <= closed[1] + 0.05, closed
 
 def test_the_permit_filter_and_the_input_filter_share_one_time_constant():

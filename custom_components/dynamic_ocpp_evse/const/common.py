@@ -104,6 +104,54 @@ RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
 # are different design decisions that should be retunable apart. The measured
 # optimum was tau ~6.2 s (0.15/s at 1 s), well inside the rig's resolution.
 RAMP_TAU_S = 5.6
+# The PERMIT filter's own time constant, shorter than the input filter's on
+# purpose. `apply_smoothing`'s EMA is the second exponential lag on the same
+# signal: its input is the engine's answer, which was already computed from
+# readings smoothed at EMA_TAU_S. A second 5.6 s of it buys no further noise
+# rejection - there is little noise left to reject - and costs another 5.6 s of
+# phase, which the rate limiter then inherits.
+#
+# Measured on the rig (2026-09-08), and this is the failure it caused rather
+# than a preference: the ramp's proportional term never engaged at all. It
+# closes `|delta| * approach` where delta is the distance to the SMOOTHED
+# target, and the matched filter held that within 140 W of where the ramp
+# already stood, so `max(floor, proportional)` chose the floor every cycle. The
+# permit rose in near-constant 115 W steps (0.1 A/s, exactly RAMP_UP_RATE)
+# while the real error was 600 W, and the adaptive rate that was added to fix
+# constant-slew tracking was doing nothing.
+#
+# The same lag holds the permit UP after a surplus falls: export dipped to
+# 9 147 W against an 11 000 W limit while the station drew 2 392 W against a
+# 1 527 W ideal.
+#
+# 7 s, and it went UP rather than down, which was the opposite of the first
+# guess. 2 s was tried first, on the reasoning that a second helping of the
+# input filter's smoothing buys no noise rejection. It tracked better on every
+# average and rang 600 W peak-to-peak indefinitely on a dead-flat input (rig,
+# 2026-09-08) - the averages preferred it precisely BECAUSE it rang, since
+# mean-|error| rewards a ring centred on the right answer over an honest lag.
+#
+# The real fault was in the rate limiter, not here: it took its proportional
+# step from the distance to the SMOOTHED target, which this filter holds inside
+# the fixed floor, so the adaptive step was frequently not the binding one.
+# With the limiter reading the raw error instead, the loop moves faster and
+# then needs MORE damping here, not less - and once damped it wastes less,
+# because it is no longer hunting.
+#
+# Swept on dev/tests/dynamics.py across four refresh rates and two device ramp
+# speeds. Against the previous pairing (5.6 s with the old limiter) 7 s is
+# better on the fixed-point ring in 8 configurations of 8, on step rise time in
+# 7, on tracking in 7 and on curtailed energy in 7. The one loss is a 10 s site
+# with a slow device, by about 1% on two figures. At the 2 s default:
+#     ring 300 W -> 0 W, rise 60 s -> 48 s, curtailed 55 W -> 33 W
+#
+# It is deliberately no longer equal to EMA_TAU_S. The two are cascaded on one
+# signal, so they are not the same design decision: the input filter answers
+# how noisy the readings are, this one answers how much phase the loop can
+# afford. Their sharing a value was a coincidence of derivation, not a
+# constraint - and holding them equal is what made the first attempt look like
+# a choice between filtering and tracking.
+PERMIT_TAU_S = 7.0
 RAMP_APPROACH_MAX = 0.9     # never close more than this much of it in one cycle
 
 # EMA smoothing - exponential moving average on engine output before rate limiting

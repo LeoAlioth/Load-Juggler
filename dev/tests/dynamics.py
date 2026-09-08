@@ -290,6 +290,59 @@ def hold(value_w, seconds, dt=1.0):
         yield value_w
 
 
+def step(low_w=13600.0, high_w=15800.0, low_s=60.0, high_s=180.0, dt=1.0):
+    """A production step, which is what a cloud edge actually looks like.
+
+    The sinusoid measures tracking; this measures how fast the loop can move at
+    all, which is the quantity the rate limiter governs and the one a mean error
+    over a whole cycle hides.
+    """
+    for _ in range(int(low_s / dt)):
+        yield low_w
+    for _ in range(int(high_s / dt)):
+        yield high_w
+
+
+def rise_time_s(rows, key="reg", frac=0.9):
+    """Seconds from the step to ``frac`` of the eventual value.
+
+    Measured from where the input moves rather than from t=0, and against the
+    value the run actually reaches, so a run that never gets there reports None
+    instead of flattering itself.
+    """
+    solars = [r["solar"] for r in rows]
+    step_i = next((i for i in range(1, len(solars)) if solars[i] > solars[i - 1] + 1), None)
+    if step_i is None:
+        return None
+    after = rows[step_i:]
+    start = after[0][key]
+    final = max(r[key] for r in after)
+    if final <= start:
+        return None
+    want = start + (final - start) * frac
+    hit = next((r for r in after if r[key] >= want), None)
+    return None if hit is None else hit["t"] - after[0]["t"]
+
+
+def binding_share(rows, dt, ramp_up_rate=None):
+    """Share of RISING cycles whose step exceeded the fixed floor.
+
+    The floor is ``RAMP_UP_RATE * site_freq``; a step bigger than that can only
+    have come from the proportional term. This is the mechanism the 2026-09-08
+    finding was about, asserted directly rather than inferred from an average:
+    if the proportional term never binds, the adaptive rate is decoration.
+    """
+    from custom_components.dynamic_ocpp_evse.const import RAMP_UP_RATE
+
+    floor_w = (ramp_up_rate if ramp_up_rate is not None else RAMP_UP_RATE) * dt * V
+    rising = [
+        (b["permit"] - a["permit"])
+        for a, b in zip(rows, rows[1:])
+        if b["permit"] > a["permit"] + 1e-9
+    ]
+    if not rising:
+        return 0.0
+    return sum(1 for d in rising if d > floor_w + 1e-6) / len(rising)
 def run(sim, driver, warmup_s=120.0, warmup_w=14700.0):
     """Settle the loop, then record. The warmup is discarded, as on the rig."""
     for w in hold(warmup_w, warmup_s, sim.dt):
@@ -467,13 +520,16 @@ def plot(runs, path, summaries=None):
 # -- entry point ----------------------------------------------------------
 def _configs():
     """The three the rig measured on 2026-09-08, so the harness can be checked
-    against numbers that came off real hardware before it is trusted."""
-    from custom_components.dynamic_ocpp_evse import const
+    against numbers that came off real hardware before it is trusted.
 
+    Named by what the CALLER sets, never by the constants - a label naming a
+    time constant goes stale the moment that constant is retuned, and then
+    reads as a measurement of something it is not.
+    """
     return [
-        ("tau 5.6, ramp 50", dict(device_ramp=0.5)),
-        ("tau 5.6, ramp 100", dict(device_ramp=1.0)),
-        ("10 s refresh", dict(site_freq=10.0, device_ramp=1.0)),
+        ("1 s refresh, device ramp 50%", dict(device_ramp=0.5)),
+        ("1 s refresh, device ramp 100%", dict(device_ramp=1.0)),
+        ("10 s refresh, device ramp 100%", dict(site_freq=10.0, device_ramp=1.0)),
     ]
 
 

@@ -2,6 +2,7 @@ import logging
 from ..const import (
     DEAD_BAND,
     ema_alpha_for,
+    PERMIT_TAU_S,
     RAMP_APPROACH_MAX,
     RAMP_TAU_S,
     RAMP_UP_RATE,
@@ -63,11 +64,13 @@ def apply_smoothing(
         sensor._schmitt_state = "rising"
         sensor._rate_limited_current = raw_allocated
     else:
-        # EMA_TAU_S of smoothing at whatever cadence this site runs at. The
-        # conversion is the readers' own, shared rather than restated: the
-        # input filter and this one are tuned as a pair, and a second copy of
-        # the formula would let them drift apart silently.
-        alpha = ema_alpha_for(site_freq)
+        # PERMIT_TAU_S of smoothing at whatever cadence this site runs at,
+        # through the readers' own conversion - shared rather than restated, so
+        # the three stages cannot drift onto different bases. The time constant
+        # is deliberately NOT the readers': see PERMIT_TAU_S for why a second
+        # helping of the input filter's 5.6 s stopped the rate limiter's
+        # proportional term from ever engaging.
+        alpha = ema_alpha_for(site_freq, PERMIT_TAU_S)
         sensor._ema_current = round(
             alpha * raw_allocated + (1 - alpha) * sensor._ema_current, 2
         )
@@ -114,12 +117,31 @@ def apply_smoothing(
         # error still to close, so this is never slower than the old constant
         # slew and is much faster while far from target. Shrinking with the
         # error is what makes it self-damping: it approaches asymptotically
-        # rather than driving through at a constant rate.
-        # RAMP_TAU_S of approach per cycle, on the same time basis as the two
-        # EMAs. The cap stays: it guarantees a step never closes the WHOLE
-        # error, so there is always some follower left however slow the site.
+        # rather than driving through at a constant rate. RAMP_TAU_S sets the
+        # fraction, on the same time basis as the two EMAs, and the cap
+        # guarantees a step never closes the WHOLE error so there is always
+        # some follower left however slow the site.
+        #
+        # The fraction is taken of the RAW error, not of ``delta``. Measured on
+        # the rig (2026-09-08), that one word was the difference between this
+        # stage working and doing nothing at all: ``delta`` is the distance to
+        # the SMOOTHED target, and the filter above holds that inside the fixed
+        # floor, so ``max(floor, proportional)`` chose the floor on every cycle
+        # of every site. The permit climbed in near-constant 115 W steps
+        # (0.1 A/s, exactly RAMP_UP_RATE) while the real error was 600 W - the
+        # adaptive rate was measured as an improvement while never once
+        # engaging.
+        #
+        # Taking it of the raw error cannot overshoot, which is what makes it
+        # safe: the step stays bounded by ``delta`` in the comparisons below,
+        # so the permit still moves only as far as the smoothed target. A
+        # bigger allowance lets it stop being throttled SHORT of that target,
+        # never past it, so the OUTPUT is never less filtered than the EMA.
+        # That is the difference from shortening PERMIT_TAU_S, which bought the
+        # same speed by removing the filter itself and turned a decaying
+        # transient into a sustained 600 W ring on a dead-flat input.
         approach = min(RAMP_APPROACH_MAX, ema_alpha_for(site_freq, RAMP_TAU_S))
-        proportional = abs(delta) * approach
+        proportional = abs(raw_allocated - sensor._rate_limited_current) * approach
         max_up = max(RAMP_UP_RATE * site_freq, proportional)
         max_down = max(RAMP_DOWN_RATE * site_freq, proportional)
 
