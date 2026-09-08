@@ -35,7 +35,6 @@ input_number:
     min: 500
     max: 6000
     step: 100
-    initial: 2000
     unit_of_measurement: W
     icon: mdi:flash
 

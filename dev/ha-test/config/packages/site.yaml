@@ -14,24 +14,23 @@
 # Positive = importing, which is the sign convention the engine reads (there is
 # an "invert phases" option for sites wired the other way).
 
-# Every knob below carries an explicit `initial:`, and that is load-bearing.
-# Without one, Home Assistant starts an input_number at its MINIMUM on a fresh
-# config — which gave this site a phantom 15 kW battery DISCHARGE at 200 V on
-# first boot, and left `sim_lag` off so the measurement delay was disabled by
-# default. A rig whose starting state is an artefact of its own slider bounds
-# is worse than no rig.
+# A few knobs below carry an explicit `initial:`, and only those that need it.
+# Home Assistant starts an input_number at its MINIMUM on a fresh config, and
+# for some of these that minimum is actively misleading: −15 kW of phantom
+# battery discharge, 200 V, a lag toggle that defaults to off and so disables
+# the measurement delay entirely, a 5 °C tank. Those keep an `initial:`.
 #
-# The cost is that a restart resets the scenario rather than restoring it, and
-# you restart often while editing the component. That is usually what you
-# want after a code change; delete a knob's `initial:` line if you would
-# rather that one survived.
+# The rest deliberately do NOT, because `initial:` also means the value is
+# RESET on every restart — and you restart often while editing the component,
+# which was quietly wiping the scenario each time. Without it Home Assistant
+# restores what you last set, and the minimum (0 W of solar, 0 W of household)
+# is a perfectly sane fresh-config starting point anyway.
 input_number:
   sim_household_a:
     name: Household phase A
     min: 0
     max: 11000
     step: 50
-    initial: 300
     mode: box
     unit_of_measurement: W
     icon: mdi:home-lightning-bolt
@@ -40,7 +39,6 @@ input_number:
     min: 0
     max: 11000
     step: 50
-    initial: 300
     mode: box
     unit_of_measurement: W
     icon: mdi:home-lightning-bolt
@@ -49,7 +47,6 @@ input_number:
     min: 0
     max: 11000
     step: 50
-    initial: 300
     mode: box
     unit_of_measurement: W
     icon: mdi:home-lightning-bolt
@@ -59,7 +56,6 @@ input_number:
     min: 0
     max: 25000
     step: 100
-    initial: 0
     mode: box
     unit_of_measurement: W
     icon: mdi:solar-power-variant
@@ -69,7 +65,6 @@ input_number:
     min: 0
     max: 100
     step: 1
-    initial: 50
     mode: box
     unit_of_measurement: "%"
     icon: mdi:battery-70

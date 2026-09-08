@@ -1228,39 +1228,74 @@ def _inverter_covers_load(load: LoadContext, site: SiteContext) -> bool:
     return covered
 
 
-def _excess_pool_permits(pool: float, site: SiteContext, running: bool) -> bool:
-    """May an Excess load run against this much surplus on its own phases?
+def _excess_phase_is_importing(load: LoadContext, site: SiteContext) -> bool:
+    """Is any phase this load occupies already BUYING power?
 
-    ONE rule for both Excess behaviors. They used to differ by a watt, and that
-    watt inverted the rank order at the threshold: the modulating behavior
-    started on the verdict, the binary one demanded ``pool > 0``, so a pool of
-    exactly 0 started the LOWER-ranked modulating load while the higher-ranked
-    binary one sat out — and a single watt of surplus swapped them back.
+    This is the guard the Excess behaviors need, and it has to be asked of the
+    phase's own FLOW.
 
-    * **Positive** — run. The pool exists only while the verdict is on.
-    * **Zero** — run, if the verdict is on. A binary load's whole rating
-      overshoots the pool by design, so an empty pool is no more of an
-      objection at 0 W than at 1 W, and the threshold sits deliberately below
-      the export limit (by ``excess_trigger_margin``): at a pool of zero there
-      is still real headroom before anything is wasted, which is what that lead
-      time is for.
-    * **Negative** — these phases are IMPORTING, and then it depends on whether
-      the load is already drawing.
+    It used to be asked of the phase's slice of the surplus POOL, which is a
+    different question and a numerically terrible one. That slice is the
+    residue of a 200:1 cancellation — ``grid[i] - (sum(grid) - total) / 3`` — so
+    at a +50 W site margin each phase's share is ~0.07 A, arrived at by taking
+    ~15.33 A off ~15.4 A. A few hundredths of an amp of asymmetry flips its
+    sign: CT rounding, or one phase's meter a sample behind precisely because
+    it is the only phase a load perturbs. Measured on the Docker rig
+    (2026-09-08): pool slices of ``A=0.1, B=-0.1, C=0.1`` on a healthy site
+    total, and a tank on phase B flapping on a 16 second cycle while that phase
+    was exporting 15.4 A.
 
-      A load NOT yet running must not start: buying power is the one thing an
-      Excess load exists to avoid, and on an unbalanced site the net total can
-      be positive while this load's own phase is not
-      (``3ph_battery/test_excess.yaml`` pins that case).
+    A phase's flow is not marginal in that way — it either buys or it does not,
+    by amps rather than hundredths.
 
-      One ALREADY running holds instead — that dip is exactly what the
-      verdict's hysteresis is for, and cutting the load on it is the chattering
-      the release band exists to prevent. This is the half the binary behavior
-      did not have: a running plug used to be dropped by the same ``pool > 0``
-      test that (correctly) refused to start it, so it chattered where a
-      modulating load rode the dip. Unifying gives both the band.
+    Overshooting a phase's export is still ALLOWED. A binary load takes its
+    whole rating by design, and ``3ph_battery/test_excess.yaml`` pins both
+    halves of that: a plug on a phase already importing 2.25 A gets nothing,
+    while a plug on a phase exporting 7.75 A takes its full 8.7 A even though
+    that is more than the phase had.
+
+    Readings are post-feedback, so a load's own draw has already been taken
+    out: this asks what the phase is doing WITHOUT the load in question.
     """
-    if pool < 0:
-        return running
+    mask = load.active_phases_mask or ""
+    for letter, exp, cons in zip(
+        "ABC",
+        (site.export_current.a, site.export_current.b, site.export_current.c),
+        (site.consumption.a, site.consumption.b, site.consumption.c),
+    ):
+        if letter not in mask or cons is None:
+            continue
+        if (exp or 0.0) - (cons or 0.0) < 0:
+            return True
+    return False
+
+
+def _excess_permits(
+    load: LoadContext, site: SiteContext, pool: float, running: bool
+) -> bool:
+    """May this Excess load run? ONE rule for both Excess behaviors.
+
+    They used to differ by a watt, and that watt inverted the rank order at the
+    threshold: the modulating behavior started on the verdict, the binary one
+    demanded ``pool > 0``, so a pool of exactly 0 started the LOWER-ranked
+    modulating load while the higher-ranked binary one sat out — and a single
+    watt of surplus swapped them back.
+
+    A load not yet running is refused on a phase that is already buying: that
+    is the one thing an Excess load exists to avoid. One already running is
+    not, because a phase turning to import is a dip, and cutting a load on a
+    dip is the chattering the verdict's release band exists to prevent — the
+    band then decides, through the hysteresis in ``_excess_verdict``.
+
+    Otherwise the SITE's verdict decides, not the phase's slice of the pool. A
+    binary load's whole rating overshoots the pool by design, so an empty pool
+    is no more of an objection at 0 W than at 1 W, and the threshold sits
+    deliberately below the export limit (by ``excess_trigger_margin``): at a
+    pool of zero there is still real headroom in front of it, which is what
+    that lead time is for.
+    """
+    if not running and _excess_phase_is_importing(load, site):
+        return False
     return pool > 0 or _excess_verdict(site)
 
 
@@ -1348,7 +1383,7 @@ def _source_limit(
         if excess_ahead is not None and excess_ahead <= 0:
             return 0
         pool = excess.get_available(mask) if excess_ahead is None else excess_ahead
-        if not _excess_pool_permits(pool, site, _measured_draw(load) > 0):
+        if not _excess_permits(load, site, pool, _measured_draw(load) > 0):
             return 0
         return load.max_current
 
@@ -1402,7 +1437,7 @@ def _source_limit(
             # load must not be handed the surplus it is about to take. In pass
             # 2 ``base`` is already this load's own reserved share of it.
             e_avail = min(e_avail, max(0.0, excess_ahead - base))
-        if not _excess_pool_permits(e_avail, site, _measured_draw(load) > 0):
+        if not _excess_permits(load, site, e_avail, _measured_draw(load) > 0):
             return 0
         return max(load.min_current, base + e_avail)
 

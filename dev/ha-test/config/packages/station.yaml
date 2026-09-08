@@ -29,7 +29,6 @@ input_number:
     min: 0
     max: 11000
     step: 50
-    initial: 0
     unit_of_measurement: W
     icon: mdi:battery-charging-high
   sim_station_reserve_raw:
@@ -37,7 +36,6 @@ input_number:
     min: 0
     max: 100
     step: 5
-    initial: 20
     unit_of_measurement: "%"
     icon: mdi:battery-lock
   sim_station_ramp:
