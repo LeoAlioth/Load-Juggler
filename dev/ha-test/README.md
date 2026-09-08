@@ -163,6 +163,35 @@ what the Sankey's live ribbons read; the energy statistics only feed the
 graphs, and they need a five-minute statistics window before they show
 anything.
 
+## The timers are deliberately short here
+
+Every wait in Load Juggler is a real Home Assistant timer, so they all apply in
+this instance exactly as on a live site. At their production defaults a single
+experiment takes ten minutes of watching, so this rig runs them at the floor of
+what the config flow accepts:
+
+| Setting | Production default | Here | What it costs you at the default |
+|---|---|---|---|
+| Site sensor refresh (hub) | 2 s | **1 s** | — |
+| Load update frequency | 15 s | **5 s** | three cycles before a change is even re-evaluated |
+| Minimum off time (plug, tank) | 5 min | **0** | a load that switches off cannot come back for five minutes |
+| Solar/Excess grace period | 5 min | **0** | a load coasts at its minimum for five minutes after conditions fail, so you never see the release |
+
+They live in the config entries, not in the packages, so a reset that keeps
+`.storage` keeps them — and one that wipes `.storage` puts the defaults back
+along with everything else.
+
+**Read the rig's cadence as the rig's, not the product's.** Behaviour that
+looks like chatter here may simply be the anti-chatter guards switched off; the
+minimum off time exists to protect a compressor from exactly what a 0 lets you
+do. When something looks wrong, put a timer back to its default before
+believing it.
+
+Two waits are NOT config and stay as they are: the engine smooths its grid
+readings, so a step change takes roughly 40 s to work through, and the
+simulated CTs lag 5–10 s on top of that. Give a slider move four or five
+cycles before reading anything.
+
 ## Working with it
 
 The engine's own cycle log is the fastest read on what it is thinking — faster
