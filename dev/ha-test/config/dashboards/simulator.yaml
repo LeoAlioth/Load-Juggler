@@ -1,0 +1,76 @@
+# The simulator's control panel. Load Juggler's own entities are on the default
+# (auto-generated) dashboard — this one is only the hardware you are pretending
+# to have.
+title: Simulator
+views:
+  - title: Site
+    path: site
+    icon: mdi:transmission-tower
+    cards:
+      - type: markdown
+        content: >
+          The grid CTs are **derived**: `grid = household + managed loads −
+          inverter`. Move a slider and the meter follows, the same way it does
+          on a real site. There is no way to set an impossible state.
+      - type: entities
+        title: What the house draws
+        entities:
+          - input_number.sim_household_a
+          - input_number.sim_household_b
+          - input_number.sim_household_c
+      - type: entities
+        title: What the inverter makes
+        entities:
+          - input_number.sim_solar
+          - input_select.sim_inverter_phases
+          - input_number.sim_battery_soc
+          - input_number.sim_battery_power
+          - input_number.sim_voltage
+      - type: entities
+        title: The meter that follows from it
+        entities:
+          - sensor.sim_grid_current_a
+          - sensor.sim_grid_current_b
+          - sensor.sim_grid_current_c
+          - sensor.sim_grid_net_power
+          - type: divider
+          - sensor.sim_site_load_a
+          - sensor.sim_site_load_b
+          - sensor.sim_site_load_c
+      - type: history-graph
+        title: The last hour
+        hours_to_show: 1
+        entities:
+          - sensor.sim_grid_net_power
+          - sensor.sim_solar_power
+          - entity: sensor.sim_site_load_a
+            name: Site load A
+
+  - title: Loads
+    path: loads
+    icon: mdi:power-plug
+    cards:
+      - type: entities
+        title: Plug
+        entities:
+          - switch.sim_plug
+          - input_number.sim_plug_power
+          - input_select.sim_plug_phase
+          - sensor.sim_plug_power
+      - type: entities
+        title: Hot water tank
+        entities:
+          - climate.sim_water_tank
+          - input_number.sim_tank_temperature
+          - input_number.sim_tank_element_power
+          - input_select.sim_tank_phase
+          - input_boolean.sim_tank_element
+          - sensor.sim_tank_power
+      - type: entities
+        title: Power station
+        entities:
+          - number.sim_station_charge_speed
+          - number.sim_station_reserve
+          - input_number.sim_station_battery
+          - input_select.sim_station_phase
+          - sensor.sim_station_ac_input

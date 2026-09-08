@@ -1,0 +1,26 @@
+# A throwaway Home Assistant that runs the real integration against simulated
+# hardware. Everything the engine reads is a helper entity here, and the grid
+# CTs are DERIVED from the rest — so granting a load power really does move the
+# meter, and the cycle closes the way it does on a live site.
+#
+#   docker compose -f dev/ha-test/docker-compose.yml up -d
+#   open http://localhost:8124
+#
+services:
+  homeassistant:
+    container_name: load-juggler-test
+    image: ghcr.io/home-assistant/home-assistant:stable
+    restart: unless-stopped
+    ports:
+      # 8124, not 8123: a real Home Assistant on this machine already owns
+      # 8123, and a test instance must never be the thing that takes it.
+      - "8124:8123"
+    volumes:
+      - ./config:/config
+      # The integration itself, live from the working tree. Edit a file, hit
+      # Restart in the UI (or Developer tools → YAML → Restart), and the change
+      # is in — no image rebuild, and no second copy of the component to drift
+      # from the one the test suites run against.
+      - ../../custom_components/dynamic_ocpp_evse:/config/custom_components/dynamic_ocpp_evse
+    environment:
+      TZ: Europe/Ljubljana

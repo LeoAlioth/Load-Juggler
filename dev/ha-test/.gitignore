@@ -1,0 +1,13 @@
+# Home Assistant writes its whole runtime into the config directory — the
+# database, .storage, logs, downloaded deps, the onboarding account. Only the
+# files we author belong in git, so ignore the directory's contents and name
+# the exceptions.
+/config/*
+!/config/configuration.yaml
+!/config/packages/
+!/config/dashboards/
+# The component is bind-mounted in, and Docker creates the mount point on the
+# host. It is the working tree's copy, never a second one to commit.
+!/config/custom_components/
+/config/custom_components/*
+!/config/custom_components/.gitkeep

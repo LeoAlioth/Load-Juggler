@@ -1,0 +1,49 @@
+# Load Juggler test instance — see dev/ha-test/README.md.
+homeassistant:
+  name: Load Juggler test
+  # Ljubljana: the live sites are in Slovenia, so the sun position and the
+  # forecast integrations behave the way they do in the field.
+  latitude: 46.0569
+  longitude: 14.5058
+  elevation: 295
+  unit_system: metric
+  currency: EUR
+  time_zone: Europe/Ljubljana
+  # One file per simulated thing. Delete a package and that device is simply
+  # gone from the site — which is how you test a site without a battery, or
+  # with only a plug.
+  packages: !include_dir_named packages
+
+# `default_config:` would also pull in cloud, ssdp, zeroconf, bluetooth, the
+# mobile app and the energy dashboard: minutes of boot and a lot of network
+# chatter for an instance that talks to nothing. This is the set the frontend,
+# the onboarding flow and a config flow actually need.
+frontend:
+config:
+history:
+logbook:
+mobile_app:
+recorder:
+  # A test instance's history is worth two days at most, and a small database
+  # keeps restarts fast — you will do a lot of them.
+  purge_keep_days: 2
+
+logger:
+  default: warning
+  logs:
+    # The engine's own cycle log: the three pools, every load's permit and
+    # measured draw, and the distribution's reasoning, once per site cycle.
+    # This is the fastest read on what the engine is thinking — faster than
+    # the Overview page, which only re-renders when you reopen it.
+    custom_components.dynamic_ocpp_evse: debug
+
+lovelace:
+  # The default dashboard stays UI-editable; the simulator gets its own YAML
+  # one so the knobs are version-controlled next to the physics they drive.
+  dashboards:
+    load-juggler-sim:
+      mode: yaml
+      title: Simulator
+      icon: mdi:tune-variant
+      show_in_sidebar: true
+      filename: dashboards/simulator.yaml

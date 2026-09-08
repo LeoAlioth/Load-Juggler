@@ -1,0 +1,119 @@
+# A portable power station (the EcoFlow shape): a modulating load whose charge
+# rate the engine writes to a `number` entity, with its own battery.
+#
+# The one device here whose draw is a continuous variable rather than on/off,
+# so it is the one that exercises the modulating path: the engine sizes it
+# against a pool, writes a watts figure, and reads back what it actually pulls.
+#
+# Its AC input FOLLOWS the charge speed — clamped to 0 once the pack is full,
+# because a station that has finished charging stops drawing however high the
+# register is set, and an engine that budgets for a draw that never arrives is
+# a bug worth being able to see.
+#
+# Configure it in Load Juggler as: charge speed = number.sim_station_charge_speed,
+# reserve = number.sim_station_reserve, battery level = sensor.sim_station_battery,
+# AC input = sensor.sim_station_ac_input.
+
+input_number:
+  sim_station_charge_speed_raw:
+    # The register itself. The engine writes it through the template number
+    # below; this is where the value lands.
+    name: Station charge speed register
+    min: 0
+    max: 1800
+    step: 50
+    unit_of_measurement: W
+    icon: mdi:battery-charging-high
+  sim_station_reserve_raw:
+    name: Station reserve register
+    min: 0
+    max: 100
+    step: 5
+    unit_of_measurement: "%"
+    icon: mdi:battery-lock
+  sim_station_battery:
+    name: Station battery level
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-60
+
+input_select:
+  sim_station_phase:
+    name: Station wired to phase
+    options: ["A", "B", "C"]
+    initial: "C"
+    icon: mdi:transmission-tower
+
+template:
+  - number:
+      # The two registers the engine writes. `number`, not `input_number`: the
+      # station's pickers offer that domain only, as a real station's
+      # integration provides.
+      - name: Sim station charge speed
+        unique_id: sim_station_charge_speed
+        unit_of_measurement: W
+        min: 0
+        max: 1800
+        step: 50
+        state: "{{ states('input_number.sim_station_charge_speed_raw') | float(0) }}"
+        set_value:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.sim_station_charge_speed_raw
+            data:
+              value: "{{ value }}"
+      - name: Sim station reserve
+        unique_id: sim_station_reserve
+        unit_of_measurement: "%"
+        min: 0
+        max: 100
+        step: 5
+        state: "{{ states('input_number.sim_station_reserve_raw') | float(0) }}"
+        set_value:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.sim_station_reserve_raw
+            data:
+              value: "{{ value }}"
+
+  - sensor:
+      - name: Sim station battery
+        unique_id: sim_station_battery
+        device_class: battery
+        unit_of_measurement: "%"
+        state_class: measurement
+        state: "{{ states('input_number.sim_station_battery') | float(0) | round(0) }}"
+
+      # What it really pulls: the register, unless the pack is full.
+      - name: Sim station ac input
+        unique_id: sim_station_ac_input
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ 0 if states('input_number.sim_station_battery') | float(0) >= 100
+             else states('input_number.sim_station_charge_speed_raw') | float(0) }}
+
+      - name: Sim managed station a
+        unique_id: sim_managed_station_a
+        device_class: power
+        unit_of_measurement: W
+        state: >
+          {{ states('sensor.sim_station_ac_input') | float(0)
+             if is_state('input_select.sim_station_phase', 'A') else 0 }}
+      - name: Sim managed station b
+        unique_id: sim_managed_station_b
+        device_class: power
+        unit_of_measurement: W
+        state: >
+          {{ states('sensor.sim_station_ac_input') | float(0)
+             if is_state('input_select.sim_station_phase', 'B') else 0 }}
+      - name: Sim managed station c
+        unique_id: sim_managed_station_c
+        device_class: power
+        unit_of_measurement: W
+        state: >
+          {{ states('sensor.sim_station_ac_input') | float(0)
+             if is_state('input_select.sim_station_phase', 'C') else 0 }}

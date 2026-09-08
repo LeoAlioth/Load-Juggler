@@ -1,0 +1,233 @@
+# The site: what the house draws, what the array makes, what the pack is doing
+# — and the grid CTs DERIVED from all three.
+#
+# Deriving the meter rather than making it a fourth slider is the whole point.
+# On a real site the CTs are downstream of the physics: grant a load 3 kW and
+# the meter moves by 3 kW a few seconds later, which is what the engine's
+# feedback loop is built around. Independent sliders would let you set states
+# no site can be in (exporting 10 kW while the array makes nothing) and the
+# loop would spend every cycle fighting you.
+#
+#   grid[p] = household[p] + managed[p] − inverter[p]
+#   inverter total = solar − battery power   (+ charge consumes, − discharge adds)
+#
+# Positive = importing, which is the sign convention the engine reads (there is
+# an "invert phases" option for sites wired the other way).
+
+input_number:
+  sim_household_a:
+    name: Household phase A
+    min: 0
+    max: 11000
+    step: 50
+    unit_of_measurement: W
+    icon: mdi:home-lightning-bolt
+  sim_household_b:
+    name: Household phase B
+    min: 0
+    max: 11000
+    step: 50
+    unit_of_measurement: W
+    icon: mdi:home-lightning-bolt
+  sim_household_c:
+    name: Household phase C
+    min: 0
+    max: 11000
+    step: 50
+    unit_of_measurement: W
+    icon: mdi:home-lightning-bolt
+
+  sim_solar:
+    name: Solar production
+    min: 0
+    max: 25000
+    step: 100
+    unit_of_measurement: W
+    icon: mdi:solar-power-variant
+
+  sim_battery_soc:
+    name: Battery SOC
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:battery-70
+  sim_battery_power:
+    name: Battery power (+ charging / − discharging)
+    min: -15000
+    max: 15000
+    step: 100
+    unit_of_measurement: W
+    icon: mdi:battery-charging
+
+  sim_voltage:
+    name: Phase voltage
+    min: 200
+    max: 250
+    step: 1
+    unit_of_measurement: V
+    icon: mdi:sine-wave
+
+input_select:
+  sim_inverter_phases:
+    # Which phases the inverter feeds — NOT which phases the site has (that is
+    # decided by the CTs you pick in the config flow). Set it to A with the
+    # grid on ABC to reproduce a single-phase array on a three-phase service.
+    name: Inverter output phases
+    options: ["A", "B", "C", "AB", "BC", "AC", "ABC"]
+    initial: "ABC"
+    icon: mdi:transmission-tower
+
+template:
+  - sensor:
+      # The managed loads' draw per phase — the sum of every device package's
+      # own contribution. Matched by name rather than listed, so deleting a
+      # device package removes it from the physics with no edit here: any
+      # `sensor.sim_managed_<device>_<phase>` is picked up automatically.
+      #
+      # `match` anchors at the start of the object_id, and these aggregates are
+      # deliberately named `sim_site_load_*` instead. A `sim_managed_*` name
+      # here would match the pattern and make the sum a sum of itself.
+      #
+      # Renaming one of these needs the unique_id changed too: Home Assistant
+      # derives an entity_id from the name only at FIRST registration and the
+      # registry keeps it thereafter, so a name-only edit leaves the old
+      # entity_id in place and the templates below silently miss it.
+      - name: Sim site load A
+        unique_id: sim_site_load_a
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ states.sensor
+             | selectattr('object_id', 'match', 'sim_managed_.*_a$')
+             | map(attribute='state') | map('float', 0) | sum | round(1) }}
+      - name: Sim site load B
+        unique_id: sim_site_load_b
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ states.sensor
+             | selectattr('object_id', 'match', 'sim_managed_.*_b$')
+             | map(attribute='state') | map('float', 0) | sum | round(1) }}
+      - name: Sim site load C
+        unique_id: sim_site_load_c
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ states.sensor
+             | selectattr('object_id', 'match', 'sim_managed_.*_c$')
+             | map(attribute='state') | map('float', 0) | sum | round(1) }}
+
+      # The inverter's AC output per phase: solar less whatever the pack is
+      # absorbing, spread over the phases it actually feeds.
+      - name: Sim inverter output A
+        unique_id: sim_inverter_output_a
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {% set mask = states('input_select.sim_inverter_phases') %}
+          {% set total = states('input_number.sim_solar') | float(0)
+                       - states('input_number.sim_battery_power') | float(0) %}
+          {{ (total / mask | length) | round(1) if 'A' in mask else 0 }}
+      - name: Sim inverter output B
+        unique_id: sim_inverter_output_b
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {% set mask = states('input_select.sim_inverter_phases') %}
+          {% set total = states('input_number.sim_solar') | float(0)
+                       - states('input_number.sim_battery_power') | float(0) %}
+          {{ (total / mask | length) | round(1) if 'B' in mask else 0 }}
+      - name: Sim inverter output C
+        unique_id: sim_inverter_output_c
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {% set mask = states('input_select.sim_inverter_phases') %}
+          {% set total = states('input_number.sim_solar') | float(0)
+                       - states('input_number.sim_battery_power') | float(0) %}
+          {{ (total / mask | length) | round(1) if 'C' in mask else 0 }}
+
+      # The grid CTs. These are what you pick as phase A/B/C current in the
+      # config flow.
+      - name: Sim grid current A
+        unique_id: sim_grid_current_a
+        device_class: current
+        unit_of_measurement: A
+        state_class: measurement
+        state: >
+          {% set v = states('input_number.sim_voltage') | float(230) %}
+          {% set w = states('input_number.sim_household_a') | float(0)
+                   + states('sensor.sim_site_load_a') | float(0)
+                   - states('sensor.sim_inverter_output_a') | float(0) %}
+          {{ (w / v) | round(2) if v > 0 else 0 }}
+      - name: Sim grid current B
+        unique_id: sim_grid_current_b
+        device_class: current
+        unit_of_measurement: A
+        state_class: measurement
+        state: >
+          {% set v = states('input_number.sim_voltage') | float(230) %}
+          {% set w = states('input_number.sim_household_b') | float(0)
+                   + states('sensor.sim_site_load_b') | float(0)
+                   - states('sensor.sim_inverter_output_b') | float(0) %}
+          {{ (w / v) | round(2) if v > 0 else 0 }}
+      - name: Sim grid current C
+        unique_id: sim_grid_current_c
+        device_class: current
+        unit_of_measurement: A
+        state_class: measurement
+        state: >
+          {% set v = states('input_number.sim_voltage') | float(230) %}
+          {% set w = states('input_number.sim_household_c') | float(0)
+                   + states('sensor.sim_site_load_c') | float(0)
+                   - states('sensor.sim_inverter_output_c') | float(0) %}
+          {{ (w / v) | round(2) if v > 0 else 0 }}
+
+      # Plain mirrors of the knobs, carrying the device_class and unit the
+      # config flow's pickers filter on — an input_number is not offered for a
+      # grid CT or a solar sensor however it is labelled.
+      - name: Sim solar power
+        unique_id: sim_solar_power
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: "{{ states('input_number.sim_solar') | float(0) | round(1) }}"
+      - name: Sim battery SOC
+        unique_id: sim_battery_soc
+        device_class: battery
+        unit_of_measurement: "%"
+        state_class: measurement
+        state: "{{ states('input_number.sim_battery_soc') | float(0) | round(0) }}"
+      - name: Sim battery power
+        unique_id: sim_battery_power
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: "{{ states('input_number.sim_battery_power') | float(0) | round(1) }}"
+      - name: Sim phase voltage
+        unique_id: sim_phase_voltage
+        device_class: voltage
+        unit_of_measurement: V
+        state_class: measurement
+        state: "{{ states('input_number.sim_voltage') | float(230) | round(1) }}"
+
+      # A read-out for your own benefit: the site's net position in watts, so
+      # you can see at a glance whether the site imports or exports without
+      # doing the three-phase arithmetic in your head.
+      - name: Sim grid net power
+        unique_id: sim_grid_net_power
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {% set v = states('input_number.sim_voltage') | float(230) %}
+          {{ ((states('sensor.sim_grid_current_a') | float(0)
+             + states('sensor.sim_grid_current_b') | float(0)
+             + states('sensor.sim_grid_current_c') | float(0)) * v) | round(0) }}

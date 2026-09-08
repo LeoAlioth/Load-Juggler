@@ -1,0 +1,89 @@
+# A smart plug: a switch the engine turns on and off, and a power monitor that
+# reports what it draws. The simplest closed loop in the setup — the engine
+# grants it power, the relay closes, the draw appears, the grid CTs move.
+#
+# Configure it in Load Juggler as: switch = switch.sim_plug,
+# power monitor = sensor.sim_plug_power, and CONNECTED TO PHASE matching
+# input_select.sim_plug_phase below. Those two are deliberately separate — the
+# select is the WIRING, the config field is the engine's BELIEF about the
+# wiring, and being able to make them disagree is a test in its own right.
+
+input_boolean:
+  sim_plug_relay:
+    name: Plug relay
+    icon: mdi:power-socket-eu
+
+input_number:
+  sim_plug_power:
+    name: Plug draw when on
+    min: 100
+    max: 11000
+    step: 100
+    unit_of_measurement: W
+    icon: mdi:flash
+
+input_select:
+  sim_plug_phase:
+    name: Plug wired to phase
+    options: ["A", "B", "C", "AB", "BC", "AC", "ABC"]
+    initial: "A"
+    icon: mdi:transmission-tower
+
+template:
+  - switch:
+      # What Load Juggler controls. A template switch over an input_boolean
+      # rather than the input_boolean itself: the plug picker offers the
+      # `switch` domain only, which is also true of a real smart plug.
+      - name: Sim plug
+        unique_id: sim_plug
+        state: "{{ is_state('input_boolean.sim_plug_relay', 'on') }}"
+        turn_on:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.sim_plug_relay
+        turn_off:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.sim_plug_relay
+
+  - sensor:
+      # The plug's own power monitor, as the engine reads it.
+      - name: Sim plug power
+        unique_id: sim_plug_power
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ states('input_number.sim_plug_power') | float(0)
+             if is_state('input_boolean.sim_plug_relay', 'on') else 0 }}
+
+      # Its contribution to each site phase, summed into the grid CTs by
+      # packages/site.yaml. A multi-phase plug splits its draw evenly, which is
+      # what a symmetric three-phase load does.
+      - name: Sim managed plug a
+        unique_id: sim_managed_plug_a
+        device_class: power
+        unit_of_measurement: W
+        state: >
+          {% set mask = states('input_select.sim_plug_phase') %}
+          {% set on = is_state('input_boolean.sim_plug_relay', 'on') %}
+          {{ (states('input_number.sim_plug_power') | float(0) / mask | length)
+             | round(1) if on and 'A' in mask else 0 }}
+      - name: Sim managed plug b
+        unique_id: sim_managed_plug_b
+        device_class: power
+        unit_of_measurement: W
+        state: >
+          {% set mask = states('input_select.sim_plug_phase') %}
+          {% set on = is_state('input_boolean.sim_plug_relay', 'on') %}
+          {{ (states('input_number.sim_plug_power') | float(0) / mask | length)
+             | round(1) if on and 'B' in mask else 0 }}
+      - name: Sim managed plug c
+        unique_id: sim_managed_plug_c
+        device_class: power
+        unit_of_measurement: W
+        state: >
+          {% set mask = states('input_select.sim_plug_phase') %}
+          {% set on = is_state('input_boolean.sim_plug_relay', 'on') %}
+          {{ (states('input_number.sim_plug_power') | float(0) / mask | length)
+             | round(1) if on and 'C' in mask else 0 }}

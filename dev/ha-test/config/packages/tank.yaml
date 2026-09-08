@@ -1,0 +1,111 @@
+# A hot water tank: a real `generic_thermostat` over a simulated element.
+#
+# This one closes the loop through Home Assistant's own thermostat rather than
+# through us, which is what makes it worth simulating: Load Juggler writes a
+# SETPOINT (normal, away, or the boost it jumps to on surplus), the thermostat
+# decides whether that means heating, and only then does the element draw. The
+# engine reads the result back as the climate entity's hvac_action, which is
+# what its connector status is derived from — a tank whose thermostat is idle
+# is an inactive load however high the setpoint went.
+#
+# Water temperature is a knob, not a simulation: drag it below the setpoint to
+# make the tank call for heat, above it to satisfy it. Modelling the tank
+# actually warming up would need a time integral, and the interesting question
+# here is the engine's response, not thermodynamics.
+#
+# Configure it in Load Juggler as: climate = climate.sim_water_tank,
+# power = sensor.sim_tank_power.
+
+input_boolean:
+  sim_tank_element:
+    name: Tank element
+    icon: mdi:heating-coil
+
+input_number:
+  sim_tank_temperature:
+    name: Tank water temperature
+    min: 5
+    max: 85
+    step: 1
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-water
+  sim_tank_element_power:
+    name: Tank element power
+    min: 500
+    max: 6000
+    step: 100
+    unit_of_measurement: W
+    icon: mdi:flash
+
+input_select:
+  sim_tank_phase:
+    name: Tank wired to phase
+    options: ["A", "B", "C", "AB", "BC", "AC", "ABC"]
+    initial: "B"
+    icon: mdi:transmission-tower
+
+climate:
+  - platform: generic_thermostat
+    name: Sim water tank
+    unique_id: sim_water_tank
+    heater: input_boolean.sim_tank_element
+    target_sensor: sensor.sim_tank_temperature
+    min_temp: 10
+    max_temp: 80
+    target_temp: 45
+    cold_tolerance: 0.5
+    hot_tolerance: 0.5
+    # No anti-cycle delay: the engine's own minimum off-time is the thing under
+    # test, and a second one here would mask it.
+    min_cycle_duration:
+      seconds: 0
+    precision: 1.0
+
+template:
+  - sensor:
+      # What the thermostat measures. A template mirror rather than the
+      # input_number itself, so it carries device_class: temperature.
+      - name: Sim tank temperature
+        unique_id: sim_tank_temperature
+        device_class: temperature
+        unit_of_measurement: "°C"
+        state_class: measurement
+        state: "{{ states('input_number.sim_tank_temperature') | float(45) | round(1) }}"
+
+      # The element's draw, as the engine reads it.
+      - name: Sim tank power
+        unique_id: sim_tank_power
+        device_class: power
+        unit_of_measurement: W
+        state_class: measurement
+        state: >
+          {{ states('input_number.sim_tank_element_power') | float(0)
+             if is_state('input_boolean.sim_tank_element', 'on') else 0 }}
+
+      - name: Sim managed tank a
+        unique_id: sim_managed_tank_a
+        device_class: power
+        unit_of_measurement: W
+        state: >
+          {% set mask = states('input_select.sim_tank_phase') %}
+          {% set on = is_state('input_boolean.sim_tank_element', 'on') %}
+          {{ (states('input_number.sim_tank_element_power') | float(0) / mask | length)
+             | round(1) if on and 'A' in mask else 0 }}
+      - name: Sim managed tank b
+        unique_id: sim_managed_tank_b
+        device_class: power
+        unit_of_measurement: W
+        state: >
+          {% set mask = states('input_select.sim_tank_phase') %}
+          {% set on = is_state('input_boolean.sim_tank_element', 'on') %}
+          {{ (states('input_number.sim_tank_element_power') | float(0) / mask | length)
+             | round(1) if on and 'B' in mask else 0 }}
+      - name: Sim managed tank c
+        unique_id: sim_managed_tank_c
+        device_class: power
+        unit_of_measurement: W
+        state: >
+          {% set mask = states('input_select.sim_tank_phase') %}
+          {% set on = is_state('input_boolean.sim_tank_element', 'on') %}
+          {{ (states('input_number.sim_tank_element_power') | float(0) / mask | length)
+             | round(1) if on and 'C' in mask else 0 }}
