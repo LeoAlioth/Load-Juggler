@@ -2294,7 +2294,8 @@ async def test_rate_limit_ramp_up_capped(
     Previous output 6A, engine wants 16A, site_update_frequency 2s. The EMA
     lands at 9.0A, the dead band passes, and the step is the LARGER of the
     fixed floor (RAMP_UP_RATE * 2 = 0.2A) and a fraction of the error still to
-    close (3.0A * RAMP_APPROACH_RATE * 2 = 0.9A) - so 6.9A.
+    close (3.0A * 0.30 = 0.9A, the approach RAMP_TAU_S gives at the 2 s
+    default) - so 6.9A.
 
     The bound moved when the constant slew gained that proportional term: a
     fixed 0.2A per cycle could not track a moving surplus, leaving 719 W
@@ -2305,7 +2306,8 @@ async def test_rate_limit_ramp_up_capped(
         DEFAULT_SITE_UPDATE_FREQUENCY,
         EMA_ALPHA,
         RAMP_APPROACH_MAX,
-        RAMP_APPROACH_RATE,
+        RAMP_TAU_S,
+        ema_alpha_for,
         RAMP_UP_RATE,
     )
 
@@ -2334,7 +2336,7 @@ async def test_rate_limit_ramp_up_capped(
         # Engine would allocate 16A (max), but the smoothing pipeline caps it.
         freq = DEFAULT_SITE_UPDATE_FREQUENCY
         ema = EMA_ALPHA * 16.0 + (1 - EMA_ALPHA) * 6.0
-        approach = min(RAMP_APPROACH_MAX, RAMP_APPROACH_RATE * freq)
+        approach = min(RAMP_APPROACH_MAX, ema_alpha_for(freq, RAMP_TAU_S))
         step = max(RAMP_UP_RATE * freq, abs(ema - 6.0) * approach)
         max_allowed = 6.0 + step
         assert limit <= max_allowed + 0.05, (
@@ -2359,7 +2361,8 @@ async def test_rate_limit_ramp_down_capped(
         DEFAULT_SITE_UPDATE_FREQUENCY,
         EMA_ALPHA,
         RAMP_APPROACH_MAX,
-        RAMP_APPROACH_RATE,
+        RAMP_TAU_S,
+        ema_alpha_for,
         RAMP_DOWN_RATE,
     )
 
@@ -2394,7 +2397,7 @@ async def test_rate_limit_ramp_down_capped(
         # error - see test_rate_limit_ramp_up_capped for why.
         freq = DEFAULT_SITE_UPDATE_FREQUENCY
         ema = EMA_ALPHA * 6.0 + (1 - EMA_ALPHA) * 16.0
-        approach = min(RAMP_APPROACH_MAX, RAMP_APPROACH_RATE * freq)
+        approach = min(RAMP_APPROACH_MAX, ema_alpha_for(freq, RAMP_TAU_S))
         step = max(RAMP_DOWN_RATE * freq, abs(16.0 - ema) * approach)
         min_allowed = 16.0 - step
         assert limit >= min_allowed - 0.05, (

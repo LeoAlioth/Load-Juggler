@@ -1111,6 +1111,35 @@ def test_the_permit_filter_smooths_in_seconds_not_in_cycles():
     assert spread < 0.06, closed
 
 
+def test_the_ramp_closes_the_same_error_in_the_same_seconds_at_any_cadence():
+    """The rate limiter was the last per-CYCLE stage. ``RAMP_APPROACH_RATE *
+    site_freq`` is a fraction per cycle wearing per-second clothes, and the
+    0.9 cap hid it: past a ~6 s interval every site closed 90% of its error
+    per cycle, so a 10 s site ramped with tau ~4.3 s where a 1 s site used
+    ~6.2 s and tracked WORSE for a reason no setting described."""
+    from types import SimpleNamespace
+    from custom_components.dynamic_ocpp_evse.control.smoothing import apply_smoothing
+    from custom_components.dynamic_ocpp_evse.const import CONF_SITE_UPDATE_FREQUENCY
+
+    span_s = 30.0
+    closed = {}
+    for dt in (1, 2, 5, 10):
+        entry = SimpleNamespace(options={CONF_SITE_UPDATE_FREQUENCY: dt}, data={})
+        sensor = SimpleNamespace(
+            _attr_name="t", _ema_current=6.0, _schmitt_current=6.0,
+            _schmitt_state="rising", _rate_limited_current=6.0,
+        )
+        for _ in range(int(span_s / dt)):
+            apply_smoothing(sensor, 16.0, False, entry)
+        closed[dt] = (sensor._rate_limited_current - 6.0) / 10.0
+
+    for dt, frac in closed.items():
+        assert 0.5 < frac < 1.0, (dt, frac)
+    # Two cascaded lags (EMA then ramp) leave a wider spread than the EMA alone,
+    # but the ORDERING must not invert: a slower cadence may not close more.
+    assert max(closed.values()) - min(closed.values()) < 0.20, closed
+    assert closed[10] <= closed[1] + 0.05, closed
+
 def test_the_permit_filter_and_the_input_filter_share_one_time_constant():
     """The two are tuned as a pair, so the conversion is imported rather than
     restated - a second copy of the formula would let them drift apart with no

@@ -3,7 +3,7 @@ from ..const import (
     DEAD_BAND,
     ema_alpha_for,
     RAMP_APPROACH_MAX,
-    RAMP_APPROACH_RATE,
+    RAMP_TAU_S,
     RAMP_UP_RATE,
     RAMP_DOWN_RATE,
     CONF_SITE_UPDATE_FREQUENCY,
@@ -115,7 +115,10 @@ def apply_smoothing(
         # slew and is much faster while far from target. Shrinking with the
         # error is what makes it self-damping: it approaches asymptotically
         # rather than driving through at a constant rate.
-        approach = min(RAMP_APPROACH_MAX, RAMP_APPROACH_RATE * site_freq)
+        # RAMP_TAU_S of approach per cycle, on the same time basis as the two
+        # EMAs. The cap stays: it guarantees a step never closes the WHOLE
+        # error, so there is always some follower left however slow the site.
+        approach = min(RAMP_APPROACH_MAX, ema_alpha_for(site_freq, RAMP_TAU_S))
         proportional = abs(delta) * approach
         max_up = max(RAMP_UP_RATE * site_freq, proportional)
         max_down = max(RAMP_DOWN_RATE * site_freq, proportional)

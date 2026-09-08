@@ -286,13 +286,30 @@ the two cadences land within run-to-run noise of each other, and the slower one
 is no longer the loser. A refresh rate is a politeness setting for the
 inverter's Modbus; it should not be a control-loop tuning knob.
 
-The remaining 10 s vs 1 s gap runs the OTHER way (717 against 832) and is the
+The remaining 10 s vs 1 s gap ran the OTHER way (717 against 832) and was the
 rate limiter, not the EMA: `approach = min(RAMP_APPROACH_MAX, RAMP_APPROACH_RATE
-* site_freq)` is still a fraction per CYCLE, and it saturates at 0.9 for any
-interval past ~6 s. So a 10 s site closes 90% of the error per cycle (tau ~4.3 s)
-where a 1 s site closes 15% (tau ~6.2 s) - the same per-cycle-versus-per-second
-mistake the EMAs had, hiding behind the cap. Converting it the same way
-(`1 - exp(-site_freq / tau)`) is the obvious next step and has not been done.
+* site_freq)` was a fraction per CYCLE that saturated at 0.9 for any interval
+past ~6 s, so a 10 s site closed 90% of its error per cycle (tau ~4.3 s) where a
+1 s site closed 15% (tau ~6.2 s) - the same per-cycle-versus-per-second mistake
+the EMAs had, hiding behind the cap.
+
+That was the third and last stage to convert. `RAMP_TAU_S` now drives it through
+the same `1 - exp(-dt/tau)` as the filters, so all three stages of the pipeline
+are fixed in seconds:
+
+| interval | old approach | now |
+|---|---|---|
+| 1 s | 0.150 | 0.164 |
+| 2 s | 0.300 | 0.300 |
+| 5 s | 0.750 | 0.591 |
+| 10 s | 0.900 | 0.832 |
+| 30 s and up | 0.900 | 0.900 |
+
+The 2 s column is identical by construction, so default-configured sites did not
+move. `RAMP_TAU_S` is a separate constant from `EMA_TAU_S` despite holding the
+same 5.6 s: it is derived independently (the old 0.15/s over the 2 s default
+closes 0.30, and tau = -2 / ln(1 - 0.30) = 5.6 s), and the ramp and the input
+filter are different design decisions that should be retunable apart.
 
 A CAVEAT ON EVERY ROW ABOVE, found on 2026-09-08 while reading the traces
 rather than the summaries. All the loads in this rig carry

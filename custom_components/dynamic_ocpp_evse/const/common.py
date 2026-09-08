@@ -87,7 +87,23 @@ RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
 # own grid EMA) dominates. Tuning this number further buys nothing; closing the
 # remaining gap would need feed-forward from the solar reading rather than a
 # faster follower.
-RAMP_APPROACH_RATE = 0.15   # 1/s - ~6.7 s to close most of an error
+#
+# Expressed as a TIME CONSTANT rather than that per-second fraction, for the
+# reason the two EMAs were converted before it: a fraction multiplied by the
+# refresh interval is a per-CYCLE quantity wearing per-second clothes, and it
+# made the refresh rate a control-loop tuning knob. It hid behind the 0.9 cap -
+# past a ~6 s interval every site closed 90% of its error per cycle, so a 10 s
+# site ramped with tau ~4.3 s where a 1 s site used tau ~6.2 s, and the 10 s
+# site tracked BETTER for a reason nothing in the UI explained (rig, 2026-09-08:
+# 717 W against 832 W).
+#
+# 5.6 s is the same number as EMA_TAU_S, and deliberately a SEPARATE constant:
+# it is derived independently - the old 0.15/s over the 2 s default closes 0.30
+# of the error, and tau = -2 / ln(1 - 0.30) = 5.6 s, which also keeps
+# default-configured sites bit-identical - and the ramp and the input filter
+# are different design decisions that should be retunable apart. The measured
+# optimum was tau ~6.2 s (0.15/s at 1 s), well inside the rig's resolution.
+RAMP_TAU_S = 5.6
 RAMP_APPROACH_MAX = 0.9     # never close more than this much of it in one cycle
 
 # EMA smoothing - exponential moving average on engine output before rate limiting
@@ -112,8 +128,8 @@ EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothi
 EMA_TAU_S = 5.6
 
 
-def ema_alpha_for(dt: float) -> float:
-    """The EMA weight that gives EMA_TAU_S of smoothing at a ``dt`` s cadence.
+def ema_alpha_for(dt: float, tau: float = EMA_TAU_S) -> float:
+    """The weight that gives ``tau`` seconds of smoothing at a ``dt`` s cadence.
 
     ``1 - exp(-dt/tau)`` is the exact discrete equivalent of a continuous
     first-order lag, so the filter's behaviour in SECONDS is the same however
@@ -130,7 +146,7 @@ def ema_alpha_for(dt: float) -> float:
     """
     if not dt or dt <= 0:
         return EMA_ALPHA
-    return min(1.0, max(1e-3, 1.0 - math.exp(-float(dt) / EMA_TAU_S)))
+    return min(1.0, max(1e-3, 1.0 - math.exp(-float(dt) / float(tau))))
 
 
 # The battery charge controller reads export and battery power through its OWN
