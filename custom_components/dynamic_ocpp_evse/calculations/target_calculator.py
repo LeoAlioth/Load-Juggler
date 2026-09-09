@@ -1122,10 +1122,22 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
     margin = excess_margin(site, 0.0)
     total = margin / site.voltage
 
-    if site.inverter_supports_asymmetric:
+    if site.inverter_supports_asymmetric or site.is_off_grid:
         # The inverter can put its output on any leg, so the site total is the
         # only bound and a single-phase load may reach all of it. Same shape as
         # the gross asymmetric pool; ``netting`` only changes how it is read.
+        #
+        # OFF-GRID joins this branch, and must: the symmetric arm below bounds
+        # each phase by its own grid FLOW, and off-grid there is no grid to
+        # have a flow. Every phase read 0 there, so ``min(own_phase, ABC)``
+        # offered nothing anywhere and an Excess load on an off-grid site could
+        # never be allocated - seen live on the kozolec diagnostics
+        # (2026-09-09): pool ``A 0.0, B 0.0, C 0.0`` against ``ABC 1.45``.
+        # The bound it was reaching for does not exist off-grid either: it is
+        # there to stop a load driving its own phase into IMPORT, and nothing
+        # can be bought without a grid. What really limits a leg there is the
+        # inverter's own per-phase output, and the physical pool already
+        # enforces that - every call site takes ``min(phys_avail, src_max)``.
         #
         # Deliberately NOT bounded by the phase's own measured flow, which is
         # what the symmetric arm below does. That bound assumes the leg's share

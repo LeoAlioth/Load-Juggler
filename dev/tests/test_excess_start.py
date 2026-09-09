@@ -647,6 +647,47 @@ def test_a_claim_bigger_than_its_phase_still_comes_off_the_site_total():
     assert _close(gross.get_available("C"), 4.348)    # C untouched
 
 
+def test_an_off_grid_site_still_offers_its_excess_pool():
+    """Off-grid there is no grid flow, so a bound measured from one offers
+    nothing anywhere.
+
+    Found on the kozolec diagnostics (2026-09-09), one day after the per-phase
+    bound landed: the pool read ``A 0.0, B 0.0, C 0.0`` against ``ABC 1.45``,
+    because each phase is bounded by ``export - consumption`` and off-grid both
+    are synthetic zeros. ``get_available`` takes ``min(own_phase, ABC)``, so
+    every Excess load on the site was offered exactly 0 - where before the
+    change it got the total's even third.
+
+    The bound has no meaning there anyway: it exists to stop a load driving its
+    own phase into IMPORT, and nothing can be bought without a grid. What
+    limits a leg off-grid is the inverter's own per-phase output, which the
+    PHYSICAL pool enforces separately at every call site.
+    """
+    station = _evse("station", min_current=0.9, max_current=10.4, phase="A")
+    site = _site_3ph(THRESHOLD + 1500.0, loads=[station])
+    # An off-grid site: no CTs at all, production and the pack are the whole
+    # story. The margin comes from the battery term, not from export.
+    site.is_off_grid = True
+    site.export_current = PhaseValues(0.0, 0.0, 0.0)
+    site.consumption = PhaseValues(0.0, 0.0, 0.0)
+    site.grid_current = PhaseValues(0.0, 0.0, 0.0)
+    site.battery_power = -3332.0          # charging, and over its allowance
+    site.battery_soc = 78.0
+    site.battery_soc_full = 97.0
+    site.battery_max_charge_power = 3000.0
+
+    from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
+        _calculate_excess_available,
+    )
+
+    pool = _calculate_excess_available(site)
+    assert pool.ABC > 0, f"the site has surplus: {pool}"
+    # The regression: a per-phase zero against a positive total.
+    assert pool.A > 0, f"off-grid must still offer its phases: {pool}"
+    assert _close(pool.get_available("A"), pool.ABC, tol=0.01), (
+        f"a load on A may reach the whole off-grid surplus: {pool}"
+    )
+
 def test_a_deduction_never_inflates_the_site_total():
     """``deduct`` used to rebuild ``ABC`` from the sum of the phases, which is
     only the site total on a pool whose phases happen to sum to it.
