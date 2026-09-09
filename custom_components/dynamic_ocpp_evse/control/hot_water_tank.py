@@ -43,8 +43,11 @@ def resolve_tank_setpoint(
     - Freeze Protection: the away setpoint, raised to boost when the hub reports
       excess - the site can't absorb its own production anywhere else - or the
       battery is over its target SOC (ride free energy whenever it's available).
-    - Solar Priority: away below battery-min SOC, normal up to battery-target
-      SOC, boost at/above target SOC.
+    - Solar Priority: away below battery-min SOC, then boost at/above the
+      target SOC **or** on the same excess verdict the other two read, and
+      normal in between. The battery keeps its priority up to target only
+      while there is something to give it - excess means the pack is already
+      taking all it is permitted to take.
     - Normal: normal setpoint, raised to boost on the same surplus test as
       Freeze Protection.
     """
@@ -74,7 +77,26 @@ def resolve_tank_setpoint(
     if mode == TANK_MODE_SOLAR_PRIORITY.key:
         if soc is not None and soc_min is not None and soc < soc_min:
             return away, "away"
-        if soc is not None and soc_target is not None and soc >= soc_target:
+        # At or over the target SOC, OR the hub says the site cannot place its
+        # own production anywhere else.
+        #
+        # The excess half was missing (Anze, 2026-09-09, kozolec): this branch
+        # read SOC alone, so a tank sat at its normal setpoint while the hub
+        # published excess_available - and excess means the battery is already
+        # taking every watt it is PERMITTED to take, so "the battery has
+        # priority until target" has nothing left to protect. The surplus was
+        # going into the pack above its own allowance instead of into hot
+        # water. Live at the time: SOC 78 % against an 87 % target with the
+        # pack pulling 3 332 W against a 3 000 W allowance, so 332 W was
+        # placed nowhere the site had chosen to put it.
+        #
+        # The away floor above is deliberately NOT yielded to excess: that one
+        # is about the house's own reserve, and dropping to 15 C below the
+        # minimum SOC is a decision about the battery, not about surplus.
+        at_or_over_target = (
+            soc is not None and soc_target is not None and soc >= soc_target
+        )
+        if at_or_over_target or excess_available:
             return boost, "boost"
         return normal, "normal"
 

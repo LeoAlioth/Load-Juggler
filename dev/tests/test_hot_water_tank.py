@@ -112,6 +112,47 @@ def test_freeze_protection_missing_verdict_falls_back_to_element_power():
 #   between min/target → normal
 #   at or above target → boost
 
+def test_solar_priority_below_target_boosts_on_the_hubs_excess_verdict():
+    """The battery has priority until target - unless there is nothing left to
+    give it.
+
+    Excess means the pack is already taking every watt it is PERMITTED to take,
+    so "the battery first" has nothing to protect and the surplus should go
+    into hot water. This branch read SOC alone until 2026-09-09, and the live
+    kozolec case is the shape: SOC 78 % against an 87 % target, the pack
+    pulling 3 332 W against its 3 000 W allowance, the hub publishing excess -
+    and the tank sitting at 42 C.
+    """
+    result = resolve_tank_setpoint(
+        TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        _hub(soc=78, soc_min=54, soc_target=87, excess=True),
+    )
+    assert result == (BOOST, "boost")
+
+
+def test_solar_priority_below_target_without_excess_stays_normal():
+    """The mirror: no surplus, so the battery keeps its priority."""
+    result = resolve_tank_setpoint(
+        TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        _hub(soc=78, soc_min=54, soc_target=87, excess=False),
+    )
+    assert result == (NORMAL, "normal")
+
+
+def test_solar_priority_below_MINIMUM_soc_ignores_excess():
+    """The away floor is not yielded to surplus, deliberately.
+
+    Below the minimum SOC the tank drops to its away temperature to leave
+    energy for the house - a decision about the battery's reserve, not about
+    whether production is spare. Excess does not lift it.
+    """
+    result = resolve_tank_setpoint(
+        TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
+        _hub(soc=40, soc_min=54, soc_target=87, excess=True),
+    )
+    assert result == (AWAY, "away")
+
+
 def test_solar_priority_below_min_soc_is_away():
     result = resolve_tank_setpoint(
         TANK_MODE_SOLAR_PRIORITY.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, _hub(soc=15)
