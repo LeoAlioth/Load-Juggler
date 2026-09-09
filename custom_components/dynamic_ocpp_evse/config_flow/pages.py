@@ -650,8 +650,19 @@ def _hub_overview_lines(hass, entry) -> list[str]:
         f"- Solar surplus: {_fmt(hub_data.get('available_solar_power'), 'W', 0)}"
     )
     lines.append(f"- Grid headroom: {_fmt(hub_data.get('available_grid_power'), 'W', 0)}")
+    # "Battery discharge available", not "Battery headroom". Every other line
+    # in this section names one source's remaining capability, and for the grid
+    # and the array "headroom" can only mean one thing. The battery is the one
+    # source with two directions, so the same word reads as ROOM TO CHARGE -
+    # exactly when the battery is charging and a reader is most likely to be
+    # asking. It cost a live misdiagnosis (2026-09-09): a kozolec pack charging
+    # at 3 332 W against a 3 000 W allowance showed "Battery headroom 4 500 W",
+    # which is its rated DISCHARGE less the discharge already serving the
+    # house, and the 4 500 was read as charge allowance still to fill - sending
+    # us looking for a misconfigured 3 kW setting that was correct all along.
     lines.append(
-        f"- Battery headroom: {_fmt(hub_data.get('available_battery_power'), 'W', 0)}"
+        "- Battery discharge available: "
+        f"{_fmt(hub_data.get('available_battery_power'), 'W', 0)}"
     )
     excess = hub_data.get("excess_available")
     if excess is not None:
