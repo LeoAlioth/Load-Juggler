@@ -5949,6 +5949,88 @@ async def test_composed_status_name_still_used_without_a_registry_entry(
     assert load.connector_status == "SuspendedEV"
 
 
+async def test_a_finished_car_stops_getting_profiles_even_though_the_entity_says_suspended(
+    hass, hub_entry, charger_entry, setup_domain_data
+):
+    """The engine's verdict reaches the actuator, not just the allocator.
+
+    When a car finishes charging the connector sits in SuspendedEV - plugged
+    in, drawing nothing - and after SUSPENDED_EV_IDLE_TIMEOUT the engine
+    rewrites the load's status to "Finishing" so the session counts as over.
+    That rewrite lived only on the engine's LoadContext while the dispatch
+    guard re-read the ENTITY, which still says SuspendedEV, so a 0 A profile
+    went out on every command interval for as long as the car stayed plugged
+    in. On the SE17K Elvi that produced "Set charging profile failed with
+    response Exception", repeatedly, always after a car finished.
+    """
+    import time
+
+    _set_ha_states(hass, hub_entry)
+    # A finished car: still plugged (SuspendedEV), drawing nothing. BOTH halves
+    # matter - the engine's substitution gates on the status AND on the draw
+    # being under 1 A, so the fixture's 10 A charger has to go quiet too or the
+    # session never counts as over.
+    hass.states.async_set(
+        "sensor.test_charger_status_connector", "SuspendedEV"
+    )
+    hass.states.async_set(
+        "sensor.test_charger_current_import", "0.0",
+        {"device_class": "current", "unit_of_measurement": "A",
+         "l1_current": 0.0, "l2_current": 0.0, "l3_current": 0.0},
+    )
+    # The phase CT loses the charger's share with it, or the site reads a
+    # household that is not there.
+    hass.states.async_set(
+        "sensor.phase_a_current", "-5.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+
+    sensor = LoadJugglerDeviceSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
+    )
+    # Backdate the idle marker past the timeout, which is what the engine keys
+    # its substitution on. Reaching into load_rt is how the harness would see
+    # it after a real minute of SuspendedEV.
+    load_rt = (
+        hass.data.setdefault(DOMAIN, {})
+        .setdefault("loads", {})
+        .setdefault(charger_entry.entry_id, {})
+    )
+    load_rt["_suspended_ev_since"] = time.monotonic() - 600
+
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock) as mock_call:
+        hub_data = await _run_site_cycle(hass, hub_entry, sensor)
+
+        ocpp_calls = [
+            c for c in mock_call.call_args_list
+            if c[0][0] == "ocpp" and c[0][1] == "set_charge_rate"
+        ]
+
+    # The entity still disagrees, which is the whole point of the test.
+    assert hass.states.get("sensor.test_charger_status_connector").state == (
+        "SuspendedEV"
+    )
+    # Nothing was written to the charger.
+    assert ocpp_calls == [], (
+        "a session the engine has closed must get no more profiles: "
+        f"{len(ocpp_calls)} sent"
+    )
+
+    # And the engine half, asserted directly rather than through the published
+    # hub_data - `_run_site_cycle` returns the TRIMMED result and per-load
+    # dicts are not republished (the load processors receive the raw one).
+    from custom_components.dynamic_ocpp_evse.engine.load_builders import (
+        _build_evse_load,
+    )
+
+    load_rt["_suspended_ev_since"] = time.monotonic() - 600
+    rebuilt = _build_evse_load(hass, charger_entry, 230, "test_charger", 1)
+    assert rebuilt.connector_status == "Finishing", (
+        "the engine substitutes Finishing once SuspendedEV has been idle past "
+        f"the timeout, got {rebuilt.connector_status}"
+    )
+
+
 # ── The Excess verdict counts only the rate the battery MAY take ───────
 #
 # The engine half of the narrowing. The charge control publishes what it is

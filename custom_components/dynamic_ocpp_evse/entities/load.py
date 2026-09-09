@@ -812,5 +812,15 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         else:
             await check_profile_compliance(self, limit, dynamic_control_on)
             await send_ocpp_command(
-                self, limit, hub_entry, dynamic_control_on, now_mono
+                self,
+                limit,
+                hub_entry,
+                dynamic_control_on,
+                now_mono,
+                # The engine's verdict on this connector, which is what makes
+                # the load inactive - see send_ocpp_command for why re-reading
+                # the entity there was wrong.
+                effective_status=hub_data.get("load_connector_status", {}).get(
+                    self.config_entry.entry_id
+                ),
             )

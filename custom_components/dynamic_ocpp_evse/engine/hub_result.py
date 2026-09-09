@@ -992,6 +992,15 @@ def _build_hub_result(
     # pulling (sum of phase currents). For a binary load this is what the
     # device draws right now, which can be far below its reserved allocation
     # (e.g. a metered plug switched on but its appliance idle).
+    # The connector status the ENGINE settled on, which is not always the
+    # entity's: load_builders substitutes "Finishing" once a car has sat in
+    # SuspendedEV drawing nothing for SUSPENDED_EV_IDLE_TIMEOUT, and that
+    # substitution is the whole reason the load goes inactive. The ACTUATOR has
+    # to see the same verdict - re-reading the entity there left it writing
+    # profiles into a session the engine had already closed. See
+    # control/ocpp.send_ocpp_command.
+    load_connector_status = {c.load_id: c.connector_status for c in site.loads}
+
     load_draw = {
         c.load_id: (
             None
@@ -1069,6 +1078,7 @@ def _build_hub_result(
         "load_modes": load_modes,
         "load_rank": load_rank,
         "load_draw": load_draw,
+        "load_connector_status": load_connector_status,
         "load_active_phases": load_active_phases,
         "load_phase_masks": load_phase_masks,
         "distribution_mode": site.distribution_mode,

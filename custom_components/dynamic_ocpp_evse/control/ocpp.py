@@ -69,16 +69,44 @@ async def detect_charge_rate_unit(sensor, ocpp_device_id: str) -> str | None:
 
 
 async def send_ocpp_command(
-    sensor, limit: float, hub_entry, dynamic_control_on: bool, now_mono: float
+    sensor, limit: float, hub_entry, dynamic_control_on: bool, now_mono: float,
+    effective_status: str | None = None,
 ) -> None:
-    """Send OCPP charging profile to an EVSE charger."""
-    connector_state = sensor.hass.states.get(sensor._connector_status_entity)
-    connector_status = units.state_or_unknown(connector_state)
-    if connector_status in ("Finishing", "Faulted"):
+    """Send OCPP charging profile to an EVSE charger.
+
+    ``effective_status`` is the connector status the ENGINE decided on, taken
+    from ``hub_data["load_connector_status"]``. It is not always what the
+    entity says, and the difference is a bug this guard used to have: when a
+    car finishes charging the connector sits in **SuspendedEV** - plugged in,
+    drawing nothing, transaction still open - and after
+    SUSPENDED_EV_IDLE_TIMEOUT ``load_builders`` rewrites the load's status to
+    "Finishing" so the engine treats the session as over and drops the permit
+    to 0. That rewrite lived only on the engine's ``LoadContext``, while this
+    guard re-read the raw entity and saw "SuspendedEV" - so it kept sending a
+    0 A profile every command interval, for as long as the car stayed plugged
+    in, to a charger that had finished.
+
+    Reported live on the SE17K site's EvBox Elvi (Anze, 2026-09-09, and seen
+    under 1.1.x too): "Set charging profile failed with response Exception",
+    always with a car plugged in, arriving when that car finished charging,
+    sometimes many times within the hour - one per command interval. The
+    charger is entitled to refuse: OCPP 1.6 permits a 0 A schedule period, but
+    plenty of firmware rejects a limit under the 6 A minimum rather than
+    reading 0 as "suspend", and answering with a protocol error rather than a
+    clean Rejected is what surfaces as "Exception" through ocpp-lib.
+
+    The fix is not to special-case the zero - it is that the actuator must stop
+    when the engine stops. Falls back to the entity when no status is passed,
+    so a caller that does not have hub_data still behaves as before.
+    """
+    if effective_status is None:
+        connector_state = sensor.hass.states.get(sensor._connector_status_entity)
+        effective_status = units.state_or_unknown(connector_state)
+    if effective_status in ("Finishing", "Faulted"):
         _LOGGER.debug(
             "Skipping OCPP command for %s - connector is %s",
             sensor._attr_name,
-            connector_status,
+            effective_status,
         )
         sensor._last_update = datetime.now(timezone.utc)
         sensor._last_command_time = now_mono
