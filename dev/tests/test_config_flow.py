@@ -266,7 +266,8 @@ async def test_options_flow_hub_shows_menu(
     assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "init"
     assert result["menu_options"] == [
-        "hub_connection", "hub_export", "hub_policy", "hub_timing", "overview", "summary",
+        "hub_connection", "hub_export", "hub_policy", "hub_timing", "hub_filters",
+        "overview", "summary",
     ]
 
     # The first menu entry is the grid connection page.

@@ -77,6 +77,23 @@ from ..const import (
     CONF_PLUG_POWER_RATING,
     CONF_PLUG_SWITCH_ENTITY_ID,
     CONF_PROFILE_VALIDITY_MODE,
+    # The Filters page: its keys, and the constants that are its defaults.
+    CONF_FILTER_CTRL_FAST_TAU_S,
+    CONF_FILTER_DEAD_BAND,
+    CONF_FILTER_INPUT_TAU_S,
+    CONF_FILTER_PERMIT_TAU_S,
+    CONF_FILTER_RAMP_DOWN_RATE,
+    CONF_FILTER_RAMP_TAU_S,
+    CONF_FILTER_RAMP_UP_RATE,
+    CONF_FILTER_SETTLE_SECONDS,
+    CTRL_FAST_TAU_S,
+    DEAD_BAND,
+    EMA_TAU_S,
+    PERMIT_TAU_S,
+    RAMP_DOWN_RATE,
+    RAMP_TAU_S,
+    RAMP_UP_RATE,
+    SETTLE_DRAW_SECONDS,
     CONF_SITE_UPDATE_FREQUENCY,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
@@ -1292,6 +1309,64 @@ def _hub_section_schema(hass, defaults, keys) -> vol.Schema:
     ]
     assert len(fields) == len(wanted), "hub section keys drifted from the grid page"
     return vol.Schema(dict(fields))
+
+
+def _hub_filters_schema(defaults: dict | None = None) -> vol.Schema:
+    """The Filters page: the control pipeline's time constants and slews.
+
+    Deliberately NOT drawn from ``_build_hub_grid_schema`` like the other hub
+    pages: that list also builds the hub SETUP form (via ``_hub_schema``), and
+    eight filter dials have no business in front of someone wiring up their
+    first hub. Options-only, reachable from the hub menu.
+
+    Every default is the engine constant the dial overrides, so a hub that has
+    never opened this page runs the constants exactly. The fast filter's step
+    is "any": its default is the calibrated 1.2427 s, and a 0.1 grid would
+    either flag that as invalid or nudge it to 1.2 on an open-and-save.
+    """
+    defaults = defaults or {}
+
+    def dial(key, const, lo, hi, step, unit):
+        return (
+            vol.Optional(key, default=defaults.get(key, const)),
+            selector(
+                {
+                    "number": {
+                        "min": lo,
+                        "max": hi,
+                        "step": step,
+                        "mode": "box",
+                        "unit_of_measurement": unit,
+                    }
+                }
+            ),
+        )
+
+    return vol.Schema(
+        dict(
+            [
+                dial(CONF_FILTER_INPUT_TAU_S, EMA_TAU_S, 1, 60, 0.1, "s"),
+                dial(CONF_FILTER_PERMIT_TAU_S, PERMIT_TAU_S, 1, 60, 0.1, "s"),
+                dial(CONF_FILTER_RAMP_TAU_S, RAMP_TAU_S, 1, 60, 0.1, "s"),
+                dial(CONF_FILTER_CTRL_FAST_TAU_S, CTRL_FAST_TAU_S, 0.5, 60, "any", "s"),
+                dial(CONF_FILTER_SETTLE_SECONDS, SETTLE_DRAW_SECONDS, 5, 300, 1, "s"),
+                dial(CONF_FILTER_DEAD_BAND, DEAD_BAND, 0, 5, 0.1, "A"),
+                dial(CONF_FILTER_RAMP_UP_RATE, RAMP_UP_RATE, 0.05, 5, 0.05, "A/s"),
+                dial(CONF_FILTER_RAMP_DOWN_RATE, RAMP_DOWN_RATE, 0.05, 5, 0.05, "A/s"),
+            ]
+        )
+    )
+
+
+def validate_hub_filters(data: dict, errors: dict) -> None:
+    """The battery controller's fast filter must be FASTER than the site
+    reading filter it pairs with. A longer tau on the "fast" half inverts the
+    matched pair, and the feedback law then reads every transition backwards
+    (see readers._smooth_directional)."""
+    fast = data.get(CONF_FILTER_CTRL_FAST_TAU_S, CTRL_FAST_TAU_S)
+    slow = data.get(CONF_FILTER_INPUT_TAU_S, EMA_TAU_S)
+    if fast is not None and slow is not None and float(fast) >= float(slow):
+        errors[CONF_FILTER_CTRL_FAST_TAU_S] = "fast_filter_not_below_input"
 
 
 def _hub_battery_schema(hass, defaults: dict | None = None) -> vol.Schema:

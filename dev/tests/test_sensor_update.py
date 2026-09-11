@@ -7191,3 +7191,90 @@ async def test_an_off_grid_site_publishes_no_reconstructed_export(hass: HomeAssi
     assert result["total_export_power"] == 0
     # Not a number at all: there is no meter to reconstruct from.
     assert result["total_export_power_raw"] is None
+
+
+# ── The Filters page reaches the engine ──────────────────────────────
+
+
+async def _hub_with_options(hass, hub_entry, **options):
+    """Store Filters-page dials on the hub entry the way the options flow does."""
+    if hass.config_entries.async_get_entry(hub_entry.entry_id) is None:
+        hub_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        hub_entry, options={**dict(hub_entry.options), **options}
+    )
+    return hub_entry
+
+
+async def test_the_reading_filter_dials_reach_the_readers_through_the_hub_entry(
+    hass, hub_entry, setup_domain_data
+):
+    """The site cycle hands the two reader time constants from the hub entry
+    to set_ema_interval, so the weight in the shared EMA dict is the dial's,
+    not the constant's."""
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_FILTER_CTRL_FAST_TAU_S, CONF_FILTER_INPUT_TAU_S,
+        CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY, ema_alpha_for,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.readers import _ALPHA_KEY, _FAST_TAU_KEY
+    from custom_components.dynamic_ocpp_evse.helpers import get_entry_value
+
+    _set_ha_states(hass, hub_entry)
+    await _hub_with_options(
+        hass, hub_entry, **{CONF_FILTER_INPUT_TAU_S: 20.0, CONF_FILTER_CTRL_FAST_TAU_S: 0.7}
+    )
+    await _run_site_cycle(hass, hub_entry)
+
+    ema = hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["_ema_inputs"]
+    dt = get_entry_value(hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY)
+    assert ema[_ALPHA_KEY] == ema_alpha_for(dt, 20.0), ema[_ALPHA_KEY]
+    assert ema[_FAST_TAU_KEY] == 0.7
+
+
+async def test_the_settle_dial_reaches_the_evse_builder(
+    hass, hub_entry, charger_entry, setup_domain_data
+):
+    """A draw steady for 10 s is settled against a 5 s dial and not against a
+    60 s one. The builder takes the dial as an argument; the site cycle reads
+    it off the hub entry (CONF_FILTER_SETTLE_SECONDS) and passes it down."""
+    from custom_components.dynamic_ocpp_evse.engine.load_builders import _build_evse_load
+
+    charger_entry.add_to_hass(hass)
+    hass.states.async_set("sensor.test_charger_status_connector", "Charging")
+    hass.states.async_set(
+        "sensor.test_charger_current_import", "10.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    load_rt = hass.data[DOMAIN]["loads"].setdefault(charger_entry.entry_id, {})
+    load_rt["_settle_last_draw"] = 10.0
+    load_rt["_settle_since"] = time.monotonic() - 10.0
+    load_rt["_last_permit"] = 16.0   # drawing well under it: the case that settles
+
+    assert _build_evse_load(hass, charger_entry, 230, "test_charger", 1, settle_seconds=5.0).draw_settled
+    assert not _build_evse_load(hass, charger_entry, 230, "test_charger", 1, settle_seconds=60.0).draw_settled
+
+
+async def test_the_ramp_down_dial_widens_the_compliance_tolerance(
+    hass, hub_entry, charger_entry, setup_domain_data
+):
+    """compliance.py's tolerance is RAMP_DOWN_RATE x update_frequency. With the
+    hub's ramp-down dial at 5 A/s the tolerance at the 15 s default is 75 A,
+    so a charger offering 0 A against a 16 A command is NOT a mismatch - where
+    test_auto_reset_mismatch_counter_increments pins that it is by default."""
+    from custom_components.dynamic_ocpp_evse.const import CONF_FILTER_RAMP_DOWN_RATE
+
+    _set_ha_states(hass, hub_entry)
+    await _hub_with_options(hass, hub_entry, **{CONF_FILTER_RAMP_DOWN_RATE: 5.0})
+
+    sensor = LoadJugglerDeviceSensor(
+        hass, charger_entry, hub_entry, "Test Charger", "test_charger"
+    )
+    sensor._last_commanded_limit = 16.0
+    hass.states.async_set(
+        "sensor.test_charger_current_offered", "0.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
+        await _run_site_cycle(hass, hub_entry, sensor)
+
+    assert sensor._mismatch_count == 0, sensor._mismatch_count

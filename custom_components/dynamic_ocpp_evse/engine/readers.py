@@ -59,6 +59,7 @@ from ..const import (
     DOMAIN,
     CTRL_FAST_TAU_S,
     DEFAULT_SITE_UPDATE_FREQUENCY,
+    EMA_TAU_S,
     ema_alpha_for,
     INPUT_STALE_TIMEOUT,
     INVERTER_RT_ENFORCED_CHARGE_W,
@@ -88,6 +89,9 @@ _ALPHA_KEY = "_ema_alpha"
 # OWN time constant (the directional pair below) can convert for itself rather
 # than scaling someone else's weight.
 _DT_KEY = "_ema_dt"
+# The charge controller's fast time constant for this cycle - a Filters-page
+# dial - stored beside the cadence so _smooth_directional converts it itself.
+_FAST_TAU_KEY = "_ema_fast_tau"
 
 
 def _default_alpha() -> float:
@@ -102,11 +106,19 @@ def _default_alpha() -> float:
     return ema_alpha_for(DEFAULT_SITE_UPDATE_FREQUENCY)
 
 
-def set_ema_interval(ema_dict: dict, dt: float) -> float:
-    """Record this site's refresh cadence for the cycle. Returns the weight."""
-    alpha = ema_alpha_for(dt)
+def set_ema_interval(ema_dict: dict, dt: float, tau: float = EMA_TAU_S,
+                     fast_tau: float = CTRL_FAST_TAU_S) -> float:
+    """Record this site's refresh cadence and filter time constants for the
+    cycle. Returns the slow weight.
+
+    ``tau`` and ``fast_tau`` are the hub's Filters-page dials. Their defaults
+    are the constants they override, so a caller that passes nothing gets the
+    pre-page filter exactly.
+    """
+    alpha = ema_alpha_for(dt, tau)
     ema_dict[_ALPHA_KEY] = alpha
     ema_dict[_DT_KEY] = dt
+    ema_dict[_FAST_TAU_KEY] = fast_tau
     return alpha
 
 
@@ -172,7 +184,8 @@ def _smooth_directional(ema_dict: dict, key: str, raw, fast_away: bool,
         # 4 s cadence up, which is "no smoothing at all" and breaks the matched
         # pair the feedback law depends on.
         fast_alpha = ema_alpha_for(
-            ema_dict.get(_DT_KEY, DEFAULT_SITE_UPDATE_FREQUENCY), CTRL_FAST_TAU_S
+            ema_dict.get(_DT_KEY, DEFAULT_SITE_UPDATE_FREQUENCY),
+            ema_dict.get(_FAST_TAU_KEY, CTRL_FAST_TAU_S),
         )
     prev = ema_dict.get(key)
     if prev is None or raw is None or raw is _UNAVAILABLE:

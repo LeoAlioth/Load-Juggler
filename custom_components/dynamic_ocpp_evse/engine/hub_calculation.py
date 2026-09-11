@@ -39,6 +39,9 @@ from ..const import (
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_NAME,
     CONF_PHASE_VOLTAGE,
+    CONF_FILTER_CTRL_FAST_TAU_S,
+    CONF_FILTER_INPUT_TAU_S,
+    CONF_FILTER_SETTLE_SECONDS,
     CONF_SITE_UPDATE_FREQUENCY,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
     DEFAULT_BATTERY_SOC_MIN,
@@ -49,7 +52,10 @@ from ..const import (
     DEFAULT_GRID_EXPORT_LIMIT,
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
+    CTRL_FAST_TAU_S,
     DEFAULT_SITE_UPDATE_FREQUENCY,
+    EMA_TAU_S,
+    SETTLE_DRAW_SECONDS,
     DEVICE_TYPE_EVSE,
     DOMAIN,
     GRID_STALE_TIMEOUT,
@@ -846,6 +852,11 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         get_entry_value(
             hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
         ),
+        # The Filters page; each default is the constant it overrides.
+        tau=get_entry_value(hub_entry, CONF_FILTER_INPUT_TAU_S, EMA_TAU_S),
+        fast_tau=get_entry_value(
+            hub_entry, CONF_FILTER_CTRL_FAST_TAU_S, CTRL_FAST_TAU_S
+        ),
     )
 
     # --- Resolve unreadable grid CTs (the only place allowed to substitute) ---
@@ -1106,7 +1117,12 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         if hasattr(hub_entry, "entry_id")
         else hub_entry.data.get("hub_entry_id")
     )
-    _add_loads_to_site(hass, site, hub_entry_id, load_entries)
+    _add_loads_to_site(
+        hass, site, hub_entry_id, load_entries,
+        settle_seconds=get_entry_value(
+            hub_entry, CONF_FILTER_SETTLE_SECONDS, SETTLE_DRAW_SECONDS
+        ),
+    )
 
     # --- Build circuit groups ---
     site.circuit_groups = _build_circuit_groups(hass, hub_entry_id)

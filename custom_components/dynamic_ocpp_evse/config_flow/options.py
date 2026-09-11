@@ -118,6 +118,8 @@ from .schemas import (
     _build_inverter_battery_schema,
     _build_inverter_control_schema,
     _hub_section_schema,
+    _hub_filters_schema,
+    validate_hub_filters,
     HUB_CONNECTION_KEYS,
     HUB_EXPORT_KEYS,
     HUB_POLICY_KEYS,
@@ -297,6 +299,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             if hub_has_battery(self.hass, self.config_entry):
                 menu_options.append("hub_policy")
             menu_options.append("hub_timing")
+            menu_options.append("hub_filters")
             if _controlled_devices(self.hass, self.config_entry.entry_id):
                 menu_options.append("priority")
             menu_options += ["overview", "summary"]
@@ -571,6 +574,17 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             schema=lambda defaults: _hub_section_schema(
                 self.hass, defaults, HUB_TIMING_KEYS
             ),
+        )
+
+    async def async_step_hub_filters(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The control pipeline's filters: time constants, dead band, slews."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="hub_filters",
+            schema=lambda defaults: _hub_filters_schema(defaults),
+            validate=validate_hub_filters,
         )
 
     async def async_step_hub_inverter(

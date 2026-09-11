@@ -15,6 +15,8 @@ from ..const import (
     CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
     CONF_EVSE_POWER_OFFERED_ENTITY_ID,
     CONF_UPDATE_FREQUENCY,
+    CONF_FILTER_DEAD_BAND,
+    CONF_FILTER_RAMP_DOWN_RATE,
     CONF_PHASE_VOLTAGE,
     DEFAULT_PHASE_VOLTAGE,
 )
@@ -140,7 +142,16 @@ async def check_profile_compliance(
     update_freq = get_entry_value(
         sensor.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
     )
-    tolerance = RAMP_DOWN_RATE * update_freq
+    # The hub's Filters page dials, when this load knows its hub; each default
+    # is the constant it overrides. The ramp-down rate doubles as the
+    # compliance tolerance because a charger legitimately lags a ramp.
+    hub = getattr(sensor, "hub_entry", None)
+    dead_band = get_entry_value(hub, CONF_FILTER_DEAD_BAND, DEAD_BAND) if hub else DEAD_BAND
+    ramp_down = (
+        get_entry_value(hub, CONF_FILTER_RAMP_DOWN_RATE, RAMP_DOWN_RATE)
+        if hub else RAMP_DOWN_RATE
+    )
+    tolerance = ramp_down * update_freq
 
     # Skip while the commanded limit is still ramping - the charger's offered
     # current legitimately lags a ramp (up or down), which a single-sample diff
@@ -148,7 +159,7 @@ async def check_profile_compliance(
     # steady-state command within DEAD_BAND, so a larger change means a ramp.
     prev_limit = getattr(sensor, "_last_compliance_limit", None)
     sensor._last_compliance_limit = sensor._last_commanded_limit
-    if prev_limit is not None and abs(sensor._last_commanded_limit - prev_limit) > DEAD_BAND:
+    if prev_limit is not None and abs(sensor._last_commanded_limit - prev_limit) > dead_band:
         _clear_mismatch(sensor)
         return
 

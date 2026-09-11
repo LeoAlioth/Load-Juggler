@@ -458,7 +458,8 @@
             "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. A battery SOC entity and a battery power entity are both required.",
             "ocpp_device_not_usable": "That device has no usable OCPP charger sensors. Pick the device the OCPP integration created for the charger - it needs a current import sensor plus a current offered or power offered sensor.",
             "invalid_unit": "Sensor unit mismatch - check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V).",
-            "control_needs_battery": "Battery charge management needs a battery - tick “Battery” as well."
+            "control_needs_battery": "Battery charge management needs a battery - tick “Battery” as well.",
+            "fast_filter_not_below_input": "The battery controller fast filter must be shorter than the site reading filter."
         },
         "abort": {
             "entry_not_found": "Configuration entry not found"
@@ -480,6 +481,7 @@
                     "hub_export": "Export limit and Excess",
                     "hub_policy": "Battery and forecast policy",
                     "hub_timing": "Timing and detection",
+                    "hub_filters": "Filters",
                     "priority": "Device priority order"
                 }
             },
@@ -608,6 +610,30 @@
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to loads.",
                     "auto_detect_phase_mapping": "Monitors load current draws to detect incorrect phase wiring. Works for all load types on multi-phase sites. Disable if false alerts occur.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
+                }
+            },
+            "hub_filters": {
+                "title": "Filters",
+                "description": "How the site's readings and the loads' permits are smoothed. The defaults are the tuned values; leave them unless you are chasing a specific behaviour and can watch the result.",
+                "data": {
+                    "filter_input_tau_s": "Site reading filter",
+                    "filter_permit_tau_s": "Permit filter",
+                    "filter_ramp_tau_s": "Ramp response",
+                    "filter_ctrl_fast_tau_s": "Battery controller fast filter",
+                    "filter_settle_seconds": "Draw settle time",
+                    "filter_dead_band": "Dead band",
+                    "filter_ramp_up_rate": "Minimum ramp up",
+                    "filter_ramp_down_rate": "Minimum ramp down"
+                },
+                "data_description": {
+                    "filter_input_tau_s": "Time constant of the smoothing on grid, PV and battery readings, in seconds. Shorter follows the site faster and passes more noise through; below the refresh rate there is nothing left to smooth.",
+                    "filter_permit_tau_s": "Time constant of the smoothing on each load's permit before it is sent. This is what damps the loop: too short and the permit hunts around a steady surplus.",
+                    "filter_ramp_tau_s": "How quickly a modulating load closes the gap to its permit. The fraction closed each cycle follows from this time constant.",
+                    "filter_ctrl_fast_tau_s": "The battery charge controller's fast filter, used when export or import deepens. Must be shorter than the site reading filter.",
+                    "filter_settle_seconds": "How long an EVSE's draw must hold steady before its measured draw, rather than its permit, counts as its footprint and the unused gap is freed for other loads.",
+                    "filter_dead_band": "Permit changes smaller than this are ignored, so a load is not re-commanded for noise. 0 turns this off.",
+                    "filter_ramp_up_rate": "The permit always moves toward its target at least this fast, in amps per second. When the gap is large the proportional response moves it faster.",
+                    "filter_ramp_down_rate": "The same for falling. Also sets how far a charger's offered current may lag its command before it counts as ignoring it."
                 }
             },
             "hub_inverter": {

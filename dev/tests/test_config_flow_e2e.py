@@ -652,7 +652,8 @@ async def test_options_flow_hub_saves_changes(
     menu = await hass.config_entries.options.async_init(mock_hub_entry.entry_id)
     assert menu["type"] == FlowResultType.MENU
     assert menu["menu_options"] == [
-        "hub_connection", "hub_export", "hub_policy", "hub_timing", "overview", "summary",
+        "hub_connection", "hub_export", "hub_policy", "hub_timing", "hub_filters",
+        "overview", "summary",
     ]
 
     result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_connection")
@@ -695,6 +696,33 @@ async def test_options_flow_hub_saves_changes(
         result["flow_id"], user_input={CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD}
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    # The Filters page. Its one cross-field rule first: the battery
+    # controller's fast filter may not be slower than the reading filter it
+    # pairs with, or the matched pair inverts.
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_FILTER_CTRL_FAST_TAU_S, CONF_FILTER_INPUT_TAU_S, CONF_FILTER_PERMIT_TAU_S,
+    )
+    result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_filters")
+    assert result["type"] == FlowResultType.FORM
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_FILTER_CTRL_FAST_TAU_S: 10.0, CONF_FILTER_INPUT_TAU_S: 5.0},
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"] == {CONF_FILTER_CTRL_FAST_TAU_S: "fast_filter_not_below_input"}
+    # Corrected, the same flow saves - and only this page's fields.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_FILTER_CTRL_FAST_TAU_S: 1.0,
+            CONF_FILTER_INPUT_TAU_S: 5.0,
+            CONF_FILTER_PERMIT_TAU_S: 9.0,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert mock_hub_entry.options.get(CONF_FILTER_PERMIT_TAU_S) == 9.0
+    assert mock_hub_entry.options.get(CONF_FILTER_INPUT_TAU_S) == 5.0
     # Each page saved only its own fields, and none clobbered another's.
     assert mock_hub_entry.options.get(CONF_PHASE_A_CURRENT_ENTITY_ID) == "sensor.inverter_phase_a"
 
@@ -2594,3 +2622,28 @@ async def test_slider_backed_config_fields_say_the_slider_owns_them(hass: HomeAs
                         f"{name} {section}/{step}/{field} does not mention the slider"
                     )
         assert seen == 22, f"{name}: found {seen} slider-backed fields, expected 22"
+
+
+def test_the_filters_page_is_translated_in_every_file():
+    """The menu entry, every dial's label and help text, and the one error the
+    page can raise exist in all three translation files, with the same keys.
+    A field added in one language and missed in another shows the raw key in
+    the other UI, with no test to notice."""
+    import json
+    from pathlib import Path
+
+    base = Path("custom_components/dynamic_ocpp_evse")
+    dials = {
+        "filter_input_tau_s", "filter_permit_tau_s", "filter_ramp_tau_s",
+        "filter_ctrl_fast_tau_s", "filter_settle_seconds", "filter_dead_band",
+        "filter_ramp_up_rate", "filter_ramp_down_rate",
+    }
+    for name in ("strings.json", "translations/en.json", "translations/sl.json"):
+        opt = json.loads((base / name).read_text(encoding="utf-8"))["options"]
+        assert opt["step"]["init"]["menu_options"]["hub_filters"], name
+        page = opt["step"]["hub_filters"]
+        assert page["title"] and page["description"], name
+        assert set(page["data"]) == dials, (name, set(page["data"]) ^ dials)
+        assert set(page["data_description"]) == dials, name
+        assert all(page["data"][k] and page["data_description"][k] for k in dials), name
+        assert opt["error"]["fast_filter_not_below_input"], name

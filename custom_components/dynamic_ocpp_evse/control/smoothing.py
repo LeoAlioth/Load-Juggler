@@ -8,6 +8,11 @@ from ..const import (
     RAMP_DOWN_RATE,
     CONF_SITE_UPDATE_FREQUENCY,
     DEFAULT_SITE_UPDATE_FREQUENCY,
+    CONF_FILTER_DEAD_BAND,
+    CONF_FILTER_PERMIT_TAU_S,
+    CONF_FILTER_RAMP_DOWN_RATE,
+    CONF_FILTER_RAMP_TAU_S,
+    CONF_FILTER_RAMP_UP_RATE,
 )
 from ..helpers import get_entry_value
 
@@ -32,6 +37,13 @@ def apply_smoothing(
     site_freq = get_entry_value(
         hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
     )
+    # The hub's Filters page. Each default is the constant it overrides, so an
+    # entry that never opened the page runs the pre-page pipeline exactly.
+    permit_tau = get_entry_value(hub_entry, CONF_FILTER_PERMIT_TAU_S, PERMIT_TAU_S)
+    ramp_tau = get_entry_value(hub_entry, CONF_FILTER_RAMP_TAU_S, RAMP_TAU_S)
+    dead_band = get_entry_value(hub_entry, CONF_FILTER_DEAD_BAND, DEAD_BAND)
+    ramp_up = get_entry_value(hub_entry, CONF_FILTER_RAMP_UP_RATE, RAMP_UP_RATE)
+    ramp_down = get_entry_value(hub_entry, CONF_FILTER_RAMP_DOWN_RATE, RAMP_DOWN_RATE)
 
     if sensor._schmitt_current is None and sensor._ema_current is not None:
         sensor._schmitt_current = sensor._rate_limited_current
@@ -69,7 +81,7 @@ def apply_smoothing(
         # is deliberately NOT the readers': see PERMIT_TAU_S for why a second
         # helping of the input filter's 5.6 s stopped the rate limiter's
         # proportional term from ever engaging.
-        alpha = ema_alpha_for(site_freq, PERMIT_TAU_S)
+        alpha = ema_alpha_for(site_freq, permit_tau)
         sensor._ema_current = round(
             alpha * raw_allocated + (1 - alpha) * sensor._ema_current, 2
         )
@@ -79,7 +91,7 @@ def apply_smoothing(
         if sensor._schmitt_state == "rising":
             if ema >= prev:
                 sensor._schmitt_current = ema
-            elif prev - ema >= DEAD_BAND:
+            elif prev - ema >= dead_band:
                 sensor._schmitt_state = "falling"
                 sensor._schmitt_current = ema
                 _LOGGER.debug(
@@ -97,9 +109,9 @@ def apply_smoothing(
                     prev,
                 )
         else:
-            if ema < prev - DEAD_BAND:
+            if ema < prev - dead_band:
                 sensor._schmitt_current = ema
-            elif ema > prev + DEAD_BAND:
+            elif ema > prev + dead_band:
                 sensor._schmitt_state = "rising"
                 sensor._schmitt_current = ema
                 _LOGGER.debug(
@@ -139,10 +151,10 @@ def apply_smoothing(
         # That is the difference from shortening PERMIT_TAU_S, which bought the
         # same speed by removing the filter itself and turned a decaying
         # transient into a sustained 600 W ring on a dead-flat input.
-        approach = ema_alpha_for(site_freq, RAMP_TAU_S)
+        approach = ema_alpha_for(site_freq, ramp_tau)
         proportional = abs(raw_allocated - sensor._rate_limited_current) * approach
-        max_up = max(RAMP_UP_RATE * site_freq, proportional)
-        max_down = max(RAMP_DOWN_RATE * site_freq, proportional)
+        max_up = max(ramp_up * site_freq, proportional)
+        max_down = max(ramp_down * site_freq, proportional)
 
         if delta > max_up:
             target = sensor._rate_limited_current + max_up

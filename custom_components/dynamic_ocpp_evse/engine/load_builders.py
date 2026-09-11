@@ -118,7 +118,8 @@ from .readers import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
+def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
+                     settle_seconds=SETTLE_DRAW_SECONDS):
     """Build a LoadContext for an OCPP EVSE load."""
     load_rt = hass.data[DOMAIN]["loads"].get(entry.entry_id, {})
     config_min = get_entry_value(
@@ -383,7 +384,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
             load_rt.pop("_settle_since", None)
         load_rt["_settle_last_draw"] = measured_draw
         since = load_rt.get("_settle_since")
-        steady = since is not None and time.monotonic() - since >= SETTLE_DRAW_SECONDS
+        steady = since is not None and time.monotonic() - since >= settle_seconds
         under_permit = (
             measured_draw + SETTLE_PERMIT_MARGIN
             < load_rt.get("_last_permit", 0)
@@ -935,11 +936,14 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     return load
 
 
-def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None):
+def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
+                       settle_seconds=SETTLE_DRAW_SECONDS):
     """Build LoadContext objects for all loads and add them to the site.
 
     ``load_entries`` overrides the hub's registered loads (used by tests and
     by any caller that already knows the entries); None reads the registry.
+    ``settle_seconds`` is the hub's draw-settle dial (Filters page); the
+    default is the constant it overrides.
     """
     if load_entries is None:
         loads = get_loads_for_hub(hass, hub_entry_id)
@@ -967,7 +971,8 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None):
             )
         else:
             load = _build_evse_load(
-                hass, entry, site.voltage, load_entity_id, priority
+                hass, entry, site.voltage, load_entity_id, priority,
+                settle_seconds=settle_seconds,
             )
 
         # Clamp active_phases_mask to only include phases that exist on the site

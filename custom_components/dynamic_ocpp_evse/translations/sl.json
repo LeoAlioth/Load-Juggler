@@ -458,7 +458,8 @@
             "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta napolnjenosti baterije in entiteta moči baterije.",
             "ocpp_device_not_usable": "Ta naprava nima uporabnih senzorjev OCPP polnilne postaje. Izberite napravo, ki jo je za polnilno postajo ustvarila integracija OCPP - potrebuje senzor uvoženega toka ter senzor ponujenega toka ali ponujene moči.",
             "invalid_unit": "Neujemanje enote senzorja - preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V).",
-            "control_needs_battery": "Upravljanje polnjenja baterije potrebuje baterijo - označite tudi »Baterija«."
+            "control_needs_battery": "Upravljanje polnjenja baterije potrebuje baterijo - označite tudi »Baterija«.",
+            "fast_filter_not_below_input": "Hitri filter krmilnika baterije mora biti krajši od filtra meritev lokacije."
         },
         "abort": {
             "entry_not_found": "Konfiguracijski vnos ni najden"
@@ -480,6 +481,7 @@
                     "hub_export": "Omejitev izvoza in presežki",
                     "hub_policy": "Baterije in napovedi",
                     "hub_timing": "Časovni intervali",
+                    "hub_filters": "Filtri",
                     "priority": "Vrstni red prioritet naprav"
                 }
             },
@@ -608,6 +610,30 @@
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja porabnikom.",
                     "auto_detect_phase_mapping": "Spremlja tokove porabnikov za zaznavo nepravilnega faznega ožičenja. Deluje za vse vrste porabnikov na večfaznih lokacijah. Onemogočite ob lažnih opozorilih.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
+                }
+            },
+            "hub_filters": {
+                "title": "Filtri",
+                "description": "Kako se glajijo meritve lokacije in dovoljenja porabnikov. Privzete vrednosti so umerjene; spreminjajte jih le, če lovite točno določeno obnašanje in lahko spremljate rezultat.",
+                "data": {
+                    "filter_input_tau_s": "Filter meritev lokacije",
+                    "filter_permit_tau_s": "Filter dovoljenja",
+                    "filter_ramp_tau_s": "Odziv rampe",
+                    "filter_ctrl_fast_tau_s": "Hitri filter krmilnika baterije",
+                    "filter_settle_seconds": "Čas umiritve odjema",
+                    "filter_dead_band": "Mrtvi pas",
+                    "filter_ramp_up_rate": "Najmanjša hitrost naraščanja",
+                    "filter_ramp_down_rate": "Najmanjša hitrost padanja"
+                },
+                "data_description": {
+                    "filter_input_tau_s": "Časovna konstanta glajenja meritev omrežja, PV in baterije, v sekundah. Krajša hitreje sledi lokaciji in prepušča več šuma; pod pogostostjo osveževanja ni več kaj gladiti.",
+                    "filter_permit_tau_s": "Časovna konstanta glajenja dovoljenja vsakega porabnika, preden se pošlje. To duši regulacijsko zanko: prekratka in dovoljenje niha okoli stalnega presežka.",
+                    "filter_ramp_tau_s": "Kako hitro modulirajoči porabnik zapre razliko do svojega dovoljenja. Delež, zaprt v vsakem ciklu, sledi iz te časovne konstante.",
+                    "filter_ctrl_fast_tau_s": "Hitri filter krmilnika polnjenja baterije, uporabljen, ko se izvoz ali uvoz poglobi. Mora biti krajši od filtra meritev lokacije.",
+                    "filter_settle_seconds": "Kako dolgo mora odjem EVSE ostati stabilen, preden se kot njegov odtis šteje izmerjeni odjem namesto dovoljenja in se neizkoriščena razlika sprosti drugim porabnikom.",
+                    "filter_dead_band": "Spremembe dovoljenja, manjše od te, se prezrejo, da porabnik ne dobi novega ukaza zaradi šuma. 0 to izklopi.",
+                    "filter_ramp_up_rate": "Dovoljenje se proti cilju vedno premika vsaj tako hitro, v amperih na sekundo. Pri veliki razliki ga proporcionalni odziv premakne hitreje.",
+                    "filter_ramp_down_rate": "Enako za padanje. Določa tudi, koliko sme ponujeni tok polnilnice zaostajati za ukazom, preden se šteje, da ga ignorira."
                 }
             },
             "hub_inverter": {

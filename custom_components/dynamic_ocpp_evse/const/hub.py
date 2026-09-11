@@ -45,6 +45,23 @@ CONF_SITE_UPDATE_FREQUENCY = "site_update_frequency"  # Hub-level: how often sit
 CONF_AUTO_DETECT_PHASE_MAPPING = "auto_detect_phase_mapping"  # Hub-level: detect L1/L2/L3 wiring mismatches
 CONF_SOLAR_GRACE_PERIOD = "solar_grace_period"  # Hub-level: minutes before pausing in Solar/Excess mode
 
+# The Filters page (options only - never the setup wizard). Each dial's
+# DEFAULT is the engine constant it overrides, in const/common (EMA_TAU_S,
+# PERMIT_TAU_S, ...), and every consumer reads it as
+#     get_entry_value(hub_entry, CONF_FILTER_*, <that constant>)
+# so there is exactly ONE number per filter and an entry that has never opened
+# the page behaves byte-identically to one from before the page existed. No
+# DEFAULT_FILTER_* twins, deliberately: a second copy of a tuned constant is a
+# second thing to keep in step. Keys are public config API once shipped.
+CONF_FILTER_INPUT_TAU_S = "filter_input_tau_s"          # EMA_TAU_S
+CONF_FILTER_PERMIT_TAU_S = "filter_permit_tau_s"        # PERMIT_TAU_S
+CONF_FILTER_RAMP_TAU_S = "filter_ramp_tau_s"            # RAMP_TAU_S
+CONF_FILTER_CTRL_FAST_TAU_S = "filter_ctrl_fast_tau_s"  # CTRL_FAST_TAU_S
+CONF_FILTER_SETTLE_SECONDS = "filter_settle_seconds"    # SETTLE_DRAW_SECONDS
+CONF_FILTER_DEAD_BAND = "filter_dead_band"              # DEAD_BAND (A)
+CONF_FILTER_RAMP_UP_RATE = "filter_ramp_up_rate"        # RAMP_UP_RATE (A/s)
+CONF_FILTER_RAMP_DOWN_RATE = "filter_ramp_down_rate"    # RAMP_DOWN_RATE (A/s)
+
 # Hub default values
 DEFAULT_MAIN_BREAKER_RATING = 25
 DEFAULT_SITE_UPDATE_FREQUENCY = 2  # Fast site info refresh (seconds)
