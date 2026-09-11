@@ -155,7 +155,23 @@ PERMIT_TAU_S = 7.0
 RAMP_APPROACH_MAX = 0.9     # never close more than this much of it in one cycle
 
 # EMA smoothing - exponential moving average on engine output before rate limiting
-EMA_ALPHA = 0.3          # Weight of new reading (0.3 = smooth, 1.0 = no smoothing)
+# NOT the filter's weight any more, despite the name - EMA_TAU_S below is what
+# sets the smoothing, and ``set_ema_interval`` writes the per-cadence weight
+# into the EMA dict at the top of every cycle (engine/hub_calculation), so on a
+# running site this value is never the live alpha. Two jobs survive:
+#   * the default in ``readers._smooth`` for a dict that has not had an
+#     interval set on it yet, which in production cannot happen (the call at
+#     hub_calculation:844 precedes every smooth) but keeps direct callers and
+#     tests honest;
+#   * the DENOMINATOR of the charge controller's directional ratio,
+#     ``CTRL_FAST_ALPHA / EMA_ALPHA`` - that pairing was calibrated as 0.8
+#     against 0.3, and expressing it as a ratio is what carries it to any
+#     cadence (see _smooth_directional).
+# It is also the anchor EMA_TAU_S was derived from: 5.6 s is the tau whose
+# weight at the 2 s default is exactly 0.3, which is what left existing sites
+# bit-identical through that change. Do not retune it as though it were a
+# filter setting.
+EMA_ALPHA = 0.3
 
 # The EMA's time constant, in SECONDS. ``EMA_ALPHA`` above is a weight per
 # CALL, so on its own the filter's speed is a hidden function of how often the
@@ -192,9 +208,15 @@ def ema_alpha_for(dt: float, tau: float = EMA_TAU_S) -> float:
     (AGENTS.md), never engine. A second copy of the formula would let the pair
     drift apart with nothing to notice.
     """
-    if not dt or dt <= 0:
-        return EMA_ALPHA
-    return min(1.0, max(1e-3, 1.0 - math.exp(-float(dt) / float(tau))))
+    # The site interval cannot be set below 1 s - config_flow/schemas.py caps
+    # the field at 1..60 - so a smaller value never came from the UI. It can
+    # only be a hand-edited entry, a migration, or a test. Clamp to that floor
+    # rather than substituting a weight: 1 s is a real cadence with a real
+    # answer (alpha 0.164 at EMA_TAU_S), where the historic EMA_ALPHA describes
+    # a different filter speed altogether and would quietly apply it to a site
+    # whose stored interval happened to be unreadable.
+    dt = max(1.0, float(dt or 0.0))
+    return min(1.0, max(1e-3, 1.0 - math.exp(-dt / float(tau))))
 
 
 # The battery charge controller reads export and battery power through its OWN

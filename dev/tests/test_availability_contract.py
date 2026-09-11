@@ -1024,7 +1024,11 @@ def test_the_smoothing_time_constant_does_not_depend_on_the_refresh_rate():
             out = _smooth(ema, "x", 10.0)
         return out
 
-    settled = [ramp_for(10.0, dt) for dt in (0.5, 1.0, 2.0)]
+    # Cadences at or above the 1 s floor the config flow enforces. A sub-second
+    # dt is no longer a meaningful case: ``ema_alpha_for`` clamps it to 1 s, so
+    # feeding one here would iterate twice as often at the 1 s weight and
+    # over-smooth - a property of the test, not of the filter.
+    settled = [ramp_for(10.0, dt) for dt in (1.0, 2.0, 5.0)]
     assert max(settled) - min(settled) < 0.3, settled
     # And it is genuinely most of the way there after ~2 time constants.
     assert 8.0 < settled[0] < 9.9, settled
@@ -1046,9 +1050,13 @@ def test_a_slow_refresh_no_longer_means_a_slow_filter():
     assert ema_alpha_for(10) > 0.8, ema_alpha_for(10)
     # A cadence FASTER than the time constant smooths more, not less.
     assert ema_alpha_for(1) < 0.3, ema_alpha_for(1)
-    # Degenerate cadences fall back rather than dividing by nothing.
-    assert ema_alpha_for(0) == 0.3
-    assert ema_alpha_for(-5) == 0.3
+    # A cadence below the smallest the UI can store (1 s, per
+    # config_flow/schemas.py) is clamped to that floor rather than falling back
+    # to a historic weight - 1 s is a real cadence with a real answer, where
+    # EMA_ALPHA describes a different filter speed entirely.
+    floor = ema_alpha_for(1)
+    for degenerate in (0, -5, 0.5, None):
+        assert ema_alpha_for(degenerate) == floor, degenerate
 
 
 def test_the_directional_pair_keeps_its_ratio_at_any_refresh_rate():
