@@ -57,8 +57,8 @@ from ..const import (
     DEFAULT_PHASE_VOLTAGE,
     DEFAULT_WIRING_TOPOLOGY,
     DOMAIN,
-    CTRL_FAST_ALPHA,
-    EMA_ALPHA,
+    CTRL_FAST_TAU_S,
+    DEFAULT_SITE_UPDATE_FREQUENCY,
     ema_alpha_for,
     INPUT_STALE_TIMEOUT,
     INVERTER_RT_ENFORCED_CHARGE_W,
@@ -84,12 +84,29 @@ _UNAVAILABLE = object()
 # signatures. Set once per cycle by set_ema_interval(); absent it falls back to
 # the historic fixed weight.
 _ALPHA_KEY = "_ema_alpha"
+# The cadence that produced that weight, kept beside it so a filter with its
+# OWN time constant (the directional pair below) can convert for itself rather
+# than scaling someone else's weight.
+_DT_KEY = "_ema_dt"
+
+
+def _default_alpha() -> float:
+    """The weight for a dict no cycle has set an interval on.
+
+    In production this cannot happen - hub_calculation calls
+    ``set_ema_interval`` before every smooth - but direct callers and tests
+    reach ``_smooth`` cold. Derived from the default cadence rather than being
+    a hand-written weight, so it stays the same filter as a default-configured
+    site instead of a second number that can drift away from one.
+    """
+    return ema_alpha_for(DEFAULT_SITE_UPDATE_FREQUENCY)
 
 
 def set_ema_interval(ema_dict: dict, dt: float) -> float:
     """Record this site's refresh cadence for the cycle. Returns the weight."""
     alpha = ema_alpha_for(dt)
     ema_dict[_ALPHA_KEY] = alpha
+    ema_dict[_DT_KEY] = dt
     return alpha
 
 
@@ -112,7 +129,7 @@ def _smooth(ema_dict: dict, key: str, raw, alpha: float | None = None):
     if not math.isfinite(val):
         return ema_dict.get(key)
     if alpha is None:
-        alpha = ema_dict.get(_ALPHA_KEY, EMA_ALPHA)
+        alpha = ema_dict.get(_ALPHA_KEY, _default_alpha())
     prev = ema_dict.get(key)
     if prev is None:
         ema_dict[key] = val
@@ -148,11 +165,15 @@ def _smooth_directional(ema_dict: dict, key: str, raw, fast_away: bool,
     Pure function - unit-testable.
     """
     if alpha is None:
-        alpha = ema_dict.get(_ALPHA_KEY, EMA_ALPHA)
+        alpha = ema_dict.get(_ALPHA_KEY, _default_alpha())
     if fast_alpha is None:
-        # The historic pair was CTRL_FAST_ALPHA against EMA_ALPHA; hold that
-        # ratio against whatever the slow weight now is, capped at 1.
-        fast_alpha = min(1.0, alpha * (CTRL_FAST_ALPHA / EMA_ALPHA))
+        # Its own time constant, converted at this site's cadence - NOT a ratio
+        # against the slow weight. The ratio form saturated at 1.0 from about a
+        # 4 s cadence up, which is "no smoothing at all" and breaks the matched
+        # pair the feedback law depends on.
+        fast_alpha = ema_alpha_for(
+            ema_dict.get(_DT_KEY, DEFAULT_SITE_UPDATE_FREQUENCY), CTRL_FAST_TAU_S
+        )
     prev = ema_dict.get(key)
     if prev is None or raw is None or raw is _UNAVAILABLE:
         return _smooth(ema_dict, key, raw, alpha)

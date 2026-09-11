@@ -3,7 +3,6 @@ from ..const import (
     DEAD_BAND,
     ema_alpha_for,
     PERMIT_TAU_S,
-    RAMP_APPROACH_MAX,
     RAMP_TAU_S,
     RAMP_UP_RATE,
     RAMP_DOWN_RATE,
@@ -140,7 +139,7 @@ def apply_smoothing(
         # That is the difference from shortening PERMIT_TAU_S, which bought the
         # same speed by removing the filter itself and turned a decaying
         # transient into a sustained 600 W ring on a dead-flat input.
-        approach = min(RAMP_APPROACH_MAX, ema_alpha_for(site_freq, RAMP_TAU_S))
+        approach = ema_alpha_for(site_freq, RAMP_TAU_S)
         proportional = abs(raw_allocated - sensor._rate_limited_current) * approach
         max_up = max(RAMP_UP_RATE * site_freq, proportional)
         max_down = max(RAMP_DOWN_RATE * site_freq, proportional)

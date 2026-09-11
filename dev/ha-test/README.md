@@ -303,13 +303,26 @@ are fixed in seconds:
 | 2 s | 0.300 | 0.300 |
 | 5 s | 0.750 | 0.591 |
 | 10 s | 0.900 | 0.832 |
-| 30 s and up | 0.900 | 0.900 |
+| 15 s | 0.900 | 0.931 |
+| 30 s | 0.900 | 0.995 |
+| 60 s | 0.900 | 1.000 |
 
 The 2 s column is identical by construction, so default-configured sites did not
 move. `RAMP_TAU_S` is a separate constant from `EMA_TAU_S` despite holding the
 same 5.6 s: it is derived independently (the old 0.15/s over the 2 s default
 closes 0.30, and tau = -2 / ln(1 - 0.30) = 5.6 s), and the ramp and the input
 filter are different design decisions that should be retunable apart.
+
+The last three rows are why `RAMP_APPROACH_MAX` is gone (2026-09-11). It capped
+`approach` at 0.9, which `ema_alpha_for(dt, RAMP_TAU_S)` only exceeds above
+~12.9 s - so at every cadence measured above it was dead code, and the one place
+it was live it read as a safety rail without being one: the step it bounds is
+proportional to the error with no integral term, so closing the error completely
+lands on target and cannot overshoot. Re-run at 15 / 30 / 60 s on
+`dev/tests/dynamics.py`, removing it left tracking, curtailment, ring and writes
+identical at 15 and 60 s and improved mean tracking error by 3.8 W at 30 s. What
+bounds a step now is `RAMP_UP_RATE` / `RAMP_DOWN_RATE`, which are amps per
+SECOND and so mean the same thing at any cadence.
 
 ### The inverter curtails, so unabsorbed surplus is LOST
 

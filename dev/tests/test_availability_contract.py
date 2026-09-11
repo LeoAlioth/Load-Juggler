@@ -956,7 +956,13 @@ def test_grid_phase_reader_does_not_coerce_the_sentinel_away():
 # ``_smooth_directional`` weights a reading by which way it moves: toward a
 # limit (away from zero) fast, back toward zero slow - or the mirror, for
 # battery power. Everything else is ``_smooth``'s contract. The numbers below
-# use the defaults: EMA_ALPHA 0.3, CTRL_FAST_ALPHA 0.8.
+# use the defaults at the default 2 s cadence, where EMA_TAU_S gives 0.3003 and
+# CTRL_FAST_TAU_S gives 0.8000 - the two weights these were calibrated as. They
+# are not EXACTLY 0.3 and 0.8: both time constants are written to the precision
+# a human can read (5.6 s, 1.2427 s) rather than to the last bit of
+# ``-dt / ln(1 - alpha)``, so the weights they give back are a few parts in ten
+# thousand off the numbers they reproduce. Expectations below carry that where
+# it survives the 2-dp rounding ``_smooth`` applies.
 
 
 def test_directional_is_fast_away_from_zero_and_slow_toward_it():
@@ -978,12 +984,18 @@ def test_directional_treats_a_sign_flip_as_away():
 
 def test_directional_mirror_is_fast_toward_zero_for_battery_power():
     """Battery power is smoothed in mirror: a permit cut (charging falls, toward
-    zero) is fast, so it moves together with the export rise it causes."""
+    zero) is fast, so it moves together with the export rise it causes.
+
+    Two cycles of smoothing, so this is where the time constants' rounding
+    shows: the second value is 0.4 W off the -1160 an exact 0.3 would give,
+    because the first cycle's output is itself rounded before being weighted
+    again. Tolerance widened rather than the figures softened - the point of
+    the assertion is the fast/slow ASYMMETRY, which is 1 200 W wide."""
     ema = {}
     _smooth_directional(ema, "b", -2000.0, fast_away=False)
-    assert math.isclose(_smooth_directional(ema, "b", -500.0, fast_away=False), -800.0, abs_tol=0.01)
+    assert math.isclose(_smooth_directional(ema, "b", -500.0, fast_away=False), -800.0, abs_tol=0.05)
     # Charging rising again (away from zero): slow.
-    assert math.isclose(_smooth_directional(ema, "b", -2000.0, fast_away=False), -1160.0, abs_tol=0.01)
+    assert math.isclose(_smooth_directional(ema, "b", -2000.0, fast_away=False), -1160.4, abs_tol=0.05)
 
 
 def test_directional_keeps_the_smoothing_contract():
@@ -999,7 +1011,7 @@ def test_directional_keeps_the_smoothing_contract():
 def test_the_smoothing_time_constant_does_not_depend_on_the_refresh_rate():
     """A filter's speed must be fixed in SECONDS, not in cycles.
 
-    ``EMA_ALPHA`` is a weight per CALL, so on its own tau = interval / alpha
+    A weight per CALL means tau = interval / alpha
     and the filter silently retunes whenever someone changes how often the
     site refreshes. Measured on the rig (2026-09-08) by changing nothing but
     the refresh: mean tracking error on a moving surplus went 596 W at a 1 s
@@ -1053,34 +1065,52 @@ def test_a_slow_refresh_no_longer_means_a_slow_filter():
     # A cadence below the smallest the UI can store (1 s, per
     # config_flow/schemas.py) is clamped to that floor rather than falling back
     # to a historic weight - 1 s is a real cadence with a real answer, where
-    # EMA_ALPHA describes a different filter speed entirely.
+    # the per-cycle 0.3 describes a different filter speed entirely.
     floor = ema_alpha_for(1)
     for degenerate in (0, -5, 0.5, None):
         assert ema_alpha_for(degenerate) == floor, degenerate
 
 
-def test_the_directional_pair_keeps_its_ratio_at_any_refresh_rate():
-    """``_smooth_directional``'s fast weight was a fixed number against a
-    fixed slow one. Once the slow weight became time-based, a fixed fast one
-    would break the matched pair the charge controller depends on - export
-    fast and battery slow reads one transition twice. The ratio is what has to
-    hold, so it is derived rather than declared."""
+def test_the_directional_fast_weight_is_its_own_time_constant():
+    """``_smooth_directional``'s fast weight is a filter, so it is set in
+    SECONDS like every other one here.
+
+    It was a fixed 0.8 against a fixed 0.3; when the slow half became
+    time-based the fast half was carried along as a RATIO against it
+    (``alpha * (0.8 / 0.3)``, capped at 1). A ratio is not a filter speed and
+    does not hold one: capped, it pinned at 1.0 from a 3 s cadence upward, so
+    the fast half passed its input straight through while the slow half went on
+    filtering. That is precisely the two-readings-to-converge damping the 0.8
+    was calibrated to get, absent on every site slower than the default. At 1 s
+    the same ratio was too SLOW (0.436 where the real lag gives 0.553).
+
+    Asserted as a property: at each cadence the fast weight must be the one
+    CTRL_FAST_TAU_S implies, and must stay faster than the slow weight, which
+    is the whole point of the pair."""
     from custom_components.dynamic_ocpp_evse.engine.readers import (
         _smooth_directional, ema_alpha_for, set_ema_interval,
     )
-    from custom_components.dynamic_ocpp_evse.const import CTRL_FAST_ALPHA, EMA_ALPHA
+    from custom_components.dynamic_ocpp_evse.const import CTRL_FAST_TAU_S
 
-    for dt in (1, 2, 10):
+    for dt in (1, 2, 3, 10):
         ema = {}
         set_ema_interval(ema, dt)
         _smooth_directional(ema, "g", -4.0, fast_away=True)   # seed
         # A move further from zero takes the fast weight.
         out = _smooth_directional(ema, "g", -8.0, fast_away=True)
-        expected_fast = min(1.0, ema_alpha_for(dt) * (CTRL_FAST_ALPHA / EMA_ALPHA))
+        expected_fast = ema_alpha_for(dt, CTRL_FAST_TAU_S)
         assert abs(out - (expected_fast * -8.0 + (1 - expected_fast) * -4.0)) < 0.02, (
             dt, out
         )
         assert expected_fast >= ema_alpha_for(dt), dt
+
+    # The 2 s default still lands on the calibrated 0.8 exactly, which is what
+    # leaves default-configured sites bit-identical through the change.
+    assert abs(ema_alpha_for(2, CTRL_FAST_TAU_S) - 0.8) < 0.001
+
+    # And the 3 s cadence the ratio form could not express is a real filter
+    # again rather than a pass-through.
+    assert ema_alpha_for(3, CTRL_FAST_TAU_S) < 0.95
 
 
 def test_the_permit_filter_smooths_in_seconds_not_in_cycles():
@@ -1173,7 +1203,7 @@ def test_the_permit_filter_and_the_input_filter_share_one_time_constant():
 
     src = inspect.getsource(smoothing)
     assert "ema_alpha_for" in src, "the control EMA must use the shared conversion"
-    assert "EMA_ALPHA *" not in src, "a per-cycle weight is back in the permit filter"
+    assert "EMA_ALPHA" not in src, "a per-cycle weight is back in the permit filter"
 
 if __name__ == "__main__":
     # Deliberately pytest-free: the pure tier has to run on the developer's

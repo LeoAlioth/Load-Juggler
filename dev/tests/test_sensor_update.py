@@ -2329,9 +2329,7 @@ async def test_rate_limit_ramp_up_capped(
     """
     from custom_components.dynamic_ocpp_evse.const import (
         DEFAULT_SITE_UPDATE_FREQUENCY,
-        EMA_ALPHA,
         PERMIT_TAU_S,
-        RAMP_APPROACH_MAX,
         RAMP_TAU_S,
         ema_alpha_for,
         RAMP_UP_RATE,
@@ -2362,7 +2360,7 @@ async def test_rate_limit_ramp_up_capped(
         # Engine would allocate 16A (max), but the smoothing pipeline caps it.
         freq = DEFAULT_SITE_UPDATE_FREQUENCY
         ema = ema_alpha_for(freq, PERMIT_TAU_S) * 16.0 + (1 - ema_alpha_for(freq, PERMIT_TAU_S)) * 6.0
-        approach = min(RAMP_APPROACH_MAX, ema_alpha_for(freq, RAMP_TAU_S))
+        approach = ema_alpha_for(freq, RAMP_TAU_S)
         # Of the RAW error (16 - 6), not of the distance to the smoothed
         # target: the filter holds that inside the floor, so taking the
         # fraction of it meant the floor always won and this stage never acted.
@@ -2388,9 +2386,7 @@ async def test_rate_limit_ramp_down_capped(
     """
     from custom_components.dynamic_ocpp_evse.const import (
         DEFAULT_SITE_UPDATE_FREQUENCY,
-        EMA_ALPHA,
         PERMIT_TAU_S,
-        RAMP_APPROACH_MAX,
         RAMP_TAU_S,
         ema_alpha_for,
         RAMP_DOWN_RATE,
@@ -2427,7 +2423,7 @@ async def test_rate_limit_ramp_down_capped(
         # error - see test_rate_limit_ramp_up_capped for why.
         freq = DEFAULT_SITE_UPDATE_FREQUENCY
         ema = ema_alpha_for(freq, PERMIT_TAU_S) * 6.0 + (1 - ema_alpha_for(freq, PERMIT_TAU_S)) * 16.0
-        approach = min(RAMP_APPROACH_MAX, ema_alpha_for(freq, RAMP_TAU_S))
+        approach = ema_alpha_for(freq, RAMP_TAU_S)
         # Of the RAW error (6 - 16), for the reason given in the ramp-up test.
         step = max(RAMP_DOWN_RATE * freq, abs(6.0 - 16.0) * approach)
         min_allowed = 16.0 - step

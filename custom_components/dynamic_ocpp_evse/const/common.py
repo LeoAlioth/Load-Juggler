@@ -152,30 +152,25 @@ RAMP_TAU_S = 5.6
 # constraint - and holding them equal is what made the first attempt look like
 # a choice between filtering and tracking.
 PERMIT_TAU_S = 7.0
-RAMP_APPROACH_MAX = 0.9     # never close more than this much of it in one cycle
+# There is deliberately NO cap on the approach fraction. There was one
+# (RAMP_APPROACH_MAX = 0.9, "never close more than this much of the error in
+# one cycle"), which read as a safety rail and was not one: the step it bounds
+# is PROPORTIONAL to the error with no integral term, so closing the whole
+# error lands exactly on target and cannot overshoot. Arithmetically it only
+# bound above ~12.9 s, the cadence where ema_alpha_for(dt, RAMP_TAU_S) first
+# exceeds 0.9, so at every cadence anyone had measured it was dead code. Run
+# at the cadences where it DID bind (15 / 30 / 60 s, dev/tests/dynamics.py)
+# removing it left tracking, curtailment, ring and writes identical at 15 and
+# 60 s and improved mean tracking error by 3.8 W at 30 s. What actually bounds
+# a step is RAMP_UP_RATE / RAMP_DOWN_RATE below, which are in amps per second
+# and so mean the same thing at any cadence.
 
-# EMA smoothing - exponential moving average on engine output before rate limiting
-# NOT the filter's weight any more, despite the name - EMA_TAU_S below is what
-# sets the smoothing, and ``set_ema_interval`` writes the per-cadence weight
-# into the EMA dict at the top of every cycle (engine/hub_calculation), so on a
-# running site this value is never the live alpha. Two jobs survive:
-#   * the default in ``readers._smooth`` for a dict that has not had an
-#     interval set on it yet, which in production cannot happen (the call at
-#     hub_calculation:844 precedes every smooth) but keeps direct callers and
-#     tests honest;
-#   * the DENOMINATOR of the charge controller's directional ratio,
-#     ``CTRL_FAST_ALPHA / EMA_ALPHA`` - that pairing was calibrated as 0.8
-#     against 0.3, and expressing it as a ratio is what carries it to any
-#     cadence (see _smooth_directional).
-# It is also the anchor EMA_TAU_S was derived from: 5.6 s is the tau whose
-# weight at the 2 s default is exactly 0.3, which is what left existing sites
-# bit-identical through that change. Do not retune it as though it were a
-# filter setting.
-EMA_ALPHA = 0.3
-
-# The EMA's time constant, in SECONDS. ``EMA_ALPHA`` above is a weight per
-# CALL, so on its own the filter's speed is a hidden function of how often the
-# site refreshes: tau = interval / alpha. At the 2 s default that is ~6.7 s,
+# EMA smoothing - exponential moving average on engine output before rate
+# limiting.
+#
+# The EMA's time constant, in SECONDS. It replaced ``EMA_ALPHA = 0.3``, a
+# weight per CALL, which made the filter's speed a hidden function of how often
+# the site refreshes: tau = interval / alpha. At the 2 s default that is ~6.7 s,
 # but a site polled every 60 s to be kind to its inverter's Modbus silently
 # gets tau ~200 s - longer than a cloud takes to pass, so every control loop
 # on it is detuned by a setting that says nothing about filtering.
@@ -184,7 +179,7 @@ EMA_ALPHA = 0.3
 # tracking error on a moving surplus went 596 W at 1 s to 1 164 W at 10 s.
 #
 # Chosen so that at DEFAULT_SITE_UPDATE_FREQUENCY (2 s) the effective weight is
-# exactly EMA_ALPHA, leaving default-configured sites bit-identical:
+# exactly the 0.3 it replaced, leaving default-configured sites bit-identical:
 #     tau = -2 / ln(1 - 0.3) = 5.6 s
 # A first-order low-pass has a single REAL pole, so moving its time constant
 # can never make that pole complex - no value of tau can introduce oscillation.
@@ -212,9 +207,9 @@ def ema_alpha_for(dt: float, tau: float = EMA_TAU_S) -> float:
     # the field at 1..60 - so a smaller value never came from the UI. It can
     # only be a hand-edited entry, a migration, or a test. Clamp to that floor
     # rather than substituting a weight: 1 s is a real cadence with a real
-    # answer (alpha 0.164 at EMA_TAU_S), where the historic EMA_ALPHA describes
-    # a different filter speed altogether and would quietly apply it to a site
-    # whose stored interval happened to be unreadable.
+    # answer (alpha 0.164 at EMA_TAU_S), where the historic per-cycle weight
+    # describes a different filter speed altogether and would quietly apply it
+    # to a site whose stored interval happened to be unreadable.
     dt = max(1.0, float(dt or 0.0))
     return min(1.0, max(1e-3, 1.0 - math.exp(-dt / float(tau))))
 
@@ -222,13 +217,30 @@ def ema_alpha_for(dt: float, tau: float = EMA_TAU_S) -> float:
 # The battery charge controller reads export and battery power through its OWN
 # smoothers, which are DIRECTIONAL (engine/readers._smooth_directional): a move
 # toward a limit - deeper export, heavier import, or the mirror for battery
-# power - takes this weight; a move back toward zero keeps EMA_ALPHA. Two
-# readings to converge, not one: 1.0 passed every lensing spike straight into
+# power - takes THIS time constant; a move back toward zero keeps EMA_TAU_S.
+#
+# In SECONDS, for the same reason EMA_TAU_S is. It was CTRL_FAST_ALPHA = 0.8, a
+# weight per call, carried to other cadences as a RATIO against the slow weight
+# (``alpha * (0.8 / 0.3)``, capped at 1), which is not a filter speed and does
+# not hold one. Against what a real 1.24 s lag gives:
+#     1 s   0.436 against 0.553   too SLOW
+#     2 s   0.801 against 0.800   the anchor, and the only cadence they agree
+#     3 s   1.000 against 0.911   pinned - no smoothing at all
+#     4 s   1.000 against 0.960
+# From a 3 s cadence up the ratio is stuck at 1.0, so the fast half of the pair
+# passes its input straight through while the slow half still filters - which
+# is exactly the two-readings-to-converge behaviour the 0.8 was calibrated to
+# get, removed on every site slower than the default.
+#
+# 1.2427 s is the tau whose weight at the 2 s default is exactly 0.8, so
+# default-configured sites are bit-identical through the change - the same
+# anchoring EMA_TAU_S got. The 0.8 it reproduces was calibrated on the rig: two
+# readings to converge, not one. 1.0 passed every lensing spike straight into
 # the register and fed the register↔Excess-allowance loop (21 verdict flips on
 # the lensing+EVSE rig against 1), and a single reading is also how a motor's
 # start-up inrush looks. 0.6 gave back a third of the curtailment win. 0.8 kept
 # the verdict at 1 flip and halved curtailment - dev/tests/test_charge_control_loop.py.
-CTRL_FAST_ALPHA = 0.8
+CTRL_FAST_TAU_S = 1.2427
 DEAD_BAND = 0.3          # Ignore changes smaller than this (Schmitt trigger, amps)
 GRID_STALE_TIMEOUT = 60  # Seconds of grid CT unavailability before falling to min_current
 INPUT_STALE_TIMEOUT = 60  # Seconds of solar/battery/inverter sensor unavailability before falling back to a safe value
