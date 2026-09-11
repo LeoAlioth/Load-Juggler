@@ -1,6 +1,6 @@
 """Auto-detection of grid CT inversion and phase mapping misconfigurations.
 
-Called once per hub calculation cycle from dynamic_ocpp_evse.py.
+Called once per hub calculation cycle from engine/hub_calculation.py.
 State lives in hub_runtime["_auto_detect"] - functions are stateless.
 Returns notification payload dicts; the async caller fires them.
 """
@@ -12,6 +12,7 @@ Returns notification payload dicts; the async caller fires them.
 from __future__ import annotations
 
 import logging
+import time
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,6 +21,23 @@ _INV_MIN_DELTA_A = 1.0      # Minimum load draw change (A) to count as significa
 _INV_MIN_GRID_DELTA_A = 0.5  # Minimum grid change (A) for its sign to be meaningful
 _INV_WINDOW_SIZE = 15       # Rolling window length (samples with significant delta)
 _INV_THRESHOLD = 10         # Inversion signals needed in a full window to fire
+# ...and at least this much wall clock since the FIRST qualifying sample. The
+# window counts qualifying EVENTS, not cycles, so on its own it says nothing
+# about how independent they are: on a 1 s site the 15 samples one EVSE ramp
+# throws off are 15 s of a single event observed 15 times, and 10 of 15 is
+# reached on far less evidence than the same count at 10 s. A minute is long
+# enough for a correctly wired site to have produced the contradicting samples
+# that keep the count down.
+#
+# Deliberately measured from the first sample, NOT as the span of the retained
+# window. A rolling window that must span 60 s can be held under 60 s forever
+# by a site producing 15+ qualifying events a minute - a hunting EVSE on a
+# fast site, which is the very site an inversion is most likely to be
+# suspected on - and that would switch detection off there without a trace.
+# A clock from the first sample can only DELAY the notification, never
+# suppress it. It lives in hub_runtime, so it restarts with Home Assistant,
+# as the window itself does.
+_INV_MIN_OBSERVATION_S = 60.0
 
 # --- Phase mapping detection parameters ---
 _PM_MIN_DELTA_A = 0.5       # Minimum draw / grid-phase delta (A) to correlate
@@ -47,6 +65,7 @@ def check_inversion(state: dict, smoothed_phases: list, loads: list,
         "prev_grid_total": None,
         "prev_load_total": None,
         "window": [],
+        "first_sample_at": None,
         "notified": False,
     })
 
@@ -77,6 +96,8 @@ def check_inversion(state: dict, smoothed_phases: list, loads: list,
             # would let arbitrarily small grid wobble fill the window.
             if (abs(delta_draw) >= _INV_MIN_DELTA_A
                     and abs(delta_grid) >= _INV_MIN_GRID_DELTA_A):
+                if inv.get("first_sample_at") is None:
+                    inv["first_sample_at"] = time.monotonic()
                 if delta_draw * delta_grid < 0:
                     inv["window"].append(1)   # inversion signal
                 else:
@@ -95,12 +116,16 @@ def check_inversion(state: dict, smoothed_phases: list, loads: list,
                     inv_count, len(inv["window"]),
                 )
 
+                started = inv.get("first_sample_at")
+                observed_s = 0.0 if started is None else time.monotonic() - started
                 if (len(inv["window"]) >= _INV_WINDOW_SIZE
-                        and inv_count >= _INV_THRESHOLD):
+                        and inv_count >= _INV_THRESHOLD
+                        and observed_s >= _INV_MIN_OBSERVATION_S):
                     inv["notified"] = True
                     _LOGGER.warning(
                         "AutoDetect: Grid CT inversion detected for hub '%s' "
-                        "(%d/%d signals)", hub_name, inv_count, _INV_WINDOW_SIZE,
+                        "(%d/%d signals over %.0f s)",
+                        hub_name, inv_count, _INV_WINDOW_SIZE, observed_s,
                     )
                     result = {
                         "title": "Load Juggler \u2014 Possible Grid CT Inversion",

@@ -4,6 +4,7 @@ Pure Python, no Home Assistant dependencies.
 """
 
 import sys
+import time
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -19,7 +20,7 @@ from custom_components.dynamic_ocpp_evse.calculations.models import (
 )
 from custom_components.dynamic_ocpp_evse.engine.auto_detect import (
     check_inversion, check_phase_mapping,
-    _INV_WINDOW_SIZE, _INV_THRESHOLD,
+    _INV_WINDOW_SIZE, _INV_THRESHOLD, _INV_MIN_OBSERVATION_S,
     _PM_NOTIFY_SCORE, _PM_REMAP_SCORE,
 )
 
@@ -73,7 +74,13 @@ class TestInversionDetection:
             assert result is None, f"False positive at cycle {i}"
 
     def test_inverted_correlation_triggers(self):
-        """Charger ramps up, grid decreases (inverted CTs) → notification fires."""
+        """Charger ramps up, grid decreases (inverted CTs) → notification fires.
+
+        The loop runs in microseconds, so the observation floor is back-dated
+        once the first sample has stamped it - the same way the stale-input
+        and SuspendedEV tests back-date their monotonic marks. The floor
+        itself is asserted in test_a_full_window_waits_out_the_observation_floor.
+        """
         state = {}
         notified = False
         for i in range(25):
@@ -83,6 +90,9 @@ class TestInversionDetection:
             )
             # Grid DECREASES as charger ramps up → inverted
             smoothed = [10.0 - draw / 3] * 3
+            inv = state.get("inversion")
+            if inv and inv.get("first_sample_at") is not None:
+                inv["first_sample_at"] = time.monotonic() - _INV_MIN_OBSERVATION_S - 1
             result = check_inversion(state, smoothed, [charger],
                                      "hub1", "Test Hub")
             if result is not None:
@@ -94,11 +104,62 @@ class TestInversionDetection:
         assert notified, "Expected inversion notification but none fired"
         assert state["inversion"]["notified"] is True
 
+    def test_a_full_window_waits_out_the_observation_floor(self):
+        """15 samples of one ramp are one event seen 15 times, not 15 events.
+
+        On a 1 s site an EVSE ramp fills the window in 15 s, and 10 of 15 is
+        then reached on far less independent evidence than the same count at
+        a 10 s cadence. So a full window over threshold must still NOT fire
+        until _INV_MIN_OBSERVATION_S has passed since the first sample - and
+        the clock is what is holding it, nothing else: the count conditions
+        are asserted satisfied. Once the clock is served the very next
+        qualifying cycle fires, which is the "delay, never suppress" half.
+        """
+        state = {}
+        for i in range(25):
+            draw = i * 1.5
+            charger = _make_charger(
+                l1_current=draw / 3, l2_current=draw / 3, l3_current=draw / 3,
+            )
+            result = check_inversion(state, [10.0 - draw / 3] * 3, [charger],
+                                     "hub1", "Test Hub")
+            assert result is None, f"fired at cycle {i} inside the floor"
+
+        inv = state["inversion"]
+        window = inv["window"]
+        assert len(window) >= _INV_WINDOW_SIZE, len(window)
+        assert sum(1 for s in window if s == 1) >= _INV_THRESHOLD, window
+        assert inv["notified"] is False
+        assert inv["first_sample_at"] is not None
+
+        # Serve the clock; one more inverted step and it fires.
+        inv["first_sample_at"] = time.monotonic() - _INV_MIN_OBSERVATION_S - 1
+        draw = 25 * 1.5
+        charger = _make_charger(
+            l1_current=draw / 3, l2_current=draw / 3, l3_current=draw / 3,
+        )
+        result = check_inversion(state, [10.0 - draw / 3] * 3, [charger],
+                                 "hub1", "Test Hub")
+        assert result is not None and "Inversion" in result["title"]
+        assert inv["notified"] is True
+
+    def test_the_observation_clock_starts_at_the_first_sample_not_the_first_call(self):
+        """An idle hour before the first qualifying sample buys nothing: the
+        clock measures observation of RELEVANT events, so it is stamped on
+        the first sample, and cycles with no significant delta leave it None."""
+        state = {}
+        charger = _make_charger(l1_current=0, l2_current=0, l3_current=0)
+        for _ in range(10):
+            check_inversion(state, [5.0, 5.0, 5.0], [charger], "hub1", "Test Hub")
+        assert state["inversion"]["first_sample_at"] is None
+        assert state["inversion"]["window"] == []
+
     def test_notification_fires_only_once(self):
         """After notified=True, no more notifications."""
         state = {"inversion": {
-            "prev_grid_total": None, "prev_charger_total": None,
-            "window": [1] * _INV_WINDOW_SIZE, "notified": True,
+            "prev_grid_total": None, "prev_load_total": None,
+            "window": [1] * _INV_WINDOW_SIZE,
+            "first_sample_at": time.monotonic() - 600, "notified": True,
         }}
         charger = _make_charger(l1_current=5, l2_current=5, l3_current=5)
         result = check_inversion(state, [-5.0, -5.0, -5.0], [charger],
