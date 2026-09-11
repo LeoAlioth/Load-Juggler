@@ -5933,6 +5933,64 @@ async def test_engine_reads_the_resolved_connector_status_entity(
     assert sensor._connector_status_entity == renamed == "sensor.garage_wallbox_state"
 
 
+async def test_an_empty_connector_reports_no_draw_however_stale_its_meter(
+    hass, hub_entry, charger_entry, setup_domain_data
+):
+    """A charger with no car cannot be drawing current.
+
+    Chargers commonly stop sending MeterValues when a session ends, and Home
+    Assistant holds the last state, so `current_import` freezes at whatever the
+    car was taking. Live on the SE17K Elvi (2026-09-11): 13.2 A reported into
+    an empty connector for hours, which the loads-off reconstruction then added
+    back - grid headroom read the whole breaker, a solar pool appeared on a
+    phase that had none, and household clamped at 0.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.load_builders import (
+        _build_evse_load,
+    )
+
+    charger_entry.add_to_hass(hass)
+    hass.states.async_set("sensor.test_charger_status_connector", "Available")
+    hass.states.async_set(
+        "sensor.test_charger_current_import", "13.2",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+
+    load = _build_evse_load(hass, charger_entry, 230, "test_charger", 1)
+
+    assert load.connector_status == "Available"
+    assert load.l1_current == 0.0, f"stale meter believed: {load.l1_current} A"
+    assert load.l2_current == 0.0
+    assert load.l3_current == 0.0
+
+
+async def test_a_plugged_in_charger_keeps_its_measured_draw(
+    hass, hub_entry, charger_entry, setup_domain_data
+):
+    """The mirror, and the reason the guard keys on "Available" alone.
+
+    Every other status may have a car behind it, including the ones that mean
+    trouble - so only OCPP's own word for an empty connector zeroes the draw.
+    An unreadable status is NOT evidence of no car; inventing a zero there
+    would repeat the grid-CT mistake in the other direction.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.load_builders import (
+        _build_evse_load,
+    )
+
+    charger_entry.add_to_hass(hass)
+    for status in ("Charging", "SuspendedEV", "Finishing", "unavailable"):
+        hass.states.async_set("sensor.test_charger_status_connector", status)
+        hass.states.async_set(
+            "sensor.test_charger_current_import", "13.2",
+            {"device_class": "current", "unit_of_measurement": "A"},
+        )
+        load = _build_evse_load(hass, charger_entry, 230, "test_charger", 1)
+        assert load.l1_current == 13.2, (
+            f"status {status!r} must keep its measured draw, got {load.l1_current}"
+        )
+
+
 async def test_composed_status_name_still_used_without_a_registry_entry(
     hass, hub_entry, charger_entry, setup_domain_data
 ):

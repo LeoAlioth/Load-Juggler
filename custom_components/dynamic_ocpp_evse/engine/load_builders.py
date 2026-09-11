@@ -303,6 +303,41 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
             except (ValueError, TypeError):
                 pass
 
+    # An EMPTY connector cannot be drawing current, whatever its meter says.
+    # "Available" is OCPP's own word for "no car", so this is a fact about the
+    # connector rather than an inference about the reading.
+    #
+    # Chargers commonly stop sending MeterValues when a session ends, and Home
+    # Assistant holds a sensor's last state until something newer arrives - so
+    # `current_import` freezes at whatever the car was taking when it was
+    # unplugged. Seen live on the SE17K Elvi (2026-09-11): 13.2 A reported into
+    # an empty connector for hours. That phantom draw is added back by the
+    # loads-off reconstruction, and one stale reading moved four published
+    # figures at once - grid headroom read the WHOLE breaker (every phase's
+    # consumption went to 0 once 13.2 A was subtracted from a 1.8 A import), a
+    # solar pool of 11.4 A appeared on a phase that had none, export-with-
+    # loads-off read 3 898 W against a real 856 W, and household clamped at 0
+    # where the arithmetic wanted -2 215 W. A load engaging on that phantom
+    # pool would have made the site import.
+    #
+    # Deliberately NOT a staleness timeout. A car charging steadily holds
+    # `current_import` at one value for minutes, so "has not changed recently"
+    # cannot tell stale from steady and would shed healthy sessions. And
+    # deliberately only on "Available": an unreadable status is not evidence of
+    # an empty connector, and inventing a zero there would repeat the grid-CT
+    # mistake in the other direction. Finishing and Faulted keep their draw
+    # too - a car may still be connected.
+    if connector_status == "Available" and (
+        load.l1_current or load.l2_current or load.l3_current
+    ):
+        _LOGGER.debug(
+            "EVSE %s: connector is Available (no car) but the meter reports "
+            "%.1f/%.1f/%.1f A - treating the draw as 0",
+            load_entity_id,
+            load.l1_current, load.l2_current, load.l3_current,
+        )
+        load.l1_current = load.l2_current = load.l3_current = 0.0
+
     if current_draw:
         _LOGGER.debug(
             "EVSE %s: Current draw source: %s", load_entity_id, current_draw

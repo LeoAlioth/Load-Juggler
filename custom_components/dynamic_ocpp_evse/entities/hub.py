@@ -140,6 +140,19 @@ HUB_SENSOR_DEFINITIONS = [
         "decimals": 0,
     },
     {
+        # What the site draws that Load Juggler does NOT control - the whole
+        # site less every managed load. The figure has always been computed
+        # and published in hub_data; this exposes it so it can be graphed and
+        # automated on rather than read off the Overview page.
+        "name_suffix": "Household Power",
+        "unique_id_suffix": "household_power",
+        "hub_data_key": "household_power",
+        "unit": "W",
+        "device_class": SensorDeviceClass.POWER,
+        "icon": "mdi:home-lightning-bolt",
+        "decimals": 0,
+    },
+    {
         "name_suffix": "Current Battery Power",
         "unique_id_suffix": "battery_power",
         "hub_data_key": "battery_power",
@@ -357,9 +370,6 @@ _HUB_REPUBLISH_KEYS = frozenset(
     "excess_available",
     "excess_margin_power",
     "inverters",
-    # Unmanaged (household) draw - no hub sensor (yet); read by the Overview
-    # options page and available to automations.
-    "household_power",
     # Fleet forecast advice - no hub sensor anymore (the per-battery sensors
     # live on the inverter entries) but kept in hub_data for automations.
     "forecast_battery_max_soc",
