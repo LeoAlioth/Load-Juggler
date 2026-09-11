@@ -2537,16 +2537,22 @@ async def test_auto_reset_triggers_after_threshold(
     charger_entry,
     setup_domain_data,
 ):
-    """Test that auto-reset fires after sustained mismatch reaches threshold."""
-    from custom_components.dynamic_ocpp_evse.const import AUTO_RESET_MISMATCH_THRESHOLD
+    """Auto-reset fires once the mismatch has lasted AUTO_RESET_MISMATCH_SECONDS.
+
+    The decision is the clock, not the count: the count is back-dated to what
+    four prior checks would have left, but it is the timestamp that lets the
+    next check fire. Same back-dating as the SuspendedEV and stale-input tests.
+    """
+    from custom_components.dynamic_ocpp_evse.const import AUTO_RESET_MISMATCH_SECONDS
 
     _set_ha_states(hass, hub_entry)
 
     sensor = LoadJugglerDeviceSensor(
         hass, charger_entry, hub_entry, "Test Charger", "test_charger"
     )
-    # Pre-set mismatch count to one below threshold
-    sensor._mismatch_count = AUTO_RESET_MISMATCH_THRESHOLD - 1
+    # A disagreement that started AUTO_RESET_MISMATCH_SECONDS ago.
+    sensor._mismatch_count = 4
+    sensor._mismatch_since = time.monotonic() - AUTO_RESET_MISMATCH_SECONDS - 1
     sensor._last_commanded_limit = 16.0
 
     # Charger offering 0A - big mismatch
@@ -2576,7 +2582,7 @@ async def test_auto_reset_cooldown_prevents_retrigger(
     setup_domain_data,
 ):
     """Test that cooldown prevents immediate re-triggering after reset."""
-    from custom_components.dynamic_ocpp_evse.const import AUTO_RESET_MISMATCH_THRESHOLD
+    from custom_components.dynamic_ocpp_evse.const import AUTO_RESET_MISMATCH_SECONDS
 
     _set_ha_states(hass, hub_entry)
 
@@ -2586,7 +2592,9 @@ async def test_auto_reset_cooldown_prevents_retrigger(
     # Simulate: just reset recently
     sensor._last_auto_reset_at = datetime.now()
     sensor._last_commanded_limit = 16.0
-    sensor._mismatch_count = AUTO_RESET_MISMATCH_THRESHOLD + 5  # Would trigger
+    # A disagreement old enough to fire - the cooldown must still hold it.
+    sensor._mismatch_count = 10
+    sensor._mismatch_since = time.monotonic() - AUTO_RESET_MISMATCH_SECONDS * 3
 
     # Charger still offering 0A
     hass.states.async_set(

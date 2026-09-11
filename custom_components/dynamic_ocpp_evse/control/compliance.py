@@ -1,10 +1,11 @@
 import logging
+import time
 from datetime import datetime, timezone
 from ..const import (
     DOMAIN,
     HARD_RESET_COOLDOWN_SECONDS,
     AUTO_RESET_COOLDOWN_SECONDS,
-    AUTO_RESET_MISMATCH_THRESHOLD,
+    AUTO_RESET_MISMATCH_SECONDS,
     ESCALATION_PROFILE_RESET_LIMIT,
     DEFAULT_UPDATE_FREQUENCY,
     RAMP_DOWN_RATE,
@@ -23,12 +24,20 @@ from .. import units
 _LOGGER = logging.getLogger(__name__)
 
 
+def _clear_mismatch(sensor) -> None:
+    """Forget the current disagreement: the count that is published and the
+    clock that decides. Every path that used to zero the count goes through
+    here, so the two can never come apart."""
+    sensor._mismatch_count = 0
+    sensor._mismatch_since = None
+
+
 async def check_profile_compliance(
     sensor, limit: float, dynamic_control_on: bool
 ) -> None:
     """Check if the charger is following commanded profiles and auto-reset if not."""
     if not dynamic_control_on or limit <= 0:
-        sensor._mismatch_count = 0
+        _clear_mismatch(sensor)
         return
 
     if sensor._last_commanded_limit is None or sensor._last_commanded_limit <= 0:
@@ -37,20 +46,20 @@ async def check_profile_compliance(
     if sensor._last_hard_reset_at is not None:
         elapsed = (datetime.now(timezone.utc) - sensor._last_hard_reset_at).total_seconds()
         if elapsed < HARD_RESET_COOLDOWN_SECONDS:
-            sensor._mismatch_count = 0
+            _clear_mismatch(sensor)
             return
 
     if sensor._last_auto_reset_at is not None:
         elapsed = (datetime.now(timezone.utc) - sensor._last_auto_reset_at).total_seconds()
         if elapsed < AUTO_RESET_COOLDOWN_SECONDS:
-            sensor._mismatch_count = 0
+            _clear_mismatch(sensor)
             return
 
     connector_status_state = sensor.hass.states.get(sensor._connector_status_entity)
     connector_status = units.state_or_unknown(connector_status_state)
     # No car, or a status we cannot read - nothing to be compliant about.
     if connector_status == "Available" or units.is_unavailable_state(connector_status):
-        sensor._mismatch_count = 0
+        _clear_mismatch(sensor)
         return
 
     # Options-first, like every other charger field: the options charger page
@@ -140,21 +149,28 @@ async def check_profile_compliance(
     prev_limit = getattr(sensor, "_last_compliance_limit", None)
     sensor._last_compliance_limit = sensor._last_commanded_limit
     if prev_limit is not None and abs(sensor._last_commanded_limit - prev_limit) > DEAD_BAND:
-        sensor._mismatch_count = 0
+        _clear_mismatch(sensor)
         return
 
     diff = abs(current_offered - sensor._last_commanded_limit)
     if diff > tolerance:
+        # The count is the published diagnostic; the clock is the decision.
+        # Timestamped rather than counted, like the draw-settle detector: a
+        # count of checks is a duration only once you know update_frequency.
         sensor._mismatch_count += 1
+        if sensor._mismatch_since is None:
+            sensor._mismatch_since = time.monotonic()
+        mismatched_s = time.monotonic() - sensor._mismatch_since
         _LOGGER.debug(
             "Profile mismatch for %s: commanded=%.1fA, offered=%.1fA, diff=%.1fA "
-            "(cycle %d/%d)",
+            "(%d checks, %.0f/%.0f s)",
             sensor._attr_name,
             sensor._last_commanded_limit,
             current_offered,
             diff,
             sensor._mismatch_count,
-            AUTO_RESET_MISMATCH_THRESHOLD,
+            mismatched_s,
+            AUTO_RESET_MISMATCH_SECONDS,
         )
     else:
         if sensor._mismatch_count > 0:
@@ -164,12 +180,12 @@ async def check_profile_compliance(
                 sensor._mismatch_count,
                 sensor._profile_reset_count,
             )
-        sensor._mismatch_count = 0
+        _clear_mismatch(sensor)
         sensor._profile_reset_count = 0
         return
 
-    if sensor._mismatch_count >= AUTO_RESET_MISMATCH_THRESHOLD:
-        sensor._mismatch_count = 0
+    if mismatched_s >= AUTO_RESET_MISMATCH_SECONDS:
+        _clear_mismatch(sensor)
         sensor._profile_reset_count += 1
 
         if sensor._profile_reset_count >= ESCALATION_PROFILE_RESET_LIMIT:

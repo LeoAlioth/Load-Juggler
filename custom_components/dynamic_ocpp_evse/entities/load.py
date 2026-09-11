@@ -202,6 +202,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self._last_compliance_limit = None
         self._last_command_time: float = -float("inf")
         self._mismatch_count = 0
+        self._mismatch_since = None   # monotonic; control/compliance
         self._last_auto_reset_at = None
         self._profile_reset_count = 0
         self._last_hard_reset_at = None

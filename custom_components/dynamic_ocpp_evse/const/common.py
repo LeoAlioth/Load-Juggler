@@ -278,8 +278,17 @@ SETTLE_DRAW_SECONDS = 15.0
 # the correct pool footprint.
 SETTLE_PERMIT_MARGIN = 1.0    # Amps - draw must be this far below last permit
 
-# Auto-reset detection - triggers reset_ocpp_evse when charger ignores profiles
-AUTO_RESET_MISMATCH_THRESHOLD = 5    # consecutive mismatched cycles before reset
+# Auto-reset detection - triggers reset_ocpp_evse when charger ignores profiles.
+# How long the charger must keep offering something other than what it was
+# told, in SECONDS, before a profile reset is sent. It was 5 consecutive
+# mismatched CHECKS, which is a duration only once you know the load's own
+# update_frequency: 60 s at the 15 s default, 25 s on a 5 s load, 5 minutes at
+# 60 s - and nothing said so. 60 s reproduces the default exactly: five checks
+# at 15 s span 60 s from the first to the fifth, so the fifth check is the one
+# that fires, as before. (Not 75 - that would be the SIXTH check.) The
+# mismatch COUNT survives as the auto_reset_mismatch_count attribute, which is
+# a useful diagnostic and public; it no longer decides anything.
+AUTO_RESET_MISMATCH_SECONDS = 60.0
 AUTO_RESET_COOLDOWN_SECONDS = 120    # seconds to wait after reset before checking again
 ESCALATION_PROFILE_RESET_LIMIT = 3   # profile resets before escalating to hard reset
 HARD_RESET_COOLDOWN_SECONDS = 300    # seconds to wait after hard reset (5 minutes)
