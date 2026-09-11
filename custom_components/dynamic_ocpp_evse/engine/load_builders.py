@@ -83,7 +83,7 @@ from ..const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
-    SETTLE_DRAW_CYCLES,
+    SETTLE_DRAW_SECONDS,
     SETTLE_DRAW_TOLERANCE,
     SETTLE_PERMIT_MARGIN,
     STATION_MODE_STANDARD,
@@ -361,7 +361,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
 
     # Draw-settle detection: the measured draw is trusted as the EVSE's real
     # footprint - freeing the unused gap to lower-priority loads - only when
-    # two conditions hold: it has held steady for SETTLE_DRAW_CYCLES cycles
+    # two conditions hold: it has held steady for SETTLE_DRAW_SECONDS
     # *and* it is measurably below the permit we offered last cycle. A car
     # drawing essentially what we offered (util ≈ 1.0) is using all of it, so
     # we keep treating the permit as its footprint. A still-ramping car keeps
@@ -370,15 +370,20 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
     if load.unmetered:
         load.draw_settled = False
         load_rt.pop("_settle_last_draw", None)
-        load_rt.pop("_settle_count", None)
+        load_rt.pop("_settle_since", None)
     else:
         last_draw = load_rt.get("_settle_last_draw")
         if last_draw is not None and abs(measured_draw - last_draw) <= SETTLE_DRAW_TOLERANCE:
-            load_rt["_settle_count"] = load_rt.get("_settle_count", 0) + 1
+            # Timestamped rather than counted: a count of cycles is a duration
+            # only once you know the refresh rate. Same shape as the
+            # SuspendedEV idle marker above.
+            if "_settle_since" not in load_rt:
+                load_rt["_settle_since"] = time.monotonic()
         else:
-            load_rt["_settle_count"] = 0
+            load_rt.pop("_settle_since", None)
         load_rt["_settle_last_draw"] = measured_draw
-        steady = load_rt["_settle_count"] >= SETTLE_DRAW_CYCLES
+        since = load_rt.get("_settle_since")
+        steady = since is not None and time.monotonic() - since >= SETTLE_DRAW_SECONDS
         under_permit = (
             measured_draw + SETTLE_PERMIT_MARGIN
             < load_rt.get("_last_permit", 0)

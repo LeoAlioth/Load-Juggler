@@ -250,10 +250,15 @@ HOUSEHOLD_HOLD_RESIDUAL = 0.1         # Fraction of the held value left after th
 
 # EVSE draw-settle detection - the measured draw is trusted as the EVSE's real
 # footprint (freeing the unused gap to lower-priority loads) only once it has
-# held steady for SETTLE_DRAW_CYCLES consecutive cycles within SETTLE_DRAW_TOLERANCE.
+# held steady for SETTLE_DRAW_SECONDS within SETTLE_DRAW_TOLERANCE.
 # A car still ramping toward its permit keeps changing and stays "unsettled".
 SETTLE_DRAW_TOLERANCE = 0.5   # Amps - draw change below this counts as steady
-SETTLE_DRAW_CYCLES = 3        # Consecutive steady cycles before the draw is trusted
+# How long the draw must hold steady, in SECONDS. It was 3 consecutive CYCLES,
+# which is the same defect the filters had: a cycle count is a duration only
+# once you know the refresh rate, so it meant 3 s on a 1 s site, 6 s at the 2 s
+# default and 30 s at 10 s - and nothing said so. 15 s is a duration a car's
+# ramp can be reasoned about against, whatever the site polls at.
+SETTLE_DRAW_SECONDS = 15.0
 # An EVSE only counts as settled-and-capped when its draw is also measurably
 # below the permit we offered it last cycle - that is the under-drawing case
 # the footprint model is meant to free. A car drawing essentially what we

@@ -548,9 +548,10 @@ async def test_one_calculation_per_cycle_with_three_loads(
 
     Regression for ISSUES.md #8: with a DataUpdateCoordinator per load, every
     load ran the whole site calculation, so all cycle-counted engine state
-    (SETTLE_DRAW_CYCLES, the input EMAs, power_stable_count) advanced N times
-    per real interval on an N-load site. This test fails on that architecture:
-    three loads produced three engine runs per interval.
+    (power_stable_count, and the then cycle-counted settle detector and input
+    EMAs) advanced N times per real interval on an N-load site. This test
+    fails on that architecture: three loads produced three engine runs per
+    interval.
     """
     from custom_components.dynamic_ocpp_evse import sensor as sensor_module
 
@@ -621,13 +622,23 @@ async def test_cycle_counted_engine_state_advances_once_per_cycle(
     charger_entry,
     setup_domain_data,
 ):
-    """The symptom behind ISSUES.md #8, asserted directly.
+    """The symptom behind ISSUES.md #8, in its current form.
 
-    `_settle_count` (the SETTLE_DRAW_CYCLES counter) advances once per ENGINE
-    run. With a coordinator per load it advanced once per load per interval, so
+    It used to assert `_settle_count`, the SETTLE_DRAW_CYCLES counter: with a
+    coordinator per load that counter advanced once per load per interval, so
     three loads reached the settle threshold three times too early and the
-    engine freed a still-ramping car's gap to other loads. Two site cycles must
-    leave the counter at 1, not 3.
+    engine freed a still-ramping car's gap to other loads.
+
+    That counter is gone - the settle detector is now a TIMESTAMP against
+    SETTLE_DRAW_SECONDS, because a count of cycles is a duration only once you
+    know the refresh rate. The marker is immune to the original bug by
+    construction: re-running the engine cannot advance a wall-clock elapsed
+    time, which is the better property. What this pins now is that the marker
+    is seeded ONCE and does not move while the draw holds steady.
+
+    The once-per-cycle invariant itself is pinned by its sibling,
+    test_one_calculation_per_cycle_with_three_loads, which asserts the engine
+    runs exactly once per site cycle however many loads are attached.
     """
     _set_ha_states(hass, hub_entry)
 
@@ -646,12 +657,26 @@ async def test_cycle_counted_engine_state_advances_once_per_cycle(
     await _run_site_cycle(hass, hub_entry)
     await _run_site_cycle(hass, hub_entry)
 
-    counts = {
-        entry_id: runtime.get("_settle_count")
+    seeded = {
+        entry_id: runtime.get("_settle_since")
         for entry_id, runtime in hass.data[DOMAIN]["loads"].items()
     }
-    assert set(counts.values()) == {1}, (
-        f"cycle-counted engine state must advance once per site cycle, got {counts}"
+    assert all(v is not None for v in seeded.values()), (
+        f"a steady draw must seed the settle marker on every load, got {seeded}"
+    )
+    first = dict(seeded)
+
+    # A third cycle with the draw still steady must not re-seed it: the elapsed
+    # time is the whole mechanism, and restarting the clock each cycle would
+    # mean the draw never settles at all.
+    await _run_site_cycle(hass, hub_entry)
+    again = {
+        entry_id: runtime.get("_settle_since")
+        for entry_id, runtime in hass.data[DOMAIN]["loads"].items()
+    }
+    assert again == first, (
+        f"the settle marker must not be re-seeded while the draw holds: "
+        f"{first} -> {again}"
     )
 
 
