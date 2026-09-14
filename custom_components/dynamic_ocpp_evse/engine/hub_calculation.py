@@ -381,27 +381,32 @@ def _read_site_phases(hass, hub_entry, voltage):
 def _read_max_import_power(hass, hub_entry):
     """The site's max grid import power, or None for unlimited.
 
-    The ENABLE FLAG COMES FIRST, then a configured entity, then the hub's own
-    slider. The flag used to be tested last, so an entity left behind from
-    when the limit was enabled went on being read after it was switched off -
-    and a site with the limit disabled and a stale entity had that sensor's
-    dropouts reported on the hub status, taking the whole site to a warning
-    state ten times a day for a feature it was not using (live 2026-09-07:
-    ``enable_max_import_power: false`` beside
-    ``max_import_power_entity_id: sensor.current_block_power_limit``).
-    Disabled means disabled, on every one of the three code paths that read
-    this pair - see ``_check_entity_availability`` and ``number.py``.
+    Precedence, as the hub form's own help text states it: a configured
+    OVERRIDE SENSOR applies whenever it is set - "it takes precedence over both
+    the slider and this checkbox" - then the hub's slider while the checkbox
+    that creates it is ticked, else unlimited.
+
+    The checkbox is ``CONF_ENABLE_MAX_IMPORT_POWER``, labelled "Create max
+    import power limit slider". It is NOT a switch for the feature, and it
+    must never gate the sensor: a user who drives the limit from their own
+    sensor has no use for the slider and leaves the box unticked. Commit
+    565a0bf (2026-09-07) read the flag as a feature switch and tested it
+    first, on the theory that an unticked box beside a configured sensor was
+    a leftover - it was the intended configuration, and the live SE17K's
+    15-minute block limit (sensor.current_block_power_limit, 10,600 W in
+    tariff block 2) went unapplied for a week until the export of 2026-09-14
+    showed the published grid headroom sitting up to 9 kW above it.
     """
-    # --- Max grid import power (disabled → entity override → hub slider) ---
-    if not get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True):
-        return None
+    # --- Max grid import power (override sensor -> slider -> unlimited) ---
     max_import_power_entity = get_entry_value(
         hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None
     )
     if max_import_power_entity:
         return _coerce(
             _read_entity(hass, max_import_power_entity, None, unit="W"), None
-        )  # Convert kW→W if needed
+        )  # Convert kW->W if needed
+    if not get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True):
+        return None
     hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
     return hub_rt.get("max_import_power", None)
 

@@ -1345,23 +1345,29 @@ async def test_hub_status_names_unavailable_sensor(
     )
 
 
-async def test_a_disabled_max_import_limit_ignores_its_leftover_entity(
+async def test_the_override_sensor_applies_whatever_the_slider_checkbox_says(
     hass,
     hub_entry,
     charger_entry,
     setup_domain_data,
 ):
-    """The enable flag gates the ENTITY too, on every path that reads the pair.
+    """A configured max-import override sensor IS the limit, ticked box or not.
 
-    An entity configured while the limit was enabled kept being read after it
-    was switched off, and its dropouts kept being reported - so a site with
-    ``enable_max_import_power: false`` and a stale entity went to a warning
-    state every time that sensor blinked, taking every load's sensors with it.
-    Measured on the live site 2026-09-07: ten such episodes in one morning,
-    for a limit the site was not using.
+    The checkbox is "Create max import power limit slider" and its help text
+    says the override sensor "takes precedence over both the slider and this
+    checkbox". 565a0bf inverted that and gated the sensor on the box, reading
+    an unticked box beside a configured sensor as a leftover. It was the
+    intended configuration - a site driving the limit from its own sensor
+    has no use for a slider - and the live SE17K's 15-minute block limit went
+    unapplied from 2026-09-07 until the 2026-09-14 export showed the published
+    grid headroom up to 9 kW above sensor-minus-import.
+
+    Pinned on all three paths that read the pair: the engine's limit, the hub
+    status report of the sensor's dropouts, and (by absence) the slider.
     """
     from custom_components.dynamic_ocpp_evse.const import (
         CONF_ENABLE_MAX_IMPORT_POWER,
+        CONF_MAX_IMPORT_POWER_ENTITY_ID,
     )
     from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
         run_hub_calculation,
@@ -1369,30 +1375,43 @@ async def test_a_disabled_max_import_limit_ignores_its_leftover_entity(
 
     hub_entry.add_to_hass(hass)
     _set_ha_states(hass, hub_entry)
-    # The fixture already names a max-import entity; it is unreadable, exactly
-    # as the live one keeps being.
+    # A limit low enough to bind: the fixture imports ~3 kW.
     hass.states.async_set(
-        "sensor.grid_power_limit", "unavailable",
+        "sensor.grid_power_limit", "6000",
         {"device_class": "power", "unit_of_measurement": "W"},
     )
 
-    # Enabled: the entity IS the site's business, so its dropout is reported.
-    hass.config_entries.async_update_entry(
-        hub_entry,
-        options={**hub_entry.options, CONF_ENABLE_MAX_IMPORT_POWER: True},
-    )
-    result = run_hub_calculation(hass, hub_entry)
-    assert "Max import power sensor" in result["hub_status"]
+    def _with(**options):
+        hass.config_entries.async_update_entry(
+            hub_entry, options={**hub_entry.options, **options}
+        )
+        return run_hub_calculation(hass, hub_entry)
 
-    # Disabled: the same entity is neither read nor reported.
+    ticked = _with(**{CONF_ENABLE_MAX_IMPORT_POWER: True})
+    unticked = _with(**{CONF_ENABLE_MAX_IMPORT_POWER: False})
+
+    # The engine's limit: the sensor binds, and the checkbox changes nothing.
+    assert ticked["available_grid_power"] <= 6000, ticked["available_grid_power"]
+    assert unticked["available_grid_power"] == ticked["available_grid_power"]
+    assert unticked["load_targets"] == ticked["load_targets"]
+
+    # The sensor's dropouts are the site's business either way: an unreadable
+    # override sensor lifts the cap to unlimited, which is when the owner
+    # needs to hear about it.
+    hass.states.async_set("sensor.grid_power_limit", "unavailable")
+    dropped = _with(**{CONF_ENABLE_MAX_IMPORT_POWER: False})
+    assert "Max import power sensor" in dropped["hub_status"], dropped["hub_status"]
+
+    # With NO sensor and the box unticked there is no limit and nothing to
+    # report - that, not a configured sensor, is what "unused" looks like.
+    options = {k: v for k, v in hub_entry.options.items() if k != CONF_MAX_IMPORT_POWER_ENTITY_ID}
     hass.config_entries.async_update_entry(
-        hub_entry,
-        options={**hub_entry.options, CONF_ENABLE_MAX_IMPORT_POWER: False},
+        hub_entry, options={**options, CONF_ENABLE_MAX_IMPORT_POWER: False}
     )
-    result = run_hub_calculation(hass, hub_entry)
-    assert "Max import power" not in result["hub_status"]
-    assert not any("Max import power" in w for w in result["hub_warnings"])
-    assert not any("grid_power_limit" in w for w in result["hub_warnings"])
+    unused = run_hub_calculation(hass, hub_entry)
+    assert unused["available_grid_power"] > 6000, unused["available_grid_power"]
+    assert "Max import power" not in unused["hub_status"]
+    assert not any("Max import power" in w for w in unused["hub_warnings"])
 
 
 # ── Cold-start grid failsafe: assumed for safety, never published ────

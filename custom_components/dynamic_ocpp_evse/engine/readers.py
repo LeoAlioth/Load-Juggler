@@ -369,16 +369,17 @@ def _check_entity_availability(hass, hub_entry) -> list:
         ("Inverter output sensor (L1)", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
         ("Inverter output sensor (L2)", CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
         ("Inverter output sensor (L3)", CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
+        # Whenever it is configured, whatever the slider checkbox says: a set
+        # override sensor is always read by the engine (hub_calculation.
+        # _read_max_import_power), and an unreadable one lifts the cap to
+        # unlimited, which is exactly when the owner needs to hear about it.
+        # 565a0bf gated this on the checkbox, reading the SE17K's ten dropouts
+        # a morning as noise from an unused feature; the sensor was in use,
+        # and those dropouts were the SolarEdge integration blinking - the
+        # same source as the grid CTs, which is why every load went
+        # unavailable in the same instants.
+        ("Max import power sensor", CONF_MAX_IMPORT_POWER_ENTITY_ID),
     ]
-    # Only while the limit is ENABLED. A disabled max-import limit is not read
-    # by the engine (``_read_max_import_power`` returns None before it looks at
-    # the entity), so reporting its sensor missing would put the whole site
-    # into a warning state over a feature it is not using - measured on the
-    # live site 2026-09-07: ten "Sensor unavailable: Max import power sensor"
-    # episodes in a morning, every load's sensors going unavailable with the
-    # hub, against ``enable_max_import_power: false``.
-    if get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True):
-        checks.append(("Max import power sensor", CONF_MAX_IMPORT_POWER_ENTITY_ID))
     for label, conf_key in checks:
         entity_id = get_entry_value(hub_entry, conf_key, None)
         if not entity_id:

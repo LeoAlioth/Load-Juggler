@@ -76,20 +76,22 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         # Always create Power Buffer (useful even without battery)
         entities.append(PowerBufferSlider(hass, config_entry, name, entity_id))
 
-        # Max Import Power: the ENABLE FLAG IS TESTED FIRST, matching
-        # engine/hub_calculation._read_max_import_power. Testing the entity
-        # first meant a stale entity from when the limit was enabled kept
-        # claiming to own the limit after it was switched off, so the site got
-        # neither a slider nor a disabled limit.
+        # Max Import Power slider: created when its checkbox is ticked AND no
+        # override sensor is set - with a sensor the slider would be a dead
+        # control, since the sensor takes precedence over it (hub form help
+        # text; engine/hub_calculation._read_max_import_power). The checkbox
+        # only ever decides the slider. It is not a switch for the limit:
+        # 565a0bf treated it as one and a site driving its limit from a
+        # sensor lost the limit for a week.
         enable_max_import = get_entry_value(config_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
         max_import_entity = get_entry_value(config_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
-        if not enable_max_import:
-            _LOGGER.info("Max import power limit disabled")
-        elif max_import_entity:
-            _LOGGER.info("Max import power using entity override: %s", max_import_entity)
-        else:
+        if max_import_entity:
+            _LOGGER.info("Max import power from override sensor %s", max_import_entity)
+        elif enable_max_import:
             entities.append(MaxImportPowerSlider(hass, config_entry, name, entity_id))
-            _LOGGER.info("Max import power slider created (no entity override)")
+            _LOGGER.info("Max import power slider created (no override sensor)")
+        else:
+            _LOGGER.info("Max import power: no sensor and no slider - unlimited")
 
         # Only create battery entities if battery is configured
         if has_battery:
