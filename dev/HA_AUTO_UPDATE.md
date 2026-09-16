@@ -15,9 +15,12 @@ notification instead and restart when it suits you.
 ## The update entity
 
 HACS's update entity for this repository is **`update.dynamic_ocpp_evse_update`**
-- named after the GitHub repository (`Dynamic_OCPP_EVSE`), not the integration's
-display name ("Load Juggler"). If that ever changes, list the real IDs with this
-in Developer Tools → Template:
+on every instance that installed it before 2026-09-16 - the entity id was formed
+from the GitHub repository's name at the time (`Dynamic_OCPP_EVSE`) and entity
+ids do not follow renames, so it survives the repository's rename to
+`Load-Juggler`; the entity's display NAME does follow it. A fresh install after
+the rename gets `update.load_juggler_update` instead. List the real ids with
+this in Developer Tools → Template:
 
 ```jinja
 {{ states.update | map(attribute='entity_id') | list }}

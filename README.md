@@ -176,7 +176,7 @@ The charge *rate* is the register every hybrid exposes, and slowing the fill lea
 
 **Method 1 _(easiest)_:**
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=LeoAlioth&repository=Dynamic_OCPP_EVSE&category=integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=LeoAlioth&repository=Load-Juggler&category=integration)
 
 **Method 2:**
 
@@ -481,6 +481,6 @@ This integration is actively being developed and improved. Looking for users to 
 **How to help:**
 
 - Install and test the integration with your setup
-- Report any issues or unexpected behavior via [GitHub Issues](https://github.com/LeoAlioth/Dynamic_OCPP_EVSE/issues)
+- Report any issues or unexpected behavior via [GitHub Issues](https://github.com/LeoAlioth/Load-Juggler/issues)
 - Share your configuration and experiences
 - Suggest improvements or new features

@@ -145,26 +145,26 @@ jobs:
           # Delete previous dev releases from GitHub
           echo "Fetching GitHub releases..."
           GH_RELEASES=$(curl -s \
-            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
+            "https://api.github.com/repos/LeoAlioth/Load-Juggler/releases")
 
           echo "$GH_RELEASES" | jq -r '.[] | select(.tag_name | test("'"$DEV_PATTERN"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
             if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
               echo "Deleting GitHub release: $RELEASE_TAG (ID: $RELEASE_ID)"
               curl -s -X DELETE \
-                -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+                -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID"
+                "https://api.github.com/repos/LeoAlioth/Load-Juggler/releases/$RELEASE_ID"
 
               echo "Deleting GitHub tag: $RELEASE_TAG"
               curl -s -X DELETE \
-                -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+                -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/git/refs/tags/$RELEASE_TAG"
+                "https://api.github.com/repos/LeoAlioth/Load-Juggler/git/refs/tags/$RELEASE_TAG"
             fi
           done
 
@@ -206,26 +206,26 @@ jobs:
           # Delete previous pre-releases with same version from GitHub
           echo "Fetching GitHub releases..."
           GH_RELEASES=$(curl -s \
-            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
+            "https://api.github.com/repos/LeoAlioth/Load-Juggler/releases")
 
           echo "$GH_RELEASES" | jq -r '.[] | select(.tag_name | test("'"$RC_PATTERN"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
             if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
               echo "Deleting GitHub release: $RELEASE_TAG (ID: $RELEASE_ID)"
               curl -s -X DELETE \
-                -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+                -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID"
+                "https://api.github.com/repos/LeoAlioth/Load-Juggler/releases/$RELEASE_ID"
 
               echo "Deleting GitHub tag: $RELEASE_TAG"
               curl -s -X DELETE \
-                -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+                -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/git/refs/tags/$RELEASE_TAG"
+                "https://api.github.com/repos/LeoAlioth/Load-Juggler/git/refs/tags/$RELEASE_TAG"
             fi
           done
 
@@ -263,26 +263,26 @@ jobs:
           # Delete previous feature branch releases from GitHub
           echo "Fetching GitHub releases..."
           GH_RELEASES=$(curl -s \
-            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
+            "https://api.github.com/repos/LeoAlioth/Load-Juggler/releases")
 
           echo "$GH_RELEASES" | jq -r '.[] | select(.tag_name | test("'"$FEATURE_PATTERN"'")) | "\(.id) \(.tag_name)"' | while read -r RELEASE_ID RELEASE_TAG; do
             if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
               echo "Deleting GitHub release: $RELEASE_TAG (ID: $RELEASE_ID)"
               curl -s -X DELETE \
-                -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+                -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID"
+                "https://api.github.com/repos/LeoAlioth/Load-Juggler/releases/$RELEASE_ID"
 
               echo "Deleting GitHub tag: $RELEASE_TAG"
               curl -s -X DELETE \
-                -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+                -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/git/refs/tags/$RELEASE_TAG"
+                "https://api.github.com/repos/LeoAlioth/Load-Juggler/git/refs/tags/$RELEASE_TAG"
             fi
           done
 
@@ -327,11 +327,11 @@ jobs:
           # Create the release using GitHub API
           BODY=$(jq -Rs '.' < /tmp/release_body.md)
           RELEASE_RESPONSE=$(curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Dynamic OCPP EVSE $TAG_NAME\", \"body\": $BODY, \"prerelease\": true, \"draft\": false}" \
-            "https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases")
+            "https://api.github.com/repos/LeoAlioth/Load-Juggler/releases")
           
           echo "GitHub Release response: $RELEASE_RESPONSE"
           RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
@@ -344,12 +344,12 @@ jobs:
           
           # Upload the asset to GitHub
           curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             -H "Content-Type: application/zip" \
             --data-binary @custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip \
-            "https://uploads.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
+            "https://uploads.github.com/repos/LeoAlioth/Load-Juggler/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
 
           echo "GitHub pre-release created successfully!"
 
