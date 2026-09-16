@@ -54,7 +54,7 @@ variables:
   target: "{{ entities.get(trigger.json.repository) }}"
 conditions:
   - condition: template
-    value_template: "{{ target is truthy }}"
+    value_template: "{{ target is not none and target != 'None' }}"
 actions:
   - action: update.install
     target:
