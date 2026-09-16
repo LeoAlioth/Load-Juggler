@@ -383,7 +383,7 @@ jobs:
             host=$(printf '%s' "$url" | sed -E 's#^[a-z]+://([^/]+).*#\1#')
             if curl -fsS -X POST "$url" \
                  -H "Content-Type: application/json" \
-                 -d "{\"version\": \"$TAG_NAME\"}"; then
+                 -d "{\"version\": \"$TAG_NAME\", \"repository\": \"${{ github.repository }}\"}"; then
               echo "Notified $host: $TAG_NAME"
             else
               echo "Notify failed for $host - download $TAG_NAME manually in HACS"

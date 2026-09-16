@@ -28,34 +28,53 @@ this in Developer Tools → Template:
 
 ## The automation
 
+One automation per instance serves every Load Juggler-family repository. The
+webhook payload carries the repository, and the automation maps it to that
+instance's HACS update entity - the mapping lives HERE, not in the workflow,
+because entity ids depend on when HACS first saw the repository (an install
+from before the 2026-09-16 rename has `update.dynamic_ocpp_evse_update`, a
+fresh one `update.load_juggler_update`). Check yours with the template above
+and edit the `entities` map to match.
+
 Add this in Home Assistant (Settings → Automations → new → Edit in YAML), or
 paste it into `automations.yaml`:
 
 ```yaml
-alias: Load Juggler - download pushed build
-description: Downloads the build the Gitea release workflow just published.
+alias: Load Juggler family - download pushed build
+description: Downloads the build a Gitea release workflow just published, for whichever repository sent it.
 triggers:
   - trigger: webhook
-    webhook_id: load-juggler-build          # change this - it is the shared secret
+    webhook_id: lj-family-build             # change this - it is the shared secret
     allowed_methods: [POST]
     local_only: true                        # runner and HA are on the same network
-conditions: []
+variables:
+  entities:
+    LeoAlioth/Load-Juggler: update.dynamic_ocpp_evse_update
+    LeoAlioth/Load-Insights: update.load_insights_update
+  target: "{{ entities.get(trigger.json.repository) }}"
+conditions:
+  - condition: template
+    value_template: "{{ target is truthy }}"
 actions:
   - action: update.install
     target:
-      entity_id: update.dynamic_ocpp_evse_update
+      entity_id: "{{ target }}"
     data:
       version: "{{ trigger.json.version }}"
   - action: persistent_notification.create
     data:
-      title: "Load Juggler {{ trigger.json.version }} downloaded"
+      title: "{{ trigger.json.repository.split('/')[1] }} {{ trigger.json.version }} downloaded"
       message: Restart Home Assistant to load it.
-      notification_id: load_juggler_restart_pending
+      notification_id: "{{ trigger.json.repository.split('/')[1] | lower }}_restart_pending"
 mode: queued
 ```
 
-Then add the matching secret in Gitea (repository → Settings → Actions →
-Secrets):
+A payload naming a repository the map does not know is ignored, so adding a
+third integration later is one line here and nothing else.
+
+Then add the matching secret in Gitea. Since one webhook now serves every
+repository, put it at USER level (avatar → Settings → Actions → Secrets) so all
+of them read it, and delete any repository-level copy:
 
 | Secret | Value |
 | ------ | ----- |
