@@ -1,6 +1,6 @@
-"""Contract guards for "is this sensor reading usable?" — ISSUES.md #31.
+"""Contract guards for "is this sensor reading usable?" - ISSUES.md #31.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 That question used to be hand-rolled at more than a dozen read sites with five
 different answers, and they drifted: some forgot ``state.state is None``, some
@@ -14,7 +14,7 @@ question of whether a parsed reading can be used as a number.
 The bug that motivated all of it was the grid CTs. ``_read_grid_phases`` coerced
 an unavailable reading to **0 A** and trusted a second, independently
 hand-rolled staleness test downstream to overwrite it. 0 A on a grid phase means
-"the house is importing nothing", i.e. the whole main breaker is free — so any
+"the house is importing nothing", i.e. the whole main breaker is free - so any
 divergence between those two tests, in either direction, silently granted full
 breaker headroom on a blind site. The reader now propagates its sentinel and
 ``_resolve_grid_phases`` is the only thing allowed to substitute a value, which
@@ -35,10 +35,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from standalone_loader import load_pure_modules
 
-load_pure_modules(engine_modules=("hub_calculation",))
+load_pure_modules(
+    engine_modules=("hub_calculation",), control_modules=("smoothing",)
+)
 
 from custom_components.dynamic_ocpp_evse import units
 from custom_components.dynamic_ocpp_evse.const import (
+    CONF_BATTERY_CAPACITY_KWH,
+    CONF_BATTERY_MAX_CHARGE_POWER,
+    CONF_BATTERY_MAX_DISCHARGE_POWER,
+    CONF_BATTERY_SOC_FULL,
     CONF_CLIMATE_ENTITY_ID,
     CONF_CONNECTED_TO_PHASE,
     CONF_HEATING_ELEMENT_POWER,
@@ -76,6 +82,7 @@ from custom_components.dynamic_ocpp_evse.engine.readers import (
     _read_fleet_member,
     _read_grid_phases,
     _resolve_grid_phases,
+    _smooth_directional,
     _track_grid_stale,
 )
 
@@ -86,7 +93,7 @@ BREAKER = 25.0
 
 
 # ---------------------------------------------------------------------------
-# Minimal HA doubles — only ``.state``/``.attributes`` and ``states.get`` are
+# Minimal HA doubles - only ``.state``/``.attributes`` and ``states.get`` are
 # ever touched, which is exactly why units.py stays importable without HA.
 # ---------------------------------------------------------------------------
 class FakeState:
@@ -308,14 +315,14 @@ def test_resolve_holds_the_last_ema_during_a_brief_dropout():
     )
     assert resolved == [7.5, -1.5, None]
     assert stale is True
-    # A held value is an estimate, NOT the breaker fabrication — so it stays
+    # A held value is an estimate, NOT the breaker fabrication - so it stays
     # publishable as a measurement and nothing is flagged.
     assert assumed == (False, False, False)
 
 
 def test_resolve_assumes_the_breaker_on_a_cold_start():
     # Failure mode 2: unavailable from the very first cycle, no EMA history.
-    # Worst case on purpose — a fully loaded phase hands out no headroom, where
+    # Worst case on purpose - a fully loaded phase hands out no headroom, where
     # the old 0 A fallback handed out all of it.
     resolved, stale, assumed = _resolve_grid_phases(
         [_UNAVAILABLE, None, None], {}, BREAKER
@@ -337,7 +344,7 @@ def test_resolve_is_per_phase():
     )
     assert resolved == [9.0, 3.0, BREAKER]
     assert stale is True
-    # Held, read, assumed — the flag distinguishes all three per phase.
+    # Held, read, assumed - the flag distinguishes all three per phase.
     assert assumed == (False, False, True)
 
 
@@ -378,7 +385,7 @@ def test_resolve_flags_a_phase_only_when_it_invented_the_breaker_value():
     """The publisher's signal has to mean exactly one thing.
 
     Flagged if and only if this phase had no usable reading AND no EMA
-    history — i.e. the resolved value is the invented main-breaker worst case,
+    history - i.e. the resolved value is the invented main-breaker worst case,
     which is the one substitute that must not reach the published grid
     measurements. Never flagged for a real reading, for an absent CT, or for a
     held EMA value (a held value is an estimate of what the phase was doing
@@ -406,9 +413,9 @@ def test_resolve_flags_a_phase_only_when_it_invented_the_breaker_value():
 #
 # The same two-substitutes distinction as the grid CTs, one layer along. A
 # configured production sensor that cannot be read resolves to either a HELD
-# EMA value (an estimate of what the array was doing moments ago — publishable)
+# EMA value (an estimate of what the array was doing moments ago - publishable)
 # or an invented 0 W (a fresh start with no history, or the stale guard having
-# given up on it — not publishable). ``solar_assumed`` marks the second case
+# given up on it - not publishable). ``solar_assumed`` marks the second case
 # only, and the calculation goes on using the 0 W either way.
 
 _SOLAR = "sensor.solar"
@@ -479,7 +486,7 @@ def test_a_brief_dropout_holds_its_ema_and_stays_publishable():
 
 def test_the_stale_guard_giving_up_is_an_invented_zero():
     # Past INPUT_STALE_TIMEOUT the guard drops the held value for its 0 W
-    # fallback — deliberately, so a sensor that died at 8 kW cannot feed
+    # fallback - deliberately, so a sensor that died at 8 kW cannot feed
     # phantom production forever. That 0 is a substitute, not a reading, which
     # is what makes a mid-run None reachable for the solar keys.
     measured, assumed = _read_solar(
@@ -499,6 +506,52 @@ def test_no_production_sensor_configured_is_not_a_fabrication():
     assert member.has_solar_entity is False
     assert member.solar_measured is None
     assert member.solar_assumed is False
+
+
+# ---------------------------------------------------------------------------
+# _read_fleet_member: no battery entity means no battery, whatever the options
+# ---------------------------------------------------------------------------
+#
+# The same shape as the solar contract above, one field group along: the
+# inverter form writes its battery defaults into EVERY entry, so the options
+# dict is not evidence of a pack - only the SOC/power entities are. Live
+# (2026-09-03) the 5000 W charge default on a PV-only entry took 53 % of the
+# charge-limit advice and widened the Excess allowance by the same 5 kW. The
+# guard covers all six battery fields rather than only the two that bit, so
+# this test is the whole rule at once: nothing a phantom pack could be summed,
+# weighted or split by survives the read.
+
+
+def test_a_pv_only_entry_hands_the_fleet_no_battery_figures():
+    entry = FakeInverterEntry(
+        {
+            CONF_SOLAR_PRODUCTION_ENTITY_ID: _SOLAR,
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_BATTERY_SOC_FULL: 97,
+            CONF_BATTERY_CAPACITY_KWH: 20,
+        }
+    )
+    member = _read_fleet_member(
+        FakeHass({_SOLAR: FakeState("1800", unit="W")}),
+        entry,
+        {},
+        {},
+        V,
+        legacy=False,
+    )
+    assert member.has_battery is False
+    assert member.solar_measured == 1800.0  # the PV half still reads
+    assert member.charge_cap is None
+    assert member.discharge_cap is None
+    assert member.enforced_charge_limit is None
+    # capacity_total() sums this one UNGATED, and it is the divisor in the
+    # forecast reserve: 20 kWh of phantom pack reserves a fraction of the SOC
+    # band the real pack needs, so the site under-reserves and clips while the
+    # reserve still looks like it is working.
+    assert member.capacity_kwh is None
+    assert member.soc_full is None
+    assert member.soc_target is None
 
 
 # ---------------------------------------------------------------------------
@@ -551,7 +604,7 @@ def test_an_idle_load_with_no_reading_still_publishes_its_zero():
     """The condition that keeps a whole site's figure alive.
 
     An offline OCPP charger takes every one of its sensors with it, which is
-    the common case by far — and for a load the engine booked nothing for that
+    the common case by far - and for a load the engine booked nothing for that
     also reports itself inactive, 0 W is not a guess: our own allocation and
     its own status are facts we hold without any meter.
     """
@@ -617,7 +670,7 @@ def test_a_plug_flags_only_an_unreadable_monitor():
 
 
 def test_a_plug_with_no_monitor_configured_is_not_flagged():
-    # Its draw is its configured rating while switched on — a documented
+    # Its draw is its configured rating while switched on - a documented
     # estimate, not an invented measurement, and unchanged by this fix.
     entry = FakeEntry(
         {
@@ -726,7 +779,7 @@ def test_stale_timer_grows_across_an_unbroken_outage():
     runtime = {}
     assert _track_grid_stale(runtime, True, 1000.0) == 0  # first stale cycle
     assert _track_grid_stale(runtime, True, 1010.0) == 10.0
-    # A brief dropout must NOT trip the escalation — that is the whole point of
+    # A brief dropout must NOT trip the escalation - that is the whole point of
     # holding the EMA rather than falling straight to minimum current.
     assert 10.0 <= GRID_STALE_TIMEOUT
     assert _track_grid_stale(runtime, True, 1010.0) <= GRID_STALE_TIMEOUT
@@ -758,24 +811,24 @@ def test_stale_timer_restarts_after_a_single_healthy_cycle():
 
 # ``units.py`` owns the definition, so it is the one file allowed to name these
 # strings. Everywhere else, a literal "unknown"/"unavailable" in CODE means
-# someone is hand-rolling the question again — which is how five different
+# someone is hand-rolling the question again - which is how five different
 # answers to it grew in the first place.
 #
 # Counts may only go DOWN without editing this table. Exempting whole files is
 # deliberately not offered: that would have exempted hub_calculation.py, which
 # is where the dangerous copy lived.
 _UNAVAILABLE_LITERAL_BUDGET = {
-    # Two display/vocabulary uses, neither an entity state — one per module
+    # Two display/vocabulary uses, neither an entity state - one per module
     # since config_flow became a package (the total is unchanged):
     #   errors["base"] = "unknown" is HA's translation key for "unexpected
     #   exception" in a config flow;
     "config_flow/flow.py": 1,
     #   f"- Status: {status or 'unknown'}" on the load Overview page falls back
     #   for OUR OWN computed charging-status string (hass.data load_status),
-    #   which no sensor ever publishes — the sibling line in the one-line
+    #   which no sensor ever publishes - the sibling line in the one-line
     #   summary spells the same fallback "status unknown".
     "config_flow/pages.py": 1,
-    # A log-line placeholder for a register we could not read back — formatting
+    # A log-line placeholder for a register we could not read back - formatting
     # only, never compared against anything.
     "control/inverter.py": 1,
 }
@@ -806,8 +859,8 @@ def _docstring_node_ids(tree):
 def _unavailable_literals_in_code(path):
     """Every code-level occurrence of a ratcheted state literal, as line numbers.
 
-    Parsed rather than grepped, so comments and docstrings — where these strings
-    legitimately appear all over the place, including in this test's own prose —
+    Parsed rather than grepped, so comments and docstrings - where these strings
+    legitimately appear all over the place, including in this test's own prose -
     cost nothing, and no membership shape can hide from it: ``in (...)``,
     ``not in [...]``, ``== "unavailable"``, a bare ``else "unknown"`` default
     and a dict lookup all reduce to the same string constant in the AST.
@@ -837,7 +890,7 @@ def test_the_unavailable_membership_lives_only_in_units_py():
         if len(hits) > budget:
             over_budget[key] = f"{len(hits)} found on line(s) {hits}, budget {budget}"
     assert not over_budget, (
-        f"hand-rolled unavailable-state handling: {over_budget} — use "
+        f"hand-rolled unavailable-state handling: {over_budget} - use "
         f"units.is_unavailable(state) for a state object, "
         f"units.is_unavailable_state(s) for a status already reduced to a "
         f"string, or units.state_or_unknown(state) for the stand-in when there "
@@ -863,7 +916,7 @@ def test_no_second_definition_of_the_membership_set():
     ]
     assert not offenders, (
         f"{offenders} build their own unavailable-state membership from HA's "
-        f"STATE_* constants — route through units.UNAVAILABLE_STATES instead"
+        f"STATE_* constants - route through units.UNAVAILABLE_STATES instead"
     )
 
 
@@ -887,7 +940,7 @@ def test_grid_phase_reader_does_not_coerce_the_sentinel_away():
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     ]
     assert "_coerce" not in calls, (
-        "_read_grid_phases must propagate _UNAVAILABLE — coercing it to a "
+        "_read_grid_phases must propagate _UNAVAILABLE - coercing it to a "
         "default here reads as 0 A of grid import, i.e. the whole main breaker "
         "free, and leaves the stale holdover with nothing to detect"
     )
@@ -896,6 +949,262 @@ def test_grid_phase_reader_does_not_coerce_the_sentinel_away():
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Directional smoothing - the charge controller's private view of the plant
+# ---------------------------------------------------------------------------
+# ``_smooth_directional`` weights a reading by which way it moves: toward a
+# limit (away from zero) fast, back toward zero slow - or the mirror, for
+# battery power. Everything else is ``_smooth``'s contract. The numbers below
+# use the defaults at the default 2 s cadence, where EMA_TAU_S gives 0.3003 and
+# CTRL_FAST_TAU_S gives 0.8000 - the two weights these were calibrated as. They
+# are not EXACTLY 0.3 and 0.8: both time constants are written to the precision
+# a human can read (5.6 s, 1.2427 s) rather than to the last bit of
+# ``-dt / ln(1 - alpha)``, so the weights they give back are a few parts in ten
+# thousand off the numbers they reproduce. Expectations below carry that where
+# it survives the 2-dp rounding ``_smooth`` applies.
+
+
+def test_directional_is_fast_away_from_zero_and_slow_toward_it():
+    ema = {}
+    assert _smooth_directional(ema, "g", -10.0, fast_away=True) == -10.0  # seeds
+    # Deeper export (away from zero): the fast weight, 80 % of the way.
+    assert math.isclose(_smooth_directional(ema, "g", -20.0, fast_away=True), -18.0, abs_tol=0.01)
+    # Easing back toward zero: the ordinary 0.3.
+    assert math.isclose(_smooth_directional(ema, "g", -10.0, fast_away=True), -15.6, abs_tol=0.01)
+
+
+def test_directional_treats_a_sign_flip_as_away():
+    """Export to import is a move toward the OTHER limit, so it is fast too -
+    an inrush that flips the meter must not wait out a decay from the wrong side."""
+    ema = {}
+    _smooth_directional(ema, "g", -10.0, fast_away=True)
+    assert math.isclose(_smooth_directional(ema, "g", 5.0, fast_away=True), 2.0, abs_tol=0.01)
+
+
+def test_directional_mirror_is_fast_toward_zero_for_battery_power():
+    """Battery power is smoothed in mirror: a permit cut (charging falls, toward
+    zero) is fast, so it moves together with the export rise it causes.
+
+    Two cycles of smoothing, so this is where the time constants' rounding
+    shows: the second value is 0.4 W off the -1160 an exact 0.3 would give,
+    because the first cycle's output is itself rounded before being weighted
+    again. Tolerance widened rather than the figures softened - the point of
+    the assertion is the fast/slow ASYMMETRY, which is 1 200 W wide."""
+    ema = {}
+    _smooth_directional(ema, "b", -2000.0, fast_away=False)
+    assert math.isclose(_smooth_directional(ema, "b", -500.0, fast_away=False), -800.0, abs_tol=0.05)
+    # Charging rising again (away from zero): slow.
+    assert math.isclose(_smooth_directional(ema, "b", -2000.0, fast_away=False), -1160.4, abs_tol=0.05)
+
+
+def test_directional_keeps_the_smoothing_contract():
+    ema = {}
+    assert _smooth_directional(ema, "g", None, fast_away=True) is None       # not configured
+    assert _smooth_directional(ema, "g", _UNAVAILABLE, fast_away=True) is None  # nothing to hold yet
+    _smooth_directional(ema, "g", -4.0, fast_away=True)
+    assert _smooth_directional(ema, "g", _UNAVAILABLE, fast_away=True) == -4.0  # held
+    assert _smooth_directional(ema, "g", "garbage", fast_away=True) == -4.0     # held
+    # Its own key: the symmetric grid_0 state is untouched by the ctrl view.
+    assert "grid_0" not in ema
+
+def test_the_smoothing_time_constant_does_not_depend_on_the_refresh_rate():
+    """A filter's speed must be fixed in SECONDS, not in cycles.
+
+    A weight per CALL means tau = interval / alpha
+    and the filter silently retunes whenever someone changes how often the
+    site refreshes. Measured on the rig (2026-09-08) by changing nothing but
+    the refresh: mean tracking error on a moving surplus went 596 W at a 1 s
+    cadence to 1 164 W at 10 s.
+
+    ``ema_alpha_for`` fixes the behaviour in seconds instead. Asserted as a
+    PROPERTY - feed the same physical ramp at three cadences and the smoothed
+    value after a given number of SECONDS must agree - rather than against a
+    table of weights, which would just restate the formula.
+    """
+    from custom_components.dynamic_ocpp_evse.engine.readers import (
+        ema_alpha_for, set_ema_interval, _smooth,
+    )
+
+    def ramp_for(seconds, dt):
+        """Feed a 0 -> 10 step through the filter for `seconds` at `dt` cadence."""
+        ema = {}
+        set_ema_interval(ema, dt)
+        _smooth(ema, "x", 0.0)               # seed
+        steps = int(round(seconds / dt))
+        for _ in range(steps):
+            out = _smooth(ema, "x", 10.0)
+        return out
+
+    # Cadences at or above the 1 s floor the config flow enforces. A sub-second
+    # dt is no longer a meaningful case: ``ema_alpha_for`` clamps it to 1 s, so
+    # feeding one here would iterate twice as often at the 1 s weight and
+    # over-smooth - a property of the test, not of the filter.
+    settled = [ramp_for(10.0, dt) for dt in (1.0, 2.0, 5.0)]
+    assert max(settled) - min(settled) < 0.3, settled
+    # And it is genuinely most of the way there after ~2 time constants.
+    assert 8.0 < settled[0] < 9.9, settled
+
+    # The historic weight is preserved at the default cadence, so a
+    # default-configured site behaves exactly as it always did.
+    assert abs(ema_alpha_for(2) - 0.3) < 0.005, ema_alpha_for(2)
+
+
+def test_a_slow_refresh_no_longer_means_a_slow_filter():
+    """The case that motivated it. At a 60 s cadence the old per-call weight
+    gave tau = 60/0.3 = 200 s - longer than a cloud takes to pass, so the loop
+    could never track. Time-based, one sample at 60 s covers many time
+    constants and is nearly unfiltered, which is correct: there is nothing
+    between samples that far apart left to smooth."""
+    from custom_components.dynamic_ocpp_evse.engine.readers import ema_alpha_for
+
+    assert ema_alpha_for(60) > 0.99, ema_alpha_for(60)
+    assert ema_alpha_for(10) > 0.8, ema_alpha_for(10)
+    # A cadence FASTER than the time constant smooths more, not less.
+    assert ema_alpha_for(1) < 0.3, ema_alpha_for(1)
+    # A cadence below the smallest the UI can store (1 s, per
+    # config_flow/schemas.py) is clamped to that floor rather than falling back
+    # to a historic weight - 1 s is a real cadence with a real answer, where
+    # the per-cycle 0.3 describes a different filter speed entirely.
+    floor = ema_alpha_for(1)
+    for degenerate in (0, -5, 0.5, None):
+        assert ema_alpha_for(degenerate) == floor, degenerate
+
+
+def test_the_directional_fast_weight_is_its_own_time_constant():
+    """``_smooth_directional``'s fast weight is a filter, so it is set in
+    SECONDS like every other one here.
+
+    It was a fixed 0.8 against a fixed 0.3; when the slow half became
+    time-based the fast half was carried along as a RATIO against it
+    (``alpha * (0.8 / 0.3)``, capped at 1). A ratio is not a filter speed and
+    does not hold one: capped, it pinned at 1.0 from a 3 s cadence upward, so
+    the fast half passed its input straight through while the slow half went on
+    filtering. That is precisely the two-readings-to-converge damping the 0.8
+    was calibrated to get, absent on every site slower than the default. At 1 s
+    the same ratio was too SLOW (0.436 where the real lag gives 0.553).
+
+    Asserted as a property: at each cadence the fast weight must be the one
+    CTRL_FAST_TAU_S implies, and must stay faster than the slow weight, which
+    is the whole point of the pair."""
+    from custom_components.dynamic_ocpp_evse.engine.readers import (
+        _smooth_directional, ema_alpha_for, set_ema_interval,
+    )
+    from custom_components.dynamic_ocpp_evse.const import CTRL_FAST_TAU_S
+
+    for dt in (1, 2, 3, 10):
+        ema = {}
+        set_ema_interval(ema, dt)
+        _smooth_directional(ema, "g", -4.0, fast_away=True)   # seed
+        # A move further from zero takes the fast weight.
+        out = _smooth_directional(ema, "g", -8.0, fast_away=True)
+        expected_fast = ema_alpha_for(dt, CTRL_FAST_TAU_S)
+        assert abs(out - (expected_fast * -8.0 + (1 - expected_fast) * -4.0)) < 0.02, (
+            dt, out
+        )
+        assert expected_fast >= ema_alpha_for(dt), dt
+
+    # The 2 s default still lands on the calibrated 0.8 exactly, which is what
+    # leaves default-configured sites bit-identical through the change.
+    assert abs(ema_alpha_for(2, CTRL_FAST_TAU_S) - 0.8) < 0.001
+
+    # And the 3 s cadence the ratio form could not express is a real filter
+    # again rather than a pass-through.
+    assert ema_alpha_for(3, CTRL_FAST_TAU_S) < 0.95
+
+
+def test_the_permit_filter_smooths_in_seconds_not_in_cycles():
+    """``apply_smoothing``'s EMA weighted per CYCLE, so its time constant was
+    the site interval divided by the weight - 200 s at the 60 s refresh a slow
+    inverter needs. The input filter was fixed first and this one was missed,
+    which left the same hidden coupling on the output side: the readings
+    tracked the sun while the permit crawled.
+
+    Under test is the property, not the arithmetic: the SAME wall-clock span
+    must close the same fraction of the error at any cadence."""
+    from types import SimpleNamespace
+    from custom_components.dynamic_ocpp_evse.control.smoothing import apply_smoothing
+    from custom_components.dynamic_ocpp_evse.const import CONF_SITE_UPDATE_FREQUENCY
+
+    span_s = 10.0
+    closed = {}
+    for dt in (1, 2, 5, 10):
+        entry = SimpleNamespace(options={CONF_SITE_UPDATE_FREQUENCY: dt}, data={})
+        sensor = SimpleNamespace(
+            _attr_name="t", _ema_current=0.0, _schmitt_current=0.0,
+            _schmitt_state="rising", _rate_limited_current=0.0,
+        )
+        # Seed above zero: a rate_limited_current of 0 takes the fast-start
+        # branch, which bypasses the filter entirely and by design.
+        sensor._ema_current = sensor._schmitt_current = 6.0
+        sensor._rate_limited_current = 6.0
+        for _ in range(int(span_s / dt)):
+            apply_smoothing(sensor, 16.0, False, entry)
+        closed[dt] = (sensor._ema_current - 6.0) / 10.0
+
+    # The invariance is EXACT, not approximate: what remains after the span is
+    # (1 - alpha)^n = exp(-n*dt/tau) = exp(-span/tau) whatever dt was, so every
+    # cadence lands on the same figure and only the 2 dp rounding of
+    # ``_ema_current`` separates them.
+    #
+    # Derived from PERMIT_TAU_S rather than written as a number. A bound tuned
+    # to one time constant silently becomes a test OF that constant: this
+    # asserted "> 0.95", which held at 2.0 s and failed the moment the constant
+    # went back to 5.6 - reporting a filter regression where the only thing
+    # that had changed was the tuning it was pinned to.
+    import math
+    from custom_components.dynamic_ocpp_evse.const import PERMIT_TAU_S
+
+    expected = 1.0 - math.exp(-span_s / PERMIT_TAU_S)
+    for dt, frac in closed.items():
+        assert abs(frac - expected) < 0.02, (dt, frac, expected)
+    spread = max(closed.values()) - min(closed.values())
+    assert spread < 0.01, closed
+
+
+def test_the_ramp_closes_the_same_error_in_the_same_seconds_at_any_cadence():
+    """The rate limiter was the last per-CYCLE stage. ``RAMP_APPROACH_RATE *
+    site_freq`` is a fraction per cycle wearing per-second clothes, and the
+    0.9 cap hid it: past a ~6 s interval every site closed 90% of its error
+    per cycle, so a 10 s site ramped with tau ~4.3 s where a 1 s site used
+    ~6.2 s and tracked WORSE for a reason no setting described."""
+    from types import SimpleNamespace
+    from custom_components.dynamic_ocpp_evse.control.smoothing import apply_smoothing
+    from custom_components.dynamic_ocpp_evse.const import CONF_SITE_UPDATE_FREQUENCY
+
+    span_s = 30.0
+    closed = {}
+    for dt in (1, 2, 5, 10):
+        entry = SimpleNamespace(options={CONF_SITE_UPDATE_FREQUENCY: dt}, data={})
+        sensor = SimpleNamespace(
+            _attr_name="t", _ema_current=6.0, _schmitt_current=6.0,
+            _schmitt_state="rising", _rate_limited_current=6.0,
+        )
+        for _ in range(int(span_s / dt)):
+            apply_smoothing(sensor, 16.0, False, entry)
+        closed[dt] = (sensor._rate_limited_current - 6.0) / 10.0
+
+    for dt, frac in closed.items():
+        assert 0.5 < frac <= 1.0, (dt, frac)
+    # Two cascaded lags (EMA then ramp) leave a wider spread than the EMA alone,
+    # because the ramp's floor is a per-second rate the proportional term only
+    # sometimes beats. What must hold is that the ORDERING does not invert: a
+    # slower cadence may not close MORE of the error than a faster one, which
+    # is exactly what the per-cycle version did.
+    assert max(closed.values()) - min(closed.values()) < 0.25, closed
+    assert closed[10] <= closed[1] + 0.05, closed
+
+def test_the_permit_filter_and_the_input_filter_share_one_time_constant():
+    """The two are tuned as a pair, so the conversion is imported rather than
+    restated - a second copy of the formula would let them drift apart with no
+    test to notice."""
+    import inspect
+    from custom_components.dynamic_ocpp_evse.control import smoothing
+
+    src = inspect.getsource(smoothing)
+    assert "ema_alpha_for" in src, "the control EMA must use the shared conversion"
+    assert "EMA_ALPHA" not in src, "a per-cycle weight is back in the permit filter"
+
 if __name__ == "__main__":
     # Deliberately pytest-free: the pure tier has to run on the developer's
     # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
@@ -910,5 +1219,5 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

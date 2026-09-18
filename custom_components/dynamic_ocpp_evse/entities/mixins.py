@@ -44,7 +44,7 @@ SITE_CYCLE_LISTENERS = "site_cycle_listeners"
 # ``load_processors``: that one is keyed by load entry, is walked in entry_id
 # order because two loads must never dispatch OCPP commands concurrently, and
 # every consumer of it reads its members as managed loads. A worker is none of
-# those things — see SiteCycleWorkerMixin for the contract this bucket carries.
+# those things - see SiteCycleWorkerMixin for the contract this bucket carries.
 SITE_CYCLE_WORKERS = "site_cycle_workers"
 
 
@@ -56,14 +56,14 @@ def attach_site_cycle_listeners(hass, hub_entry_id, coordinator) -> None:
     answer both ways a reader can end up unsubscribed:
 
     * **Setup order.** A group, inverter or load entry can have its sensor
-      platform set up before its hub's — so ``hub_coordinators[hub_entry_id]``
+      platform set up before its hub's - so ``hub_coordinators[hub_entry_id]``
       may not exist yet when the entity is added. It registers here anyway and
       the hub's first tick adopts it, mirroring how loads join their hub via
       the ``load_processors`` registry.
     * **Hub reload.** Reloading only the hub entry (the UI's Reload button)
       shuts its coordinator down and builds a new one, while the children's
       entities stay loaded. Rebinding on every tick is what stops them from
-      sitting on a dead subscription — frozen at their last value, and still
+      sitting on a dead subscription - frozen at their last value, and still
       claiming to be available.
 
     Re-binding an entity that is already on this coordinator is a no-op, so the
@@ -102,7 +102,7 @@ class LoadJugglerEntity:
         """The site result this entity's hub last published (``{}`` if none).
 
         Every subclass mixin answers ``_site_hub_entry_id`` from its own entry
-        shape — a hub entity is its own hub, everything else carries the hub's
+        shape - a hub entity is its own hub, everything else carries the hub's
         id in its entry data.
         """
         return (
@@ -116,13 +116,13 @@ class LoadJugglerEntity:
 class SiteFreshnessMixin:
     """Availability keyed on the freshness of this entity's producer.
 
-    A site-cycle reader holds no measurement of its own — it mirrors what the
+    A site-cycle reader holds no measurement of its own - it mirrors what the
     hub's engine last published. So it is available exactly while that
     publication is recent (see entities/freshness.py for the window), and
     unavailable before the first cycle and after the producer stops.
 
     ``_site_hub_entry_id`` and ``_hub_data()`` come from the device mixin
-    (Hub/Load/Group/Inverter via LoadJugglerEntity) — deliberately not
+    (Hub/Load/Group/Inverter via LoadJugglerEntity) - deliberately not
     redefined here, where they would win the MRO over the device's answer.
     """
 
@@ -158,14 +158,14 @@ class SiteFreshnessMixin:
 class SiteCycleConsumerMixin(SiteFreshnessMixin):
     """A pure reader of its hub's site result: pushed, never polled.
 
-    Subclasses implement ``_read_site_data()`` — a synchronous read of
+    Subclasses implement ``_read_site_data()`` - a synchronous read of
     ``hass.data`` into ``_attr_*`` / private fields. This mixin owns everything
     around it: the coordinator subscription, the error containment, and the
     state write.
 
     Polling is off. The hub coordinator refreshes hub_data once per
     ``site_update_frequency``; a platform scan on its own 10 s clock could only
-    re-read the same dict at the wrong moments — late for a fast site, and
+    re-read the same dict at the wrong moments - late for a fast site, and
     pointlessly often for a slow one.
     """
 
@@ -208,7 +208,7 @@ class SiteCycleConsumerMixin(SiteFreshnessMixin):
             self.bind_site_cycle_coordinator(coordinator)
 
         # Read once now, before HA publishes this entity's first state. Entities
-        # are added asynchronously, so a cycle may already have run — without
+        # are added asynchronously, so a cycle may already have run - without
         # this, a site on a 60 s cadence would show every reader as unavailable
         # for up to a minute after a restart, waiting for a push.
         self._refresh_from_site_data()
@@ -259,21 +259,21 @@ class SiteCycleWorkerMixin:
 
     The async counterpart of :class:`SiteCycleConsumerMixin`. A reader can ride
     a coordinator listener because re-reading a dict is synchronous. An entity
-    whose work is an *await* — a Modbus register write, a service call — cannot:
+    whose work is an *await* - a Modbus register write, a service call - cannot:
     a listener is a plain callback, so it could only spawn a task per tick and
     then let those tasks race each other on a slow write.
 
     Such an entity therefore joins the cycle the way a load does
     (``entities/load.py``): it registers itself in a bucket that the hub
-    coordinator walks from inside its own async body. Registration — not a
-    coordinator reference — is the whole link, so a worker whose entry is set up
+    coordinator walks from inside its own async body. Registration - not a
+    coordinator reference - is the whole link, so a worker whose entry is set up
     before its hub's is simply picked up by the next tick, and the entry is
     released with the entity.
 
     What the coordinator guarantees (``sensor.py: async_run_hub_cycle``):
 
     * a worker is awaited **after** ``publish_hub_data``, and is handed the
-      published result — the same dict this hub's readers see, so a worker can
+      published result - the same dict this hub's readers see, so a worker can
       never act on a different cycle than the sensors reporting it;
     * the workers of one hub are awaited **sequentially**, so nothing here can
       overlap with itself or with another worker. This is what replaces the
@@ -321,7 +321,7 @@ class SiteCycleWorkerMixin:
             )
         # Polling is off and there is no coordinator listener, so this is the one
         # place this entity's state reaches HA. Skipped before HA has registered
-        # it — a hub tick can precede the entity being added.
+        # it - a hub tick can precede the entity being added.
         if self.hass is not None and self.entity_id:
             self.async_write_ha_state()
 
@@ -333,7 +333,7 @@ class SiteCycleWorkerMixin:
 def _apply_restored_number(entity, last_state):
     """Set ``entity._attr_native_value`` from ``last_state``, clamped to range.
 
-    A restored state is just the last value HA saw — it predates any change to
+    A restored state is just the last value HA saw - it predates any change to
     the entity's bounds. Reconfiguring a load's min/max, or shipping a new
     default range, otherwise brings the slider back outside its own
     native_min/native_max: HA renders it out of range and every consumer
@@ -354,7 +354,7 @@ def _apply_restored_number(entity, last_state):
     clamped = min(max(value, low), high)
     if clamped != value:
         _LOGGER.info(
-            "%s: restored value %s is outside the current %s–%s range — clamped to %s",
+            "%s: restored value %s is outside the current %s–%s range - clamped to %s",
             entity._attr_name, value, low, high, clamped,
         )
     entity._attr_native_value = clamped
@@ -518,7 +518,7 @@ class InverterEntityMixin(LoadJugglerEntity):
         The same idea as ``LoadEntityMixin._hub_entry``, resolved from the config
         entries rather than from the hub's runtime bucket: an inverter's write
         controls need site-level settings (the Excess trigger margin that bounds
-        their slew), and config is config — a hub mid-reload must not read as a
+        their slew), and config is config - a hub mid-reload must not read as a
         site with no settings.
         """
         hub_entry_id = self._site_hub_entry_id
@@ -538,7 +538,7 @@ class InverterEntityMixin(LoadJugglerEntity):
         """This inverter's section of a given published site result.
 
         Split out from ``_my_inverter_data`` for the site-cycle worker, which is
-        handed the published dict rather than fetching it — same extraction, so
+        handed the published dict rather than fetching it - same extraction, so
         a worker and the sensors beside it cannot read the fleet aggregate two
         different ways.
         """

@@ -47,7 +47,7 @@ scenarios:
         # 17.4 A) offered the full inverter rating and charged at ~16 A on a
         # site whose inverter was already saturated.
         # (A binary battery-backed plug would NOT be gated here: above-target
-        # plugs are SOC-gated by design and the grid tops up — see ISSUES.md.)
+        # plugs are SOC-gated by design and the grid tops up - see ISSUES.md.)
         allocated: 0.0
 
   - name: "symmetric-phase-household-caps-solar-only-evse"

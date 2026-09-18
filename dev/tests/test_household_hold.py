@@ -1,6 +1,6 @@
-"""Unit tests for the asymmetric household floor hold — calculations/utils.py.
+"""Unit tests for the asymmetric household floor hold - calculations/utils.py.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 The bug behind these (ISSUES.md #12): per-phase household is derived as
 inverter_output − managed draws. The draw side (OCPP, sub-second) rises the
@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Module loading — shared stub loader (avoids the HA-importing package root)
+# Module loading - shared stub loader (avoids the HA-importing package root)
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from standalone_loader import load_pure_modules
@@ -102,11 +102,11 @@ def test_partial_fall_above_the_floor_is_taken_as_measured():
 
 
 # ---------------------------------------------------------------------------
-# None handling — both directions
+# None handling - both directions
 # ---------------------------------------------------------------------------
 
 def test_none_phase_in_new_stays_none():
-    """None means the phase does not exist on this site — a held value from a
+    """None means the phase does not exist on this site - a held value from a
     previous cycle must not invent it."""
     out = hold_per_phase_floor(
         PhaseValues(4.0, None, None), PhaseValues(4.0, 7.0, 7.0), _decay(2.0)
@@ -129,7 +129,7 @@ def test_no_held_state_returns_the_new_reading_object():
 
 
 def test_new_none_yields_none():
-    """No inverter output data — nothing to hold (the engine also clears the
+    """No inverter output data - nothing to hold (the engine also clears the
     held state in this case so it cannot resurrect later)."""
     assert hold_per_phase_floor(None, PhaseValues(4.0, 4.0, 4.0), _decay(2.0)) is None
 
@@ -215,5 +215,5 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

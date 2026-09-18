@@ -31,9 +31,17 @@ from custom_components.dynamic_ocpp_evse.calculations.utils import (
     compute_household_per_phase,
     grid_without_managed_draws,
 )
-from custom_components.dynamic_ocpp_evse.const.modes import resolve_operating_mode, behavior_for
+from custom_components.dynamic_ocpp_evse.const.modes import (
+    resolve_operating_mode,
+    behavior_for,
+    BEHAVIOR_EXCESS,
+    BEHAVIOR_BINARY_EXCESS,
+)
 from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
+    DEFAULT_TANK_AWAY_TEMPERATURE,
+    TANK_MODE_FREEZE_PROTECTION,
     resolve_tank_mode_priority,
+    tank_boost_is_opportunistic,
     DEFAULT_TANK_NORMAL_TEMPERATURE,
 )
 from custom_components.dynamic_ocpp_evse.const import DEFAULT_BATTERY_SOC_FULL, DEFAULT_PLUG_MAX_CURRENT
@@ -59,12 +67,12 @@ RAMP_UP_PER_CYCLE = 1.5   # 0.1 A/s * 15s
 RAMP_DOWN_PER_CYCLE = 3.0  # 0.2 A/s * 15s
 
 # EVSE draw-settle detection: the measured draw counts as "settled" once it
-# has held within SETTLE_TOLERANCE for SETTLE_CYCLES consecutive cycles — the
+# has held within SETTLE_TOLERANCE for SETTLE_CYCLES consecutive cycles - the
 # car has reached a ceiling rather than still tracking a ramping permit.
 SETTLE_TOLERANCE = 0.5  # A
 SETTLE_CYCLES = 3
-# An EVSE only counts as settled-and-under-drawing — the case the footprint
-# model frees to lower-priority loads — when its measured draw is also
+# An EVSE only counts as settled-and-under-drawing - the case the footprint
+# model frees to lower-priority loads - when its measured draw is also
 # measurably below the permit we offered it last cycle. A car at util ≈ 1.0
 # draws what it is offered; treating that as "capped" would let the engine
 # repeatedly over-allocate and oscillate.
@@ -79,7 +87,7 @@ def scale_site_values(site, t):
     """Scale dynamic site values by factor t (0.0 to 1.0) for cold-start ramp-up.
 
     Scales household consumption and solar_production_total.
-    Export is NOT scaled — it's computed from scratch each cycle by the CT sim.
+    Export is NOT scaled - it's computed from scratch each cycle by the CT sim.
     Preserves None for non-existent phases.  Config values (voltage, breaker
     rating, battery SOC, etc.) are NOT scaled.
     """
@@ -117,8 +125,13 @@ def set_load_phase_currents(load, commanded_limit):
     """Set load l1/l2/l3_current from commanded limit based on phase mapping.
 
     Uses the load's L1/L2/L3 → site phase mapping (l1_phase, l2_phase, l3_phase)
-    to determine which OCPP phases are active. L1 is always used; L2/L3 depend on
-    the load's active_phases_mask containing the corresponding site phases.
+    to determine which OCPP phases are active, bounded by how many legs the load
+    actually HAS: a 1-phase load energises L1 only, whatever its l2/l3 mapping
+    says. That bound matters because ``l2_phase`` defaults to "B" and
+    ``l3_phase`` to "C" when a scenario does not name them, so a 1-phase load
+    declared on phase B used to match on L2 as well and have its simulated draw
+    DOUBLED onto that phase - the CT readings for every such load were wrong,
+    and the physical-invariant check is what surfaced it (2026-09-07).
     """
     load.l1_current = 0
     load.l2_current = 0
@@ -126,13 +139,14 @@ def set_load_phase_currents(load, commanded_limit):
     if commanded_limit <= 0:
         return
     mask = (load.active_phases_mask or "").upper()
-    # L1 is always active if its mapped site phase is in the mask
-    if load.l1_phase in mask:
-        load.l1_current = commanded_limit
-    if load.l2_phase in mask:
-        load.l2_current = commanded_limit
-    if load.l3_phase in mask:
-        load.l3_current = commanded_limit
+    legs = [(load.l1_phase, "l1_current")]
+    if (load.phases or 1) >= 2:
+        legs.append((load.l2_phase, "l2_current"))
+    if (load.phases or 1) >= 3:
+        legs.append((load.l3_phase, "l3_current"))
+    for phase, attr in legs:
+        if phase in mask:
+            setattr(load, attr, commanded_limit)
 
 
 def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
@@ -175,7 +189,7 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
             max_discharge = (site.battery_max_discharge_power or 0) / site.voltage
             # Inverter output cap: battery discharge goes through the inverter.
             # If solar already uses all inverter capacity, battery can't discharge.
-            # Off-grid the battery covers the whole deficit regardless — the
+            # Off-grid the battery covers the whole deficit regardless - the
             # inverter physically overloads past its rating (observed in the
             # field), which is exactly the state the engine must correct.
             if site.inverter_max_power and not site.is_off_grid:
@@ -204,7 +218,7 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     site.consumption = PhaseValues(ct_a_cons, ct_b_cons, ct_c_cons)
     site.export_current = PhaseValues(ct_a_exp, ct_b_exp, ct_c_exp)
 
-    # Off-grid: there are no grid CTs — production injects 0 A for phases that
+    # Off-grid: there are no grid CTs - production injects 0 A for phases that
     # have inverter output sensors, so the engine always sees zero grid flow.
     if site.is_off_grid:
         def _zero(h):
@@ -240,11 +254,11 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
 
 
 def simulate_inverter_output(site):
-    """Fleet AC output in watts — the sim's stand-in for output_power_total().
+    """Fleet AC output in watts - the sim's stand-in for output_power_total().
 
     Mirrors engine/fleet.py's two tiers: the measured per-phase output when the
     scenario models output sensors, else the topology-aware estimate (solar plus
-    the battery term — signed in series, discharge-only in parallel).
+    the battery term - signed in series, discharge-only in parallel).
 
     Called BEFORE apply_feedback_adjustment() for the same reason production
     reads it before its feedback loop: afterwards the derived solar contains the
@@ -279,7 +293,7 @@ def apply_feedback_adjustment(site):
     total_l3 = total_phase_c
 
     # Off-grid: the grid readings are synthetic zeros that never contained the
-    # load draws — production's _apply_feedback_loop returns early without
+    # load draws - production's _apply_feedback_loop returns early without
     # adjusting them (subtracting would fabricate export).
     if not site.is_off_grid and (total_l1 > 0 or total_l2 > 0 or total_l3 > 0):
         # Same pure helper production's _apply_feedback_loop calls.
@@ -290,10 +304,10 @@ def apply_feedback_adjustment(site):
         )
 
     # Derived mode: recalculate solar_production_total from adjusted export.
-    # Battery charging absorbs solar power invisible to grid CT — add it back.
+    # Battery charging absorbs solar power invisible to grid CT - add it back.
     if site.solar_is_derived:
         if site.is_off_grid and site.inverter_output_per_phase is not None:
-            # Off-grid: export is always 0 — production's _derive_solar_production
+            # Off-grid: export is always 0 - production's _derive_solar_production
             # uses the inverter output instead.
             # Series: inverter_output = solar + battery_power → solar = output − battery.
             # Parallel: inverter output IS solar.
@@ -351,7 +365,7 @@ def load_scenarios(yaml_file):
     return data['scenarios']
 
 
-def build_site_from_scenario(scenario):
+def build_site_from_scenario(scenario, excess_on=False):
     """Build SiteContext from scenario dict.
 
     YAML values represent physical reality:
@@ -361,6 +375,12 @@ def build_site_from_scenario(scenario):
 
     The simulation loop converts these to grid CT values before feeding
     to the engine, matching the production data flow.
+
+    ``excess_on`` is LAST cycle's Excess verdict, and a tank needs it: the
+    control layer writes the tank's setpoint from that verdict, and the builder
+    reads the resulting label back one cycle stale to decide whether the tank
+    is boosting. Without it every tank here was must-run and the boost path -
+    the whole reason a tank competes as an Excess load - was unreachable.
     """
     site_data = scenario['site']
     voltage = site_data.get('voltage', 230)
@@ -371,7 +391,7 @@ def build_site_from_scenario(scenario):
     phase_b_cons = site_data.get('phase_b_consumption')
     phase_c_cons = site_data.get('phase_c_consumption')
 
-    # Export starts at zero — will be computed by CT simulation in the loop
+    # Export starts at zero - will be computed by CT simulation in the loop
     phase_a_export = 0.0 if phase_a_cons is not None else None
     phase_b_export = 0.0 if phase_b_cons is not None else None
     phase_c_export = 0.0 if phase_c_cons is not None else None
@@ -437,7 +457,7 @@ def build_site_from_scenario(scenario):
             equiv_current = round(power_rating / (voltage * phases), 1)
             min_current = equiv_current
             max_current = equiv_current
-            # Plug hardware rating (A) — the cap for available_current,
+            # Plug hardware rating (A) - the cap for available_current,
             # separate from the set-power slider.
             rated_current = load_data.get("plug_max_current", DEFAULT_PLUG_MAX_CURRENT)
         elif device_type == "hot_water_tank":
@@ -468,14 +488,42 @@ def build_site_from_scenario(scenario):
         # is bumped to the Normal urgency tier (behavior unchanged). Mirrors the
         # production builder in engine/hub_calculation.py.
         mode_priority = _mode.priority
+        mode_behavior = behavior_for(_mode)
         if device_type == "hot_water_tank":
+            # The setpoint label, as control/hot_water_tank.py resolves it:
+            # Freeze Protection and Normal both ride surplus up to the boost
+            # setpoint, and every other mode keeps its own.
+            current_temp = load_data.get("current_temperature")
+            normal_temp = load_data.get(
+                "normal_temperature", DEFAULT_TANK_NORMAL_TEMPERATURE
+            )
+            away_temp = load_data.get("away_temperature", DEFAULT_TANK_AWAY_TEMPERATURE)
+            setpoint_label = None
+            if _mode.key in (TANK_MODE_FREEZE_PROTECTION.key, "Normal"):
+                setpoint_label = "boost" if excess_on else (
+                    "away" if _mode.key == TANK_MODE_FREEZE_PROTECTION.key else "normal"
+                )
             mode_priority, _ = resolve_tank_mode_priority(
                 _mode.key,
                 _mode.priority,
-                load_data.get("current_temperature"),
-                load_data.get("normal_temperature", DEFAULT_TANK_NORMAL_TEMPERATURE),
+                current_temp,
+                normal_temp,
                 load_data.get("prioritize_below_normal", True),
+                setpoint_label,
             )
+            # ...and the behavior from the same label, mirroring
+            # engine/load_builders.py: a tank heating past what its mode asks
+            # for, on energy the site would otherwise dump, is opportunistic
+            # and competes as an Excess load. Below its mode's own floor it
+            # stays unconditional - that guard is what keeps frost protection
+            # from ever being gated.
+            if tank_boost_is_opportunistic(
+                _mode.key,
+                setpoint_label,
+                current_temp,
+                away_temp if _mode.key == TANK_MODE_FREEZE_PROTECTION.key else normal_temp,
+            ):
+                mode_behavior = BEHAVIOR_BINARY_EXCESS
 
         load = LoadContext(
             load_id=f"load_{idx}",
@@ -486,7 +534,7 @@ def build_site_from_scenario(scenario):
             priority=load_data.get("priority", idx),
             device_type=device_type,
             operating_mode=_mode.key,
-            mode_behavior=behavior_for(_mode),
+            mode_behavior=mode_behavior,
             mode_priority=mode_priority,
             l1_phase=load_data.get("l1_phase", "A"),
             l2_phase=load_data.get("l2_phase", "B"),
@@ -497,6 +545,10 @@ def build_site_from_scenario(scenario):
             l2_current=load_data.get("l2_current", 0),
             l3_current=load_data.get("l3_current", 0),
             unmetered=load_data.get("unmetered", False),
+            # A scenario can hand a load back to the user, as the Dynamic
+            # Control switch does: its draw becomes household and it competes
+            # for nothing.
+            dynamic_control=load_data.get("dynamic_control", True),
             rated_current=rated_current,
         )
         site.loads.append(load)
@@ -648,7 +700,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
 
     Cycles 0-4:   Site values ramp from 0 to target (cold start).
     Cycles 5-24:  Warmup with ramp rate limiting on load output.
-    Cycles 25-29: Stability check — engine targets and commanded limits
+    Cycles 25-29: Stability check - engine targets and commanded limits
                   must converge.
 
     Returns (passed, errors, history).
@@ -662,6 +714,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
     # Excess latch state, the hub_runtime["_excess_on"] equivalent: the widened
     # release band only applies while Excess was already engaged last cycle.
     excess_on = False
+    invariant_breaches = set()  # physical guards, deduplicated across cycles
 
     # Per-load draw-settle tracking: last measured draw and the count of
     # consecutive cycles it has held steady. Mirrors the HA layer's per-load
@@ -675,7 +728,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
     # switched on but idle. Models a car taking less than offered, or an
     # appliance behind a plug drawing nothing.
     #
-    # draw_cap (optional, Amps): hard ceiling on the simulated draw — models a
+    # draw_cap (optional, Amps): hard ceiling on the simulated draw - models a
     # car whose battery limits how much it can take regardless of what we
     # offer (e.g. a 16 A car on a 32 A EVSE). measured = min(commanded × util,
     # draw_cap). Defaults to no cap.
@@ -688,18 +741,24 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
 
     for cycle in range(TOTAL_CYCLES):
         # 1. Build site from YAML (household consumption, solar production, battery)
-        site = build_site_from_scenario(scenario)
+        # Last cycle's verdict, so a tank's boost setpoint (and therefore its
+        # behavior) is resolved the way the control layer does it.
+        site = build_site_from_scenario(scenario, excess_on=excess_on)
 
         # 2. Scale household + solar for cold-start ramp-up (cycles 0-4)
         if cycle < RAMP_UP_CYCLES:
             t = (cycle + 1) / RAMP_UP_CYCLES
             scale_site_values(site, t)
 
-        # Save household consumption before CT simulation overwrites it
+        # Save household consumption before CT simulation overwrites it, and
+        # the PHYSICAL solar total before the feedback loop re-derives it - the
+        # invariant check below needs the site as the sky made it, not as the
+        # engine reconstructed it.
         household = PhaseValues(site.consumption.a, site.consumption.b, site.consumption.c)
+        physical_solar_w = site.solar_production_total
 
         # 3. Set load l1/l2/l3_current from previous commanded limits,
-        #    scaled by utilization — the device may draw less than its permit.
+        #    scaled by utilization - the device may draw less than its permit.
         #    Then update draw-settle tracking: a draw that has held steady for
         #    SETTLE_CYCLES is trusted as the EVSE's real footprint.
         for load in site.loads:
@@ -749,7 +808,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         apply_feedback_adjustment(site)
 
         # 6. Excess trigger + hysteresis latch (replicates the same block in
-        #    engine/hub_calculation.py — the calculator itself is stateless and
+        #    engine/hub_calculation.py - the calculator itself is stateless and
         #    just reads site.excess_hysteresis). Scenarios that leave
         #    `excess_hysteresis` unset get 0 and the latch is a no-op.
         hysteresis = scenario['site'].get('excess_hysteresis', 0)
@@ -760,14 +819,24 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         # 7. Run calculation engine
         calculate_all_load_targets(site)
 
-        # Remember this cycle's permit per load — the next cycle's settle
+        # 7b. Physical invariants - every scenario, every settled cycle. Only
+        #     past the ramp-up: cycles 0-4 scale household and solar toward
+        #     their real values, so the site is deliberately not yet the site
+        #     the scenario describes and a transient breach there says nothing.
+        #     The convergence the harness already tests is what makes the
+        #     settled cycles the right place to assert physics.
+        if cycle >= RAMP_UP_CYCLES:
+            for breach in check_physical_invariants(site, household, physical_solar_w):
+                invariant_breaches.add(f"cycle {cycle}: {breach}")
+
+        # Remember this cycle's permit per load - the next cycle's settle
         # check uses it to tell "car capped below offer" from "car at offer".
         for c in site.loads:
             last_permit[c.entity_id] = c.available_current
 
         # 8. Set each load's commanded value for the next cycle.
         #    EVSE: ramp-limited toward the permit (available_current).
-        #    Plug/tank: binary — its set power when the engine powers it
+        #    Plug/tank: binary - its set power when the engine powers it
         #    (permit > 0), else 0; no ramp.
         for load in site.loads:
             if load.device_type == "plug":
@@ -831,7 +900,117 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         passed = False
         errors.append(f"Stability check failed: {stability_msg}")
 
+    # --- Physical invariants: no scenario may breach them, whatever it tests ---
+    #
+    # A scenario may declare `known_invariant_breaches:` - a list of substrings,
+    # each with the reason in its own comment. The bookkeeping is two-way on
+    # purpose: an unlisted breach FAILS (so a new one cannot hide behind an old
+    # one), and a listed substring that no longer occurs also FAILS (so the
+    # exemption is deleted when the bug is fixed, instead of quietly outliving
+    # it).
+    known = scenario.get("known_invariant_breaches") or []
+    unmatched = [
+        b for b in sorted(invariant_breaches)
+        if not any(k in b for k in known)
+    ]
+    stale = [k for k in known if not any(k in b for b in invariant_breaches)]
+    if unmatched:
+        passed = False
+        for breach in unmatched:
+            errors.append(f"Physical invariant: {breach}")
+    if stale:
+        passed = False
+        for k in stale:
+            errors.append(
+                f"known_invariant_breaches lists '{k}' but nothing breached it "
+                "- fixed? delete the entry"
+            )
+
     return passed, errors, history
+
+
+# Slack on the invariant checks below: float noise in the CT simulation, plus
+# the register quantisation a real device applies. Well under the smallest
+# decision the engine makes.
+INVARIANT_TOLERANCE = 0.05  # A
+
+
+def check_physical_invariants(site, household, physical_solar_w):
+    """Physical guards on what the engine just decided - run on EVERY scenario.
+
+    The scenarios' own ``expected`` blocks say what each site should allocate.
+    These say what NO site may ever do, whatever it was written to test, and
+    they are the half that catches a bug nobody thought to write a scenario
+    for. Both are stated against the physical inputs the CT simulation was
+    built from (household, solar, battery), not against the engine's own view
+    of them - checking the engine against its own reconstruction would only
+    prove it is self-consistent, which every bug in this class already was.
+
+    **A - the breaker.** With the permits just issued actually drawn, no phase
+    may exceed ``main_breaker_rating``.
+
+    **B - a modulating Excess load may never cause import.** Recompute the
+    site's position with those loads' permits removed: if removing them turns
+    import into less import, the engine sized them on surplus that was not
+    there. Restricted to ``BEHAVIOR_EXCESS`` on purpose - it is the one
+    behaviour the engine SIZES against a surplus pool, so it has no excuse.
+    Binary Excess loads are exempt by decision (Anže, 2026-09-07: a 2 kW
+    element on a smaller surplus still boosts, because the overshoot costs
+    export), and Solar Priority is exempt because it deliberately runs on a
+    grid-backed minimum below the SOC target.
+
+    Returns a list of violation strings; empty means legal.
+    """
+    saved = [(c, c.l1_current, c.l2_current, c.l3_current) for c in site.loads]
+    # The feedback loop re-derives solar_production_total on a derived-solar
+    # site, so the value on `site` by now already has the loads' draws folded
+    # in. Feeding that back into the CT simulation would count them twice and
+    # report an import the site never had - restore the physical figure for the
+    # duration of the check. (Missing this was worth ~2 A on a 460 W site.)
+    saved_solar = site.solar_production_total
+    site.solar_production_total = physical_solar_w
+
+    def _phase_draws():
+        a = b = c = 0.0
+        for load in site.loads:
+            pa, pb, pc = load.get_site_phase_draw()
+            a += pa
+            b += pb
+            c += pc
+        return a, b, c
+
+    try:
+        for load in site.loads:
+            # ALLOCATED, not available: the permit is a per-load ceiling and two
+            # loads sharing a phase are each offered more than the phase can
+            # give them together. The allocation is the engine's actual
+            # decision, and the only figure physics has to honour.
+            set_load_phase_currents(load, load.allocated_current)
+        with_all = simulate_grid_ct(site, household, *_phase_draws())[:3]
+        for load in site.loads:
+            if load.mode_behavior == BEHAVIOR_EXCESS:
+                set_load_phase_currents(load, 0)
+        without_excess = simulate_grid_ct(site, household, *_phase_draws())[:3]
+    finally:
+        for load, l1, l2, l3 in saved:
+            load.l1_current, load.l2_current, load.l3_current = l1, l2, l3
+        site.solar_production_total = saved_solar
+
+    violations = []
+    breaker = site.main_breaker_rating or 0
+    for label, net, bare in zip("ABC", with_all, without_excess):
+        if net is None:
+            continue
+        if breaker and net > breaker + INVARIANT_TOLERANCE:
+            violations.append(
+                f"phase {label}: {net:.2f} A drawn against a {breaker:.0f} A breaker"
+            )
+        extra = max(0.0, net) - max(0.0, bare or 0.0)
+        if extra > INVARIANT_TOLERANCE:
+            violations.append(
+                f"phase {label}: modulating Excess loads add {extra:.2f} A of import"
+            )
+    return violations
 
 
 def validate_results(scenario, site):

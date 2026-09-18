@@ -1,4 +1,4 @@
-"""Entity-read handling — the one place that knows A/mA/W/kW/V/mV, and the one
+"""Entity-read handling - the one place that knows A/mA/W/kW/V/mV, and the one
 place that decides whether a reading is usable at all.
 
 Every physical value Load Juggler reads comes from someone else's integration,
@@ -10,7 +10,7 @@ so the conversion has to be right at every read site.
 It used to be spread out: the old ``_read_entity(unit="A")`` contract said
 "W → A conversion requires voltage - caller must handle this", and each reader
 reimplemented it. The grid-phase reader never did, so a 1300 W meter reading
-was treated as 1300 A and multiplied by voltage again — 300 kW of phantom grid
+was treated as 1300 A and multiplied by voltage again - 300 kW of phantom grid
 power. Hence one module, pure functions, and an exhaustive test matrix.
 
 ``ENTITY_UNIT_CONTRACTS`` below is the declaration the config flow validates
@@ -21,7 +21,7 @@ some converter here can actually turn into that field's canonical domain.
 converters are: "is this sensor reading usable?" used to be hand-rolled at a
 dozen read sites with five different answers, and the safety-relevant one
 (the grid CTs) had the loosest. The module stays importable without Home
-Assistant — state objects are duck-typed, only ``.state`` is touched — so the
+Assistant - state objects are duck-typed, only ``.state`` is touched - so the
 pure test tier can hold these to their contract.
 """
 
@@ -50,7 +50,7 @@ POWER_UNITS = frozenset({"W", "kW"})
 VOLTAGE_UNITS = frozenset({"V", "mV"})
 SOC_UNITS = frozenset({"%"})
 
-# Canonical domains — what the engine wants a value in, whatever it arrived as.
+# Canonical domains - what the engine wants a value in, whatever it arrived as.
 DOMAIN_AMPS = "A"
 DOMAIN_WATTS = "W"
 DOMAIN_VOLTS = "V"
@@ -81,7 +81,7 @@ ENTITY_UNIT_CONTRACTS: dict[str, tuple[frozenset, str]] = {
 # This is the UNION of every variant that used to be hand-rolled at the read
 # sites: Home Assistant's own "unavailable"/"unknown", plus the empty string
 # and a None state (a restored State, or one from an integration that never
-# wrote a value, carries either). The strictest reading wins deliberately —
+# wrote a value, carries either). The strictest reading wins deliberately -
 # each looser site was a bug by this one's standard, and the two that mattered
 # most read a hard 0 A off a state this set rejects.
 #
@@ -96,7 +96,7 @@ def is_unavailable_state(value) -> bool:
     The string form exists because some statuses outlive the State object they
     came from: an OCPP connector status travels into the pure engine as a plain
     string on ``LoadContext.connector_status`` and is compared again in
-    ``control/``. Same membership as :func:`is_unavailable` — one definition,
+    ``control/``. Same membership as :func:`is_unavailable` - one definition,
     two front doors.
     """
     return value in UNAVAILABLE_STATES
@@ -105,7 +105,7 @@ def is_unavailable_state(value) -> bool:
 def state_or_unknown(state) -> str:
     """The state string, or a stand-in that reads as unavailable.
 
-    For the sites that carry a status ONWARD as a plain string — a log line, a
+    For the sites that carry a status ONWARD as a plain string - a log line, a
     ``LoadContext.connector_status`` the pure engine will compare later. They
     must not invent a readable status for a sensor that has none, and they must
     not hand ``None`` to code expecting a string, so they get the same
@@ -128,7 +128,7 @@ def is_unavailable(state) -> bool:
     ``state`` is duck-typed (only ``.state`` is read), so this stays HA-free.
 
     Deliberately says nothing about whether the reading is a NUMBER: plenty of
-    inputs are legitimately non-numeric — an OCPP connector status, a switch's
+    inputs are legitimately non-numeric - an OCPP connector status, a switch's
     on/off, a climate hvac_action. :func:`is_unusable_number` answers that
     question instead, one step later, after the parse and conversion.
     """
@@ -143,7 +143,7 @@ def is_unusable_number(value) -> bool:
     Two ways that happens: it is not a number at all (None, an unavailable
     sentinel, a leftover state string), or it is non-finite. NaN/Inf deserve
     their own check because ``float("nan")`` parses perfectly happily and NaN
-    then poisons every comparison it touches silently — ``nan > limit`` and
+    then poisons every comparison it touches silently - ``nan > limit`` and
     ``nan < limit`` are both False, so a NaN reading passes every safety test
     downstream instead of failing one.
 
@@ -167,13 +167,13 @@ def normalize(unit) -> str:
 def to_amps(value: float, unit, voltage: float = 0.0) -> float:
     """Amps, from amps, milliamps, watts or kilowatts.
 
-    Sign is preserved — on a grid CT it distinguishes import from export.
+    Sign is preserved - on a grid CT it distinguishes import from export.
     An unrecognised (or absent) unit is assumed to be amps already, which is
     what a sensor with no unit_of_measurement almost always is; converting
     would be a guess, and passing it through matches the historical reading.
 
     ``voltage`` <= 0 leaves power values unconverted rather than dividing by
-    zero — the caller's site voltage is missing, not the value.
+    zero - the caller's site voltage is missing, not the value.
     """
     u = normalize(unit)
     if u == "MA":

@@ -1,4 +1,4 @@
-"""Portable power station control — charge speed and backup reserve.
+"""Portable power station control - charge speed and backup reserve.
 
 Two writes per command cycle, and the interesting one is the reserve. The
 station's charge-speed knob has no zero (200 W is its floor), so "stop
@@ -120,7 +120,7 @@ async def send_power_station_command(
         reserve_label,
     )
 
-    # These integrations talk BLE, so writes are cheap but not free — and a
+    # These integrations talk BLE, so writes are cheap but not free - and a
     # value the device would round to what it already has is pure churn. Only
     # write on a change of at least one device step.
     try:

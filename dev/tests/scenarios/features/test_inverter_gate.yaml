@@ -1,7 +1,7 @@
 # Test scenarios: the inverter coverage gate on SOC-gated binary loads
 #
 # ISSUES.md #17. A battery-backed plug in Solar Priority / Solar Only / Excess is
-# switched on by an SOC verdict alone — "there is stored energy". That says
+# switched on by an SOC verdict alone - "there is stored energy". That says
 # nothing about the PATH: while the inverter is already putting out its rated
 # power, the plug's draw cannot come from the battery, so it comes from the grid.
 # _source_limit() now gates those permits on inverter coverage as well:
@@ -12,13 +12,13 @@
 # All three sites below are grid-tied and identical except for the one variable
 # named in each scenario. Saturation is created by a Continuous plug (a must-run
 # managed load) draining the battery through a small inverter at night, so the
-# only thing that can serve the second plug is the grid — exactly the state #17
+# only thing that can serve the second plug is the grid - exactly the state #17
 # reported.
 #
 # Note what the cold-start ramp makes these prove: at cycle 0 no managed load is
 # drawing yet, so the inverter is idle, the gate passes and the gated plug is
-# switched ON. It is only from cycle 1 — once the must-run load's draw has taken
-# the inverter to its rating — that the gate sheds it. These scenarios therefore
+# switched ON. It is only from cycle 1 - once the must-run load's draw has taken
+# the inverter to its rating - that the gate sheds it. These scenarios therefore
 # pin the harder half of the fix: shedding a load that is ALREADY RUNNING, not
 # merely refusing to start one.
 #
@@ -63,7 +63,7 @@ scenarios:
         l1_phase: "A"
     expected:
       must_run:
-        allocated: 12.2   # 2800 W / 230 V — Continuous is never gated
+        allocated: 12.2   # 2800 W / 230 V - Continuous is never gated
       solar_plug:
         # The inverter is at its 3000 W rating carrying household + must-run
         # load, and the site is importing the rest. Shedding this plug frees no
@@ -108,7 +108,7 @@ scenarios:
       must_run:
         allocated: 12.2
       solar_plug:
-        # ~4 kW of battery-sourced output against a 12 kW rating — the inverter
+        # ~4 kW of battery-sourced output against a 12 kW rating - the inverter
         # is nowhere near saturated, so the SOC permit stands as it always did.
         allocated: 4.3   # 1000 W / 230 V
 
@@ -151,7 +151,7 @@ scenarios:
       excess_plug:
         # "The battery cannot absorb any more" is an SOC verdict, so the
         # near-full shortcut is gated like the other two. Denied, it falls
-        # through to the export rule — and a site importing at night exports
+        # through to the export rule - and a site importing at night exports
         # nothing, so there is no flow-derived permit either.
         allocated: 0.0
         available: 0.0

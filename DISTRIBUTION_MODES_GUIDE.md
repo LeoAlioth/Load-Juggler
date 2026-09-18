@@ -1,4 +1,4 @@
-# Load Juggler — Distribution Modes Guide
+# Load Juggler - Distribution Modes Guide
 
 When multiple loads are connected to a single hub, the distribution mode determines how available current is allocated between them. All modes use a two-step approach: first ensure minimums, then distribute the remainder.
 
@@ -164,7 +164,7 @@ Processing:
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | **Load Priority** | Priority for distribution (1-10, lower = higher) | 1 |
-| **Min Current** | Minimum charge rate (A) — load gets this or 0 | 6A |
+| **Min Current** | Minimum charge rate (A) - load gets this or 0 | 6A |
 | **Max Current** | Maximum charge rate (A) | 16A |
 
 ### Key Rules
@@ -174,7 +174,7 @@ Processing:
 - Priority value 1 is highest, 10 is lowest
 - Mode urgency takes precedence over priority number: Standard/Continuous loads are always allocated before Solar Priority, which comes before Solar Only, etc.
 - Only active loads participate in distribution (EVSE must have car plugged in and ready, smart plugs must be connected)
-- Circuit group limits are enforced **after** distribution — they can reduce allocations but never increase them
+- Circuit group limits are enforced **after** distribution - they can reduce allocations but never increase them
 
 ---
 

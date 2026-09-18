@@ -16,8 +16,8 @@ class LoadJugglerHubSensor(SiteCycleConsumerMixin, HubEntityMixin, SensorEntity)
     """Hub-level sensor showing site-wide information.
 
     The hub's own coordinator (sensor.py) runs the site calculation once per
-    site_update_frequency and republishes hub_data — with no loads configured
-    too — and this sensor is a pure reader of that result, pushed by the
+    site_update_frequency and republishes hub_data - with no loads configured
+    too - and this sensor is a pure reader of that result, pushed by the
     coordinator. It never runs the engine itself: a second writer produced a
     differently-shaped hub_data and double-advanced the engine's cycle-counted
     state.
@@ -47,7 +47,7 @@ class LoadJugglerHubSensor(SiteCycleConsumerMixin, HubEntityMixin, SensorEntity)
         Deliberately NOT 0.0 for "no value": 0 W of remaining power is a real
         and alarming reading (the site is at its limit), and reporting it when
         the truth is "nothing has been calculated yet" is a lie that both a
-        dashboard and an automation act on. Unknown says unknown — and the
+        dashboard and an automation act on. Unknown says unknown - and the
         freshness gate on `available` covers the case where the producer has
         stopped rather than never started.
         """
@@ -137,6 +137,19 @@ HUB_SENSOR_DEFINITIONS = [
         "unit": "W",
         "device_class": SensorDeviceClass.POWER,
         "icon": "mdi:solar-power-variant",
+        "decimals": 0,
+    },
+    {
+        # What the site draws that Load Juggler does NOT control - the whole
+        # site less every managed load. The figure has always been computed
+        # and published in hub_data; this exposes it so it can be graphed and
+        # automated on rather than read off the Overview page.
+        "name_suffix": "Household Power",
+        "unique_id_suffix": "household_power",
+        "hub_data_key": "household_power",
+        "unit": "W",
+        "device_class": SensorDeviceClass.POWER,
+        "icon": "mdi:home-lightning-bolt",
         "decimals": 0,
     },
     {
@@ -252,17 +265,17 @@ HUB_SENSOR_DEFINITIONS = [
         "icon": "mdi:ev-station",
         "decimals": 0,
     },
-    # PV clipping forecast — advisory battery headroom. The kWh sensors carry
+    # PV clipping forecast - advisory battery headroom. The kWh sensors carry
     # device_class ENERGY with state_class TOTAL (developer decision,
     # 2026-08-17): HA rejects ENERGY + MEASUREMENT, and TOTAL is the class for
-    # "an amount that can both increase and decrease" — which is exactly what
+    # "an amount that can both increase and decrease" - which is exactly what
     # a remaining-today advisory figure does. TOTAL keeps them out of the
     # energy dashboard's metered pipeline (no last_reset, nothing accumulates).
     #
     # All three describe the NEXT clipping window rather than the calendar day
     # (``select_clipping_window``): the remainder of today while today still
     # clips, and from the evening onward TOMORROW's peak. So these do not fall
-    # to zero at dusk and sit there — they roll over to what the site is about
+    # to zero at dusk and sit there - they roll over to what the site is about
     # to face, which is the figure the overnight SOC reservation is made from.
     # A day with no clip today and none tomorrow reads 0.00 on all three.
     {
@@ -298,8 +311,45 @@ HUB_SENSOR_DEFINITIONS = [
         "decimals": 2,
         "requires_forecast": True,
     },
+    # OBSERVE-ONLY: how much the site ACTUALLY clipped today against what a
+    # 15-minute average predicted it would. 100% means the block average told
+    # the whole truth; above it is the Jensen gap - clipping is convex and
+    # one-sided, so a block average can never overstate it. Measured from the
+    # site's own production samples, no cloud model involved. Nothing acts on
+    # it (see calculations/calibration.py and dev/TODO.md).
+    # The ground truth for the whole clipping feature: what the site ACTUALLY
+    # threw away today, next to what the forecast predicted it would
+    # (Forecast Clippable Energy). Accumulated only while the Excess verdict
+    # holds - export allowance used up AND the battery taking all it can - and
+    # estimated as the forecast's excess over measured production, because
+    # curtailed energy cannot be metered: the inverter never makes it. Bounded
+    # by the forecast's own accuracy, and in the same direction.
+    {
+        "name_suffix": "Clipped Energy Today",
+        "unique_id_suffix": "forecast_clipped_actual",
+        "hub_data_key": "forecast_clipped_actual_kwh",
+        "unit": "kWh",
+        "device_class": SensorDeviceClass.ENERGY,
+        # Rises through the day and resets at local midnight - the state class
+        # HA documents for a daily-resetting energy counter. The advisory
+        # forecast kWh sensors above are TOTAL instead because they rise AND
+        # fall as the remaining day shrinks.
+        "state_class": SensorStateClass.TOTAL_INCREASING,
+        "icon": "mdi:content-cut",
+        "decimals": 2,
+        "requires_forecast": True,
+    },
+    {
+        "name_suffix": "Forecast Peakiness",
+        "unique_id_suffix": "forecast_peakiness",
+        "hub_data_key": "forecast_peakiness_pct",
+        "unit": "%",
+        "icon": "mdi:chart-bell-curve",
+        "decimals": 1,
+        "requires_forecast": True,
+    },
     # The recommended max-SOC and charge-limit sensors live on the inverter
-    # entries (entities/inverter.py) — the advice is per battery, and that is
+    # entries (entities/inverter.py) - the advice is per battery, and that is
     # where the future write-control will act. The fleet values remain in
     # hub_data (forecast_battery_max_soc / forecast_charge_limit_w) for
     # automations.
@@ -320,13 +370,31 @@ _HUB_REPUBLISH_KEYS = frozenset(
     "excess_available",
     "excess_margin_power",
     "inverters",
-    # Unmanaged (household) draw — no hub sensor (yet); read by the Overview
-    # options page and available to automations.
-    "household_power",
-    # Fleet forecast advice — no hub sensor anymore (the per-battery sensors
+    # Fleet forecast advice - no hub sensor anymore (the per-battery sensors
     # live on the inverter entries) but kept in hub_data for automations.
     "forecast_battery_max_soc",
     "forecast_charge_limit_w",
+    # Read by the Overview page (config_flow/pages.py): the raw-basis
+    # reconstructed export, the per-load measured draws and permits, and the
+    # forecast figures that have no hub sensor of their own. Anything the
+    # Overview reads must be listed here or it silently falls back -
+    # test_the_overview_reads_only_republished_keys pins the set.
+    "total_export_power_raw",
+    "load_draw",
+    "load_targets",
+    "load_available",
+    "forecast_window_tomorrow",
+    "forecast_accuracy_pct",
+    "forecast_clipped_actual_yesterday_kwh",
+    # The clamped headroom figure the reserve is actually sized on
+    # (min(absorbable, capacity)) - absorbable_kwh has a hub sensor, this does
+    # not, and the Overview shows this one because the raw rate integral runs
+    # past the pack and is discarded before anything decides with it.
+    "forecast_room_needed_kwh",
+    # The three allocator pools per phase - no hub sensor: seven signed fields
+    # per pool is a debugging structure, not a number to graph. Read by the
+    # Overview page and carried into the diagnostics dump.
+    "pool_detail",
 }
 
 
@@ -358,7 +426,7 @@ class LoadJugglerHubDataSensor(
 
     Every one of these is a numeric reading. W/A/% sensors carry state_class
     MEASUREMENT (the default here); the advisory kWh sensors override it to
-    ENERGY + TOTAL per their definitions — HA rejects ENERGY + MEASUREMENT,
+    ENERGY + TOTAL per their definitions - HA rejects ENERGY + MEASUREMENT,
     and TOTAL is the class for an amount that rises and falls.
     """
 
@@ -371,7 +439,9 @@ class LoadJugglerHubDataSensor(
         )
         self._defn = defn
         self._attr_native_unit_of_measurement = defn["unit"]
-        self._attr_device_class = defn["device_class"]
+        # Optional: a ratio in percent has no fitting HA device class, and
+        # borrowing one (BATTERY, POWER_FACTOR) would mislabel it everywhere.
+        self._attr_device_class = defn.get("device_class")
         self._attr_state_class = defn.get(
             "state_class", SensorStateClass.MEASUREMENT
         )
@@ -382,7 +452,7 @@ class LoadJugglerHubDataSensor(
         """Publish this cycle's figure, or unknown when there isn't one.
 
         A key that arrives as None means the producer ran and reported that it
-        has no measurement — a sensor unreadable with nothing to hold, so the
+        has no measurement - a sensor unreadable with nothing to hold, so the
         engine substituted a safety value internally and refuses to publish it
         (see engine/hub_result.py). Clearing the value is what turns that into
         `unknown`; HOLDING the last one would freeze a stale reading that looks

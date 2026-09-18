@@ -1,5 +1,5 @@
 # Test scenarios: SOC Hysteresis boundary conditions
-# The engine is stateless — it receives pre-adjusted thresholds from the HA layer.
+# The engine is stateless - it receives pre-adjusted thresholds from the HA layer.
 # These tests verify engine behavior at hysteresis-adjusted boundaries.
 #
 # Hysteresis model (target=80%, hysteresis=3%):
@@ -23,7 +23,7 @@ scenarios:
   # ========== SOLAR ONLY: Target SOC boundary (1-phase) ==========
 
   - name: "hyst-solar-only-below-target"
-    description: "SOC 75% clearly below target 80%, not previously above — no charging"
+    description: "SOC 75% clearly below target 80%, not previously above - no charging"
     human_verified: false
     site:
       voltage: 230
@@ -52,7 +52,7 @@ scenarios:
         allocated: 0  # Below target: Solar Only blocked
 
   - name: "hyst-solar-only-at-target-rising"
-    description: "SOC exactly 80% = target, crossing threshold — charges from solar"
+    description: "SOC exactly 80% = target, crossing threshold - charges from solar"
     human_verified: false
     site:
       voltage: 230
@@ -81,7 +81,7 @@ scenarios:
         allocated: 17.0  # At target: solar pool available (20A - 3A consumption = 17A)
 
   - name: "hyst-solar-only-deadband-above"
-    description: "SOC 78% in dead band [77-80], previously above — engine sees effective target=77%, full power"
+    description: "SOC 78% in dead band [77-80], previously above - engine sees effective target=77%, full power"
     human_verified: false
     site:
       voltage: 230
@@ -110,7 +110,7 @@ scenarios:
         allocated: 32.0  # SOC 78% > effective target 77% → solar + battery discharge, capped at max
 
   - name: "hyst-solar-only-deadband-below"
-    description: "SOC 78% in dead band [77-80], NOT previously above — engine sees target=80%, blocked"
+    description: "SOC 78% in dead band [77-80], NOT previously above - engine sees target=80%, blocked"
     human_verified: false
     site:
       voltage: 230
@@ -136,10 +136,10 @@ scenarios:
         priority: 1
     expected:
       load_1:
-        allocated: 0  # SOC 78% < target 80% — no charging
+        allocated: 0  # SOC 78% < target 80% - no charging
 
   - name: "hyst-solar-only-at-lower-edge"
-    description: "SOC at exactly target-hysteresis (77%), previously above — edge of dead band, still charges"
+    description: "SOC at exactly target-hysteresis (77%), previously above - edge of dead band, still charges"
     human_verified: false
     site:
       voltage: 230
@@ -165,10 +165,10 @@ scenarios:
         priority: 1
     expected:
       load_1:
-        allocated: 17.0  # SOC 77% >= effective target 77% — still charges
+        allocated: 17.0  # SOC 77% >= effective target 77% - still charges
 
   - name: "hyst-solar-only-below-lower-edge"
-    description: "SOC 76% below target-hysteresis (77%), fell out of dead band — reverts to target=80%"
+    description: "SOC 76% below target-hysteresis (77%), fell out of dead band - reverts to target=80%"
     human_verified: false
     site:
       voltage: 230
@@ -194,12 +194,12 @@ scenarios:
         priority: 1
     expected:
       load_1:
-        allocated: 0  # SOC 76% < target 80% — no charging
+        allocated: 0  # SOC 76% < target 80% - no charging
 
   # ========== SOLAR PRIORITY: Target SOC boundary (1-phase) ==========
 
   - name: "hyst-solar-prio-deadband-above"
-    description: "Solar Priority, SOC 78% in dead band, previously above — full power (solar + discharge)"
+    description: "Solar Priority, SOC 78% in dead band, previously above - full power (solar + discharge)"
     human_verified: false
     site:
       voltage: 230
@@ -228,7 +228,7 @@ scenarios:
         allocated: 32.0  # Above effective target: solar + battery discharge, capped at max
 
   - name: "hyst-solar-prio-deadband-below"
-    description: "Solar Priority, SOC 78% in dead band, NOT previously above — min only"
+    description: "Solar Priority, SOC 78% in dead band, NOT previously above - min only"
     human_verified: false
     site:
       voltage: 230
@@ -259,7 +259,7 @@ scenarios:
   # ========== MIN SOC HYSTERESIS: Battery discharge gating (1-phase) ==========
 
   - name: "hyst-min-soc-deadband-above"
-    description: "Standard mode, SOC 21% in min dead band [20-23], previously above min — battery discharge available"
+    description: "Standard mode, SOC 21% in min dead band [20-23], previously above min - battery discharge available"
     human_verified: false
     site:
       voltage: 230
@@ -269,7 +269,7 @@ scenarios:
       solar_production: 2300  # 10A
       phase_a_consumption: 3.0
       battery_soc: 21
-      battery_soc_min: 20  # Effective min: 20% (previously above — the floor itself)
+      battery_soc_min: 20  # Effective min: 20% (previously above - the floor itself)
       battery_soc_target: 80
       battery_max_charge_power: 4600
       battery_max_discharge_power: 4600  # 20A
@@ -288,7 +288,7 @@ scenarios:
         allocated: 32  # SOC 21% >= effective min 20%: grid + solar + battery discharge
 
   - name: "hyst-min-soc-deadband-below"
-    description: "Standard mode, SOC 21% in min dead band [20-23], NOT previously above min — no battery discharge"
+    description: "Standard mode, SOC 21% in min dead band [20-23], NOT previously above min - no battery discharge"
     human_verified: false
     site:
       voltage: 230
@@ -319,7 +319,7 @@ scenarios:
   # ========== 3-PHASE: Target SOC boundary ==========
 
   - name: "hyst-3ph-solar-only-deadband-above"
-    description: "3-phase, Solar Only, SOC 78% in dead band, previously above — full power (solar + discharge)"
+    description: "3-phase, Solar Only, SOC 78% in dead band, previously above - full power (solar + discharge)"
     human_verified: false
     site:
       voltage: 230
@@ -350,7 +350,7 @@ scenarios:
         allocated: 16.0  # SOC 78% > effective target 77%: solar + discharge, capped at 16A max
 
   - name: "hyst-3ph-solar-only-deadband-below"
-    description: "3-phase, Solar Only, SOC 78% in dead band, NOT previously above — blocked"
+    description: "3-phase, Solar Only, SOC 78% in dead band, NOT previously above - blocked"
     human_verified: false
     site:
       voltage: 230
@@ -378,12 +378,12 @@ scenarios:
         priority: 1
     expected:
       load_1:
-        allocated: 0  # SOC 78% < target 80% — blocked
+        allocated: 0  # SOC 78% < target 80% - blocked
 
   # ========== SOLAR SURPLUS DISCHARGE: Target SOC boundary ==========
 
   - name: "hyst-discharge-potential-deadband-above"
-    description: "Solar Only, SOC 79%, effective target 77% — battery discharge potential unlocked for solar surplus"
+    description: "Solar Only, SOC 79%, effective target 77% - battery discharge potential unlocked for solar surplus"
     human_verified: false
     site:
       voltage: 230
@@ -394,7 +394,7 @@ scenarios:
       phase_a_consumption: 3.0
       battery_soc: 79
       battery_soc_min: 20
-      battery_soc_target: 77  # Effective target: 77% (previously above) — discharge potential triggers (soc > target)
+      battery_soc_target: 77  # Effective target: 77% (previously above) - discharge potential triggers (soc > target)
       battery_max_charge_power: 4600
       battery_max_discharge_power: 4600  # 20A
       inverter_supports_asymmetric: true
@@ -412,7 +412,7 @@ scenarios:
         allocated: 27.0  # SOC 79% > effective target 77%: solar(10-3=7A) + battery discharge(20A) = 27A
 
   - name: "hyst-discharge-potential-deadband-below"
-    description: "Solar Only, SOC 79%, normal target 80% — below target, no charging"
+    description: "Solar Only, SOC 79%, normal target 80% - below target, no charging"
     human_verified: false
     site:
       voltage: 230
@@ -423,7 +423,7 @@ scenarios:
       phase_a_consumption: 3.0
       battery_soc: 79
       battery_soc_min: 20
-      battery_soc_target: 80  # Effective target: 80% (not previously above) — no discharge potential
+      battery_soc_target: 80  # Effective target: 80% (not previously above) - no discharge potential
       battery_max_charge_power: 4600
       battery_max_discharge_power: 4600
       inverter_supports_asymmetric: true
@@ -438,4 +438,4 @@ scenarios:
         priority: 1
     expected:
       load_1:
-        allocated: 0  # SOC 79% < target 80% — below target, blocked
+        allocated: 0  # SOC 79% < target 80% - below target, blocked

@@ -1,21 +1,21 @@
 """Unit tests for inverter AC output: signed readings and display headroom.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 Two fixes are pinned here (ISSUES.md #13 and #15):
 
-**#13 — headroom must not assume a wiring topology.** The hub's display
+**#13 - headroom must not assume a wiring topology.** The hub's display
 headroom is ``inverter_rating − current_output``. The old current-output form
 was ``solar + battery_power``, which is the SERIES (DC-coupled) model: charging
 takes DC power that never reaches the AC side. On a PARALLEL (AC-coupled) site
 the battery charges FROM the AC bus, so the PV inverter still puts out its full
-production and the old form understated the output by the whole charge power —
+production and the old form understated the output by the whole charge power -
 Site Remaining Power then advertised headroom the site does not have.
 ``fleet.output_power_total`` fixes this in two tiers: measured output when
 output entities exist (no topology assumption at all), else a topology-aware
 per-member estimate.
 
-**#15 — inverter output readings are signed.** A hybrid with an AC-coupled
+**#15 - inverter output readings are signed.** A hybrid with an AC-coupled
 inverter on its load port legitimately reads NEGATIVE output, up to the child's
 production. ``abs()`` fabricated output; a 0-clamp would erase the term the
 fleet sum needs to net the child's back-feed against its parent. The clamps
@@ -31,8 +31,8 @@ import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Module loading — shared stub loader (avoids the HA-importing package root).
-# hub_calculation is needed for the display-headroom test (#48) — it pulls in
+# Module loading - shared stub loader (avoids the HA-importing package root).
+# hub_calculation is needed for the display-headroom test (#48) - it pulls in
 # fleet and the rest of its import chain, engine/hub_result.py (where
 # _build_hub_result lives) included, with the few homeassistant modules its
 # siblings import at module level stubbed when HA is absent.
@@ -106,13 +106,13 @@ def _hybrid(entry_id="hybrid", topology=WIRING_TOPOLOGY_SERIES, power=None, **kw
 
 
 # ---------------------------------------------------------------------------
-# (a) Measured output — the same measurement means the same headroom, whatever
+# (a) Measured output - the same measurement means the same headroom, whatever
 #     the wiring topology says
 # ---------------------------------------------------------------------------
 
 def test_measured_output_is_topology_independent():
     """8900 W of PV measured at the inverter's AC terminals is 8900 W of output
-    on a series site and on a parallel one alike — the measurement already
+    on a series site and on a parallel one alike - the measurement already
     contains whatever the battery is doing."""
     series = _hybrid(topology=WIRING_TOPOLOGY_SERIES, power=-2000.0,
                      max_power=10000.0, output=_pv_watts(8900.0, None, None))
@@ -157,7 +157,7 @@ def test_member_without_output_entities_adds_its_own_estimate():
     """A mixed fleet: one metered inverter plus a hybrid that only has a
     production sensor and a battery. The site's export-derived solar cannot be
     split per member, so the unmetered member contributes exactly what it knows
-    about itself — 4000 W of PV minus 1500 W of DC-side charging."""
+    about itself - 4000 W of PV minus 1500 W of DC-side charging."""
     metered = _inverter("metered", output=_pv_watts(3000.0, None, None))
     unmetered = _hybrid("hybrid", power=-1500.0, has_solar_entity=True,
                         solar_measured=4000.0)
@@ -165,7 +165,7 @@ def test_member_without_output_entities_adds_its_own_estimate():
 
 
 # ---------------------------------------------------------------------------
-# (b) Fallback estimate — topology decides whether charging reduces the output
+# (b) Fallback estimate - topology decides whether charging reduces the output
 # ---------------------------------------------------------------------------
 
 def test_estimate_series_charging_reduces_output():
@@ -179,7 +179,7 @@ def test_estimate_series_charging_reduces_output():
 
 def test_estimate_parallel_charging_does_not_reduce_output():
     """Parallel (AC-coupled): the battery charges FROM the bus, so the PV
-    inverter still puts out its full 8900 W — 2000 W less headroom than the
+    inverter still puts out its full 8900 W - 2000 W less headroom than the
     series site above, from the same scalars."""
     parallel = _hybrid(topology=WIRING_TOPOLOGY_PARALLEL, power=-2000.0,
                        max_power=10000.0)
@@ -223,7 +223,7 @@ def test_estimate_with_no_members_at_all_falls_back_to_site_scalars():
 
 
 # ---------------------------------------------------------------------------
-# (c) Signed readings — the cascade case (#15)
+# (c) Signed readings - the cascade case (#15)
 # ---------------------------------------------------------------------------
 
 def test_negative_member_output_nets_against_a_positive_sibling():
@@ -248,7 +248,7 @@ def test_sum_outputs_nets_signed_readings_per_phase():
 
 
 def test_negative_phase_still_counts_as_a_fed_phase():
-    """A phase reading −3 A is still a phase this inverter is connected to —
+    """A phase reading −3 A is still a phase this inverter is connected to -
     None is the only "phase absent" signal."""
     m = _inverter(output=PhaseValues(-3.0, None, None))
     assert m.spans_phase("a") and not m.spans_phase("b")
@@ -273,11 +273,11 @@ def test_output_above_the_rating_gives_zero_headroom():
 
 
 # ---------------------------------------------------------------------------
-# (d) Aggregate clamps — where physics demands non-negativity
+# (d) Aggregate clamps - where physics demands non-negativity
 # ---------------------------------------------------------------------------
 
 def test_member_solar_clamps_a_negative_output_to_zero():
-    """A negative reading means power flowing INTO this inverter — never its own
+    """A negative reading means power flowing INTO this inverter - never its own
     production. The child's production is counted on the child's member, so the
     clamp cannot lose it."""
     parent = _inverter(topology=WIRING_TOPOLOGY_SERIES, output=_pv_watts(-1500.0, None, None))
@@ -316,7 +316,7 @@ def test_solar_total_never_goes_negative_at_the_aggregate():
 
 
 def test_solar_total_stays_none_when_nothing_is_known():
-    """None is the caller's cue to fall back to grid export + charging draw —
+    """None is the caller's cue to fall back to grid export + charging draw -
     the aggregate clamp must not turn that into a hard 0."""
     assert solar_total([_inverter()], V) is None
     assert solar_total([], V) is None
@@ -333,7 +333,7 @@ def test_solar_total_unaffected_for_ordinary_positive_readings():
 # ---------------------------------------------------------------------------
 #
 # _build_hub_result used to recompute the fleet's current output from
-# site.solar_production_total — but by then the feedback loop has folded the
+# site.solar_production_total - but by then the feedback loop has folded the
 # managed draws back into the derived solar, inflating the estimate by exactly
 # the running loads' draw and understating Site Remaining Power. The fix: the
 # display consumes site.inverter_output_total, the figure captured at READ
@@ -421,5 +421,5 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

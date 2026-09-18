@@ -2,12 +2,12 @@
 """Validation tests for the shipped charger-settings validator.
 
 This exercises the REAL helpers.validate_charger_settings. It used to define a
-local copy of the function and assert against that — which passes no matter what
+local copy of the function and assert against that - which passes no matter what
 the integration actually does. (The equally tautological twin,
 test_validation.py, was deleted rather than kept in sync.)
 
 helpers.py imports homeassistant.config_entries, so this file needs the pytest
-tier (Docker / WSL) — it is no longer runnable under a bare python3.
+tier (Docker / WSL) - it is no longer runnable under a bare python3.
 """
 
 from custom_components.dynamic_ocpp_evse.helpers import validate_charger_settings

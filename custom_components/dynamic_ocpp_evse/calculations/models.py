@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 
 _LOGGER = logging.getLogger(__name__)
 
-# Valid load phase masks — the site phases a load may occupy. Any other
+# Valid load phase masks - the site phases a load may occupy. Any other
 # value (e.g. "L1", "D", "BA", "") is rejected by get_available/deduct rather
 # than crashing the calculation with an AttributeError.
 VALID_PHASE_MASKS = frozenset({"A", "B", "C", "AB", "AC", "BC", "ABC"})
@@ -39,13 +39,29 @@ class LoadContext:
     phases: int  # 1 or 3 (EVSE hardware capability)
     priority: int = 1  # Per-load configured priority (lower = higher priority)
     device_type: str = "evse"  # "evse" (OCPP) or "plug" (smart load)
-    operating_mode: str = "Standard"  # Mode key — for logs / load_modes export
-    mode_behavior: str = "full_power"  # BEHAVIOR_* — what the engine switches on
+    operating_mode: str = "Standard"  # Mode key - for logs / load_modes export
+    mode_behavior: str = "full_power"  # BEHAVIOR_* - what the engine switches on
     mode_priority: int = 1  # Mode urgency tier 1-4 (lower = served first)
     
     # Active car connection (detected from OCPP or configured)
     active_phases_mask: str = None  # "A", "AB", "ABC", "B", "BC", "C", "AC"
     connector_status: str = "Charging"  # OCPP status: Default to active for backward compatibility
+
+    # False when the user has turned this load's Dynamic Control switch OFF.
+    #
+    # "Hands off" has to mean hands off in the CALCULATION too, not just in the
+    # command. The HA layer already skips writing to such a load, but the
+    # engine had no idea: it still allocated it, published a permit, deducted
+    # it from every pool, charged its rating to the Excess start ledger, and
+    # subtracted its draw from the grid readings as though the draw were ours
+    # to move. A plug switched off and handed back therefore reserved its whole
+    # 2 kW of surplus indefinitely, and a boosting tank on another phase
+    # flapped on and off against what was left (measured on the Docker rig,
+    # 2026-09-08).
+    #
+    # An unmanaged load is part of the HOUSE: its draw belongs in the household
+    # figure and it competes for nothing.
+    dynamic_control: bool = True
     
     def __post_init__(self):
         """Set default phase mask from L1/L2/L3 → site phase mapping.
@@ -68,35 +84,45 @@ class LoadContext:
     l3_phase: str = "C"
 
     # Per-phase current readings (from OCPP L1/L2/L3 attributes)
-    l1_current: float = 0  # L1 current (A) — maps to l1_phase
-    l2_current: float = 0  # L2 current (A) — maps to l2_phase
-    l3_current: float = 0  # L3 current (A) — maps to l3_phase
+    l1_current: float = 0  # L1 current (A) - maps to l1_phase
+    l2_current: float = 0  # L2 current (A) - maps to l2_phase
+    l3_current: float = 0  # L3 current (A) - maps to l3_phase
 
     # True when the engine has no live draw measurement for this load (an EVSE
     # with no current-import sensor). The load's footprint then falls back to
-    # its permit — without a meter we cannot see it draw less than it is
+    # its permit - without a meter we cannot see it draw less than it is
     # granted. Plugs and tanks always carry a correct l1/l2/l3 draw (rating
     # when on, 0 when off), so they are never flagged unmetered.
     unmetered: bool = False
 
     # True when the per-phase draw above is a fabricated 0 rather than a
     # reading: this load HAS a current/power monitor configured, and it is
-    # unreadable with nothing held. The 0 stays for the calculation — it is the
+    # unreadable with nothing held. The 0 stays for the calculation - it is the
     # conservative figure for the feedback loop, which subtracts managed draws
-    # from the grid CTs — but a load that may well be drawing kilowatts must
+    # from the grid CTs - but a load that may well be drawing kilowatts must
     # not be PUBLISHED as drawing 0 W (see engine/hub_result.py, which pairs it
     # with the load's own engagement to decide). Set by the HA layer's builders,
     # the only place that knows which monitor produced which number.
     draw_assumed: bool = False
 
     # EVSE only: True when the car's measured draw has held steady for several
-    # cycles — it has reached a ceiling below what we offered, rather than
+    # cycles - it has reached a ceiling below what we offered, rather than
     # still tracking our ramping permit. Only then is the draw trusted as the
     # EVSE's footprint; while it is moving the engine reserves the full permit.
     # Set by the HA layer (or the test harness) from per-load draw history.
     draw_settled: bool = False
 
-    # Device hardware current rating (A) — the ceiling for available_current.
+    # The current this load will draw the moment the Excess verdict starts it -
+    # its rating for a binary load (a plug in Excess mode, a tank whose mode
+    # boosts on surplus and is below its boost setpoint), its minimum for a
+    # modulating one (an Excess EVSE or power station); 0 for a load the
+    # verdict does not start. Read by the Excess start ledger for loads that
+    # are not yet ACTIVE - a tank claims its 2 kW the cycle the verdict turns
+    # on, before its thermostat has responded, so a lower-ranked station does
+    # not start on a surplus the tank is about to take (SE17K, 2026-09-04).
+    excess_claim_current: float = 0.0
+
+    # Device hardware current rating (A) - the ceiling for available_current.
     # EVSE: its configured max current. Plug: the socket/relay rating, which
     # is separate from the set-power slider (the slider tracks the connected
     # load, not the plug's capability). Tank: the heating-element current.
@@ -105,8 +131,8 @@ class LoadContext:
 
     # Calculated values (populated during calculation)
     # allocated_current = the load's real FOOTPRINT on the budget (measured
-    #   draw) — what other loads are budgeted against.
-    # available_current = the PERMIT — what the engine grants the device to
+    #   draw) - what other loads are budgeted against.
+    # available_current = the PERMIT - what the engine grants the device to
     #   draw, up to its rated/max. Drives the device command.
     allocated_current: float = 0
     available_current: float = 0
@@ -123,7 +149,7 @@ class LoadContext:
         Its own status is a fact we have without any power monitor: no car
         connected, a thermostat not calling for heat, a switch that is off. That
         is what makes a 0 W figure honest for such a load even when its monitor
-        is unreadable — and, conversely, what makes the fabricated 0 of a load
+        is unreadable - and, conversely, what makes the fabricated 0 of a load
         that reports itself active something we must not publish.
         """
         return self.connector_status in INACTIVE_STATUSES
@@ -220,9 +246,9 @@ class SiteContext:
     # position: the feedback loop deliberately erases the managed loads' draws
     # from consumption/export. See _inverter_covers_load() in target_calculator.
     #
-    # Fleet AC output right now (W, SIGNED — negative means power is flowing
+    # Fleet AC output right now (W, SIGNED - negative means power is flowing
     # into the inverters). Measured where output entities exist, otherwise a
-    # topology-aware estimate — engine/fleet.py output_power_total(). None =
+    # topology-aware estimate - engine/fleet.py output_power_total(). None =
     # unknown, which the coverage gate treats as "do not gate".
     inverter_output_total: float | None = None
     # Net grid flow right now (W): positive = importing, negative = exporting.
@@ -237,6 +263,16 @@ class SiteContext:
     # engaged, so a load doesn't chatter at the trigger point. The engine owns
     # the latch and sets this; the calculator stays stateless.
     excess_hysteresis: float = 0
+    # Excess start claims of loads that are INACTIVE this cycle but that the
+    # verdict is about to start: ``((rank, mask, amps), ...)`` - set by
+    # calculate_all_load_targets around the distribution, consumed by the
+    # pass-1 ledger (see LoadContext.excess_claim_current).
+    excess_potential_claims: tuple = ()
+    # The three pools the allocator worked from this cycle, as plain rounded
+    # dicts - OBSERVABILITY ONLY. Written by calculate_all_load_targets, read
+    # by engine/hub_result.py for the Overview page and the diagnostics dump.
+    # Nothing in the calculation reads it back.
+    pool_snapshot: dict = field(default_factory=dict)
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
     is_off_grid: bool = False  # True when no grid CT sensors are configured
 
@@ -279,6 +315,36 @@ class PhaseConstraints:
     - A, B, C: single-phase limits
     - AB, AC, BC: two-phase combination limits
     - ABC: three-phase (total) limit
+
+    ``netting`` SAYS WHICH PHYSICS THE POOL OBEYS, and it travels with the pool
+    rather than being passed at each call site, because ``deduct`` reaches
+    ``normalize`` internally and a call-site flag could not steer that.
+
+    * **Gross** (the default - grid, inverter, group, solar, physical): each
+      phase's flow stands on its own, and a combination is bounded by its
+      members. Right for a breaker, for what an inverter leg can deliver, and
+      for an export LIMIT, which is contractual per exported flow - a site
+      pushing 30 A out on two phases while pulling 10 A in on the third is
+      exporting 30 A, not 20 A, and Slovenia meters it that way.
+    * **Net** (the Excess pool): the total is the algebraic SUM, so an importing
+      phase cancels an exporting one. Right for SURPLUS - with A and B importing
+      1 A each and C exporting 2 A the site has nothing spare, so ``ABC`` is 0
+      and a load on C may take nothing: taking C's 2 A would simply import.
+      Under netting values stay signed and ``normalize``'s clamp-and-cascade is
+      skipped. That cascade keeps a set of NON-NEGATIVE UPPER BOUNDS mutually
+      consistent (``A <= AB`` and ``AB <= A + B``), which is what a gross pool
+      holds. A net pool's fields are signed positions whose total is their
+      algebraic sum, already consistent by construction, and clamping them at
+      zero would throw away the very information the total is read from.
+
+    ``get_available`` does NOT branch on the flag, and deliberately so. It once
+    did, until the gross 1-phase rule was fixed to stop letting a two-phase
+    field bound a load that is not on it (see below) - after which the two
+    readings are provably identical: the remaining pair terms cannot bind,
+    because ``(A + B) / 2 >= min(A, B)`` on a summed pool and
+    ``total / 2 >= total / 3`` on a pooled one. Verified exhaustively over
+    signed inputs. So the flag governs DEDUCTION and normalisation only, and a
+    branch there would be dead code claiming a distinction that does not exist.
     """
     A: float = 0.0
     B: float = 0.0
@@ -287,21 +353,27 @@ class PhaseConstraints:
     AC: float = 0.0
     BC: float = 0.0
     ABC: float = 0.0
+    netting: bool = False
 
     @classmethod
-    def zeros(cls) -> PhaseConstraints:
-        return cls()
+    def zeros(cls, netting: bool = False) -> PhaseConstraints:
+        return cls(netting=netting)
 
     @classmethod
-    def from_per_phase(cls, a: float, b: float, c: float) -> PhaseConstraints:
+    def from_per_phase(
+        cls, a: float, b: float, c: float, netting: bool = False
+    ) -> PhaseConstraints:
         """Build constraints from per-phase values (symmetric inverter pattern).
 
-        Multi-phase combos are the sum of their components.
+        Multi-phase combos are the sum of their components - which is also
+        exactly what a NET pool wants, so this is the constructor both use;
+        only ``netting`` differs, and it changes how the fields are READ.
         """
         return cls(
             A=a, B=b, C=c,
             AB=a + b, AC=a + c, BC=b + c,
             ABC=a + b + c,
+            netting=netting,
         )
 
     @classmethod
@@ -317,11 +389,16 @@ class PhaseConstraints:
             ABC=total,
         )
 
+    # ``netting`` is carried from the LEFT operand throughout: combining pools
+    # of different physics is a bug, not a case to average, and every live
+    # combination (``_calculate_site_limit``'s grid + inverter) is gross on
+    # both sides.
     def __add__(self, other: PhaseConstraints) -> PhaseConstraints:
         return PhaseConstraints(
             A=self.A + other.A, B=self.B + other.B, C=self.C + other.C,
             AB=self.AB + other.AB, AC=self.AC + other.AC, BC=self.BC + other.BC,
             ABC=self.ABC + other.ABC,
+            netting=self.netting,
         )
 
     def _element_op(self, other: PhaseConstraints, op) -> PhaseConstraints:
@@ -329,6 +406,7 @@ class PhaseConstraints:
             A=op(self.A, other.A), B=op(self.B, other.B), C=op(self.C, other.C),
             AB=op(self.AB, other.AB), AC=op(self.AC, other.AC), BC=op(self.BC, other.BC),
             ABC=op(self.ABC, other.ABC),
+            netting=self.netting,
         )
 
     def element_min(self, other: PhaseConstraints) -> PhaseConstraints:
@@ -350,12 +428,21 @@ class PhaseConstraints:
             return 0
 
         if len(mask) == 1:
-            phase = mask
-            two_phase_limits = []
-            for combo in ('AB', 'AC', 'BC'):
-                if phase in combo:
-                    two_phase_limits.append(getattr(self, combo))
-            return min(getattr(self, phase), *two_phase_limits, self.ABC)
+            # Own phase and the site TOTAL - not the two-phase fields. ``AC`` is
+            # a bound on a load spanning A and C; it is not a bound on a load on
+            # C alone. Including it is harmless only while every value is
+            # non-negative, where ``A + C >= C`` and the pair can never bind -
+            # and wrong the moment a phase can go negative. The SOLAR pool can:
+            # ``discharge_drain`` strips the pack's in-flight discharge out per
+            # phase, so a phase whose household exceeds its own solar reads
+            # negative, truthfully. On an evening site with export (0, 3, 4) A
+            # and the pack discharging 6 A, the pool is (-2, 1, 2) with a site
+            # total of 1 A, and a Solar Only load on C was refused outright
+            # because ``AC = -2 + 2 = 0`` - bound by phase A, which it is not on.
+            # Its own phase holds 2 A and the site has 1 A spare, so 1 A is the
+            # answer: enough to use the real surplus, not enough to drain the
+            # pack, which is what discharge_drain exists to prevent.
+            return min(getattr(self, mask), self.ABC)
 
         elif len(mask) == 2:
             return min(
@@ -381,6 +468,60 @@ class PhaseConstraints:
             _LOGGER.warning("Unknown phase mask '%s', deduct skipped", mask)
             return self.copy()
 
+        if self.netting:
+            # Subtract from the named phases and from the site total. No cascade
+            # (a claim on B is not a claim on A and C) and no clamp (the
+            # remaining site total must stay readable: a 9.13 A claim against a
+            # 4.35 A/phase pool leaves 3.91 A of site surplus, where the gross
+            # path zeroed every field).
+            #
+            # ``ABC`` is carried as its OWN quantity rather than rebuilt from
+            # the phase sum. For a netted pool the phases and the total answer
+            # different questions - "how much can THIS phase absorb before it
+            # buys" against "how much surplus does the site have" - and only on
+            # a pool whose phases happen to sum to its total are the two the
+            # same number. Rebuilding it assumed that identity, so on any pool
+            # without it a deduction INFLATED the site total: the excess pool
+            # for an asymmetric inverter is ``from_pool(t, t, t, t)``, where one
+            # 9.13 A claim took ABC from 13.04 A to 16.52 A and every later load
+            # sized itself on a surplus 3x larger than the site had.
+            per_phase = {p: getattr(self, p) for p in "ABC"}
+            for phase in mask:
+                per_phase[phase] -= current
+            a, b, c = per_phase["A"], per_phase["B"], per_phase["C"]
+            # A claim on n phases draws ``current`` on each, so n x current
+            # leaves the site. The pair fields stay plain sums of their phases;
+            # they can never bind a load that spans them once A, B and ABC do.
+            return PhaseConstraints(
+                A=a, B=b, C=c,
+                AB=a + b, AC=a + c, BC=b + c,
+                ABC=self.ABC - current * len(mask),
+                netting=True,
+            )
+
+        # NEVER OVER-DRAW. ``current`` is the load's MEASURED footprint
+        # (``_pool_deduction``), so a device ignoring its permit can ask for
+        # more than the pool holds - and this is the only pool that can be
+        # over-drawn at all, since ``_deduct_from_sources`` caps solar and
+        # excess at ``min(current, available)``.
+        #
+        # Left uncapped, the over-draw landed on the phase AND on every
+        # combination containing it, and ``normalize``'s cascade then spread the
+        # deficit sideways: at (-1, 8, 8) a 1 A overshoot on A pulled B from
+        # 8 A to 6 A and C likewise, and (-5, 2, 2) zeroed all seven fields. The
+        # physical pool is per-phase independent - three breaker poles, each
+        # carrying its own phase - so an overshoot on one phase says nothing
+        # about another's headroom, and shedding loads there was wrong.
+        #
+        # Capping at what the mask can actually take floors every field at 0 for
+        # both pool shapes (a summed pool has ``AB = A + B >= A >= current``; a
+        # pooled one has ``AB = total >= A >= current``), so the pool stays a
+        # set of honest non-negative bounds and the cascade never meets a
+        # signed value. The over-draw itself is a fact about the DEVICE, not
+        # about what may be allocated next - the scenario suite's physical
+        # invariants are what surface it.
+        current = min(current, max(0.0, self.get_available(mask)))
+
         result = self.copy()
 
         # Deduct from individual phases
@@ -400,6 +541,13 @@ class PhaseConstraints:
 
     def normalize(self) -> PhaseConstraints:
         """Apply cascading limits to ensure constraint consistency. Returns new instance."""
+        if self.netting:
+            # Nothing to reconcile: a net pool's combinations are sums of its
+            # phases by construction, so it is always already consistent. And
+            # the cascade below would destroy it - it clamps at zero, which
+            # discards the signed position the total is read from.
+            return self.copy()
+
         r = self.copy()
 
         for _ in range(2):
@@ -436,6 +584,11 @@ class PhaseConstraints:
         return replace(self)
 
     def __repr__(self) -> str:
+        # The basis is named only when it is the unusual one, so every gross
+        # pool's debug line stays byte-identical to what it has always been.
+        # It belongs here because the same fields mean different things under
+        # each basis, and a log without it cannot be read.
+        basis = ", net" if self.netting else ""
         return (f"PC(A={self.A:.1f}, B={self.B:.1f}, C={self.C:.1f}, "
                 f"AB={self.AB:.1f}, AC={self.AC:.1f}, BC={self.BC:.1f}, "
-                f"ABC={self.ABC:.1f})")
+                f"ABC={self.ABC:.1f}{basis})")

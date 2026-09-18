@@ -1,4 +1,4 @@
-# Load Juggler — Improvements
+# Load Juggler - Improvements
 
 This document is used for keeping notes of ideas for future implementations in no particular order. As long as the developer does not explicitly say to start implementing them, you can just use this as a reference for what might come, if that has any effect on current decisions. This will also keep any discussions about ideas. This way you can plan them easier with the developer.
 
@@ -71,7 +71,7 @@ The current architecture is already quite general:
 
 ### Progress
 
-**Phase 1: Smart Plug + Per-Load Operating Modes** — Done (TODO #6, #74, #79-85).
+**Phase 1: Smart Plug + Per-Load Operating Modes** - Done (TODO #6, #74, #79-85).
 - Smart plug device type with power monitoring
 - Per-load operating mode selection (Continuous, Solar Priority, Solar Only, Excess)
 - Dual-pool distribution engine (physical pool + mode-aware ceilings)
@@ -96,24 +96,24 @@ The current architecture is already quite general:
 **Complexity:** Medium
 
 ### Problem
-Flat sample counts (notify at 10, remap at 30) were too slow when phase mapping was wrong — the engine would oscillate (allocate wrong phase → pause → resume → repeat) for 30+ cycles before correcting. Some cars refuse to charge after too many interruptions.
+Flat sample counts (notify at 10, remap at 30) were too slow when phase mapping was wrong - the engine would oscillate (allocate wrong phase → pause → resume → repeat) for 30+ cycles before correcting. Some cars refuse to charge after too many interruptions.
 
 ### Implementation
 Replaced flat counts with weighted scoring:
-- `weight = min(abs(delta_draw), 15) / 5` — strong signals (large current swings) score higher
+- `weight = min(abs(delta_draw), 15) / 5` - strong signals (large current swings) score higher
 - Notify at score >= 6.0, auto-remap at score >= 15.0
-- Soft decay (×0.5) on inconclusive data instead of hard reset — preserves partial progress
+- Soft decay (×0.5) on inconclusive data instead of hard reset - preserves partial progress
 - Strong oscillation signals (20A swings) trigger remap in ~5 samples vs 30 flat samples
 
 ### EV Charging Interruption Research (reference)
 
 **No hard standard exists.** IEC 61851 defines CP pilot signal states but does NOT specify max start/stop cycles. Behavior is OEM-specific:
-- **Most EVs auto-retry** — no universal "3 strikes" rule
-- **Some cars fault after rapid cycling** — Kia EV6, Ford Mach-E, Renault ZOE reported, ~5 to ~20+ cycles
+- **Most EVs auto-retry** - no universal "3 strikes" rule
+- **Some cars fault after rapid cycling** - Kia EV6, Ford Mach-E, Renault ZOE reported, ~5 to ~20+ cycles
 - **Tesla** generally tolerant, retries indefinitely
 - **Hyundai/Kia ICCU** known to be fragile
 
-**evcc's approach:** `guardduration` 5 min between start/stop, `disable.delay` 30 min before pausing. Their `Min+Solar` mode never stops charging — designed for sensitive cars.
+**evcc's approach:** `guardduration` 5 min between start/stop, `disable.delay` 30 min before pausing. Their `Min+Solar` mode never stops charging - designed for sensitive cars.
 
 **Key insight:** The danger is full start/stop transitions (CP state C→B→C), not gradual current changes. The auto-detect remap eliminates the root cause of oscillation.
 
@@ -125,10 +125,10 @@ Only two issues remain open on the mirror (the rest of the February list was
 closed in the meantime). Closing comments are drafted; needs Anže's GitHub
 hands (no `gh`/credentials on this machine):
 
-- **#7** — Single phase installation → fixed since v1.2.1 (phases B/C optional), scenario-tested throughout 2.x. Close as fixed.
-- **#19** — Solar mode not working in 1.2.1 → solar logic fully rewritten in 2.0.x; close as fixed with an invitation to reopen on 2.0.5+.
+- **#7** - Single phase installation → fixed since v1.2.1 (phases B/C optional), scenario-tested throughout 2.x. Close as fixed.
+- **#19** - Solar mode not working in 1.2.1 → solar logic fully rewritten in 2.0.x; close as fixed with an invitation to reopen on 2.0.5+.
 
-## Circuit Groups — shared breaker limit for co-located loads
+## Circuit Groups - shared breaker limit for co-located loads
 **Status:** Implemented (TODO #96)
 **Complexity:** Medium
 
@@ -137,7 +137,7 @@ Two 16A EVSEs on the same 20A circuit breaker. The engine knows per-load limits 
 
 ### Design
 
-**New device type: Circuit Group** — a config entry linked to a hub, like chargers/plugs.
+**New device type: Circuit Group** - a config entry linked to a hub, like chargers/plugs.
 
 **Config flow:**
 1. Select type "Circuit Group"
@@ -154,7 +154,7 @@ class CircuitGroup:
     member_ids: list[str]  # charger_ids of member loads
 ```
 
-No separate phase setting needed — the limit applies per-phase universally. A 20A breaker on a 3ph site = 20A on each phase. Works with PhaseConstraints naturally.
+No separate phase setting needed - the limit applies per-phase universally. A 20A breaker on a 3ph site = 20A on each phase. Works with PhaseConstraints naturally.
 
 **Engine: post-distribution capping (new Step 6)**
 After `_distribute_power()`, add `_enforce_circuit_groups()`:
@@ -172,14 +172,14 @@ After `_distribute_power()`, add `_enforce_circuit_groups()`:
 - Loads not in any group are unconstrained (only site breaker applies)
 
 ### Future upgrade path
-Post-distribution capping is simple but can "waste" headroom — the engine might over-allocate to a group then slash, while non-grouped loads could have used that capacity. If this matters in practice, upgrade to group-aware distribution where `_distribute_power()` deducts from both site pool and group budget simultaneously.
+Post-distribution capping is simple but can "waste" headroom - the engine might over-allocate to a group then slash, while non-grouped loads could have used that capacity. If this matters in practice, upgrade to group-aware distribution where `_distribute_power()` deducts from both site pool and group budget simultaneously.
 
 
 ## Device-based OCPP charger discovery
 
 **Problem:** Some OCPP chargers (e.g. Alfen) expose per-phase current as separate entities (`sensor.<charger>_current_import_l1`, `_l2`, `_l3`) instead of a single entity with L1/L2/L3 attributes. Our discovery only finds `sensor.<charger>_current_import` and reads phase data from its attributes.
 
-**Solution:** Rewrite charger discovery to be device-based. User selects an OCPP **device** from the device registry, and we auto-discover all relevant entities from it (current_import, current_offered, status, per-phase current if separate). This also simplifies UX — one device pick instead of hoping entity naming matches.
+**Solution:** Rewrite charger discovery to be device-based. User selects an OCPP **device** from the device registry, and we auto-discover all relevant entities from it (current_import, current_offered, status, per-phase current if separate). This also simplifies UX - one device pick instead of hoping entity naming matches.
 
 **Scope:**
 - Rework `_discover_ocpp_chargers()` in config_flow.py to scan by device, not entity suffix
@@ -187,12 +187,12 @@ Post-distribution capping is simple but can "waste" headroom — the engine migh
 - Fallback: keep attribute-based reading for chargers that use single-entity + attributes pattern
 - Store discovered entity IDs in config entry data (current_import, current_import_l1/l2/l3, current_offered, status)
 
-## Failure modes — DONE
+## Failure modes - DONE
 
 
-### Issue 1: Grid CT sensor unavailability — IMPLEMENTED
+### Issue 1: Grid CT sensor unavailability - IMPLEMENTED
 
-When a configured grid CT sensor becomes `unavailable`/`unknown`, `_read_entity()` returns default 0, making the engine think there's zero site load — dangerous over-allocation.
+When a configured grid CT sensor becomes `unavailable`/`unknown`, `_read_entity()` returns default 0, making the engine think there's zero site load - dangerous over-allocation.
 
 **Solution** (in `dynamic_ocpp_evse.py`):
 - After reading raw_phases, check each configured CT entity via `hass.states.get()`
@@ -203,7 +203,7 @@ When a configured grid CT sensor becomes `unavailable`/`unknown`, `_read_entity(
 - Recovery: when sensors return, resume normal operation with log message
 - Hub sensor exposes `grid_stale` attribute (only shown when `True`)
 
-### Issue 2: Site available power ignores max_grid_import_power — IMPLEMENTED
+### Issue 2: Site available power ignores max_grid_import_power - IMPLEMENTED
 
 `total_site_available_power` and `available_grid_power` (hub sensors) only accounted for breaker headroom, ignoring the configured max grid import power entity/slider.
 
@@ -212,7 +212,7 @@ When a configured grid CT sensor becomes `unavailable`/`unknown`, `_read_entity(
 - Cap `grid_headroom` by `max_grid_import_power - post_feedback_consumption`
 - These sensors now reflect the actual grid limit used by the calculation engine
 
-### Issue 3: Broader sensor resilience — IMPLEMENTED
+### Issue 3: Broader sensor resilience - IMPLEMENTED
 
 Extended failure handling beyond grid CT to all sensor types:
 
@@ -222,46 +222,46 @@ Extended failure handling beyond grid CT to all sensor types:
 - Non-smoothed call sites use `_coerce()` helper to safely convert `_UNAVAILABLE` to appropriate defaults
 - **Effect**: solar production, battery power, and inverter output sensors automatically hold their last value during brief unavailability
 
-### Issue 4: OCPP/switch service call resilience — IMPLEMENTED
+### Issue 4: OCPP/switch service call resilience - IMPLEMENTED
 
 - `set_charge_rate` wrapped in try-except; `_last_commanded_limit` only updated on success
 - Plug switch `turn_on`/`turn_off` wrapped in try-except with warning log
 - Prevents entire update cycle crash if OCPP integration restarts
 
-### Issue 5: Miscellaneous hardening — IMPLEMENTED
+### Issue 5: Miscellaneous hardening - IMPLEMENTED
 
 - Plug charger `connected_to_phase` fallback to "A" if empty (prevents division by zero)
 - Voltage validation: `<= 0` falls back to `DEFAULT_PHASE_VOLTAGE` (230V)
 - Circuit group stale member filtering: deleted charger entry_ids silently dropped with warning log
 
-## Cascaded inverters — child on the parent's load/backup port
+## Cascaded inverters - child on the parent's load/backup port
 **Status:** Not yet implemented (requested 2026-08-17; real site: SolarEdge AC-coupled on the Deye's load port)
 **Complexity:** Medium-high (fleet maths)
 
 ### Problem
-The fleet model treats all inverters as parallel peers on the site bus. A cascaded setup — an AC-coupled inverter wired to a hybrid's load/backup port — breaks that: the child's output flows THROUGH the parent, so the fleet currently over-counts capacity and may double-count production.
+The fleet model treats all inverters as parallel peers on the site bus. A cascaded setup - an AC-coupled inverter wired to a hybrid's load/backup port - breaks that: the child's output flows THROUGH the parent, so the fleet currently over-counts capacity and may double-count production.
 
 ### Idea
-Optional field on the inverter entry: **"Output feeds"** — a selector of the other inverters on the same hub (default: the grid/site bus, today's behavior). Validation: same hub only, no cycles.
+Optional field on the inverter entry: **"Output feeds"** - a selector of the other inverters on the same hub (default: the grid/site bus, today's behavior). Validation: same hub only, no cycles.
 
 Engine implications to work through:
-1. **Throughput capping** — the parent's `inverter_max_power`(/per-phase) must cap its own output PLUS the child's passthrough; `fleet.inverter_limits` / `sum_outputs` need a nested (tree) model instead of a flat sum.
-2. **Double counting** — establish whether the parent's output sensors already include the child's passthrough power (measurement point question — on a Deye the load-port input likely does NOT appear on its grid-side output sensors, but must be verified on the real site). `solar_total` must count the child's production exactly once.
-3. **Behavioral gains** — child production can charge the parent's battery (the point of this wiring); off-grid, the child is only alive while the parent is up; the child is effectively "series behind the parent" regardless of its own topology field.
-4. **Display** — Overview/Summary pages render the relationship, e.g. "Solaredge Inverter · 10000 W · symmetric · behind DEYE Inverter (load port)".
+1. **Throughput capping** - the parent's `inverter_max_power`(/per-phase) must cap its own output PLUS the child's passthrough; `fleet.inverter_limits` / `sum_outputs` need a nested (tree) model instead of a flat sum.
+2. **Double counting** - establish whether the parent's output sensors already include the child's passthrough power (measurement point question - on a Deye the load-port input likely does NOT appear on its grid-side output sensors, but must be verified on the real site). `solar_total` must count the child's production exactly once.
+3. **Behavioral gains** - child production can charge the parent's battery (the point of this wiring); off-grid, the child is only alive while the parent is up; the child is effectively "series behind the parent" regardless of its own topology field.
+4. **Display** - Overview/Summary pages render the relationship, e.g. "Solaredge Inverter · 10000 W · symmetric · behind DEYE Inverter (load port)".
 
 First step when picked up: measure on the real site (child exporting hard, parent idle/charging/discharging) to pin down what each Deye sensor actually includes before touching the fleet maths.
 
 ## Dry-run mode + Debug options page
-**Status:** Not yet implemented — idea from the Adaptive Cover Pro discussion (2026-08-17). The companion Overview and "How it decides" summary pages are NOT part of this item; they are being built directly into the options flow alongside the reconfigure→options collapse.
+**Status:** Not yet implemented - idea from the Adaptive Cover Pro discussion (2026-08-17). The companion Overview and "How it decides" summary pages are NOT part of this item; they are being built directly into the options flow alongside the reconfigure→options collapse.
 **Complexity:** Medium
 
 ### Idea
-A third read-only page in the hub's options ("Configure") menu — **Debug** — next to Overview and Summary, mirroring Adaptive Cover Pro's Debug & Diagnostics screen:
+A third read-only page in the hub's options ("Configure") menu - **Debug** - next to Overview and Summary, mirroring Adaptive Cover Pro's Debug & Diagnostics screen:
 
-- **Dry Run switch (hub-level)** — the engine runs its full cycle every interval, but ALL actuation is suppressed: OCPP profiles (`control/ocpp.py`), plug switches (`control/plug.py`), inverter register writes (`control/inverter.py`), tank climate calls (`control/hot_water_tank.py`), power-station writes (`control/power_station.py`). Instead, log at INFO and publish a per-load "last decision" attribute — what *would* have been sent and why (AC Pro's "Decision Trace" / "Last Skipped Action" pattern). Gate it at the single dispatch choke point in `entities/load.py`, not per control module, so future device types inherit it automatically.
-- **Debug log promotion** — multi-select of log areas (engine, distribution, OCPP, compliance, auto-detect) promoted from DEBUG to INFO without touching YAML/logger config.
-- **`diagnostics.py` platform** — standard HA diagnostics: downloadable JSON of entry config (redacted entity IDs optional) + the latest `hub_data` snapshot, for attaching to bug reports. ~50 lines, independent of the rest — could land first.
+- **Dry Run switch (hub-level)** - the engine runs its full cycle every interval, but ALL actuation is suppressed: OCPP profiles (`control/ocpp.py`), plug switches (`control/plug.py`), inverter register writes (`control/inverter.py`), tank climate calls (`control/hot_water_tank.py`), power-station writes (`control/power_station.py`). Instead, log at INFO and publish a per-load "last decision" attribute - what *would* have been sent and why (AC Pro's "Decision Trace" / "Last Skipped Action" pattern). Gate it at the single dispatch choke point in `entities/load.py`, not per control module, so future device types inherit it automatically.
+- **Debug log promotion** - multi-select of log areas (engine, distribution, OCPP, compliance, auto-detect) promoted from DEBUG to INFO without touching YAML/logger config.
+- **`diagnostics.py` platform** - standard HA diagnostics: downloadable JSON of entry config (redacted entity IDs optional) + the latest `hub_data` snapshot, for attaching to bug reports. ~50 lines, independent of the rest - could land first.
 
 ### Why
 Config validation without moving real loads (new installs, phase-mapping experiments); dramatically better support/bug-report loops.

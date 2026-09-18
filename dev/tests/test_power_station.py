@@ -1,6 +1,6 @@
 """Tests for the portable power station device type.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 Two pure resolvers carry the device type's logic. The station's charge-speed knob
 has no zero (200 W floor), so the engine's allocation decides *how fast* and the
@@ -33,7 +33,7 @@ def test_allocation_at_the_floor_charges_at_the_floor():
 
 
 def test_allocation_floors_to_the_device_step():
-    # 250 W of surplus must not become a 300 W draw — that would overdraw the
+    # 250 W of surplus must not become a 300 W draw - that would overdraw the
     # pool by rounding up.
     assert resolve_station_charge_speed(250, MIN_POWER, MAX_POWER) == 200
     assert resolve_station_charge_speed(1290, MIN_POWER, MAX_POWER) == 1200
@@ -41,7 +41,7 @@ def test_allocation_floors_to_the_device_step():
 
 
 def test_allocation_is_capped_at_the_configured_max():
-    # The configured max, not the hardware's — a station may be held lower.
+    # The configured max, not the hardware's - a station may be held lower.
     assert resolve_station_charge_speed(5000, MIN_POWER, MAX_POWER) == 2400
     assert resolve_station_charge_speed(5000, MIN_POWER, 1500) == 1500
 

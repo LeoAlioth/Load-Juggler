@@ -40,7 +40,7 @@ def main() -> int:
 
     scenarios_dir = Path(args.scenarios_dir)
     # Scenario files live in nested subdirectories (1ph/, 3ph_battery/,
-    # features/, ...) — search recursively.
+    # features/, ...) - search recursively.
     search_paths = list(sorted(scenarios_dir.rglob("*.yaml"))) + list(
         sorted(scenarios_dir.rglob("*.yml"))
     )
@@ -49,7 +49,7 @@ def main() -> int:
         logging.error("No scenario files found in %s", scenarios_dir)
         return 1
 
-    # Find the file containing the scenario first, then run it once — so a
+    # Find the file containing the scenario first, then run it once - so a
     # scenario that runs but FAILS is reported as a failure, not "not found".
     for scenario_file in search_paths:
         with open(scenario_file, "r", encoding="utf-8") as fh:

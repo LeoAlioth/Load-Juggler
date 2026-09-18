@@ -1,11 +1,18 @@
 import logging
 from ..const import (
-    EMA_ALPHA,
     DEAD_BAND,
+    ema_alpha_for,
+    PERMIT_TAU_S,
+    RAMP_TAU_S,
     RAMP_UP_RATE,
     RAMP_DOWN_RATE,
     CONF_SITE_UPDATE_FREQUENCY,
     DEFAULT_SITE_UPDATE_FREQUENCY,
+    CONF_FILTER_DEAD_BAND,
+    CONF_FILTER_PERMIT_TAU_S,
+    CONF_FILTER_RAMP_DOWN_RATE,
+    CONF_FILTER_RAMP_TAU_S,
+    CONF_FILTER_RAMP_UP_RATE,
 )
 from ..helpers import get_entry_value
 
@@ -17,8 +24,27 @@ def apply_smoothing(
 ) -> float:
     """Apply EMA smoothing → Schmitt trigger → rate limiting pipeline.
 
+    Every stage runs on the same TIME basis: the site interval sets both the
+    EMA weight and the ramp step, so the pipeline delivers the same seconds of
+    smoothing whether the site polls every second or every minute. Weighting
+    the EMA per CYCLE instead coupled the two, and the coupling was invisible:
+    at the 60 s interval a slow inverter needs, the permit filter carried a
+    200 s time constant, so a load crawled for minutes toward a surplus it had
+    already been granted.
+
     Returns the final rate-limited current to send to the load.
     """
+    site_freq = get_entry_value(
+        hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
+    )
+    # The hub's Filters page. Each default is the constant it overrides, so an
+    # entry that never opened the page runs the pre-page pipeline exactly.
+    permit_tau = get_entry_value(hub_entry, CONF_FILTER_PERMIT_TAU_S, PERMIT_TAU_S)
+    ramp_tau = get_entry_value(hub_entry, CONF_FILTER_RAMP_TAU_S, RAMP_TAU_S)
+    dead_band = get_entry_value(hub_entry, CONF_FILTER_DEAD_BAND, DEAD_BAND)
+    ramp_up = get_entry_value(hub_entry, CONF_FILTER_RAMP_UP_RATE, RAMP_UP_RATE)
+    ramp_down = get_entry_value(hub_entry, CONF_FILTER_RAMP_DOWN_RATE, RAMP_DOWN_RATE)
+
     if sensor._schmitt_current is None and sensor._ema_current is not None:
         sensor._schmitt_current = sensor._rate_limited_current
         sensor._schmitt_state = "rising"
@@ -30,7 +56,7 @@ def apply_smoothing(
         sensor._rate_limited_current = raw_allocated
         if mode_changed:
             _LOGGER.debug(
-                "Mode changed for %s — smoothing reset (allocated=%.1fA)",
+                "Mode changed for %s - smoothing reset (allocated=%.1fA)",
                 sensor._attr_name,
                 raw_allocated,
             )
@@ -40,16 +66,24 @@ def apply_smoothing(
         # the minimum. The permit was computed inside every site constraint, so
         # the step is safe by construction, and crawling up would waste surplus.
         # The ramp exists to damp oscillation, not to protect anything; the
-        # compliance checker's "ramping" skip tolerates the step. The power
-        # station deliberately diverges (resumes at its minimum — see
-        # entities/load.py) because its permit is the volatile excess pool.
+        # compliance checker's "ramping" skip tolerates the step. Every
+        # modulating load type goes through this identically - the power
+        # station used to resume at its minimum instead, which only delayed
+        # its absorption of a surplus it had already been granted.
         sensor._ema_current = raw_allocated
         sensor._schmitt_current = raw_allocated
         sensor._schmitt_state = "rising"
         sensor._rate_limited_current = raw_allocated
     else:
+        # PERMIT_TAU_S of smoothing at whatever cadence this site runs at,
+        # through the readers' own conversion - shared rather than restated, so
+        # the three stages cannot drift onto different bases. The time constant
+        # is deliberately NOT the readers': see PERMIT_TAU_S for why a second
+        # helping of the input filter's 5.6 s stopped the rate limiter's
+        # proportional term from ever engaging.
+        alpha = ema_alpha_for(site_freq, permit_tau)
         sensor._ema_current = round(
-            EMA_ALPHA * raw_allocated + (1 - EMA_ALPHA) * sensor._ema_current, 2
+            alpha * raw_allocated + (1 - alpha) * sensor._ema_current, 2
         )
 
         ema = sensor._ema_current
@@ -57,7 +91,7 @@ def apply_smoothing(
         if sensor._schmitt_state == "rising":
             if ema >= prev:
                 sensor._schmitt_current = ema
-            elif prev - ema >= DEAD_BAND:
+            elif prev - ema >= dead_band:
                 sensor._schmitt_state = "falling"
                 sensor._schmitt_current = ema
                 _LOGGER.debug(
@@ -75,9 +109,9 @@ def apply_smoothing(
                     prev,
                 )
         else:
-            if ema < prev - DEAD_BAND:
+            if ema < prev - dead_band:
                 sensor._schmitt_current = ema
-            elif ema > prev + DEAD_BAND:
+            elif ema > prev + dead_band:
                 sensor._schmitt_state = "rising"
                 sensor._schmitt_current = ema
                 _LOGGER.debug(
@@ -87,17 +121,45 @@ def apply_smoothing(
                     prev,
                 )
 
-        site_freq = get_entry_value(
-            hub_entry, CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
-        )
-        max_up = RAMP_UP_RATE * site_freq
-        max_down = RAMP_DOWN_RATE * site_freq
         target = sensor._schmitt_current
         delta = target - sensor._rate_limited_current
+
+        # The allowed step is the LARGER of a fixed floor and a fraction of the
+        # error still to close, so this is never slower than the old constant
+        # slew and is much faster while far from target. Shrinking with the
+        # error is what makes it self-damping: it approaches asymptotically
+        # rather than driving through at a constant rate. RAMP_TAU_S sets the
+        # fraction, on the same time basis as the two EMAs, and the cap
+        # guarantees a step never closes the WHOLE error so there is always
+        # some follower left however slow the site.
+        #
+        # The fraction is taken of the RAW error, not of ``delta``. Measured on
+        # the rig (2026-09-08), that one word was the difference between this
+        # stage working and doing nothing at all: ``delta`` is the distance to
+        # the SMOOTHED target, and the filter above holds that inside the fixed
+        # floor, so ``max(floor, proportional)`` chose the floor on every cycle
+        # of every site. The permit climbed in near-constant 115 W steps
+        # (0.1 A/s, exactly RAMP_UP_RATE) while the real error was 600 W - the
+        # adaptive rate was measured as an improvement while never once
+        # engaging.
+        #
+        # Taking it of the raw error cannot overshoot, which is what makes it
+        # safe: the step stays bounded by ``delta`` in the comparisons below,
+        # so the permit still moves only as far as the smoothed target. A
+        # bigger allowance lets it stop being throttled SHORT of that target,
+        # never past it, so the OUTPUT is never less filtered than the EMA.
+        # That is the difference from shortening PERMIT_TAU_S, which bought the
+        # same speed by removing the filter itself and turned a decaying
+        # transient into a sustained 600 W ring on a dead-flat input.
+        approach = ema_alpha_for(site_freq, ramp_tau)
+        proportional = abs(raw_allocated - sensor._rate_limited_current) * approach
+        max_up = max(ramp_up * site_freq, proportional)
+        max_down = max(ramp_down * site_freq, proportional)
+
         if delta > max_up:
             target = sensor._rate_limited_current + max_up
             _LOGGER.debug(
-                "Ramp UP for %s: %.1fA → %.1fA (schmitt=%.1fA, max +%.1fA/cycle)",
+                "Ramp UP for %s: %.1fA → %.1fA (schmitt=%.1fA, max +%.2fA/cycle)",
                 sensor._attr_name,
                 sensor._rate_limited_current,
                 target,
@@ -107,7 +169,7 @@ def apply_smoothing(
         elif delta < -max_down:
             target = sensor._rate_limited_current - max_down
             _LOGGER.debug(
-                "Ramp DOWN for %s: %.1fA → %.1fA (schmitt=%.1fA, max -%.1fA/cycle)",
+                "Ramp DOWN for %s: %.1fA → %.1fA (schmitt=%.1fA, max -%.2fA/cycle)",
                 sensor._attr_name,
                 sensor._rate_limited_current,
                 target,

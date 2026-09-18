@@ -33,7 +33,7 @@ scenarios:
         allocated: 8.0  # Export = (20-2)*230 = 4140W. Excess = (4140-2300)/230 = 8A
 
   - name: "1ph-1c-excess-no-bat-below-threshold"
-    description: "Excess mode with export below threshold — no charging"
+    description: "Excess mode with export below threshold - no charging"
     human_verified: false
     site:
       voltage: 230
@@ -63,7 +63,7 @@ scenarios:
         allocated: 0.0  # Export = (10-3)*230 = 1610W < 3450W threshold → no charging
 
   - name: "1ph-1c-excess-no-bat-below-min-after-threshold"
-    description: "Excess mode — excess over threshold is below min current"
+    description: "Excess mode - excess over threshold is below min current"
     human_verified: false
     site:
       voltage: 230
@@ -94,7 +94,7 @@ scenarios:
 
   - name: "1ph-1c-excess-no-bat-at-the-trigger-starts-at-min"
     description: >
-      Export sitting EXACTLY on the allowance — the pool is 0 A, and that is
+      Export sitting EXACTLY on the allowance - the pool is 0 A, and that is
       Excess by definition: the site cannot place another watt. A modulating
       load cannot run below its minimum, so the verdict starts it at 6 A, the
       same threshold-hit engagement a binary Excess plug gets. Gating the start
@@ -111,7 +111,7 @@ scenarios:
       distribution_mode: priority
       solar_production: 4600  # 20A
       phase_a_consumption: 2.0
-      excess_export_threshold: 4140  # 18A — exactly the export
+      excess_export_threshold: 4140  # 18A - exactly the export
       battery_soc: null
       battery_soc_min: null
       battery_soc_target: null

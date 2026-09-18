@@ -33,7 +33,7 @@ scenarios:
         allocated: 8.0  # Export = (20-2)*230 = 4140W. Excess = (4140-2300)/230 = 8A
 
   - name: "1ph-1c-excess-bat-below-threshold"
-    description: "Excess mode with battery, export below threshold — no charging"
+    description: "Excess mode with battery, export below threshold - no charging"
     human_verified: false
     site:
       voltage: 230

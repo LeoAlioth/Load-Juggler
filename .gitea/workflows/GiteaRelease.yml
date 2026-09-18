@@ -45,17 +45,17 @@ jobs:
           echo "GITHUB_REF_NAME: $GITHUB_REF_NAME"
 
           if echo "$GITHUB_REF" | grep -q "^refs/tags/"; then
-            # Triggered by tag push — use the tag name directly
+            # Triggered by tag push - use the tag name directly
             TAG_NAME="$GITHUB_REF_NAME"
           else
-            # Manual dispatch on a branch — read version from manifest.json
+            # Manual dispatch on a branch - read version from manifest.json
             TAG_NAME=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
             echo "Manual trigger: read version '$TAG_NAME' from manifest.json"
           fi
 
           # Validate TAG_NAME looks like a version (starts with v or digit)
           if ! echo "$TAG_NAME" | grep -qE '^(v?[0-9])'; then
-            echo "ERROR: TAG_NAME '$TAG_NAME' does not look like a version tag — aborting"
+            echo "ERROR: TAG_NAME '$TAG_NAME' does not look like a version tag - aborting"
             exit 1
           fi
 
@@ -146,11 +146,11 @@ jobs:
       - name: Create GitHub Release
         run: |
           echo "Creating GitHub release for tag: $TAG_NAME"
-          GH_API="https://api.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE"
+          GH_API="https://api.github.com/repos/LeoAlioth/Load-Juggler"
 
           # Check if release already exists for this tag
           EXISTING=$(curl -s \
-            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${GH_API}/releases/tags/${TAG_NAME}")
@@ -159,7 +159,7 @@ jobs:
           if [ -n "$EXISTING_ID" ]; then
             echo "Deleting existing GitHub release $EXISTING_ID for tag $TAG_NAME"
             curl -s -X DELETE \
-              -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+              -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "${GH_API}/releases/$EXISTING_ID"
@@ -168,7 +168,7 @@ jobs:
           # Create the release
           BODY=$(jq -Rs '.' < /tmp/release_body.md)
           RELEASE_RESPONSE=$(curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Load Juggler $TAG_NAME\", \"body\": $BODY, \"prerelease\": false, \"draft\": false}" \
@@ -185,17 +185,17 @@ jobs:
 
           # Upload the asset to GitHub
           curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GH_TOKEN }}" \
+            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             -H "Content-Type: application/zip" \
             --data-binary @custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip \
-            "https://uploads.github.com/repos/LeoAlioth/Dynamic_OCPP_EVSE/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
+            "https://uploads.github.com/repos/LeoAlioth/Load-Juggler/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
 
           echo "GitHub release created successfully!"
 
       - name: Tell Home Assistant to download the new build
-        # Optional — skipped unless a webhook is configured. Fires a webhook per
+        # Optional - skipped unless a webhook is configured. Fires a webhook per
         # instance so HACS downloads this exact tag instead of waiting for its own
         # update check. See dev/HA_AUTO_UPDATE.md for the receiving automation.
         #
@@ -208,7 +208,7 @@ jobs:
         run: |
           URLS="${HA_WEBHOOK_URLS:-$HA_WEBHOOK_URL}"
           if [ -z "$URLS" ]; then
-            echo "No HA webhook secret set — skipping."
+            echo "No HA webhook secret set - skipping."
             exit 0
           fi
 
@@ -218,15 +218,15 @@ jobs:
 
           # Word-splitting on whitespace/newlines is what lets one secret carry
           # several URLs. Never fail the release over an unreachable instance
-          # (it may be restarting, or off) — the build itself succeeded.
+          # (it may be restarting, or off) - the build itself succeeded.
           for url in $URLS; do
             case "$url" in ''|\#*) continue ;; esac
             host=$(printf '%s' "$url" | sed -E 's#^[a-z]+://([^/]+).*#\1#')
             if curl -fsS -X POST "$url" \
                  -H "Content-Type: application/json" \
-                 -d "{\"version\": \"$TAG_NAME\"}"; then
+                 -d "{\"version\": \"$TAG_NAME\", \"repository\": \"${{ github.repository }}\"}"; then
               echo "Notified $host: $TAG_NAME"
             else
-              echo "Notify failed for $host — download $TAG_NAME manually in HACS"
+              echo "Notify failed for $host - download $TAG_NAME manually in HACS"
             fi
           done

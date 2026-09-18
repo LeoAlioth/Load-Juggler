@@ -5,7 +5,7 @@ timezone-aware datetimes. This module is the HA-touching side: it reads the
 ``watts`` attribute the Open-Meteo Solar Forecast sensors expose (a mapping of
 block-start timestamps to average watts), parses and validates it, and sums
 the per-array series into one site series. It is also the only place timezone
-handling lives — every horizon boundary is a local midnight, so one day's peak
+handling lives - every horizon boundary is a local midnight, so one day's peak
 is never reserved for twice (``forecast_windows``).
 
 Fail open by design: an unreadable entity or attribute contributes nothing,
@@ -21,7 +21,11 @@ from datetime import timedelta
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
-from ..calculations import FORECAST_LOOKAHEAD_DAYS, merge_forecast_series
+from ..calculations import (
+    FORECAST_LOOKAHEAD_DAYS,
+    merge_forecast_series,
+    scale_forecast_series,
+)
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,7 +38,7 @@ def resolve_forecast_sensor(hass, device_id):
     """Pick the one ``watts``-bearing sensor of a forecast device, or None.
 
     A forecast device (one Open-Meteo Solar Forecast config entry per PV
-    array) exposes several sensors carrying the same ``watts`` series — today,
+    array) exposes several sensors carrying the same ``watts`` series - today,
     tomorrow, current power. Exactly one must be read per device or the array
     is double-counted. Prefer the "energy production today" sensor; otherwise
     the first watts-bearing sensor in deterministic order.
@@ -61,7 +65,7 @@ def configured_forecast_sensors(hass, device_ids, legacy_entity_ids=None):
     """The sensor entity_ids to read: one per configured forecast device,
     plus any directly-configured legacy entities (pre-device-selector
     installs). A device whose sensors expose no watts data contributes
-    nothing — fail open, visibility via the hub Status sensor."""
+    nothing - fail open, visibility via the hub Status sensor."""
     entity_ids = []
     for device_id in device_ids or []:
         entity_id = resolve_forecast_sensor(hass, device_id)
@@ -81,13 +85,13 @@ def forecast_windows(now=None):
     """The candidate integration windows, nearest first.
 
     ``[(now, tonight's midnight), (tonight's midnight, tomorrow's midnight), …]``
-    — the remainder of today, then one whole local day per lookahead day. The
+    - the remainder of today, then one whole local day per lookahead day. The
     pure side picks between them (``select_clipping_window``); all this owns is
     the local-day arithmetic, which is why it lives here and not in
     ``calculations/``.
 
-    Every boundary is a real local midnight — ``start_of_local_day`` applied to
-    the following midday, never a 24-hour offset — so on the two DST days a year
+    Every boundary is a real local midnight - ``start_of_local_day`` applied to
+    the following midday, never a 24-hour offset - so on the two DST days a year
     one window is 23 or 25 hours long and the windows still meet exactly. Adding
     a day's worth of seconds instead would land at 23:00 or 01:00 and leave a
     gap between one window's end and the next one's start, where a block of clip
@@ -114,7 +118,7 @@ def _parse_watts(entity_id, watts):
     """Parse one entity's ``watts`` attribute into {aware datetime: float W}.
 
     Accepts datetime or ISO-string keys. Naive timestamps, non-finite and
-    negative values are dropped with a debug note — one bad entry must not
+    negative values are dropped with a debug note - one bad entry must not
     discard the rest of the series.
     """
     series = {}
@@ -147,7 +151,7 @@ def _parse_watts(entity_id, watts):
 def read_forecast_series(hass, entity_ids, hub_runtime):
     """Read and sum the configured forecast entities into one site series.
 
-    The parse is memoized per entity on the State object's identity — HA
+    The parse is memoized per entity on the State object's identity - HA
     replaces the immutable State on every update, so an unchanged object means
     an unchanged attribute (a timestamp key would miss two updates landing on
     the same clock tick). The attribute holds 48–200 entries and this runs
@@ -155,11 +159,33 @@ def read_forecast_series(hass, entity_ids, hub_runtime):
     few times per hour. A memo, not a fallback cache: a missing or unavailable
     entity contributes nothing (fail open), it does not serve stale data.
     """
+    return read_forecast_series_pair(hass, entity_ids, hub_runtime)[0]
+
+
+def read_forecast_series_pair(hass, entity_ids, hub_runtime, inflation_by_entity=None):
+    '''``(raw, inflated, by_entity)`` - both site series, and their parts.
+
+    Two series out of ONE read, because the two consumers want different
+    numbers from the same forecast. The clip integral may be biased optimistic
+    per array (a learned gain, once the observers earn one); the deadline
+    (``first_production_at``) must not be, since it already carries its own
+    early bias. Reading twice would double the parse and could straddle a
+    forecast update, so the per-array series are kept and merged twice instead.
+
+    ``inflation_by_entity`` maps a forecast entity to its inverter's percent.
+    Falsy, or all zeros, returns the SAME object for both - so a site with
+    nothing configured takes exactly the path it took before this existed.
+
+    The third element is the per-entity map the merges were built from. The
+    gain observer needs it to split the site forecast back out per inverter
+    (each array belongs to one), and rebuilding it there would parse every
+    entity a second time.
+    '''
     memo = hub_runtime.setdefault("_forecast_parse_memo", {})
     for stale_id in set(memo) - set(entity_ids):
         del memo[stale_id]
 
-    series_list = []
+    by_entity = {}
     for entity_id in entity_ids:
         state = hass.states.get(entity_id)
         if units.is_unavailable(state):
@@ -167,14 +193,22 @@ def read_forecast_series(hass, entity_ids, hub_runtime):
             continue
         cached = memo.get(entity_id)
         if cached is not None and cached[0] is state:
-            series_list.append(cached[1])
+            by_entity[entity_id] = cached[1]
             continue
         series = _parse_watts(entity_id, state.attributes.get("watts"))
         memo[entity_id] = (state, series)
         if series:
-            series_list.append(series)
+            by_entity[entity_id] = series
         else:
             _LOGGER.debug(
                 "Forecast entity %s has no usable watts data", entity_id
             )
-    return merge_forecast_series(series_list)
+
+    raw = merge_forecast_series(list(by_entity.values()))
+    if not any((inflation_by_entity or {}).get(e) for e in by_entity):
+        return raw, raw, by_entity
+    inflated = merge_forecast_series([
+        scale_forecast_series(series, (inflation_by_entity or {}).get(entity_id) or 0)
+        for entity_id, series in by_entity.items()
+    ])
+    return raw, inflated, by_entity

@@ -39,6 +39,7 @@ from .const import (
     DEFAULT_STATION_MAX_CHARGE_POWER,
     DEFAULT_STATION_NORMAL_RESERVE,
     DEFAULT_STATION_STORM_RESERVE,
+    STATION_CHARGE_POWER_MAX,
     STATION_CHARGE_POWER_STEP,
     CONF_TANK_AWAY_TEMPERATURE,
     CONF_TANK_NORMAL_TEMPERATURE,
@@ -75,16 +76,22 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         # Always create Power Buffer (useful even without battery)
         entities.append(PowerBufferSlider(hass, config_entry, name, entity_id))
 
-        # Create Max Import Power slider when checkbox is enabled and no entity override
+        # Max Import Power slider: created when its checkbox is ticked AND no
+        # override sensor is set - with a sensor the slider would be a dead
+        # control, since the sensor takes precedence over it (hub form help
+        # text; engine/hub_calculation._read_max_import_power). The checkbox
+        # only ever decides the slider. It is not a switch for the limit:
+        # 565a0bf treated it as one and a site driving its limit from a
+        # sensor lost the limit for a week.
         enable_max_import = get_entry_value(config_entry, CONF_ENABLE_MAX_IMPORT_POWER, True)
         max_import_entity = get_entry_value(config_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None)
-        if enable_max_import and not max_import_entity:
+        if max_import_entity:
+            _LOGGER.info("Max import power from override sensor %s", max_import_entity)
+        elif enable_max_import:
             entities.append(MaxImportPowerSlider(hass, config_entry, name, entity_id))
-            _LOGGER.info("Max import power slider created (no entity override)")
-        elif max_import_entity:
-            _LOGGER.info("Max import power using entity override: %s", max_import_entity)
+            _LOGGER.info("Max import power slider created (no override sensor)")
         else:
-            _LOGGER.info("Max import power limit disabled")
+            _LOGGER.info("Max import power: no sensor and no slider - unlimited")
 
         # Only create battery entities if battery is configured
         if has_battery:
@@ -177,7 +184,7 @@ class _EVSECurrentSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     bucket is the cross-check (issue #38).
 
     Behavior on a crossing set: the value being SET is clamped to the sibling's
-    current value; the sibling is never moved. Rationale — the alternative
+    current value; the sibling is never moved. Rationale - the alternative
     (pushing the sibling along) silently rewrites a second entity the user did
     not touch, and would let one drag reconfigure the whole range. Clamping is
     also what the widget already does at the native_min/native_max ends, so the
@@ -221,7 +228,7 @@ class _EVSECurrentSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
             )
             if crossed:
                 _LOGGER.info(
-                    "%s: %.1fA would %s %s (%.1fA) — clamped to %.1fA",
+                    "%s: %.1fA would %s %s (%.1fA) - clamped to %.1fA",
                     self._attr_name,
                     value,
                     "exceed" if self._sibling_is_upper_bound else "fall below",
@@ -296,7 +303,7 @@ class LoadPowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
         self._attr_unique_id = f"{entity_id}_device_power"
         default_power = get_entry_value(config_entry, conf_key, default)
         # A managed load can be anything from a small pump to a 3-phase
-        # heater, so the range is wide and the step fine — the value is
+        # heater, so the range is wide and the step fine - the value is
         # mostly auto-learned from the power-measurement entity anyway.
         self._attr_native_min_value = 10
         self._attr_native_max_value = max(default_power, 30000)
@@ -338,7 +345,7 @@ class TankTemperatureSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     ):
         self.hass = hass
         self.config_entry = config_entry
-        # Instance-level data key — matches what hot_water_tank.py reads back.
+        # Instance-level data key - matches what hot_water_tank.py reads back.
         self._load_data_key = f"tank_{kind}_temperature"
         self._attr_name = f"{name} {label} Temperature"
         self._attr_unique_id = f"{entity_id}_tank_{kind}_temperature"
@@ -364,7 +371,7 @@ class StationChargePowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     """Slider for a power station's min/max charge power in Watts.
 
     These bound what the engine may allocate, deliberately *configured* rather
-    than read from the device — a station whose hardware accepts 2400 W can be
+    than read from the device - a station whose hardware accepts 2400 W can be
     held to less. The engine reads them back from the runtime dict, so a change
     takes effect on the next cycle without a reconfigure.
     """
@@ -377,12 +384,12 @@ class StationChargePowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     ):
         self.hass = hass
         self.config_entry = config_entry
-        # Instance-level key — matches what power_station.py reads back.
+        # Instance-level key - matches what power_station.py reads back.
         self._load_data_key = f"station_{kind}_charge_power"
         self._attr_name = f"{name} {label}"
         self._attr_unique_id = f"{entity_id}_station_{kind}_charge_power"
         self._attr_native_min_value = 0
-        self._attr_native_max_value = 5000
+        self._attr_native_max_value = STATION_CHARGE_POWER_MAX
         self._attr_native_step = STATION_CHARGE_POWER_STEP
         self._attr_native_value = get_entry_value(config_entry, conf_key, default)
         self._attr_native_unit_of_measurement = "W"

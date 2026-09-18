@@ -2,7 +2,7 @@
 
 Most Load Juggler sensors publish nothing of their own: they read a value the
 hub's site cycle wrote into ``hass.data``. That makes their honest availability
-a question about the PRODUCER, not about themselves — a sensor whose producer
+a question about the PRODUCER, not about themselves - a sensor whose producer
 stopped running is not "0 W", it is unavailable, and the difference matters
 because 0 A of grid draw reads as "the whole main breaker is free".
 
@@ -29,7 +29,7 @@ def freshness_window_seconds(site_update_frequency) -> float:
     """Seconds a producer's last update stays usable, given its cycle length.
 
     Anything unparseable or nonsensical (None, a string, NaN, a negative
-    period) degrades to the 30 s floor rather than to "always stale" — a
+    period) degrades to the 30 s floor rather than to "always stale" - a
     misconfigured interval must not blank out every sensor on the site.
     """
     try:
@@ -45,7 +45,7 @@ def producer_age_seconds(last_update, now=None):
     """Age of ``last_update`` in seconds, or None when it cannot be measured.
 
     None is the answer for "never updated" (``last_update`` is None) and for a
-    timestamp that cannot be compared with ``now`` — mixing a naive datetime
+    timestamp that cannot be compared with ``now`` - mixing a naive datetime
     with an aware one raises, and a producer that cannot be dated is exactly
     the case this module exists to report as stale.
 

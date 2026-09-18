@@ -10,7 +10,7 @@ YAML-driven tests that validate the calculation engine directly. Run on any plat
 
 ```bash
 python3 dev/tests/run_tests.py dev/tests/scenarios
-# equivalent — the scenarios directory is the default:
+# equivalent - the scenarios directory is the default:
 python3 dev/tests/run_tests.py
 ```
 
@@ -32,10 +32,10 @@ python3 dev/tests/run_tests.py "scenario-name"
 ### Scenario files
 
 Scenario YAML files live in `dev/tests/scenarios/`:
-- `test_scenarios_1ph.yaml` — Single-phase scenarios
-- `test_scenarios_1ph_battery.yaml` — Single-phase with battery
-- `test_scenarios_3ph.yaml` — Three-phase scenarios
-- `test_scenarios_3ph_battery.yaml` — Three-phase with battery
+- `test_scenarios_1ph.yaml` - Single-phase scenarios
+- `test_scenarios_1ph_battery.yaml` - Single-phase with battery
+- `test_scenarios_3ph.yaml` - Three-phase scenarios
+- `test_scenarios_3ph_battery.yaml` - Three-phase with battery
 
 Each YAML file contains a `scenarios:` list with inputs and expected targets for loads.
 
@@ -74,7 +74,7 @@ run, but have no Home Assistant dependency of their own:
 | File | What it tests |
 |---|---|
 | `test_hot_water_tank.py` | Tank setpoint resolution and urgency-tier promotion/demotion |
-| `test_excess_margin.py` | The Excess trigger — `excess_margin()` across grid/battery/off-grid states |
+| `test_excess_margin.py` | The Excess trigger - `excess_margin()` across grid/battery/off-grid states |
 | `test_power_station.py` | Power station charge-speed quantisation and reserve resolution |
 | `test_auto_detect.py` | Grid CT inversion + phase-mapping auto-detection (26 tests) |
 
@@ -102,6 +102,6 @@ python3 dev/debug_scenario.py "scenario-name" --verbose
 
 ## Notes
 
-- Calculation scenario tests use **real production code** from `custom_components/dynamic_ocpp_evse/calculations` — no mocks.
+- Calculation scenario tests use **real production code** from `custom_components/dynamic_ocpp_evse/calculations` - no mocks.
 - Integration tests mock platform forwarding (`async_forward_entry_setups`) to isolate the component logic under test.
 - OCPP service calls are mocked via `patch("homeassistant.core.ServiceRegistry.async_call", ...)` since no real OCPP integration is present in tests.

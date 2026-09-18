@@ -23,6 +23,7 @@ import math
 import time
 
 from ..calculations import LoadContext, CircuitGroup
+from ..calculations.models import INACTIVE_STATUSES
 from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
@@ -49,6 +50,7 @@ from ..const import (
     CONF_PLUG_POWER_RATING,
     CONF_PLUG_SWITCH_ENTITY_ID,
     CONF_STATION_AC_INPUT_ENTITY_ID,
+    CONF_STATION_RESERVE_ENTITY_ID,
     CONF_STATION_AC_OUTPUT_ENTITY_ID,
     CONF_STATION_BATTERY_LEVEL_ENTITY_ID,
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
@@ -81,7 +83,7 @@ from ..const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
-    SETTLE_DRAW_CYCLES,
+    SETTLE_DRAW_SECONDS,
     SETTLE_DRAW_TOLERANCE,
     SETTLE_PERMIT_MARGIN,
     STATION_MODE_STANDARD,
@@ -89,6 +91,15 @@ from ..const import (
     behavior_for,
     resolve_operating_mode,
     resolve_tank_mode_priority,
+    tank_boost_is_opportunistic,
+    BEHAVIOR_BINARY_EXCESS,
+    BEHAVIOR_EXCESS,
+    CONF_TANK_AWAY_TEMPERATURE,
+    CONF_TANK_BOOST_TEMPERATURE,
+    DEFAULT_TANK_AWAY_TEMPERATURE,
+    DEFAULT_TANK_BOOST_TEMPERATURE,
+    TANK_MODE_FREEZE_PROTECTION,
+    TANK_MODE_NORMAL,
 )
 from ..helpers import get_entry_value
 from ..ocpp_discovery import ocpp_connector_status_entity
@@ -107,7 +118,8 @@ from .readers import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
+def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
+                     settle_seconds=SETTLE_DRAW_SECONDS):
     """Build a LoadContext for an OCPP EVSE load."""
     load_rt = hass.data[DOMAIN]["loads"].get(entry.entry_id, {})
     config_min = get_entry_value(
@@ -120,20 +132,20 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
     max_current = load_rt.get("max_current") or config_max
     # The sliders refuse to cross each other (number.py), but a state restored
     # from an install that predates that guard still can. An inverted interval
-    # makes every permit nonsensical, so collapse it — downwards, so a bad pair
+    # makes every permit nonsensical, so collapse it - downwards, so a bad pair
     # can never authorise MORE current than the configured maximum. (The power
     # station builder below resolves its own inverted pair the other way; its
     # min is a trickle floor, not a hardware limit.)
     if min_current > max_current:
         _LOGGER.warning(
-            "%s: min_current %.1fA is above max_current %.1fA — using %.1fA for both",
+            "%s: min_current %.1fA is above max_current %.1fA - using %.1fA for both",
             load_entity_id, min_current, max_current, max_current,
         )
         min_current = max_current
 
     phases = int(get_entry_value(entry, CONF_PHASES, 3) or 3)
 
-    # Read connector status from the charger's own status sensor — resolved
+    # Read connector status from the charger's own status sensor - resolved
     # from the registries by metric classification (and cached per entry setup),
     # never composed from the charge point id: that guess is wrong for a renamed
     # status entity and on every multi-connector charger.
@@ -162,10 +174,18 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
         phases=phases,
         priority=priority,
         connector_status=connector_status,
+        # "Hands off" reaches the calculation too - see LoadContext.
+        dynamic_control=load_rt.get("dynamic_control", True),
         operating_mode=mode.key,
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
         rated_current=max_current,
+        excess_claim_current=(
+            min_current
+            if behavior_for(mode) == BEHAVIOR_EXCESS
+            and connector_status not in INACTIVE_STATUSES
+            else 0.0
+        ),
         l1_phase=l1_phase,
         l2_phase=l2_phase,
         l3_phase=l3_phase,
@@ -198,7 +218,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
             load.l2_current = l2_val if l2_val is not None else 0
             load.l3_current = l3_val if l3_val is not None else 0
             # A phase whose OWN sensor is configured but unreadable contributes
-            # an invented 0 to a draw the other phases made look measured — so
+            # an invented 0 to a draw the other phases made look measured - so
             # the total is fabricated even though this path produced a reading.
             if any(raw is _UNAVAILABLE for raw in raw_vals):
                 load.draw_assumed = True
@@ -284,12 +304,47 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
             except (ValueError, TypeError):
                 pass
 
+    # An EMPTY connector cannot be drawing current, whatever its meter says.
+    # "Available" is OCPP's own word for "no car", so this is a fact about the
+    # connector rather than an inference about the reading.
+    #
+    # Chargers commonly stop sending MeterValues when a session ends, and Home
+    # Assistant holds a sensor's last state until something newer arrives - so
+    # `current_import` freezes at whatever the car was taking when it was
+    # unplugged. Seen live on the SE17K Elvi (2026-09-11): 13.2 A reported into
+    # an empty connector for hours. That phantom draw is added back by the
+    # loads-off reconstruction, and one stale reading moved four published
+    # figures at once - grid headroom read the WHOLE breaker (every phase's
+    # consumption went to 0 once 13.2 A was subtracted from a 1.8 A import), a
+    # solar pool of 11.4 A appeared on a phase that had none, export-with-
+    # loads-off read 3 898 W against a real 856 W, and household clamped at 0
+    # where the arithmetic wanted -2 215 W. A load engaging on that phantom
+    # pool would have made the site import.
+    #
+    # Deliberately NOT a staleness timeout. A car charging steadily holds
+    # `current_import` at one value for minutes, so "has not changed recently"
+    # cannot tell stale from steady and would shed healthy sessions. And
+    # deliberately only on "Available": an unreadable status is not evidence of
+    # an empty connector, and inventing a zero there would repeat the grid-CT
+    # mistake in the other direction. Finishing and Faulted keep their draw
+    # too - a car may still be connected.
+    if connector_status == "Available" and (
+        load.l1_current or load.l2_current or load.l3_current
+    ):
+        _LOGGER.debug(
+            "EVSE %s: connector is Available (no car) but the meter reports "
+            "%.1f/%.1f/%.1f A - treating the draw as 0",
+            load_entity_id,
+            load.l1_current, load.l2_current, load.l3_current,
+        )
+        load.l1_current = load.l2_current = load.l3_current = 0.0
+
     if current_draw:
         _LOGGER.debug(
             "EVSE %s: Current draw source: %s", load_entity_id, current_draw
         )
 
-    # No current-import source found — the engine cannot see this EVSE's real
+    # No current-import source found - the engine cannot see this EVSE's real
     # draw, so its footprint falls back to its permit (it may reserve more than
     # it uses). Plugs and tanks always carry a correct draw and are never
     # flagged unmetered.
@@ -306,8 +361,8 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
         load.draw_assumed = True
 
     # Draw-settle detection: the measured draw is trusted as the EVSE's real
-    # footprint — freeing the unused gap to lower-priority loads — only when
-    # two conditions hold: it has held steady for SETTLE_DRAW_CYCLES cycles
+    # footprint - freeing the unused gap to lower-priority loads - only when
+    # two conditions hold: it has held steady for SETTLE_DRAW_SECONDS
     # *and* it is measurably below the permit we offered last cycle. A car
     # drawing essentially what we offered (util ≈ 1.0) is using all of it, so
     # we keep treating the permit as its footprint. A still-ramping car keeps
@@ -316,15 +371,20 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
     if load.unmetered:
         load.draw_settled = False
         load_rt.pop("_settle_last_draw", None)
-        load_rt.pop("_settle_count", None)
+        load_rt.pop("_settle_since", None)
     else:
         last_draw = load_rt.get("_settle_last_draw")
         if last_draw is not None and abs(measured_draw - last_draw) <= SETTLE_DRAW_TOLERANCE:
-            load_rt["_settle_count"] = load_rt.get("_settle_count", 0) + 1
+            # Timestamped rather than counted: a count of cycles is a duration
+            # only once you know the refresh rate. Same shape as the
+            # SuspendedEV idle marker above.
+            if "_settle_since" not in load_rt:
+                load_rt["_settle_since"] = time.monotonic()
         else:
-            load_rt["_settle_count"] = 0
+            load_rt.pop("_settle_since", None)
         load_rt["_settle_last_draw"] = measured_draw
-        steady = load_rt["_settle_count"] >= SETTLE_DRAW_CYCLES
+        since = load_rt.get("_settle_since")
+        steady = since is not None and time.monotonic() - since >= settle_seconds
         under_permit = (
             measured_draw + SETTLE_PERMIT_MARGIN
             < load_rt.get("_last_permit", 0)
@@ -341,7 +401,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority):
         idle_duration = time.monotonic() - load_rt["_suspended_ev_since"]
         if idle_duration >= SUSPENDED_EV_IDLE_TIMEOUT:
             _LOGGER.debug(
-                "EVSE %s: SuspendedEV idle for %.0fs (>%ds) — treating as inactive",
+                "EVSE %s: SuspendedEV idle for %.0fs (>%ds) - treating as inactive",
                 load_entity_id,
                 idle_duration,
                 SUSPENDED_EV_IDLE_TIMEOUT,
@@ -426,7 +486,7 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
         )  # Convert kW→W if needed
         # A configured monitor that cannot be read leaves this plug's draw at
         # 0 W. That is the conservative figure for the feedback loop and stays,
-        # but it is invented — see LoadContext.draw_assumed at the end.
+        # but it is invented - see LoadContext.draw_assumed at the end.
         monitor_unreadable = raw_power_draw is _UNAVAILABLE
         power_draw = _coerce(raw_power_draw)
 
@@ -440,7 +500,7 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
         on = True
     connector_status = "Charging" if on else "Available"
 
-    # Learn the device's real power from the monitor — but only while the plug
+    # Learn the device's real power from the monitor - but only while the plug
     # is on AND the reading is steady. A transient reading (a switch-off dip, a
     # compressor inrush spike) must not overwrite the configured rating, so we
     # require N consecutive readings within ±20 % of the *first* one before
@@ -451,7 +511,7 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
     if power_monitor_entity and on and power_draw and power_draw > 10:
         candidate = load_rt.get("power_candidate")
         if candidate is None or candidate <= 0:
-            # First reading of a run — remember it as the yardstick to compare
+            # First reading of a run - remember it as the yardstick to compare
             # the next cycles against.
             load_rt["power_candidate"] = power_draw
             load_rt["power_stable_count"] = 1
@@ -462,7 +522,7 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
                 power_rating = power_draw
                 load_rt["device_power"] = math.ceil(power_draw / 10) * 10
         else:
-            # The reading moved off the candidate — the run is broken, restart
+            # The reading moved off the candidate - the run is broken, restart
             # counting against the new value.
             load_rt["power_candidate"] = power_draw
             load_rt["power_stable_count"] = 1
@@ -474,7 +534,7 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
     # plug is not permanently locked off due to a very low power rating.
     equivalent_current = max(0.1, power_rating / (voltage * phases)) if voltage > 0 else 0
 
-    # Actual draw — the measured draw while the plug is on (else the set power
+    # Actual draw - the measured draw while the plug is on (else the set power
     # if there is no monitor), 0 when off. Populates the load's per-phase
     # currents so the plug counts toward Total Managed Power and the feedback.
     if power_monitor_entity:
@@ -497,11 +557,16 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
         priority=priority,
         active_phases_mask=connected_to_phase,
         connector_status=connector_status,
+        # "Hands off" reaches the calculation too - see LoadContext.
+        dynamic_control=load_rt.get("dynamic_control", True),
         device_type=DEVICE_TYPE_PLUG,
         operating_mode=mode.key,
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
         rated_current=plug_max_current,
+        excess_claim_current=(
+            equivalent_current if behavior_for(mode) == BEHAVIOR_BINARY_EXCESS else 0.0
+        ),
         draw_assumed=monitor_unreadable,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
@@ -518,6 +583,33 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
     return load
 
 
+def _station_at_its_reserve(hass, entry, load_rt, soc) -> bool:
+    """Whether the station's SOC has reached the backup reserve it is holding -
+    the point where it stops drawing from the wall regardless of the commanded
+    speed. Judged against the higher of the live reserve entity and the reserve
+    the control last wrote. Unknown SOC or reserve → not at it (the old behaviour)."""
+    if soc is None:
+        return False
+    reserve = _coerce(
+        _read_entity(
+            hass, get_entry_value(entry, CONF_STATION_RESERVE_ENTITY_ID, None), None
+        ),
+        None,
+    )
+    written = load_rt.get("station_reserve")
+    candidates = [r for r in (reserve, written) if r is not None]
+    if not candidates:
+        return False
+    try:
+        # The higher of the two: a reserve we have just raised to charge may
+        # not have reached the device yet (BLE), and until it has, the live
+        # entity still shows the lower normal level - which is not a full
+        # station, only a write in flight.
+        return float(soc) >= max(float(r) for r in candidates)
+    except (TypeError, ValueError):
+        return False
+
+
 def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     """Build a LoadContext for a portable power station (modulating load).
 
@@ -526,7 +618,7 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     device's own, so it can be held below what the hardware allows), and the
     allocation is written back as an AC charging speed.
 
-    Its managed draw is the charging component only — ``ac_input - ac_output``.
+    Its managed draw is the charging component only - ``ac_input - ac_output``.
     Whatever is plugged into the station passes through to its outputs and is
     ordinary household consumption, not ours: counting it here would let the
     feedback loop add it back as available surplus.
@@ -568,7 +660,7 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     if charge_limit is None:
         charge_limit = DEFAULT_STATION_CHARGE_LIMIT
 
-    # Status. The station is inactive — and its power goes back to other loads —
+    # Status. The station is inactive - and its power goes back to other loads -
     # once it has reached its own charge limit. It is *unavailable* when the
     # control entity is gone: these integrations talk BLE, which allows one
     # connection at a time, so opening the vendor app silently takes control
@@ -584,7 +676,7 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
 
     # Managed draw: the charging component of the wall draw. Falls back to the
     # commanded speed when the AC sensors aren't configured, and only while the
-    # station was last told to charge — an idle station draws nothing.
+    # station was last told to charge - an idle station draws nothing.
     ac_in_entity = get_entry_value(entry, CONF_STATION_AC_INPUT_ENTITY_ID, None)
     ac_out_entity = get_entry_value(entry, CONF_STATION_AC_OUTPUT_ENTITY_ID, None)
     raw_ac_in = _read_entity(hass, ac_in_entity, None, unit="W")
@@ -603,11 +695,17 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     )
     if ac_in is not None and ac_out is not None:
         actual_draw_w = max(0.0, ac_in - abs(ac_out))
-    elif load_rt.get("station_charging"):
+    elif load_rt.get("station_charging") and not _station_at_its_reserve(
+        hass, entry, load_rt, soc
+    ):
         # _read_entity parses and unit-converts; _coerce only maps the
         # unavailable sentinel, so the raw state string must not go through it.
         actual_draw_w = _coerce(_read_entity(hass, speed_entity, 0, unit="W"), 0) or 0
     else:
+        # Idle - or commanded to charge but already at the reserve, where the
+        # station's own gate stops the wall draw whatever speed we wrote. Adding
+        # the commanded speed back then would credit the site with surplus it
+        # does not have (a full station kept the Excess verdict on, 2026-09-03).
         actual_draw_w = 0
 
     mode = resolve_operating_mode(
@@ -628,11 +726,19 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
         priority=priority,
         active_phases_mask=connected_to_phase,
         connector_status=connector_status,
+        # "Hands off" reaches the calculation too - see LoadContext.
+        dynamic_control=load_rt.get("dynamic_control", True),
         device_type=DEVICE_TYPE_POWER_STATION,
         operating_mode=mode.key,
         mode_behavior=behavior_for(mode),
         mode_priority=mode.priority,
         rated_current=max_current,
+        excess_claim_current=(
+            min_current
+            if behavior_for(mode) == BEHAVIOR_EXCESS
+            and connector_status not in INACTIVE_STATUSES
+            else 0.0
+        ),
         draw_assumed=draw_assumed,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
@@ -665,7 +771,7 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     load_rt = hass.data[DOMAIN]["loads"].get(entry.entry_id, {})
 
     # Connector status from the climate entity's hvac_action: a thermostat
-    # reporting "idle" means the tank is satisfied — mark it inactive so the
+    # reporting "idle" means the tank is satisfied - mark it inactive so the
     # engine reallocates that power. Anything else is treated as an active load.
     climate_entity = entry.data.get(CONF_CLIMATE_ENTITY_ID)
     connector_status = "Charging"
@@ -682,7 +788,7 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     #
     # The heating gate is essential: standby electronics or a circulation pump
     # keep the sensor at a few watts with the element off, and learning from
-    # that would shrink the tank's equivalent_current to the 0.1 A floor —
+    # that would shrink the tank's equivalent_current to the 0.1 A floor -
     # a 2 kW load booked as free. With no hvac_action to confirm heating we
     # keep the configured rating rather than learn from an unknown state.
     element_power = get_entry_value(
@@ -708,7 +814,7 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
 
     equivalent_current = power_rating / (voltage * phases) if voltage > 0 else 0
 
-    # Actual draw — the element only consumes while the thermostat is calling
+    # Actual draw - the element only consumes while the thermostat is calling
     # for heat. Use the live power sensor if configured, else the element
     # rating while hvac_action is "heating". Populates per-phase currents so
     # the tank counts toward Total Managed Power and the feedback loop.
@@ -720,7 +826,7 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     # Resolve the tank's operating mode. Its behavior (Freeze Protection /
     # Normal are must-run Full Power; Solar Priority follows the sun) is mapped
     # centrally in const/modes.py. resolve_tank_setpoint() independently picks
-    # *which* setpoint (away/normal/boost) to aim at — the mode behavior only
+    # *which* setpoint (away/normal/boost) to aim at - the mode behavior only
     # decides how the tank competes for power, not whether it runs.
     mode = resolve_operating_mode(
         DEVICE_TYPE_HOT_WATER_TANK,
@@ -729,7 +835,7 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
 
     # Cold-tank promotion: a Solar Priority tank below its normal temperature is
     # bumped to the Normal urgency tier so it beats other solar-priority loads
-    # in contention. Only the tier is raised — the behavior stays Solar Priority,
+    # in contention. Only the tier is raised - the behavior stays Solar Priority,
     # so the tank still draws from solar + above-min battery and never deep-cycles
     # the bank below its minimum SOC. Toggleable per tank (default on).
     raw_temp = (
@@ -742,10 +848,16 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     normal_temp = load_rt.get("tank_normal_temperature") or get_entry_value(
         entry, CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE
     )
+    boost_temp = load_rt.get("tank_boost_temperature") or get_entry_value(
+        entry, CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE
+    )
+    away_temp = load_rt.get("tank_away_temperature") or get_entry_value(
+        entry, CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE
+    )
 
     # Surplus demotion: a tank aiming at boost is heating on energy the site
     # would otherwise dump, so it competes at the Excess tier instead of its
-    # mode's own. The label is whatever the command layer last wrote — one cycle
+    # mode's own. The label is whatever the command layer last wrote - one cycle
     # stale, which is the honest reading. Resolving it here instead would have to
     # use PRE-feedback export (loads are built before the feedback loop and
     # the excess latch), and that figure is already depressed by the tank's own
@@ -767,6 +879,20 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     )
     load_rt["tank_priority_elevated"] = elevated
 
+    # ...and its BEHAVIOR the same way, from the same label. The tier demotion
+    # above says a boosting tank is opportunistic; this is what makes the
+    # allocator agree, so the tank is sized by the surplus it claims against
+    # instead of taking its rating from the physical pool regardless. Below its
+    # mode's own floor temperature it stays full-power and unconditional - see
+    # tank_boost_is_opportunistic for why that guard is not optional.
+    opportunistic = tank_boost_is_opportunistic(
+        mode.key,
+        setpoint_label,
+        current_temp,
+        away_temp if mode.key == TANK_MODE_FREEZE_PROTECTION.key else normal_temp,
+    )
+    mode_behavior = BEHAVIOR_BINARY_EXCESS if opportunistic else behavior_for(mode)
+
     load = LoadContext(
         load_id=entry.entry_id,
         entity_id=load_entity_id,
@@ -776,11 +902,23 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         priority=priority,
         active_phases_mask=connected_to_phase,
         connector_status=connector_status,
+        # "Hands off" reaches the calculation too - see LoadContext.
+        dynamic_control=load_rt.get("dynamic_control", True),
         device_type=DEVICE_TYPE_HOT_WATER_TANK,
         operating_mode=mode.key,
-        mode_behavior=behavior_for(mode),
+        mode_behavior=mode_behavior,
         mode_priority=mode_priority,
         rated_current=equivalent_current,
+        # The verdict starts this tank (its setpoint jumps to boost) whenever
+        # its mode rides surplus and it is below the boost temperature - so it
+        # claims its rating from the verdict-on cycle, thermostat idle or not.
+        excess_claim_current=(
+            equivalent_current
+            if mode.key in (TANK_MODE_FREEZE_PROTECTION.key, TANK_MODE_NORMAL.key)
+            and current_temp is not None
+            and current_temp < boost_temp
+            else 0.0
+        ),
         draw_assumed=power_unreadable,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
@@ -798,11 +936,14 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     return load
 
 
-def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None):
+def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
+                       settle_seconds=SETTLE_DRAW_SECONDS):
     """Build LoadContext objects for all loads and add them to the site.
 
     ``load_entries`` overrides the hub's registered loads (used by tests and
     by any caller that already knows the entries); None reads the registry.
+    ``settle_seconds`` is the hub's draw-settle dial (Filters page); the
+    default is the constant it overrides.
     """
     if load_entries is None:
         loads = get_loads_for_hub(hass, hub_entry_id)
@@ -830,7 +971,8 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None):
             )
         else:
             load = _build_evse_load(
-                hass, entry, site.voltage, load_entity_id, priority
+                hass, entry, site.voltage, load_entity_id, priority,
+                settle_seconds=settle_seconds,
             )
 
         # Clamp active_phases_mask to only include phases that exist on the site
@@ -848,7 +990,7 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None):
         if mask_phases and not mask_phases.issubset(site_phases):
             clamped = "".join(sorted(mask_phases & site_phases)) or load.l1_phase
             _LOGGER.warning(
-                "%s %s: phase mask %s includes phases not on site (%s) — clamping to %s",
+                "%s %s: phase mask %s includes phases not on site (%s) - clamping to %s",
                 "Plug" if load.device_type == DEVICE_TYPE_PLUG else "EVSE",
                 load_entity_id,
                 load.active_phases_mask,
@@ -885,7 +1027,7 @@ def _build_circuit_groups(hass, hub_entry_id):
         stale = set(raw_member_ids) - set(member_ids)
         if stale:
             _LOGGER.warning(
-                "Circuit group '%s': removed %d stale member(s) — entries no longer exist",
+                "Circuit group '%s': removed %d stale member(s) - entries no longer exist",
                 options.get(CONF_NAME, "Circuit Group"),
                 len(stale),
             )

@@ -1,4 +1,4 @@
-"""EVSE (OCPP charger) constants — entities, OCPP, charge limits, modes."""
+"""EVSE (OCPP charger) constants - entities, OCPP, charge limits, modes."""
 
 from .common import OperatingMode
 
@@ -24,7 +24,7 @@ CONF_CHARGER_L1_PHASE = "charger_l1_phase"
 CONF_CHARGER_L2_PHASE = "charger_l2_phase"
 CONF_CHARGER_L3_PHASE = "charger_l3_phase"
 
-# The ocpp integration's own domain — the device-registry identifier domain it
+# The ocpp integration's own domain - the device-registry identifier domain it
 # stamps on every charge point ("ocpp", <charge point id>), the platform its
 # entities carry, and the device selector's integration filter.
 OCPP_INTEGRATION_DOMAIN = "ocpp"
@@ -44,7 +44,7 @@ OCPP_ENTITY_SUFFIX_CURRENT_OFFERED = "_current_offered"
 OCPP_ENTITY_SUFFIX_POWER_OFFERED = "_power_offered"
 OCPP_ENTITY_SUFFIX_POWER_IMPORT = "_power_active_import"
 OCPP_ENTITY_SUFFIX_STATUS = "_status"
-# The connector status ("Status.Connector") — classified like the metrics above
+# The connector status ("Status.Connector") - classified like the metrics above
 # but never stored on an entry: it is resolved from the registries at setup.
 OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR = "_status_connector"
 OCPP_ENTITY_SUFFIX_STOP_REASON = "_stop_reason"
@@ -69,7 +69,7 @@ PROFILE_VALIDITY_MODE_RELATIVE = "relative"
 PROFILE_VALIDITY_MODE_ABSOLUTE = "absolute"
 DEFAULT_PROFILE_VALIDITY_MODE = PROFILE_VALIDITY_MODE_ABSOLUTE
 
-# EVSE operating modes — priority is the distribution urgency tier (1-4).
+# EVSE operating modes - priority is the distribution urgency tier (1-4).
 EVSE_MODE_STANDARD = OperatingMode(
     key="Standard", label="Standard", priority=1, icon="mdi:flash",
 )

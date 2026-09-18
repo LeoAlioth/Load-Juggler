@@ -241,7 +241,7 @@ async def test_fleet_survives_a_hub_reload(
     Regression: the hub's runtime child lists are rebuilt empty on every hub
     setup, and children that are already loaded never re-register themselves.
     Adding an inverter schedules a hub reload, so the fleet could come back
-    missing inverters — silently taking their capacity out of the site limit —
+    missing inverters - silently taking their capacity out of the site limit -
     until the next Home Assistant restart.
     """
     from custom_components.dynamic_ocpp_evse import get_inverters_for_hub
@@ -298,7 +298,7 @@ async def test_chargers_are_readopted_after_a_hub_reload(
     mock_setup,
 ):
     """Same regression for chargers, which keep a runtime list because their
-    allocation state lives beside it — the hub re-adopts them on setup."""
+    allocation state lives beside it - the hub re-adopts them on setup."""
     from custom_components.dynamic_ocpp_evse import get_loads_for_hub
 
     mock_hub_entry.add_to_hass(hass)

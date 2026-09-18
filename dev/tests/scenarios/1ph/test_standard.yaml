@@ -3,7 +3,7 @@
 scenarios:
 
   - name: "1ph-1c-standard-no-bat-basic"
-    description: "Standard mode basic — charger max limited by max_current"
+    description: "Standard mode basic - charger max limited by max_current"
     human_verified: false
     site:
       voltage: 230
@@ -32,7 +32,7 @@ scenarios:
         allocated: 16.0  # 35A breaker - 5A consumption = 30A available, capped at max 16A
 
   - name: "1ph-1c-standard-no-bat-breaker-limited"
-    description: "Standard mode — breaker limits charger below max_current"
+    description: "Standard mode - breaker limits charger below max_current"
     human_verified: false
     site:
       voltage: 230

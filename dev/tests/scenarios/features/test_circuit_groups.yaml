@@ -1,4 +1,4 @@
-# Test scenarios: Circuit groups — shared breaker limits for co-located loads
+# Test scenarios: Circuit groups - shared breaker limits for co-located loads
 # Circuit groups enforce a per-phase current limit on a subset of loads.
 # Post-distribution capping: the engine distributes normally, then caps groups.
 
@@ -7,7 +7,7 @@ scenarios:
   # --- Basic capping ---
 
   - name: "group-3ph-two-chargers-capped"
-    description: "Two 3ph chargers on 20A group, 25A site — second charger capped by group"
+    description: "Two 3ph chargers on 20A group, 25A site - second charger capped by group"
     human_verified: false
     site:
       voltage: 230
@@ -50,7 +50,7 @@ scenarios:
         allocated: 0.0   # 20A - 16A = 4A remaining < 6A min → 0
 
   - name: "group-3ph-two-chargers-both-fit"
-    description: "Two 3ph chargers on 24A group — both fit at reduced current"
+    description: "Two 3ph chargers on 24A group - both fit at reduced current"
     human_verified: false
     site:
       voltage: 230
@@ -93,7 +93,7 @@ scenarios:
         allocated: 9.0   # 24 - 15 = 9A remaining ≥ 6A min → 9A
 
   - name: "group-3ph-one-inactive"
-    description: "Two 3ph chargers on 20A group — one inactive, other gets full allocation"
+    description: "Two 3ph chargers on 20A group - one inactive, other gets full allocation"
     human_verified: false
     site:
       voltage: 230
@@ -139,7 +139,7 @@ scenarios:
   # --- Phase-aware capping ---
 
   - name: "group-1ph-same-phase-capped"
-    description: "Two 1ph chargers on same phase in 16A group — second charger capped"
+    description: "Two 1ph chargers on same phase in 16A group - second charger capped"
     human_verified: false
     site:
       voltage: 230
@@ -176,7 +176,7 @@ scenarios:
         allocated: 0.0   # 16 - 16 = 0A remaining < 6A min → 0
 
   - name: "group-1ph-different-phases-no-conflict"
-    description: "Two 1ph chargers on different phases in 16A group — no capping needed"
+    description: "Two 1ph chargers on different phases in 16A group - no capping needed"
     human_verified: false
     site:
       voltage: 230
@@ -217,7 +217,7 @@ scenarios:
   # --- Priority and mode ordering ---
 
   - name: "group-mixed-priority"
-    description: "Two chargers in group — higher priority keeps allocation, lower capped"
+    description: "Two chargers in group - higher priority keeps allocation, lower capped"
     human_verified: false
     site:
       voltage: 230
@@ -308,7 +308,7 @@ scenarios:
   # --- No group / unconstrained ---
 
   - name: "group-limit-above-sum-no-effect"
-    description: "Group limit higher than sum of max_currents — no capping"
+    description: "Group limit higher than sum of max_currents - no capping"
     human_verified: false
     site:
       voltage: 230

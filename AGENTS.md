@@ -4,19 +4,19 @@ This file provides guidance to LLM Agents when working with code in this reposit
 
 ## Project Overview
 
-Load Juggler is a Home Assistant custom component for intelligent load management. It dynamically distributes available power across managed loads — EV chargers (via OCPP 1.6J), smart plugs, and more — based on solar production, battery state, grid capacity, and per-load operating modes.
+Load Juggler is a Home Assistant custom component for intelligent load management. It dynamically distributes available power across managed loads - EV chargers (via OCPP 1.6J), smart plugs, and more - based on solar production, battery state, grid capacity, and per-load operating modes.
 
 **Key Capabilities:**
 
 - Per-load operating modes (Standard, Solar Priority, Solar Only, Excess for EVSE; Continuous, Solar Only, Excess for plugs)
 - Multi-load support with priority-based distribution and mode urgency sorting
-- Circuit groups — shared breaker limits for co-located loads (post-distribution capping)
+- Circuit groups - shared breaker limits for co-located loads (post-distribution capping)
 - Battery integration with SOC thresholds
 - Phase-aware handling (1-phase, 2-phase, 3-phase installations)
 - Symmetric and asymmetric inverter support
-- Off-grid support (no grid CTs required — infers phases from inverter output)
+- Off-grid support (no grid CTs required - infers phases from inverter output)
 
-**Backwards compatibility** — stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 5); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API — keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
+**Backwards compatibility** - stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 5); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API - keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
 
 **Bug tracking**: Open issues live in `dev/ISSUES.md`. Claude picks them up automatically at the start of each session.
 
@@ -26,7 +26,7 @@ Load Juggler is a Home Assistant custom component for intelligent load managemen
 
 - **Completed**: Short one-liners (title only, no implementation details). Periodically consolidate related items and remove entries that are no longer useful context.
 - **In Progress**: Clearly defined tasks to finish before reaching out to the developer. Include enough detail to implement without ambiguity.
-- **Backlog**: Upcoming work. More general — make more detailed when transitioning to In Progress.
+- **Backlog**: Upcoming work. More general - make more detailed when transitioning to In Progress.
 - **Other**: Non-code tasks (e.g., icon submissions, external PRs).
 
 Each In Progress and Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bugs are prioritized over features.
@@ -38,14 +38,14 @@ Each In Progress and Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bug
 ```text
 custom_components/dynamic_ocpp_evse/
 ├── __init__.py                    # HA setup/unload, services (re-exports the registry helpers)
-├── registry.py                    # Entry-relationship lookups (get_hub_for_load, get_*_for_hub) —
+├── registry.py                    # Entry-relationship lookups (get_hub_for_load, get_*_for_hub) -
 │                                  #   HA-import-free, so pure tooling can load it without Home Assistant
 ├── manifest.json                  # Component metadata
-├── config_flow/                   # HA configuration flow (initial setup + options "Configure" flow — the single
+├── config_flow/                   # HA configuration flow (initial setup + options "Configure" flow - the single
 │   │                              #   edit path; no reconfigure flow. Options menu: settings / overview / summary)
-│   ├── flow.py                    # LoadJugglerConfigFlow — the initial-setup step methods
-│   ├── options.py                 # LoadJugglerOptionsFlow — the "Configure" edit steps
-│   ├── schemas.py                 # Every voluptuous schema builder, as module functions — no handler
+│   ├── flow.py                    # LoadJugglerConfigFlow - the initial-setup step methods
+│   ├── options.py                 # LoadJugglerOptionsFlow - the "Configure" edit steps
+│   ├── schemas.py                 # Every voluptuous schema builder, as module functions - no handler
 │   │                              #   state; `hass` is a parameter only where a form offers entity selectors
 │   ├── pages.py                   # Overview / "How it decides" read-only page text builders
 │   └── helpers.py                 # Everything both handlers share: unit validation, the optional-entity
@@ -54,7 +54,7 @@ custom_components/dynamic_ocpp_evse/
 ├── const/                         # Constants per area: common, hub, evse, plug, hot_water_tank, group,
 │                                  #   inverter, modes, power_station
 ├── engine/                        # HA → SiteContext bridge (reads HA states, drives the calculation)
-│   ├── hub_calculation.py         # Main entry point — run_hub_calculation() builds SiteContext, calls engine
+│   ├── hub_calculation.py         # Main entry point - run_hub_calculation() builds SiteContext, calls engine
 │   │                              #   Keeps the core cycle: _apply_feedback_loop(), the SOC/Excess latches,
 │   │                              #   household figures; everything else lives in the siblings below
 │   ├── readers.py                 # HA-state edge: _read_entity() (returns _UNAVAILABLE sentinel),
@@ -70,9 +70,9 @@ custom_components/dynamic_ocpp_evse/
 │   ├── models.py                  # Data models (SiteContext, LoadContext, CircuitGroup, PhaseConstraints, PhaseValues)
 │   ├── target_calculator.py       # Main calculation engine
 │   ├── forecast.py                # Forecast-based charging advice
-│   ├── context.py                 # Unused (no callers) — candidate for deletion
+│   ├── context.py                 # Unused (no callers) - candidate for deletion
 │   └── utils.py                   # Utility functions (is_number, compute_household_per_phase)
-├── control/                       # Actuation layer (imports only const/helpers/units — never entities or engine)
+├── control/                       # Actuation layer (imports only const/helpers/units - never entities or engine)
 │   ├── ocpp.py                    # OCPP charging-profile service calls
 │   ├── compliance.py              # Charger compliance checks, escalating resets
 │   ├── inverter.py                # Inverter register writes (deadband-guarded)
@@ -81,8 +81,8 @@ custom_components/dynamic_ocpp_evse/
 │   ├── hot_water_tank.py          # Tank climate control
 │   ├── smoothing.py               # Output smoothing (EMA / Schmitt trigger / ramp limits)
 │   └── status.py                  # Charging status determination
-├── entities/                      # Entity classes shared by the platform files (ALL push-driven — nothing polls)
-│   ├── load.py                    # LoadJugglerDeviceSensor — per-load processing + dispatch, driven by the hub coordinator
+├── entities/                      # Entity classes shared by the platform files (ALL push-driven - nothing polls)
+│   ├── load.py                    # LoadJugglerDeviceSensor - per-load processing + dispatch, driven by the hub coordinator
 │   ├── load_sensors.py            # Per-load diagnostic sensors
 │   ├── hub.py / inverter.py / circuit_group.py  # Hub, inverter, and group sensors
 │   ├── freshness.py               # Pure producer-freshness predicate behind every sensor's `available`
@@ -131,7 +131,7 @@ This properly enforces constraints for every load configuration:
 - 2-phase load on AB: Uses `min(constraints['A'], constraints['B'], constraints['AB'])`
 - 3-phase load: Uses `min(constraints['A'], constraints['B'], constraints['C'], constraints['ABC'])`
 
-**Why**: Physical reality — inverters and breakers have limits for EACH phase combination, not just individual phases.
+**Why**: Physical reality - inverters and breakers have limits for EACH phase combination, not just individual phases.
 
 ### Calculation Flow
 
@@ -164,11 +164,11 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 
 ### Data Models
 
-**PhaseValues** (`calculations/models.py`) — Per-phase values (a, b, c) with `.total` property.
+**PhaseValues** (`calculations/models.py`) - Per-phase values (a, b, c) with `.total` property.
 
-**PhaseConstraints** (`calculations/models.py`) — Per-phase + combination power constraints (A, B, C, AB, AC, BC, ABC). Methods: `from_per_phase()`, `from_pool()`, `get_available(mask)`, `deduct()`, `normalize()`, arithmetic operators.
+**PhaseConstraints** (`calculations/models.py`) - Per-phase + combination power constraints (A, B, C, AB, AC, BC, ABC). Methods: `from_per_phase()`, `from_pool()`, `get_available(mask)`, `deduct()`, `normalize()`, arithmetic operators.
 
-**SiteContext** (`calculations/models.py`) — Represents the entire electrical site:
+**SiteContext** (`calculations/models.py`) - Represents the entire electrical site:
 
 - Electrical: voltage, num_phases, main_breaker_rating
 - Per-phase: consumption (PhaseValues), export_current (PhaseValues), grid_current (PhaseValues)
@@ -178,7 +178,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, wiring_topology, inverter_output_per_phase
 - Charging: distribution_mode, loads[], circuit_groups[]
 
-**LoadContext** (`calculations/models.py`) — Represents a single managed load (EVSE or smart plug):
+**LoadContext** (`calculations/models.py`) - Represents a single managed load (EVSE or smart plug):
 
 - Config: load_id, min_current, max_current, phases, priority, device_type, operating_mode
 - Status: connector_status (Available, Charging, etc.)
@@ -186,7 +186,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Current: l1_current, l2_current, l3_current (actual OCPP draw)
 - Calculated: target_current (output of calculation)
 
-**CircuitGroup** (`calculations/models.py`) — Shared breaker limit for co-located loads:
+**CircuitGroup** (`calculations/models.py`) - Shared breaker limit for co-located loads:
 
 - Config: group_id, name, current_limit (per-phase A), member_ids[]
 - Enforced post-distribution: member allocations per phase capped to current_limit
@@ -199,9 +199,9 @@ The `calculations/` directory is pure Python and can be imported/tested independ
    - `_UNAVAILABLE` sentinel: returned by `readers.py:_read_entity()` when a configured sensor is unavailable/unknown
    - `_smooth()` + `_stale_guard()` (`readers.py`): EMA smoothing with `_UNAVAILABLE` holdover (holds last value instead of decaying to 0), NaN/Inf rejection
    - `_coerce()` (`readers.py`): converts `_UNAVAILABLE` back to safe defaults for non-smoothed values
-   - Solar derivation: `engine/fleet.py` (`solar_total()` / `member_solar()`) — uses inverter output when available, falls back to grid export + battery
+   - Solar derivation: `engine/fleet.py` (`solar_total()` / `member_solar()`) - uses inverter output when available, falls back to grid export + battery
    - Off-grid: when no grid CTs are configured, phases with inverter output entities are zeroed (not None), making the site behave like a grid site with 0A grid current
-2. **Hub coordinator (sensor.py) + entities/load.py + control/**: ONE `DataUpdateCoordinator` per hub entry (`hass.data[DOMAIN]["hub_coordinators"]`) runs the engine once per `site_update_frequency`, publishes the trimmed result via `entities/hub.py:publish_hub_data`, then awaits each registered load processor sequentially (`hass.data[DOMAIN]["load_processors"]`, entry_id order — strict serialization for OCPP), then each async cycle worker (`SITE_CYCLE_WORKERS`, e.g. the inverter charge-limit write — after publish, order-insignificant), and finally notifies the push-reader sensors (`site_cycle_listeners`, rebound every tick so hub-only reloads can't strand them). `LoadJugglerDeviceSensor.async_process(hub_data)` does the per-load work — smoothing (`control/smoothing.py`), grace/pause state machines, then dispatch: OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules. Per-load `update_frequency` gates command sends inside the processor. Hub sensors (`entities/hub.py`) are pure readers of hub_data: Site Available Power, Hub Status, per-metric data sensors. Load sensors: allocated current, available current, charging status.
+2. **Hub coordinator (sensor.py) + entities/load.py + control/**: ONE `DataUpdateCoordinator` per hub entry (`hass.data[DOMAIN]["hub_coordinators"]`) runs the engine once per `site_update_frequency`, publishes the trimmed result via `entities/hub.py:publish_hub_data`, then awaits each registered load processor sequentially (`hass.data[DOMAIN]["load_processors"]`, entry_id order - strict serialization for OCPP), then each async cycle worker (`SITE_CYCLE_WORKERS`, e.g. the inverter charge-limit write - after publish, order-insignificant), and finally notifies the push-reader sensors (`site_cycle_listeners`, rebound every tick so hub-only reloads can't strand them). `LoadJugglerDeviceSensor.async_process(hub_data)` does the per-load work - smoothing (`control/smoothing.py`), grace/pause state machines, then dispatch: OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules. Per-load `update_frequency` gates command sends inside the processor. Hub sensors (`entities/hub.py`) are pure readers of hub_data: Site Available Power, Hub Status, per-metric data sensors. Load sensors: allocated current, available current, charging status.
 3. **Platform files** (button.py, number.py, select.py, etc.): Thin wiring that exposes the `entities/` classes and controls to the HA UI
 
 ### Asymmetric vs Symmetric Inverters
@@ -224,7 +224,7 @@ The `calculations/` directory is pure Python and can be imported/tested independ
 
 When loads have explicit phase assignments (e.g., `l1_phase: "B"`):
 
-- All distribution uses PhaseConstraints — per-phase limits are enforced automatically
+- All distribution uses PhaseConstraints - per-phase limits are enforced automatically
 - Each phase is allocated independently via `_distribute_power()`
 - 3-phase loads limited by minimum available phase
 
@@ -240,11 +240,11 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 
 1. **Understand the Flow**: Always trace through the 5-step calculation process
 2. **Pure Python**: `calculations/` directory has no HA dependencies for testability
-3. **Data Models**: Use SiteContext and LoadContext — don't pass raw values
+3. **Data Models**: Use SiteContext and LoadContext - don't pass raw values
 4. **Logging**: Use `_LOGGER.debug()` extensively for troubleshooting
 5. **Test First**: Run relevant tests before and after changes
 6. **Helper Functions**: Prefer helper functions over inline logic for maintainability
-7. **General naming**: When something concerns more than one device type, name it by the general concept — `load`, never `charger`, for the generic managed-device idea. The generic rename is done: `charger` now survives ONLY where the thing can only ever be an EVSE (OCPP discovery and profiles, `CONF_CHARGER_ID`/`CONF_CHARGER_L1..L3_PHASE`, the `charger_*` config-flow steps, `validate_charger_settings`, compliance, the `*_ocpp_evse` service). If a plug, tank or power station can flow through it, it is a `load`. Two deliberate exceptions, both documented in place: the published `charger_priority` entity attribute (public API since 2.0.5) and the EVSE phase-mapping notification text.
+7. **General naming**: When something concerns more than one device type, name it by the general concept - `load`, never `charger`, for the generic managed-device idea. The generic rename is done: `charger` now survives ONLY where the thing can only ever be an EVSE (OCPP discovery and profiles, `CONF_CHARGER_ID`/`CONF_CHARGER_L1..L3_PHASE`, the `charger_*` config-flow steps, `validate_charger_settings`, compliance, the `*_ocpp_evse` service). If a plug, tank or power station can flow through it, it is a `load`. Two deliberate exceptions, both documented in place: the published `charger_priority` entity attribute (public API since 2.0.5) and the EVSE phase-mapping notification text.
 
 ### Adding New Features
 
@@ -259,8 +259,8 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 2. **Per-phase vs total power**: Track carefully whether working with per-phase (A) or total (A*3)
 3. **Battery priority**: Battery charges BEFORE EVs when SOC < target (Standard mode being the exception)
 4. **Minimum current**: Loads need >= min_current or get 0 (can't run below minimum)
-5. **Phase assignment defaults**: Don't default to "A" — only set when explicitly specified
-6. **Legacy code**: This is version 2.0.0 — legacy compatibility should be removed as users are expected to reconfigure the integration
+5. **Phase assignment defaults**: Don't default to "A" - only set when explicitly specified
+6. **Legacy code**: This is version 2.0.0 - legacy compatibility should be removed as users are expected to reconfigure the integration
 7. **Grid CT consumption includes load draws**: Grid current sensors measure TOTAL site import, which includes managed-load power. `engine/hub_calculation.py` (`_apply_feedback_loop()`) subtracts each load's l1/l2/l3_current from `site.consumption` before calling the engine (step 0). Without this, the engine double-counts load power as both "consumption" and "load demand", leading to under-allocation or false pauses. Hub sensor display values intentionally show the raw (unadjusted) grid readings.
 
 ## Testing and Debugging
@@ -269,7 +269,7 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 
 ### Calculation Scenario Tests (Pure Python)
 
-YAML-driven tests that validate the calculation engine directly. **Run natively on any platform** — no Home Assistant dependencies.
+YAML-driven tests that validate the calculation engine directly. **Run natively on any platform** - no Home Assistant dependencies.
 
 ```bash
 # Run all scenarios (from project root)
@@ -322,11 +322,11 @@ scenarios:
 Scenario files in `dev/tests/scenarios/` (organized by site type × charging mode):
 
 ```text
-1ph/            — Single-phase, no battery (test_solar, test_eco, test_standard, test_excess)
-1ph_battery/    — Single-phase with battery (test_solar, test_eco, test_standard, test_excess)
-3ph/            — Three-phase, no battery (test_solar, test_eco, test_standard, test_excess)
-3ph_battery/    — Three-phase with battery (test_solar, test_eco, test_standard, test_excess)
-features/       — Cross-cutting tests (test_available, test_plugs, test_phase_mapping, test_circuit_groups)
+1ph/            - Single-phase, no battery (test_solar, test_eco, test_standard, test_excess)
+1ph_battery/    - Single-phase with battery (test_solar, test_eco, test_standard, test_excess)
+3ph/            - Three-phase, no battery (test_solar, test_eco, test_standard, test_excess)
+3ph_battery/    - Three-phase with battery (test_solar, test_eco, test_standard, test_excess)
+features/       - Cross-cutting tests (test_available, test_plugs, test_phase_mapping, test_circuit_groups)
 ```
 
 ### HA Integration Tests (Docker)
@@ -352,13 +352,13 @@ docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python dev/tests/run_tests
 
 **Integration test files:**
 
-- `test_init.py` — Setup, teardown, migration (v1->v2, v2.0->v2.1)
-- `test_config_flow.py` — Config flow step navigation and validation
-- `test_config_flow_e2e.py` — Full hub/load creation flows, options flow, discovery, entry migration
-- `test_ocpp_discovery.py` — The OCPP charger scan against a mocked device+entity registry, the OCPP
+- `test_init.py` - Setup, teardown, migration (v1->v2, v2.0->v2.1)
+- `test_config_flow.py` - Config flow step navigation and validation
+- `test_config_flow_e2e.py` - Full hub/load creation flows, options flow, discovery, entry migration
+- `test_ocpp_discovery.py` - The OCPP charger scan against a mocked device+entity registry, the OCPP
   device pickers on both edit paths (create wizard and options charger page), and the runtime
   connector-status resolution
-- `test_sensor_update.py` — Sensor initialization, update cycle, OCPP calls, charge pause, profile formats
+- `test_sensor_update.py` - Sensor initialization, update cycle, OCPP calls, charge pause, profile formats
 
 ### Linting and Type Checking
 

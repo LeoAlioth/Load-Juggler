@@ -40,7 +40,7 @@ scenarios:
         allocated: 6   # Remaining: 22-16=6A, exactly min
 
   - name: "finish-1ph-lower-prio-finishing"
-    description: "Lower priority charger finishes — higher priority unaffected"
+    description: "Lower priority charger finishes - higher priority unaffected"
     human_verified: false
     site:
       voltage: 230
@@ -70,7 +70,7 @@ scenarios:
         allocated: 0   # Finishing → inactive → 0
 
   - name: "finish-1ph-higher-prio-finishing"
-    description: "Higher priority charger finishes — lower priority gets full capacity"
+    description: "Higher priority charger finishes - lower priority gets full capacity"
     human_verified: false
     site:
       voltage: 230
@@ -204,7 +204,7 @@ scenarios:
         allocated: 16  # Solar Only: solar(17A) + discharge(20A) remaining after ch1 deducts from solar pool
 
   - name: "finish-mixed-standard-finishes"
-    description: "Standard charger finishes — Solar Only gets full solar + discharge pool"
+    description: "Standard charger finishes - Solar Only gets full solar + discharge pool"
     human_verified: false
     site:
       voltage: 230

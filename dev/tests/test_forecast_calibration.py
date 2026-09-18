@@ -1,0 +1,437 @@
+"""Forecast calibration arithmetic - calculations/calibration.py.
+
+Two observers, two different errors. The tests that matter are the ones pinning
+WHY each measurement is shaped the way it is: energy-weighting rather than a
+mean of ratios, constrained intervals excluded rather than whole days, and the
+peakiness gap measured from real samples rather than modelled.
+
+Docker / CI tier:
+  pytest dev/tests/test_forecast_calibration.py
+"""
+
+from datetime import datetime, timedelta, timezone
+
+from custom_components.dynamic_ocpp_evse.calculations.calibration import (
+    GAIN_CLAMP_HIGH,
+    GAIN_CLAMP_LOW,
+    GAIN_HOUR_OFFSET_HIGH,
+    CLIP_WALL_TOLERANCE_W,
+    block_power_at,
+    block_start,
+    clip_pair,
+    close_block,
+    day_ratio,
+    day_skipped_share,
+    hourly_offsets,
+    note_gain_sample,
+    battery_is_saturated,
+    export_is_clamped,
+    prune_series,
+    series_days,
+    series_gain,
+    update_gain,
+)
+
+T0 = datetime(2026, 8, 31, 6, 0, tzinfo=timezone.utc)
+QUARTER = timedelta(minutes=15)
+
+
+def _series(*watts):
+    return {T0 + i * QUARTER: w for i, w in enumerate(watts)}
+
+
+# --- Finding the forecast block for a moment -------------------------------
+
+
+def test_the_block_containing_the_moment_is_returned():
+    s = _series(1000.0, 2000.0, 3000.0)
+    assert block_power_at(s, T0) == 1000.0
+    assert block_power_at(s, T0 + timedelta(minutes=14)) == 1000.0
+    assert block_power_at(s, T0 + timedelta(minutes=15)) == 2000.0
+
+
+def test_before_the_series_starts_is_unknown():
+    s = _series(1000.0)
+    assert block_power_at(s, T0 - timedelta(minutes=1)) is None
+
+
+def test_past_the_end_is_unknown_not_zero():
+    """A forecast that has run out is different from a forecast of nothing -
+    counting it as 0 W would feed the learner a free perfect-overestimate."""
+    s = _series(1000.0, 2000.0)
+    assert block_power_at(s, T0 + timedelta(minutes=30)) is None
+
+
+def test_an_empty_series_is_unknown():
+    assert block_power_at({}, T0) is None
+    assert block_power_at(None, T0) is None
+
+
+# --- Accumulating a day ----------------------------------------------------
+
+
+def test_an_empty_dict_is_a_valid_fresh_day():
+    st = note_gain_sample({}, 2000.0, 1800.0, 0.25, False)
+    assert st["forecast_wh"] == 500.0
+    assert st["actual_wh"] == 450.0
+    assert st["skipped_wh"] == 0.0
+
+
+def test_constrained_intervals_are_excluded_from_both_sums():
+    """While curtailing, production is suppressed by the very thing being
+    forecast - counting it would teach the learner the forecast reads high
+    exactly when it matters."""
+    st = note_gain_sample({}, 4000.0, 2500.0, 0.25, True)
+    assert st["forecast_wh"] == 0.0
+    assert st["actual_wh"] == 0.0
+    # Still counted, so the observation can report what it threw away.
+    assert st["skipped_wh"] == 1000.0
+
+
+def test_a_clipping_day_still_contributes_its_unconstrained_hours():
+    """The reason exclusion is per INTERVAL and not per day: on an
+    export-limited site most sunny days curtail at midday, and dropping them
+    whole would leave the gain learning only from overcast days."""
+    st = {}
+    st = note_gain_sample(st, 1000.0, 1100.0, 1.0, False)   # morning, honest
+    st = note_gain_sample(st, 9000.0, 6000.0, 2.0, True)    # midday, curtailed
+    st = note_gain_sample(st, 800.0, 880.0, 1.0, False)     # evening, honest
+    assert st["forecast_wh"] == 1800.0
+    assert st["actual_wh"] == 1980.0
+    assert st["skipped_wh"] == 18000.0
+    assert round(day_ratio(st, min_wh=1000.0), 4) == 1.1
+
+
+def test_dim_blocks_are_skipped():
+    """Dawn and dusk carry no information about an array's calibration and
+    would let a near-zero denominator dominate."""
+    st = note_gain_sample({}, 20.0, 500.0, 0.25, False)
+    assert st["forecast_wh"] == 0.0
+    assert st["skipped_wh"] == 5.0
+
+
+def test_missing_readings_contribute_nothing():
+    for forecast, actual in ((None, 100.0), (100.0, None)):
+        st = note_gain_sample({}, forecast, actual, 0.25, False)
+        assert st == {"forecast_wh": 0.0, "actual_wh": 0.0, "skipped_wh": 0.0}
+
+
+# --- The day's ratio -------------------------------------------------------
+
+
+def test_the_ratio_is_energy_weighted_not_a_mean_of_ratios():
+    """One big honest hour must outweigh a handful of tiny lopsided blocks. A
+    mean of per-block ratios would answer ~1.75 here; the energy-weighted
+    answer is 1.02."""
+    st = {}
+    st = note_gain_sample(st, 4000.0, 4000.0, 1.0, False)   # ratio 1.00, 4 kWh
+    st = note_gain_sample(st, 100.0, 250.0, 0.25, False)    # ratio 2.50, 25 Wh
+    ratio = day_ratio(st, min_wh=1000.0)
+    assert round(ratio, 4) == round(4062.5 / 4025.0, 4)
+    assert 1.0 < ratio < 1.02
+
+
+def test_an_uninformative_day_yields_no_ratio():
+    st = note_gain_sample({}, 1000.0, 900.0, 0.25, False)   # 250 Wh only
+    assert day_ratio(st) is None
+
+
+def test_no_data_yields_no_ratio():
+    assert day_ratio({}) is None
+    assert day_ratio(None) is None
+
+
+# --- Folding a day into the gain ------------------------------------------
+
+
+def test_a_day_moves_the_gain_one_tenth_of_the_way():
+    assert round(update_gain(1.0, 1.10, weight=0.1), 4) == 1.01
+
+
+def test_an_uninformative_day_leaves_the_gain_alone():
+    assert update_gain(1.07, None) == 1.07
+
+
+def test_the_gain_is_clamped_at_both_ends():
+    assert update_gain(GAIN_CLAMP_HIGH, 5.0) == GAIN_CLAMP_HIGH
+    assert update_gain(GAIN_CLAMP_LOW, 0.1) == GAIN_CLAMP_LOW
+
+
+def test_a_run_of_extreme_days_parks_at_the_bound_and_stays_visible():
+    """The clamp is on the RESULT, so a persistently wrong array pins the gain
+    at 1.25 where the published value shows it, rather than averaging into
+    something that looks moderate."""
+    gain = 1.0
+    for _ in range(200):
+        gain = update_gain(gain, 3.0)
+    assert gain == GAIN_CLAMP_HIGH
+
+
+def test_converges_on_a_steady_bias():
+    gain = 1.0
+    for _ in range(100):
+        gain = update_gain(gain, 1.08)
+    assert round(gain, 3) == 1.08
+
+
+# --- Peakiness: the Jensen gap, measured ----------------------------------
+
+
+def test_a_steady_window_has_no_gap():
+    samples = [(0.05, 5000.0)] * 5
+    true_wh, block_wh = clip_pair(samples, 4000.0)
+    assert round(true_wh, 6) == round(block_wh, 6)
+
+
+def test_a_broken_window_clips_where_the_average_says_nothing():
+    """The whole effect in one case: the average sits exactly on the limit, so
+    the block-average integral reports no clipping at all, while the real trace
+    spends half its time 2 kW above it."""
+    samples = [(0.125, 7000.0), (0.125, 3000.0)]
+    true_wh, block_wh = clip_pair(samples, 5000.0)
+    assert block_wh == 0.0
+    assert round(true_wh, 4) == 250.0
+
+
+def test_the_gap_is_one_directional():
+    """Troughs never cancel peaks - power below the limit is not negative
+    clipping - so the measured truth can only ever exceed the block figure."""
+    for peak, trough in ((9000.0, 1000.0), (6000.0, 4000.0), (5001.0, 4999.0)):
+        true_wh, block_wh = clip_pair(
+            [(0.125, peak), (0.125, trough)], 5000.0
+        )
+        assert true_wh >= block_wh
+
+
+def test_a_window_entirely_above_the_limit_has_no_gap():
+    """Where the whole window clips the function is linear, so averaging costs
+    nothing - which is why the gap concentrates at the limit."""
+    samples = [(0.125, 9000.0), (0.125, 7000.0)]
+    true_wh, block_wh = clip_pair(samples, 5000.0)
+    assert round(true_wh, 6) == round(block_wh, 6)
+
+
+def test_an_empty_window_measures_nothing():
+    assert clip_pair([], 5000.0) == (0.0, 0.0)
+    assert clip_pair([(0.0, 9000.0)], 5000.0) == (0.0, 0.0)
+
+
+# --- Clipped energy: the ground truth, estimated ---------------------------
+#
+# Curtailed energy cannot be metered - the inverter never produces it - so the
+# only route is the forecast's excess over measured production, counted while
+# the site is saturated. Honest about the one direction it errs in.
+
+from custom_components.dynamic_ocpp_evse.calculations.calibration import (  # noqa: E402
+    clipped_now,
+)
+
+
+def test_nothing_is_clipped_while_the_site_can_still_place_power():
+    assert clipped_now(9000.0, 6000.0, saturated=False) == 0.0
+
+
+def test_the_forecast_shortfall_is_the_clip_while_saturated():
+    assert clipped_now(9000.0, 6000.0, saturated=True) == 3000.0
+
+
+def test_production_above_forecast_is_not_negative_clipping():
+    """A pessimistic forecast means the day beat it, not that clipping ran
+    backwards - the estimate floors at zero."""
+    assert clipped_now(6000.0, 9000.0, saturated=True) == 0.0
+
+
+def test_an_unreadable_input_measures_nothing():
+    assert clipped_now(None, 6000.0, saturated=True) == 0.0
+    assert clipped_now(9000.0, None, saturated=True) == 0.0
+
+
+# --- What counts as "curtailing" for the gain -------------------------------
+#
+# The exclusion has to key on genuine saturation, not on the charge control's
+# own operating point. The export SETPOINT sits one trigger margin below the
+# real limit and driving export onto it is precisely what the control does, so
+# testing "export >= setpoint" marked normal operation as curtailment: on a live
+# site the observer skipped nearly every productive interval, never reached its
+# minimum informative energy, and published Unknown all day (2026-08-31).
+
+
+def test_sitting_on_the_export_setpoint_is_not_curtailing():
+    """A whole productive day at the controller's own equilibrium must still
+    produce a ratio. Before the fix every one of these intervals was skipped."""
+    st = {}
+    for _ in range(8):
+        st = note_gain_sample(st, 4000.0, 3800.0, 1.0, constrained=False)
+    assert st["skipped_wh"] == 0.0
+    assert st["forecast_wh"] == 32000.0
+    assert round(day_ratio(st), 3) == 0.95
+
+
+def test_genuine_saturation_is_still_excluded():
+    st = note_gain_sample({}, 9000.0, 6000.0, 1.0, constrained=True)
+    assert st["forecast_wh"] == 0.0
+    assert st["skipped_wh"] == 9000.0
+
+
+def test_a_day_of_pure_saturation_reports_nothing_rather_than_a_wrong_number():
+    """The degenerate case the exclusion implies: if every interval is
+    curtailed there is no honest measurement, and None is the right answer -
+    not a ratio built from suppressed production."""
+    st = {}
+    for _ in range(8):
+        st = note_gain_sample(st, 9000.0, 6000.0, 1.0, constrained=True)
+    assert day_ratio(st) is None
+
+
+# --- Saying so, rather than looking like a fresh start -------------------------
+#
+# The exclusion above is correct, and on an off-grid site whose pack fills by
+# mid-morning it can discard nearly the whole day - correctly. What that leaves
+# behind is indistinguishable from a warming-up observer or a failed restore:
+# gain 1.0, 0 days, 0 blocks in all three cases. Live on the off-grid site
+# (2026-09-07, kozolec): 300.6 Wh skipped, nothing measured, accuracy null.
+
+
+def test_a_fully_curtailed_day_says_it_threw_everything_away():
+    st = {}
+    for _ in range(8):
+        st = note_gain_sample(st, 9000.0, 6000.0, 1.0, constrained=True)
+    assert day_ratio(st) is None  # still no honest ratio
+    assert day_skipped_share(st) == 1.0  # and now it says why
+
+
+def test_an_honest_day_reports_nothing_skipped():
+    st = {}
+    for _ in range(8):
+        st = note_gain_sample(st, 4000.0, 3800.0, 1.0, constrained=False)
+    assert day_skipped_share(st) == 0.0
+
+
+def test_the_share_is_energy_weighted_not_a_count_of_intervals():
+    """One long curtailed block outweighs several short honest ones, because
+    the question is how much ENERGY the gain could not be measured on."""
+    st = {}
+    st = note_gain_sample(st, 1000.0, 1100.0, 1.0, False)   # 1 kWh honest
+    st = note_gain_sample(st, 9000.0, 6000.0, 1.0, True)    # 9 kWh curtailed
+    assert day_skipped_share(st) == 0.9
+
+
+def test_nothing_observed_yet_is_not_zero_percent_skipped():
+    """A fresh day and a day that discarded nothing are different answers, so
+    the caller can publish "no data" rather than a confident 0 %."""
+    assert day_skipped_share({}) is None
+    assert day_skipped_share(None) is None
+
+
+# --- The 15-minute gain series -------------------------------------------------
+
+
+def _blocks(day_offsets_hours_ratios, base=datetime(2026, 9, 1, 0, 0, tzinfo=timezone(timedelta(hours=2)))):
+    """Blocks of 1000 Wh forecast at (day, hour) with the given actual ratio."""
+    out = []
+    for day, hour, ratio in day_offsets_hours_ratios:
+        start = base + timedelta(days=day, hours=hour)
+        out.append({"t": start.isoformat(), "f": 1000.0, "a": 1000.0 * ratio, "s": 0.0})
+    return out
+
+
+def test_block_start_floors_to_the_forecast_block():
+    now = datetime(2026, 9, 4, 13, 37, 12, tzinfo=timezone(timedelta(hours=2)))
+    assert block_start(now) == "2026-09-04T13:30:00+02:00"
+
+
+def test_close_block_records_energy_and_skips_empty_blocks():
+    assert close_block([], "t0", {}) == []
+    series = close_block([], "t0", {"forecast_wh": 250.0, "actual_wh": 240.0, "skipped_wh": 0.0})
+    assert series == [{"t": "t0", "f": 250.0, "a": 240.0, "s": 0.0}]
+    # A fully constrained block is kept - its skipped energy is information.
+    series = close_block(series, "t1", {"skipped_wh": 300.0})
+    assert series[-1] == {"t": "t1", "f": 0.0, "a": 0.0, "s": 300.0}
+
+
+def test_prune_series_keeps_the_last_fourteen_days():
+    blocks = _blocks([(0, 12, 1.0), (10, 12, 1.0), (15, 12, 1.0)])
+    now = datetime(2026, 9, 16, 12, 0, tzinfo=timezone(timedelta(hours=2)))
+    kept = prune_series(blocks, now, days=14)
+    assert [b["t"][:10] for b in kept] == ["2026-09-11", "2026-09-16"]
+
+
+def test_series_gain_is_one_ratio_of_two_sums_clamped():
+    # 3 kWh at 0.9 and 1 kWh at 1.5: energy-weighted 1.05, not the mean 1.2.
+    blocks = _blocks([(0, 10, 0.9), (0, 11, 0.9), (0, 12, 0.9), (0, 13, 1.5)])
+    assert abs(series_gain(blocks) - 1.05) < 1e-9
+    assert series_gain(_blocks([(0, 12, 0.2), (0, 13, 0.2), (0, 14, 0.2)])) == GAIN_CLAMP_LOW
+    # Too little comparable energy says nothing.
+    assert series_gain(_blocks([(0, 12, 0.5)])) is None
+
+
+def test_hourly_offsets_ride_on_the_overall_gain():
+    """Mornings read 0.6 of forecast, afternoons 1.2: the overall gain is 0.9
+    and the hours carry only their departure from it - not independent gains."""
+    blocks = _blocks(
+        [(d, 8, 0.6) for d in range(3)] + [(d, 14, 1.2) for d in range(3)]
+    )
+    overall = series_gain(blocks)
+    assert abs(overall - 0.9) < 1e-9
+    offsets = hourly_offsets(blocks, overall, min_wh=2000.0)
+    assert abs(offsets[8] - 0.6 / 0.9) < 1e-3
+    assert abs(offsets[14] - 1.2 / 0.9) < 1e-3
+    # Effective gain per hour = overall × offset - recovers each hour's ratio.
+    assert abs(overall * offsets[8] - 0.6) < 1e-3
+
+
+def test_hourly_offsets_need_enough_energy_and_are_clamped():
+    blocks = _blocks([(0, 8, 5.0), (0, 8, 5.0), (0, 14, 1.0), (0, 14, 1.0), (0, 14, 1.0)])
+    overall = series_gain(blocks)  # clamped at 1.25
+    offsets = hourly_offsets(blocks, overall, min_wh=2000.0)
+    assert offsets[8] == GAIN_HOUR_OFFSET_HIGH
+    assert 14 in offsets
+    assert hourly_offsets(blocks, overall, min_wh=5000.0) == {}
+
+
+def test_series_days_counts_dates_with_comparable_energy():
+    blocks = _blocks([(0, 12, 1.0), (0, 13, 1.0), (3, 12, 1.0)])
+    blocks.append({"t": "2026-09-09T12:00:00+02:00", "f": 0.0, "a": 0.0, "s": 400.0})
+    assert series_days(blocks) == 2
+
+
+# --- Physical curtailment, not the Excess verdict -----------------------------
+
+
+def test_export_is_clamped_only_at_the_wall():
+    """The live numbers: limit 8800, the charge control's setpoint 8300, its
+    real operating point ~8430. Only the wall counts as curtailment."""
+    assert export_is_clamped(8430.0, 8800.0) is False   # the controller working
+    assert export_is_clamped(8300.0, 8800.0) is False   # exactly on setpoint
+    assert export_is_clamped(8700.0, 8800.0) is True    # inside the tolerance
+    assert export_is_clamped(8800.0, 8800.0) is True
+    assert export_is_clamped(8900.0, 8800.0) is True
+    assert CLIP_WALL_TOLERANCE_W < 500.0, "must stay well under a trigger margin"
+
+
+def test_export_is_clamped_needs_a_limit_and_errs_on_the_safe_side():
+    # No export limit: the grid takes everything, nothing is ever clamped.
+    assert export_is_clamped(20000.0, 0) is False
+    assert export_is_clamped(20000.0, None) is False
+    # Unreadable export with a limit configured: assume clamped, since
+    # admitting a curtailed interval biases the gain and skipping one does not.
+    assert export_is_clamped(None, 8800.0) is True
+
+
+def test_battery_is_saturated_is_the_off_grid_curtailment_test():
+    """Off-grid there is no meter, so the pack decides: full, or already at its
+    permitted rate, means anything more the array could make is thrown away."""
+    # Room and rate to spare: an honest interval.
+    assert battery_is_saturated(1500.0, 4000.0, 70.0, 97.0) is False
+    # Full.
+    assert battery_is_saturated(0.0, 4000.0, 97.0, 97.0) is True
+    assert battery_is_saturated(0.0, 4000.0, 100.0, 97.0) is True
+    # At its rate limit (within the same small tolerance as the export wall).
+    assert battery_is_saturated(3950.0, 4000.0, 70.0, 97.0) is True
+    assert battery_is_saturated(4000.0, 4000.0, 70.0, 97.0) is True
+    # Unknown figures read as saturated - skipping a good interval only slows
+    # the gain, admitting a curtailed one biases it.
+    assert battery_is_saturated(None, 4000.0, 70.0, 97.0) is True
+    assert battery_is_saturated(1500.0, None, 70.0, 97.0) is True
+    # A discharging pack is not saturated.
+    assert battery_is_saturated(-800.0, 4000.0, 70.0, 97.0) is False

@@ -61,7 +61,7 @@ scenarios:
         allocated: 6.0  # 7A - 4A = 3A surplus < 6A min → Eco guarantees minimum
 
   - name: "1ph-1c-eco-no-bat-zero-solar"
-    description: "Eco mode at night, no solar — charges at minimum"
+    description: "Eco mode at night, no solar - charges at minimum"
     human_verified: false
     site:
       voltage: 230

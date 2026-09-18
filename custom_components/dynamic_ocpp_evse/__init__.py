@@ -61,6 +61,7 @@ from .const import (
     DEFAULT_BATTERY_SOC_HYSTERESIS,
     DEFAULT_BATTERY_SOC_MIN,
     DEFAULT_BATTERY_SOC_TARGET,
+    DEFAULT_CHARGE_CONTROL_DEADBAND_W,
     DEFAULT_CHARGE_PAUSE_DURATION,
     DEFAULT_CHARGE_RATE_UNIT,
     DEFAULT_DISTRIBUTION_MODE,
@@ -92,11 +93,16 @@ from .const import (
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
     MIGRATE_PLUG_SOLAR_ONLY_FLAG,
+    CONF_INVERTER_FEATURES,
 )
-from .helpers import get_entry_value
+from .helpers import (
+    get_entry_value,
+    infer_inverter_features,
+    strip_unfeatured_inverter_options,
+)
 from . import units
 from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
-from .registry import (  # noqa: F401 — re-exported; canonical home is registry.py
+from .registry import (  # noqa: F401 - re-exported; canonical home is registry.py
     get_loads_for_hub,
     get_groups_for_hub,
     get_hub_for_load,
@@ -118,6 +124,8 @@ INTEGRATION_VERSION = "2.0.0"
 # have to inspect an entry_type predating it.
 _LEGACY_ENTRY_TYPE_CHARGER = "charger"
 _LEGACY_CONF_CHARGER_PRIORITY = "charger_priority"
+# The write deadband when it was a percentage of the normal value (2.5 → 2.6).
+_LEGACY_CONF_CHARGE_CONTROL_DEADBAND = "inverter_charge_control_deadband"
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -203,7 +211,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         options = dict(entry.options)
         old_pause = options.get(CONF_CHARGE_PAUSE_DURATION)
         if old_pause is not None and old_pause > 10:
-            # Value is in seconds (old format) — convert to minutes
+            # Value is in seconds (old format) - convert to minutes
             new_pause = max(1, round(old_pause / 60))
             options[CONF_CHARGE_PAUSE_DURATION] = new_pause
             _LOGGER.info("Migrated charge_pause_duration from %ds to %dmin", old_pause, new_pause)
@@ -240,7 +248,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ceiling; the Excess trigger derives from it as limit − trigger margin
     # (default 500 W). Seed the limit as old threshold + margin so the
     # effective trigger point does not move. Only grid-tied hubs (≥1 grid CT)
-    # are seeded — off-grid Excess is battery-side only, and a seeded limit
+    # are seeded - off-grid Excess is battery-side only, and a seeded limit
     # would wrongly enable the clipping forecast maths there.
     if entry.version == 2 and getattr(entry, 'minor_version', 0) < 4:
         options = dict(entry.options)
@@ -281,8 +289,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # entry_type VALUE "charger" becomes "load", and the priority KEY
     # "charger_priority" becomes "load_priority" in both data and options.
     #
-    # Idempotent by construction — each rewrite is conditional on the legacy
-    # spelling still being present — and load-scoped: a hub, inverter or group
+    # Idempotent by construction - each rewrite is conditional on the legacy
+    # spelling still being present - and load-scoped: a hub, inverter or group
     # entry carries neither, so it passes through with only its minor_version
     # bumped. CONF_CHARGER_ID is deliberately NOT touched: it holds the OCPP
     # charge-point identifier, which really is a charger's.
@@ -300,7 +308,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 continue
             value = store.pop(_LEGACY_CONF_CHARGER_PRIORITY)
             # A half-migrated entry (both spellings present) keeps the new
-            # key's value — it is the one every reader already uses.
+            # key's value - it is the one every reader already uses.
             store.setdefault(CONF_LOAD_PRIORITY, value)
             changed.append(f"{label}.{CONF_LOAD_PRIORITY}")
 
@@ -313,6 +321,87 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         _LOGGER.info("Updated minor version to 5")
 
+    # Migrate 2.5 → 2.6: the charge-register write deadband stopped being a
+    # percentage of the normal value and became an absolute figure in watts
+    # (CONF_CHARGE_CONTROL_DEADBAND_W). The two cannot be converted here - the
+    # normal value is an entity read, not a stored number - and reading the old
+    # number as watts would be far worse than dropping it: a stored 5 would mean
+    # 5 W, which is no deadband at all on registers that go over Modbus and in
+    # some firmwares to EEPROM. So the legacy key is dropped and the new default
+    # applies; an inverter whose deadband was deliberately tuned needs it set
+    # again, which the release notes say.
+    #
+    # Inverter-scoped and idempotent: only an entry still carrying the legacy
+    # spelling is touched, and every other entry type passes through with just
+    # its minor_version bumped.
+    if entry.version == 2 and getattr(entry, "minor_version", 0) < 6:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        dropped = [
+            label
+            for store, label in ((data, "data"), (options, "options"))
+            if store.pop(_LEGACY_CONF_CHARGE_CONTROL_DEADBAND, None) is not None
+        ]
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, minor_version=6
+        )
+        if dropped:
+            _LOGGER.info(
+                "%s: the percentage write deadband was dropped from %s - the"
+                " setting is now absolute watts, defaulting to %sW",
+                entry.title,
+                ", ".join(dropped),
+                DEFAULT_CHARGE_CONTROL_DEADBAND_W,
+            )
+        _LOGGER.info("Updated minor version to 6")
+
+    # 2.7: inverter entries declare their FEATURES (PV array / battery /
+    # battery write-control) on the first page of their setup, and the pages
+    # for undeclared sections are not shown. Entries from before the list
+    # existed get it inferred from what they had configured, and the keys of
+    # every undeclared section are cleared - the form had been saving *Battery
+    # max charge power* at its default on PV-only entries, and that phantom
+    # pack took a share of every fleet sum (2026-09-03, live).
+    if entry.version == 2 and getattr(entry, "minor_version", 0) < 7:
+        options = dict(entry.options)
+        if (
+            entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
+            and CONF_INVERTER_FEATURES not in options
+        ):
+            features = infer_inverter_features({**entry.data, **options})
+            options[CONF_INVERTER_FEATURES] = features
+            strip_unfeatured_inverter_options(options, features)
+            _LOGGER.info(
+                "%s: inverter features inferred as %s", entry.title, features or "none"
+            )
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=7)
+        _LOGGER.info("Updated minor version to 7")
+
+    # 2.8: drop the pre-2.4 export threshold. The <4 step above derived
+    # ``grid_export_limit`` from it (limit = threshold + trigger margin) and
+    # nothing has read it since; it only survived because that step copied the
+    # options forward wholesale. Pruned AFTER the derivation, so a 2.1 entry
+    # still reaches 2.8 correctly in the one migration pass.
+    if entry.version == 2 and getattr(entry, "minor_version", 0) < 8:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        dropped = [
+            label
+            for store, label in ((data, "data"), (options, "options"))
+            if store.pop(CONF_EXCESS_EXPORT_THRESHOLD, None) is not None
+        ]
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, minor_version=8
+        )
+        if dropped:
+            _LOGGER.info(
+                "%s: dropped the legacy export threshold from %s - the export"
+                " limit has been its own setting since 2.4",
+                entry.title,
+                ", ".join(dropped),
+            )
+        _LOGGER.info("Updated minor version to 8")
+
     return True
 
 
@@ -320,7 +409,7 @@ def _charger_phase_count(entry: ConfigEntry) -> int:
     """How many site phases a charger draws on, from its own config.
 
     Used to encode a Watts-mode limit (A × V × phases), so guessing high
-    overshoots the charger by that factor — a 1-phase charger asked to reset to
+    overshoots the charger by that factor - a 1-phase charger asked to reset to
     a 3-phase minimum gets three times the current it should.
 
     No flow ever writes CONF_PHASES, so it is honored only when actually
@@ -328,7 +417,7 @@ def _charger_phase_count(entry: ConfigEntry) -> int:
     the charger entry does store: its L1/L2/L3 → site phase mapping. The setup
     and reconfigure steps collapse the hidden mappings onto L1's phase on a
     1-/2-phase site, so the number of DISTINCT mapped phases is the charger's
-    phase count as the site sees it. Nothing mapped at all falls back to 1 —
+    phase count as the site sees it. Nothing mapped at all falls back to 1 -
     under-encoding a limit is the safe direction.
     """
     configured = get_entry_value(entry, CONF_PHASES, None)
@@ -360,7 +449,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
         if entry is None:
             return
 
-        # Get the OCPP device ID (options first — the reconfigure/options flow
+        # Get the OCPP device ID (options first - the reconfigure/options flow
         # writes an edited device ID to entry.options, so reading entry.data
         # would keep resetting the charger the user renamed away from)
         ocpp_device_id = get_entry_value(entry, CONF_OCPP_DEVICE_ID, None)
@@ -537,7 +626,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
             _LOGGER.error("Could not find max current entity for charger %s", entry_id)
             return
 
-        # Enforce min ≤ max — the min/max sliders are independent entities, so a
+        # Enforce min ≤ max - the min/max sliders are independent entities, so a
         # service call could otherwise leave the engine with min > max.
         min_value = _read_other_current("_min_current", entry_id)
         if min_value is not None and current < min_value:
@@ -572,7 +661,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
             _LOGGER.error("Could not find min current entity for charger %s", entry_id)
             return
 
-        # Enforce min ≤ max — see handle_set_max_current.
+        # Enforce min ≤ max - see handle_set_max_current.
         max_value = _read_other_current("_max_current", entry_id)
         if max_value is not None and current > max_value:
             _LOGGER.error(
@@ -633,7 +722,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         "inverters": {},  # Inverter entries (power sources, optional battery)
         "load_allocations": {},  # Stores current allocation for each load
     })
-    # setdefault only fires once — older buckets may predate "inverters"
+    # setdefault only fires once - older buckets may predate "inverters"
     hass.data[DOMAIN].setdefault("inverters", {})
     
     entry_type = entry.data.get(ENTRY_TYPE)
@@ -668,7 +757,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # setup above is awaited, so the select already ran async_added_to_hass.
     # This is deliberately AFTER the platform forward (a setup that raises
     # ConfigEntryNotReady leaves the flag in place for the retry) and BEFORE the
-    # update listener is registered below — async_update_entry fires update
+    # update listener is registered below - async_update_entry fires update
     # listeners, and doing this from inside entity setup reloaded an entry that
     # could still be SETUP_IN_PROGRESS (issue #34).
     if pending_plug_migration:
@@ -720,7 +809,7 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     }
 
     # A hub RELOAD rebuilds the dict above, but children that are already
-    # loaded never re-register — re-adopt them from their own runtime data so
+    # loaded never re-register - re-adopt them from their own runtime data so
     # a reload doesn't strand every load until the next restart. (Inverters
     # and groups are resolved from the config entries instead; loads keep a
     # runtime list because their allocation state lives alongside it.)
@@ -740,7 +829,7 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     await _discover_and_notify_chargers(hass, entry.entry_id)
 
     # Auto-import: a hub still carrying legacy hub-level HARDWARE config
-    # (inverter, battery or PV entities and capacities — bare charge/discharge
+    # (inverter, battery or PV entities and capacities - bare charge/discharge
     # defaults don't count) gets it moved onto a standalone inverter entry.
     # The trigger is the presence of a field, not the imported flag, so a
     # release that moves one more field onto the inverter converges on the
@@ -779,7 +868,7 @@ async def _setup_load_entry(hass: HomeAssistant, entry: ConfigEntry):
     hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
 
     # Verify hub exists. HA sets up config entries concurrently in arbitrary
-    # order, so the hub may not be ready yet — raise ConfigEntryNotReady so HA
+    # order, so the hub may not be ready yet - raise ConfigEntryNotReady so HA
     # retries this load once the hub has finished setting up.
     if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
         raise ConfigEntryNotReady(
@@ -790,7 +879,7 @@ async def _setup_load_entry(hass: HomeAssistant, entry: ConfigEntry):
     # device-registry UUID as its charge point id has every OCPP command
     # rejected by ocpp 0.11.2+, and composes the wrong charge-control switch
     # name. Repaired here rather than in async_migrate_entry because it reads
-    # the device registry — a version-gated migration gets one attempt, while
+    # the device registry - a version-gated migration gets one attempt, while
     # this re-tries every setup and is a no-op the moment the id is valid.
     repair_ocpp_device_id(hass, entry)
 
@@ -832,7 +921,7 @@ async def _setup_group_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
 
-    # Verify hub exists — raise ConfigEntryNotReady so HA retries this group
+    # Verify hub exists - raise ConfigEntryNotReady so HA retries this group
     # once the hub has finished setting up (entry setup order is concurrent).
     if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
         raise ConfigEntryNotReady(
@@ -860,7 +949,7 @@ async def _setup_inverter_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
 
-    # Verify hub exists — raise ConfigEntryNotReady so HA retries this inverter
+    # Verify hub exists - raise ConfigEntryNotReady so HA retries this inverter
     # once the hub has finished setting up (entry setup order is concurrent).
     if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
         raise ConfigEntryNotReady(
@@ -961,13 +1050,13 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
     updated_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
     updated_data["integration_version"] = INTEGRATION_VERSION
 
-    # Only write the entry when something actually changed — an unconditional
+    # Only write the entry when something actually changed - an unconditional
     # async_update_entry on every startup triggers an extra hub reload.
     if updated_data != dict(entry.data):
         hass.config_entries.async_update_entry(entry, data=updated_data)
         _LOGGER.info(f"Updated hub config entry with entity IDs. Migrated {len(entities_migrated)} entities")
     else:
-        _LOGGER.debug("Hub config entry already current — no entity-ID migration needed")
+        _LOGGER.debug("Hub config entry already current - no entity-ID migration needed")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -975,7 +1064,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     entry_type = entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
     
     if entry_type == ENTRY_TYPE_HUB:
-        # Stop the site cycle FIRST — a tick landing mid-unload would drive
+        # Stop the site cycle FIRST - a tick landing mid-unload would drive
         # loads that are being torn down. async_shutdown cancels the timer and
         # drops the keepalive listener, so nothing survives the entry.
         coordinator = hass.data[DOMAIN].get("hub_coordinators", {}).pop(

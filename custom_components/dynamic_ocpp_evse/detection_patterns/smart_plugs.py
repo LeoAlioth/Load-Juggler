@@ -17,6 +17,6 @@ PLUG_POWER_MONITOR = [
     {"name": "TP-Link Kasa", "pattern": r'sensor\..*kasa.*(?:current_consumption|power)$'},
     # Tuya smart plugs
     {"name": "Tuya Plug", "pattern": r'sensor\..*tuya.*plug.*(?:power|current_consumption)$'},
-    # Generic — match entity names with "plug" + "power" (broad fallback)
+    # Generic - match entity names with "plug" + "power" (broad fallback)
     {"name": "Generic (plug power)", "pattern": r'sensor\..*plug.*power$'},
 ]
