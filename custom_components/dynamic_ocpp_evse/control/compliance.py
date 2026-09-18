@@ -1,10 +1,11 @@
 import logging
+import time
 from datetime import datetime, timezone
 from ..const import (
     DOMAIN,
     HARD_RESET_COOLDOWN_SECONDS,
     AUTO_RESET_COOLDOWN_SECONDS,
-    AUTO_RESET_MISMATCH_THRESHOLD,
+    AUTO_RESET_MISMATCH_SECONDS,
     ESCALATION_PROFILE_RESET_LIMIT,
     DEFAULT_UPDATE_FREQUENCY,
     RAMP_DOWN_RATE,
@@ -14,6 +15,8 @@ from ..const import (
     CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
     CONF_EVSE_POWER_OFFERED_ENTITY_ID,
     CONF_UPDATE_FREQUENCY,
+    CONF_FILTER_DEAD_BAND,
+    CONF_FILTER_RAMP_DOWN_RATE,
     CONF_PHASE_VOLTAGE,
     DEFAULT_PHASE_VOLTAGE,
 )
@@ -23,12 +26,20 @@ from .. import units
 _LOGGER = logging.getLogger(__name__)
 
 
+def _clear_mismatch(sensor) -> None:
+    """Forget the current disagreement: the count that is published and the
+    clock that decides. Every path that used to zero the count goes through
+    here, so the two can never come apart."""
+    sensor._mismatch_count = 0
+    sensor._mismatch_since = None
+
+
 async def check_profile_compliance(
     sensor, limit: float, dynamic_control_on: bool
 ) -> None:
     """Check if the charger is following commanded profiles and auto-reset if not."""
     if not dynamic_control_on or limit <= 0:
-        sensor._mismatch_count = 0
+        _clear_mismatch(sensor)
         return
 
     if sensor._last_commanded_limit is None or sensor._last_commanded_limit <= 0:
@@ -37,20 +48,20 @@ async def check_profile_compliance(
     if sensor._last_hard_reset_at is not None:
         elapsed = (datetime.now(timezone.utc) - sensor._last_hard_reset_at).total_seconds()
         if elapsed < HARD_RESET_COOLDOWN_SECONDS:
-            sensor._mismatch_count = 0
+            _clear_mismatch(sensor)
             return
 
     if sensor._last_auto_reset_at is not None:
         elapsed = (datetime.now(timezone.utc) - sensor._last_auto_reset_at).total_seconds()
         if elapsed < AUTO_RESET_COOLDOWN_SECONDS:
-            sensor._mismatch_count = 0
+            _clear_mismatch(sensor)
             return
 
     connector_status_state = sensor.hass.states.get(sensor._connector_status_entity)
     connector_status = units.state_or_unknown(connector_status_state)
-    # No car, or a status we cannot read — nothing to be compliant about.
+    # No car, or a status we cannot read - nothing to be compliant about.
     if connector_status == "Available" or units.is_unavailable_state(connector_status):
-        sensor._mismatch_count = 0
+        _clear_mismatch(sensor)
         return
 
     # Options-first, like every other charger field: the options charger page
@@ -94,7 +105,7 @@ async def check_profile_compliance(
                 # Field-unvalidated firmware assumption: power_offered echoes the
                 # commanded TOTAL power. If a watts-mode charger reports per-phase
                 # or measured power instead, this comparison misfires (symptom:
-                # false mismatches → escalating resets on a compliant charger) —
+                # false mismatches → escalating resets on a compliant charger) -
                 # adjust only this decode to what that firmware actually echoes.
                 phases = sensor._car_active_phases or sensor._phases or 1
                 # Options-first (get_entry_value), exactly like the command side
@@ -124,37 +135,53 @@ async def check_profile_compliance(
                 pass
 
     # A NaN offered current would make every comparison below False and hide a
-    # real mismatch forever — treat it as no reading at all.
+    # real mismatch forever - treat it as no reading at all.
     if units.is_unusable_number(current_offered):
         return
 
     update_freq = get_entry_value(
         sensor.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
     )
-    tolerance = RAMP_DOWN_RATE * update_freq
+    # The hub's Filters page dials, when this load knows its hub; each default
+    # is the constant it overrides. The ramp-down rate doubles as the
+    # compliance tolerance because a charger legitimately lags a ramp.
+    hub = getattr(sensor, "hub_entry", None)
+    dead_band = get_entry_value(hub, CONF_FILTER_DEAD_BAND, DEAD_BAND) if hub else DEAD_BAND
+    ramp_down = (
+        get_entry_value(hub, CONF_FILTER_RAMP_DOWN_RATE, RAMP_DOWN_RATE)
+        if hub else RAMP_DOWN_RATE
+    )
+    tolerance = ramp_down * update_freq
 
-    # Skip while the commanded limit is still ramping — the charger's offered
+    # Skip while the commanded limit is still ramping - the charger's offered
     # current legitimately lags a ramp (up or down), which a single-sample diff
     # cannot tell apart from genuine non-compliance. The Schmitt trigger holds a
     # steady-state command within DEAD_BAND, so a larger change means a ramp.
     prev_limit = getattr(sensor, "_last_compliance_limit", None)
     sensor._last_compliance_limit = sensor._last_commanded_limit
-    if prev_limit is not None and abs(sensor._last_commanded_limit - prev_limit) > DEAD_BAND:
-        sensor._mismatch_count = 0
+    if prev_limit is not None and abs(sensor._last_commanded_limit - prev_limit) > dead_band:
+        _clear_mismatch(sensor)
         return
 
     diff = abs(current_offered - sensor._last_commanded_limit)
     if diff > tolerance:
+        # The count is the published diagnostic; the clock is the decision.
+        # Timestamped rather than counted, like the draw-settle detector: a
+        # count of checks is a duration only once you know update_frequency.
         sensor._mismatch_count += 1
+        if sensor._mismatch_since is None:
+            sensor._mismatch_since = time.monotonic()
+        mismatched_s = time.monotonic() - sensor._mismatch_since
         _LOGGER.debug(
             "Profile mismatch for %s: commanded=%.1fA, offered=%.1fA, diff=%.1fA "
-            "(cycle %d/%d)",
+            "(%d checks, %.0f/%.0f s)",
             sensor._attr_name,
             sensor._last_commanded_limit,
             current_offered,
             diff,
             sensor._mismatch_count,
-            AUTO_RESET_MISMATCH_THRESHOLD,
+            mismatched_s,
+            AUTO_RESET_MISMATCH_SECONDS,
         )
     else:
         if sensor._mismatch_count > 0:
@@ -164,12 +191,12 @@ async def check_profile_compliance(
                 sensor._mismatch_count,
                 sensor._profile_reset_count,
             )
-        sensor._mismatch_count = 0
+        _clear_mismatch(sensor)
         sensor._profile_reset_count = 0
         return
 
-    if sensor._mismatch_count >= AUTO_RESET_MISMATCH_THRESHOLD:
-        sensor._mismatch_count = 0
+    if mismatched_s >= AUTO_RESET_MISMATCH_SECONDS:
+        _clear_mismatch(sensor)
         sensor._profile_reset_count += 1
 
         if sensor._profile_reset_count >= ESCALATION_PROFILE_RESET_LIMIT:
@@ -207,7 +234,7 @@ async def check_profile_compliance(
 async def perform_hard_reset(sensor) -> None:
     """Perform an OCPP hard reset by pressing the charger's reset button entity."""
     # The OCPP reset button is named after the OCPP charge point ID, not the
-    # Load Juggler entity_id — same resolution as the connector/control
+    # Load Juggler entity_id - same resolution as the connector/control
     # entities in load.py and hub_calculation.py.
     charger_id = sensor.config_entry.data.get(
         CONF_CHARGER_ID
@@ -223,7 +250,7 @@ async def perform_hard_reset(sensor) -> None:
 
     if state is None:
         _LOGGER.warning(
-            "Hard reset entity %s not found for %s — falling back to profile reset",
+            "Hard reset entity %s not found for %s - falling back to profile reset",
             reset_entity_id,
             sensor._attr_name,
         )

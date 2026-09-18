@@ -1,19 +1,19 @@
-"""Unit tests for the producer-freshness predicate — entities/freshness.py.
+"""Unit tests for the producer-freshness predicate - entities/freshness.py.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 Load Juggler's sensors are readers: the value they show was produced by their
 hub's site cycle, not by themselves. So "is this sensor available?" is really
 "did the producer publish recently?", and this module is that question reduced
-to arithmetic — no Home Assistant, no entity, no hass.data.
+to arithmetic - no Home Assistant, no entity, no hass.data.
 
 What the tests pin:
-  * the window is max(30 s, 3 x cycle) — the floor protects a fast site from
+  * the window is max(30 s, 3 x cycle) - the floor protects a fast site from
     flapping, the multiplier lets a slow one miss a tick;
   * never-updated (None) is stale, which is what makes a sensor unavailable
     before the first cycle instead of publishing a 0 that reads as real;
   * a garbage cycle length degrades to the 30 s floor rather than to "always
-    stale" — one bad option must not blank out an entire site;
+    stale" - one bad option must not blank out an entire site;
   * a future timestamp counts as fresh, so a clock step cannot black out every
     sensor on the site.
 
@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Module loading — freshness.py has no package-relative imports at all, so it
+# Module loading - freshness.py has no package-relative imports at all, so it
 # loads straight from its path without the stub-package hierarchy the rest of
 # the pure tier needs. Under pytest the real module is preferred when the
 # component package has already been imported.
@@ -156,7 +156,7 @@ def test_a_future_timestamp_is_fresh():
 
 
 def test_now_defaults_to_the_wall_clock():
-    # Called without `now` the predicate must still answer sensibly — the
+    # Called without `now` the predicate must still answer sensibly - the
     # entity property does pass one, but nothing in the signature requires it.
     assert is_producer_fresh(datetime.now(timezone.utc), 2) is True
     assert is_producer_fresh(datetime(2000, 1, 1, tzinfo=timezone.utc), 2) is False
@@ -179,5 +179,5 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

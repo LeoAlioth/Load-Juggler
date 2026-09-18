@@ -1,0 +1,260 @@
+# The simulator's control panel. Load Juggler's own device pages are on
+# the default dashboard; this one is the hardware you are pretending to
+# have, plus the engine's controls for it.
+title: Simulator
+views:
+- title: Site
+  path: site
+  icon: mdi:transmission-tower
+  type: sections
+  max_columns: 3
+  sections:
+  - type: grid
+    cards:
+    - type: power-sankey
+      title: Where the power is going
+      max_devices: 6
+  - type: grid
+    cards:
+    - type: entities
+      title: What you set
+      entities:
+      - entity: input_number.sim_household_a
+        name: House A
+      - entity: input_number.sim_household_b
+        name: House B
+      - entity: input_number.sim_household_c
+        name: House C
+      - &id001
+        type: divider
+      - entity: input_number.sim_solar
+        name: Solar
+      - entity: input_select.sim_inverter_phases
+        name: Feeds phases
+      - entity: input_number.sim_export_limit
+        name: Export limit
+      - entity: input_boolean.sim_curtail
+        name: Inverter curtails
+      - entity: sensor.sim_curtailed_power
+        name: Being thrown away
+      - entity: input_number.sim_battery_soc
+        name: Battery SOC
+      - entity: input_number.sim_battery_power
+        name: Battery ± W
+      - entity: input_number.sim_voltage
+        name: Voltage
+      show_header_toggle: false
+  - type: grid
+    cards:
+    - type: entities
+      title: Grid - truth, then what the engine reads
+      entities:
+      - entity: sensor.sim_grid_instant_a
+        name: A
+      - entity: sensor.sim_grid_instant_b
+        name: B
+      - entity: sensor.sim_grid_instant_c
+        name: C
+      - entity: sensor.sim_grid_net_power
+        name: Net
+      - *id001
+      - entity: input_boolean.sim_lag
+        name: Lag on
+      - entity: sensor.sim_grid_current_a
+        name: A
+      - entity: sensor.sim_grid_current_b
+        name: B
+      - entity: sensor.sim_grid_current_c
+        name: C
+      - entity: sensor.sim_ct_lag_error
+        name: Behind by
+      show_header_toggle: false
+    - type: entities
+      title: Managed draw per phase
+      entities:
+      - entity: sensor.sim_site_load_a
+        name: A
+      - entity: sensor.sim_site_load_b
+        name: B
+      - entity: sensor.sim_site_load_c
+        name: C
+      show_header_toggle: false
+  - type: grid
+    cards:
+    - type: history-graph
+      title: The last hour
+      hours_to_show: 1
+      entities:
+      - sensor.sim_grid_net_power
+      - sensor.sim_solar_power
+      - entity: sensor.sim_managed_load_total
+        name: Managed load total
+      - entity: sensor.sim_curtailed_power
+        name: Curtailed
+      - entity: sensor.sim_ct_lag_error
+        name: Meter lag
+    column_span: 3
+  - type: grid
+    cards:
+    - type: markdown
+      content: '**The grid CTs are derived**: `grid = household + managed loads − inverter`. Move a value
+        and the meter follows, the way it does on a real site - there is no way to set an impossible state.
+
+
+        They also **lag** by 5–10 s, which is what the engine''s smoothing, its settling test and its
+        over-commitment all live or die on. The upper half of the grid card is the physics; the lower
+        half is what the engine actually sees. Turn the lag off to isolate an engine question from a timing
+        one.'
+    column_span: 3
+- title: Loads
+  path: loads
+  icon: mdi:power-plug
+  type: sections
+  max_columns: 4
+  sections:
+  - type: grid
+    cards:
+    - type: entities
+      title: Site
+      entities:
+      - entity: select.site_load_management_distribution_mode
+        name: Distribution
+      - entity: number.site_load_management_max_import_power
+        name: Max import
+      - entity: number.site_load_management_power_buffer
+        name: Buffer
+      - *id001
+      - entity: sensor.site_load_management_status
+        name: Status
+      - entity: sensor.site_load_management_current_grid_power
+        name: Grid − exp
+      - entity: sensor.site_load_management_current_solar_power
+        name: Solar
+      - entity: sensor.site_load_management_current_managed_power
+        name: Managed
+      - *id001
+      - entity: sensor.site_load_management_remaining_current_a
+        name: Headroom A
+      - entity: sensor.site_load_management_remaining_current_b
+        name: Headroom B
+      - entity: sensor.site_load_management_remaining_current_c
+        name: Headroom C
+      show_header_toggle: false
+  - type: grid
+    cards:
+    - type: entities
+      title: Plug
+      entities:
+      - entity: select.smart_load_operating_mode
+        name: Mode
+      - entity: switch.smart_load_dynamic_control
+        name: Managed
+      - entity: number.smart_load_device_power
+        name: Rated
+      - *id001
+      - entity: sensor.smart_load_status
+        name: Status
+      - entity: sensor.smart_load_available_current
+        name: Permitted
+      - entity: sensor.smart_load_allocated_current
+        name: Footprint
+      - entity: sensor.smart_load_effective_priority
+        name: Rank
+      - *id001
+      - entity: switch.sim_plug
+        name: Relay
+      - entity: input_number.sim_plug_power
+        name: Draw on
+      - entity: input_select.sim_plug_phase
+        name: Phase
+      - entity: sensor.sim_plug_power
+        name: Measured
+      show_header_toggle: false
+  - type: grid
+    cards:
+    - type: entities
+      title: Hot water tank
+      entities:
+      - entity: select.hot_water_tank_operating_mode
+        name: Mode
+      - entity: switch.hot_water_tank_dynamic_control
+        name: Managed
+      - entity: number.hot_water_tank_element_power
+        name: Element
+      - entity: number.hot_water_tank_normal_temperature
+        name: Normal °C
+      - entity: number.hot_water_tank_boost_temperature
+        name: Boost °C
+      - *id001
+      - entity: sensor.hot_water_tank_tank_status
+        name: Status
+      - entity: sensor.hot_water_tank_available_current
+        name: Permitted
+      - entity: sensor.hot_water_tank_allocated_current
+        name: Footprint
+      - entity: sensor.hot_water_tank_effective_priority
+        name: Rank
+      - *id001
+      - entity: climate.sim_water_tank
+        name: Thermostat
+      - entity: input_number.sim_tank_temperature
+        name: Water °C
+      - entity: input_select.sim_tank_phase
+        name: Phase
+      - entity: sensor.sim_tank_power
+        name: Measured
+      show_header_toggle: false
+  - type: grid
+    cards:
+    - type: entities
+      title: Power station
+      entities:
+      - entity: select.power_station_operating_mode
+        name: Mode
+      - entity: switch.power_station_dynamic_control
+        name: Managed
+      - entity: number.power_station_minimum_charge_power
+        name: Min charge
+      - entity: number.power_station_maximum_charge_power
+        name: Max charge
+      - entity: number.power_station_normal_reserve
+        name: Reserve
+      - *id001
+      - entity: sensor.power_station_status
+        name: Status
+      - entity: sensor.power_station_available_current
+        name: Permitted
+      - entity: sensor.power_station_allocated_current
+        name: Footprint
+      - entity: sensor.power_station_effective_priority
+        name: Rank
+      - *id001
+      - entity: number.sim_station_charge_speed
+        name: Charge reg
+      - entity: input_number.sim_station_battery
+        name: Pack %
+      - entity: input_number.sim_station_ramp
+        name: Ramp %
+      - entity: input_select.sim_station_phase
+        name: Phase
+      - entity: sensor.sim_station_ac_input
+        name: Measured
+      show_header_toggle: false
+  - type: grid
+    cards:
+    - type: markdown
+      content: 'Each load shows **the engine''s half above the divider** - mode, limits and its verdicts
+        - and **the simulated hardware below**, so a permit the device ignores, or a draw the engine never
+        granted, is visible in one place.
+
+
+        **Permitted** is what the engine grants the device to draw, and for a modulating load it is literally
+        the setpoint written to it. **Footprint** is its measured draw - what other loads are budgeted
+        against. A load starting this cycle has a permit but no footprint yet, and a settled device drawing
+        under its permit keeps the two apart deliberately.
+
+
+        **Headroom A/B/C** is computed from *unmanaged* consumption, so on a phase already carrying one
+        of our loads it reads higher than what is physically left. The site''s ⚙ → Overview page shows
+        the allocator''s real pools beside it.'
+    column_span: 4

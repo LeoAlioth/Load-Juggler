@@ -187,7 +187,7 @@ scenarios:
         allocated: 15.9
 
   - name: "plug-switch-off-gets-allocated"
-    description: "Plug whose switch is currently off (connector_status=Available) must still be allocated — a plug has no connector, so being off must not prevent it turning on."
+    description: "Plug whose switch is currently off (connector_status=Available) must still be allocated - a plug has no connector, so being off must not prevent it turning on."
     human_verified: false
     site:
       voltage: 230

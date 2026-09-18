@@ -80,15 +80,15 @@ async def async_run_hub_cycle(hass: HomeAssistant, hub_entry: ConfigEntry) -> di
 
     This is the hub coordinator's update method and the only thing that drives
     the engine. Running it per load (as the per-load coordinators used to)
-    advanced every cycle-counted mechanism in the engine — settle counters,
-    input EMAs, power-stable counts — N times per interval on an N-load site.
+    advanced every cycle-counted mechanism in the engine - settle counters,
+    input EMAs, power-stable counts - N times per interval on an N-load site.
 
     The order of the second half of the cycle is the contract:
 
     1. publish the result, which is what every reader on this hub then shows;
-    2. load processors, awaited sequentially in entry_id order — two loads must
+    2. load processors, awaited sequentially in entry_id order - two loads must
        never dispatch OCPP commands concurrently;
-    3. site-cycle workers, awaited sequentially — entities whose per-cycle work
+    3. site-cycle workers, awaited sequentially - entities whose per-cycle work
        is an await rather than a read.
     """
     hub_entry_id = hub_entry.entry_id
@@ -96,7 +96,7 @@ async def async_run_hub_cycle(hass: HomeAssistant, hub_entry: ConfigEntry) -> di
     # Adopt (or re-adopt) this hub's read-only sensors before the cycle runs, so
     # the state they publish at the end of it is this cycle's. Covers both a
     # child entry set up before its hub and a hub reload that replaced the
-    # coordinator underneath already-loaded children — see
+    # coordinator underneath already-loaded children - see
     # entities/mixins.attach_site_cycle_listeners.
     attach_site_cycle_listeners(
         hass,
@@ -128,7 +128,7 @@ async def async_run_hub_cycle(hass: HomeAssistant, hub_entry: ConfigEntry) -> di
 
     # Workers last, and on the PUBLISHED result rather than the raw one. The
     # inverter charge-limit write is the first of these, and it consumes
-    # published["inverters"][…]["forecast_charge_limit_w"] — advice that only
+    # published["inverters"][…]["forecast_charge_limit_w"] - advice that only
     # exists once the cycle has produced it, which is why workers cannot run
     # before publish_hub_data. Handing over the same dict the readers see also
     # means the register write and the sensor reporting it are always from one
@@ -164,7 +164,7 @@ def _create_hub_coordinator(
 
     # A DataUpdateCoordinator only arms its timer while it has at least one
     # listener. The read-only sensors do subscribe now, but the site cycle must
-    # run regardless of how many of them exist — the loads are driven from it
+    # run regardless of how many of them exist - the loads are driven from it
     # and they publish their own state at the end of async_process, never as
     # coordinator listeners. This keepalive is what makes the cycle independent
     # of its audience; it is released when the hub entry unloads (as is the
@@ -172,7 +172,7 @@ def _create_hub_coordinator(
     # __init__.py's unload).
     @callback
     def _keepalive() -> None:
-        """No state of its own — the cycle's effects are published elsewhere."""
+        """No state of its own - the cycle's effects are published elsewhere."""
 
     config_entry.async_on_unload(coordinator.async_add_listener(_keepalive))
     _LOGGER.info(
@@ -194,8 +194,8 @@ async def async_setup_entry(
         name = config_entry.data.get(CONF_NAME, "Site Load Management")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "site_load_management")
 
-        # Any battery on the fleet — the hub's legacy fields or an inverter
-        # entry — enables the hub's (fleet-aggregate) battery sensors.
+        # Any battery on the fleet - the hub's legacy fields or an inverter
+        # entry - enables the hub's (fleet-aggregate) battery sensors.
         has_battery = hub_has_battery(hass, config_entry)
         has_phase_b = bool(
             get_entry_value(config_entry, CONF_PHASE_B_CURRENT_ENTITY_ID, None)
@@ -203,11 +203,11 @@ async def async_setup_entry(
         has_phase_c = bool(
             get_entry_value(config_entry, CONF_PHASE_C_CURRENT_ENTITY_ID, None)
         )
-        # PV clipping forecast needs all three of its inputs configured —
+        # PV clipping forecast needs all three of its inputs configured -
         # matches the gate in _compute_forecast_advice, so a disabled feature
         # creates no sensors rather than five permanently-unknown ones.
         # Fleet capacity: the hub's own (legacy) capacity plus every linked
-        # inverter entry's — matches the engine's forecast gate.
+        # inverter entry's - matches the engine's forecast gate.
         fleet_capacity = get_entry_value(config_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0
         for child in hass.config_entries.async_entries(DOMAIN):
             if (
@@ -264,7 +264,7 @@ async def async_setup_entry(
             get_entry_value(config_entry, CONF_BATTERY_SOC_ENTITY_ID, None)
         )
         # Forecast advice sensors need this battery to have a capacity AND
-        # the hub's forecast to be enabled (export limit + forecast sources) —
+        # the hub's forecast to be enabled (export limit + forecast sources) -
         # matching the engine's per-inverter advice gate.
         hub_entry = hass.config_entries.async_get_entry(
             config_entry.data.get(CONF_HUB_ENTRY_ID)
@@ -274,15 +274,15 @@ async def async_setup_entry(
             and (get_entry_value(config_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0) > 0
             and hub_entry is not None
             and (get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
-            # Any array on the fleet feeds the site forecast — the advice for
+            # Any array on the fleet feeds the site forecast - the advice for
             # THIS battery does not require THIS inverter to own a forecast
             # device (an AC-coupled array's clipping is absorbed here too).
             and fleet_has_forecast_sources(hass, hub_entry)
         )
         # The accuracy observer is the reverse shape: it needs THIS inverter to
-        # own a forecast device — actual ÷ forecast is a property of the array,
+        # own a forecast device - actual ÷ forecast is a property of the array,
         # battery or not (the engine's observer loop gates on
-        # forecast_device_ids alone) — plus the engine's own early-return gate,
+        # forecast_device_ids alone) - plus the engine's own early-return gate,
         # export limit and some fleet battery capacity, or the value would
         # never publish.
         fleet_capacity = 0
@@ -315,7 +315,7 @@ async def async_setup_entry(
             entities.append(
                 LoadJugglerInverterDataSensor(hass, config_entry, entity_id, defn)
             )
-        # Write-control status — created only with a target register, since
+        # Write-control status - created only with a target register, since
         # that sensor is also what drives the writes.
         writes_charge_limit = bool(
             get_entry_value(config_entry, CONF_CHARGE_LIMIT_ENTITY_ID, None)
@@ -325,7 +325,7 @@ async def async_setup_entry(
                 LoadJugglerInverterChargeControlSensor(hass, config_entry, entity_id)
             )
         # The SOC ceiling's own reporter, gated on its own targets. A pure reader
-        # of what the charge-control worker records — the writes stay in that one
+        # of what the charge-control worker records - the writes stay in that one
         # worker, so this adds a sensor and not a second writer.
         writes_soc_limit = bool(soc_targets(config_entry))
         if writes_soc_limit:
@@ -397,7 +397,7 @@ async def async_setup_entry(
         )
     entities = [sensor, allocated_sensor, effective_priority_sensor, status_sensor]
 
-    # Phase mask sensor — only for 3-phase EVSEs (L1/L2/L3 mapped to 3 distinct
+    # Phase mask sensor - only for 3-phase EVSEs (L1/L2/L3 mapped to 3 distinct
     # site phases). For 1-/2-phase loads the mask is trivial, so it is omitted.
     l1 = get_entry_value(config_entry, CONF_CHARGER_L1_PHASE, "A")
     l2 = get_entry_value(config_entry, CONF_CHARGER_L2_PHASE, "B")
@@ -411,7 +411,7 @@ async def async_setup_entry(
 
     # No per-load options-update listener is registered here. Option changes
     # are handled centrally by _async_options_updated (in __init__.py), which
-    # does a clean full reload of the entry — and, for a hub, of its loads —
+    # does a clean full reload of the entry - and, for a hub, of its loads -
     # so a changed site_update_frequency is picked up by rebuilding the hub's
     # coordinator from scratch. A second listener that swapped the coordinator
     # in place raced with that reload and leaked the old coordinator's timer.

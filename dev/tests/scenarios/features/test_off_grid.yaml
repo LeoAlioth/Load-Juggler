@@ -1,4 +1,4 @@
-# Test scenarios: Off-grid site — inverter limit must be respected
+# Test scenarios: Off-grid site - inverter limit must be respected
 #
 # An off-grid site has no grid CTs (production injects 0 A grid readings for
 # phases with inverter output sensors), so ALL power flows through the
@@ -6,13 +6,13 @@
 #   1. _calculate_grid_limit produced phantom main-breaker headroom
 #      (breaker − 0 A consumption) even though no grid feed exists.
 #   2. _calculate_inverter_limit ignored the household the inverter must keep
-#      serving — invisible off-grid because no grid CT ever sees it.
+#      serving - invisible off-grid because no grid CT ever sees it.
 #   3. _apply_feedback_loop subtracted charger draws from the synthetic 0 A
 #      grid readings, fabricating export equal to the charger's own draw.
 #
 # Field snapshot behind scenario 1: 1-phase off-grid, 4 kW hybrid inverter,
 # 5 kW battery discharge, solar 1465 W, household ~2.6 kW, 1.75 kW boiler on
-# a smart plug. Inverter output was 4357 W — past its 4 kW rating — yet the
+# a smart plug. Inverter output was 4357 W - past its 4 kW rating - yet the
 # boiler was never shed.
 
 scenarios:

@@ -8,7 +8,7 @@ from both sides of the integration:
 * the runtime uses it to find a charger's connector-status sensor.
 
 It lives at the package root rather than under ``config_flow/`` because
-``engine/`` may not import the flows — a package-root module next to
+``engine/`` may not import the flows - a package-root module next to
 ``units.py`` / ``helpers.py`` / ``registry.py`` is below both layers, and this
 one imports only ``const``, ``helpers`` and the Home Assistant registries, so
 neither direction can grow a cycle.
@@ -69,7 +69,7 @@ _LOGGER = logging.getLogger(__name__)
 # ── OCPP charger discovery ─────────────────────────────────────────────
 #
 # One payload key per OCPP metric. The metric key is the ocpp integration's own
-# ``metric.lower().replace(".", "_")`` — which is exactly our entity suffix
+# ``metric.lower().replace(".", "_")`` - which is exactly our entity suffix
 # without its leading underscore, so the suffix constants stay the single
 # declaration of what an OCPP sensor is called.
 _OCPP_PAYLOAD_BY_SUFFIX = {
@@ -89,8 +89,8 @@ _OCPP_ENTITY_KEYS = tuple(_OCPP_PAYLOAD_BY_SUFFIX.values())
 # The connector-status sensor is classified with the metrics above but is
 # deliberately NOT one of _OCPP_ENTITY_KEYS: it never becomes a stored entry
 # key, it is resolved from the registries at every setup instead (see
-# ``ocpp_connector_status_entity``). So the discovery payload contract — and
-# with it every stored charger entry — is exactly what it was.
+# ``ocpp_connector_status_entity``). So the discovery payload contract - and
+# with it every stored charger entry - is exactly what it was.
 _STATUS_GROUP_KEY = "status_connector_entity"
 _OCPP_GROUP_KEY_BY_METRIC = {
     **_OCPP_PAYLOAD_BY_METRIC,
@@ -119,8 +119,8 @@ def _ocpp_device_identities(device) -> set[tuple[str, int | None]]:
     what makes the charge point id recoverable no matter how the entities or
     the device were renamed.
 
-    Every identifier, not the first one: the charge point device carries TWO —
-    its ``cpid`` and the ``cp_id`` the charger reports over the wire — and
+    Every identifier, not the first one: the charge point device carries TWO -
+    its ``cpid`` and the ``cp_id`` the charger reports over the wire - and
     ``device.identifiers`` is a SET, so "the first" is whatever the string
     hashes decide, which Python re-seeds every process. Picking one that way
     made the resolved charge point id differ between restarts; the cp_id then
@@ -145,7 +145,7 @@ def _split_ocpp_unique_id(unique_id) -> tuple[str, int | None, str] | None:
     format would orphan every existing sensor). That makes it the one registry
     field a scan can trust: unlike the entity_id it survives a rename, unlike
     the friendly name it survives a user override, and unlike the device
-    identifiers it names the ``cpid`` and nothing else — which is why it, not
+    identifiers it names the ``cpid`` and nothing else - which is why it, not
     the device, decides the charge point id (see ``_ocpp_device_identities``).
 
     The id is rejoined from every part between the domain and the metric rather
@@ -172,11 +172,11 @@ def _ocpp_metric_of(entity) -> str | None:
 
     Three signals, most robust first:
 
-    1. ``unique_id`` — the ocpp integration's own persisted format (above).
+    1. ``unique_id`` - the ocpp integration's own persisted format (above).
     2. the slugified ``original_name``: the metric is published with its dots
        turned into spaces ("Current.Import" → "Current Import"), and a user
        rename lands in ``name``, leaving ``original_name`` alone.
-    3. the ``entity_id`` suffix — the only signal the pre-device scan had.
+    3. the ``entity_id`` suffix - the only signal the pre-device scan had.
        Kept last so OCPP-shaped sensors the ocpp integration did NOT create
        (template sensors mirroring a charger) keep being discovered.
     """
@@ -225,8 +225,8 @@ def _ocpp_charger_candidates(hass) -> dict[str, dict]:
         if parsed is not None:
             # The unique_id decides, not the device: it names the cpid and only
             # the cpid, while the charge point device also carries the reported
-            # cp_id (see ``_ocpp_device_identities``). Keying the groups — and
-            # so the stored charge point id — on the cpid is what makes the
+            # cp_id (see ``_ocpp_device_identities``). Keying the groups - and
+            # so the stored charge point id - on the cpid is what makes the
             # ocpp service calls and the composed entity names agree.
             charge_point_id, connector = parsed[0], parsed[1]
         elif identities:
@@ -289,7 +289,7 @@ def _ocpp_charger_payload(charge_point_id: str, group: dict) -> dict:
     """The one discovery payload shape, from one grouped charge point.
 
     ``device_id`` is the OCPP charge point id ("evbox_elvi"), never the HA
-    device-registry UUID — the ocpp services cannot address a UUID. The UUID
+    device-registry UUID - the ocpp services cannot address a UUID. The UUID
     rides along separately as ``ha_device_id``, for the device picker only.
     """
     entities = group["entities"]
@@ -316,8 +316,8 @@ def _ocpp_charger_is_usable(payload: dict) -> bool:
 def scan_ocpp_chargers(hass) -> list[dict]:
     """Every OCPP charger in the registries that is not configured yet.
 
-    The ONE scanner behind both entry points — the manual "Add OCPP Charger"
-    flow and the automatic discovery spawned from ``_setup_hub_entry`` — so a
+    The ONE scanner behind both entry points - the manual "Add OCPP Charger"
+    flow and the automatic discovery spawned from ``_setup_hub_entry`` - so a
     discovered charger and a manually-added one always carry the same complete
     key set.
 
@@ -363,7 +363,7 @@ def ocpp_charger_for_device(hass, ha_device_id: str | None) -> dict | None:
     entity come from one derivation on both paths. Picking a connector
     sub-device resolves to its charge point.
 
-    Unlike the scan it does NOT drop already-configured chargers — the user
+    Unlike the scan it does NOT drop already-configured chargers - the user
     named this device explicitly, and the duplicate check is the flow's.
     """
     if not ha_device_id:
@@ -376,7 +376,7 @@ def ocpp_charger_for_device(hass, ha_device_id: str | None) -> dict | None:
     # INTERSECT rather than pick: the charge point device carries both its cpid
     # and the charger-reported cp_id, and only the cpid keys the candidate map
     # (the groups are keyed off the sensors' unique_ids, which are built from
-    # the cpid). So the intersection IS the cpid — no guessing which of the two
+    # the cpid). So the intersection IS the cpid - no guessing which of the two
     # identifiers is which, and no dependence on the identifier set's order,
     # which Python re-seeds every process. Storing the cp_id instead was silent:
     # the ocpp services still resolve it, but the composed charge-control switch
@@ -407,8 +407,8 @@ def ocpp_device_for_charge_point(hass, charge_point_id: str | None) -> str | Non
     picker on the options charger page. Read straight off the identifier the
     ocpp integration stamps (``_ocpp_device_identities``), not off the candidate
     groups, so the picker still opens on the right device for a charger whose
-    sensors are all unclassifiable. The charge point outranks its connectors —
-    the same rule as the scan — so the picker never opens on a single leg.
+    sensors are all unclassifiable. The charge point outranks its connectors -
+    the same rule as the scan - so the picker never opens on a single leg.
 
     None when nothing in the device registry claims that charge point id, which
     is the template-sensor case: there is no device to point at.
@@ -418,7 +418,7 @@ def ocpp_device_for_charge_point(hass, charge_point_id: str | None) -> str | Non
     best_id = None
     best_rank = None
     for device in async_get_device_registry(hass).devices.values():
-        # ANY identifier may be the match — the charge point device carries its
+        # ANY identifier may be the match - the charge point device carries its
         # cp_id alongside its cpid, and this is a membership question, so it
         # never needed to single one out.
         ranks = [
@@ -441,8 +441,8 @@ def repair_ocpp_device_id(hass, entry) -> str | None:
     in ``CONF_OCPP_DEVICE_ID``; the scan was fixed to store the charge point id
     the ocpp services actually accept, but nothing repaired the entries already
     written. Those sites kept working only because the ocpp integration quietly
-    fell back to its first charger when a ``devid`` matched nothing —
-    ``except KeyError: cp = list(self.charge_points.values())[0]`` — which was
+    fell back to its first charger when a ``devid`` matched nothing -
+    ``except KeyError: cp = list(self.charge_points.values())[0]`` - which was
     always right on a one-charger site. ocpp 0.11.2 replaced that fallback with
     an error, so every ``set_charge_rate`` on such an entry now raises and the
     charger runs unmanaged.
@@ -453,7 +453,7 @@ def repair_ocpp_device_id(hass, entry) -> str | None:
     identifier, and a hand-typed value that no longer matches. Healthy entries
     are left alone, so this is a no-op on every boot after the first.
 
-    The charger is re-identified through the stored Current.Import entity —
+    The charger is re-identified through the stored Current.Import entity -
     the one anchor that stayed correct, since the scan maps sensors to charge
     points. ONLY the id is rewritten: the sensor entity keys are working, and
     a silent repair should not move them (re-pointing a charger deliberately
@@ -478,12 +478,12 @@ def repair_ocpp_device_id(hass, entry) -> str | None:
         None,
     )
     if repaired is None:
-        # The registry cannot say which charger this is — a charger removed, or
+        # The registry cannot say which charger this is - a charger removed, or
         # renamed sensors on an entry that also lost its id. Leave it: a wrong
         # rewrite is worse than the error the user can see and act on.
         _LOGGER.warning(
             "Stored OCPP charge point id %r for %s matches no charger and could"
-            " not be repaired from %s — OCPP commands will fail until the"
+            " not be repaired from %s - OCPP commands will fail until the"
             " charger is re-selected on the options page",
             stored,
             entry.title,
@@ -528,7 +528,7 @@ def ocpp_entry_fields(payload: dict) -> dict:
     """The whole OCPP side of a charger entry, from one resolved payload.
 
     The charge point id every ocpp service call addresses plus every sensor
-    entity key — as one dict, so re-pointing a charger is all-or-nothing on
+    entity key - as one dict, so re-pointing a charger is all-or-nothing on
     both edit paths. Absent sensors come back as None rather than missing, so
     a watts-only charger cannot inherit the previous charger's current sensor.
     """
@@ -558,7 +558,7 @@ def _ocpp_status_entity_for(hass, charge_point_id: str | None) -> str | None:
 
     Same classification and the same precedence as every other metric: the
     charger-level sensor outranks a connector's, and the lowest connector
-    number wins among connectors — so on a multi-connector charger the status
+    number wins among connectors - so on a multi-connector charger the status
     comes from the very connector whose current sensors the charger is
     configured with.
     """
@@ -577,7 +577,7 @@ def ocpp_connector_status_entity(hass, entry) -> str:
     as ``sensor.{charge point id}_status_connector``: that string is wrong for
     a renamed status entity, and wrong on a multi-connector charger, where the
     real sensor is ``sensor.{cpid}_connector_{n}_status_connector``. Nothing
-    new is stored — an existing entry is fixed the moment it is loaded again.
+    new is stored - an existing entry is fixed the moment it is loaded again.
 
     Falls back to the legacy composed name when classification finds nothing,
     so a site whose "OCPP" sensors are template sensors with no registry entry
@@ -612,7 +612,7 @@ def ocpp_connector_status_entity(hass, entry) -> str:
 _RT_CHARGE_CONTROL_ENTITY = "_ocpp_charge_control_entity"
 
 # The ocpp integration's switch unique_id: ``switch.ocpp.<cpid>[.conn<n>].<key>``
-# — the same persisted-contract shape as the sensors', one platform deeper.
+# - the same persisted-contract shape as the sensors', one platform deeper.
 _OCPP_CHARGE_CONTROL_KEY = "charge_control"
 
 
@@ -621,7 +621,7 @@ def _ocpp_charge_control_entity_for(hass, charge_point_id: str | None) -> str | 
 
     Classified off the switch's unique_id rather than composed, for the same
     reason the status sensor is: the entity_id is ``slugify(f"{cpid}_{key}")``,
-    so any cpid the slug would alter — a capital, a space, a dot — composes a
+    so any cpid the slug would alter - a capital, a space, a dot - composes a
     name that does not exist, and a multi-connector charger names the connector
     in it. The charger-level switch outranks a connector's, lowest connector
     number first, exactly as the metric grouping ranks its sensors.
@@ -648,7 +648,7 @@ def _ocpp_charge_control_entity_for(hass, charge_point_id: str | None) -> str | 
 def _split_ocpp_switch_unique_id(unique_id) -> tuple[str, int | None, str] | None:
     """``(charge point id, connector number, key)`` from an ocpp switch id.
 
-    ``switch.ocpp.<cpid>[.conn<n>].<key>`` — the platform leads here, where the
+    ``switch.ocpp.<cpid>[.conn<n>].<key>`` - the platform leads here, where the
     sensors' format trails it with ``.sensor``, so the two are split apart
     rather than sharing one parser.
     """

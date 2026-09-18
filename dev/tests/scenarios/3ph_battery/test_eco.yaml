@@ -35,7 +35,7 @@ scenarios:
         allocated: 10 # available is 15A+18A from battery - 3A load = 30A. Even distribution so 10A per phase is available.
 
   - name: "3ph-1c-eco-prio-with-bat-low-soc"
-    description: "Eco mode with battery below minimum — charges at minimum from grid"
+    description: "Eco mode with battery below minimum - charges at minimum from grid"
     human_verified: false
     site:
       voltage: 230

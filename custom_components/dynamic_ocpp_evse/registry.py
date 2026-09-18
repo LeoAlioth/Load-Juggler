@@ -5,7 +5,7 @@ inverter and circuit-group entries pointing at it via ``CONF_HUB_ENTRY_ID``.
 These helpers are the single place that walks that tree, for anything that
 needs "the hub of this load" or "the inverters of this hub".
 
-Deliberately free of any runtime ``homeassistant`` import — the HA types are
+Deliberately free of any runtime ``homeassistant`` import - the HA types are
 annotations only, under ``TYPE_CHECKING``. That is what lets this module live
 outside the package root: it used to sit in ``__init__.py``, where every
 caller in ``engine/``, ``entities/`` and ``config_flow.py`` had to defer its
@@ -67,7 +67,7 @@ def _children_of_hub(hass: HomeAssistant, hub_entry_id: str, entry_type: str) ->
     child lists. Those lists are rebuilt empty every time the hub reloads and
     are only refilled by children that set up afterwards, so a hub reload
     (adding an inverter schedules one) would silently drop already-loaded
-    children from the site until the next restart — an inverter vanishing
+    children from the site until the next restart - an inverter vanishing
     from the fleet takes its capacity with it. Config is config: read it from
     the entries themselves. Disabled entries are excluded, since HA never
     sets them up and they represent hardware the user switched off.
@@ -87,7 +87,7 @@ def _children_of_hub(hass: HomeAssistant, hub_entry_id: str, entry_type: str) ->
 def get_inverters_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigEntry]:
     """Get all inverter config entries for a hub, in a deterministic order.
 
-    Sorted by entry_id — per-inverter runtime keys (EMA smoothing state,
+    Sorted by entry_id - per-inverter runtime keys (EMA smoothing state,
     result attribution) rely on a stable iteration order.
     """
     return _children_of_hub(hass, hub_entry_id, ENTRY_TYPE_INVERTER)

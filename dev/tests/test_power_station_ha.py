@@ -1,10 +1,10 @@
 """HA-layer tests for the portable power station device type.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 Covers the two halves that need Home Assistant to exercise: the engine builder
-(_build_power_station_load — bounds, managed draw, status) and the command
-module (send_power_station_command — what gets written to which entity). The pure
+(_build_power_station_load - bounds, managed draw, status) and the command
+module (send_power_station_command - what gets written to which entity). The pure
 resolvers are covered in test_power_station.py.
 
 Run under WSL/Linux with pytest-homeassistant-custom-component; HA core needs
@@ -229,7 +229,7 @@ async def test_managed_draw_is_the_charging_component_only(
 async def test_pure_pass_through_is_not_our_draw(
     hass, hub_entry, station_entry, domain_data
 ):
-    # Input equals output — the station is only passing power through.
+    # Input equals output - the station is only passing power through.
     _set_states(hass, ac_in="163", ac_out="163")
     load = _build(hass, station_entry)
     assert load.l1_current == 0
@@ -253,7 +253,8 @@ async def test_draw_falls_back_to_commanded_speed_without_sensors(
         station_entry,
         drop_options=(CONF_STATION_AC_INPUT_ENTITY_ID, CONF_STATION_AC_OUTPUT_ENTITY_ID),
     )
-    _set_states(hass, speed="800")
+    # Charging means the control has raised the reserve to the charge limit.
+    _set_states(hass, speed="800", soc="60", reserve="90")
 
     domain_data["station_charging"] = True
     charging = _build(hass, entry)
@@ -264,6 +265,49 @@ async def test_draw_falls_back_to_commanded_speed_without_sensors(
     assert idle.l1_current == 0
 
 
+async def test_an_excess_station_claims_its_minimum_for_the_start_ledger(
+    hass, hub_entry, station_entry, domain_data
+):
+    _set_states(hass)
+    load = _build(hass, station_entry)
+    assert load.excess_claim_current == pytest.approx(200 / 230, abs=0.01)
+    # At its charge limit it is inactive and claims nothing.
+    _set_states(hass, soc="95", limit="90")
+    assert _build(hass, station_entry).excess_claim_current == 0
+
+
+async def test_commanded_speed_fallback_is_zero_once_soc_reaches_the_reserve(
+    hass, hub_entry, station_entry, domain_data
+):
+    """Without AC sensors the fallback is what we commanded - but a station
+    whose SOC has reached the reserve it holds draws nothing from the wall,
+    whatever speed is set. Crediting 800 W back to the site there would keep
+    Excess engaged on surplus that is not there."""
+    entry = _entry_variant(
+        station_entry,
+        drop_options=(CONF_STATION_AC_INPUT_ENTITY_ID, CONF_STATION_AC_OUTPUT_ENTITY_ID),
+    )
+    domain_data["station_charging"] = True
+
+    _set_states(hass, speed="800", soc="95", reserve="95")
+    assert _build(hass, entry).l1_current == 0
+
+    _set_states(hass, speed="800", soc="90", reserve="95")
+    assert _build(hass, entry).l1_current == pytest.approx(800 / 230, abs=0.01)
+
+    # No reserve entity readable: the control's last written reserve decides.
+    hass.states.async_remove(RESERVE)
+    domain_data["station_reserve"] = 95
+    hass.states.async_set(SOC, "96", {"device_class": "battery", "unit_of_measurement": "%"})
+    assert _build(hass, entry).l1_current == 0
+
+    # A raise in flight: we wrote 95 but the device still shows 30. SOC 60 is
+    # not a full station - the higher of the two decides.
+    _set_states(hass, speed="800", soc="60", reserve="30")
+    domain_data["station_reserve"] = 95
+    assert _build(hass, entry).l1_current == pytest.approx(800 / 230, abs=0.01)
+
+
 # ── Builder: status ───────────────────────────────────────────────────
 
 
@@ -272,7 +316,7 @@ async def test_station_at_its_charge_limit_frees_its_power(
 ):
     _set_states(hass, soc="90", limit="90")
     load = _build(hass, station_entry)
-    # "Available" is the engine's inactive marker — the allocation goes to
+    # "Available" is the engine's inactive marker - the allocation goes to
     # other loads instead.
     assert load.connector_status == "Available"
 
@@ -288,7 +332,7 @@ async def test_station_below_its_charge_limit_is_active(
 async def test_unavailable_speed_entity_marks_the_station_unavailable(
     hass, hub_entry, station_entry, domain_data
 ):
-    # BLE allows one connection at a time — the vendor app taking over looks
+    # BLE allows one connection at a time - the vendor app taking over looks
     # exactly like this, and we must stop allocating power we can't command.
     _set_states(hass)
     hass.states.async_set(SPEED, "unavailable")
@@ -361,7 +405,7 @@ async def test_allocation_writes_speed_and_raises_the_reserve(
 async def test_allocation_below_the_minimum_drops_the_reserve(
     hass, hub_entry, station_entry, domain_data
 ):
-    # 150 W is below the station's 200 W floor, so there is no speed to write —
+    # 150 W is below the station's 200 W floor, so there is no speed to write -
     # dropping the reserve is what stops the charge. Start from a raised reserve,
     # as if the station had been charging: writes are deadbanded against the
     # entity's current value, so dropping to a reserve it already holds is a no-op.
@@ -375,7 +419,7 @@ async def test_allocation_below_the_minimum_drops_the_reserve(
 async def test_reserve_write_is_skipped_when_already_at_the_target(
     hass, hub_entry, station_entry, domain_data
 ):
-    # Idle station already sitting at its normal reserve — nothing to write.
+    # Idle station already sitting at its normal reserve - nothing to write.
     _set_states(hass, speed="200", soc="60", limit="90", reserve="30")
     written = await _send(hass, hub_entry, station_entry, 150 / 230)
     assert written == {}
@@ -447,3 +491,93 @@ async def test_missing_control_entities_write_nothing(
     _set_states(hass)
     written = await _send(hass, hub_entry, entry, 900 / 230)
     assert written == {}
+
+
+async def test_the_form_and_the_slider_offer_the_same_ceiling(hass: HomeAssistant):
+    """The runtime slider OWNS the charge bounds once the device exists, so a
+    config form that accepted more than the slider would clamp the user's
+    setting straight back down with nothing said.
+
+    They were two independent literals until the ceiling became a constant.
+    Asserted against the schema and the entity rather than against 11000, so
+    raising the ceiling stays a one-line change.
+    """
+    from custom_components.dynamic_ocpp_evse.const import STATION_CHARGE_POWER_MAX
+    from custom_components.dynamic_ocpp_evse.config_flow.schemas import (
+        _power_station_schema,
+    )
+    from custom_components.dynamic_ocpp_evse.number import StationChargePowerSlider
+
+    schema = _power_station_schema()
+    maxima = {
+        str(key): validator.config["max"]
+        for key, validator in schema.schema.items()
+        if getattr(validator, "config", {}).get("unit_of_measurement") == "W"
+    }
+    assert maxima, "the scan found no watt fields - the schema's shape changed"
+    assert set(maxima.values()) == {STATION_CHARGE_POWER_MAX}, maxima
+
+    entry = MockConfigEntry(domain=DOMAIN, data={CONF_NAME: "S"}, options={})
+    entry.add_to_hass(hass)
+    slider = StationChargePowerSlider(
+        hass, entry, "S", "s", "max", "station_max_charge_power", 2400, "Max"
+    )
+    assert slider.native_max_value == STATION_CHARGE_POWER_MAX
+
+    # And the clamp really does use it: a value above the ceiling comes back
+    # AT the ceiling, not silently at 5000. (The state write is patched out -
+    # the slider is built by hand here, so it has no platform to write to.)
+    with patch.object(StationChargePowerSlider, "async_write_ha_state"), \
+            patch.object(StationChargePowerSlider, "_write_to_load_data"):
+        await slider.async_set_native_value(STATION_CHARGE_POWER_MAX + 500)
+    assert slider.native_value == STATION_CHARGE_POWER_MAX
+
+
+async def test_every_load_picker_offers_every_phase_mask():
+    """The station's picker used to carry only A/B/C while the plug's and the
+    tank's carried all seven - three copies of one list, and the odd one out
+    silently forbade a wiring its own engine builder has always handled
+    (``phases = len(connected_to_phase)``).
+
+    Asserted against ``VALID_PHASE_MASKS`` - the set the engine will actually
+    accept - so a picker can never again offer less, or more, than that.
+    """
+    from custom_components.dynamic_ocpp_evse.calculations.models import (
+        VALID_PHASE_MASKS,
+    )
+    from custom_components.dynamic_ocpp_evse.config_flow.schemas import (
+        _hot_water_tank_schema,
+        _plug_schema,
+        _power_station_schema,
+    )
+
+    for name, builder in (
+        ("plug", _plug_schema),
+        ("tank", _hot_water_tank_schema),
+        ("station", _power_station_schema),
+    ):
+        offered = {
+            option["value"]
+            for key, validator in builder().schema.items()
+            if str(key) == CONF_CONNECTED_TO_PHASE
+            for option in validator.config["options"]
+        }
+        assert offered == set(VALID_PHASE_MASKS), (name, sorted(offered))
+
+
+async def test_a_charger_leg_still_maps_to_a_single_phase():
+    """The counterpart, and why the two lists stay separate: L1/L2/L3 each land
+    on exactly ONE site phase, so a mask like "AB" is meaningless for a leg.
+    Sharing the load pickers' list here would offer nonsense."""
+    from custom_components.dynamic_ocpp_evse.config_flow.schemas import (
+        _charger_current_schema,
+    )
+
+    legs = {
+        str(key): {option["value"] for option in validator.config["options"]}
+        for key, validator in _charger_current_schema().schema.items()
+        if str(key).endswith("_phase")
+    }
+    assert legs, "the scan found no leg mapping fields - the schema changed"
+    for key, offered in legs.items():
+        assert offered == {"A", "B", "C"}, (key, sorted(offered))

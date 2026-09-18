@@ -1,18 +1,18 @@
-"""The dual gate on SOC-gated binary loads — SOC *and* inverter coverage.
+"""The dual gate on SOC-gated binary loads - SOC *and* inverter coverage.
 
-Machine-authored tests — not yet human-reviewed.
+Machine-authored tests - not yet human-reviewed.
 
 ISSUES.md #17, reversed from "accepted by design" to a fix. A battery-backed
 plug in Solar Priority / Solar Only / Excess is switched on by an SOC verdict
 alone: *there is stored energy*. That says nothing about the PATH. While the
 inverters already put out everything they are rated for, the plug's power cannot
-come from the battery — it comes from the grid (or, off grid, pushes the
+come from the battery - it comes from the grid (or, off grid, pushes the
 inverters past their plate rating). ``_source_limit`` now also requires the
 inverter's rating to cover the load's own draw.
 
 The gate is evaluated **with the load off** (ISSUES.md #41's discipline): a gate
 the load's own draw can flip is a gate that suppresses itself. What makes that
-add-back honest is the grid term — a draw the site is IMPORTING for is not
+add-back honest is the grid term - a draw the site is IMPORTING for is not
 something the inverters are delivering, so shedding it frees no inverter
 capacity. That single term is the difference between a gate that sheds a
 grid-fed load and a one-way latch that can never shed anything once it is on.
@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Module loading — shared stub loader (avoids the HA-importing package root)
+# Module loading - shared stub loader (avoids the HA-importing package root)
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from standalone_loader import load_pure_modules
@@ -66,7 +66,7 @@ def _plug(
 ):
     """A binary load: min == max == its rating, on phase A.
 
-    ``running`` sets the measured draw the way the HA layer does for a plug —
+    ``running`` sets the measured draw the way the HA layer does for a plug -
     its rating while switched on, 0 while off.
     """
     amps = watts / V
@@ -167,7 +167,7 @@ def test_solar_priority_binary_takes_the_same_gate():
 
 
 def test_a_failing_soc_still_denies_a_wide_open_inverter():
-    """The gate is AND, not OR — an idle inverter cannot rescue a flat battery."""
+    """The gate is AND, not OR - an idle inverter cannot rescue a flat battery."""
     plug = _plug(2000)
     site = _site([plug], rating=5000.0, output=0.0, soc=50.0, soc_target=80.0)
     assert _close(_limit(site, plug), 0.0)
@@ -179,7 +179,7 @@ def test_a_failing_soc_still_denies_a_wide_open_inverter():
 # ---------------------------------------------------------------------------
 def test_an_engaged_load_that_saturates_the_inverter_itself_stays_eligible():
     """The plug is ON and its 2 kW is the very power that took the inverter to
-    its 5 kW rating — the site imports nothing, so the battery is carrying it.
+    its 5 kW rating - the site imports nothing, so the battery is carrying it.
     Judged with the load off, the inverter is at 3 kW with 2 kW spare: it keeps
     its permit. Without the add-back this load would shed itself every cycle."""
     plug = _plug(2000, running=True)
@@ -188,7 +188,7 @@ def test_an_engaged_load_that_saturates_the_inverter_itself_stays_eligible():
 
 
 def test_an_engaged_load_the_site_is_importing_for_is_shed():
-    """Identical output and identical draw as the test above — the ONE thing
+    """Identical output and identical draw as the test above - the ONE thing
     that differs is that the site imports 2 kW. Then the inverter is not the
     thing carrying the plug, shedding it frees no inverter capacity, and the
     load-off headroom is still 0. This is the case ISSUES #17 reported, and the
@@ -211,7 +211,7 @@ def test_export_the_load_could_displace_counts_as_coverage():
 def test_a_higher_ranked_load_may_claim_what_it_would_preempt():
     """A running Solar Priority plug (urgency tier 3) holds the whole inverter.
     A cold tank promoted to tier 1 outranks it, so the tank's gate counts that
-    draw as capacity it can take — otherwise an incumbent low-priority load
+    draw as capacity it can take - otherwise an incumbent low-priority load
     would lock preemption out of a saturated inverter. The pond's own gate is
     unmoved: it may only ever credit itself."""
     pond = _plug(1400, behavior=BEHAVIOR_BINARY_ABOVE_MIN, running=True,
@@ -234,7 +234,7 @@ def test_a_higher_ranked_load_may_claim_what_it_would_preempt():
 # ---------------------------------------------------------------------------
 def test_no_inverter_rating_means_unlimited():
     """A site that never told us its inverter capacity keeps the pre-gate
-    behavior — for None and for a 0 that means 'not configured'."""
+    behavior - for None and for a 0 that means 'not configured'."""
     for rating in (None, 0.0):
         plug = _plug(2000)
         site = _site([plug], rating=rating, output=99999.0)
@@ -267,7 +267,7 @@ def test_excess_near_full_shortcut_is_gated():
 
 def test_excess_falls_through_to_the_export_rule_when_saturated():
     """A denied near-full shortcut does not answer 0 outright: the export pool
-    is a FLOW verdict — the power is already on the AC bus — so it stands on its
+    is a FLOW verdict - the power is already on the AC bus - so it stands on its
     own and needs no coverage gate. A clipping inverter that is still exporting
     keeps the load on."""
     plug = _plug(2000, behavior=BEHAVIOR_BINARY_EXCESS)
@@ -288,7 +288,7 @@ def test_excess_without_a_full_battery_is_pure_flow_and_ungated():
 
 def test_a_battery_free_site_keeps_the_live_surplus_rule():
     """With no battery the binary SOC modes fall through to the solar/excess
-    rules, which are flow-derived — the coverage gate never runs."""
+    rules, which are flow-derived - the coverage gate never runs."""
     plug = _plug(2000)
     site = _site([plug], rating=5000.0, output=5000.0, soc=None)
     solar = PhaseConstraints.from_per_phase(20.0, 0.0, 0.0)
@@ -314,5 +314,5 @@ if __name__ == "__main__":
             print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
         else:
             print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} — {len(failed)} failure(s)")
+    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
     sys.exit(1 if failed else 0)

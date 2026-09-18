@@ -62,7 +62,7 @@ def min_off_hold(permit, off_since, now, min_off_seconds):
     """Withhold a binary load's permit until it has been off long enough.
 
     Returns ``(permit, off_since, held)``. ``held`` is the dwell in seconds when
-    this call decided one — the value the caller logs — and None otherwise.
+    this call decided one - the value the caller logs - and None otherwise.
 
     One-directional by construction: the only thing it can do to a permit is
     take it away, so it can never keep a load running past a protective shed.
@@ -86,8 +86,8 @@ def min_off_hold(permit, off_since, now, min_off_seconds):
 def soc_floor_reached(hub_data) -> bool:
     """Is the battery sitting at (or under) the floor the engine gated on?
 
-    ``battery_soc_min`` in ``hub_data`` is the HYSTERESIS-WIDENED floor — the
-    very number ``_source_limit`` compared against this cycle — so this answers
+    ``battery_soc_min`` in ``hub_data`` is the HYSTERESIS-WIDENED floor - the
+    very number ``_source_limit`` compared against this cycle - so this answers
     "was the minimum SOC the reason the permit collapsed?" without the load
     layer having to know anything else about why.
 
@@ -107,13 +107,13 @@ def grace_modes(binary_load, hub_data) -> tuple:
     Solar Only and Excess always may. Solar Priority was excluded outright
     (decided 2026-08-17) because a grace hold cannot tell WHY the permit
     collapsed and would therefore also bridge a minimum-SOC shed, and that floor
-    is protective — it has to act on the cycle it happens.
+    is protective - it has to act on the cycle it happens.
 
     That reason is answerable rather than fundamental for a BINARY load: the
     live SOC and the gated floor are both published, so the one cause that must
     never be bridged can be named here (``soc_floor_reached``). Above the floor
-    a Solar Priority plug or tank now rides out the other causes — a brief
-    inverter saturation, a cloud — instead of cycling its relay; at the floor it
+    a Solar Priority plug or tank now rides out the other causes - a brief
+    inverter saturation, a cloud - instead of cycling its relay; at the floor it
     sheds exactly as before. Nothing holds a load on below its floor.
 
     Modulating loads are unchanged: in Solar Priority they fall back to a
@@ -134,10 +134,10 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
     on every load registered under that hub, handing it the shared result.
     Platform polling stays off: a poll would dispatch commands a second time
     on the platform's own scan interval. (Nothing in this integration polls
-    anymore — every entity is pushed by the site cycle.)
+    anymore - every entity is pushed by the site cycle.)
 
     Unlike the read-only sensors it does not subscribe to the coordinator
-    either — being CALLED by the site cycle is its subscription, and it writes
+    either - being CALLED by the site cycle is its subscription, and it writes
     its own state at the end of every processed cycle.
     """
 
@@ -166,7 +166,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self._state = None
         self._phases = None
         # Phase count actually seen drawing, from the engine's live per-load
-        # measurement — surfaced as the "detected_phases" attribute and used to
+        # measurement - surfaced as the "detected_phases" attribute and used to
         # encode Watts-mode OCPP limits (control/ocpp.py, control/compliance.py).
         self._car_active_phases = None
         self._operating_mode = None
@@ -174,10 +174,13 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self._allocated_current = None
         self._available_current = None
         # UTC timestamp of the last cycle this load was processed without error.
-        # None (not datetime.min) until the first one — a naive sentinel next to
+        # None (not datetime.min) until the first one - a naive sentinel next to
         # the tz-aware values written later is a comparison landmine.
         self._last_update = None
         self._pause_started_at = None
+        # Has this load ever held a RUNNABLE permit in this process? The charge
+        # pause may only arm once it has - see the pause branch for why.
+        self._had_runnable_permit = False
         self._grace_started_at = None
         # Binary-load grace state: the last permit the engine actually granted
         # (what the hold re-offers) and a latch so a spent grace window cannot
@@ -199,6 +202,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self._last_compliance_limit = None
         self._last_command_time: float = -float("inf")
         self._mismatch_count = 0
+        self._mismatch_since = None   # monotonic; control/compliance
         self._last_auto_reset_at = None
         self._profile_reset_count = 0
         self._last_hard_reset_at = None
@@ -214,7 +218,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
 
         The hub coordinator drives every registered processor once per site
         cycle. Registration (not a coordinator reference) is the whole link:
-        a load can be set up before its hub's coordinator exists — the next
+        a load can be set up before its hub's coordinator exists - the next
         hub tick simply picks it up. The entry is released with the entity.
         """
         await super().async_added_to_hass()
@@ -282,7 +286,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             "last_set_current": self._last_set_current,
             "last_set_power": self._last_set_power,
             # Published attribute name predates the charger → load rename and
-            # is public API for automations/templates — kept as it shipped.
+            # is public API for automations/templates - kept as it shipped.
             "charger_priority": get_entry_value(
                 self.config_entry, CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
             ),
@@ -298,7 +302,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         """Apply one site result to this load: state, timers and commands.
 
         Called by the hub coordinator once per site cycle, after the single
-        site calculation. Everything here is per-load — the site result is
+        site calculation. Everything here is per-load - the site result is
         read-only input. Errors are contained so one misbehaving load cannot
         stop its siblings from being served.
         """
@@ -322,7 +326,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             self.async_write_ha_state()
 
     async def _async_apply(self, hub_data):
-        """The body of async_process — see its docstring."""
+        """The body of async_process - see its docstring."""
         hub_entry = get_hub_for_load(self.hass, self.config_entry.entry_id)
         if not hub_entry:
             _LOGGER.error("Hub not found for load: %s", self._attr_name)
@@ -353,7 +357,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         if mode_changed:
             if self._pause_started_at is not None:
                 _LOGGER.info(
-                    "Mode changed for %s (operating: %s→%s, distribution: %s→%s) — cancelling charge pause",
+                    "Mode changed for %s (operating: %s→%s, distribution: %s→%s) - cancelling charge pause",
                     self._attr_name,
                     self._prev_operating_mode,
                     self._operating_mode,
@@ -363,7 +367,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 self._pause_started_at = None
             if self._grace_started_at is not None:
                 _LOGGER.info(
-                    "Mode changed for %s — cancelling grace timer", self._attr_name
+                    "Mode changed for %s - cancelling grace timer", self._attr_name
                 )
                 self._grace_started_at = None
             # A spent grace window belongs to the mode that spent it.
@@ -379,7 +383,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self._calc_used = hub_data.get("calc_used")
 
         # The site-level republish into hass.data is the hub coordinator's job
-        # (one writer per cycle) — see publish_hub_data in entities/hub.py.
+        # (one writer per cycle) - see publish_hub_data in entities/hub.py.
 
         load_targets = hub_data.get("load_targets", {})
 
@@ -400,7 +404,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
 
         # allocated_current = the load's real footprint (measured draw).
         # It is what the "Allocated Current" sensor shows, for every
-        # device type — no smoothing, it is a measurement.
+        # device type - no smoothing, it is a measurement.
         self._allocated_current = round(
             load_targets.get(self.config_entry.entry_id, 0), 1
         )
@@ -422,38 +426,13 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 self, raw_permit, mode_changed, hub_entry
             )
         elif device_type == DEVICE_TYPE_POWER_STATION:
-            # The station's charge speed is rate-limited like an EVSE's
-            # current — a saturated Excess pool would otherwise command
-            # 0 → max in a single cycle. One divergence: the pipeline
-            # resumes from 0 at the full permit (right for an EVSE coming
-            # back from a pause); the station instead resumes at its
-            # MINIMUM charge power and ramps up from there.
-            if (
-                self._rate_limited_current == 0
-                and raw_permit > 0
-                and not mode_changed
-            ):
-                load_rt = self._load_runtime()
-                min_power = load_rt.get(
-                    "station_min_charge_power"
-                ) or get_entry_value(
-                    self.config_entry,
-                    CONF_STATION_MIN_CHARGE_POWER,
-                    DEFAULT_STATION_MIN_CHARGE_POWER,
-                )
-                voltage = get_entry_value(
-                    hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE
-                )
-                phases_count = len(
-                    get_entry_value(self.config_entry, CONF_CONNECTED_TO_PHASE, "A")
-                    or "A"
-                )
-                resume_current = min(
-                    raw_permit, min_power / (voltage * phases_count)
-                )
-                self._ema_current = resume_current
-                self._schmitt_current = resume_current
-                self._rate_limited_current = resume_current
+            # Identical to the EVSE, including the fast start from 0. The
+            # station used to resume at its MINIMUM charge power instead and
+            # ramp up from there, on the reasoning that its permit comes from
+            # the volatile Excess pool. But the permit was computed inside
+            # every site constraint either way, so the step is as safe here as
+            # it is for a charger - and crawling up from the minimum wastes the
+            # surplus the load exists to absorb, for as long as the ramp takes.
             self._available_current = apply_smoothing(
                 self, raw_permit, mode_changed, hub_entry
             )
@@ -469,7 +448,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # back to the config value exactly as engine/hub_calculation.py does.
         load_rt = self._load_runtime()
         if device_type == DEVICE_TYPE_POWER_STATION:
-            # The station's floor is its minimum charge POWER, not a current —
+            # The station's floor is its minimum charge POWER, not a current -
             # see _build_power_station_load().
             _min_power = load_rt.get(
                 "station_min_charge_power"
@@ -502,8 +481,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         grace_period_seconds = grace_period_minutes * 60
 
         # Binary loads (plug, tank) run no smoothing pipeline: their permit IS
-        # the raw permit, so the EVSE hold gate below — "the smoothed permit dipped
-        # under the minimum but the engine still physically offers it" — compares a
+        # the raw permit, so the EVSE hold gate below - "the smoothed permit dipped
+        # under the minimum but the engine still physically offers it" - compares a
         # number with itself and can never be true. The grace hold was therefore
         # unreachable for every plug and tank. They get the same idea stated on
         # their own terms: the load had a permit last cycle and it has now
@@ -511,7 +490,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # re-offers the load's own last permit rather than an EVSE minimum current.
         #
         # What the hold bridges is any collapse of the permit while in these
-        # modes — a brief inverter saturation, a cloud, an SOC dip past target.
+        # modes - a brief inverter saturation, a cloud, an SOC dip past target.
         # This layer cannot see WHY the engine withdrew the permit, and the whole
         # point of grace is that short-lived reasons should not cycle the relay.
         # Sustained ones still shed: the window expires exactly once (the
@@ -525,21 +504,21 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 # above 0 is the "conditions recovered" reset the EVSE branch
                 # below performs against its minimum current.
                 _LOGGER.debug(
-                    "Grace timer reset for %s — permit recovered", self._attr_name
+                    "Grace timer reset for %s - permit recovered", self._attr_name
                 )
                 self._grace_started_at = None
 
         # Solar Priority was excluded from this list (decided 2026-08-17) on the
         # grounds that a grace hold cannot tell WHY the permit collapsed, so it
-        # would also bridge minimum-SOC sheds — and the minimum SOC is a
+        # would also bridge minimum-SOC sheds - and the minimum SOC is a
         # protective floor that must act immediately.
         #
         # That reason turns out to be answerable rather than fundamental: the
         # live SOC and the floor the engine actually gated on are both published
         # in hub_data, and that floor is already the hysteresis-widened one, so
         # this layer CAN name the one cause it must never bridge. A Solar
-        # Priority binary load therefore rides out every other collapse — a
-        # brief inverter saturation, a cloud — while an SOC shed still acts on
+        # Priority binary load therefore rides out every other collapse - a
+        # brief inverter saturation, a cloud - while an SOC shed still acts on
         # the cycle it happens, exactly as before. Nothing holds a load on below
         # its floor; the hold is simply no longer forbidden above it.
         if (
@@ -552,11 +531,11 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                     self.config_entry.entry_id, 0
                 )
                 # For an EVSE, grace holds only while the engine still
-                # physically offers the minimum — a vanished permit means a
+                # physically offers the minimum - a vanished permit means a
                 # site limit, and 6 A of grid draw is real money. A power
                 # station's permit IS the excess pool, which collapses in
-                # every brief export dip — exactly what grace exists to
-                # bridge — and its floor is a ~200 W trickle, so it rides
+                # every brief export dip - exactly what grace exists to
+                # bridge - and its floor is a ~200 W trickle, so it rides
                 # the grace window whenever it was actually charging (the
                 # was-charging gate stops an idle station from cycling
                 # 200 W on/off through the night). This is what stops the
@@ -590,7 +569,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                         )
                     else:
                         _LOGGER.info(
-                            "Grace timer expired for %s after %dm — allowing pause",
+                            "Grace timer expired for %s after %dm - allowing pause",
                             self._attr_name,
                             grace_period_minutes,
                         )
@@ -604,14 +583,14 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 else:
                     if self._grace_started_at is not None:
                         _LOGGER.info(
-                            "Site limit violation for %s — cancelling grace timer",
+                            "Site limit violation for %s - cancelling grace timer",
                             self._attr_name,
                         )
                         self._grace_started_at = None
             else:
                 if self._grace_started_at is not None:
                     _LOGGER.debug(
-                        "Grace timer reset for %s — conditions recovered",
+                        "Grace timer reset for %s - conditions recovered",
                         self._attr_name,
                     )
                     self._grace_started_at = None
@@ -619,7 +598,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             if self._grace_started_at is not None:
                 self._grace_started_at = None
 
-        # MINIMUM OFF TIME — the last word on a binary load's permit, applied
+        # MINIMUM OFF TIME - the last word on a binary load's permit, applied
         # after grace has had its say. Once the engine sheds the load it stays
         # shed for the configured span whatever recovers in the meantime.
         #
@@ -661,7 +640,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 self._available_current = permit
             elif held is not None and min_off_seconds > 0:
                 _LOGGER.info(
-                    "Minimum off time satisfied for %s after %.0fs —"
+                    "Minimum off time satisfied for %s after %.0fs -"
                     " switching back on",
                     self._attr_name,
                     held,
@@ -672,12 +651,12 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         if "load_allocations" not in self.hass.data[DOMAIN]:
             self.hass.data[DOMAIN]["load_allocations"] = {}
         # "Allocated Current" reflects the real footprint for every device
-        # type — _allocated_current is the engine's measured draw.
+        # type - _allocated_current is the engine's measured draw.
         self.hass.data[DOMAIN]["load_allocations"][
             self.config_entry.entry_id
         ] = self._allocated_current
 
-        # Effective priority rank from the engine — the order this device
+        # Effective priority rank from the engine - the order this device
         # is served when power is contended (mode urgency, then priority).
         if "load_ranks" not in self.hass.data[DOMAIN]:
             self.hass.data[DOMAIN]["load_ranks"] = {}
@@ -705,7 +684,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
 
         # min_charge_current is the device-type-aware floor computed above
         # (a power station's is min_power / (V × phases), an EVSE's is its
-        # configured minimum) — deliberately not re-read here, since a
+        # configured minimum) - deliberately not re-read here, since a
         # re-read would resolve to the EVSE default 6 A for a station and
         # falsely trip the pause branch below.
         max_charge_current = get_entry_value(
@@ -718,7 +697,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         dynamic_control_on = load_rt.get("dynamic_control", True)
 
         if device_type == DEVICE_TYPE_HOT_WATER_TANK:
-            # The tank is a binary load whose thermostat — not the engine —
+            # The tank is a binary load whose thermostat - not the engine -
             # decides moment-to-moment draw. While the thermostat is
             # satisfied the engine classes the tank inactive and allocates
             # it 0, so the heating-permitted gate follows the *available*
@@ -728,7 +707,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             limit = round(self._available_current, 1)
             self._pause_started_at = None
         elif device_type == DEVICE_TYPE_PLUG:
-            # A plug is a binary load — the permit is the on/off answer
+            # A plug is a binary load - the permit is the on/off answer
             # (its rated current when granted, 0 when denied). The EVSE
             # min-current pause threshold does not apply.
             # Round the permit UP to the next 0.1 A instead of nearest, so
@@ -740,7 +719,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             limit = round(float(max_charge_current), 1)
             self._pause_started_at = None
             _LOGGER.debug(
-                "Dynamic control OFF for %s — using max current %sA",
+                "Dynamic control OFF for %s - using max current %sA",
                 self._attr_name,
                 limit,
             )
@@ -753,11 +732,28 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 )
                 * 60
             )
-            if self._pause_started_at is None:
+            # The pause bounds cycle FREQUENCY (see the minimum-off-time
+            # comment below for why that is the quantity that matters), and a
+            # cycle needs a previous ON: a load that has never held a runnable
+            # permit in this process cannot be cycling. Arming on the cold
+            # start read absence of information as a shed - after a restart the
+            # engine's permit is 0 only because the CT EMAs have no history and
+            # the hub has not published a cycle yet - and then withheld the
+            # permit for the whole dwell once it arrived. Measured on the rig
+            # (2026-09-08): a power station sat commanded-off through 3 minutes
+            # of 1.1 kW surplus after every restart, and an options change
+            # reloads the entry, so it was not a rare event. Withholding a
+            # permit is only meaningful once there was one to withhold.
+            if self._pause_started_at is None and self._had_runnable_permit:
                 self._pause_started_at = time.monotonic()
                 _LOGGER.debug("Charge pause started for %s", self._attr_name)
             limit = 0
         else:
+            # Reaching here means the permit is runnable, which is what lets a
+            # later collapse arm the pause at all (see above). Set before the
+            # dwell test, so a load that is currently serving one still counts
+            # as having held a permit.
+            self._had_runnable_permit = True
             pause_duration_s = (
                 get_entry_value(
                     self.config_entry,
@@ -817,5 +813,15 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         else:
             await check_profile_compliance(self, limit, dynamic_control_on)
             await send_ocpp_command(
-                self, limit, hub_entry, dynamic_control_on, now_mono
+                self,
+                limit,
+                hub_entry,
+                dynamic_control_on,
+                now_mono,
+                # The engine's verdict on this connector, which is what makes
+                # the load inactive - see send_ocpp_command for why re-reading
+                # the entity there was wrong.
+                effective_status=hub_data.get("load_connector_status", {}).get(
+                    self.config_entry.entry_id
+                ),
             )

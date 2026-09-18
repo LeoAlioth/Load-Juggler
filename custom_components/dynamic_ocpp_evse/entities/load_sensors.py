@@ -2,7 +2,7 @@
 
 Every class here is a pure reader of what the hub's site cycle published (its
 own load's slice of it), so they share one shape: no polling, pushed by the
-hub coordinator, and available only while that publication is fresh — see
+hub coordinator, and available only while that publication is fresh - see
 mixins.SiteCycleConsumerMixin.
 
 Only the allocated-current sensor is a measurement. The status sensors publish
@@ -81,7 +81,7 @@ class LoadJugglerEffectivePrioritySensor(LoadJugglerLoadSensor):
     """Sensor showing a device's effective priority rank within its hub.
 
     When power is contended the engine serves loads by mode urgency first, then
-    the configured priority number — so a device's real standing can differ
+    the configured priority number - so a device's real standing can differ
     from the priority it was given (e.g. a Continuous load outranks a
     higher-priority Solar Only load). This sensor reports that resolved rank:
     1 = served first.
@@ -129,7 +129,7 @@ class LoadJugglerEffectivePrioritySensor(LoadJugglerLoadSensor):
         every hub, and nothing removes a load's key when its config entry is
         deleted. A rank of "2 of N" is only meaningful against the loads the
         engine actually ranked together, so filter at read time rather than
-        trusting the bucket's size (issue #40) — stale keys are dropped by the
+        trusting the bucket's size (issue #40) - stale keys are dropped by the
         config-entry lookup, foreign hubs by the hub id comparison.
         """
         my_hub = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
@@ -169,7 +169,7 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
 
 
 class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
-    """Status sensor for a smart plug — on/off plus error states.
+    """Status sensor for a smart plug - on/off plus error states.
 
     A plug has no connector to plug a car into, so the EVSE charging-status
     vocabulary ("Unplugged", "Charging", ...) does not apply. This simply
@@ -217,7 +217,7 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
 class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
     """Status sensor for a portable power station.
 
-    Shows what Load Juggler last asked of it — ``Charging`` with the resolved
+    Shows what Load Juggler last asked of it - ``Charging`` with the resolved
     speed, ``Storm Reserve`` while holding for an outage, ``Full`` once it has
     reached its charge limit, or ``Idle`` when the reserve has been dropped and
     the station is running on (and off) its own battery. Attributes carry the
@@ -270,7 +270,7 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
         if not speed_entity:
             self._attr_native_value = "Not Configured"
         elif units.is_unavailable(speed_state):
-            # These integrations talk BLE, one connection at a time — the
+            # These integrations talk BLE, one connection at a time - the
             # vendor app taking over looks exactly like this.
             self._attr_native_value = "Unavailable"
         elif not load_rt.get("dynamic_control", True):
@@ -348,7 +348,7 @@ class LoadJugglerPhaseMaskSensor(LoadJugglerLoadSensor):
 
 
 class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
-    """Status sensor for a hot water tank — heating state, temp, and setpoint."""
+    """Status sensor for a hot water tank - heating state, temp, and setpoint."""
 
     _attr_icon = "mdi:water-boiler"
 
@@ -389,7 +389,7 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
         if units.is_unavailable(climate_state):
             self._attr_native_value = "Unavailable"
         elif not load_rt.get("dynamic_control", True):
-            # Dynamic Control off — Load Juggler is not managing the tank;
+            # Dynamic Control off - Load Juggler is not managing the tank;
             # the thermostat runs on its own.
             self._attr_native_value = "Manual"
         elif not load_rt.get("tank_heating_permitted", True):

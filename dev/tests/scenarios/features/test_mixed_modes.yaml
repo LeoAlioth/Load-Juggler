@@ -83,7 +83,7 @@ scenarios:
       load_1:
         allocated: 16.0  # Shared: Continuous (no source limit) fills to its
                          # max once the Solar-Only charger caps at its solar
-                         # share — equal-split among unconstrained.
+                         # share - equal-split among unconstrained.
       load_2:
         allocated: 7.8   # Shared: Solar Only capped by the solar pool left
                          # after both minimums. Solar pool 41.4 A total
@@ -93,7 +93,7 @@ scenarios:
                          # 6 + 1.8 = 7.8 A. At that point the Solar Only load
                          # draws 3 x 7.8 = 23.4 A = 5382 W against the site's
                          # real surplus of 6900 W solar - 1380 W household =
-                         # 5520 W — inside it.
+                         # 5520 W - inside it.
                          # Was 6.3 A: the old batch check scaled EVERY
                          # increment by min_solar/total, so the grid-backed
                          # load's fill-up crawled in solar-sized steps and
@@ -110,7 +110,7 @@ scenarios:
       main_breaker_rating: 32
       max_import_power: 22080
       distribution_mode: priority
-      solar_production: 13800  # 60A total — lots of solar
+      solar_production: 13800  # 60A total - lots of solar
       phase_a_consumption: 2.0
       phase_b_consumption: 2.0
       phase_c_consumption: 2.0
@@ -258,7 +258,7 @@ scenarios:
         l1_phase: "A"
     expected:
       load_1:
-        allocated: 10  # placeholder — Solar Priority: solar available
+        allocated: 10  # placeholder - Solar Priority: solar available
       load_2:
         allocated: 0   # Excess: export below 3000W threshold → off
 

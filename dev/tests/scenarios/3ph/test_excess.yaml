@@ -3,7 +3,7 @@
 scenarios:
 
   - name: "3ph-1c-excess-no-bat-above-threshold"
-    description: "Excess mode with export above threshold — 3-phase charger, symmetric inverter"
+    description: "Excess mode with export above threshold - 3-phase charger, symmetric inverter"
     human_verified: false
     site:
       voltage: 230
@@ -35,7 +35,7 @@ scenarios:
         allocated: 9.0  # Export = 14A/ph * 3 * 230 = 9660W. Excess = (9660-3450)/230 = 27A / 3 = 9A per phase
 
   - name: "3ph-1c-excess-no-bat-below-threshold"
-    description: "Excess mode with export below threshold — no charging"
+    description: "Excess mode with export below threshold - no charging"
     human_verified: false
     site:
       voltage: 230

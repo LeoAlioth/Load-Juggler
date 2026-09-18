@@ -35,4 +35,4 @@ INVERTER_OUTPUT = [
     },
 ]
 
-# Battery SOC/power and solar use common naming — handled by generic patterns.
+# Battery SOC/power and solar use common naming - handled by generic patterns.

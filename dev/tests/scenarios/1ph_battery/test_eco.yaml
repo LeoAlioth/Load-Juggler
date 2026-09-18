@@ -3,7 +3,7 @@
 scenarios:
 
   - name: "1ph-1c-eco-bat-above-target"
-    description: "Eco with battery above target — uses solar surplus + battery discharge"
+    description: "Eco with battery above target - uses solar surplus + battery discharge"
     human_verified: false
     site:
       voltage: 230
@@ -32,7 +32,7 @@ scenarios:
         allocated: 27.0  # Solar 10A + battery 20A - consumption 3A = 27A. Eco above target = max(surplus, min).
 
   - name: "1ph-1c-eco-bat-below-min"
-    description: "Eco with battery below minimum SOC — charges at minimum from grid"
+    description: "Eco with battery below minimum SOC - charges at minimum from grid"
     human_verified: false
     site:
       voltage: 230
@@ -61,7 +61,7 @@ scenarios:
         allocated: 6.0  # Battery below min → Eco still guarantees minimum from grid
 
   - name: "1ph-1c-eco-bat-between-min-target"
-    description: "Eco with battery between min and target — minimum current only"
+    description: "Eco with battery between min and target - minimum current only"
     human_verified: false
     site:
       voltage: 230
@@ -90,7 +90,7 @@ scenarios:
         allocated: 8.0  # Battery between min and target → Eco only allows minimum current
 
   - name: "1ph-1c-eco-bat-at-target-good-solar"
-    description: "Eco with battery at target and good solar — surplus allocation"
+    description: "Eco with battery at target and good solar - surplus allocation"
     human_verified: false
     site:
       voltage: 230

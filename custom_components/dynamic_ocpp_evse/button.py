@@ -25,7 +25,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         _LOGGER.debug("Skipping button setup for non-load entry: %s", entry.title)
         return
 
-    # The reset button performs an OCPP reset — only meaningful for EVSEs.
+    # The reset button performs an OCPP reset - only meaningful for EVSEs.
     if entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE) != DEVICE_TYPE_EVSE:
         _LOGGER.debug("Skipping OCPP reset button for non-EVSE device: %s", entry.title)
         return

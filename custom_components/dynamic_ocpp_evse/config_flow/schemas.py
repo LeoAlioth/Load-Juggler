@@ -6,7 +6,7 @@ per-device-type forms for EVSE / plug / hot water tank / power station, and the
 entity-selector plumbing behind them.
 
 Functions rather than a mixin: the only handler state a builder ever read was
-``hass``, for the entity registry, so it is simply a parameter — and only on
+``hass``, for the entity registry, so it is simply a parameter - and only on
 the builders that offer entity selectors. The rest take nothing but their
 ``defaults`` dict. That is what lets the create flow and the options flow each
 call them directly instead of one borrowing the other's handler instance.
@@ -77,6 +77,23 @@ from ..const import (
     CONF_PLUG_POWER_RATING,
     CONF_PLUG_SWITCH_ENTITY_ID,
     CONF_PROFILE_VALIDITY_MODE,
+    # The Filters page: its keys, and the constants that are its defaults.
+    CONF_FILTER_CTRL_FAST_TAU_S,
+    CONF_FILTER_DEAD_BAND,
+    CONF_FILTER_INPUT_TAU_S,
+    CONF_FILTER_PERMIT_TAU_S,
+    CONF_FILTER_RAMP_DOWN_RATE,
+    CONF_FILTER_RAMP_TAU_S,
+    CONF_FILTER_RAMP_UP_RATE,
+    CONF_FILTER_SETTLE_SECONDS,
+    CTRL_FAST_TAU_S,
+    DEAD_BAND,
+    EMA_TAU_S,
+    PERMIT_TAU_S,
+    RAMP_DOWN_RATE,
+    RAMP_TAU_S,
+    RAMP_UP_RATE,
+    SETTLE_DRAW_SECONDS,
     CONF_SITE_UPDATE_FREQUENCY,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
@@ -150,9 +167,15 @@ from ..const import (
     OCPP_INTEGRATION_DOMAIN,
     PROFILE_VALIDITY_MODE_ABSOLUTE,
     PROFILE_VALIDITY_MODE_RELATIVE,
+    STATION_CHARGE_POWER_MAX,
     STATION_CHARGE_POWER_STEP,
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
+    CONF_INVERTER_FEATURES,
+    INVERTER_FEATURE_BATTERY,
+    INVERTER_FEATURE_BATTERY_CONTROL,
+    INVERTER_FEATURE_SOLAR,
+    INVERTER_FEATURES,
 )
 from ..helpers import normalize_optional_entity
 from .helpers import (
@@ -161,6 +184,23 @@ from .helpers import (
     _SOC_UNITS,
     _VOLTAGE_UNITS,
 )
+
+
+# The site phases a LOAD may occupy, in the order every picker shows them.
+#
+# ONE list, because there were three: the plug's and the tank's carried all
+# seven masks while the station's carried only the three single-phase ones -
+# even though ``_build_power_station_load`` has always derived
+# ``phases = len(connected_to_phase)`` and ``_phase_draw`` has always spread a
+# draw across whatever mask it is given. A picker offering less than the engine
+# supports is a picker bug, not a limit.
+#
+# Labels are derived from the masks so the two cannot drift. Distinct from the
+# charger LEG mapping in _charger_current_schema, which is one phase per leg.
+PHASE_MASK_OPTIONS = [
+    {"value": mask, "label": f"Phase {'+'.join(mask)}"}
+    for mask in ("A", "B", "C", "AB", "BC", "AC", "ABC")
+]
 
 
 def _entity_ids_for(
@@ -203,7 +243,7 @@ def _optional_entity_field(key: str, default_val):
     """Create vol.Optional with suggested_value so the user can truly clear it.
 
     Using suggested_value instead of default lets the entity selector
-    be cleared with X — vol.Optional(default=...) would silently
+    be cleared with X - vol.Optional(default=...) would silently
     re-fill the default on clear.
     """
     val = normalize_optional_entity(default_val)
@@ -491,7 +531,7 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
 
 
 def _build_inverter_solar_schema(hass, defaults: dict | None = None) -> list[tuple]:
-    """PV fields for an INVERTER entry — the array behind this inverter.
+    """PV fields for an INVERTER entry - the array behind this inverter.
 
     Its production sensor and its Open-Meteo forecast device(s) belong to
     the inverter, not the site: a hybrid and an AC-coupled string inverter
@@ -518,13 +558,13 @@ def _build_inverter_solar_schema(hass, defaults: dict | None = None) -> list[tup
             ),
         ),
         (
-            # One forecast DEVICE per PV array — the Open-Meteo Solar
+            # One forecast DEVICE per PV array - the Open-Meteo Solar
             # Forecast integration creates one device per array, and
             # several of its sensors carry the same watts series, so
             # letting the user pick sensors risks double-counting.
             vol.Optional(
                 CONF_SOLAR_FORECAST_DEVICE_IDS,
-                # suggested_value, NOT default — same clearing rule as
+                # suggested_value, NOT default - same clearing rule as
                 # CONF_SOC_LIMIT_ENTITY_IDS (_normalize_forecast_list).
                 description={
                     "suggested_value": defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS)
@@ -544,7 +584,7 @@ def _build_inverter_solar_schema(hass, defaults: dict | None = None) -> list[tup
 
 
 def _build_hub_battery_schema(hass, defaults: dict | None = None) -> list[tuple]:
-    """LEGACY hub solar/battery fields — shown only while a hub still
+    """LEGACY hub solar/battery fields - shown only while a hub still
     carries them, i.e. before the one-time auto-import moves them onto an
     inverter entry. New hubs never see this page: their solar sensor,
     forecast devices and battery hardware are configured per inverter, and
@@ -662,13 +702,13 @@ def _build_hub_battery_schema(hass, defaults: dict | None = None) -> list[tuple]
         # Active only when the grid export limit (hub grid step), a battery
         # capacity and at least one forecast entity are all set.
         (
-            # One forecast DEVICE per PV array — the Open-Meteo Solar
+            # One forecast DEVICE per PV array - the Open-Meteo Solar
             # Forecast integration creates one device per array, and
             # several of its sensors carry the same watts series, so
             # letting the user pick sensors risks double-counting.
             vol.Optional(
                 CONF_SOLAR_FORECAST_DEVICE_IDS,
-                # suggested_value, NOT default — same clearing rule as
+                # suggested_value, NOT default - same clearing rule as
                 # CONF_SOC_LIMIT_ENTITY_IDS (_normalize_forecast_list).
                 description={
                     "suggested_value": defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS)
@@ -734,7 +774,7 @@ def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple
                 CONF_INVERTER_MAX_POWER,
                 # "0 means not configured" is STORED as None
                 # (_normalize_inverter_power_caps), and dict.get's fallback
-                # does not cover a key that exists holding None — while
+                # does not cover a key that exists holding None - while
                 # voluptuous validates defaults, so a None default fails
                 # the NumberSelector the moment the field is left empty.
                 # `or 0` restores the None↔0 round-trip.
@@ -809,7 +849,7 @@ def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple
 
 
 def _build_inverter_battery_schema(hass, defaults: dict | None = None) -> list[tuple]:
-    """Battery fields for an INVERTER entry — the battery physically behind
+    """Battery fields for an INVERTER entry - the battery physically behind
     this inverter. Reuses the hub-level key names (see ENTRY_TYPE_INVERTER
     in const/common.py), but deliberately excludes the hub-policy fields
     (SOC target/min sliders, hysteresis) and the hub-scoped solar
@@ -929,13 +969,13 @@ def _build_inverter_battery_schema(hass, defaults: dict | None = None) -> list[t
 
 
 def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[tuple]:
-    """Write-control fields for an INVERTER entry — optional throughout.
+    """Write-control fields for an INVERTER entry - optional throughout.
 
     With no target entity the inverter stays advisory: the forecast's
     recommended charge limit is published as a sensor and nothing is
     written. Naming a register adds the opt-in switch that starts writes.
 
-    Two independent controls share this page — the charge RATE (one register)
+    Two independent controls share this page - the charge RATE (one register)
     and the SOC CEILING (a list of time-of-use slot entities). Each gets its
     own switch, and configuring one does not imply the other.
     """
@@ -1099,7 +1139,7 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
         ),
         (
             # The live "normal" ceiling. An entity rather than a number so
-            # whatever already owns the slots keeps owning them — we only
+            # whatever already owns the slots keeps owning them - we only
             # ever push below it. sensor is allowed too: a template sensor
             # deriving the ceiling from a schedule is a normal way to do it.
             _optional_entity_field(
@@ -1111,7 +1151,7 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
             ),
         ),
         (
-            # What a WRITE to the entities above means on this hardware — the
+            # What a WRITE to the entities above means on this hardware - the
             # flag the floor-aware SOC fan-out keys on. It never changes what
             # is READ: the destination always comes from the ceiling source
             # when that is set (a floor whose value is not the target leaves
@@ -1128,11 +1168,11 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
                         "options": [
                             {
                                 "value": SOC_LIMIT_SEMANTICS_CEILING,
-                                "label": "Charge ceiling — the battery stops charging there",
+                                "label": "Charge ceiling - the battery stops charging there",
                             },
                             {
                                 "value": SOC_LIMIT_SEMANTICS_FLOOR,
-                                "label": "Discharge floor — grid-defense level (Deye TOU slot)",
+                                "label": "Discharge floor - grid-defense level (Deye TOU slot)",
                             },
                         ],
                         "mode": "dropdown",
@@ -1153,14 +1193,49 @@ def _inverter_control_schema(hass, defaults: dict | None = None) -> vol.Schema:
     return vol.Schema(dict(_build_inverter_control_schema(hass, defaults)))
 
 
-def _inverter_combined_schema(hass, defaults: dict | None = None) -> vol.Schema:
-    """Inverter + solar + battery + write-control on one page
-    (inverter options flow)."""
+def _inverter_features_schema(defaults: dict | None = None) -> vol.Schema:
+    """The first inverter page: what this inverter HAS.
+
+    A multi-select of feature slugs (labels via the ``inverter_features``
+    selector translation). ``suggested_value`` rather than ``default``: a list
+    the user empties is omitted by the frontend, and a default would silently
+    put the old list back (the same clearing rule as the SOC slots).
+    """
+    defaults = defaults or {}
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_INVERTER_FEATURES,
+                description={
+                    "suggested_value": list(defaults.get(CONF_INVERTER_FEATURES) or [])
+                },
+            ): selector(
+                {
+                    "select": {
+                        "options": list(INVERTER_FEATURES),
+                        "multiple": True,
+                        "mode": "list",
+                        "translation_key": "inverter_features",
+                    }
+                }
+            ),
+        }
+    )
+
+
+def _inverter_config_schema(hass, defaults: dict | None = None, features=None):
+    """The inverter's own page on setup: the AC side, plus the PV section when
+    the solar feature is declared. Returns the field list (the create step
+    adds name and entity id in front of it)."""
     fields = _build_hub_inverter_schema(hass, defaults)
-    fields.extend(_build_inverter_solar_schema(hass, defaults))
-    fields.extend(_build_inverter_battery_schema(hass, defaults))
-    fields.extend(_build_inverter_control_schema(hass, defaults))
-    return vol.Schema(dict(fields))
+    if _has_feature(features, INVERTER_FEATURE_SOLAR):
+        fields.extend(_build_inverter_solar_schema(hass, defaults))
+    return fields
+
+
+def _has_feature(features, feature) -> bool:
+    """None means "everything" - the pre-features shape of these pages."""
+    return features is None or feature in features
 
 
 def _hub_schema(
@@ -1190,6 +1265,108 @@ def _hub_schema(
 def _hub_grid_schema(hass, defaults: dict | None = None) -> vol.Schema:
     """Build schema with only grid/electrical fields."""
     return _hub_schema(hass, defaults, include_grid=True, include_battery=False)
+
+
+# The hub's options menu splits the grid page into four pages, one question
+# each: how the site is wired to the grid, where the export wall and the
+# Excess trigger sit, the fleet-wide battery/forecast policy, and the engine's
+# timing. The setup wizard keeps the one page (_hub_grid_schema).
+HUB_CONNECTION_KEYS = (
+    CONF_PHASE_A_CURRENT_ENTITY_ID,
+    CONF_PHASE_B_CURRENT_ENTITY_ID,
+    CONF_PHASE_C_CURRENT_ENTITY_ID,
+    CONF_INVERT_PHASES,
+    CONF_MAIN_BREAKER_RATING,
+    CONF_PHASE_VOLTAGE,
+    CONF_ENABLE_MAX_IMPORT_POWER,
+    CONF_MAX_IMPORT_POWER_ENTITY_ID,
+)
+HUB_EXPORT_KEYS = (
+    CONF_GRID_EXPORT_LIMIT,
+    CONF_EXCESS_TRIGGER_MARGIN,
+    CONF_EXCESS_HYSTERESIS,
+)
+HUB_POLICY_KEYS = (
+    CONF_BATTERY_SOC_HYSTERESIS,
+    CONF_BASE_CONSUMPTION,
+    CONF_FORECAST_SOC_FLOOR,
+)
+HUB_TIMING_KEYS = (
+    CONF_SITE_UPDATE_FREQUENCY,
+    CONF_AUTO_DETECT_PHASE_MAPPING,
+    CONF_SOLAR_GRACE_PERIOD,
+)
+
+
+def _hub_section_schema(hass, defaults, keys) -> vol.Schema:
+    """One hub options page: the grid page's fields restricted to ``keys``,
+    in the grid page's own order, so the two never drift apart."""
+    wanted = set(keys)
+    fields = [
+        (marker, validator)
+        for marker, validator in _build_hub_grid_schema(hass, defaults)
+        if getattr(marker, "schema", None) in wanted
+    ]
+    assert len(fields) == len(wanted), "hub section keys drifted from the grid page"
+    return vol.Schema(dict(fields))
+
+
+def _hub_filters_schema(defaults: dict | None = None) -> vol.Schema:
+    """The Filters page: the control pipeline's time constants and slews.
+
+    Deliberately NOT drawn from ``_build_hub_grid_schema`` like the other hub
+    pages: that list also builds the hub SETUP form (via ``_hub_schema``), and
+    eight filter dials have no business in front of someone wiring up their
+    first hub. Options-only, reachable from the hub menu.
+
+    Every default is the engine constant the dial overrides, so a hub that has
+    never opened this page runs the constants exactly. The fast filter's step
+    is "any": its default is the calibrated 1.2427 s, and a 0.1 grid would
+    either flag that as invalid or nudge it to 1.2 on an open-and-save.
+    """
+    defaults = defaults or {}
+
+    def dial(key, const, lo, hi, step, unit):
+        return (
+            vol.Optional(key, default=defaults.get(key, const)),
+            selector(
+                {
+                    "number": {
+                        "min": lo,
+                        "max": hi,
+                        "step": step,
+                        "mode": "box",
+                        "unit_of_measurement": unit,
+                    }
+                }
+            ),
+        )
+
+    return vol.Schema(
+        dict(
+            [
+                dial(CONF_FILTER_INPUT_TAU_S, EMA_TAU_S, 1, 60, 0.1, "s"),
+                dial(CONF_FILTER_PERMIT_TAU_S, PERMIT_TAU_S, 1, 60, 0.1, "s"),
+                dial(CONF_FILTER_RAMP_TAU_S, RAMP_TAU_S, 1, 60, 0.1, "s"),
+                dial(CONF_FILTER_CTRL_FAST_TAU_S, CTRL_FAST_TAU_S, 0.5, 60, "any", "s"),
+                dial(CONF_FILTER_SETTLE_SECONDS, SETTLE_DRAW_SECONDS, 5, 300, 1, "s"),
+                dial(CONF_FILTER_DEAD_BAND, DEAD_BAND, 0, 5, 0.1, "A"),
+                dial(CONF_FILTER_RAMP_UP_RATE, RAMP_UP_RATE, 0.05, 5, 0.05, "A/s"),
+                dial(CONF_FILTER_RAMP_DOWN_RATE, RAMP_DOWN_RATE, 0.05, 5, 0.05, "A/s"),
+            ]
+        )
+    )
+
+
+def validate_hub_filters(data: dict, errors: dict) -> None:
+    """The battery controller's fast filter must be FASTER than the site
+    reading filter it pairs with. A longer tau on the "fast" half inverts the
+    matched pair, and the feedback law then reads every transition backwards
+    (see readers._smooth_directional)."""
+    fast = data.get(CONF_FILTER_CTRL_FAST_TAU_S, CTRL_FAST_TAU_S)
+    slow = data.get(CONF_FILTER_INPUT_TAU_S, EMA_TAU_S)
+    if fast is not None and slow is not None and float(fast) >= float(slow):
+        errors[CONF_FILTER_CTRL_FAST_TAU_S] = "fast_filter_not_below_input"
 
 
 def _hub_battery_schema(hass, defaults: dict | None = None) -> vol.Schema:
@@ -1235,7 +1412,7 @@ def _charger_info_schema(defaults: dict | None = None) -> vol.Schema:
     # pointing at the right one instead of by typing an id nobody can check.
     # Optional and pre-filled with the discovered device: leaving it alone
     # keeps exactly what discovery found. Filtered to the ocpp integration, so
-    # it is empty (and skippable) when that integration is not the source —
+    # it is empty (and skippable) when that integration is not the source -
     # OCPP-shaped template sensors have no device to offer.
     # suggested_value, not default, for the same reason the entity fields use
     # it: a default would silently re-fill the picker when the user clears it.
@@ -1260,7 +1437,10 @@ def _charger_current_schema(
     Only shows L2/L3 phase mapping fields when the hub has 2+/3+ phases.
     """
     defaults = defaults or {}
-    phase_options = [
+    # One site phase per charger LEG - not a phase mask. L1/L2/L3 each land on
+    # exactly one phase, so the multi-phase combinations that the load pickers
+    # offer (PHASE_MASK_OPTIONS) would be meaningless here.
+    leg_phase_options = [
         {"value": "A", "label": "Phase A"},
         {"value": "B", "label": "Phase B"},
         {"value": "C", "label": "Phase C"},
@@ -1301,7 +1481,7 @@ def _charger_current_schema(
         vol.Required(
             CONF_CHARGER_L1_PHASE,
             default=defaults.get(CONF_CHARGER_L1_PHASE, "A"),
-        ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
+        ): selector({"select": {"options": leg_phase_options, "mode": "dropdown"}}),
     }
     if hub_phases >= 2:
         fields[
@@ -1309,14 +1489,14 @@ def _charger_current_schema(
                 CONF_CHARGER_L2_PHASE,
                 default=defaults.get(CONF_CHARGER_L2_PHASE, "B"),
             )
-        ] = selector({"select": {"options": phase_options, "mode": "dropdown"}})
+        ] = selector({"select": {"options": leg_phase_options, "mode": "dropdown"}})
     if hub_phases >= 3:
         fields[
             vol.Required(
                 CONF_CHARGER_L3_PHASE,
                 default=defaults.get(CONF_CHARGER_L3_PHASE, "C"),
             )
-        ] = selector({"select": {"options": phase_options, "mode": "dropdown"}})
+        ] = selector({"select": {"options": leg_phase_options, "mode": "dropdown"}})
     return vol.Schema(fields)
 
 
@@ -1450,15 +1630,6 @@ def _charger_timing_schema(
 def _plug_schema(defaults: dict | None = None) -> vol.Schema:
     """Build schema for smart load configuration."""
     defaults = defaults or {}
-    phase_options = [
-        {"value": "A", "label": "Phase A"},
-        {"value": "B", "label": "Phase B"},
-        {"value": "C", "label": "Phase C"},
-        {"value": "AB", "label": "Phase A+B"},
-        {"value": "BC", "label": "Phase B+C"},
-        {"value": "AC", "label": "Phase A+C"},
-        {"value": "ABC", "label": "Phase A+B+C"},
-    ]
     return vol.Schema(
         {
             vol.Required(
@@ -1500,7 +1671,7 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
             vol.Required(
                 CONF_CONNECTED_TO_PHASE,
                 default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
-            ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
+            ): selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
             vol.Required(
                 CONF_LOAD_PRIORITY,
                 default=defaults.get(
@@ -1566,15 +1737,6 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
 def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
     """Build schema for hot water tank configuration."""
     defaults = defaults or {}
-    phase_options = [
-        {"value": "A", "label": "Phase A"},
-        {"value": "B", "label": "Phase B"},
-        {"value": "C", "label": "Phase C"},
-        {"value": "AB", "label": "Phase A+B"},
-        {"value": "BC", "label": "Phase B+C"},
-        {"value": "AC", "label": "Phase A+C"},
-        {"value": "ABC", "label": "Phase A+B+C"},
-    ]
 
     def _temp_selector():
         return selector(
@@ -1639,7 +1801,7 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
             vol.Required(
                 CONF_CONNECTED_TO_PHASE,
                 default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
-            ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
+            ): selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
             vol.Required(
                 CONF_LOAD_PRIORITY,
                 default=defaults.get(
@@ -1710,23 +1872,17 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
 
     The charge bounds are configured rather than read from the device, so a
     station whose hardware accepts more can be held below that. The reserve
-    is the station's on/off gate — dropped below its current battery level it
-    stops drawing from the wall — so both the day-to-day and the storm level
+    is the station's on/off gate - dropped below its current battery level it
+    stops drawing from the wall - so both the day-to-day and the storm level
     are set here.
     """
     defaults = defaults or {}
-    phase_options = [
-        {"value": "A", "label": "Phase A"},
-        {"value": "B", "label": "Phase B"},
-        {"value": "C", "label": "Phase C"},
-    ]
-
     def _power_selector():
         return selector(
             {
                 "number": {
                     "min": 0,
-                    "max": 5000,
+                    "max": STATION_CHARGE_POWER_MAX,
                     "step": STATION_CHARGE_POWER_STEP,
                     "mode": "box",
                     "unit_of_measurement": "W",
@@ -1802,7 +1958,7 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
             vol.Required(
                 CONF_CONNECTED_TO_PHASE,
                 default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
-            ): selector({"select": {"options": phase_options, "mode": "dropdown"}}),
+            ): selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
             vol.Required(
                 CONF_LOAD_PRIORITY,
                 default=defaults.get(

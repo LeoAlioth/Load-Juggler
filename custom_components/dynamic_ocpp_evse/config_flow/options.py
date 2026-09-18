@@ -1,14 +1,14 @@
 """Load Juggler - the options flow: the single edit path after setup.
 
-``LoadJugglerOptionsFlow`` is what "Configure" opens on an existing entry —
+``LoadJugglerOptionsFlow`` is what "Configure" opens on an existing entry -
 a small menu that branches to the settings steps for whatever the entry is
 (hub, inverter, group or one of the load types) and to the two read-only pages.
 It owns no schemas of its own: every form it shows comes from ``schemas.py``,
 the same builders the create flow uses.
 
-Two executors carry the shape the steps share — ``_async_edit_page`` for a
+Two executors carry the shape the steps share - ``_async_edit_page`` for a
 page that saves on submit, ``_async_wizard_page`` for one that routes on to
-the next — so each step is left declaring only what makes it different. The
+the next - so each step is left declaring only what makes it different. The
 priority and circuit-group steps stay hand-written; see their docstrings.
 """
 import voluptuous as vol
@@ -54,6 +54,10 @@ from ..const import (
     FIELD_OCPP_DEVICE,
     MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
     OCPP_INTEGRATION_DOMAIN,
+    CONF_INVERTER_FEATURES,
+    INVERTER_FEATURE_BATTERY,
+    INVERTER_FEATURE_BATTERY_CONTROL,
+    INVERTER_FEATURE_SOLAR,
 )
 from ..detection_patterns import BATTERY_MAX_DISCHARGE_POWER_PATTERNS
 from ..helpers import (
@@ -61,6 +65,7 @@ from ..helpers import (
     validate_charger_settings,
     validate_offgrid_battery_requirement,
 )
+from ..helpers import hub_has_battery, inverter_features, strip_unfeatured_inverter_options
 from .helpers import (
     _BATTERY_ENTITY_KEYS,
     _BATTERY_UNIT_MAP,
@@ -89,6 +94,8 @@ from .helpers import (
     _validate_charge_limit_unit,
     _validate_entity_units,
     _validate_forecast_devices,
+    _normalize_features_list,
+    _validate_inverter_features,
 )
 from ..ocpp_discovery import (
     ocpp_charger_for_device,
@@ -103,9 +110,20 @@ from .schemas import (
     _hub_battery_schema,
     _hub_grid_schema,
     _hub_inverter_schema,
-    _inverter_combined_schema,
     _plug_schema,
     _power_station_schema,
+    _inverter_features_schema,
+    _build_hub_inverter_schema,
+    _build_inverter_solar_schema,
+    _build_inverter_battery_schema,
+    _build_inverter_control_schema,
+    _hub_section_schema,
+    _hub_filters_schema,
+    validate_hub_filters,
+    HUB_CONNECTION_KEYS,
+    HUB_EXPORT_KEYS,
+    HUB_POLICY_KEYS,
+    HUB_TIMING_KEYS,
 )
 
 
@@ -123,7 +141,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     def _save(self) -> config_entries.FlowResult:
         """Write what the steps collected in ``self._data`` back to the entry.
 
-        Options only — the static ``data`` half is never edited after setup, so
+        Options only - the static ``data`` half is never edited after setup, so
         the previous options are the base every step merges onto.
         """
         return self.async_create_entry(
@@ -147,7 +165,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         The shape every single-page settings step shares. The stored config is
         the form's defaults; a submit normalizes the page's entity fields
-        (``entity_keys`` — omitted ones were cleared) and any multi-select
+        (``entity_keys`` - omitted ones were cleared) and any multi-select
         lists, validates units and whatever else the page demands, and saves.
         A failed validation re-shows the form over what the user just typed.
 
@@ -157,7 +175,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 pass to the form as the ``entity`` placeholder.
             finalize: last-moment rewrite of the data about to be stored.
 
-        The hub and charger wizards do NOT use this — their submit branch
+        The hub and charger wizards do NOT use this - their submit branch
         routes to the next step instead of saving, so they stay hand-written.
         """
         errors: dict[str, str] = {}
@@ -203,7 +221,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         """Run one page of a multi-step edit wizard: normalize → validate → on.
 
         The same skeleton as _async_edit_page, except a clean submit routes to
-        ``next_step`` instead of saving — the input piles up in ``self._data``
+        ``next_step`` instead of saving - the input piles up in ``self._data``
         until the wizard's final step calls _save(). A failed validation
         re-shows the form over the submitted input alone; the first show uses
         the stored config, or ``show_defaults`` where a page has to massage it.
@@ -250,13 +268,44 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """The one entry point for editing an entry — a small menu.
+        """The one entry point for editing an entry - a small menu.
 
         "Configure" is the single edit path (there is no reconfigure flow), so
         this menu also hosts the two read-only pages: a live Overview for every
         entry type, and "How it decides" for the hub.
         """
         entry_type = self.config_entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
+        if entry_type == ENTRY_TYPE_INVERTER:
+            # An inverter's menu lists its pages directly: the features first,
+            # then one page per declared feature - each saves on its own.
+            features = inverter_features(self.config_entry)
+            menu_options = ["inverter_features", "inverter_core"]
+            if INVERTER_FEATURE_SOLAR in features:
+                menu_options.append("inverter_solar")
+            if INVERTER_FEATURE_BATTERY in features:
+                menu_options.append("inverter_battery")
+            if INVERTER_FEATURE_BATTERY_CONTROL in features:
+                menu_options.append("inverter_control")
+            menu_options.append("overview")
+            return self.async_show_menu(step_id="init", menu_options=menu_options)
+        if entry_type == ENTRY_TYPE_HUB and self.config_entry.data.get(
+            MIGRATE_HUB_INVERTER_IMPORTED_FLAG
+        ):
+            # A hub whose hardware lives on inverter entries edits its own
+            # settings one question per page. The battery/forecast policy is
+            # offered only while some inverter on it declares a battery; the
+            # priority order only while it has loads to order.
+            menu_options = ["hub_connection", "hub_export"]
+            if hub_has_battery(self.hass, self.config_entry):
+                menu_options.append("hub_policy")
+            menu_options.append("hub_timing")
+            menu_options.append("hub_filters")
+            if _controlled_devices(self.hass, self.config_entry.entry_id):
+                menu_options.append("priority")
+            menu_options += ["overview", "summary"]
+            return self.async_show_menu(step_id="init", menu_options=menu_options)
+        # A hub still carrying legacy hardware fields (never auto-imported)
+        # keeps the wizard, whose later pages edit those fields.
         menu_options = ["settings", "overview"]
         if entry_type == ENTRY_TYPE_HUB:
             menu_options.append("summary")
@@ -269,14 +318,14 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         Rendered as a MENU, not a form: a form's submit button is fixed to
         "Next"/"Submit" by HA, which reads as if something gets saved. Menu
-        options give real, labeled buttons instead — "Refresh" re-enters this
+        options give real, labeled buttons instead - "Refresh" re-enters this
         step (rebuilding the text from live data), "Back" returns to init.
         """
         try:
             text = _overview_text(self.hass, self.config_entry.entry_id)
-        except Exception:  # pragma: no cover — a display page must not break
+        except Exception:  # pragma: no cover - a display page must not break
             _LOGGER.exception("Could not build the overview page")
-            text = "⚠️ Could not read the live data — see the Home Assistant log."
+            text = "⚠️ Could not read the live data - see the Home Assistant log."
         return self.async_show_menu(
             step_id="overview",
             menu_options=["overview", "init"],
@@ -288,14 +337,14 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.FlowResult:
         """Read-only "how it decides" page (hub only).
 
-        A menu for the same reason as async_step_overview — the only action
+        A menu for the same reason as async_step_overview - the only action
         here is going back, and a form's "Next" button would misname it.
         """
         try:
             text = _summary_text(self.hass, self.config_entry.entry_id)
-        except Exception:  # pragma: no cover — a display page must not break
+        except Exception:  # pragma: no cover - a display page must not break
             _LOGGER.exception("Could not build the summary page")
-            text = "⚠️ Could not read the configuration — see the Home Assistant log."
+            text = "⚠️ Could not read the configuration - see the Home Assistant log."
         return self.async_show_menu(
             step_id="summary",
             menu_options=["init"],
@@ -306,7 +355,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Route to the editable pages for this entry type."""
-        # A pre-2.0 entry carries no entry_type — those are hubs (async_setup
+        # A pre-2.0 entry carries no entry_type - those are hubs (async_setup
         # stamps the type on load, so this only matters before the first load).
         entry_type = self.config_entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
 
@@ -330,35 +379,103 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_inverter(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Options for an inverter entry — one page: inverter, PV and battery."""
+        """Options for an inverter entry: the features page."""
+        return await self.async_step_inverter_features(user_input)
 
-        def _validate(data: dict, errors: dict):
-            _validate_charge_limit_unit(self.hass, data, errors)
-            # Returned last: a bad forecast device's name feeds the form's
-            # ``entity`` placeholder (see _async_edit_page's validate hook).
-            return _validate_forecast_devices(self.hass, data, errors)
+    async def async_step_inverter_features(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """What this inverter has. Saves on its own: the menu then offers a
+        page per declared feature, and the keys of every feature unticked
+        here are cleared so nothing outlives the section it belonged to."""
+
+        def _finalize(data: dict) -> None:
+            strip_unfeatured_inverter_options(
+                data, data.get(CONF_INVERTER_FEATURES) or [], clear_all=True
+            )
 
         return await self._async_edit_page(
             user_input,
-            step_id="inverter",
-            schema=lambda defaults: _inverter_combined_schema(self.hass, defaults),
-            entity_keys=_INVERTER_ENTITY_KEYS
-            + [
-                CONF_SOLAR_PRODUCTION_ENTITY_ID,
-                CONF_BATTERY_SOC_ENTITY_ID,
-                CONF_BATTERY_POWER_ENTITY_ID,
+            step_id="inverter_features",
+            schema=lambda defaults: _inverter_features_schema(
+                {
+                    **defaults,
+                    CONF_INVERTER_FEATURES: inverter_features(self.config_entry),
+                }
+            ),
+            list_normalizers=(_normalize_features_list,),
+            validate=_validate_inverter_features,
+            finalize=_finalize,
+        )
+
+    async def async_step_inverter_core(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The inverter's AC side: capacity, topology, per-phase output."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="inverter_core",
+            schema=lambda defaults: vol.Schema(
+                dict(_build_hub_inverter_schema(self.hass, defaults))
+            ),
+            entity_keys=_INVERTER_ENTITY_KEYS,
+            unit_map=_INVERTER_OUTPUT_UNIT_MAP,
+            finalize=_normalize_inverter_power_caps,
+        )
+
+    async def async_step_inverter_solar(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The PV array behind this inverter: production sensor, forecast."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="inverter_solar",
+            schema=lambda defaults: vol.Schema(
+                dict(_build_inverter_solar_schema(self.hass, defaults))
+            ),
+            entity_keys=[CONF_SOLAR_PRODUCTION_ENTITY_ID],
+            list_normalizers=(_normalize_forecast_list,),
+            unit_map=_SOLAR_UNIT_MAP,
+            # Returns a bad forecast device's name for the ``entity`` placeholder.
+            validate=lambda data, errors: _validate_forecast_devices(
+                self.hass, data, errors
+            ),
+        )
+
+    async def async_step_inverter_battery(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The battery behind this inverter."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="inverter_battery",
+            schema=lambda defaults: vol.Schema(
+                dict(_build_inverter_battery_schema(self.hass, defaults))
+            ),
+            entity_keys=[CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
+            unit_map=_BATTERY_UNIT_MAP,
+        )
+
+    async def async_step_inverter_control(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Battery charge management: the charge register and SOC slots."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="inverter_control",
+            schema=lambda defaults: vol.Schema(
+                dict(_build_inverter_control_schema(self.hass, defaults))
+            ),
+            entity_keys=[
                 CONF_CHARGE_LIMIT_ENTITY_ID,
                 CONF_BATTERY_VOLTAGE_ENTITY_ID,
                 CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
             ],
-            list_normalizers=(_normalize_forecast_list, _normalize_soc_limit_list),
-            unit_map=_INVERTER_OUTPUT_UNIT_MAP
-            | _SOLAR_UNIT_MAP
-            | _BATTERY_UNIT_MAP
-            | _WRITE_CONTROL_UNIT_MAP,
-            validate=_validate,
-            finalize=_normalize_inverter_power_caps,
-            last_step=None,
+            list_normalizers=(_normalize_soc_limit_list,),
+            unit_map=_WRITE_CONTROL_UNIT_MAP,
+            validate=lambda data, errors: _validate_charge_limit_unit(
+                self.hass, data, errors
+            ),
         )
 
     async def async_step_hub_grid(
@@ -366,7 +483,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.FlowResult:
         """Hub settings step 1: the grid connection and the site policy.
 
-        No auto-detection when editing an existing hub — only the initial
+        No auto-detection when editing an existing hub - only the initial
         install scans for entities. Re-detecting here can grab entities from an
         unrelated system (e.g. a second inverter in another building), silently
         adding phantom phases. The stored values are shown as-is.
@@ -383,7 +500,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         async def _next() -> config_entries.FlowResult:
             # Post-import the hardware (inverters, batteries, PV sensors and
-            # forecast sources) is edited on the inverter entries — the legacy
+            # forecast sources) is edited on the inverter entries - the legacy
             # hub pages are skipped entirely.
             if self.config_entry.data.get(MIGRATE_HUB_INVERTER_IMPORTED_FLAG):
                 return await self.async_step_priority()
@@ -399,10 +516,81 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             validate=_require_battery_when_offgrid,
         )
 
+    async def async_step_hub_connection(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """How the site is wired to the grid: CTs, breaker, voltage, import cap.
+        Dropping every CT makes the hub off-grid, so the battery requirement is
+        checked here."""
+
+        def _require_battery_when_offgrid(data, errors) -> None:
+            validate_offgrid_battery_requirement(
+                data, self._defaults, errors,
+                hass=self.hass, hub_entry_id=self.config_entry.entry_id,
+            )
+
+        return await self._async_edit_page(
+            user_input,
+            step_id="hub_connection",
+            schema=lambda defaults: _hub_section_schema(
+                self.hass, defaults, HUB_CONNECTION_KEYS
+            ),
+            entity_keys=_GRID_ENTITY_KEYS,
+            unit_map=_GRID_UNIT_MAP,
+            validate=_require_battery_when_offgrid,
+        )
+
+    async def async_step_hub_export(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The export wall and the Excess trigger under it."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="hub_export",
+            schema=lambda defaults: _hub_section_schema(
+                self.hass, defaults, HUB_EXPORT_KEYS
+            ),
+        )
+
+    async def async_step_hub_policy(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Fleet-wide battery and forecast policy."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="hub_policy",
+            schema=lambda defaults: _hub_section_schema(
+                self.hass, defaults, HUB_POLICY_KEYS
+            ),
+        )
+
+    async def async_step_hub_timing(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The engine's timing: refresh interval, phase detection, solar grace."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="hub_timing",
+            schema=lambda defaults: _hub_section_schema(
+                self.hass, defaults, HUB_TIMING_KEYS
+            ),
+        )
+
+    async def async_step_hub_filters(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """The control pipeline's filters: time constants, dead band, slews."""
+        return await self._async_edit_page(
+            user_input,
+            step_id="hub_filters",
+            schema=lambda defaults: _hub_filters_schema(defaults),
+            validate=validate_hub_filters,
+        )
+
     async def async_step_hub_inverter(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """LEGACY hub inverter page — reachable only while the hub still
+        """LEGACY hub inverter page - reachable only while the hub still
         carries those fields (i.e. before the one-time auto-import).
 
         No auto-detection when editing an existing hub: re-detecting the
@@ -413,7 +601,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         """
 
         def _battery_power_hint() -> dict[str, str]:
-            """Detected battery discharge power — form text only, sets nothing."""
+            """Detected battery discharge power - form text only, sets nothing."""
             hint = _auto_detect_entity_value(
                 self.hass, BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR
             )
@@ -451,7 +639,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_hub(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """LEGACY hub solar/battery page — reachable only while the hub still
+        """LEGACY hub solar/battery page - reachable only while the hub still
         carries those fields (i.e. before the one-time auto-import).
 
         No auto-detection here either: re-detecting can grab battery/solar
@@ -485,12 +673,12 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         Presents one ordered multi-select listing every load (EVSE, smart plug,
         hot-water tank) linked to this hub. The selection order becomes the
         served-first order: the first chip is priority 1, the next is 2, and so
-        on. This is the single place to set relative priority — the per-device
+        on. This is the single place to set relative priority - the per-device
         number is written back to each child entry from the chosen order.
         """
         devices = _controlled_devices(self.hass, self.config_entry.entry_id)
 
-        # No loads to order yet — just persist the hub settings and finish.
+        # No loads to order yet - just persist the hub settings and finish.
         if not devices:
             return self._save()
 
@@ -512,7 +700,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         """Options charger step 1: priority and the OCPP device behind it.
 
         The same device picker the create wizard's charger_info step offers,
-        instead of the free-text charge point id it replaces — an id nobody can
+        instead of the free-text charge point id it replaces - an id nobody can
         check, typed against a device the registry already knows by name.
 
         Pre-selected to whatever device claims the stored charge point id. When
@@ -557,7 +745,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 "charge_point_id": get_entry_value(
                     self.config_entry, CONF_OCPP_DEVICE_ID, None
                 )
-                or "—"
+                or "-"
             }
 
         def _apply_picked_device(
@@ -619,10 +807,10 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_charger_timing(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Options charger step 3: Units and timing (final — saves)."""
+        """Options charger step 3: Units and timing (final - saves)."""
 
         # A device picked on the charger page is not stored yet, so the pending
-        # charge point id wins — the detected-unit hint has to describe the
+        # charge point id wins - the detected-unit hint has to describe the
         # charger the user just pointed at, not the one being replaced. Then
         # options-first, since a previous edit lives in entry.options.
         ocpp_device_id = self._data.get(CONF_OCPP_DEVICE_ID) or get_entry_value(

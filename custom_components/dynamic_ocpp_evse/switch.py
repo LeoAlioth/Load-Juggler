@@ -42,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
 
     if entry_type == ENTRY_TYPE_INVERTER:
         # Write-control opt-ins, one per control and each gated on its own
-        # target being configured — with nothing to write to, a switch would be
+        # target being configured - with nothing to write to, a switch would be
         # a lie. The two are independent: an inverter may expose a charge-current
         # register, TOU SOC slots, both, or neither.
         #
@@ -72,7 +72,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         _LOGGER.debug("Skipping switch setup for unknown entry type: %s", config_entry.title)
         return
 
-    # Hub-level switches — only if any fleet battery is configured
+    # Hub-level switches - only if any fleet battery is configured
     # (the hub's legacy fields or an inverter entry)
     has_battery = hub_has_battery(hass, config_entry)
 
@@ -162,7 +162,7 @@ class DynamicControlSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
         self._state = False
         self.async_write_ha_state()
         self._write_to_load_data(False)
-        _LOGGER.info("Dynamic control disabled for %s — load will use max current", self._attr_name)
+        _LOGGER.info("Dynamic control disabled for %s - load will use max current", self._attr_name)
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
@@ -180,8 +180,8 @@ class StationStormReserveSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
 
     When ON: the station holds its storm reserve level, charging from whatever
     source is available and refusing to discharge below it. That overrides the
-    operating mode — a backup reserve that may only be filled from surplus is
-    not a reserve — so the engine treats the station as a must-run load for as
+    operating mode - a backup reserve that may only be filled from surplus is
+    not a reserve - so the engine treats the station as a must-run load for as
     long as this is on.
 
     When OFF: the station returns to its operating mode and its normal reserve.
@@ -208,7 +208,7 @@ class StationStormReserveSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
         self.async_write_ha_state()
         self._write_to_load_data(True)
         _LOGGER.info(
-            "Storm reserve enabled for %s — charging from any source and holding",
+            "Storm reserve enabled for %s - charging from any source and holding",
             self._attr_name,
         )
 
@@ -231,14 +231,14 @@ class StationStormReserveSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
 class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
     """Per-inverter opt-in for writing the forecast's charge limit.
 
-    OFF (the default): the clipping forecast stays advisory — the sensors show
+    OFF (the default): the clipping forecast stays advisory - the sensors show
     what it recommends and nothing is written to the inverter. ON: the
     recommended charge limit is written to the configured register, and the
     normal value is restored once the advice releases.
 
     Default off on purpose. This is the only entity in the integration whose
     'on' state makes Load Juggler write to a third-party device's Modbus
-    registers, so arming it should be a deliberate act — including after a
+    registers, so arming it should be a deliberate act - including after a
     restore with no previous state.
     """
 
@@ -267,7 +267,7 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
         self.async_write_ha_state()
         self._write_to_inverter_data(True)
         _LOGGER.info(
-            "Battery charge control enabled for %s — the PV clipping forecast "
+            "Battery charge control enabled for %s - the PV clipping forecast "
             "will now write %s",
             self.config_entry.title,
             get_entry_value(self.config_entry, CONF_CHARGE_LIMIT_ENTITY_ID, None),
@@ -278,10 +278,10 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
         self.async_write_ha_state()
         self._write_to_inverter_data(False)
         # The control loop sees the disabled flag on its next tick and puts
-        # the normal value back — no write from here, so the pacing and the
+        # the normal value back - no write from here, so the pacing and the
         # write-once-on-release logic stay in one place.
         _LOGGER.info(
-            "Battery charge control disabled for %s — restoring its normal "
+            "Battery charge control disabled for %s - restoring its normal "
             "charge limit",
             self.config_entry.title,
         )
@@ -297,20 +297,20 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
 class BatterySocControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
     """Per-inverter opt-in for writing the forecast's battery SOC ceiling.
 
-    OFF (the default): the recommended max SOC stays advisory — the sensor shows
+    OFF (the default): the recommended max SOC stays advisory - the sensor shows
     it and none of the configured time-of-use slots is touched. ON: every
     configured slot is driven to the lower of the forecast's recommendation and
     the normal ceiling, and rises back with the recommendation on its own.
 
     A switch of its own rather than a second meaning for Battery Charge Control.
-    The two controls write different things at different strengths — a rate limit
-    slows the fill, a SOC ceiling stops it dead — and an inverter may support
+    The two controls write different things at different strengths - a rate limit
+    slows the fill, a SOC ceiling stops it dead - and an inverter may support
     either without the other, so a site that wants only the gentler one must be
     able to say exactly that.
 
     Default off, for the same reason as its sibling: 'on' makes Load Juggler
     write to a third-party device, here to several of its entities at once, so
-    arming it should be a deliberate act — including after a restore with no
+    arming it should be a deliberate act - including after a restore with no
     previous state.
     """
 
@@ -339,7 +339,7 @@ class BatterySocControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
         self.async_write_ha_state()
         self._write_to_inverter_data(True)
         _LOGGER.info(
-            "Battery SOC control enabled for %s — the PV clipping forecast will "
+            "Battery SOC control enabled for %s - the PV clipping forecast will "
             "now write %s",
             self.config_entry.title,
             ", ".join(soc_targets(self.config_entry)),
@@ -354,7 +354,7 @@ class BatterySocControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
         # owner's value or a limit that will simply stop being maintained.
         # Turning this off stops writing; it does not undo history.
         _LOGGER.info(
-            "Battery SOC control disabled for %s — its SOC slots are left as they "
+            "Battery SOC control disabled for %s - its SOC slots are left as they "
             "stand",
             self.config_entry.title,
         )

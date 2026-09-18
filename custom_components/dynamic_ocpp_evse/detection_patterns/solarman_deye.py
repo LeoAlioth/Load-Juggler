@@ -7,7 +7,7 @@ Entity names depend on the YAML definition file used in the Solarman integration
 GRID_CT = [
     # The CT POWER entities are signed (negative while exporting); the CT
     # CURRENT entities of the same name are magnitude-only, so picking those
-    # makes export invisible — no Excess mode, and exported power counted as
+    # makes export invisible - no Excess mode, and exported power counted as
     # household consumption. Power first, current only as a fallback for
     # YAML definitions that don't publish it.
     {

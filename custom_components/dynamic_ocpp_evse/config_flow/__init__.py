@@ -5,7 +5,7 @@ the handler registered for ``DOMAIN`` to be reachable from it, so this file is
 the public face of the split: the two flow handlers and the read-only page
 builders.
 
-Split out of the single-file config_flow.py — helpers.py (validation, ordering,
+Split out of the single-file config_flow.py - helpers.py (validation, ordering,
 auto-detection), pages.py (the Overview / "How it decides" text), schemas.py (the
 form builders), flow.py (setup) and options.py (editing afterwards).
 """

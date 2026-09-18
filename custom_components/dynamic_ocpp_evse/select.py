@@ -60,7 +60,7 @@ class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
 
     _load_data_key = "operating_mode"
 
-    # Mode keys renamed across versions — a restored value is migrated before
+    # Mode keys renamed across versions - a restored value is migrated before
     # use so existing installs keep a valid selection.
     _RENAMED_MODE_KEYS = {
         DEVICE_TYPE_HOT_WATER_TANK: {"Solar Only": "Solar Priority"},
@@ -96,7 +96,7 @@ class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
         # was renamed to "Solar Priority"; the key "Solar Only" now denotes a
         # different, target-gated mode. async_migrate_entry flags the entry and
         # async_setup_entry turns that into a one-shot runtime marker, claimed
-        # here. The claim MUST NOT write to the config entry — that fires the
+        # here. The claim MUST NOT write to the config entry - that fires the
         # update listener and reloads an entry that may still be
         # SETUP_IN_PROGRESS (issue #34); async_setup_entry clears the persisted
         # flag itself, at a point where no update listener is registered.

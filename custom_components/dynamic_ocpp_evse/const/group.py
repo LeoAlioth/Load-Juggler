@@ -1,4 +1,4 @@
-"""Circuit-group constants — shared breaker limit for co-located loads.
+"""Circuit-group constants - shared breaker limit for co-located loads.
 
 The ``DEVICE_TYPE_GROUP`` discriminator lives in ``common.py`` alongside the
 other ``DEVICE_TYPE_*`` values.

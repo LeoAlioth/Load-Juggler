@@ -36,7 +36,7 @@ scenarios:
         l3_phase: "A"
     expected:
       load_1:
-        allocated: 7.0  # Same result as default mapping — 7A per phase from solar surplus
+        allocated: 7.0  # Same result as default mapping - 7A per phase from solar surplus
 
   - name: "3ph-2c-solar-phase-mapping-swapped"
     description: "Two chargers: one with swapped phases, one default. Solar priority distribution."

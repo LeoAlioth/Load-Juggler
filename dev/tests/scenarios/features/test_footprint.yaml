@@ -1,6 +1,6 @@
 scenarios:
-  # The footprint model: the pools are reduced by allocated_current — a load's
-  # real draw — not by available_current (its permit ceiling). A plug/tank
+  # The footprint model: the pools are reduced by allocated_current - a load's
+  # real draw - not by available_current (its permit ceiling). A plug/tank
   # removes only what it actually draws, so an idle or under-drawing plug
   # frees its unused capacity to lower-priority loads.
   #
@@ -10,8 +10,8 @@ scenarios:
   - name: "footprint-idle-plug-frees-heater"
     description: >
       A metered plug switched on but idle (drawing 0 W) no longer blocks a
-      lower-priority water heater. The plug's 0 A footprint — not its 13 A set
-      power — is what leaves the pool for the heater. Under the old model the
+      lower-priority water heater. The plug's 0 A footprint - not its 13 A set
+      power - is what leaves the pool for the heater. Under the old model the
       plug's 13 A reservation starved the heater on an 18 A pool.
     human_verified: false
     site:
@@ -36,16 +36,16 @@ scenarios:
         utilization: 1.0
     expected:
       plug_1:
-        allocated: 0.0        # footprint — drawing nothing
-        available: 16.0       # permit ceiling — the plug's hardware rating
+        allocated: 0.0        # footprint - drawing nothing
+        available: 16.0       # permit ceiling - the plug's hardware rating
       heater_1:
-        allocated: 8.7        # footprint — its 2 kW element
+        allocated: 8.7        # footprint - its 2 kW element
         available: 16.0
 
   - name: "footprint-plug-partial-draw-frees-load"
     description: >
       A 3 kW-rated plug whose appliance only draws half (1.5 kW) removes just
-      its 6.5 A footprint from the pool — not its 13 A set power — leaving room
+      its 6.5 A footprint from the pool - not its 13 A set power - leaving room
       for a lower-priority 2 kW load on a 16 A pool. The old model reserved the
       full 13 A and denied the second load.
     human_verified: false
@@ -71,7 +71,7 @@ scenarios:
         utilization: 1.0
     expected:
       plug_1:
-        allocated: 6.5        # footprint — half of its 13 A set power
+        allocated: 6.5        # footprint - half of its 13 A set power
         available: 16.0
       load_2:
         allocated: 8.7
@@ -83,7 +83,7 @@ scenarios:
       frees the unused 8 A to a lower-priority EVSE. Once the higher EVSE's
       draw has held steady for a few cycles the engine trusts it as a real
       ceiling and budgets the lower EVSE against the 8 A footprint, not the
-      16 A permit — so the lower EVSE reaches 16 A instead of the 8 A the old
+      16 A permit - so the lower EVSE reaches 16 A instead of the 8 A the old
       permit-reservation model left it.
     human_verified: false
     site:
@@ -110,8 +110,8 @@ scenarios:
         utilization: 1.0
     expected:
       evse_1:
-        allocated: 8.0        # footprint — the car's settled draw
-        available: 16.0       # permit — still offered its full 16 A
+        allocated: 8.0        # footprint - the car's settled draw
+        available: 16.0       # permit - still offered its full 16 A
       evse_2:
         allocated: 16.0       # gets evse_1's freed 8 A on top of its own 8 A
         available: 16.0
@@ -120,7 +120,7 @@ scenarios:
     description: >
       Shared mode equivalent of the priority scenario: two 32 A EVSEs on a
       50 A pool. The first car is hardware-capped at 16 A (a small car on a
-      big EVSE) — its draw stays at 16 A regardless of what we offer. Naive
+      big EVSE) - its draw stays at 16 A regardless of what we offer. Naive
       shared would split 25/25 and leave the second EVSE 7 A short of its
       max. Once the first car's draw has settled the engine treats it as a
       16 A footprint and the second EVSE fills to its full 32 A.
@@ -149,8 +149,8 @@ scenarios:
         utilization: 1.0
     expected:
       evse_1:
-        allocated: 16.0       # footprint — the car's hardware cap
-        available: 32.0       # permit — still offered its full 32 A
+        allocated: 16.0       # footprint - the car's hardware cap
+        available: 32.0       # permit - still offered its full 32 A
       evse_2:
         allocated: 32.0       # got evse_1's freed 16 A on top of its share
         available: 32.0

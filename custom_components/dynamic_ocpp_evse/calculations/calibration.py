@@ -1,13 +1,13 @@
-"""Forecast calibration — the pure arithmetic behind the two observers.
+"""Forecast calibration - the pure arithmetic behind the two observers.
 
 Two DIFFERENT forecast errors, measured separately because neither correction
 fixes the other:
 
-* **Level bias** — the forecast's daily energy is systematically high or low for
+* **Level bias** - the forecast's daily energy is systematically high or low for
   an array: a wrong declared kWp, soiling, a horizon the model does not know,
   panel degradation. Stationary, so it is learnable as one slow gain per
   inverter. Measured as an energy-weighted ``actual ÷ forecast`` ratio.
-* **Peakiness** — clipping is a convex, one-sided function of power, so by
+* **Peakiness** - clipping is a convex, one-sided function of power, so by
   Jensen's inequality the clip of a block AVERAGE is never more than the average
   of the clip. A 15-minute series therefore understates clipping whenever power
   varies inside a block, and the forecast's mean can be exactly right while the
@@ -17,8 +17,10 @@ fixes the other:
 Both are OBSERVERS first: they publish what they would have corrected and change
 nothing, so a season of evidence decides whether either is worth applying.
 
-Pure functions — unit-testable.
+Pure functions - unit-testable.
 """
+
+from datetime import timedelta
 
 import logging
 
@@ -48,11 +50,11 @@ def block_power_at(series, when):
     ``series`` maps block-start timestamps to average watts, at whatever
     resolution the forecast publishes (Open-Meteo Solar Forecast: 15 minutes).
     The block containing ``when`` is the latest one starting at or before it,
-    and only while ``when`` actually falls inside that block's width — past the
+    and only while ``when`` actually falls inside that block's width - past the
     end of the series there is no forecast, which is different from a forecast
     of zero.
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     if not series:
         return None
@@ -86,14 +88,14 @@ def note_gain_sample(state, forecast_w, actual_w, dt_hours, constrained):
     forecast reads high exactly when accuracy matters most. Dropping the whole
     day instead was the obvious alternative and is worse: on an export-limited
     site most of the *sunny* days curtail, which would leave the gain learning
-    only from overcast days — where forecast error is largest and least
+    only from overcast days - where forecast error is largest and least
     stationary. Excluding by interval keeps a clipping day's morning and
     evening, which are honest measurements.
 
     What is excluded is still counted, in ``skipped_wh``, so the published
     observation can say how much of the day it had to throw away.
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     forecast_wh = float(state.get("forecast_wh", 0.0))
     actual_wh = float(state.get("actual_wh", 0.0))
@@ -121,7 +123,7 @@ def note_gain_sample(state, forecast_w, actual_w, dt_hours, constrained):
 def day_ratio(state, min_wh=GAIN_MIN_DAY_WH):
     """A day's energy-weighted ``actual ÷ forecast``, or None if uninformative.
 
-    ENERGY-weighted — one ratio of two sums, never a mean of per-block ratios.
+    ENERGY-weighted - one ratio of two sums, never a mean of per-block ratios.
     A block ratio's denominator approaches zero at both ends of the day, so
     averaging them lets the least informative minutes dominate the answer.
 
@@ -129,13 +131,45 @@ def day_ratio(state, min_wh=GAIN_MIN_DAY_WH):
     washout, or a day whose unconstrained intervals were too few to say
     anything.
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     forecast_wh = float((state or {}).get("forecast_wh", 0.0))
     actual_wh = float((state or {}).get("actual_wh", 0.0))
     if forecast_wh < min_wh or forecast_wh <= 0:
         return None
     return actual_wh / forecast_wh
+
+
+def day_skipped_share(state):
+    """The share of a day's forecast energy the observer excluded, 0.0-1.0.
+
+    Both of ``note_gain_sample``'s exclusion reasons, because it tallies them
+    into one bucket and the useful question is how much was thrown away, not
+    why each watt-hour went: curtailed intervals, and the near-dark blocks
+    under ``GAIN_MIN_BLOCK_W``. Which one dominates is legible from the hour -
+    a high share at midday is curtailment, at dusk it is the noise floor.
+
+    ``note_gain_sample`` has always tallied the excluded energy so the
+    published observation "can say how much of the day it had to throw away";
+    this is the figure that says it. It matters because a starved observer and
+    a warming-up one look identical from outside - a gain of 1.0 over 0 days
+    reads the same whether the series is empty because the integration just
+    restarted, because a restore failed, or because every interval was
+    correctly discarded as curtailed. On an off-grid site whose pack is full
+    through the middle of the day, the last of those is the normal case and
+    NOT a fault (dev/TODO.md), so it has to be legible rather than inferred.
+
+    None when nothing has been observed at all: "0 % skipped" and "no data
+    yet" are different answers, and the caller publishes them differently.
+
+    Pure function - unit-testable.
+    """
+    forecast_wh = float((state or {}).get("forecast_wh", 0.0))
+    skipped_wh = float((state or {}).get("skipped_wh", 0.0))
+    total = forecast_wh + skipped_wh
+    if total <= 0:
+        return None
+    return skipped_wh / total
 
 
 def update_gain(
@@ -150,12 +184,12 @@ def update_gain(
     A plain exponential average, and deliberately a slow one. The clamp is on
     the RESULT rather than on the incoming ratio, so a run of extreme days
     pushes the gain to the bound and holds it there instead of being averaged
-    into something that looks moderate — the bound is then visible in the
+    into something that looks moderate - the bound is then visible in the
     published value, which is the point of an observer.
 
     ``ratio`` of None leaves the gain untouched (an uninformative day).
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     if ratio is None:
         return gain
@@ -163,12 +197,106 @@ def update_gain(
     return min(high, max(low, moved))
 
 
+# --- The 15-minute gain series -------------------------------------------------
+#
+# The gain is computed from a stored series of per-block energy pairs rather
+# than from a running average: recomputable when the rule changes, inspectable,
+# and able to carry SHAPE - an overall gain offset by hour of day - which a
+# scalar average cannot. Blocks match the forecast's own resolution.
+GAIN_SERIES_DAYS = 14          # how much history the series keeps
+GAIN_BLOCK_MINUTES = 15        # one Open-Meteo forecast block
+GAIN_MIN_HOUR_WH = 1000.0      # an hour-of-day needs this much comparable
+                               # forecast energy across the window to offset
+GAIN_HOUR_OFFSET_LOW = 0.5     # bounds on an hour's offset from the overall
+GAIN_HOUR_OFFSET_HIGH = 2.0
+
+
+def block_start(now, minutes=GAIN_BLOCK_MINUTES):
+    """The start of the block ``now`` falls in - the series key, ISO 8601."""
+    floored = now.replace(
+        minute=(now.minute // minutes) * minutes, second=0, microsecond=0
+    )
+    return floored.isoformat()
+
+
+def close_block(series, start_iso, acc):
+    """Append a finished block's accumulators to ``series`` (a new list).
+
+    A block with no comparable energy at all (night, or fully constrained) is
+    still recorded when it skipped something - the skipped energy is what says
+    the day was curtailed - but an empty block is not.
+    """
+    acc = acc or {}
+    f = float(acc.get("forecast_wh", 0.0))
+    a = float(acc.get("actual_wh", 0.0))
+    k = float(acc.get("skipped_wh", 0.0))
+    if f <= 0 and a <= 0 and k <= 0:
+        return list(series or [])
+    return list(series or []) + [
+        {"t": start_iso, "f": round(f, 1), "a": round(a, 1), "s": round(k, 1)}
+    ]
+
+
+def prune_series(series, now, days=GAIN_SERIES_DAYS):
+    """Drop blocks older than ``days`` before ``now`` (ISO strings compare in
+    order because they share ``now``'s offset - the series is local time)."""
+    cutoff = (now - timedelta(days=days)).isoformat()
+    return [b for b in (series or []) if b.get("t", "") >= cutoff]
+
+
+def series_gain(series, min_wh=GAIN_MIN_DAY_WH, low=GAIN_CLAMP_LOW, high=GAIN_CLAMP_HIGH):
+    """The overall gain: energy-weighted actual ÷ forecast over the whole
+    series, clamped - or None while the series holds too little comparable
+    energy to say anything (the caller keeps 1.0)."""
+    f = sum(float(b.get("f", 0.0)) for b in (series or []))
+    a = sum(float(b.get("a", 0.0)) for b in (series or []))
+    if f < min_wh or f <= 0:
+        return None
+    return min(high, max(low, a / f))
+
+
+def hourly_offsets(series, overall, min_wh=GAIN_MIN_HOUR_WH,
+                   low=GAIN_HOUR_OFFSET_LOW, high=GAIN_HOUR_OFFSET_HIGH):
+    """Per hour-of-day multipliers on the overall gain: ``{hour: offset}``.
+
+    NOT independent hourly gains. Each hour's own energy-weighted ratio is
+    expressed relative to the overall gain, so the overall figure stays the one
+    number that says how far the forecast is off and the offsets only say
+    where in the day it is off more or less (behind a ridge at dawn, under
+    lensing at noon). An hour appears only when its comparable forecast energy
+    across the window reaches ``min_wh``; offsets are clamped.
+    """
+    if not overall or overall <= 0:
+        return {}
+    f = {}
+    a = {}
+    for b in series or []:
+        t = b.get("t", "")
+        try:
+            hour = int(t[11:13])
+        except (TypeError, ValueError):
+            continue
+        f[hour] = f.get(hour, 0.0) + float(b.get("f", 0.0))
+        a[hour] = a.get(hour, 0.0) + float(b.get("a", 0.0))
+    offsets = {}
+    for hour in sorted(f):
+        if f[hour] < min_wh or f[hour] <= 0:
+            continue
+        offsets[hour] = round(min(high, max(low, (a[hour] / f[hour]) / overall)), 3)
+    return offsets
+
+
+def series_days(series):
+    """How many distinct dates carry comparable energy in the series."""
+    return len({b.get("t", "")[:10] for b in (series or []) if float(b.get("f", 0.0)) > 0})
+
+
 def clip_pair(samples, threshold_w):
     """``(true_wh, block_wh)`` for one window of measured production.
 
     The peakiness measurement, and it needs no cloud model at all: replay the
     real samples through the clip integral, then through the same integral fed
-    only the window's average — which is exactly what the forecast series gives
+    only the window's average - which is exactly what the forecast series gives
     the engine. Their difference IS the Jensen gap for this window, measured on
     this array.
 
@@ -176,7 +304,7 @@ def clip_pair(samples, threshold_w):
     figures in watt-hours so a caller can accumulate them across a day and
     publish one honest ratio.
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     total_hours = sum(dt for dt, _ in samples if dt > 0)
     if total_hours <= 0:
@@ -189,11 +317,82 @@ def clip_pair(samples, threshold_w):
     return true_wh, block_wh
 
 
+# How close to the export limit the meter must sit before the site counts as
+# PHYSICALLY unable to place more. Small on purpose: the charge control's own
+# operating point is one Excess trigger margin under the limit (plus register
+# quantisation, ~370 W under it on a live site), so a band anywhere near that
+# margin would mark the controller working correctly as curtailment.
+CLIP_WALL_TOLERANCE_W = 100.0
+
+
+def export_is_clamped(export_w, export_limit_w, tolerance=CLIP_WALL_TOLERANCE_W):
+    """Whether the meter is sitting on the site's export wall.
+
+    The PHYSICAL curtailment test, and the one both observers gate on: at the
+    wall the inverter is clamping its own output, so every watt the array
+    could still make has nowhere to go. Below it the site is placing
+    everything it makes - in the grid, the battery or a managed load - and the
+    interval is honest evidence about the forecast.
+
+    Deliberately NOT the Excess verdict, which engages one trigger margin
+    BELOW the limit ("the export allowance is used up and the battery is
+    taking all it can"). Driving export onto that setpoint is exactly what the
+    charge control exists to do, and while it succeeds the battery is
+    absorbing the difference and nothing is being thrown away - so testing the
+    verdict marked the controller's own steady state as curtailment: on a live
+    site the gain observer skipped nearly every productive afternoon interval
+    and both the 9 kWp and the 4 kWp array published Unknown for days
+    (2026-09-07).
+
+    No export limit configured means the grid absorbs everything, so nothing
+    is ever clamped. Conservative where it is unsure: an unreadable export
+    reads as clamped, because admitting a curtailed interval teaches the gain
+    that the forecast reads high, while skipping a good one only slows it.
+
+    Pure function - unit-testable.
+    """
+    if not export_limit_w or float(export_limit_w) <= 0:
+        return False
+    if export_w is None:
+        return True
+    return float(export_w) >= float(export_limit_w) - abs(tolerance)
+
+
+def battery_is_saturated(
+    charge_w, charge_cap_w, soc, soc_full, tolerance=CLIP_WALL_TOLERANCE_W
+):
+    """Off-grid curtailment: the pack can take no more.
+
+    With no meter there is no export wall to test, and off-grid the battery IS
+    the sink of last resort - so the array is being throttled exactly when the
+    pack is full or already taking its permitted rate. Either is enough:
+
+    * ``soc >= soc_full`` - nothing left to fill.
+    * ``charge_w >= charge_cap_w − tolerance`` - the pack is at its rate limit,
+      so anything more the array could make has nowhere to go.
+
+    Conservative where it is unsure, the same way ``export_is_clamped`` is: an
+    array producing exactly the charge cap is not really curtailed and is
+    excluded anyway, which only slows the gain. Unknown figures read as
+    saturated, because admitting a curtailed interval biases the gain while
+    skipping a good one does not.
+
+    Pure function - unit-testable.
+    """
+    if soc is not None and soc_full is not None and float(soc) >= float(soc_full):
+        return True
+    if charge_cap_w is None or float(charge_cap_w) <= 0:
+        return True
+    if charge_w is None:
+        return True
+    return float(charge_w) >= float(charge_cap_w) - abs(tolerance)
+
+
 def clipped_now(forecast_w, actual_w, saturated):
     """Watts being curtailed right now, or 0.0.
 
     An ESTIMATE, and honest about which way it errs. While the site is
-    saturated — export allowance used up AND the battery taking all it can —
+    saturated - export allowance used up AND the battery taking all it can -
     every watt the array could still make has nowhere to go, so the forecast's
     excess over measured production is what is being thrown away. It is the only
     route to the number: curtailed energy cannot be metered, because the
@@ -207,7 +406,7 @@ def clipped_now(forecast_w, actual_w, saturated):
     Clamped at zero: measured production above forecast means the forecast was
     pessimistic, not that clipping ran backwards.
 
-    Pure function — unit-testable.
+    Pure function - unit-testable.
     """
     if not saturated or forecast_w is None or actual_w is None:
         return 0.0
