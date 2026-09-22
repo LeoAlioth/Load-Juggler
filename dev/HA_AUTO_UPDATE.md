@@ -1,6 +1,6 @@
 # Auto-downloading a new build into Home Assistant
 
-Every push to `dev` / `dev-*` / `pre-release` builds a tagged pre-release and
+Every push to `dev` / `dev-*` builds a tagged pre-release and
 publishes it to both Gitea and GitHub. HACS reads the **GitHub** repository, but
 it only notices a new version when its own periodic check happens to run - so a
 freshly pushed build can sit unnoticed for hours.
