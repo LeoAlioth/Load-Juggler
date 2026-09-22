@@ -39,20 +39,42 @@ Scenario YAML files live in `dev/tests/scenarios/`:
 
 Each YAML file contains a `scenarios:` list with inputs and expected targets for loads.
 
-## 2. HA Integration Tests (WSL/Linux)
+## 2. HA Integration Tests
 
-Pytest-based tests using `pytest-homeassistant-custom-component`. These require a Linux environment (HA core depends on `fcntl`), so they run under WSL.
+Pytest-based tests using `pytest-homeassistant-custom-component`. This is the
+tier CI runs and gates a release on, so it is the one that matters before a
+push.
 
-### Run all integration tests
+### Set it up
+
+Home Assistant needs a recent Python - newer than the system one on a Mac - so
+let `uv` fetch a standalone build rather than hunting for an interpreter:
 
 ```bash
-wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python3 -m pytest dev/tests/test_init.py dev/tests/test_config_flow.py dev/tests/test_config_flow_e2e.py dev/tests/test_sensor_update.py -v"
+uv venv .venv --python 3.13 && uv pip install -r requirements_dev.txt
+```
+
+They run natively on macOS. The instructions here used to send you through WSL
+to a Windows path that no longer exists, on the grounds that HA core needs
+`fcntl` - it is in the macOS standard library too, and the whole tier runs in
+about 25 seconds.
+
+**Do not skip this tier because the venv is awkward.** On 2026-09-18 a one-line
+change to `ocpp_discovery.py` shipped unverified for exactly that reason, and
+it turned every charge point into a string: six tests red, every Gitea build
+and the 2.1.2 release blocked, and nobody noticed for four days because the
+only thing that would have caught it was this command.
+
+### Run them
+
+```bash
+PYTHONPATH=$PWD .venv/bin/python -m pytest dev/tests/ --ignore=dev/tests/scenarios -q
 ```
 
 ### Run a single integration test file
 
 ```bash
-wsl -- bash -c "source ~/ha-test-venv/bin/activate && cd /mnt/c/Users/anzek/Documents/Dynamic_OCPP_EVSE && python3 -m pytest dev/tests/test_sensor_update.py -v"
+PYTHONPATH=$PWD .venv/bin/python -m pytest dev/tests/test_sensor_update.py -v
 ```
 
 ### Integration test files
