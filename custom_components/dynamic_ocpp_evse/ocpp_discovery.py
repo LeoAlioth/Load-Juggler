@@ -417,10 +417,15 @@ def ocpp_device_for_charge_point(hass, charge_point_id: str | None) -> str | Non
         return None
     best_id = None
     best_rank = None
-    # Iterating the registry yields the entries themselves; reading .values()
-    # off it treats it as a mapping, which Home Assistant deprecates and
-    # stops supporting in 2027.9 (Anze's log, 2026-09-18).
-    for device in async_get_device_registry(hass).devices:
+    # .values(), because .devices is a MAPPING of device id -> entry and
+    # iterating it yields the ids. This was briefly "fixed" to iterate the
+    # mapping directly, on the strength of DeviceRegistry.__iter__ returning
+    # entries - which is about a different object, and DeviceRegistry is not
+    # iterable at all. Every charge point then arrived here as a string and
+    # the whole ocpp discovery path raised, silently to anyone not running
+    # the tests. Home Assistant deprecates nothing here: BaseRegistryItems
+    # defines .values() precisely to avoid __iter__ overhead (2026-09-22).
+    for device in async_get_device_registry(hass).devices.values():
         # ANY identifier may be the match - the charge point device carries its
         # cp_id alongside its cpid, and this is a membership question, so it
         # never needed to single one out.
