@@ -1,5 +1,16 @@
 # Release Notes
 
+## 2.1.2
+
+Two fixes for Home Assistant deprecation warnings, both proven on the local test rig rather than reasoned about.
+
+### Fixes
+
+- **Devices are linked to their hub by id, not by an identifier tuple.** `via_device` took a tuple and let Home Assistant resolve it, creating a placeholder when the parent had not registered itself yet; `via_device_id` takes the id, which makes that resolution ours. Nothing makes a load, group or inverter entry wait for its hub and no device here is created explicitly - they all exist because some entity's `device_info` created them - so a child setting up first would have resolved to None and landed at the top level of the device page with nothing in the log to say so. The helper now creates the hub's device itself when it is absent, which is what `via_device` had been doing implicitly. Tested by deleting every Load Juggler device from the registry and restarting: all four came back, the Smart Load, Power Station and Hot Water Tank each pointing at the hub, and none of the 192 deprecation warnings that had been there.
+- **The device registry is iterated, not read as a mapping**, which is what raised the warning when opening an EVSE's settings.
+
+---
+
 ## 2.1.1
 
 ### New Features

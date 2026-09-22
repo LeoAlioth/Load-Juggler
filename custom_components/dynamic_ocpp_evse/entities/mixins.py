@@ -15,6 +15,7 @@ import logging
 from datetime import datetime, timezone
 
 from homeassistant.core import callback
+from homeassistant.helpers import device_registry as dr
 
 from ..const import (
     DOMAIN,
@@ -76,6 +77,34 @@ def attach_site_cycle_listeners(hass, hub_entry_id, coordinator) -> None:
     )
     for entity in list(registry.values()):
         entity.bind_site_cycle_coordinator(coordinator)
+
+
+
+def via_device_id(hass, hub_entry_id):
+    """The device registry's own id for a hub's device, for ``via_device_id``.
+
+    ``via_device`` took an identifier tuple and let Home Assistant resolve it,
+    creating a placeholder device when the parent had not registered itself
+    yet. ``via_device_id`` takes the id, so that resolution - and that
+    placeholder - becomes ours to do. It matters here: nothing makes a load,
+    group or inverter entry wait for its hub, and no device in this
+    integration is created explicitly - they all exist because some entity's
+    device_info created them. A child that set up first would otherwise
+    resolve to None and land at the top level of the device page, silently,
+    until a reload (Anze's log, 2026-09-18).
+    """
+    if hass is None or not hub_entry_id:
+        return None
+    registry = dr.async_get(hass)
+    device = registry.async_get_device(identifiers={(DOMAIN, hub_entry_id)})
+    if device is None:
+        # the hub's own entities have not been added yet - make the shell it
+        # would have made, which is exactly what via_device did implicitly
+        device = registry.async_get_or_create(
+            config_entry_id=hub_entry_id,
+            identifiers={(DOMAIN, hub_entry_id)},
+        )
+    return device.id if device is not None else None
 
 
 class LoadJugglerEntity:
@@ -458,7 +487,7 @@ class LoadEntityMixin(LoadJugglerEntity):
             "name": self.config_entry.data.get(CONF_NAME),
             "manufacturer": "Load Juggler",
             "model": model,
-            "via_device": (DOMAIN, hub.entry_id) if hub else None,
+            "via_device_id": via_device_id(self.hass, hub.entry_id if hub else None),
         }
 
     def _write_to_load_data(self, value):
@@ -493,7 +522,7 @@ class GroupEntityMixin(LoadJugglerEntity):
             "name": self.config_entry.data.get(CONF_NAME),
             "manufacturer": "Load Juggler",
             "model": "Circuit Group",
-            "via_device": (DOMAIN, hub_entry_id) if hub_entry_id else None,
+            "via_device_id": via_device_id(self.hass, hub_entry_id),
         }
 
 
@@ -558,7 +587,7 @@ class InverterEntityMixin(LoadJugglerEntity):
             "name": self.config_entry.data.get(CONF_NAME),
             "manufacturer": "Load Juggler",
             "model": "Inverter",
-            "via_device": (DOMAIN, hub_entry_id) if hub_entry_id else None,
+            "via_device_id": via_device_id(self.hass, hub_entry_id),
         }
 
     def _write_to_inverter_data(self, value):

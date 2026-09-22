@@ -2,6 +2,8 @@ name: Create Release
 
 on:
   push:
+    branches:
+      - main          # A merge to main releases the version in manifest.json
     tags:
       - 'v*'          # Only trigger on version tags like v1.0.0, v2.1.3
       - '[0-9]*'      # Or tags starting with numbers like 1.0.0, 2.1.3
@@ -18,26 +20,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements_dev.txt
-
-      - name: Run test suite
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: |
-          echo "=== Running calculation scenario tests ==="
-          python dev/tests/run_tests.py dev/tests/scenarios
-          echo ""
-          echo "=== Running HA integration tests ==="
-          pytest dev/tests/ -v --ignore=dev/tests/scenarios
-
       - name: Set up variables
         id: vars
         run: |
@@ -48,9 +30,23 @@ jobs:
             # Triggered by tag push - use the tag name directly
             TAG_NAME="$GITHUB_REF_NAME"
           else
-            # Manual dispatch on a branch - read version from manifest.json
+            # A branch run - a merge to main, or a manual dispatch. The version
+            # to release is the one in the manifest.
             TAG_NAME=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
-            echo "Manual trigger: read version '$TAG_NAME' from manifest.json"
+            echo "Branch run on $GITHUB_REF_NAME: version '$TAG_NAME' from manifest.json"
+            # A merge to main is not by itself a release. Most of them do not
+            # touch the version, and releasing again would move the tag onto a
+            # later commit and replace the published release with an identical
+            # one - so the AUTOMATIC path stops as soon as the version already
+            # has a tag. Bump manifest.json and the next merge releases; do not,
+            # and the merge passes in silence. A tag push and a manual run are
+            # both deliberate acts and are never skipped (Anze, 2026-09-22).
+            if [ "$GITHUB_EVENT_NAME" = "push" ] \
+               && git ls-remote --exit-code --tags origin "refs/tags/$TAG_NAME" >/dev/null 2>&1; then
+              echo "$TAG_NAME is already tagged - nothing to release."
+              echo "SKIP=true" >> $GITHUB_ENV
+              exit 0
+            fi
           fi
 
           # Validate TAG_NAME looks like a version (starts with v or digit)
@@ -62,7 +58,30 @@ jobs:
           echo "Using tag: $TAG_NAME"
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
 
+      - name: Set up Python
+        if: env.SKIP != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_dev.txt
+
+      - name: Run test suite
+        if: env.SKIP != 'true'
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          echo "=== Running calculation scenario tests ==="
+          python dev/tests/run_tests.py dev/tests/scenarios
+          echo ""
+          echo "=== Running HA integration tests ==="
+          pytest dev/tests/ -v --ignore=dev/tests/scenarios
+
       - name: Generate release notes
+        if: env.SKIP != 'true'
         run: |
           # Extract version from tag (strip leading 'v' if present)
           VERSION=$(echo "$TAG_NAME" | sed 's/^v//')
@@ -87,6 +106,7 @@ jobs:
           echo "---"
 
       - name: Create ZIP archive
+        if: env.SKIP != 'true'
         run: |
           # Create zip with full path for HACS (content_in_root: false)
           # HACS expects: /manifest.json
@@ -94,6 +114,7 @@ jobs:
           zip -r dynamic-ocpp-evse.zip .
 
       - name: Create Gitea Release
+        if: env.SKIP != 'true'
         run: |
           echo "Creating Gitea release for tag: $TAG_NAME"
           GITEA_API="${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
@@ -144,6 +165,7 @@ jobs:
           echo "Gitea release created successfully!"
 
       - name: Create GitHub Release
+        if: env.SKIP != 'true'
         run: |
           echo "Creating GitHub release for tag: $TAG_NAME"
           GH_API="https://api.github.com/repos/LeoAlioth/Load-Juggler"
@@ -195,6 +217,7 @@ jobs:
           echo "GitHub release created successfully!"
 
       - name: Tell Home Assistant to download the new build
+        if: env.SKIP != 'true'
         # Optional - skipped unless a webhook is configured. Fires a webhook per
         # instance so HACS downloads this exact tag instead of waiting for its own
         # update check. See dev/HA_AUTO_UPDATE.md for the receiving automation.
