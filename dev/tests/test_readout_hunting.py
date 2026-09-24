@@ -494,6 +494,30 @@ async def test_a_car_that_briefly_takes_nothing_is_not_a_stuck_readout(hass, sit
 # minus our draws steps with our commands to the charger.
 
 
+async def test_off_grid_the_healthy_session_stays_inside_the_inverter(hass, off_grid_site):
+    """Control, off-grid: with a working meter the charger starts and runs at
+    the inverter's allowance without a stop - and without ever putting the
+    inverter over its rating, the start included.
+
+    Until 2026-09-24 every start overshot by up to 520 W for about 30 s: the
+    household is the SMOOTHED inverter output minus the managed draw, and the
+    draw was taken RAW, so the car's whole draw came off while the output it
+    is part of was still catching up and the house read as having shrunk
+    (dev/tests/test_offgrid_household_smoothing.py). Now the whole session is
+    pinned, not only its settled tail."""
+    first, _, _ = await _session(
+        hass, off_grid_site, lockstep_enabled=True, frozen_minutes=0.1
+    )
+    assert _stops(first) == 0
+    running = [limit for _, limit, _, _ in first[20:90] if limit is not None]
+    assert min(running) >= MIN_A
+    peak = max(supply for _, _, supply, _ in first)
+    assert peak <= SETTLED_W, (
+        f"the inverter carried {peak - ALLOWANCE_W:.0f} W over its "
+        f"{ALLOWANCE_W:.0f} W rating"
+    )
+
+
 async def test_off_grid_a_readout_stuck_at_zero_hunts_without_the_check(hass, off_grid_site):
     _, second, watch = await _session(hass, off_grid_site, lockstep_enabled=False)
     stops = _stops(second)
@@ -506,33 +530,34 @@ async def test_off_grid_the_household_check_stops_the_hunting(hass, off_grid_sit
 
     assert readout_watch.is_stuck(watch)
     assert watch["stuck_how"] == readout_watch.HOUSEHOLD_LOCKSTEP
-    # As on the grid: the first start and cut are the evidence, and from the
+    # As grid-tied: the first start and cut are the evidence, and from the
     # restart after the one pause the charger is controlled blind. (Until
-    # 2026-09-24 it did not even get to a stop off-grid - but only because the
-    # 0 A the reading had held since the car arrived counted as a SETTLED draw
-    # once charging began, and lifted every permit through the squeeze by the
-    # car's 6 A minimum: 15.4 A where 9.4 A was right. See
-    # dev/tests/test_start_settle.py.)
+    # 2026-09-24 this run did not stop off-grid, for two reasons that were
+    # both bugs: the 0 A the reading had held since the car arrived counted
+    # as a SETTLED draw once charging began and lifted every permit through
+    # the squeeze by the car's 6 A minimum - dev/tests/test_start_settle.py -
+    # and the previous car, gone 10 s before, still sat in the smoothed
+    # output while its raw draw was already 0, so the house read high and the
+    # second car was started 4 A low - dev/tests/test_offgrid_household_
+    # smoothing.py. With a two-minute gap it stopped once then too.)
     assert _stops(second) <= 1, f"stopped {_stops(second)} times"
-    restart = next(
-        (
-            t for (t, a, _, _), (_, b, _, _) in zip(second, second[1:])
-            if (a or 0) < MIN_A and (b or 0) >= MIN_A and t > second[0][0] + 60
-        ),
-        watch["stuck_since"],
-    )
-    tail = [(t, limit, supply) for t, limit, supply, _ in second if t > restart + 30]
+    entered = watch["stuck_since"]
+    restarts = [
+        t for (t, a, _, _), (_, b, _, _) in zip(second, second[1:])
+        if (a or 0) < MIN_A and (b or 0) >= MIN_A and t > second[0][0] + 60
+    ]
+    since = max([entered] + restarts)
+    # From the verdict - or the restart after the one pause - it runs to the
+    # end at the inverter's 6 kW rating, and at no point over it: the
+    # household is the smoothed output minus the SAME smoothed draw, blind
+    # loads at their assumed current, so neither the verdict nor the restart
+    # reads as the house shrinking.
+    tail = [(t, limit, supply) for t, limit, supply, _ in second if t > since]
     assert tail and min(limit for _, limit, _ in tail) >= MIN_A
-    # The inverter carries house + car at its 6 kW rating, and not over it,
-    # once settled. (The first minute after the restart rides up to ~500 W
-    # over, and so does the HEALTHY off-grid session after every start - up to
-    # ~520 W: the engine's off-grid household is the SMOOTHED inverter output
-    # minus the RAW managed draws, so a draw that steps reads as the house
-    # shrinking until the output filter catches up. Pre-existing, not the
-    # watch; only the settled tail is pinned.)
-    tail = [(t, limit, supply) for t, limit, supply in tail if t > restart + 60]
-    assert max(supply for _, _, supply in tail) <= SETTLED_W, max(s for *_, s in tail)
-    assert min(supply for _, _, supply in tail) >= ALLOWANCE_W - DEAD_BAND * V - V
+    peak = max(supply for _, _, supply in tail)
+    assert peak <= SETTLED_W, f"{peak - ALLOWANCE_W:.0f} W over the inverter"
+    settled = [supply for t, _, supply in tail if t > since + 60]
+    assert min(settled) >= ALLOWANCE_W - DEAD_BAND * V - V, min(settled)
 
 
 async def test_off_grid_a_car_that_takes_nothing_is_not_a_stuck_readout(

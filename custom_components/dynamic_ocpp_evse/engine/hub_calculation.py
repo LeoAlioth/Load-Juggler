@@ -116,7 +116,10 @@ def _managed_phase_draws(site, ema_inputs=None):
     to every view that subtracts it. Two calls a cycle ran the draw's filter
     at twice the grid's speed: during a ramp the draw term led the grid term,
     the household read low by the difference and the permit overshot the
-    allowance (dev/tests/test_managed_draw_smoothing.py).
+    allowance (dev/tests/test_managed_draw_smoothing.py). The same holds for
+    the series household, the SMOOTHED inverter output minus this draw - the
+    only household an off-grid site has - so it takes this one result too
+    (_apply_household_figures; dev/tests/test_offgrid_household_smoothing.py).
 
     Callers that work on the RAW grid basis must leave ``ema_inputs`` unset and
     get raw draws, so their pairing stays consistent too -
@@ -286,12 +289,13 @@ def _apply_feedback_loop(site, solar_is_derived, members, total_draws):
     )
 
 
-def _mixed_household_per_phase(site, members):
+def _mixed_household_per_phase(site, members, draws):
     """Per-phase household for a mixed-topology fleet: the parallel formula on
     the parallel members' summed outputs plus the series formula on the series
     members' - grid-bus loads show on the CT + parallel outputs, behind-series
     loads show in the series outputs. Best-effort superposition; uniform
-    fleets never come here and keep the exact single-formula path."""
+    fleets never come here and keep the exact single-formula path. ``draws``
+    is what the series half subtracts (see _apply_household_figures)."""
     original = site.inverter_output_per_phase
     try:
         site.inverter_output_per_phase = fleet.sum_outputs(
@@ -306,7 +310,7 @@ def _mixed_household_per_phase(site, members):
             members, WIRING_TOPOLOGY_SERIES
         )
         series_hh = (
-            compute_household_per_phase(site, WIRING_TOPOLOGY_SERIES)
+            compute_household_per_phase(site, WIRING_TOPOLOGY_SERIES, draws)
             if site.inverter_output_per_phase is not None
             else None
         )
@@ -608,6 +612,7 @@ def _apply_household_figures(
     solar_is_derived,
     solar_production_total,
     battery_power,
+    managed_draws,
 ):
     """Fill in what the household (everything unmanaged) is drawing.
 
@@ -615,6 +620,15 @@ def _apply_household_figures(
     derived from readings the managed draws have already been taken out of.
     Sets ``site.household_consumption_total`` / ``site.household_consumption``
     and owns the asymmetric hold state in ``hub_runtime``.
+
+    ``managed_draws`` is this cycle's smoothed draw from _managed_phase_draws -
+    the one list every other view subtracts too. The series household is the
+    SMOOTHED inverter output minus the managed draw, so the draw has to be on
+    the same EMA step: with the raw draw, a charger's start came off at once
+    while the output it is part of was still catching up, the household read
+    low by the filter's lag and the permit went over the inverter's allowance
+    by as much (off-grid, where the inverter rating is the whole allowance:
+    up to 773 W, dev/tests/test_offgrid_household_smoothing.py).
     """
     # Compute household_consumption_total when solar entity provides ground truth
     if not solar_is_derived and solar_production_total > 0:
@@ -633,15 +647,18 @@ def _apply_household_figures(
 
     # Compute per-phase household from inverter output entities (after feedback)
     if fleet.mixed_topologies(members):
-        household = _mixed_household_per_phase(site, members)
+        household = _mixed_household_per_phase(site, members, managed_draws)
     else:
-        household = compute_household_per_phase(site, site.wiring_topology)
+        household = compute_household_per_phase(
+            site, site.wiring_topology, managed_draws
+        )
     if household is not None:
         # Asymmetric hold on the household floor. The managed draw side of the
-        # subtraction (OCPP, sub-second) reacts before the polled inverter
-        # output does, so a ramping car transiently zeroes household and the
-        # engine would hand the real household's power out as headroom. Rises
-        # pass straight through; falls are bridged over
+        # subtraction (OCPP, sub-second) can report before the polled inverter
+        # output does - the two share one input EMA, but not one sensor
+        # cadence - so a ramping car can still transiently zero household and
+        # the engine would hand the real household's power out as headroom.
+        # Rises pass straight through; falls are bridged over
         # HOUSEHOLD_HOLD_BRIDGE_SECONDS of wall clock.
         decay = _household_hold_decay(hub_entry)
         raw_household = household
@@ -1228,6 +1245,9 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         solar_is_derived,
         solar_production_total,
         battery_power,
+        # This cycle's one smoothed draw, not a raw re-sum: the series
+        # household subtracts it from the SMOOTHED inverter output.
+        managed_draws,
     )
 
     # --- Calculate targets ---
