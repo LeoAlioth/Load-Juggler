@@ -184,8 +184,9 @@ class World:
         elif self.site.sensors == "parallel-output":
             # A PV inverter beside the grid puts out what the array makes.
             set_state("sensor.inverter_out_a", str(round(self.site.solar_w / V, 3)), current)
-        else:
+        elif self.site.sensors == "solar-sensor":
             set_state("sensor.solar_production", str(self.site.solar_w), power)
+        # "meter-only": no output and no solar sensor - solar from the meter.
         if self.site.discharge_w is not None:
             set_state(
                 "sensor.battery_power",
@@ -211,6 +212,8 @@ def site(hass, request):
     sensors, solar_w, discharge_w, allowance_w = request.param
     if sensors == "solar-sensor":
         reading = {CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.solar_production"}
+    elif sensors == "meter-only":
+        reading = {}
     else:
         reading = {
             CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.inverter_out_a",
@@ -467,3 +470,86 @@ async def test_an_unread_battery_power_offers_nothing_on_the_batterys_word(hass,
             f"{label}: the car fell to {min(drawn_w):.0f} W of the "
             f"{target_w:.0f} W the site can give it"
         )
+
+
+# (how the site is read, solar W, battery discharge rating W or None, import
+# allowance W): 3 kW of sun and the 1 kW house by day, 2 kW of it spare; the
+# battery carrying the house and the car at night, no sun spare at all.
+SOLAR_REMAINING_SITES = pytest.mark.parametrize(
+    "site",
+    [
+        ("parallel-output", 3000.0, None, 0.0),
+        ("parallel-output", 3000.0, 5000.0, 0.0),
+        ("series-output", 3000.0, 5000.0, 0.0),
+        ("series-output", 0.0, 5000.0, 0.0),
+        ("solar-sensor", 3000.0, None, 0.0),
+        ("solar-sensor", 3000.0, 5000.0, 0.0),
+        ("meter-only", 3000.0, 5000.0, 0.0),
+        ("meter-only", 0.0, 5000.0, 0.0),
+    ],
+    ids=[
+        "parallel-output-day",
+        "parallel-output-battery-day",
+        "series-output-battery-day",
+        "series-output-battery-night",
+        "solar-sensor-day",
+        "solar-sensor-battery-day",
+        "meter-only-battery-day",
+        "meter-only-battery-night",
+    ],
+    indirect=True,
+)
+
+
+@SOLAR_REMAINING_SITES
+async def test_solar_remaining_is_the_sun_the_house_leaves(hass, site):
+    """Solar Remaining Power / Current, read through the real hub sensors once
+    the car has settled, is the sun's share of the solar pool the Solar modes
+    are offered: the export with our loads off, plus the battery's charge, less
+    the discharge the export carries - the sun less the house, 2000 W by day
+    and nothing at night, whichever way the site is read.
+
+    Before the fix it was the whole solar figure wherever no production sensor
+    feeds the household total, measured:
+
+    ==============================  ==========  ==========
+    Solar Remaining Power           before      after
+    ==============================  ==========  ==========
+    parallel output, day            2999 W      2001 W
+    parallel output + battery, day  2999 W      2001 W
+    series output + battery, day    3000 W      2001 W
+    meter only + battery, day       6992 W      2001 W
+    meter only + battery, night     4000 W      0 W
+    series output + battery, night  2 W         0 W
+    solar sensor (+ battery), day   2001 W      2001 W
+    ==============================  ==========  ==========
+
+    (Solar Remaining Current 13.0 A before on the output sensors, 30.4 A and
+    17.4 A on the meter-only site; 8.7 A and 0 A after.)
+
+    On the meter-only site the "solar" is the export plus the charge, so the
+    battery's discharge carrying the car - handed back as export - was
+    published as spare sun.
+    """
+    from custom_components.dynamic_ocpp_evse.sensor import (
+        DynamicOcppEvseHubDataSensor,
+        HUB_SENSOR_DEFINITIONS,
+    )
+
+    await _session(hass, site, minutes=3)
+    sensors = {
+        d["hub_data_key"]: DynamicOcppEvseHubDataSensor(hass, site.hub, "Hub", "hub", d)
+        for d in HUB_SENSOR_DEFINITIONS
+        if d["hub_data_key"] in ("available_solar_power", "available_solar_current")
+    }
+    for sensor in sensors.values():
+        await sensor.async_update()
+
+    expected_w = max(0.0, site.solar_w - HOUSE_W)
+    power = sensors["available_solar_power"].native_value
+    current = sensors["available_solar_current"].native_value
+    assert power == pytest.approx(expected_w, abs=5.0), (
+        f"Solar Remaining Power {power:.0f} W with {site.solar_w:.0f} W of sun "
+        f"and a {HOUSE_W:.0f} W house"
+    )
+    assert current == pytest.approx(expected_w / V, abs=0.1)

@@ -189,8 +189,9 @@ def _pool_detail_lines(hub_data: dict) -> list[str]:
     """The three pools as the allocator built them, per phase.
 
     Site available, grid headroom and the per-phase headroom above this are
-    read from the physical pool's offered figures (engine/hub_result.py); the
-    solar surplus and battery discharge lines are source figures, not pools.
+    read from the physical pool's offered figures, and the solar surplus is
+    the solar pool's sun share (engine/hub_result.py); the battery discharge
+    line is a source figure, not a pool.
     These are the objects the distribution actually consulted, per phase and
     per combination.
 
