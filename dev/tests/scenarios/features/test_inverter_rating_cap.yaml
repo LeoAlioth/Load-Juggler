@@ -164,9 +164,10 @@ scenarios:
     # its 0 W allowance. It read 13.0 A (989 W over) while the house on the
     # inverters was taken as the whole discharge - the car's own 2 kW counted
     # as house, which hunted and fell short wherever the battery carried the
-    # car within the rating (grid-rating-cap-meter-only-* below). Delete this
-    # entry when a derived-solar site can see its inverter's saturation
-    # (dev/TODO.md).
+    # car within the rating (grid-rating-cap-meter-only-* below). One cycle
+    # cannot see the saturation; over a few the site cycle does and holds the
+    # battery at its flow (engine/hub_calculation._apply_saturation_latch,
+    # dev/tests/test_gridtied_inverter_pool.py) - this stays the first cycle.
     known_invariant_breaches:
       - "grid import 13.00 A against the 0.00 A"
     site:

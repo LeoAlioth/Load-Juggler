@@ -23,6 +23,7 @@ from ..calculations import (
     PhaseValues,
     calculate_all_load_targets,
     excess_margin,
+    grid_overdraw,
 )
 from ..calculations.models import INACTIVE_STATUSES
 from ..const import (
@@ -60,6 +61,7 @@ from ..const import (
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
     CTRL_FAST_TAU_S,
+    DEAD_BAND,
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DEFAULT_UPDATE_FREQUENCY,
     EMA_TAU_S,
@@ -71,6 +73,7 @@ from ..const import (
     GRID_STALE_TIMEOUT,
     HOUSEHOLD_HOLD_BRIDGE_SECONDS,
     HOUSEHOLD_HOLD_RESIDUAL,
+    INPUT_STALE_TIMEOUT,
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
 )
@@ -616,6 +619,134 @@ def _apply_excess_latch(hub_runtime, site, excess_hysteresis):
         "Excess %s (margin %+.0fW)", "ON" if excess_on else "off", margin
     )
     return excess_on, margin
+
+
+# How long the saturation sign must hold before it is believed: the engine
+# drives the pools on a battery reading up to INPUT_STALE_TIMEOUT old
+# (readers._stale_guard), so a battery that answers our loads inside that
+# window is never taken for one that cannot.
+SATURATION_CONFIRM_S = INPUT_STALE_TIMEOUT
+# How long a verdict holds before the rating is offered again - judgements,
+# not measurements: from the meter nothing tells a limit that has gone from one
+# that has not, so the only test is to offer the rating and watch, and a limit
+# still there costs one detection's overrun (and, where what fits is below a
+# load's minimum, one start). A quarter hour is the block a capacity tariff
+# averages import over, so each block pays for one at most; every offer the
+# limit answers doubles the wait, up to an hour - the longest a verdict that
+# has gone stale may keep the battery from the loads.
+SATURATION_HOLD_S = 15 * 60.0
+SATURATION_HOLD_MAX_S = 60 * 60.0
+
+
+def _apply_saturation_latch(hub_runtime, site, now):
+    """A meter-only hybrid at its limit: hold its battery at what it gave then.
+
+    With no solar and no output sensor the sun the house uses itself reaches
+    no meter, so by day the rating cap is short by it and the inverter pool
+    offers the battery's rating less its flow where the inverter cannot pass
+    it: 3 kW of sun and a 1 kW house on a 7 kW inverter permitted a car 30.4 A
+    where 26.1 A fits, and the grid carried the 1 kW past the allowance
+    (dev/tests/test_gridtied_inverter_pool.py). A hybrid at its limit cannot
+    answer more load from sun + battery, so the grid does. The SIGN, all of
+    it for SATURATION_CONFIRM_S on end:
+
+        the grid carries our loads more than the grid half grants them
+        (``grid_overdraw``) by over DEAD_BAND - the least the permit acts on;
+        the site's import rose by over DEAD_BAND since the grid last stood
+        inside the grant (or our loads last drew less), and our loads grew by
+        at least that rise; the battery, more than DEAD_BAND below its
+        rating, did not rise by DEAD_BAND (a rise restarts the count).
+
+    Seen, the battery is held at the flow it gave (``site.
+    battery_discharge_ceiling``): the inverter pool offers what the inverters
+    already give beyond the house and no more, the grid half its grant as
+    usual. The ceiling follows the flow up (the battery showed it can) and
+    down to it at each new verdict; it goes when the flow reaches the rating,
+    or SATURATION_HOLD_S after the verdict, doubled for every offer the limit
+    answered, to SATURATION_HOLD_MAX_S - from the meter a sun that rises looks
+    like a house that falls, so only an offer can show the limit has gone.
+
+    What else shows the sign, and why it is excluded or harmless:
+      * a battery slow to answer our loads moves inside the window; one whose
+        answer takes longer than INPUT_STALE_TIMEOUT is not told apart;
+      * an import our loads did not raise - the battery's own grid setpoint,
+        the house - is not the site's import rising with them, so a steady
+        one never latches, nor ratchets our loads down;
+      * a battery its own logic holds (a BMS limit, its own reserve, a charge
+        priority, a forced charge) gives no more than its flow either, so the
+        ceiling is the truth there too; below the hub's SOC minimum its rating
+        is 0 already and nothing latches;
+      * at night the rating cap is exact, and a healthy battery never shows it;
+      * an import inside the allowance is inside the grant.
+
+    Grid-tied, solar from the meter alone (``solar_is_metered``), the
+    battery's power read, a usable rating, an Inverter Max Power - everywhere
+    else the state is dropped. It lives in ``hub_runtime`` so the calculator
+    stays stateless.
+    """
+    state = hub_runtime.setdefault("_saturation", {})
+    rating = site.battery_max_discharge_power or 0.0
+    if (
+        site.is_off_grid
+        or not site.solar_is_metered
+        or not site.inverter_max_power
+        or site.battery_power is None
+        or rating <= 0
+    ):
+        state.clear()
+        return
+    band = DEAD_BAND * site.voltage
+    flow = site.battery_power
+    draw = sum(site.managed_phase_draws or ()) * site.voltage
+    over = grid_overdraw(site) * site.voltage
+    ceiling = state.get("ceiling")
+    hold = state.get("hold", SATURATION_HOLD_S)
+    if ceiling is not None and flow >= rating - band:
+        ceiling, hold = None, SATURATION_HOLD_S
+    elif ceiling is not None and now - state["seen"] > hold:
+        ceiling = None
+        state["offered"] = now
+    # Where growth is measured from, (our draw, the site's import): the last
+    # cycle inside the grant, or the least our loads have drawn since. None
+    # until the grid has stood inside it once.
+    net = site.net_grid_power or 0.0
+    ref = state.get("ref")
+    if over <= 0 or (ref is not None and draw < ref[0]):
+        ref = (draw, net)
+    if (
+        ref is not None
+        and over > band
+        and net - ref[1] > band
+        and draw - ref[0] >= net - ref[1] - band
+        and flow < rating - band
+    ):
+        since, flow0 = state.get("episode", (now, flow))
+        if flow > flow0 + band:
+            since, flow0 = now, flow
+        state["episode"] = (since, flow0)
+        if now - since >= SATURATION_CONFIRM_S:
+            if ceiling is None:
+                answered = now - state.get("offered", -math.inf) <= hold
+                hold = (
+                    min(2 * hold, SATURATION_HOLD_MAX_S)
+                    if answered
+                    else SATURATION_HOLD_S
+                )
+            ceiling = flow if ceiling is None else min(ceiling, flow)
+            state["seen"] = now
+            ref = (draw, net)  # another verdict needs more growth
+    else:
+        state.pop("episode", None)
+    if ceiling is not None:
+        ceiling = max(ceiling, flow)
+    state.update(ref=ref, ceiling=ceiling, hold=hold)
+    site.battery_discharge_ceiling = ceiling
+    if ceiling is not None:
+        _LOGGER.debug(
+            "Inverter at its limit: battery held at %.0fW (flow %.0fW, "
+            "rating %.0fW, grid %+.0fW past its grant, next offer in %.0fs)",
+            ceiling, flow, rating, over, hold - (now - state["seen"]),
+        )
 
 
 def _apply_household_figures(
@@ -1439,6 +1570,8 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         managed_draws,
     )
     _apply_sun_probe(hass, hub_entry, hub_runtime, site)
+
+    _apply_saturation_latch(hub_runtime, site, time.monotonic())
 
     # --- Calculate targets ---
     calculate_all_load_targets(site)

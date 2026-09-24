@@ -145,6 +145,15 @@ class World:
         self.site = site
         self.limit = None          # the last limit the charger accepted (A)
         self.battery_read = True   # False: its power sensor is unavailable
+        self.soc = 80.0
+        # What the battery's own logic does that Load Juggler cannot see: the
+        # most it will discharge (its BMS, its own reserve), the import its
+        # control aims for (a grid setpoint), and a flow it holds whatever the
+        # site draws (a forced charge, a slow control loop between its steps)
+        # - None follows the site.
+        self.battery_cap_w = site.discharge_w
+        self.battery_setpoint_w = 0.0
+        self.battery_held_w = None
 
     @property
     def draw(self):
@@ -159,11 +168,19 @@ class World:
     @property
     def battery_w(self):
         """Self-consumption: discharges into any deficit up to its rating,
-        charges from any surplus up to 5 kW. Positive = discharging."""
+        charges from any surplus up to 5 kW. Positive = discharging. A hybrid
+        that saturates puts out the sun plus the battery and never more than
+        its rating, so the battery adds no more than the rating leaves beside
+        the sun, and the grid carries the rest."""
         if self.site.discharge_w is None:
             return 0.0
-        deficit = self.demand_w - self.site.solar_w
-        return max(-5000.0, min(deficit, self.site.discharge_w))
+        if self.battery_held_w is not None:
+            return self.battery_held_w
+        deficit = self.demand_w - self.site.solar_w - self.battery_setpoint_w
+        cap = self.battery_cap_w
+        if self.site.saturates:
+            cap = min(cap, self.site.rating_w - self.site.solar_w)
+        return max(-5000.0, min(deficit, cap))
 
     @property
     def import_w(self):
@@ -194,7 +211,7 @@ class World:
                 str(round(self.battery_w, 1)) if self.battery_read else "unavailable",
                 power,
             )
-            set_state("sensor.battery_soc", "80",
+            set_state("sensor.battery_soc", str(self.soc),
                       {"device_class": "battery", "unit_of_measurement": "%"})
         set_state("sensor.evse_status_connector", self.charger_status())
         set_state("switch.evse_charge_control", "on")
@@ -212,6 +229,7 @@ class World:
 def site(hass, request):
     sensors, solar_w, discharge_w, allowance_w, *rating = request.param
     rating_w = rating[0] if rating else None
+    saturates = len(rating) > 1 and rating[1]
     if sensors == "solar-sensor":
         reading = {CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.solar_production"}
     elif sensors == "meter-only":
@@ -294,6 +312,7 @@ def site(hass, request):
     return SimpleNamespace(
         hub=hub_entry, evse=evse, sensors=sensors, solar_w=solar_w,
         discharge_w=discharge_w, allowance_w=allowance_w, rating_w=rating_w,
+        saturates=saturates,
     )
 
 
@@ -769,3 +788,255 @@ async def test_meter_only_rating_cap_leaves_the_car_its_own_supply(hass, site):
         f"the inverters put out {worst_output_w:.0f} W on a "
         f"{site.rating_w:.0f} W rating"
     )
+
+
+# A HYBRID that saturates at its Inverter Max Power (site as above: the
+# rating, then True): its AC output is the sun plus the battery and never more
+# than the rating, and the grid carries whatever the site draws beyond it.
+# 3 kW of sun and the 1 kW house on a 7 kW inverter with a 5 kW battery: the
+# car can have the rating less the house, 6 kW (26.1 A) - not the
+# 3 + 5 - 1 = 7 kW (30.4 A) the sun and the battery would give past it.
+SATURATED_DAY = ("meter-only", 3000.0, 5000.0, 0.0, 7000.0, True)
+# How far past the allowance a settled site may sit: the permit's deadband and
+# the 0.1 A a command is rounded to - a charger cut from above holds up to
+# that far over its target.
+SETTLED_W = DEADBAND_W + 0.05 * V
+# The longest the grid may carry the car past the allowance while a verdict is
+# reached: two site cycles for the filtered import to show it, the
+# confirmation, then up to two commands (the charger's 15 s interval, 16 s on
+# 2 s cycles) to bring the car back down - 80 to 96 s measured at each offer
+# of the rating. At the car's fast start into the limit the battery reading
+# first has to settle within the deadband of the 6 kW it swung, 36 s on the
+# input filter: 96 to 128 s measured.
+OFFER_S = 2 * CYCLE_S + hub_calculation.SATURATION_CONFIRM_S + 2 * 16.0
+START_S = OFFER_S + 36.0
+
+
+def _overruns(log, allowance_w):
+    """(start s, seconds) of each stretch the grid carried more than the
+    allowance, past what a settled site may sit at."""
+    start, runs, run = log[0][0], [], None
+    for t, _limit, imp, _battery in log:
+        if imp > allowance_w + SETTLED_W:
+            run = (run[0], t) if run else (t, t)
+        elif run:
+            runs.append(run)
+            run = None
+    if run:
+        runs.append(run)
+    return [(a - start, b - a + CYCLE_S) for a, b in runs]
+
+
+def _settled(log, runs):
+    """The car's limit (W) on every cycle outside those stretches."""
+    start = log[0][0]
+    over = {round(at + k * CYCLE_S) for at, secs in runs for k in range(int(secs / CYCLE_S))}
+    return [limit * V for t, limit, *_ in log if round(t - start) not in over]
+
+
+def _watching(verdicts, then=None):
+    """An ``on_cycle`` that records, before each cycle, the battery ceiling the
+    saturation latch held on the cycle before (None: no verdict) - then runs
+    ``then``."""
+    def hook(world, seconds):
+        runtime = world.hass.data[DOMAIN]["hubs"][world.site.hub.entry_id]
+        verdicts.append(runtime.get("_saturation", {}).get("ceiling"))
+        if then is not None:
+            then(world, seconds)
+    return hook
+
+
+def _holding(**battery):
+    """An ``on_cycle`` that sets the world's battery behaviour every cycle."""
+    def hook(world, seconds):
+        for name, value in battery.items():
+            setattr(world, name, value)
+    return hook
+
+
+def _answering_every(period_s):
+    """A battery whose control loop moves to where the site needs it only
+    every ``period_s`` seconds, holding its flow in between."""
+    def hook(world, seconds):
+        if seconds % period_s == 0:
+            world.battery_held_w = None
+            world.battery_held_w = world.battery_w
+    return hook
+
+
+@pytest.mark.parametrize("site", [SATURATED_DAY], ids=["meter-only-day"], indirect=True)
+async def test_a_saturated_meter_only_hybrid_is_held_to_its_rating(hass, site):
+    """No solar and no output sensor, 3 kW of sun, the 1 kW house, a 7 kW
+    hybrid, a 5 kW battery, a 0 W allowance, an hour of real site cycles.
+
+    From the meter the house the sun serves is invisible, so the rating cap
+    took off none of it and the pool offered the battery's 1 kW of rating the
+    inverter cannot pass. Measured before: the car at 30.4 A for the whole
+    hour, the battery stuck at 4 kW, 1 kW below its rating, the grid carrying
+    992 W past the allowance throughout.
+
+    After: the grid carrying the car's growth while the battery stays flat
+    below its rating is the verdict (hub_calculation._apply_saturation_latch).
+    The car comes down to 26.4 A (26.1 A fits; a charger cut from above holds
+    within the permit's deadband) and stays there; the grid carries more than
+    the allowance only while a verdict is being reached - 128 s at the start,
+    80 s at each offer of the rating, 15 min after the verdict and then 30 -
+    288 s of the hour where it was all 3600. While the battery is held,
+    Battery Remaining Power reads 0 W, as the pool offers (1000 W before).
+    """
+    verdicts, published = [], []
+    log = await _session(
+        hass, site, minutes=60, published=published, on_cycle=_watching(verdicts)
+    )
+    start = log[0][0]
+    target_w = site.allowance_w + site.rating_w - HOUSE_W
+
+    stops = _stops(log, since=start + 60)
+    assert stops == 0, f"the car was cut {stops} times"
+
+    runs = _overruns(log, site.allowance_w)
+    assert len(runs) == 3, f"stretches past the allowance: {runs} (s, seconds)"
+    assert runs[0][1] <= START_S and all(secs <= OFFER_S for _, secs in runs[1:]), (
+        f"past the allowance for {runs} (s, seconds) - longer than a verdict "
+        f"takes ({START_S:.0f} s at the start, {OFFER_S:.0f} s at an offer)"
+    )
+
+    # Outside those stretches the car sits at the rating less the house.
+    settled = _settled(log, runs)
+    assert min(settled) >= target_w - DEADBAND_W - V, (
+        f"the car fell to {min(settled) / V:.1f} A of {target_w / V:.1f} A"
+    )
+    assert max(settled) <= target_w + SETTLED_W, (
+        f"the car sat at {max(settled) / V:.1f} A where {target_w / V:.1f} A fits"
+    )
+    assert verdicts[-1] is not None
+    assert published[-1]["available_battery_power"] == 0
+
+
+@pytest.mark.parametrize(
+    "site,battery,target_w",
+    [
+        # SOC below the hub's minimum, at night: its rating is 0, the battery
+        # idles, the house imports 1 kW and the car gets the 2 kW the 3 kW
+        # allowance leaves.
+        (("meter-only", 0.0, 5000.0, 3000.0, 6000.0, True),
+         _holding(soc=15.0, battery_held_w=0.0), 2000.0),
+        # Allow Grid Charging, a 2 kW allowance: the hybrid saturates, but the
+        # 1.36 kW the grid carries for the 32 A car is inside the grant.
+        (("meter-only", 3000.0, 5000.0, 2000.0, 7000.0, True), None, 7360.0),
+        # A battery that answers the site only every 30 s: the car starts at
+        # 17.4 A on the battery's word and the grid carries it for up to 30 s.
+        (("meter-only", 0.0, 5000.0, 0.0, 6000.0, True),
+         _answering_every(30.0), 4000.0),
+        # At night the house alone imports: 1 kW against an 800 W battery at
+        # its rating; the car gets the 2 kW allowance less the 200 W.
+        (("meter-only", 0.0, 800.0, 2000.0, 6000.0, True), None, 1800.0),
+        # The battery's own control aims for a 150 W import (a grid setpoint),
+        # past the 0 W allowance whenever the car runs: it answers every step.
+        (("meter-only", 0.0, 5000.0, 0.0, 6000.0, True),
+         _holding(battery_setpoint_w=150.0), 4000.0),
+    ],
+    ids=["soc-below-minimum-night", "grid-charging-within-allowance",
+         "battery-answering-every-30s", "house-alone-imports-night",
+         "battery-grid-setpoint"],
+    indirect=["site"],
+)
+async def test_b_no_verdict_where_the_battery_answers(hass, site, battery, target_w):
+    """Every site here shows some part of the sign - a battery below its
+    rating, an import, a charger asking for more - and none of it is an
+    inverter at its limit. Over twenty minutes the latch never holds the
+    battery, the car is never cut after the first minute, and it settles on
+    what the site gives it - 8.7, 32.0, 17.4, 7.8 and 17.7 A, measured the
+    same before the change."""
+    verdicts = []
+    log = await _session(hass, site, minutes=20, on_cycle=_watching(verdicts, battery))
+    start = log[0][0]
+
+    held = [v for v in verdicts if v is not None]
+    assert not held, f"the battery was held at {held[0]:.0f} W"
+    assert _stops(log, since=start + 60) == 0
+    tail_w = [limit * V for t, limit, *_ in log if t > start + 180]
+    assert min(tail_w) >= target_w - DEADBAND_W - V, (
+        f"settled at {min(tail_w) / V:.1f} A of {target_w / V:.1f} A"
+    )
+    assert max(tail_w) <= target_w + SETTLED_W, (
+        f"settled at {max(tail_w) / V:.1f} A where {target_w / V:.1f} A fits"
+    )
+
+
+@pytest.mark.parametrize(
+    "site,battery,target_w,stops",
+    [
+        # Its BMS holds the discharge at 2 kW: the inverter is not at its
+        # rating, the battery is at its own limit, and 3 + 2 - 1 = 4 kW fits.
+        (SATURATED_DAY, _holding(battery_cap_w=2000.0), 4000.0, 0),
+        # Charging from the grid on its own schedule, 2 kW, at night under a
+        # 5 kW allowance: the car gets the 2 kW the house and the charge leave.
+        (("meter-only", 0.0, 5000.0, 5000.0, 7000.0, True),
+         _holding(battery_held_w=-2000.0), 2000.0, 0),
+        # Charging 1.5 kW from the sun toward its own target, yielding none of
+        # it: 3 - 1 - 1.5 = 0.5 kW is left, under the car's 6 A minimum.
+        (SATURATED_DAY, _holding(battery_held_w=-1500.0), 0.0, 3),
+    ],
+    ids=["bms-holds-discharge-2kw", "forced-grid-charge-night",
+         "charge-priority-day"],
+    indirect=["site"],
+)
+async def test_b_a_battery_its_own_logic_holds_is_kept_to_the_allowance(
+    hass, site, battery, target_w, stops
+):
+    """A battery that will not give the car what its rating says - its BMS,
+    a forced charge, its own charge priority - shows the same sign as an
+    inverter at its limit, and on a meter-only site nothing tells them apart.
+    Holding it at its flow is the truth here too: it gives no more.
+
+    Measured before, for the hour: the car at 30.4, 32.0 and 30.4 A, the grid
+    carrying 2992, 5360 and 6492 W past the allowance throughout. After: the
+    car settles on what the site gives it - 17.6, 8.9 and 0 A - and the grid
+    carries more than the allowance only while a verdict is reached, at the
+    start and at each offer of the rating. Where what fits is under the car's
+    minimum it stops, and each offer restarts it: 3 stops in the hour (the
+    first session, then 16 and 47 min in), where it ran throughout past the
+    allowance before.
+    """
+    log = await _session(hass, site, minutes=60, on_cycle=battery)
+    start = log[0][0]
+
+    runs = _overruns(log, site.allowance_w)
+    assert len(runs) == 3, f"stretches past the allowance: {runs} (s, seconds)"
+    assert runs[0][1] <= START_S and all(secs <= OFFER_S for _, secs in runs[1:]), (
+        f"past the allowance for {runs} (s, seconds)"
+    )
+    assert _stops(log, since=start) == stops
+    settled = _settled(log, runs)
+    assert max(settled) <= target_w + SETTLED_W, (
+        f"the car sat at {max(settled) / V:.1f} A where {target_w / V:.1f} A fits"
+    )
+    if target_w:
+        assert min(settled) >= target_w - DEADBAND_W - V
+
+
+@pytest.mark.parametrize(
+    "site",
+    [
+        ("solar-sensor", 3000.0, 5000.0, 0.0, 7000.0, True),
+        ("series-output", 3000.0, 5000.0, 0.0, 7000.0, True),
+    ],
+    ids=["solar-sensor", "series-output"],
+    indirect=True,
+)
+async def test_c_a_site_that_sees_its_sun_needs_no_verdict(hass, site):
+    """The same saturating hybrid read through a solar production sensor, or
+    a series hybrid's output sensor: the rating cap sees the house the sun
+    serves, the car gets the 26.1 A that fits from the start, the grid never
+    carries it past the allowance, and the latch - meter-only sites alone -
+    never holds the battery. Measured the same before the change."""
+    verdicts = []
+    log = await _session(hass, site, minutes=20, on_cycle=_watching(verdicts))
+    start = log[0][0]
+    target_w = site.allowance_w + site.rating_w - HOUSE_W
+
+    assert all(v is None for v in verdicts)
+    assert _overruns(log, site.allowance_w) == []
+    tail_w = [limit * V for t, limit, *_ in log if t > start + 60]
+    assert target_w - DEADBAND_W - V <= min(tail_w) <= max(tail_w) <= target_w + DEADBAND_W

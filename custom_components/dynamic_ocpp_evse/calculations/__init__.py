@@ -12,6 +12,7 @@ from .target_calculator import (
     excess_load_draw_power,
     household_unknown,
     excess_margin,
+    grid_overdraw,
     reconstructed_export_power,
     sun_power,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "household_unknown",
     "excess_load_draw_power",
     "excess_margin",
+    "grid_overdraw",
     "reconstructed_export_power",
     "sun_power",
     "ClippingForecast",
