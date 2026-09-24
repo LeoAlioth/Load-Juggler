@@ -641,6 +641,27 @@ def household_unknown(site: SiteContext) -> bool:
     )
 
 
+def sun_power(site: SiteContext) -> float:
+    """The site's solar production (W), the batteries' discharge left out.
+
+    Wherever a member knows its production this is solar_production_total.
+    From the meter alone (``site.solar_is_metered``) that figure is the export
+    with our loads handed back plus the batteries' charge, and the export
+    carries their DISCHARGE too: the car the battery covers comes back as
+    export once its draw is handed back, so 3 kW of sun read 6992 W by day and
+    4000 W at night (dev/tests/test_gridtied_inverter_pool.py). Battery power
+    is + discharging, so export - battery power is export + charge -
+    discharge: the sun the house does not use itself (the rest reaches no
+    meter). With the battery's power unread nothing takes the discharge off.
+
+    Current Solar Power publishes it (engine/hub_result.py), and the house on
+    the inverters is built on it (``_house_on_inverters``).
+    """
+    if site.solar_is_metered:
+        return max(0.0, site.total_export_power - (site.battery_power or 0))
+    return site.solar_production_total or 0
+
+
 def _house_on_inverters(site: SiteContext, flow: float) -> float:
     """What the household already takes from the inverters (A), our loads off.
 
@@ -662,6 +683,12 @@ def _house_on_inverters(site: SiteContext, flow: float) -> float:
       draws handed back included) is the house's. Exact with a solar sensor or
       a parallel inverter's output sensor; with neither, the sun the house
       uses itself never reaches a meter and only the battery's share is seen.
+      The solar there is ``sun_power``, not the engine's figure: that one
+      carries the discharge feeding our own loads, so the house came out as
+      the whole discharge - at night a car the battery carried at 17.4 A was
+      cut to 0 A under a 6 kW rating and restarted, and by day it settled at
+      21.6 A where 30.4 A fit an 8 kW one
+      (dev/tests/test_gridtied_inverter_pool.py).
     """
     consumption = (site.consumption.a, site.consumption.b, site.consumption.c)
     if site.is_off_grid or (
@@ -673,7 +700,7 @@ def _house_on_inverters(site: SiteContext, flow: float) -> float:
             for house, grid in zip(_get_household_per_phase(site), consumption)
             if grid is not None
         )
-    solar = (site.solar_production_total or 0) / site.voltage
+    solar = sun_power(site) / site.voltage
     exported = sum(
         e for e in (site.export_current.a, site.export_current.b, site.export_current.c)
         if e is not None

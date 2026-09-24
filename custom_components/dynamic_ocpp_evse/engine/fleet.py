@@ -634,8 +634,9 @@ def solar_is_metered(members) -> bool:
     well - a car the battery covers comes back as export - so the figure is
     not production: 3 kW of sun read 6992 W with the battery carrying the car
     (dev/tests/test_gridtied_inverter_pool.py). The engine keeps it; the
-    publisher takes the discharge back off (hub_result._build_hub_result),
-    and with a battery's power unread it cannot (solar_is_assumed)."""
+    published figure and the inverter rating cap take the discharge back off
+    (SiteContext.solar_is_metered, target_calculator.sun_power), and with a
+    battery's power unread they cannot (solar_is_assumed)."""
     return not any(m.has_solar_entity or m.output is not None for m in members)
 
 

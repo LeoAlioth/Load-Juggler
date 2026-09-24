@@ -233,6 +233,11 @@ class SiteContext:
     # Solar
     solar_production_total: float = 0
     solar_is_derived: bool = True  # True = derived from grid meter, False = dedicated entity
+    # No member knows its production - no production sensor, no inverter
+    # output sensors (engine/fleet.solar_is_metered): solar_production_total is
+    # then worked out from the meter and carries the batteries' discharge
+    # (target_calculator.sun_power).
+    solar_is_metered: bool = False
     household_consumption_total: float | None = None  # Computed when solar entity available (W)
     household_consumption: PhaseValues | None = None  # Per-phase household (A), from inverter entities
 

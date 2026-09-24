@@ -57,6 +57,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_HUB_ENTRY_ID,
+    CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_LOAD_PRIORITY,
     CONF_MAIN_BREAKER_RATING,
@@ -96,7 +97,7 @@ CYCLE_S = float(DEFAULT_SITE_UPDATE_FREQUENCY)
 # trigger holds a command within DEAD_BAND of it.
 DEADBAND_W = DEAD_BAND * V
 # (how the site is read, solar W, battery discharge rating W or None, import
-# allowance W)
+# allowance W[, Inverter Max Power W])
 SITES = pytest.mark.parametrize(
     "site",
     [
@@ -209,7 +210,8 @@ class World:
 
 @pytest.fixture
 def site(hass, request):
-    sensors, solar_w, discharge_w, allowance_w = request.param
+    sensors, solar_w, discharge_w, allowance_w, *rating = request.param
+    rating_w = rating[0] if rating else None
     if sensors == "solar-sensor":
         reading = {CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.solar_production"}
     elif sensors == "meter-only":
@@ -242,6 +244,7 @@ def site(hass, request):
             CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_a",
             **reading,
             **battery,
+            **({CONF_INVERTER_MAX_POWER: rating_w} if rating_w else {}),
         },
     )
     evse = MockConfigEntry(
@@ -290,7 +293,7 @@ def site(hass, request):
     }
     return SimpleNamespace(
         hub=hub_entry, evse=evse, sensors=sensors, solar_w=solar_w,
-        discharge_w=discharge_w, allowance_w=allowance_w,
+        discharge_w=discharge_w, allowance_w=allowance_w, rating_w=rating_w,
     )
 
 
@@ -695,3 +698,74 @@ async def test_solar_remaining_is_unknown_with_the_battery_unread(hass, site):
         "available_solar_power": (None, True),
         "available_solar_current": (None, True),
     }, f"published (value, available): {published}, the battery unread"
+
+
+# A meter-only site with an Inverter Max Power (site as above, the rating
+# last): the battery carries the house and the car at night; by day the sun
+# covers the house and the battery the rest of the car.
+@pytest.mark.parametrize(
+    "site",
+    [
+        ("meter-only", 0.0, 5000.0, 0.0, 6000.0),
+        ("meter-only", 3000.0, 5000.0, 0.0, 8000.0),
+        ("meter-only", 0.0, 5000.0, 0.0, 4000.0),
+        ("meter-only", 0.0, 5000.0, 2000.0, 6000.0),
+    ],
+    ids=["night-6kw", "day-8kw", "night-4kw-rating-binds", "night-6kw-2kw-allowance"],
+    indirect=True,
+)
+async def test_meter_only_rating_cap_leaves_the_car_its_own_supply(hass, site):
+    """The rating caps the inverters at the rating less the house they
+    already serve - and the car's own supply is not house.
+
+    From the meter alone the engine's solar is the export with our loads
+    handed back plus the battery's charge, and that export carries the
+    discharge feeding the car; read as solar + battery flow - export, the
+    house on the inverters came out as the whole discharge, the car's share
+    included. Measured before the fix (0 W allowance unless stated):
+
+    ===========================  ================================  =========
+    site                         before                            after
+    ===========================  ================================  =========
+    night, 6 kW rating           17.4 A, cut to 0 A at 16, 224     17.4 A
+                                 and 432 s, restarted each time
+    day, 8 kW rating             21.6 A where 30.4 A fits          30.4 A
+    night, 4 kW rating           13.0 A, cut the same way          13.0 A
+    night, 6 kW, 2 kW allowance  15.3 A where 26.1 A fits          26.1 A
+    ===========================  ================================  =========
+
+    The car settles on the supply less the house, within the rating less the
+    house, never cut after the first minute; the inverters (the sun plus the
+    battery - this world's battery has no rating of its own beyond its
+    discharge) never put out more than their rating.
+    """
+    log = await _session(hass, site, minutes=10)
+    start = log[0][0]
+    target_w = min(
+        _headroom_w(site), site.allowance_w + site.rating_w - HOUSE_W
+    )
+
+    stops = _stops(log, since=start + 60)
+    ran = [(t - start, limit) for t, limit, *_ in log if limit is not None]
+    cuts = [t for (_, a), (t, b) in zip(ran, ran[1:]) if a >= MIN_A > b]
+    assert stops == 0, (
+        f"the car hunted: {stops} stops after the first minute, from "
+        f"{max(limit for _, limit in ran):.1f} A to 0 A at {cuts} s"
+    )
+
+    tail_w = [limit * V for t, limit, *_ in log if t > start + 180]
+    low_w, high_w = min(tail_w), max(tail_w)
+    assert low_w >= target_w - DEADBAND_W - V, (
+        f"settled at {low_w / V:.1f} A, {target_w - low_w:.0f} W short of the "
+        f"{target_w / V:.1f} A the site and the rating can give it"
+    )
+    assert high_w <= target_w + DEADBAND_W, (
+        f"settled at {high_w / V:.1f} A, {high_w - target_w:.0f} W over the "
+        f"{target_w / V:.1f} A the site and the rating can give it"
+    )
+
+    worst_output_w = max(site.solar_w + battery for *_, battery in log)
+    assert worst_output_w <= site.rating_w + DEADBAND_W, (
+        f"the inverters put out {worst_output_w:.0f} W on a "
+        f"{site.rating_w:.0f} W rating"
+    )
