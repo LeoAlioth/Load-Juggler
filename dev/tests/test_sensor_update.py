@@ -4674,7 +4674,10 @@ async def test_the_verdict_does_not_flap_while_the_battery_yields_above_target(h
         #    exported. The verdict must not move - and the battery yields.
         engaged = stage(2200.0, 3000.0, 3000.0, 10.0)
         assert engaged["excess_available"] is True
-        assert engaged["excess_margin_power"] >= idle["excess_margin_power"]
+        # Unmoved to within the EMAs' own 0.01 A (2.3 W) output rounding, one
+        # step per term. A bare >= passed only while the draw's EMA advanced
+        # twice a cycle: converged ahead of the grid's, it read the margin high.
+        assert engaged["excess_margin_power"] >= idle["excess_margin_power"] - 5
         assert engaged["forecast_charge_limit_w"] == pytest.approx(
             3000 - 2300, abs=2
         )
