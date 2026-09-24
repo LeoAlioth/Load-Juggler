@@ -437,3 +437,44 @@ scenarios:
         # Before the fix the pool was the solar alone - the house never taken
         # off - and the car's extra 1 kW came out of a pack below its minimum.
         allocated: 8.7
+
+  # Off-grid with inverter output sensors and PARALLEL wiring - the setup
+  # form's default. Parallel reconstructs the household as grid consumption +
+  # output - grid export, which grid-tied is right because the feedback loop
+  # has taken the managed draws off the grid terms. Off-grid those terms are
+  # synthetic zeros it leaves alone, and with no grid everything the site
+  # consumes comes out of the inverter, so the output carries the charger too.
+  # Before 2026-09-24 nothing took it off: the car's own draw was read as house
+  # load and it settled at about half the inverter's rating less the house.
+  # Same rig as the series formula, which always took the draw off.
+  - name: "off-grid-parallel-output-charger-gets-inverter-rating"
+    description: "Off-grid, parallel wiring, output sensors: 6kW inverter, 1kW house → charger 21.7A, its own draw not counted as house load"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 0         # night: the battery supplies the whole output
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 20000
+      inverter_max_power: 6000
+      inverter_output_sensors: true
+      wiring_topology: parallel
+    loads:
+      - entity_id: "car"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+        operating_mode: "Standard"
+    expected:
+      car:
+        # 6000 W / 230 V = 26.09 A of inverter, less the 4.35 A house = 21.7 A.
+        # With the car's own draw left in the household it settled at 10.9 A.
+        allocated: 21.7

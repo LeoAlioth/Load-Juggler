@@ -247,15 +247,18 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     # Update per-phase inverter output to reflect actual physical state.
     # Parallel: inverter output = solar per phase (inverter only carries solar)
     # Series: inverter output = household + load draws per phase (all loads go through inverter)
+    # Off-grid, either wiring: household + load draws - with no grid to carry
+    # the rest, everything the site consumes comes out of the inverter
+    # (production's _supply_per_phase reads the output the same way).
     if site.inverter_output_per_phase is not None:
-        if site.wiring_topology == 'parallel':
+        if site.wiring_topology == 'parallel' and not site.is_off_grid:
             site.inverter_output_per_phase = PhaseValues(
                 solar_per_phase if household.a is not None else None,
                 solar_per_phase if household.b is not None else None,
                 solar_per_phase if household.c is not None else None,
             )
         else:
-            # Series: everything downstream goes through inverter
+            # Series, or off-grid: everything downstream goes through inverter
             site.inverter_output_per_phase = PhaseValues(
                 ((household.a or 0) + load_l1) if household.a is not None else None,
                 ((household.b or 0) + load_l2) if household.b is not None else None,
