@@ -1,0 +1,272 @@
+# Test scenarios: Off-grid with NO battery at all - the sun is the whole supply
+#
+# A PV-only off-grid inverter (or an AC-coupled one with no battery entity):
+# no grid, no pack. What our loads can use is solar - household, within the
+# inverter's rating and each phase's leg - the off-grid identity
+# (solar + usable discharge rating - household) with no rating to add.
+#
+# Before 2026-09-24 the off-grid pools could not say it. Both are sized from
+# the supply our loads hold plus the battery's headroom
+# (target_calculator._off_grid_held_supply, 8d3553e), and with no battery that
+# term was None - "the battery's flow is unread" - when the flow was simply 0.
+# So the solar pool had no term at all (off-grid export is a synthetic 0): a
+# Solar Only car got 0 A in 3 kW of spare sun, a Solar Priority or Excess car
+# sat at its 6 A minimum. And the physical pool fell back to the gross solar
+# figure, the house never taken off: a Standard car was offered the house's
+# own share again, and a Solar Priority car ran its minimum on sun the house
+# was already using.
+#
+# An off-grid array with no pack follows demand: its output (and so the solar
+# figure derived from output sensors) IS house + our draws, and the sun it is
+# not asked for shows nowhere. So the unused sun is measured only where a
+# solar production sensor reads it apart from the house the output sensors
+# measure - the configuration most scenarios below use. With output sensors
+# alone, solar - household is exactly the draw our loads hold (last scenario).
+#
+# The harness's no-battery site now also fails invariant C when our loads take
+# the site past the sun (run_tests._off_grid_violations): with no pack, nothing
+# covers the deficit.
+
+scenarios:
+
+  - name: "off-grid-no-battery-solar-only-car-gets-the-sun-less-the-house"
+    description: "Off-grid, no battery, solar sensor + series output sensor: 4 kW sun, 1 kW house → Solar Only car 13.0 A (before: 0 A)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 4000
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (4000 - 1000) / 230 = 13.0 A. Before: the solar pool had no term
+        # without a battery flow, 0 A.
+        allocated: 13.0
+
+  - name: "off-grid-no-battery-parallel-solar-only-car-gets-the-sun-less-the-house"
+    description: "Same site, PARALLEL output sensor (the setup default) → 13.0 A (before: 0 A)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 4000
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      inverter_output_sensors: true
+      wiring_topology: parallel
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 13.0
+
+  - name: "off-grid-no-battery-solar-priority-car-gets-the-sun-less-the-house"
+    description: "Same site, Solar Priority → 13.0 A (before: held at its 6 A minimum)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 4000
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 13.0
+
+  - name: "off-grid-no-battery-excess-car-gets-the-sun-less-the-house"
+    description: "Same site, Excess → 13.0 A: with no pack and no grid every unused watt of sun is excess (before: held at its 6 A minimum)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 4000
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Excess"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # The verdict is always on here (no sink to fill); the margin had only
+        # our own draw in it, so the pool never grew past the minimum.
+        allocated: 13.0
+
+  - name: "off-grid-no-battery-solar-only-car-inverter-binds"
+    description: "Off-grid, no battery, 3 kW inverter, 4 kW sun, 1 kW house → Solar Only car gets the inverter's 2 kW (8.7 A), not the sun's 3 kW"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 4000
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      inverter_max_power: 3000
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (3000 - 1000) / 230 = 8.7 A.
+        allocated: 8.7
+
+  - name: "off-grid-no-battery-3ph-solar-only-car-leg-binds"
+    description: "Off-grid, no battery, 3-phase symmetric 9 kW inverter (3 kW legs), 9 kW sun, 2.3 kW house on A → Solar Only car on B gets its leg (13.0 A)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 9000
+      solar_production_direct: true
+      phase_a_consumption: 10.0   # household 2300 W, all on A
+      phase_b_consumption: 0.0
+      phase_c_consumption: 0.0
+      inverter_max_power: 9000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "B"
+    expected:
+      car:
+        # The sun leaves 6700 W, but leg B carries 3000 W: 13.0 A.
+        allocated: 13.0
+
+  # Controls: the house takes all the sun, so nothing is spare.
+  - name: "off-grid-no-battery-house-takes-the-sun-solar-only-car-stays-off"
+    description: "Off-grid, no battery, 1.5 kW sun, 1.5 kW house → Solar Only car 0 A"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 1500
+      solar_production_direct: true
+      phase_a_consumption: 6.52   # household ≈ 1500 W
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 0.0
+
+  - name: "off-grid-no-battery-house-takes-the-sun-solar-priority-car-stays-off"
+    description: "Same site, Solar Priority → 0 A (before: its 6 A minimum, 1380 W past the sun)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 1500
+      solar_production_direct: true
+      phase_a_consumption: 6.52   # household ≈ 1500 W
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # No grid and no pack to back its minimum: the physical pool offered
+        # the gross 1.5 kW - the house's own sun - and the car took 6 A of it.
+        allocated: 0.0
+
+  - name: "off-grid-no-battery-output-sensor-only-standard-car-stays-off"
+    description: "Off-grid, no battery, output sensor only, 1.5 kW sun, 1.5 kW house → Standard car 0 A (before: ratcheted to 32 A, 7.4 kW past the sun)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 1500
+      phase_a_consumption: 6.52   # household ≈ 1500 W
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # The derived solar is the output, house + car. Offered gross, the car
+        # was handed the house's share on top of its own draw every cycle and
+        # climbed by it. solar - household is the car's own draw: with nothing
+        # measuring unused sun, nothing more is offered.
+        allocated: 0.0
