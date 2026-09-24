@@ -62,6 +62,11 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   grid/inverter/fleet-member reading
 │   ├── load_builders.py           # _build_[evse|plug|power_station|hot_water_tank]_load(),
 │   │                              #   _add_loads_to_site(), _build_circuit_groups()
+│   ├── readout_watch.py           # Pure: judges an EVSE's reported draw STUCK - it claims more than
+│   │                              #   the limit in force for 2x its learned reporting gap, OR the
+│   │                              #   reconstructed household steps with our commands to it (both
+│   │                              #   ways, repeatedly) while it reads nothing; load_builders then
+│   │                              #   controls it blind (assumed draw = the accepted command)
 │   ├── hub_result.py              # _compute_forecast_advice(), _build_hub_result() (the published dict)
 │   ├── fleet.py                   # Multi-inverter fleet aggregation (solar_total, weighted_soc, inverter_limits)
 │   ├── auto_detect.py             # Grid CT inversion + phase mapping auto-detection

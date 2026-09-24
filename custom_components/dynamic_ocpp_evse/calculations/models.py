@@ -112,6 +112,24 @@ class LoadContext:
     # Set by the HA layer (or the test harness) from per-load draw history.
     draw_settled: bool = False
 
+    # EVSE only: True while the charger's readout is judged STUCK (see
+    # engine/readout_watch.py) and the load is controlled blind. The HA layer
+    # has then replaced l1/l2/l3 with the ASSUMED draw - the limit the charger
+    # was last told, on the legs the verdict chose. Unlike draw_assumed (an
+    # invented 0) this is a real estimate, so it IS published - as one: see
+    # draw_estimate below and engine/hub_result.py.
+    #
+    # Its footprint is the LARGER of its allocation and that assumed draw (see
+    # _pool_deduction): while the permit rises, it reserves the permit, as an
+    # unsettled EVSE always does; while the permit falls, the charger may still
+    # be taking what it was last told until the lower command lands, and the
+    # pools must not hand that out before it has.
+    draw_blind: bool = False
+    # While draw_blind: what the estimate rests on, for the figures published
+    # from it - ``{"load": entity id, "evidence": "above_limit" |
+    # "household_lockstep", "since": UTC datetime}``. Set by the HA layer.
+    draw_estimate: dict | None = None
+
     # The current this load will draw the moment the Excess verdict starts it -
     # its rating for a binary load (a plug in Excess mode, a tank whose mode
     # boosts on surplus and is below its boost setpoint), its minimum for a

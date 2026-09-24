@@ -65,8 +65,17 @@ def _pool_deduction(load: LoadContext, fallback: float) -> float:
     is merely following our ramping permit (not a real ceiling), and an
     unmetered EVSE has no draw at all - both fall back to ``fallback``, the
     reserved current.
+
+    An EVSE controlled blind (``draw_blind`` - its readout is stuck and l1..l3
+    carry the draw ASSUMED from its last command) removes the larger of the
+    two: the reservation when it is being allowed more, the last command when
+    it is being cut, because until the lower command lands it may still be
+    taking what it was told. Either way no pool is ever handed current the
+    charger could be drawing.
     """
     if load.device_type == DEVICE_TYPE_EVSE:
+        if load.draw_blind:
+            return max(fallback, _measured_draw(load))
         if load.unmetered or not load.draw_settled:
             return fallback
         return _measured_draw(load)

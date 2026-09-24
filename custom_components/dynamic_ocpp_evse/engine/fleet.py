@@ -60,6 +60,11 @@ class FleetMember:
     supports_asymmetric: bool = False
     topology: str = WIRING_TOPOLOGY_PARALLEL
     output: Optional[PhaseValues] = None  # smoothed amps per phase
+    # The same outputs UNSMOOTHED, as this cycle read them (None for a phase
+    # that is unconfigured or unreadable). Only the stuck-readout watch reads
+    # these: off-grid they are the site's consumption, and it looks for steps
+    # in it, which a filter would smear (engine/load_builders).
+    output_raw: Optional[PhaseValues] = None
     has_solar_entity: bool = False  # a solar production sensor is configured
     solar_measured: Optional[float] = None  # W, smoothed, when measured
     # True when ``solar_measured`` is the 0 W SUBSTITUTE rather than a reading:
@@ -364,13 +369,16 @@ def split_charge_limit(members, charge_limit, ceiling) -> dict:
     return shares
 
 
-def sum_outputs(members, topology: Optional[str] = None) -> Optional[PhaseValues]:
+def sum_outputs(members, topology: Optional[str] = None,
+                raw: bool = False) -> Optional[PhaseValues]:
     """Per-phase sum of member outputs (amps), optionally filtered by
-    topology. A phase is non-None if any summed member covers it."""
+    topology. A phase is non-None if any summed member covers it. ``raw`` sums
+    the unsmoothed readings instead (``FleetMember.output_raw``)."""
     selected = [
-        m.output
+        m.output_raw if raw else m.output
         for m in members
-        if m.output is not None and (topology is None or m.topology == topology)
+        if (m.output_raw if raw else m.output) is not None
+        and (topology is None or m.topology == topology)
     ]
     if not selected:
         return None

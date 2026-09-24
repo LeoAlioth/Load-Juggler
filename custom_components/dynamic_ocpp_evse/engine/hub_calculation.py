@@ -73,7 +73,11 @@ from ..helpers import get_entry_value
 from .auto_detect import check_inversion, check_phase_mapping
 from . import fleet
 from .hub_result import _build_hub_result, _compute_forecast_advice
-from .load_builders import _add_loads_to_site, _build_circuit_groups
+from .load_builders import (
+    _add_loads_to_site,
+    _build_circuit_groups,
+    _watch_readouts_against_household,
+)
 from .readers import (
     _PHASE_LABELS,
     _check_entity_availability,
@@ -158,6 +162,46 @@ def _charge_control_view(site, consumption, export, battery_power, ema_inputs=No
     return replace(
         site, consumption=consumption, export_current=export, battery_power=battery_power
     )
+
+
+def _supply_per_phase(raw_phases, grid_assumed, has_grid_cts, members,
+                      output_total_w, voltage):
+    """Per phase, what the site is drawing WITH our managed loads in it (A) -
+    the quantity the household is reconstructed from by taking every managed
+    draw off. Returns ``(phases, unusable, source)``, one entry per site
+    phase: None where there is no usable reading, and ``unusable`` flagging a
+    value that stands on an assumption rather than a reading; ``source`` names
+    where it was measured, for the watch's log line.
+
+    * Grid-tied: the signed grid reading, unsmoothed - the feedback loop's own
+      basis (_apply_feedback_loop). ``unusable`` is the breaker worst case an
+      unreadable CT with no history stands on.
+    * Off-grid: the inverter fleet's AC output. With no grid, everything the
+      site consumes - managed loads included - comes out of the inverters, so
+      the fleet's summed output IS the site's consumption, per phase where the
+      output sensors are per phase (unsmoothed, like the grid path). A site
+      with no output sensors at all is modelled single-phase
+      (_read_site_phases), and the fleet's total output - measured, else the
+      topology-aware estimate - stands on that one phase.
+
+    Read only by the stuck-readout watch (engine/load_builders.
+    _watch_readouts_against_household); the allocation's own household is
+    untouched by it.
+    """
+    if has_grid_cts:
+        return list(raw_phases), tuple(grid_assumed), "the grid"
+    exists = [r is not None for r in raw_phases]
+    outputs = fleet.sum_outputs(members, raw=True)
+    if outputs is not None:
+        values = [
+            getattr(outputs, p) if exists[i] else None
+            for i, p in enumerate(("a", "b", "c"))
+        ]
+    elif sum(exists) == 1 and output_total_w is not None and voltage > 0:
+        values = [output_total_w / voltage if e else None for e in exists]
+    else:
+        values = [None, None, None]
+    return values, (False, False, False), "the inverter output"
 
 
 def _apply_feedback_loop(site, solar_is_derived, members, ema_inputs=None):
@@ -1135,6 +1179,20 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # Apply auto-detected phase remaps from previous cycles
     auto_detect_state = hub_runtime.setdefault("_auto_detect", {})
     _apply_phase_remaps(site, auto_detect_state)
+
+    # --- Stuck charger readouts, judged against the household ---
+    # On the phases as remapped, and on the household as the engine is about
+    # to reconstruct it - the grid reading minus our draws, or off-grid the
+    # inverter output minus our draws - which is where a readout stuck LOW
+    # does its damage (see engine/readout_watch.observe_household).
+    _watch_readouts_against_household(
+        hass,
+        site,
+        *_supply_per_phase(
+            raw_phases, grid_assumed_phases, has_grid_cts, members,
+            inverter_output_total, voltage,
+        ),
+    )
 
     # --- Feedback loop ---
     _apply_feedback_loop(site, solar_is_derived, members, ema_inputs)
