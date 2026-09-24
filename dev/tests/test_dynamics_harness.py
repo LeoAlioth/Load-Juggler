@@ -18,6 +18,10 @@ tests hold it to that on the ramp 4cbbdd1 was about (dynamics.RampSim, the
 same loop dev/tests/test_managed_draw_smoothing.py closes through Home
 Assistant, and the same figures to the watt).
 
+And to the rig's station ring (8151a69): a station with no AC output sensor,
+booked by production's builder at its command, its register written behind
+the command gate, on the rig's 5 s instrument clock (dynamics.Sim).
+
 Pure Python, no Home Assistant dependencies. Runnable two ways:
   python3 dev/tests/test_dynamics_harness.py   (standalone, no pytest needed)
   pytest dev/tests/test_dynamics_harness.py    (CI tier)
@@ -31,6 +35,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dynamics  # noqa: E402 - loads the pure modules on import
 
+from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+    STATION_CHARGE_POWER_STEP as STEP_W,
+)
 from custom_components.dynamic_ocpp_evse.engine import (  # noqa: E402
     hub_calculation,
 )
@@ -151,6 +158,56 @@ def test_every_input_ema_advances_once_per_cycle():
         seen.update(ema.writes)
     # Not vacuous: the grid and the managed draw were both being smoothed.
     assert {"grid_0", "managed_draw_0"} <= seen, sorted(seen)
+
+
+def _late_rings(tau, phases=dynamics.TICK_PHASES, **kw):
+    """Register peak-to-peak on a flat input, mean of the second half's 30 s
+    windows (the rig's measure), at every phase of the 5 s instrument tick -
+    which a rig restart lands at random."""
+    with dynamics.permit_tau(tau):
+        return [
+            dynamics.fixed_point_ring(tick_phase_s=phase, **kw)[0]
+            for phase in phases
+        ]
+
+
+def test_the_rigs_station_rings_under_a_short_permit_filter_and_not_at_7_s():
+    """dynamics.Sim's defaults are the rig's station, and they ring like it.
+
+    Register peak-to-peak on a flat 14.7 kW, W, second half. The rig (8151a69,
+    one value per cold run) beside the harness (mean / worst of five phases):
+
+    ========  ===========  =============
+    tau       rig          harness
+    ========  ===========  =============
+    1.0 s     300          290 / 625
+    2.0 s     150, 250     190 / 400
+    7.0 s     0, 0, 0      0 / 0
+    ========  ===========  =============
+
+    Until 2026-09-24 the harness showed no ring from 1.5 s up, because it
+    booked the station at what it drew and commanded it every cycle.
+    """
+    for tau in (1.0, 2.0):
+        rings = _late_rings(tau)
+        assert sum(rings) / len(rings) >= STEP_W, f"tau {tau}: {rings}"
+    rings = _late_rings(7.0)
+    assert max(rings) < STEP_W, f"tau 7.0 rings: {rings}"
+
+
+def test_neither_the_booked_command_nor_the_rigs_clock_rings_alone():
+    """The ring needs the command booked AND the rig's clock under it.
+
+    Read through both AC sensors (metered), the station on the same clock is
+    booked at what its AC input shows, which lags as the CTs do, and nothing
+    rings. Booked at its command but on the old continuous clock (CTs a pure
+    7 s delay, the converter every cycle), it does not ring either - the
+    harness's blind spot until 2026-09-24.
+    """
+    # The continuous clock has no tick to be out of phase with: one run.
+    for kw in (dict(station_metered=True), dict(tick_s=None, phases=(0.0,))):
+        rings = _late_rings(1.0, **kw)
+        assert max(rings) < STEP_W, f"{kw}: {rings}"
 
 
 if __name__ == "__main__":
