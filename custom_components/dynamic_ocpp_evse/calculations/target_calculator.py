@@ -34,6 +34,7 @@ from ..const import (
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    WIRING_TOPOLOGY_SERIES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -526,6 +527,46 @@ def _off_grid_held_supply(site: SiteContext) -> Optional[tuple[float, float, flo
     return tuple(draws)
 
 
+def _house_on_inverters(site: SiteContext, flow: float) -> float:
+    """What the household already takes from the inverters (A), our loads off.
+
+    That share is inside the inverters' rating before our loads get any of it,
+    so the rating caps the inverter pool at the rating LESS this
+    (``_calculate_inverter_limit``). ``flow`` is the battery's signed flow in A
+    (+ discharging), 0 when unread.
+
+    - Off-grid, and behind a SERIES hybrid read through its output sensors:
+      the house the output sensors see (``compute_household_per_phase``:
+      output less our draws), less what the grid carries of it on each phase.
+      Not "solar + flow − export": a series output sensor reads the load port,
+      so solar derived from it carries the grid passing through the hybrid
+      (and misses what leaves by the grid port) - 5.4 kW of house on a 3 kW
+      one at a 2 kW allowance, which cut the car to 0 and back
+      (dev/tests/scenarios/features/test_inverter_rating_cap.yaml).
+    - Everywhere else, the inverter side's own balance: solar + battery flow
+      is what the inverters supply, and what does not leave as export (our
+      draws handed back included) is the house's. Exact with a solar sensor or
+      a parallel inverter's output sensor; with neither, the sun the house
+      uses itself never reaches a meter and only the battery's share is seen.
+    """
+    consumption = (site.consumption.a, site.consumption.b, site.consumption.c)
+    if site.is_off_grid or (
+        site.household_consumption is not None
+        and site.wiring_topology == WIRING_TOPOLOGY_SERIES
+    ):
+        return sum(
+            max(0.0, house - grid)
+            for house, grid in zip(_get_household_per_phase(site), consumption)
+            if grid is not None
+        )
+    solar = (site.solar_production_total or 0) / site.voltage
+    exported = sum(
+        e for e in (site.export_current.a, site.export_current.b, site.export_current.c)
+        if e is not None
+    )
+    return max(0.0, solar + flow - exported)
+
+
 def _build_inverter_constraints(
     site: SiteContext, total_pool: float, per_phase_pool=None
 ) -> PhaseConstraints:
@@ -639,6 +680,7 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     if site.battery_power is None and site.solar_is_derived:
         rating = 0.0
 
+    flow = site.battery_power / site.voltage if site.battery_power is not None else 0.0
     held = _off_grid_held_supply(site)
     per_phase = None
     if site.is_off_grid and held is None:
@@ -649,7 +691,6 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
         )
         total_inverter_current = solar_current + rating
     else:
-        flow = site.battery_power / site.voltage if site.battery_power is not None else 0.0
         headroom = rating - flow
         exports = (site.export_current.a, site.export_current.b, site.export_current.c)
         spare = [
@@ -677,16 +718,20 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
 
     constraints = _build_inverter_constraints(site, total_inverter_current, per_phase)
 
-    # Apply total inverter power limit if configured.
-    # Cap combination fields (not per-phase) - same principle as grid limit.
+    # The inverters' rating, less what the house already takes from them - on
+    # every site, not only off-grid: the output serving the house is inside
+    # the rating before our loads get any of it. Capped at the FULL rating, a
+    # hybrid near it offered its whole rating beside a big house; it clipped
+    # and the grid carried the rest - 3 kW of sun and 3 kW of house on a 5 kW
+    # inverter permitted a car 21.7 A where 8.7 A was left, 3 kW past a 0 W
+    # import allowance (dev/tests/scenarios/features/test_inverter_rating_cap.
+    # yaml). Cap combination fields (not per-phase) - same principle as grid
+    # limit.
     if site.inverter_max_power:
-        max_total_current = site.inverter_max_power / site.voltage
-        if site.is_off_grid:
-            # Off-grid the household is invisible to the (nonexistent) grid
-            # CTs, yet the same inverter must keep serving it - only the
-            # capacity left after the household can go to managed loads.
-            household = sum(_get_household_per_phase(site))
-            max_total_current = max(0, max_total_current - household)
+        max_total_current = max(
+            0.0,
+            site.inverter_max_power / site.voltage - _house_on_inverters(site, flow),
+        )
         constraints.ABC = min(constraints.ABC, max_total_current)
         constraints = constraints.normalize()
 
