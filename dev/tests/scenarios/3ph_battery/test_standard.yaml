@@ -53,7 +53,7 @@ scenarios:
   - name: "3ph-1c-standard-heavy-importing"
     description: "Home consuming more than solar produces (importing)"
     human_verified: false
-    # Found by the physical-invariant check 2026-09-07 (dev/TODO.md): phase A
+    # Found by the physical-invariant check 2026-09-07: phase A
     # carries 8 A of household against 4.33 A/phase of solar and 6 A/phase of
     # battery discharge, so it nets 2.33 A of export and its headroom is
     # 25 + 2.33 = 27.33 A IF the inverter's output stays where it is - the
@@ -70,8 +70,12 @@ scenarios:
     # harness's even 10.33 A per phase does not. So what is left is a question
     # about the hardware - does an asymmetric inverter place its output where
     # the breaker needs it - not an inverter output counted twice.
-    known_invariant_breaches:
-      - "phase A: 25.97 A drawn against a 25 A breaker"
+    #
+    # Settled 2026-09-24 (Anže): it does - his asymmetric inverter "puts/pulls
+    # power on the phases in a way to always try to balance them on the grid".
+    # The harness now places it that way (run_tests.place_asymmetric_output):
+    # 11.33 / 10.33 / 9.33 A, every phase at 24.97 A, so the known breach of
+    # phase A (25.97 A on the even spread) is gone. The allocation is unchanged.
     site:
       voltage: 230
       main_breaker_rating: 25
