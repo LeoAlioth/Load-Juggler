@@ -292,6 +292,18 @@ def test_solar_series_output_subtracts_own_battery():
     assert member_solar(m, V) == 10.0 * V - 500
 
 
+def test_solar_off_grid_parallel_output_subtracts_own_battery():
+    # Off-grid the output is the site's supply: 2300 W out, 2300 W of it from
+    # the battery at night is 0 W of solar, not 2300 W; by day, charging
+    # 1000 W beside a 2300 W output, the panels make 3300 W.
+    out = PhaseValues(a=10.0, b=None, c=None)
+    night = _battery(soc=80, power=10.0 * V, output=out, topology="parallel")
+    day = _battery(soc=80, power=-1000, output=out, topology="parallel")
+    night.off_grid = day.off_grid = True
+    assert member_solar(night, V) == 0.0
+    assert member_solar(day, V) == 10.0 * V + 1000
+
+
 def test_solar_mixed_fleet_sums_per_member():
     par = _member("p", output=PhaseValues(a=10.0, b=None, c=None), topology="parallel")
     ser = _battery(

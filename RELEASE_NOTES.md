@@ -1,5 +1,13 @@
 # Release Notes
 
+## 2.1.4
+
+### Bug Fixes
+
+- **Off-grid with inverter output sensors and *Parallel* wiring, the battery's discharge is no longer published as solar**: with no grid, an inverter's output is everything the site draws from it - solar plus the battery's discharge, less its charging - whichever wiring is chosen. On *Series* wiring Load Juggler took the battery's power off the output to find the solar production; on *Parallel* - the setup form's default - it took the whole output as solar. At night on a 6 kW inverter with the car charging, the Solar Power sensor read **5992 W**, all of it from the battery, and by day it read the same 5992 W with 3000 W from the panels; the same figure went into long-term statistics, the per-inverter solar sensor, the Overview and the forecast accuracy measurement. It also reached charging: with the battery above its SOC target, a *Solar Only* or *Solar Priority* load may use the battery's spare discharge, bounded by what the inverter has left, and with the discharge counted once as solar and again as discharge, the inverter's output was set against its rating twice: past half the rating the battery had nothing more to offer, and the load was held at whatever it was drawing - in a closed-loop test a Solar Only car settled at **12.4 A** at night (18.0 A by day) where *Series* wiring gave it **21.7 A**. Off-grid both wirings now take the battery's power off the output: the sensor reads 0 W at night and 3000 W by day, and the Solar Only car gets 21.7 A on either wiring. Without a battery power sensor nothing tells the panels' share from the battery's, and the whole output is still reported as solar, as it always was on *Series* wiring - add a battery power sensor or a solar production sensor. Grid-tied sites are not affected.
+
+---
+
 ## 2.1.3
 
 ### Bug Fixes

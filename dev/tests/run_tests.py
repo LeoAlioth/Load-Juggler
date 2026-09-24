@@ -325,14 +325,11 @@ def apply_feedback_adjustment(site):
         if site.is_off_grid and site.inverter_output_per_phase is not None:
             # Off-grid: export is always 0 - production's _derive_solar_production
             # uses the inverter output instead.
-            # Series: inverter_output = solar + battery_power → solar = output − battery.
-            # Parallel: inverter output IS solar.
+            # Either wiring: inverter_output = solar + battery_power → solar =
+            # output − battery (production's fleet.member_solar off-grid).
             inv_watts = site.inverter_output_per_phase.total * site.voltage
-            if site.wiring_topology == 'series':
-                bp = site.battery_power if site.battery_power is not None else 0
-                site.solar_production_total = max(0, inv_watts - bp)
-            else:
-                site.solar_production_total = max(0, inv_watts)
+            bp = site.battery_power if site.battery_power is not None else 0
+            site.solar_production_total = max(0, inv_watts - bp)
         else:
             site.solar_production_total = site.export_current.total * site.voltage
             if site.battery_power is not None and site.battery_power < 0:
