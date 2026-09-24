@@ -626,6 +626,19 @@ def solar_is_unsplit(member) -> bool:
     )
 
 
+def solar_is_metered(members) -> bool:
+    """No member knows its own production - no production sensor, no output
+    sensors - so the site's solar is worked out from the meter
+    (hub_calculation): the export with our loads handed back, plus what the
+    batteries are charging. That export carries the batteries' DISCHARGE as
+    well - a car the battery covers comes back as export - so the figure is
+    not production: 3 kW of sun read 6992 W with the battery carrying the car
+    (dev/tests/test_gridtied_inverter_pool.py). The engine keeps it; the
+    publisher takes the discharge back off (hub_result._build_hub_result),
+    and with a battery's power unread it cannot (solar_is_assumed)."""
+    return not any(m.has_solar_entity or m.output is not None for m in members)
+
+
 def member_solar_published(member, voltage: float) -> Optional[float]:
     """One member's production for PUBLICATION - None while its own figure is
     the invented 0 W (``solar_assumed``) or an output nothing splits from its
@@ -643,7 +656,9 @@ def member_solar_published(member, voltage: float) -> Optional[float]:
 
 def solar_is_assumed(members) -> bool:
     """True when any member's production figure is not a measurement: an
-    invented 0 W, or an off-grid output nothing splits from its battery.
+    invented 0 W, or an off-grid output nothing splits from its battery - or
+    the site's, worked out from the meter (solar_is_metered) beside a battery
+    whose power is unread, whose discharge nothing takes back off the export.
 
     The fleet total sums every member, so one fabricated term makes the whole
     sum fabricated - the same rule the grid phases follow, and for the same
@@ -652,7 +667,10 @@ def solar_is_assumed(members) -> bool:
     unknowable in BOTH directions (the array could be idle or at full output),
     which is an argument for silence rather than against it.
     """
-    return any(m.solar_assumed or solar_is_unsplit(m) for m in members)
+    return any(m.solar_assumed or solar_is_unsplit(m) for m in members) or (
+        solar_is_metered(members)
+        and any(m.has_battery and m.battery_power is None for m in members)
+    )
 
 
 def solar_is_measured(members) -> bool:

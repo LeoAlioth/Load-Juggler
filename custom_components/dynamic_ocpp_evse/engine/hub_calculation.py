@@ -1393,6 +1393,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         # Same split for solar: the calculation keeps the conservative 0 W of a
         # dead production sensor, the published measurement does not.
         solar_assumed=fleet.solar_is_assumed(members),
+        solar_metered=fleet.solar_is_metered(members),
         hub_status=hub_status,
         hub_warnings=hub_warnings,
         excess_available=excess_on,
