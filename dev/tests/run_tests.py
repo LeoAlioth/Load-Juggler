@@ -772,6 +772,14 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
 
             eid = load.entity_id
             draw = max(load.l1_current, load.l2_current, load.l3_current)
+            # Like the HA layer, the window runs only while Charging and opens
+            # afresh when charging starts: a 0 A held while waiting or
+            # suspended is not a settled draw.
+            if load.connector_status != "Charging":
+                settle_last_draw.pop(eid, None)
+                settle_count[eid] = 0
+                load.draw_settled = False
+                continue
             prev = settle_last_draw.get(eid)
             if prev is not None and abs(draw - prev) <= SETTLE_TOLERANCE:
                 settle_count[eid] = settle_count.get(eid, 0) + 1

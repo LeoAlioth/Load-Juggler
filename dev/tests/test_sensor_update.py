@@ -651,6 +651,10 @@ async def test_cycle_counted_engine_state_advances_once_per_cycle(
         }
         hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["loads"].append(extra.entry_id)
         hass.data[DOMAIN]["load_allocations"][extra.entry_id] = 0
+        # Charging like the first: the settle window runs only while energy
+        # flows (dev/tests/test_start_settle.py), and without a status sensor
+        # these two read Unknown.
+        hass.states.async_set(f"sensor.charger_{suffix}_status_connector", "Charging")
 
     # Two cycles with an unchanged measured draw: the first seeds the counter,
     # the second is the first one that can increment it.
