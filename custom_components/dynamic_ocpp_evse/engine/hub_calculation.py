@@ -111,6 +111,13 @@ def _managed_phase_draws(site, ema_inputs=None):
     the rig, 2026-09-08: a station hunting 299-828 W against a 600 W target,
     seven register writes a minute).
 
+    With ``ema_inputs`` every call ADVANCES that EMA, so it is taken exactly
+    once per site cycle (``run_hub_calculation``) and the one result is handed
+    to every view that subtracts it. Two calls a cycle ran the draw's filter
+    at twice the grid's speed: during a ramp the draw term led the grid term,
+    the household read low by the difference and the permit overshot the
+    allowance (dev/tests/test_managed_draw_smoothing.py).
+
     Callers that work on the RAW grid basis must leave ``ema_inputs`` unset and
     get raw draws, so their pairing stays consistent too -
     ``engine/hub_result.py`` adds draws back to ``raw_phases`` and wants raw
@@ -139,7 +146,7 @@ def _managed_phase_draws(site, ema_inputs=None):
     ]
 
 
-def _charge_control_view(site, consumption, export, battery_power, ema_inputs=None):
+def _charge_control_view(site, consumption, export, battery_power, draws):
     """The site as the battery CHARGE CONTROLLER reads it.
 
     Same loads, same allowance, same feedback subtraction as ``site`` - only
@@ -153,10 +160,11 @@ def _charge_control_view(site, consumption, export, battery_power, ema_inputs=No
     fast, 1 with the view scoped here - dev/tests/test_charge_control_loop.py).
 
     Built AFTER ``_apply_feedback_loop`` ran on the site, so the same
-    managed-draw subtraction is applied to these phases here; off-grid the
-    phases are synthetic zeros on both views and there is nothing to subtract.
+    managed-draw subtraction is applied to these phases here - ``draws`` is the
+    very list the site view subtracted, not a second smoothing of it; off-grid
+    the phases are synthetic zeros on both views and there is nothing to
+    subtract.
     """
-    draws = _managed_phase_draws(site, ema_inputs)
     if not site.is_off_grid and any(d > 0 for d in draws):
         consumption, export = grid_without_managed_draws(consumption, export, draws)
     return replace(
@@ -204,13 +212,14 @@ def _supply_per_phase(raw_phases, grid_assumed, has_grid_cts, members,
     return values, (False, False, False), "the inverter output"
 
 
-def _apply_feedback_loop(site, solar_is_derived, members, ema_inputs=None):
+def _apply_feedback_loop(site, solar_is_derived, members, total_draws):
     """Subtract load draws from grid readings to prevent double-counting.
 
     Grid CTs measure total site current INCLUDING load draws. Without this
     adjustment, the engine double-counts load power as both 'consumption'
     and 'load demand'. Modifies site.consumption and site.export_current
-    in-place.
+    in-place. ``total_draws`` is this cycle's smoothed per-phase managed draw
+    from ``_managed_phase_draws``.
     """
     # Off-grid: the grid phase readings are synthetic zeros (no CTs exist) and
     # never contained the load draws - subtracting them here would fabricate
@@ -219,7 +228,6 @@ def _apply_feedback_loop(site, solar_is_derived, members, ema_inputs=None):
     if site.is_off_grid:
         return
 
-    total_draws = _managed_phase_draws(site, ema_inputs)
     if not any(d > 0 for d in total_draws):
         return
 
@@ -1195,16 +1203,19 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     )
 
     # --- Feedback loop ---
-    _apply_feedback_loop(site, solar_is_derived, members, ema_inputs)
+    # The managed-draw EMA advances HERE, once per cycle, like every other
+    # input filter - and both views subtract this one result.
+    managed_draws = _managed_phase_draws(site, ema_inputs)
+    _apply_feedback_loop(site, solar_is_derived, members, managed_draws)
     ctrl_site = _charge_control_view(
         site,
         ctrl_consumption_pv,
         ctrl_export_pv,
         float(battery_power_ctrl) if battery_power_ctrl is not None else None,
         # Its phases come from the DIRECTIONAL smoothers, but the draw it
-        # subtracts is the same smoothed term the site view used - one EMA
-        # state, so the two views cannot disagree about what our loads draw.
-        ema_inputs,
+        # subtracts is the same smoothed term the site view used - one value,
+        # so the two views cannot disagree about what our loads draw.
+        managed_draws,
     )
 
     excess_on, margin = _apply_excess_latch(hub_runtime, site, excess_hysteresis)
