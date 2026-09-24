@@ -478,3 +478,74 @@ scenarios:
         # 6000 W / 230 V = 26.09 A of inverter, less the 4.35 A house = 21.7 A.
         # With the car's own draw left in the household it settled at 10.9 A.
         allocated: 21.7
+
+  # Off-grid, no inverter output sensors, and no production being counted: a
+  # battery-only site (no solar sensor), and a solar sensor reading 0 W at
+  # night. Solar + battery is still the site's whole supply - here all of it
+  # battery - so the house is the battery's discharge less the managed draw.
+  # Before 2026-09-24 the household total was built only from a solar reading
+  # above 0; without it the household fell back to the synthetic 0 A grid
+  # phase, the car was given the whole 26.1 A and the inverter ran 1003 W -
+  # the house - over its rating.
+  - name: "off-grid-battery-only-charger-gets-inverter-rating-less-house"
+    description: "Off-grid, battery only (no solar sensor), no output sensors: 6kW inverter, 1kW house → charger 21.7A, not the whole 26.1A"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 20000
+      inverter_max_power: 6000
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+        operating_mode: "Standard"
+    expected:
+      car:
+        # 6000 W / 230 V = 26.09 A of inverter, less the 4.35 A house = 21.7 A.
+        # With the house left out of the household it got 26.1 A.
+        allocated: 21.7
+
+  - name: "off-grid-solar-sensor-at-night-charger-gets-inverter-rating-less-house"
+    description: "Off-grid, solar sensor reading 0 W at night, no output sensors: 6kW inverter, 1kW house → charger 21.7A, not the whole 26.1A"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 0
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 20000
+      inverter_max_power: 6000
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+        operating_mode: "Standard"
+    expected:
+      car:
+        # The same 21.7 A as the daytime twin above: 0 W of solar is a reading,
+        # and solar + battery is still the supply the house is taken from.
+        allocated: 21.7

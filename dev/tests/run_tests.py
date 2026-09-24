@@ -293,7 +293,8 @@ def apply_feedback_adjustment(site):
     get_site_phase_draw()) to recover the true household consumption/export
     before load was drawing.
     In derived mode, recalculates solar_production_total from adjusted export.
-    In dedicated solar entity mode, computes household_consumption_total instead.
+    In dedicated solar entity mode, computes household_consumption_total instead
+    - and off-grid with no output sensors whenever the battery's power is known.
     """
     # Use phase mapping to get site-phase draws (A, B, C)
     total_phase_a = total_phase_b = total_phase_c = 0.0
@@ -336,22 +337,31 @@ def apply_feedback_adjustment(site):
             site.solar_production_total = site.export_current.total * site.voltage
             if site.battery_power is not None and site.battery_power < 0:
                 site.solar_production_total += abs(site.battery_power)
+
+    # household_consumption_total via energy balance: household = solar +
+    # battery_power - export. Off-grid no draw was put back onto the export
+    # above, so solar + battery still carries the loads' own draw - take it
+    # off here, as production's _apply_household_figures does. Off-grid with no
+    # output sensors that balance is the whole supply, built whenever the
+    # battery's power is known - at night (solar 0 W) and with no solar sensor
+    # too; elsewhere only from a dedicated solar entity reading above 0.
+    if site.is_off_grid and site.inverter_output_per_phase is None:
+        build_total = site.battery_power is not None or site.battery_soc is None
     else:
-        # Dedicated solar entity mode: compute household_consumption_total
-        # via energy balance: household = solar + battery_power - export.
-        # Off-grid no draw was put back onto the export above, so solar +
-        # battery still carries the loads' own draw - take it off here, as
-        # production's _apply_household_figures does.
-        if site.solar_production_total > 0:
-            export_power = site.export_current.total * site.voltage
-            bp = float(site.battery_power) if site.battery_power is not None else 0
-            managed_power = (
-                (total_l1 + total_l2 + total_l3) * site.voltage
-                if site.is_off_grid else 0.0
-            )
-            site.household_consumption_total = max(
-                0, site.solar_production_total + bp - export_power - managed_power
-            )
+        build_total = (
+            not site.solar_is_derived and site.solar_production_total > 0
+        )
+    if build_total:
+        export_power = site.export_current.total * site.voltage
+        bp = float(site.battery_power) if site.battery_power is not None else 0
+        managed_power = (
+            (total_l1 + total_l2 + total_l3) * site.voltage
+            if site.is_off_grid else 0.0
+        )
+        site.household_consumption_total = max(
+            0, (site.solar_production_total or 0) + bp - export_power
+            - managed_power
+        )
 
     # Per-phase household from inverter output entities
     household = compute_household_per_phase(site, site.wiring_topology)
