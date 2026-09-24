@@ -428,14 +428,14 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
     phase_b_limit = max(0, site.main_breaker_rating - site.consumption.b - buffer_per_phase) if site.consumption.b is not None else 0
     phase_c_limit = max(0, site.main_breaker_rating - site.consumption.c - buffer_per_phase) if site.consumption.c is not None else 0
 
-    # If grid charging not allowed (and has battery), limited to export only
+    # Grid charging not allowed (and has battery): no import at all. This used
+    # to cap each phase at its export - but the export is inverter output, and
+    # the inverter pool offers it already (_calculate_inverter_limit), so it
+    # was counted twice: 5 kW of sun, a 1 kW house and a 2 kW battery offered
+    # a car 7.36 kW and it imported 1.36 kW with grid charging off
+    # (dev/tests/scenarios/features/test_grid_inverter_split.yaml).
     if not site.allow_grid_charging and site.battery_soc is not None:
-        if site.export_current.a is not None:
-            phase_a_limit = min(phase_a_limit, site.export_current.a)
-        if site.export_current.b is not None:
-            phase_b_limit = min(phase_b_limit, site.export_current.b)
-        if site.export_current.c is not None:
-            phase_c_limit = min(phase_c_limit, site.export_current.c)
+        phase_a_limit = phase_b_limit = phase_c_limit = 0
 
     constraints = PhaseConstraints.from_per_phase(phase_a_limit, phase_b_limit, phase_c_limit)
 
@@ -526,13 +526,16 @@ def _off_grid_held_supply(site: SiteContext) -> Optional[tuple[float, float, flo
     return tuple(draws)
 
 
-def _build_inverter_constraints(site: SiteContext, total_pool: float) -> PhaseConstraints:
+def _build_inverter_constraints(
+    site: SiteContext, total_pool: float, per_phase_pool=None
+) -> PhaseConstraints:
     """Build PhaseConstraints for inverter-limited power (solar/battery/excess).
 
     For ASYMMETRIC inverters: power is a flexible pool, per-phase capped by
     inverter_max_power_per_phase minus household.
-    For SYMMETRIC inverters: power is fixed per-phase (total_pool / num_phases),
-    capped by inverter_max_power_per_phase.
+    For SYMMETRIC inverters: power is fixed per-phase - ``per_phase_pool``
+    ``(a, b, c)`` when the caller knows where it is, else total_pool /
+    num_phases - capped by inverter_max_power_per_phase.
     """
     max_per_phase = site.inverter_max_power_per_phase / site.voltage if site.inverter_max_power_per_phase else float('inf')
     hh_a, hh_b, hh_c = _get_household_per_phase(site)
@@ -545,34 +548,65 @@ def _build_inverter_constraints(site: SiteContext, total_pool: float) -> PhaseCo
         # Same per-phase capacity rule as the asymmetric branch: the inverter
         # phase already serving the household can only hand the remainder to
         # loads.
-        per_phase = total_pool / site.num_phases
-        phase_a = min(per_phase, max(0, max_per_phase - hh_a)) if site.consumption.a is not None else 0
-        phase_b = min(per_phase, max(0, max_per_phase - hh_b)) if site.consumption.b is not None else 0
-        phase_c = min(per_phase, max(0, max_per_phase - hh_c)) if site.consumption.c is not None else 0
+        even = total_pool / site.num_phases
+        pool_a, pool_b, pool_c = per_phase_pool or (even, even, even)
+        phase_a = min(pool_a, max(0, max_per_phase - hh_a)) if site.consumption.a is not None else 0
+        phase_b = min(pool_b, max(0, max_per_phase - hh_b)) if site.consumption.b is not None else 0
+        phase_c = min(pool_c, max(0, max_per_phase - hh_c)) if site.consumption.c is not None else 0
         return PhaseConstraints.from_per_phase(phase_a, phase_b, phase_c)
 
 
 def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     """
-    Calculate inverter power limit (solar + battery for Standard mode).
+    The inverters' half of the physical pool: their net supply beyond the house.
 
     Returns PhaseConstraints for ALL phase combinations.
     Solar and battery share the same inverter, so per-phase and total inverter limits
     apply to their combined output.
 
-    Battery discharge is added when SOC >= battery_soc_min.
+    THE IDENTITY every configuration satisfies: what our loads may be offered
+    is the supply the site can reach less the household,
 
-    In derived mode (solar from grid CT): solar_production_total includes battery
-    charge redirect (added by feedback loop). Only REMAINING discharge capacity
-    is added here to avoid double-counting.
+        import allowance + solar + usable discharge rating − household,
 
-    With dedicated solar entity: solar_current is the raw inverter output.
-    battery_power may not be available or embedded, so use full max_discharge.
+    and the physical pool reaches it as two halves, BOTH read with our loads
+    off (the feedback loop's reconstruction). The grid half is the allowance
+    less the import the site would show (``_calculate_grid_limit``). This
+    half is the export the site would show plus the battery's headroom:
 
-    Off-grid (with the battery's flow known) the pool is instead what the site
-    can supply beyond the household: the supply our loads already hold, plus
-    the battery's discharge rating, less the battery flow in flight - see the
-    branch below.
+        export with our loads off + (discharge rating − battery flow)
+
+    - the NET supply the inverters put out beyond the house. By the site's
+    energy balance that is solar + rating − household less whatever of the
+    house the grid carries, which the grid half has already counted.
+
+    It used to be GROSS - solar + (rating − discharge in flight) - and that
+    only lands on the identity where "solar" is itself the export-derived
+    figure (no output sensors, no solar sensor: after the feedback loop it is
+    export + charge). Everywhere else the inverter's output was counted twice
+    (dev/tests/scenarios/features/test_grid_inverter_split.yaml,
+    dev/tests/test_gridtied_inverter_pool.py). With a dedicated solar sensor or
+    a PV inverter's output sensor, the production the house already takes was
+    offered again - a 5 kW pool where 4 kW is right, 1 kW over a 0 W import
+    allowance, and past the breaker where the breaker binds. On a series
+    hybrid read through its output sensor, whose derived solar is output −
+    battery, the discharge in flight carries our own loads, so a battery-fed
+    car's draw was booked as spent: at a 0 W allowance it was cut and hunted,
+    at 2 kW its pool shrank one-for-one with its draw. Off-grid the export is
+    the managed draw our loads hold (``_off_grid_held_supply``, which stands
+    where the export stands grid-tied) - the same formula, which 8d3553e
+    introduced there.
+
+    Signed flow: a charging battery's charge comes back to our loads. Below the
+    SOC minimum the rating drops out and the flow in flight still comes off, so
+    our loads get the sun's surplus and never the pack.
+
+    With the battery's flow unread, the flow is taken as 0 - the same the
+    household total already assumes (engine/hub_calculation.
+    _apply_household_figures) - and the rating is offered only beside a
+    measured solar figure; on a derived one it never was (hub_result mirrors
+    that gate). Off-grid with the flow unread there is no export to start from
+    either, and the gross sum stays.
 
     For ASYMMETRIC inverters: Solar+battery power can be allocated to any phase.
     For SYMMETRIC inverters: Solar+battery power is fixed per-phase.
@@ -596,65 +630,52 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
         )
         return PhaseConstraints.zeros()
 
-    # Calculate solar current
-    solar_current = site.solar_production_total / site.voltage if site.solar_production_total else 0
-
-    # Calculate battery discharge current (if available)
     dischargeable = bool(
         site.battery_soc is not None
         and site.battery_soc >= (site.battery_soc_min or 0)
         and site.battery_max_discharge_power
     )
-    battery_current = 0
-    if dischargeable:
-        if site.solar_is_derived and site.battery_power is not None:
-            # Derived mode: solar_production_total already includes battery charge
-            # redirect (charge power added back in feedback loop). Only add the
-            # remaining discharge capacity to avoid double-counting.
-            # battery_power: positive=discharging, negative=charging
-            actual_discharge = max(0, site.battery_power) / site.voltage
-            max_discharge = site.battery_max_discharge_power / site.voltage
-            battery_current = max(0, max_discharge - actual_discharge)
-        elif not site.solar_is_derived:
-            # Dedicated solar entity: solar_current is raw inverter output,
-            # battery effect not embedded. Use full max discharge.
-            battery_current = site.battery_max_discharge_power / site.voltage
-
-    # Total inverter output (solar + battery)
-    total_inverter_current = solar_current + battery_current
+    rating = site.battery_max_discharge_power / site.voltage if dischargeable else 0.0
+    if site.battery_power is None and site.solar_is_derived:
+        rating = 0.0
 
     held = _off_grid_held_supply(site)
-    if held is not None:
-        # OFF-GRID replaces that sum. Everything the site draws, the household
-        # included, comes out of this one pool, so what our loads can have is
-        # the supply capacity less the household: solar + discharge rating −
-        # household. By the site's energy balance (solar + battery flow =
-        # household + our draws) that is the supply our loads already hold,
-        # plus the rating, less the battery flow in flight (signed: a charging
-        # battery's charge comes back to the loads).
-        #
-        # solar + (rating − discharge in flight) is wrong both ways off-grid.
-        # The discharge in flight carries our loads' own draw, so a
-        # battery-limited car saw its own supply as spent and hunted
-        # (dev/tests/scenarios/features/test_off_grid.yaml). And nothing took
-        # the household off, so a charging battery - or a dedicated solar
-        # sensor, which adds the full rating - offered our loads the share the
-        # house was already using.
-        #
-        # Below the SOC minimum the rating drops out and the flow in flight
-        # still comes off: our loads get the solar surplus, never the pack
-        # below its floor.
-        rating = (
-            site.battery_max_discharge_power / site.voltage if dischargeable else 0.0
+    per_phase = None
+    if site.is_off_grid and held is None:
+        # Off-grid, battery flow unread: solar + the rating (see above).
+        solar_current = (
+            site.solar_production_total / site.voltage
+            if site.solar_production_total else 0
         )
+        total_inverter_current = solar_current + rating
+    else:
+        flow = site.battery_power / site.voltage if site.battery_power is not None else 0.0
+        headroom = rating - flow
+        exports = (site.export_current.a, site.export_current.b, site.export_current.c)
+        spare = [
+            None if e is None else e + h
+            for e, h in zip(exports, held or (0.0, 0.0, 0.0))
+        ]
         total_inverter_current = max(
-            0.0, sum(held) + rating - site.battery_power / site.voltage
+            0.0, sum(x for x in spare if x is not None) + headroom
+        )
+        # A SYMMETRIC inverter's supply stays on the phase it is on: each phase
+        # offers its own spare plus its even share of the battery's headroom.
+        # Split evenly instead, a phase whose house takes more than its share
+        # of the output was handed the other phases' export on top of the
+        # whole breaker - the inverter output serving that house, credited
+        # again: 15 A of house on A of a 6 kW array, and a car on A was
+        # permitted 24.5 A where 18.7 A was left, 30.8 A through a 25 A
+        # breaker (dev/tests/scenarios/features/test_grid_inverter_split.yaml).
+        per_phase = tuple(
+            0.0 if x is None else max(0.0, x + headroom / site.num_phases)
+            for x in spare
         )
 
     if total_inverter_current == 0:
         return PhaseConstraints.zeros()
 
-    constraints = _build_inverter_constraints(site, total_inverter_current)
+    constraints = _build_inverter_constraints(site, total_inverter_current, per_phase)
 
     # Apply total inverter power limit if configured.
     # Cap combination fields (not per-phase) - same principle as grid limit.
