@@ -1486,8 +1486,10 @@ def _source_limit(
     operating mode and device type never enter here.
 
     Args:
-        base: Current already reserved in pass 1 (accounts for prior deductions
-              from source pools so the ceiling includes the pass-1 allocation).
+        base: Current this load has already taken from the source pools (so
+              the ceiling includes it) - its BOOKED footprint, never its permit
+              base: the two differ while it draws below its minimum, and the
+              pools still hold the difference. See _fill_ceiling.
         excess_ahead: Pass 1 only - the Excess surplus (A on this load's mask)
               left after every higher-ranked load's CLAIM, or None when nothing
               ahead has claimed any (this load is the first consumer). Excess
@@ -1606,7 +1608,7 @@ def _source_limit(
             # Sized on what the claims ahead leave, too: a load about to start
             # (claimed, not yet drawing) has not reduced the pool, and this
             # load must not be handed the surplus it is about to take. In pass
-            # 2 ``base`` is already this load's own reserved share of it.
+            # 2 ``base`` is what this load has already taken of it.
             e_avail = min(e_avail, max(0.0, excess_ahead - base))
         if not _excess_permits(load, site, e_avail):
             return 0
@@ -1713,7 +1715,8 @@ def _allocate_minimums(
     for each load - never more than the minimum reserved; a load that
     draws above its minimum has the surplus deducted in pass 2, where it
     fills. Pass 2 uses ``footprints`` to deduct only the *additional* real
-    draw, so the pools end up reduced by each load's true footprint.
+    draw, so the pools end up reduced by each load's true footprint - and
+    measures each load's fill from it, not from the minimum (_fill_ceiling).
     """
     allocated = {}
     footprints = {}
@@ -1780,6 +1783,45 @@ def _allocate_minimums(
             claims[phase] += claim
 
     return allocated, footprints, physical, solar, excess, ahead
+
+
+def _fill_ceiling(
+    load: LoadContext,
+    site: SiteContext,
+    physical: PhaseConstraints,
+    solar: PhaseConstraints,
+    excess: PhaseConstraints,
+    booked: float,
+    excess_ahead: "Optional[float]" = None,
+) -> float:
+    """The most a fill pass may permit a load: what the pools have left plus
+    what the load itself is booked at in them - capped by its maximum and its
+    mode's source ceiling.
+
+    ``booked`` is what the pools have actually been reduced by for this load
+    so far: its footprint, which sits BELOW the permit base pass 1 reserved
+    while it draws less than its minimum - a car Charging at 0 A or tapering
+    near full (a settled draw), a station that has not started charging yet.
+    The pools still hold the unbooked part of that minimum, so a fill measured
+    from the permit base counted it twice, as reserved and again as free. On
+    a 25 A breaker with an 8 A house, a lone car at 0 A was permitted 23 A in
+    Priority mode (its 6 A minimum on top of the 17 A there was) and its whole
+    32 A in Shared, whose rounds charged the pool only for the car's draw
+    growth - none - and handed the same untouched pool out again every round.
+
+    The caller keeps the permit base as the floor: a car at 0 is still offered
+    its minimum to start on, whatever this returns. And the gap a self-limited
+    load leaves stays in the pools for the loads after it, since only
+    ``booked`` was ever taken from them.
+    """
+    src_max = _source_limit(
+        load, site, solar, excess, base=booked, excess_ahead=excess_ahead
+    )
+    return min(
+        load.max_current,
+        src_max,
+        booked + physical.get_available(load.active_phases_mask),
+    )
 
 
 def _claims_its_permit(load: LoadContext) -> bool:
@@ -1870,14 +1912,15 @@ def _distribute_per_phase_priority(
             load.allocated_current = round(base, 1)
             continue
 
-        phys_avail = remaining.get_available(mask)
-        src_max = _source_limit(
-            load, site, solar_rem, excess_rem, base=base,
+        # Filled from what pass 1 actually took for this load, not from its
+        # permit base - they differ while it draws below its minimum (see
+        # _fill_ceiling). The base stays the floor.
+        booked = min(footprints.get(load.entity_id, 0), base)
+        ceiling = _fill_ceiling(
+            load, site, remaining, solar_rem, excess_rem, booked,
             excess_ahead=ahead.get(load.entity_id),
         )
-        effective_max = min(src_max, load.max_current)
-        additional = max(0, min(effective_max - base, phys_avail))
-        total = base + additional
+        total = max(base, ceiling)
 
         load.allocated_current = round(total, 1)
         # Deduct this load's real footprint, beyond what pass 1 already
@@ -1983,13 +2026,18 @@ def _distribute_per_phase_shared(
     # Batch compute increments to avoid order-dependent solar depletion.
     while True:
         loads_wanting_more = []
+        # Each load's ceiling this round, from what it has actually taken from
+        # the pools rather than from its permit: a settled load's permit grows
+        # while its consumption does not, and measured from the permit its
+        # ceiling rose with it every round (see _fill_ceiling).
+        ceilings = {}
         for c in charging_loads:
-            src_max = _source_limit(
-                c, site, solar_rem, excess_rem, base=allocated[c.entity_id],
+            ceilings[c.entity_id] = _fill_ceiling(
+                c, site, remaining, solar_rem, excess_rem,
+                min(consumed.get(c.entity_id, 0), allocated[c.entity_id]),
                 excess_ahead=ahead.get(c.entity_id),
             )
-            effective_max = min(c.max_current, src_max)
-            if allocated[c.entity_id] >= effective_max:
+            if allocated[c.entity_id] >= ceilings[c.entity_id]:
                 continue
             # A load whose own phases are physically exhausted cannot receive
             # anything, so it is not "wanting more" in any actionable sense.
@@ -2014,12 +2062,10 @@ def _distribute_per_phase_shared(
         batch = []
         for load in loads_wanting_more:
             mask = load.active_phases_mask
-            src_max = _source_limit(
-                load, site, solar_rem, excess_rem, base=allocated[load.entity_id],
-                excess_ahead=ahead.get(load.entity_id),
+            additional = min(
+                per_load_increment,
+                ceilings[load.entity_id] - allocated[load.entity_id],
             )
-            effective_max = min(load.max_current, src_max)
-            additional = min(per_load_increment, effective_max - allocated[load.entity_id])
             additional = max(0, additional)
             batch.append((load, mask, additional))
 

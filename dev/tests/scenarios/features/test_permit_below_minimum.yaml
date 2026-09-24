@@ -1,0 +1,448 @@
+scenarios:
+  # A load drawing LESS than its minimum current - a car Charging at 0 A, or
+  # tapering to 3 A near full - books only that draw in pass 1, while its
+  # permit base is still the whole minimum. Pass 2 used to fill the permit from
+  # the pool as if the whole minimum had been taken, so the unbooked part of it
+  # was counted twice: the permit came out at minimum + everything left, above
+  # what the site can give. The site below is the one it was measured on: a
+  # 25 A breaker, an 8 A house, 17 A for the car.
+  #
+  # `draw_cap` is what the car takes whatever it is offered; once that has
+  # held for a few cycles below the permit, its draw is SETTLED and the pools
+  # are charged the draw instead of the permit.
+  #
+  # Strict and Optimized size every load in ONE pass against what is left, so
+  # they never had the fault; their scenarios guard that.
+
+  - name: "permit-below-min-priority-car-idles-at-0"
+    description: >
+      Priority mode. A car that is Charging but takes 0 A is permitted what the
+      site has - 17 A - not its 6 A minimum on top of it (23 A).
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "priority"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        draw_cap: 0
+    expected:
+      evse_1:
+        allocated: 0.0        # footprint - the car's settled draw
+        available: 17.0       # permit - the allowance, was 23 A
+
+  - name: "permit-below-min-priority-car-tapers-to-3"
+    description: >
+      Priority mode. A car tapering to 3 A books 3 A of its 6 A minimum; its
+      permit is the 14 A left plus those 3 A - 17 A, not 20 A.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "priority"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        draw_cap: 3
+    expected:
+      evse_1:
+        allocated: 3.0
+        available: 17.0       # was 20 A
+
+  - name: "permit-below-min-shared-car-idles-at-0"
+    description: >
+      Shared mode. The equal-split loop charged the pool only for the car's
+      draw growth, which is none, so every round handed the settled car the
+      same untouched pool again until it hit its 32 A maximum. It is permitted
+      the 17 A the site has.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "shared"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        draw_cap: 0
+    expected:
+      evse_1:
+        allocated: 0.0
+        available: 17.0       # was 32 A
+
+  - name: "permit-below-min-shared-car-tapers-to-3"
+    description: >
+      Shared mode. A car tapering to 3 A is permitted 17 A, not its 32 A
+      maximum.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "shared"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        draw_cap: 3
+    expected:
+      evse_1:
+        allocated: 3.0
+        available: 17.0       # was 32 A
+
+  - name: "permit-below-min-strict-car-idles-at-0"
+    description: >
+      Strict mode sizes a load once, against the pool as it stands, so a car
+      at 0 A was always permitted exactly the 17 A the site has.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "strict"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        draw_cap: 0
+    expected:
+      evse_1:
+        allocated: 0.0
+        available: 17.0
+
+  - name: "permit-below-min-strict-car-tapers-to-3"
+    description: >
+      Strict mode, a car tapering to 3 A: permitted the 17 A the site has.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "strict"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        draw_cap: 3
+    expected:
+      evse_1:
+        allocated: 3.0
+        available: 17.0
+
+  - name: "permit-below-min-optimized-car-idles-at-0"
+    description: >
+      Optimized mode sizes a load once, against the pool as it stands, so a
+      car at 0 A was always permitted exactly the 17 A the site has.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "optimized"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        draw_cap: 0
+    expected:
+      evse_1:
+        allocated: 0.0
+        available: 17.0
+
+  - name: "permit-below-min-optimized-car-tapers-to-3"
+    description: >
+      Optimized mode, a car tapering to 3 A: permitted the 17 A the site has.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "optimized"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        draw_cap: 3
+    expected:
+      evse_1:
+        allocated: 3.0
+        available: 17.0
+
+  # The unused gap still goes to the next load. The tapering car keeps a
+  # permit above its draw (so its draw stays settled) while the car behind it
+  # is sized against the 3 A the first one really takes, not its 6 A minimum.
+
+  - name: "permit-below-min-priority-tapering-car-frees-the-gap"
+    description: >
+      Priority mode. The first car tapers to 3 A; the second is sized against
+      that 3 A and takes the 14 A the first leaves - both together draw the
+      17 A the site has. The first car's permit is the pool it saw (8 A left
+      after both minimums) plus its own 3 A: 11 A, not 14 A.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "priority"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        draw_cap: 3
+      - entity_id: "evse_2"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 2
+    expected:
+      evse_1:
+        allocated: 3.0
+        available: 11.0       # was 14 A
+      evse_2:
+        allocated: 14.0       # the gap: 17 A less the first car's 3 A
+        available: 14.0
+
+  - name: "permit-below-min-shared-tapering-car-frees-the-gap"
+    description: >
+      Shared mode. The first car tapers to 3 A; the second takes the 14 A it
+      leaves. The first car's permit stops where the pool it was sized against
+      ran out - 10 A, its minimum plus its equal share of the 8 A the two
+      minimums left - not 14 A: its 6 A minimum was counted as taken while the
+      pool still held 3 A of it.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "shared"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+        draw_cap: 3
+      - entity_id: "evse_2"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 2
+    expected:
+      evse_1:
+        allocated: 3.0
+        available: 10.0       # was 14 A
+      evse_2:
+        allocated: 14.0
+        available: 14.0
+
+  # A car at 0 behind one that takes the whole pool is still OFFERED its
+  # minimum, so it can start: that 6 A is the permit base pass 1 reserved, and
+  # a permit below the minimum would pause the charger instead.
+
+  - name: "permit-below-min-priority-idle-car-keeps-its-minimum"
+    description: >
+      Priority mode. The first car takes all 17 A; the second sits at 0 A and
+      is still permitted its 6 A minimum to start on.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "priority"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+      - entity_id: "evse_2"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 2
+        draw_cap: 0
+    expected:
+      evse_1:
+        allocated: 17.0
+        available: 17.0
+      evse_2:
+        allocated: 0.0
+        available: 6.0        # its minimum, to start on
+
+  - name: "permit-below-min-shared-idle-car-keeps-its-minimum"
+    description: >
+      Shared mode. The car at 0 A is permitted its minimum plus its equal
+      share of what the minimums left while the other car takes the whole
+      17 A - it is never cut below the minimum it needs to start on.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      phase_a_consumption: 8.0
+      distribution_mode: "shared"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 1
+      - entity_id: "evse_2"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Standard"
+        priority: 2
+        draw_cap: 0
+    expected:
+      evse_1:
+        allocated: 17.0
+        available: 17.0
+      evse_2:
+        allocated: 0.0
+        available: 11.0       # was 17 A
+
+  # The same double count, in the SOLAR pool: pass 1 took only the car's draw
+  # from it too, and a Solar Only ceiling of minimum + surplus left permitted a
+  # car at 0 A more than the sun gives - the difference would be grid import.
+
+  - name: "permit-below-min-priority-solar-only-car-idles-at-0"
+    description: >
+      Priority mode, Solar Only, 10 A of surplus on a 35 A breaker. A car at
+      0 A is permitted the 10 A surplus, not its 6 A minimum on top of it.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      phase_a_consumption: 0.0
+      solar_production: 2300  # 10 A at 230 V
+      distribution_mode: "priority"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Solar Only"
+        priority: 1
+        draw_cap: 0
+    expected:
+      evse_1:
+        allocated: 0.0
+        available: 10.0       # was 16 A
+
+  - name: "permit-below-min-shared-solar-only-car-idles-at-0"
+    description: >
+      Shared mode, Solar Only, 10 A of surplus. A car at 0 A is permitted the
+      10 A surplus - the loop used to raise its solar ceiling with every round
+      because the surplus never shrank.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      phase_a_consumption: 0.0
+      solar_production: 2300  # 10 A at 230 V
+      distribution_mode: "shared"
+    loads:
+      - entity_id: "evse_1"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        operating_mode: "Solar Only"
+        priority: 1
+        draw_cap: 0
+    expected:
+      evse_1:
+        allocated: 0.0
+        available: 10.0       # was 32 A
+
+  # Not only cars, and not only once settled: a power station's footprint is
+  # ALWAYS its measured draw, so every cycle it draws below its minimum - told
+  # to charge but not started yet, or held off by its own gate - it was
+  # permitted its minimum on top of what the site has.
+
+  - name: "permit-below-min-priority-station-draws-nothing"
+    description: >
+      Priority mode, a 16 A breaker with an 8 A house. A 200-2400 W station
+      that is drawing nothing is permitted the 8 A the site has, not its
+      0.87 A minimum on top of it.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 16
+      phase_a_consumption: 8.0
+      distribution_mode: "priority"
+    loads:
+      - entity_id: "station"
+        device_type: "power_station"
+        operating_mode: "Standard"
+        min_current: 0.87
+        max_current: 10.43
+        phases: 1
+        priority: 1
+        utilization: 0.0
+    expected:
+      station:
+        allocated: 0.0
+        available: 8.0        # was 8.9 A
+
+  - name: "permit-below-min-shared-station-draws-nothing"
+    description: >
+      Shared mode, the same station drawing nothing: permitted the 8 A the
+      site has, where the loop used to feed it to its full 10.43 A rating.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 16
+      phase_a_consumption: 8.0
+      distribution_mode: "shared"
+    loads:
+      - entity_id: "station"
+        device_type: "power_station"
+        operating_mode: "Standard"
+        min_current: 0.87
+        max_current: 10.43
+        phases: 1
+        priority: 1
+        utilization: 0.0
+    expected:
+      station:
+        allocated: 0.0
+        available: 8.0        # was 10.4 A
