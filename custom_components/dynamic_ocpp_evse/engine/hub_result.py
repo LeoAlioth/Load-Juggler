@@ -647,7 +647,6 @@ def _build_hub_result(
     site,
     raw_phases,
     voltage,
-    main_breaker_rating,
     battery_soc,
     battery_soc_min,
     battery_max_discharge_power,
@@ -745,17 +744,6 @@ def _build_hub_result(
         for c in site.loads
         if c.draw_blind and c.dynamic_control and c.draw_estimate
     }
-
-    # Grid available power (based on consumption after feedback loop).
-    # Off-grid there is no grid feed at all - headroom is 0 by definition.
-    if site.is_off_grid:
-        grid_headroom = 0.0
-    else:
-        grid_headroom = sum(
-            max(0, main_breaker_rating - c) * voltage
-            for c in (site.consumption.a, site.consumption.b, site.consumption.c)
-            if c is not None
-        )
 
     # Battery rated discharge power (gated by SOC >= minimum). This is the
     # battery's capability, not what is spare right now - see battery_remaining.
@@ -856,18 +844,6 @@ def _build_hub_result(
         household_power = round(_identity_household, 0)
         household_from_solar = True
 
-    # Cap grid headroom by max grid import power limit (if configured)
-    if site.max_grid_import_power is not None:
-        post_feedback_import = sum(
-            c * voltage
-            for c in (site.consumption.a, site.consumption.b, site.consumption.c)
-            if c is not None
-        )
-        grid_headroom = min(
-            grid_headroom,
-            max(0, site.max_grid_import_power - max(0, post_feedback_import)),
-        )
-
     # Solar power available to loads = solar production - household loads
     # (household_consumption_total is set after feedback loop, so it excludes load draws)
     solar_available = 0
@@ -891,38 +867,24 @@ def _build_hub_result(
     current_battery_discharge = max(0, battery_power or 0)
     battery_remaining = max(0, battery_rated_discharge - current_battery_discharge)
 
-    # Site remaining power = grid import headroom + power the inverter can
-    # still source from solar and battery for managed loads. On an off-grid
-    # system grid_headroom is 0, so this is purely inverter-sourced; on a
-    # grid-tied system it is the sum of both paths.
-    #
-    # Two ceilings apply, and we take the lower:
-    #  - Source: solar surplus + spare battery discharge.
-    #  - Inverter: rated capacity minus what the inverters are *already*
-    #    outputting. That output is MEASURED when output entities exist and
-    #    otherwise estimated topology-aware per fleet member - the old
-    #    solar + battery_power form was the series (DC-coupled) model only, and
-    #    on a parallel (AC-coupled) site it understated the output by the whole
-    #    battery charge power, advertising headroom the site does not have.
-    #
-    #    The figure is site.inverter_output_total - captured at READ time,
-    #    before the feedback loop, the same one the calculator's coverage gate
-    #    consumes (#17). Recomputing it here from the post-feedback scalars
-    #    inflated the estimate on a derived-solar site by the managed draws the
-    #    feedback loop folds back into solar, understating Site Remaining Power
-    #    by exactly the running loads' draw (issue #48).
-    inverter_sourced = solar_available + battery_remaining
+    # Battery Remaining Power is bounded by the inverter: the battery cannot
+    # deliver more to loads than the inverter can pass - its rating less what
+    # it is already outputting. That output is MEASURED when output entities
+    # exist and otherwise estimated topology-aware per fleet member, and it is
+    # site.inverter_output_total - captured at READ time, before the feedback
+    # loop, the same one the calculator's coverage gate consumes (#17).
+    # Recomputing it here from the post-feedback scalars inflated the estimate
+    # on a derived-solar site by the managed draws the feedback loop folds back
+    # into solar (issue #48).
     if site.inverter_max_power:
         current_inverter_output = (
             site.inverter_output_total
             if site.inverter_output_total is not None
             else 0.0
         )
-        # Headroom is clamped to the inverter's own rating: a negative measured
-        # output (a cascaded inverter feeding power IN through the load port)
-        # means the site is absorbing, but it does NOT raise this inverter's AC
-        # output capability above its nameplate - so it cannot buy extra
-        # headroom. Above the rating the headroom is 0, as before.
+        # Clamped to the inverter's own rating: a negative measured output (a
+        # cascaded inverter feeding power IN through the load port) does NOT
+        # raise this inverter's AC output capability above its nameplate.
         inverter_headroom = max(
             0.0,
             min(
@@ -930,58 +892,51 @@ def _build_hub_result(
                 site.inverter_max_power - current_inverter_output,
             ),
         )
-        inverter_sourced = min(inverter_sourced, inverter_headroom)
-        # Battery Remaining Power is likewise bounded by the inverter: the
-        # battery cannot deliver more to loads than the inverter can pass.
         battery_remaining = min(battery_remaining, inverter_headroom)
-    total_site_available = grid_headroom + inverter_sourced
 
-    # Per-phase remaining current (A) = total remaining current on that phase,
-    # i.e. grid + inverter. Each phase gets its share of grid headroom
-    # (proportional to its raw breaker headroom, preserving asymmetric
-    # loading) plus an equal share of inverter-sourced power. Summed across
-    # the active phases this matches Site Remaining Power / voltage.
+    # Site Remaining Power, Remaining Current A/B/C and the grid and inverter
+    # remaining figures are the PHYSICAL POOL the distribution sized the loads
+    # from (calculations.target_calculator._calculate_site_limit), read from
+    # its snapshot - never worked out a second time. They used to be: grid
+    # breaker headroom + solar less the house + battery discharge not yet
+    # flowing, capped at the inverter's rating less its current output. That
+    # disagreed with the pool on 95 of 223 scenarios - 22 kW over it with
+    # Allow Grid Charging off (the breaker counted as headroom the engine
+    # never grants), up to 15 kW under it where the output our own loads were
+    # drawing was booked as spent (dev/tests/test_site_remaining_power.py).
+    # The pool is what the loads may be offered with their own draw handed
+    # back, so a running charger's draw is inside it, as it always was for the
+    # grid half.
     #
-    # A phase is gated on whether IT exists (consumption is not None), never on
-    # its index versus the phase count: the site's phases need not be a prefix
-    # of A/B/C - a B+C-only installation is explicitly supported. Indexing by
-    # count would zero phase C and hand phase A (which does not exist) the
-    # inverter share.
-    phase_cons = (site.consumption.a, site.consumption.b, site.consumption.c)
-    num_phases = site.num_phases or 1
-    raw_phase_headroom = [
-        max(0, main_breaker_rating - c) if c is not None else 0.0
-        for c in phase_cons
-    ]
-    total_raw_headroom = sum(raw_phase_headroom)
-    grid_current = grid_headroom / voltage if voltage else 0
-    inverter_current_share = (
-        inverter_sourced / voltage / num_phases if voltage else 0
-    )
-    available_per_phase = []
-    for i, raw_hr in enumerate(raw_phase_headroom):
-        if phase_cons[i] is None:
-            available_per_phase.append(0)
-            continue
-        if total_raw_headroom > 0:
-            grid_part = grid_current * (raw_hr / total_raw_headroom)
-        else:
-            grid_part = 0
-        available_per_phase.append(round(grid_part + inverter_current_share, 1))
+    # Remaining Current A/B/C is what a single-phase load on that phase could
+    # be offered - its own phase within the site total (PhaseConstraints.
+    # get_available) - so where a site-wide limit binds (an import allowance,
+    # the inverter's rating) the three no longer add up to the total: each of
+    # them can have it, not all of them at once. A phase the site does not
+    # have reads 0.
+    pools = site.pool_snapshot or {}
 
-    # Per-pool remaining current (A) - the headroom each source still offers to
-    # managed loads, broken out for diagnostics. grid + inverter is the total
-    # remaining current available to loads. solar and battery are the two parts
-    # that feed the inverter pool: the inverter figure is their sum capped by
-    # the inverter's own rated headroom, so it can be smaller than solar +
-    # battery when the inverter is the binding constraint. A managed load only
-    # turns on if its minimum current fits within the inverter (off-grid) or
-    # grid + inverter (grid-tied) figure - so a battery reading of ~0 here is
-    # the usual reason a large load stays off despite a healthy SOC.
-    grid_remaining_current = grid_headroom / voltage if voltage else 0
+    def _offered(name, key="ABC"):
+        return ((pools.get(name) or {}).get("start") or {}).get(key, 0.0)
+
+    total_site_available = _offered("physical") * voltage
+    grid_headroom = _offered("grid") * voltage
+    available_per_phase = [
+        round(min(_offered("physical", phase), _offered("physical")), 1)
+        if phase in pools.get("phases", "")
+        else 0
+        for phase in "ABC"
+    ]
+    grid_remaining_current = _offered("grid")
+    inverter_remaining_current = _offered("inverter")
+
+    # Solar and battery remaining are source diagnostics, not pools: the sun
+    # left over after the house, and the rated discharge not yet flowing
+    # (bounded by the inverter above). A managed load only turns on if its
+    # minimum current fits within the physical pool, so a battery reading of
+    # ~0 here is the usual reason a large load stays off despite a healthy SOC.
     solar_remaining_current = solar_available / voltage if voltage else 0
     battery_remaining_current = battery_remaining / voltage if voltage else 0
-    inverter_remaining_current = inverter_sourced / voltage if voltage else 0
 
     # The grid measurements, or None while any phase is the breaker assumption
     # (see the docstring). Computed either way - the household identity above

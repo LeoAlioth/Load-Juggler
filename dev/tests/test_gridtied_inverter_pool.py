@@ -291,9 +291,10 @@ def _headroom_w(site):
     return site.allowance_w + site.solar_w + (site.discharge_w or 0.0) - HOUSE_W
 
 
-async def _session(hass, site, minutes):
+async def _session(hass, site, minutes, published=None):
     """``minutes`` of real site cycles against the world, one CYCLE_S apart.
-    Returns [(seconds, accepted limit, import W, battery W)] per cycle."""
+    Returns [(seconds, accepted limit, import W, battery W)] per cycle, and
+    appends each cycle's published hub data to ``published`` when given."""
     world = World(hass, site)
     clock = _Clock(10_000.0)
     hass.data[DOMAIN].setdefault("load_processors", {}).setdefault(
@@ -314,6 +315,8 @@ async def _session(hass, site, minutes):
             world.publish()
             await sensor_platform.async_run_hub_cycle(hass, site.hub)
             log.append((clock.now, world.limit, world.import_w, world.battery_w))
+            if published is not None:
+                published.append(dict(hass.data[DOMAIN]["hub_data"][site.hub.entry_id]))
             clock.now += CYCLE_S
     finally:
         for p in reversed(patches):
@@ -372,3 +375,36 @@ async def test_the_site_stays_inside_its_import_allowance(hass, site):
         f"imported {worst_import:.0f} W against a {site.allowance_w:.0f} W "
         f"allowance - {worst_import - site.allowance_w:.0f} W over"
     )
+
+
+@SITES
+async def test_site_remaining_power_is_the_pool_the_car_is_offered(hass, site):
+    """Every cycle, the published Site Remaining Power is the physical pool the
+    distribution sized the car from (the Overview's pool detail), and its grid
+    and inverter figures are that pool's two halves.
+
+    Before the fix, measured (worst cycle): the series hybrid published 2 W at
+    a 0 W allowance where the car was offered 4000 W, and 4003 W against
+    6003 W at 2 kW - the discharge carrying the car was booked as spent; with
+    its battery at its rating, 3990 W against 2999 W; the PV inverter's output
+    sensor 5000 W against 4000 W, the sun the house uses counted as spare. The
+    solar sensor agreed, and none published the pool's halves."""
+    published = []
+    await _session(hass, site, minutes=3, published=published)
+    worst = max(
+        (
+            abs(p["total_site_available_power"] - p["pool_detail"]["physical"]["start"]["ABC"] * V),
+            i,
+            p["total_site_available_power"],
+            p["pool_detail"]["physical"]["start"]["ABC"] * V,
+        )
+        for i, p in enumerate(published)
+    )
+    assert worst[0] <= 2.0, (
+        f"cycle {worst[1]}: Site Remaining Power {worst[2]:.0f} W, the pool the "
+        f"car was offered {worst[3]:.0f} W ({worst[2] - worst[3]:+.0f} W)"
+    )
+    last = published[-1]
+    pools = last["pool_detail"]
+    assert abs(last["available_grid_power"] - pools["grid"]["start"]["ABC"] * V) <= 2.0
+    assert abs(last["available_inverter_current"] - pools["inverter"]["start"]["ABC"]) <= 0.051

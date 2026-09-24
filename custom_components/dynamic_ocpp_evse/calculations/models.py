@@ -293,10 +293,11 @@ class SiteContext:
     # calculate_all_load_targets around the distribution, consumed by the
     # pass-1 ledger (see LoadContext.excess_claim_current).
     excess_potential_claims: tuple = ()
-    # The three pools the allocator worked from this cycle, as plain rounded
-    # dicts - OBSERVABILITY ONLY. Written by calculate_all_load_targets, read
-    # by engine/hub_result.py for the Overview page and the diagnostics dump.
-    # Nothing in the calculation reads it back.
+    # The three pools the allocator worked from this cycle (and the physical
+    # pool's grid and inverter halves), as plain rounded dicts - OBSERVABILITY
+    # ONLY. Written by calculate_all_load_targets, read by engine/hub_result.py
+    # for Site Remaining Power and its breakdown, the Overview page and the
+    # diagnostics dump. Nothing in the calculation reads it back.
     pool_snapshot: dict = field(default_factory=dict)
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
     is_off_grid: bool = False  # True when no grid CT sensors are configured

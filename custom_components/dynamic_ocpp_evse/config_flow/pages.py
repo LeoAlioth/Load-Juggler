@@ -188,9 +188,11 @@ def _pool_pairs_are_sums(fields: dict) -> bool:
 def _pool_detail_lines(hub_data: dict) -> list[str]:
     """The three pools as the allocator built them, per phase.
 
-    The watt figures above this are re-derived from the site's headroom terms;
-    these are the objects the distribution actually consulted. Both are shown
-    because when they disagree, the disagreement is the bug.
+    Site available, grid headroom and the per-phase headroom above this are
+    read from the physical pool's offered figures (engine/hub_result.py); the
+    solar surplus and battery discharge lines are source figures, not pools.
+    These are the objects the distribution actually consulted, per phase and
+    per combination.
 
     "Left" is what survived each load's MEASURED draw, not its permit - a plug
     that is switched off takes nothing from the pool however large a permit it

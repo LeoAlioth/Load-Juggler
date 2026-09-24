@@ -335,13 +335,18 @@ def test_solar_total_unaffected_for_ordinary_positive_readings():
 # _build_hub_result used to recompute the fleet's current output from
 # site.solar_production_total - but by then the feedback loop has folded the
 # managed draws back into the derived solar, inflating the estimate by exactly
-# the running loads' draw and understating Site Remaining Power. The fix: the
-# display consumes site.inverter_output_total, the figure captured at READ
-# time for the #17 coverage gate.
+# the running loads' draw and understating the headroom. The fix: the display
+# consumes site.inverter_output_total, the figure captured at READ time for
+# the #17 coverage gate.
+#
+# These pinned Site Remaining Power until it became the physical pool itself
+# (dev/tests/test_site_remaining_power.py) - that figure no longer reads the
+# inverter's output at all. The one published figure still bounded by
+# "rating - current output" is Battery Remaining Power, so the pin is on it.
 
 def _derived_solar_site(**overrides):
-    """An off-grid, derived-solar, 1-phase site (grid_headroom = 0, so
-    total_site_available isolates the inverter-sourced term)."""
+    """An off-grid, derived-solar, 1-phase site with a 6 kW battery idling -
+    so Battery Remaining Power is the inverter headroom alone."""
     defaults = dict(
         voltage=V,
         main_breaker_rating=63,
@@ -350,6 +355,10 @@ def _derived_solar_site(**overrides):
         solar_is_derived=True,
         is_off_grid=True,
         inverter_max_power=6000.0,
+        battery_soc=80.0,
+        battery_soc_min=20.0,
+        battery_max_discharge_power=6000.0,
+        battery_power=0.0,
     )
     defaults.update(overrides)
     return SiteContext(**defaults)
@@ -360,7 +369,6 @@ def _display_result(site):
         site,
         raw_phases=(0.0, None, None),
         voltage=V,
-        main_breaker_rating=63,
         battery_soc=site.battery_soc,
         battery_soc_min=site.battery_soc_min,
         battery_max_discharge_power=site.battery_max_discharge_power,
@@ -381,8 +389,7 @@ def test_display_headroom_uses_prefeedback_output():
         inverter_output_total=3000.0,    # captured pre-feedback
     )
     result = _display_result(site)
-    assert _close(result["total_site_available_power"], 3000.0)  # not 1000
-    assert _close(result["available_inverter_current"], round(3000.0 / V, 1))
+    assert _close(result["available_battery_power"], 3000.0)  # not 1000
 
 
 def test_display_headroom_rating_clamp_still_applies():
@@ -393,15 +400,14 @@ def test_display_headroom_rating_clamp_still_applies():
         solar_production_total=7000.0,
         inverter_output_total=-1000.0,
     )
-    result = _display_result(absorbing)
-    # headroom capped at the 6000 W rating (not 7000), solar pool 7000 → 6000.
-    assert _close(result["total_site_available_power"], 6000.0)
+    # headroom capped at the 6000 W rating (not 7000).
+    assert _close(_display_result(absorbing)["available_battery_power"], 6000.0)
 
     overloaded = _derived_solar_site(
         solar_production_total=7000.0,
         inverter_output_total=6500.0,
     )
-    assert _close(_display_result(overloaded)["total_site_available_power"], 0.0)
+    assert _close(_display_result(overloaded)["available_battery_power"], 0.0)
 
 
 # ---------------------------------------------------------------------------
