@@ -15,7 +15,9 @@ step - a load at 0 A its minimum, a running one its minimum more - and watch
 the production. If it rises by the step, the sun had room: the loads keep it
 and the next step follows. If it has not within the probe's window, the loads
 fall back to what the production did follow and no step is offered again for
-the load's own restart dwell (its charge pause) plus one command interval.
+the load's own restart dwell (its charge pause) plus one command interval -
+doubled after each failed try in a row (start or growth step alike), up to
+SUN_PROBE_MAX_PAUSE_S, and back to that base once a try succeeds.
 The window is the load's command interval + the draw settle time + the
 household hold bridge (15 + 15 + 15 = 45 s here).
 
@@ -70,8 +72,10 @@ from custom_components.dynamic_ocpp_evse.const import (
     EVSE_MODE_SOLAR_ONLY,
     EVSE_MODE_STANDARD,
     HOUSEHOLD_HOLD_BRIDGE_SECONDS,
+    LOAD_RT_SUN_PROBE,
     PERMIT_TAU_S,
     SETTLE_DRAW_SECONDS,
+    SUN_PROBE_MAX_PAUSE_S,
     WIRING_TOPOLOGY_SERIES,
 )
 from custom_components.dynamic_ocpp_evse.engine import (
@@ -264,8 +268,9 @@ def site(hass, request):
 async def _session(hass, site, minutes, sun_at=None):
     """``minutes`` of real site cycles against the world. ``sun_at(t)``, when
     given, sets the sun (W) at each cycle's time t. Returns one
-    SimpleNamespace per cycle: t, sun_w, limit, draw, asked_w and probe (the
-    hub's probe state, or None)."""
+    SimpleNamespace per cycle: t, sun_w, limit, draw, asked_w, probe (the
+    hub's probe state, or None) and backoff (a copy of the car's backoff
+    state, or None)."""
     world = World(hass, site)
     clock = _Clock(10_000.0)
     hass.data[DOMAIN].setdefault("load_processors", {}).setdefault(
@@ -296,6 +301,11 @@ async def _session(hass, site, minutes, sun_at=None):
                 draw=world.draw,
                 asked_w=world.asked_w,
                 probe=hub_rt.get("_sun_probe"),
+                backoff=dict(
+                    hass.data[DOMAIN]["loads"][site.evse.entry_id].get(
+                        LOAD_RT_SUN_PROBE
+                    ) or {}
+                ) or None,
             ))
             clock.now += CYCLE_S
     finally:
@@ -328,6 +338,45 @@ def _longest_past_the_sun(log):
         run = run + CYCLE_S if past else 0.0
         longest = max(longest, run)
     return longest
+
+
+def _tries(log):
+    """When each try was offered (s) - a start or a growth step: a new probe
+    with a step on the table."""
+    before = [SimpleNamespace(probe=None)] + log
+    return [
+        cur.t for prev, cur in zip(before, log)
+        if cur.probe is not prev.probe and cur.probe and cur.probe["step"]
+    ]
+
+
+def _pauses(log):
+    """(t, length s) of each pause a failed try began."""
+    before = [SimpleNamespace(probe=None)] + log
+    return [
+        (cur.t, cur.probe["until"] - 10_000.0 - cur.t)
+        for prev, cur in zip(before, log)
+        if cur.probe is not prev.probe and cur.probe and not cur.probe["step"]
+    ]
+
+
+def _overloads(log):
+    """(start, length s) of each stretch the site asked for more than the sun -
+    what an inverter that trips on overload would drop out on."""
+    runs, start = [], None
+    for entry in log:
+        past = entry.asked_w > min(entry.sun_w, RATING_W) + DEADBAND_W
+        if past and start is None:
+            start = entry.t
+        elif not past and start is not None:
+            runs.append((start, entry.t - start))
+            start = None
+    return runs
+
+
+def _doubling(count):
+    """The pauses the backoff rule gives ``count`` failed tries in a row."""
+    return [min(PAUSE_S * 2 ** k, SUN_PROBE_MAX_PAUSE_S) for k in range(count)]
 
 
 def _period(log):
@@ -509,3 +558,162 @@ async def test_a_solar_sensor_beside_output_sensors_needs_no_probe(hass, site):
         assert not _starts(log)
     else:
         assert log[-1].limit == pytest.approx(target, abs=1.0)
+
+
+# The tries (= overloads on an inverter that trips) one marginal 12 h day
+# costs, measured on this rig with the backoff (see the test below).
+MARGINAL_DAY_TRIES = 26
+
+
+@pytest.mark.parametrize(
+    "site",
+    [
+        ("output", EVSE_MODE_SOLAR_ONLY.key, 1500.0, 1500.0, RATING_W),
+        ("solar", EVSE_MODE_STANDARD.key, 2000.0, 1500.0, RATING_W),
+    ],
+    ids=["output-house-takes-the-sun", "solar-under-the-minimum"],
+    indirect=True,
+)
+async def test_a_marginal_day_tries_ever_less_often(hass, site):
+    """A whole 12 h day with no room for the car's minimum - the house takes
+    all the sun, or leaves 500 W of a 1380 W minimum. Every try asks the array
+    for one step past the sun, which an inverter that trips on overload drops
+    out on. Each failed try in a row doubles the pause before the next, from
+    the 3 min 15 s base up to SUN_PROBE_MAX_PAUSE_S, and each try still asks
+    past the sun for no longer than FAILED_START_S.
+
+    Measured on this rig, tries - each one overload, 48 s at most - in the
+    12 h: 179 before (a fixed 3 min 15 s pause, a try about every 4 minutes),
+    26 after (pauses 195, 390, 780, 1560 s, then 1800 s)."""
+    log = await _session(hass, site, minutes=12 * 60)
+    tries, overloads = _tries(log), _overloads(log)
+    assert len(tries) <= MARGINAL_DAY_TRIES, (
+        f"{len(tries)} tries, {len(overloads)} overloads in 12 h"
+    )
+    assert len(overloads) == len(tries)
+    assert max(length for _, length in overloads) <= FAILED_START_S
+    pauses = [length for _, length in _pauses(log)]
+    assert pauses == pytest.approx(_doubling(len(pauses))), pauses[:8]
+    # Each try follows the last one's window and pause, to within a cycle.
+    for gap, pause in zip([b - a for a, b in zip(tries, tries[1:])], pauses):
+        assert WINDOW_S + pause <= gap <= WINDOW_S + pause + 2 * CYCLE_S, (gap, pause)
+    assert log[-1].backoff["failed_tries"] == len(tries)
+
+
+@pytest.mark.parametrize(
+    "site",
+    [
+        ("output", EVSE_MODE_SOLAR_ONLY.key, 1500.0, 1500.0, RATING_W),
+        ("solar", EVSE_MODE_SOLAR_ONLY.key, 1500.0, 1500.0, RATING_W),
+    ],
+    ids=["output", "solar"],
+    indirect=True,
+)
+async def test_a_try_that_succeeds_resets_the_pause_for_starts_and_growth_alike(
+    hass, site
+):
+    """The house takes all the sun for the first 30 min, then the sun rises to
+    4 kW. The four failed starts double the pause (3:15, 6:30, 13:00, 26:00);
+    the first try after the rise starts the car and production follows, which
+    resets it: the next failure - the growth step that finds the sun's edge at
+    10.9 A - pauses for the base 3:15 again, and the growth steps after it
+    double in turn. One backoff per load, shared by its starts and its growth
+    steps; the car is never stopped once it runs."""
+    log = await _session(
+        hass, site, minutes=90, sun_at=lambda t: 1500.0 if t < 1800 else 4000.0
+    )
+    starts = _starts(log)
+    assert len(starts) == 5 and starts[-1] > 1800, starts
+    assert not [t for t in _stops(log) if t > starts[-1]], _stops(log)
+    pauses = [length for _, length in _pauses(log)]
+    assert pauses[:4] == pytest.approx(_doubling(4)), pauses
+    assert len(pauses) >= 7 and pauses[4:] == pytest.approx(_doubling(len(pauses) - 4)), pauses
+    # The count: 4 before the success, gone at it, counting again after.
+    counts = [(e.backoff or {}).get("failed_tries", 0) for e in log]
+    at_start = next(i for i, e in enumerate(log) if e.t >= starts[-1])
+    assert max(counts[:at_start]) == 4
+    assert 0 in counts[at_start:], "the success did not reset the count"
+    assert counts[-1] == len(pauses) - 4
+    target = (4000.0 - site.house_w) / V
+    assert min(e.draw for e in _period(log)) == pytest.approx(target, abs=0.5)
+
+
+@pytest.mark.parametrize(
+    "site",
+    [
+        ("output", EVSE_MODE_SOLAR_ONLY.key, 1500.0, 1500.0, RATING_W),
+        ("solar", EVSE_MODE_SOLAR_ONLY.key, 1500.0, 1500.0, RATING_W),
+    ],
+    ids=["output", "solar"],
+    indirect=True,
+)
+async def test_a_sun_that_comes_back_late_is_found_within_the_cap(hass, site):
+    """The house takes all the sun for 3 h, so the pause has reached its cap,
+    and the sun rises to 4 kW the cycle after a try has failed - the worst
+    moment: the car waits out one whole capped pause, no more, and is started
+    within SUN_PROBE_MAX_PAUSE_S + the start's send gate of the rise (measured:
+    1804 s; before the backoff a sun that came back waited at most the base
+    pause and window, about 4 minutes), then grows into the 10.9 A the sun
+    leaves."""
+    hub_rt = hass.data[DOMAIN]["hubs"][site.hub.entry_id]
+    rose = []
+
+    def sun_at(t):
+        probe = hub_rt.get("_sun_probe")
+        if (
+            not rose and t >= 3 * 3600 and probe and not probe["step"]
+            and probe["until"] - 10_000.0 - t >= SUN_PROBE_MAX_PAUSE_S - CYCLE_S
+        ):
+            rose.append(t)
+        return 4000.0 if rose else 1500.0
+
+    log = await _session(hass, site, minutes=4.5 * 60, sun_at=sun_at)
+    assert rose, "no pause began after 3 h"
+    before = [length for t, length in _pauses(log) if t < rose[0]]
+    assert before[-1] == pytest.approx(SUN_PROBE_MAX_PAUSE_S), before
+    start = next(t for t in _starts(log) if t > rose[0])
+    waited = start - rose[0]
+    assert (
+        SUN_PROBE_MAX_PAUSE_S - CYCLE_S
+        <= waited
+        <= SUN_PROBE_MAX_PAUSE_S + COMMAND_S + 2 * CYCLE_S
+    ), f"started {waited:.0f} s after the sun rose"
+    target = (4000.0 - site.house_w) / V
+    assert min(e.draw for e in _period(log)) == pytest.approx(target, abs=0.5)
+
+
+@pytest.mark.parametrize(
+    "site",
+    [("output", EVSE_MODE_SOLAR_ONLY.key, 1500.0, 1500.0, RATING_W)],
+    ids=["output"],
+    indirect=True,
+)
+async def test_the_car_shows_its_failed_tries_and_when_it_tries_next(hass, site):
+    """Two failed tries in 10 minutes where the house takes all the sun: the
+    car's Charging Status says so in words - "... (no spare sun on 2 tries,
+    next try HH:MM)" - and carries the count and the time as attributes, as
+    does the load's own sensor. A site that measures its spare sun carries
+    the attributes empty."""
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.dynamic_ocpp_evse.entities.load_sensors import (
+        LoadJugglerDeviceStatusSensor,
+    )
+
+    log = await _session(hass, site, minutes=10)
+    backoff = log[-1].backoff
+    assert backoff["failed_tries"] == 2, backoff
+    status = LoadJugglerDeviceStatusSensor(hass, site.evse, site.hub, "evse", "evse")
+    status._read_site_data()
+    at = dt_util.as_local(backoff["next_try_at"]).strftime("%H:%M")
+    assert status.native_value.endswith(
+        f" (no spare sun on 2 tries, next try {at})"
+    ), status.native_value
+    for attrs in (
+        status.extra_state_attributes,
+        hass.data[DOMAIN]["load_processors"][site.hub.entry_id][
+            site.evse.entry_id
+        ].extra_state_attributes,
+    ):
+        assert attrs["sun_probe_failed_tries"] == 2
+        assert attrs["sun_probe_next_try_at"] == backoff["next_try_at"]

@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_registry import (
 )
 from .. import units
 from ..entities.readout import status_with_readout_note
+from ..entities.sun_probe import status_with_sun_probe_note
 from ..const import (
     CONF_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
@@ -81,6 +82,7 @@ from ..const import (
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
     EVSE_RT_READOUT_WATCH,
+    LOAD_RT_SUN_PROBE,
     resolve_operating_mode,
 )
 from ..helpers import get_entry_value
@@ -422,13 +424,16 @@ def _device_status(hass, load_entry) -> str | None:
 
 def _load_status(runtime: dict, entry_id: str):
     """The EVSE status the load processor published, with the stuck-readout
-    note while the charger is controlled blind - the same words its Charging
-    Status sensor shows (entities/readout.py)."""
-    watch = ((runtime.get("loads") or {}).get(entry_id) or {}).get(
-        EVSE_RT_READOUT_WATCH
-    )
-    return status_with_readout_note(
-        (runtime.get("load_status") or {}).get(entry_id), watch
+    note while the charger is controlled blind and the sun probe's while it
+    backs off - the same words its Charging Status sensor shows
+    (entities/readout.py, entities/sun_probe.py)."""
+    load_rt = (runtime.get("loads") or {}).get(entry_id) or {}
+    return status_with_sun_probe_note(
+        status_with_readout_note(
+            (runtime.get("load_status") or {}).get(entry_id),
+            load_rt.get(EVSE_RT_READOUT_WATCH),
+        ),
+        load_rt.get(LOAD_RT_SUN_PROBE),
     )
 
 

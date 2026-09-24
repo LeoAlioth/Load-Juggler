@@ -31,6 +31,7 @@ from ..const import (
     CONF_HUB_ENTRY_ID,
     DEFAULT_LOAD_PRIORITY,
     EVSE_RT_READOUT_WATCH,
+    LOAD_RT_SUN_PROBE,
 )
 from ..helpers import get_entry_value
 from .. import units
@@ -40,6 +41,7 @@ from .readout import (
     readout_attributes,
     status_with_readout_note,
 )
+from .sun_probe import status_with_sun_probe_note, sun_probe_attributes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -173,7 +175,9 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
     status says so in words - "Charging (readout stuck - controlled on assumed
     current)" - and carries the readout_* attributes; both clear the cycle the
     episode ends. Composed here, on every site cycle, rather than in the load
-    processor, which only re-derives its status on command cycles.
+    processor, which only re-derives its status on command cycles. So is the
+    off-grid sun probe's backoff (entities/sun_probe.py): "... (no spare sun
+    on 3 tries, next try 14:32)" while it waits, and sun_probe_* attributes.
     """
 
     _attr_icon = "mdi:information-outline"
@@ -191,13 +195,20 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
 
     @property
     def extra_state_attributes(self):
-        return readout_attributes(self._readout_watch())
+        return {
+            **readout_attributes(self._readout_watch()),
+            **sun_probe_attributes(self._load_runtime().get(LOAD_RT_SUN_PROBE)),
+        }
 
     def _read_site_data(self):
         """Read charging status from hass.data (populated by the load processor)."""
         status = self._domain_bucket("load_status")
-        self._attr_native_value = status_with_readout_note(
-            status.get(self.config_entry.entry_id, "Unknown"), self._readout_watch()
+        self._attr_native_value = status_with_sun_probe_note(
+            status_with_readout_note(
+                status.get(self.config_entry.entry_id, "Unknown"),
+                self._readout_watch(),
+            ),
+            self._load_runtime().get(LOAD_RT_SUN_PROBE),
         )
 
 
