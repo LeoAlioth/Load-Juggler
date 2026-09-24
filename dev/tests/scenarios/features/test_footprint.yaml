@@ -150,7 +150,10 @@ scenarios:
     expected:
       evse_1:
         allocated: 16.0       # footprint - the car's hardware cap
-        available: 32.0       # permit - still offered its full 32 A
+        # permit - its equal half of the 50 A, above its 16 A draw so the draw
+        # stays settled. It used to be fed on to 32 A in rounds where the pool
+        # had only 9 A left besides its own 16 A (see _fill_ceiling).
+        available: 25.0
       evse_2:
         allocated: 32.0       # got evse_1's freed 16 A on top of its share
         available: 32.0

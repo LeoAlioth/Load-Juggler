@@ -532,14 +532,16 @@ async def test_off_grid_the_household_check_stops_the_hunting(hass, off_grid_sit
     assert watch["stuck_how"] == readout_watch.HOUSEHOLD_LOCKSTEP
     # As grid-tied: the first start and cut are the evidence, and from the
     # restart after the one pause the charger is controlled blind. (Until
-    # 2026-09-24 this run did not stop off-grid, for two reasons that were
-    # both bugs: the 0 A the reading had held since the car arrived counted
+    # 2026-09-24 this run did not stop off-grid, for three reasons that were
+    # all bugs: the 0 A the reading had held since the car arrived counted
     # as a SETTLED draw once charging began and lifted every permit through
-    # the squeeze by the car's 6 A minimum - dev/tests/test_start_settle.py -
-    # and the previous car, gone 10 s before, still sat in the smoothed
-    # output while its raw draw was already 0, so the house read high and the
-    # second car was started 4 A low - dev/tests/test_offgrid_household_
-    # smoothing.py. With a two-minute gap it stopped once then too.)
+    # the squeeze by the car's 6 A minimum - dev/tests/test_start_settle.py;
+    # the previous car, gone 10 s before, still sat in the smoothed output
+    # while its raw draw was already 0, so the house read high and the second
+    # car was started 4 A low - dev/tests/test_offgrid_household_smoothing.py;
+    # and the permit counted the car's unbooked minimum twice, minimum + pool,
+    # keeping the smoothed command above 6 A - dev/tests/test_permit_below_
+    # minimum.py. With a two-minute gap it stopped once then too.)
     assert _stops(second) <= 1, f"stopped {_stops(second)} times"
     entered = watch["stuck_since"]
     restarts = [
