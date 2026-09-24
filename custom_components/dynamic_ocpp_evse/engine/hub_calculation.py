@@ -624,7 +624,9 @@ def _apply_household_figures(
     derived from readings the managed draws have already been taken out of
     (off-grid the total takes them out itself - see below).
     Sets ``site.household_consumption_total`` / ``site.household_consumption``
-    and owns the asymmetric hold state in ``hub_runtime``.
+    and owns the asymmetric hold state in ``hub_runtime``. ``members`` also
+    says whether every battery's power is read - off-grid with no output
+    sensors, the condition for knowing the site's supply at all.
 
     ``managed_draws`` is this cycle's smoothed draw from _managed_phase_draws -
     the one list every other view subtracts too. The series household - and
@@ -638,8 +640,30 @@ def _apply_household_figures(
     Off-grid the feedback loop never ran, so the off-grid household total
     takes the same draw off itself.
     """
-    # Compute household_consumption_total when solar entity provides ground truth
-    if not solar_is_derived and solar_production_total > 0:
+    if site.is_off_grid and site.inverter_output_per_phase is None:
+        # Off-grid with no inverter output sensors, solar + battery is the
+        # whole supply on the AC bus - the site's one measure of what it draws
+        # - and it is known whenever every battery's power is read. A solar
+        # sensor reading 0 W at night is a reading, not an absent one; with no
+        # solar sensor at all the solar figure is the engine's own (inferred
+        # from battery charging, so 0 while the battery discharges) and the
+        # battery's discharge is the supply. Built only from a solar reading
+        # above 0, the household fell back to the synthetic 0 A grid phases at
+        # night and on a battery-only site, and the inverter's whole rating
+        # went out as headroom: on a 6 kW inverter with a 1 kW house the car
+        # got 26.1 A and the inverter ran 1003 W - the house - over its rating
+        # (dev/tests/test_offgrid_battery_household.py). A battery whose power
+        # is not read leaves the supply unknowable, and no total is built:
+        # _calculate_inverter_limit then hands out nothing rather than the
+        # whole rating.
+        build_total = all(
+            m.battery_power is not None for m in members if m.has_battery
+        )
+    else:
+        # Grid-tied (and off-grid with output sensors) only a measured
+        # production figure provides the ground truth.
+        build_total = not solar_is_derived and solar_production_total > 0
+    if build_total:
         export_power_after_feedback = site.export_current.total * site.voltage
         bp = float(battery_power) if battery_power is not None else 0
         # Grid-tied the feedback loop has put the managed draws back onto the

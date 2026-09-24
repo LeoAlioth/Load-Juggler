@@ -577,6 +577,25 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     For ASYMMETRIC inverters: Solar+battery power can be allocated to any phase.
     For SYMMETRIC inverters: Solar+battery power is fixed per-phase.
     """
+    # Off-grid with no figure for the household at all - no inverter output
+    # sensors, and a battery whose power is not read (engine/hub_calculation.
+    # _apply_household_figures builds none then) - nothing measures what the
+    # inverters are already carrying. The grid phases are synthetic zeros, so
+    # the fallback in _get_household_per_phase would read the house as 0 and
+    # hand the whole rating out as headroom, over the rating by exactly the
+    # house. Hand out nothing instead: the same the site already gets when it
+    # can read neither solar nor battery.
+    if (
+        site.is_off_grid
+        and site.household_consumption is None
+        and site.household_consumption_total is None
+    ):
+        _LOGGER.debug(
+            "Off-grid with no household figure (no inverter output, battery "
+            "power unread) - no inverter capacity for managed loads"
+        )
+        return PhaseConstraints.zeros()
+
     # Calculate solar current
     solar_current = site.solar_production_total / site.voltage if site.solar_production_total else 0
 
