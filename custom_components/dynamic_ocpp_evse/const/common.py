@@ -278,6 +278,23 @@ SETTLE_DRAW_SECONDS = 15.0
 # the correct pool footprint.
 SETTLE_PERMIT_MARGIN = 1.0    # Amps - draw must be this far below last permit
 
+# A charger leg counts as CARRYING current above this (A). It is what tells a
+# 1-phase car on a 3-phase charger apart from a 3-phase one - a leg reading a
+# few tenths of an amp is a meter's noise floor, not a car. Read by the
+# published active-phase count and phase mask (engine/hub_result.py) and by
+# the stuck-readout watch, which assumes the commanded limit only on the legs
+# that were carrying current when the reading froze.
+LEG_DRAWING_CURRENT = 1.0
+
+# How far a W-encoded charging profile may legitimately let a leg's current
+# sit above the amps it was computed from, as a fraction: the limit is sent as
+# A x V x phases, and the charger converts it back with ITS voltage, not ours,
+# so voltage and rounding variance put a genuine draw a little above the amps
+# we meant. Used where a reported draw is judged against a limit - the clamp on
+# a charger reporting its total as a per-phase figure (engine/readers.py) and
+# the stuck-readout watch (engine/readout_watch.py).
+WATTS_PROFILE_TOLERANCE = 0.10
+
 # Auto-reset detection - triggers reset_ocpp_evse when charger ignores profiles.
 # How long the charger must keep offering something other than what it was
 # told, in SECONDS, before a profile reset is sent. It was 5 consecutive

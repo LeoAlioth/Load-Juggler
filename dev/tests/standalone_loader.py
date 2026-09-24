@@ -77,6 +77,7 @@ _HUB_CALC_ENGINE_ORDER = (
     "fleet",
     "forecast_reader",
     "readers",
+    "readout_watch",
     "load_builders",
     "hub_result",
     "hub_calculation",
@@ -200,7 +201,8 @@ def load_pure_modules(
             (subset of "models", "utils", "target_calculator" - models first).
         engine_modules: engine/ modules to load (any of the names in
             _HUB_CALC_ENGINE_ORDER: "auto_detect", "fleet", "forecast_reader",
-            "readers", "load_builders", "hub_result", "hub_calculation").
+            "readers", "readout_watch", "load_builders", "hub_result",
+            "hub_calculation").
             Requesting "hub_calculation" pulls in its whole import chain (all
             the others plus helpers.py/units.py and the calc __init__)
             automatically.

@@ -30,10 +30,16 @@ from ..const import (
     CONF_LOAD_PRIORITY,
     CONF_HUB_ENTRY_ID,
     DEFAULT_LOAD_PRIORITY,
+    EVSE_RT_READOUT_WATCH,
 )
 from ..helpers import get_entry_value
 from .. import units
 from .mixins import LoadEntityMixin, SiteCycleConsumerMixin
+from .readout import (
+    estimate_attributes,
+    readout_attributes,
+    status_with_readout_note,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,6 +55,12 @@ class LoadJugglerLoadSensor(SiteCycleConsumerMixin, LoadEntityMixin, SensorEntit
     def __init__(self, hass, config_entry, hub_entry, name, unique_id):
         self._init_entity(hass, config_entry, name, unique_id)
         self.hub_entry = hub_entry
+
+    def _readout_watch(self):
+        """This charger's stuck-readout watch state (engine/readout_watch.py),
+        or None for a load that has none - every non-EVSE, and an EVSE before
+        its first cycle."""
+        return self._load_runtime().get(EVSE_RT_READOUT_WATCH)
 
 
 class LoadJugglerAllocatedCurrentSensor(LoadJugglerLoadSensor):
@@ -69,6 +81,12 @@ class LoadJugglerAllocatedCurrentSensor(LoadJugglerLoadSensor):
             f"{entity_id}_allocated_current",
         )
         self._attr_native_value = 0.0
+
+    @property
+    def extra_state_attributes(self):
+        """``estimated`` while this charger's readout is stuck: the footprint
+        is then built on its ASSUMED draw (entities/readout.py)."""
+        return estimate_attributes(self._readout_watch())
 
     def _read_site_data(self):
         """Read allocated current from hass.data (populated by the load processor)."""
@@ -147,7 +165,16 @@ class LoadJugglerEffectivePrioritySensor(LoadJugglerLoadSensor):
 
 
 class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
-    """Sensor showing the current status reason for a managed device."""
+    """Sensor showing the current status reason for a managed device - the
+    EVSE's Charging Status, which is what a user reads to see what the charger
+    is doing.
+
+    While the charger's readout is judged stuck (engine/readout_watch.py) the
+    status says so in words - "Charging (readout stuck - controlled on assumed
+    current)" - and carries the readout_* attributes; both clear the cycle the
+    episode ends. Composed here, on every site cycle, rather than in the load
+    processor, which only re-derives its status on command cycles.
+    """
 
     _attr_icon = "mdi:information-outline"
 
@@ -162,10 +189,16 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
         )
         self._attr_native_value = "Unknown"
 
+    @property
+    def extra_state_attributes(self):
+        return readout_attributes(self._readout_watch())
+
     def _read_site_data(self):
         """Read charging status from hass.data (populated by the load processor)."""
         status = self._domain_bucket("load_status")
-        self._attr_native_value = status.get(self.config_entry.entry_id, "Unknown")
+        self._attr_native_value = status_with_readout_note(
+            status.get(self.config_entry.entry_id, "Unknown"), self._readout_watch()
+        )
 
 
 class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
@@ -338,6 +371,9 @@ class LoadJugglerPhaseMaskSensor(LoadJugglerLoadSensor):
         return {
             "wiring_phases": self._wiring_mask,
             "active_phase_count": active,
+            # The mask is read off the draw - the ASSUMED one while this
+            # charger's readout is stuck (entities/readout.py).
+            **estimate_attributes(self._readout_watch()),
         }
 
     def _read_site_data(self):

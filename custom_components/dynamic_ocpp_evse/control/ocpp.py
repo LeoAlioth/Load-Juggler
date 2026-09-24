@@ -17,6 +17,9 @@ from ..const import (
     DEFAULT_PHASE_VOLTAGE,
     CONF_UPDATE_FREQUENCY,
     DEFAULT_UPDATE_FREQUENCY,
+    DOMAIN,
+    EVSE_RT_COMMANDED_LIMIT,
+    EVSE_RT_COMMANDED_RATE_UNIT,
 )
 from ..helpers import get_entry_value
 from .. import units
@@ -280,5 +283,17 @@ async def send_ocpp_command(
 
     # Recorded only after the command was actually sent successfully.
     sensor._last_commanded_limit = limit
+    # ...and published where the ENGINE can read it: the stuck-readout watch
+    # (engine/readout_watch.py) judges the charger's reported draw against the
+    # limit it actually holds, and blind mode assumes exactly this figure. The
+    # unit matters only for the tolerance a W-encoded profile is given.
+    load_rt = (
+        sensor.hass.data.get(DOMAIN, {})
+        .get("loads", {})
+        .get(sensor.config_entry.entry_id)
+    )
+    if load_rt is not None:
+        load_rt[EVSE_RT_COMMANDED_LIMIT] = float(limit)
+        load_rt[EVSE_RT_COMMANDED_RATE_UNIT] = rate_unit
     sensor._last_update = datetime.now(timezone.utc)
     sensor._last_command_time = now_mono

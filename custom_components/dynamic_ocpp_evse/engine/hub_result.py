@@ -57,6 +57,7 @@ from ..const import (
     DEFAULT_GRID_EXPORT_LIMIT,
     DEFAULT_SOC_LIMIT_NORMAL,
     FORECAST_SOC_HYSTERESIS,
+    LEG_DRAWING_CURRENT,
 )
 from ..helpers import get_entry_value
 from . import fleet
@@ -710,6 +711,13 @@ def _build_hub_result(
     does NOT: with the draw at 0 the feedback loop subtracts nothing, so the
     published export degrades to the CT's own reading rather than to an
     invented number.
+
+    A charger whose readout is judged STUCK is not that case: its draw is the
+    limit it last accepted (``LoadContext.draw_blind``, engine/readout_watch.py)
+    - an estimate, not an invented 0 - so it is published, in its own
+    ``load_draw``, in ``total_evse_power`` and in the household, and
+    ``draw_estimated`` names it so the entities can mark those figures as
+    estimates (entities/readout.py).
     """
     # Which loads carry an invented 0 draw this cycle (see _draw_is_unknown).
     # Resolved once, here, because both the per-load figure and the total need
@@ -719,6 +727,17 @@ def _build_hub_result(
         for c in site.loads
     }
     managed_draw_assumed = any(draw_unknown.values())
+    # Chargers whose readout is stuck and whose draw is the ASSUMED one - the
+    # limit they last accepted (see engine/readout_watch.py). Not unknown: an
+    # estimate, published as one. Every figure that nets in their draw -
+    # their own load_draw, total_evse_power, household_power - carries it, and
+    # this map is what marks those figures estimated on their entities
+    # (entities/readout.py). A charger handed back to the user is household.
+    draw_estimated = {
+        c.load_id: dict(c.draw_estimate)
+        for c in site.loads
+        if c.draw_blind and c.dynamic_control and c.draw_estimate
+    }
 
     # Grid available power (based on consumption after feedback loop).
     # Off-grid there is no grid feed at all - headroom is 0 by definition.
@@ -1016,13 +1035,17 @@ def _build_hub_result(
     load_phase_masks = {}
     for c in site.loads:
         active = sum(
-            1 for cur in (c.l1_current, c.l2_current, c.l3_current) if cur > 1.0
+            1
+            for cur in (c.l1_current, c.l2_current, c.l3_current)
+            if cur > LEG_DRAWING_CURRENT
         )
         load_active_phases[c.load_id] = active if active > 0 else c.phases
         # Live site-phase mask: which site phases A/B/C are actively drawing
         site_draw = c.get_site_phase_draw()
         load_phase_masks[c.load_id] = "".join(
-            phase for phase, draw in zip(("A", "B", "C"), site_draw) if draw > 1.0
+            phase
+            for phase, draw in zip(("A", "B", "C"), site_draw)
+            if draw > LEG_DRAWING_CURRENT
         )
 
     return {
@@ -1078,6 +1101,7 @@ def _build_hub_result(
         "load_modes": load_modes,
         "load_rank": load_rank,
         "load_draw": load_draw,
+        "draw_estimated": draw_estimated,
         "load_connector_status": load_connector_status,
         "load_active_phases": load_active_phases,
         "load_phase_masks": load_phase_masks,

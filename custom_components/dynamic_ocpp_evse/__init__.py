@@ -92,6 +92,7 @@ from .const import (
     ENTRY_TYPE_GROUP,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
+    EVSE_RT_COMMANDED_LIMIT,
     MIGRATE_PLUG_SOLAR_ONLY_FLAG,
     CONF_INVERTER_FEATURES,
 )
@@ -532,6 +533,15 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 }
             }
         ]
+        # From here the charger no longer holds the limit its load last
+        # recorded as accepted: clear_profile hands it back to its own default
+        # until a profile lands again. Unknown is the honest state for the
+        # stuck-readout watch (engine/readout_watch.py), which judges nothing
+        # against an unknown limit - the next accepted command re-arms it.
+        load_rt = hass.data.get(DOMAIN, {}).get("loads", {}).get(entry_id)
+        if load_rt is not None:
+            load_rt.pop(EVSE_RT_COMMANDED_LIMIT, None)
+
         script = Script(hass, sequence, "Reset OCPP EVSE", DOMAIN)
         await script.async_run(context=call.context)
 
