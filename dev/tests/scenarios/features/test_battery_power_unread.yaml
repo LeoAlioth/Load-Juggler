@@ -92,3 +92,42 @@ scenarios:
         # offered on its word. A car already running when the reading died
         # keeps its draw (dev/tests/test_gridtied_inverter_pool.py).
         allocated: 0.0
+
+  # Off-grid with no inverter output sensors, solar + battery power is the
+  # site's one measure of what it draws. With the battery's power unread
+  # nothing measures the house, so the inverters offer nothing on their word
+  # (target_calculator.household_unknown) - and Solar Remaining Power, which
+  # published the whole 2000 W here, reads unknown
+  # (dev/tests/test_site_remaining_power.py, test_offgrid_solar_household.py).
+  - name: "off-grid-battery-power-unread-solar-sensor"
+    description: "Off-grid, solar sensor, no output sensors, battery power unread → nothing measures the house, nothing offered (0 A); Solar Remaining Power unknown"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 2000
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 20000
+      battery_power_unread: true
+      inverter_max_power: 6000
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+        operating_mode: "Standard"
+    expected:
+      car:
+        # No household figure: the inverter pool hands out nothing rather
+        # than its whole rating, which would run it over by the house.
+        allocated: 0.0

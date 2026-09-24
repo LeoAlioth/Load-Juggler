@@ -117,7 +117,7 @@ When multiple loads share a sub-breaker (e.g., two chargers on a 20A circuit), c
 Load Juggler works on off-grid installations. When no grid CT entities are configured:
 - Active phases are inferred from inverter output entities
 - Grid current is treated as 0A (same calculation engine, no separate code paths)
-- Solar production is derived from inverter output less its battery power (`solar = inverter - battery`), on either wiring: with no grid, the inverter's output is everything the site draws from it. Without a battery power sensor (and with a battery configured) nothing splits the two, and Solar Power reads unknown
+- Solar production is derived from inverter output less its battery power (`solar = inverter - battery`), on either wiring: with no grid, the inverter's output is everything the site draws from it. Without a battery power sensor (and with a battery configured) nothing splits the two, and Solar Power reads unknown; with no inverter output sensors either, nothing measures the house, and Solar Remaining Power reads unknown
 
 Configure inverter output entities on the inverter entry. The hub status sensor shows "Off-grid mode" when no grid CTs are present.
 

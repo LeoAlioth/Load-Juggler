@@ -69,25 +69,31 @@ CAR = "sensor.ogs_evse_current"
 STATUS = "sensor.ogs_evse_status_connector"
 
 
-def _hub(slug, topology):
-    """No grid CT and no inverter output sensor: solar + battery only."""
+def _hub(slug, topology, *, solar=True, battery_power=True):
+    """No grid CT and no inverter output sensor: solar + battery only.
+    ``solar`` / ``battery_power`` False leave that sensor unconfigured."""
+    options = {
+        CONF_PHASE_VOLTAGE: int(V),
+        CONF_MAIN_BREAKER_RATING: 40,
+        CONF_SOLAR_PRODUCTION_ENTITY_ID: SOLAR,
+        CONF_INVERTER_MAX_POWER: int(RATING_W),
+        CONF_WIRING_TOPOLOGY: topology,
+        CONF_BATTERY_SOC_ENTITY_ID: "sensor.ogs_battery_soc",
+        CONF_BATTERY_POWER_ENTITY_ID: BATTERY,
+        # A large pack, so the inverter's rating binds and not the battery.
+        CONF_BATTERY_MAX_DISCHARGE_POWER: 20000,
+        CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+    }
+    if not solar:
+        del options[CONF_SOLAR_PRODUCTION_ENTITY_ID]
+    if not battery_power:
+        del options[CONF_BATTERY_POWER_ENTITY_ID]
     return MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=4, title=f"Off-grid Hub {slug}",
         data={CONF_NAME: f"Off-grid Hub {slug}",
               CONF_ENTITY_ID: f"ogs_hub_{slug}",
               ENTRY_TYPE: ENTRY_TYPE_HUB},
-        options={
-            CONF_PHASE_VOLTAGE: int(V),
-            CONF_MAIN_BREAKER_RATING: 40,
-            CONF_SOLAR_PRODUCTION_ENTITY_ID: SOLAR,
-            CONF_INVERTER_MAX_POWER: int(RATING_W),
-            CONF_WIRING_TOPOLOGY: topology,
-            CONF_BATTERY_SOC_ENTITY_ID: "sensor.ogs_battery_soc",
-            CONF_BATTERY_POWER_ENTITY_ID: BATTERY,
-            # A large pack, so the inverter's rating binds and not the battery.
-            CONF_BATTERY_MAX_DISCHARGE_POWER: 20000,
-            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
-        },
+        options=options,
     )
 
 
@@ -223,3 +229,98 @@ async def test_a_charger_gets_the_inverter_rating_less_the_house(
     assert supply_over <= 0.1 * V, (
         f"inverter output {supply_over:.0f} W over its {RATING_W:.0f} W rating"
     )
+
+
+@pytest.mark.parametrize(
+    "battery_power",
+    ["unconfigured", "unavailable"],
+)
+@pytest.mark.parametrize("solar", [True, False], ids=["solar-sensor", "no-solar-sensor"])
+async def test_solar_remaining_is_unknown_with_nothing_to_measure_the_house(
+    hass, solar, battery_power
+):
+    """Off-grid with no inverter output sensors, solar + battery power is the
+    site's one measure of what it draws. With the battery's power not read -
+    no sensor, or one unreadable from the start - nothing measures the house
+    (no household figure is built, and the engine hands the loads nothing on
+    the inverter's word), so nothing says how much of the sun is spare.
+
+    Solar Remaining Power / Current, read through the real hub sensors after
+    a car has been charging for a minute, 3 kW on the solar sensor:
+
+    ============  ==============  ==============  ==================
+    solar sensor  whole solar     sun share       after
+    ============  ==============  ==============  ==================
+    3000 W        3000 W, 13.0 A  0 W, 0.0 A      unknown, available
+    none          0 W, 0.0 A      0 W, 0.0 A      unknown, available
+    ============  ==============  ==============  ==================
+
+    "Whole solar" is what the figure was until it was read from the solar
+    pool's sun share, which off-grid is built from the battery's flow and so
+    is empty without it - a 0 that measures nothing. Either way, with the
+    power sensor unconfigured or unavailable from the start. What the engine
+    controls with is unchanged: the car's permit and Site Remaining Power
+    stay 0, as the inverter pool has nothing to offer with no household
+    figure.
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+    from custom_components.dynamic_ocpp_evse.entities.hub import publish_hub_data
+    from custom_components.dynamic_ocpp_evse.sensor import (
+        DynamicOcppEvseHubDataSensor,
+        HUB_SENSOR_DEFINITIONS,
+    )
+
+    slug = f"unmeasured_{solar}_{battery_power}"
+    hub = _hub(slug, WIRING_TOPOLOGY_SERIES, solar=solar,
+               battery_power=battery_power != "unconfigured")
+    hub.add_to_hass(hass)
+    evse = _evse(hub)
+    evse.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: {
+            "loads": [evse.entry_id],
+            "battery_soc_min": 20,
+            "battery_soc_target": 50,
+        }},
+        "loads": {evse.entry_id: {
+            "entry": evse, "hub_entry_id": hub.entry_id,
+            "dynamic_control": True,
+        }},
+        "load_allocations": {evse.entry_id: 0},
+        "inverters": {},
+    }
+    hass.states.async_set(STATUS, "Charging")
+    hass.states.async_set(
+        CAR, "0.0", {"device_class": "current", "unit_of_measurement": "A"})
+    hass.states.async_set(
+        "sensor.ogs_battery_soc", "80",
+        {"device_class": "battery", "unit_of_measurement": "%"})
+    hass.states.async_set(BATTERY, "unavailable")
+    attrs, state = _watts(3000.0)
+    hass.states.async_set(SOLAR, state, attrs)
+
+    with freeze_time("2026-09-24 12:00:00+00:00") as frozen:
+        for _ in range(30):
+            frozen.tick(DT)
+            result = run_hub_calculation(hass, hub)
+    publish_hub_data(hass, hub.entry_id, result)
+    sensors = {
+        d["hub_data_key"]: DynamicOcppEvseHubDataSensor(hass, hub, "Hub", slug, d)
+        for d in HUB_SENSOR_DEFINITIONS
+        if d["hub_data_key"] in ("available_solar_power", "available_solar_current")
+    }
+    published = {}
+    for key, sensor in sensors.items():
+        await sensor.async_update()
+        published[key] = (sensor.native_value, sensor.available)
+
+    assert published == {
+        "available_solar_power": (None, True),
+        "available_solar_current": (None, True),
+    }, f"published (value, available): {published}, with nothing measuring the house"
+    # Control untouched: nothing is offered on the inverter's word.
+    assert result["total_site_available_power"] == 0
+    assert result["load_available"][evse.entry_id] == 0

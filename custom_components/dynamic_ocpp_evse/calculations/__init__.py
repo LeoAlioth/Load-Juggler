@@ -10,6 +10,7 @@ from .target_calculator import (
     calculate_all_load_targets,
     discharge_headroom_unknown,
     excess_load_draw_power,
+    household_unknown,
     excess_margin,
     reconstructed_export_power,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "CircuitGroup",
     "calculate_all_load_targets",
     "discharge_headroom_unknown",
+    "household_unknown",
     "excess_load_draw_power",
     "excess_margin",
     "reconstructed_export_power",
