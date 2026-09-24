@@ -563,6 +563,26 @@ def discharge_headroom_unknown(site: SiteContext) -> bool:
     )
 
 
+def household_unknown(site: SiteContext) -> bool:
+    """True off-grid with no figure for the household at all: no inverter
+    output sensors, and a battery whose power is not read
+    (engine/hub_calculation._apply_household_figures builds neither the
+    per-phase nor the total figure then). Solar + battery power is such a
+    site's one measure of what it draws, and without the battery's half of it
+    nothing measures what the inverters are already carrying.
+
+    The inverter pool hands out nothing then (_calculate_inverter_limit), and
+    engine/hub_result.py publishes no Solar Remaining Power: with no house to
+    take off, what the sun leaves spare is unknown, not 0 W and not the whole
+    production.
+    """
+    return (
+        site.is_off_grid
+        and site.household_consumption is None
+        and site.household_consumption_total is None
+    )
+
+
 def _house_on_inverters(site: SiteContext, flow: float) -> float:
     """What the household already takes from the inverters (A), our loads off.
 
@@ -704,19 +724,13 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     For ASYMMETRIC inverters: Solar+battery power can be allocated to any phase.
     For SYMMETRIC inverters: Solar+battery power is fixed per-phase.
     """
-    # Off-grid with no figure for the household at all - no inverter output
-    # sensors, and a battery whose power is not read (engine/hub_calculation.
-    # _apply_household_figures builds none then) - nothing measures what the
-    # inverters are already carrying. The grid phases are synthetic zeros, so
-    # the fallback in _get_household_per_phase would read the house as 0 and
-    # hand the whole rating out as headroom, over the rating by exactly the
-    # house. Hand out nothing instead: the same the site already gets when it
-    # can read neither solar nor battery.
-    if (
-        site.is_off_grid
-        and site.household_consumption is None
-        and site.household_consumption_total is None
-    ):
+    # Off-grid with no figure for the household at all (household_unknown)
+    # nothing measures what the inverters are already carrying. The grid
+    # phases are synthetic zeros, so the fallback in _get_household_per_phase
+    # would read the house as 0 and hand the whole rating out as headroom,
+    # over the rating by exactly the house. Hand out nothing instead: the same
+    # the site already gets when it can read neither solar nor battery.
+    if household_unknown(site):
         _LOGGER.debug(
             "Off-grid with no household figure (no inverter output, battery "
             "power unread) - no inverter capacity for managed loads"

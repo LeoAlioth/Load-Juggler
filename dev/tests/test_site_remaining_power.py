@@ -28,7 +28,10 @@ share of the solar pool their Solar loads were offered, on some cycle, from
 it, all of it published as sun) to -4 000 W (a solar sensor reading 0 W at
 night beside a battery whose power is not read, whose export the pool
 offers). It now reads the pool's ``sun`` share
-(``target_calculator._calculate_solar_surplus``).
+(``target_calculator._calculate_solar_surplus``) - and publishes None
+(unknown) off-grid where nothing measures the house
+(``target_calculator.household_unknown``), where the pool is empty for want
+of the battery's flow and the whole production used to be published.
 
 Pure Python, no Home Assistant dependencies. Runnable two ways:
   python3 dev/tests/test_site_remaining_power.py   (standalone, no pytest)
@@ -46,6 +49,9 @@ from standalone_loader import load_pure_modules
 load_pure_modules(engine_modules=("fleet", "hub_calculation"))
 
 import run_tests  # noqa: E402 - the scenario harness drives the sites
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (  # noqa: E402
+    household_unknown,
+)
 from custom_components.dynamic_ocpp_evse.engine.hub_result import (  # noqa: E402
     _build_hub_result,
 )
@@ -90,15 +96,24 @@ def _disagreements(site):
             out.append(f"the pool snapshot has no {part} part")
     if not out:
         grid = detail["grid"]["start"]["ABC"]
-        # Solar Remaining: the sun's share of the solar pool, nothing below 0.
-        sun = max(0.0, detail["sun"]["start"]["ABC"])
         checks += [
             ("available_grid_power", grid * v, TOLERANCE_W),
             ("available_grid_current", grid, TOLERANCE_A),
             ("available_inverter_current", detail["inverter"]["start"]["ABC"], TOLERANCE_A),
-            ("available_solar_power", sun * v, TOLERANCE_W),
-            ("available_solar_current", sun, TOLERANCE_A),
         ]
+        solar_keys = ("available_solar_power", "available_solar_current")
+        if household_unknown(site):
+            # Off-grid with nothing measuring the house, the empty pool is not
+            # a measurement: Solar Remaining is unknown, not 0 W.
+            out += [
+                f"{key} {result[key]} where nothing measures the house"
+                for key in solar_keys
+                if result[key] is not None
+            ]
+        else:
+            # The sun's share of the solar pool, nothing below 0.
+            sun = max(0.0, detail["sun"]["start"]["ABC"])
+            checks += list(zip(solar_keys, (sun * v, sun), (TOLERANCE_W, TOLERANCE_A)))
     for key, phase in zip(
         ("available_current_a", "available_current_b", "available_current_c"),
         "ABC",
@@ -106,7 +121,7 @@ def _disagreements(site):
         # What a single-phase load on that phase could be offered.
         checks.append((key, min(physical[phase], physical["ABC"]), TOLERANCE_A))
     for key, pool, tolerance in checks:
-        if abs(result[key] - pool) > tolerance:
+        if result[key] is None or abs(result[key] - pool) > tolerance:
             out.append(f"{key} {result[key]} where the pool is {pool:.2f}")
     return out
 

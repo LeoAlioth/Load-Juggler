@@ -33,6 +33,7 @@ from ..calculations.calibration import (
 )
 from ..calculations import (
     discharge_headroom_unknown,
+    household_unknown,
     merge_forecast_series,
     select_clipping_window,
     first_production_at,
@@ -925,8 +926,18 @@ def _build_hub_result(
     # discharge carrying the car, 4000 W at night
     # (dev/tests/test_gridtied_inverter_pool.py). The pool can read below 0
     # where the pack's discharge outruns the export; nothing is spare then.
-    solar_remaining_current = max(0.0, _offered("sun"))
-    solar_available = solar_remaining_current * voltage
+    #
+    # Off-grid with nothing measuring the house (household_unknown - no output
+    # sensors, the battery's power unread) there is no house to take off and
+    # the pool, built from the battery's flow, is empty: that 0 is not a
+    # measurement, and the whole production was published before it. Both
+    # publish None - available, unknown - as Solar Power does for an output
+    # nothing splits (fleet.solar_is_unsplit); the Overview shows a dash.
+    if household_unknown(site):
+        solar_remaining_current = solar_available = None
+    else:
+        solar_remaining_current = max(0.0, _offered("sun"))
+        solar_available = solar_remaining_current * voltage
 
     # Battery remaining is a source diagnostic, not a pool: the rated
     # discharge not yet flowing (bounded by the inverter above). A managed load
@@ -1027,7 +1038,10 @@ def _build_hub_result(
         "available_current_b": available_per_phase[1],
         "available_current_c": available_per_phase[2],
         "available_grid_current": round(grid_remaining_current, 1),
-        "available_solar_current": round(solar_remaining_current, 1),
+        "available_solar_current": (
+            None if solar_remaining_current is None
+            else round(solar_remaining_current, 1)
+        ),
         "available_battery_current": round(battery_remaining_current, 1),
         "available_inverter_current": round(inverter_remaining_current, 1),
         # The pools THEMSELVES, per phase and per combination, exactly as the
@@ -1051,7 +1065,9 @@ def _build_hub_result(
         "total_evse_power": published_evse_power,
         "household_power": published_household_power,
         "solar_power": published_solar_power,
-        "available_solar_power": round(solar_available, 0),
+        "available_solar_power": (
+            None if solar_available is None else round(solar_available, 0)
+        ),
         "total_export_power": published_export_power,
         # The one Excess decision, computed by excess_margin() with the hysteresis
         # latch applied. Every Excess-mode load reads this rather than re-deriving
