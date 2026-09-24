@@ -638,3 +638,60 @@ async def test_meter_only_solar_power_is_the_sun_not_the_battery(
     assert available and house == pytest.approx(
         max(0.0, HOUSE_W - site.solar_w), abs=5.0
     ), f"Household Power {house} W with a {HOUSE_W:.0f} W house"
+
+
+@pytest.mark.parametrize(
+    "site",
+    [
+        ("solar-sensor", 0.0, 5000.0, 2000.0),
+        ("solar-sensor", 3000.0, 5000.0, 0.0),
+        ("meter-only", 0.0, 5000.0, 2000.0),
+    ],
+    ids=["solar-sensor-night-2kw", "solar-sensor-day", "meter-only-night-2kw"],
+    indirect=True,
+)
+async def test_solar_remaining_is_unknown_with_the_battery_unread(hass, site):
+    """Grid-tied, the battery's power sensor unavailable from the start.
+
+    Solar Remaining Power / Current is the sun's share of the solar pool: the
+    export with our loads handed back, plus the battery's charge, less the
+    discharge the export carries. With the battery's power unread neither
+    battery term is known, so the "sun" is the bare export - at night, with
+    the 2 kW allowance starting the car and the battery covering it, every
+    watt of it the battery's. Nothing tells the sun from the battery there,
+    and both sensors read unknown (and stay available), as Current Solar
+    Power does where nothing splits them. Measured, through the real hub
+    sensors once the car has settled:
+
+    ======================  ==============  ==================
+    site                    before          after
+    ======================  ==============  ==================
+    solar sensor, night     4000 W, 17.4 A  unknown, available
+    solar sensor, day       0 W, 0.0 A      unknown, available
+    meter only, night       4000 W, 17.4 A  unknown, available
+    ======================  ==============  ==================
+
+    (By day the battery takes the sun's 2 kW the house leaves; unseen, the
+    meter shows no export and the figure read 0 W.) What the car is offered
+    is unchanged.
+    """
+    from custom_components.dynamic_ocpp_evse.sensor import (
+        DynamicOcppEvseHubDataSensor,
+        HUB_SENSOR_DEFINITIONS,
+    )
+
+    def _unread(world, seconds):
+        world.battery_read = False
+
+    await _session(hass, site, minutes=3, on_cycle=_unread)
+    published = {}
+    for d in HUB_SENSOR_DEFINITIONS:
+        if d["hub_data_key"] in ("available_solar_power", "available_solar_current"):
+            sensor = DynamicOcppEvseHubDataSensor(hass, site.hub, "Hub", "hub", d)
+            await sensor.async_update()
+            published[d["hub_data_key"]] = (sensor.native_value, sensor.available)
+
+    assert published == {
+        "available_solar_power": (None, True),
+        "available_solar_current": (None, True),
+    }, f"published (value, available): {published}, the battery unread"

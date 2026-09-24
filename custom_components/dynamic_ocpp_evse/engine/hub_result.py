@@ -954,7 +954,19 @@ def _build_hub_result(
     # measurement, and the whole production was published before it. Both
     # publish None - available, unknown - as Solar Power does for an output
     # nothing splits (fleet.solar_is_unsplit); the Overview shows a dash.
-    if household_unknown(site):
+    #
+    # Grid-tied with a battery whose power is unread (no sensor, or one past
+    # its hold) neither battery term is known and the pool's sun is the bare
+    # export - at night, the battery covering the car, every watt of it the
+    # battery's: 4000 W beside a solar sensor reading 0 W
+    # (dev/tests/test_gridtied_inverter_pool.py). Nothing tells the sun from
+    # the battery there either, so the same None.
+    battery_unread = (
+        not site.is_off_grid
+        and site.battery_power is None
+        and site.battery_soc is not None
+    )
+    if household_unknown(site) or battery_unread:
         solar_remaining_current = solar_available = None
     else:
         solar_remaining_current = max(0.0, _offered("sun"))
