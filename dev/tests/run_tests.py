@@ -539,6 +539,9 @@ def build_site_from_scenario(scenario, excess_on=False):
             0.0 if phase_b_cons is not None else None,
             0.0 if phase_c_cons is not None else None,
         )
+    # No solar sensor and no output sensors: solar from the meter alone, as
+    # production flags it (engine/fleet.solar_is_metered).
+    site.solar_is_metered = solar_is_derived and site.inverter_output_per_phase is None
 
     # Build loads
     # Per-load operating_mode; fallback to site-level charging_mode for migration

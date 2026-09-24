@@ -1197,6 +1197,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         export_current=export_pv,
         solar_production_total=solar_production_total,
         solar_is_derived=solar_is_derived,
+        solar_is_metered=fleet.solar_is_metered(members),
         battery_soc=float(battery_soc) if battery_soc is not None else None,
         battery_power=float(battery_power) if battery_power is not None else None,
         battery_soc_min=float(battery_soc_min) if battery_soc_min is not None else None,
@@ -1393,7 +1394,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         # Same split for solar: the calculation keeps the conservative 0 W of a
         # dead production sensor, the published measurement does not.
         solar_assumed=fleet.solar_is_assumed(members),
-        solar_metered=fleet.solar_is_metered(members),
         hub_status=hub_status,
         hub_warnings=hub_warnings,
         excess_available=excess_on,

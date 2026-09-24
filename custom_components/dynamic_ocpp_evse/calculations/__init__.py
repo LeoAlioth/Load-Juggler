@@ -13,6 +13,7 @@ from .target_calculator import (
     household_unknown,
     excess_margin,
     reconstructed_export_power,
+    sun_power,
 )
 from .forecast import (
     ClippingForecast,
@@ -44,6 +45,7 @@ __all__ = [
     "excess_load_draw_power",
     "excess_margin",
     "reconstructed_export_power",
+    "sun_power",
     "ClippingForecast",
     "FORECAST_EARLY_START_FACTOR",
     "FORECAST_LOOKAHEAD_DAYS",
