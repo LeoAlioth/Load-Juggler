@@ -19,6 +19,17 @@ the same dict the Overview shows as the pool detail). Pinned here on every
 settled cycle of every YAML scenario: each published figure equals the pool
 it names, to the rounding the sensor publishes.
 
+Solar Remaining Power / Current joined them later. It was re-derived as the
+solar production less ``household_consumption_total`` - a total built only
+beside a production sensor - and wherever that total was missing nothing was
+taken off: 52 of 230 scenarios published a figure more than 2 W from the sun's
+share of the solar pool their Solar loads were offered, on some cycle, from
++5 599 W (a series hybrid's output sensor reading the import passing through
+it, all of it published as sun) to -4 000 W (a solar sensor reading 0 W at
+night beside a battery whose power is not read, whose export the pool
+offers). It now reads the pool's ``sun`` share
+(``target_calculator._calculate_solar_surplus``).
+
 Pure Python, no Home Assistant dependencies. Runnable two ways:
   python3 dev/tests/test_site_remaining_power.py   (standalone, no pytest)
   pytest dev/tests/test_site_remaining_power.py    (Docker / CI tier)
@@ -74,15 +85,19 @@ def _disagreements(site):
     v = site.voltage
     out = []
     checks = [("total_site_available_power", physical["ABC"] * v, TOLERANCE_W)]
-    for half in ("grid", "inverter"):
-        if half not in detail:
-            out.append(f"the pool snapshot has no {half} half")
+    for part in ("grid", "inverter", "sun"):
+        if part not in detail:
+            out.append(f"the pool snapshot has no {part} part")
     if not out:
         grid = detail["grid"]["start"]["ABC"]
+        # Solar Remaining: the sun's share of the solar pool, nothing below 0.
+        sun = max(0.0, detail["sun"]["start"]["ABC"])
         checks += [
             ("available_grid_power", grid * v, TOLERANCE_W),
             ("available_grid_current", grid, TOLERANCE_A),
             ("available_inverter_current", detail["inverter"]["start"]["ABC"], TOLERANCE_A),
+            ("available_solar_power", sun * v, TOLERANCE_W),
+            ("available_solar_current", sun, TOLERANCE_A),
         ]
     for key, phase in zip(
         ("available_current_a", "available_current_b", "available_current_c"),
@@ -125,7 +140,9 @@ def _scenario_disagreements():
 def test_every_published_remaining_figure_is_the_pool_it_names():
     """On every cycle of every scenario. Before the fix, measured: 95 of 223
     scenarios settled on a Site Remaining Power more than 5 W from the pool
-    their loads were offered, from +22 080 W to -14 950 W."""
+    their loads were offered, from +22 080 W to -14 950 W; and 52 of 230
+    published a Solar Remaining Power more than 2 W from the solar pool's sun
+    share, from +5 599 W to -4 000 W."""
     found = _scenario_disagreements()
     scenarios = sorted({name for name, *_ in found})
     # The headline figure on its own, in watts: the worst Site Remaining Power.

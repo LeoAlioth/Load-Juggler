@@ -844,24 +844,6 @@ def _build_hub_result(
         household_power = round(_identity_household, 0)
         household_from_solar = True
 
-    # Solar power available to loads = solar production - household loads
-    # (household_consumption_total is set after feedback loop, so it excludes load draws)
-    solar_available = 0
-    if site.solar_production_total and site.solar_production_total > 0:
-        household = getattr(site, "household_consumption_total", None)
-        if household is None and site.is_off_grid and hh_phases is not None:
-            # Off-grid the inverters serve the whole house, and with output
-            # sensors the per-phase household is it (the total is built only
-            # beside a measured production). Taken off nothing, this published
-            # the whole production - 3000 W where a 1 kW house leaves 2000 W
-            # (dev/tests/test_offgrid_parallel_household.py).
-            household = household_power
-        if household is not None:
-            solar_available = max(0, site.solar_production_total - household)
-        else:
-            # Derived solar mode: export IS the solar available (best approximation)
-            solar_available = max(0, site.solar_production_total)
-
     # Battery power still spare for managed loads = rated discharge minus the
     # discharge already serving the household.
     current_battery_discharge = max(0, battery_power or 0)
@@ -930,12 +912,27 @@ def _build_hub_result(
     grid_remaining_current = _offered("grid")
     inverter_remaining_current = _offered("inverter")
 
-    # Solar and battery remaining are source diagnostics, not pools: the sun
-    # left over after the house, and the rated discharge not yet flowing
-    # (bounded by the inverter above). A managed load only turns on if its
-    # minimum current fits within the physical pool, so a battery reading of
-    # ~0 here is the usual reason a large load stays off despite a healthy SOC.
-    solar_remaining_current = solar_available / voltage if voltage else 0
+    # Solar Remaining Power / Current is the sun's share of the SOLAR pool the
+    # Solar Only / Solar Priority loads are offered (target_calculator.
+    # _calculate_solar_surplus): the export with our loads off, plus the charge
+    # the sun puts into the pack, less the discharge the export carries - the
+    # sun the house leaves, per exporting phase and within the inverter's
+    # rating. It used to be re-derived here as solar production less
+    # household_consumption_total, a total built only beside a production
+    # sensor; everywhere else nothing was taken off, and the whole solar
+    # figure was published - 3000 W where 3 kW of sun and a 1 kW house leave
+    # 2000 W on an output sensor, and from the meter alone the battery's
+    # discharge carrying the car, 4000 W at night
+    # (dev/tests/test_gridtied_inverter_pool.py). The pool can read below 0
+    # where the pack's discharge outruns the export; nothing is spare then.
+    solar_remaining_current = max(0.0, _offered("sun"))
+    solar_available = solar_remaining_current * voltage
+
+    # Battery remaining is a source diagnostic, not a pool: the rated
+    # discharge not yet flowing (bounded by the inverter above). A managed load
+    # only turns on if its minimum current fits within the physical pool, so a
+    # reading of ~0 here is the usual reason a large load stays off despite a
+    # healthy SOC.
     battery_remaining_current = battery_remaining / voltage if voltage else 0
 
     # The grid measurements, or None while any phase is the breaker assumption

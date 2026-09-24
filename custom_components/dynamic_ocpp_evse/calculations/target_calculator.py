@@ -147,7 +147,7 @@ def calculate_all_load_targets(site: SiteContext) -> None:
     physical_pool, grid_pool, inverter_pool = _calculate_site_limit(site)
     _LOGGER.debug(f"Step 1 - Physical pool (grid+inverter): {physical_pool}")
 
-    solar_pool = _calculate_solar_surplus(site)
+    solar_pool, sun_pool = _calculate_solar_surplus(site)
     _LOGGER.debug(f"Step 2 - Solar pool: {solar_pool}")
 
     excess_pool = _calculate_excess_available(site)
@@ -180,7 +180,7 @@ def calculate_all_load_targets(site: SiteContext) -> None:
 
     site.pool_snapshot = _pool_snapshot(
         site, (physical_pool, solar_pool, excess_pool), pools_left,
-        (grid_pool, inverter_pool),
+        (grid_pool, inverter_pool, sun_pool),
     )
 
     # Set inactive loads to 0 allocated
@@ -233,7 +233,7 @@ def _pool_snapshot(
     site: SiteContext,
     start: tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints],
     left: tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints],
-    halves: tuple[PhaseConstraints, PhaseConstraints],
+    parts: tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints],
 ) -> dict:
     """The three pools as plain rounded dicts - for display, never for maths.
 
@@ -243,8 +243,10 @@ def _pool_snapshot(
     disagreed on 95 of 223 scenarios, by up to 22 kW. Site Remaining Power,
     Remaining Current A/B/C and the grid and inverter remaining figures are
     now read FROM here (engine/hub_result.py), so the physical pool's two
-    halves travel too, as ``grid`` and ``inverter`` (start only: the
-    distribution deducts from their sum, never from a half).
+    halves travel too, as ``grid`` and ``inverter``, and so does the solar
+    pool's sun share, as ``sun``, which Solar Remaining Power / Current
+    publish (start only: the distribution deducts from the pools, never from
+    a part).
 
     ``asdict`` rather than a hand-written field list, so a new
     ``PhaseConstraints`` field reaches the dump without a second edit. The
@@ -271,8 +273,8 @@ def _pool_snapshot(
     snapshot = {"phases": phases}
     for name, begin, end in zip(("physical", "solar", "excess"), start, left):
         snapshot[name] = {"start": fields(begin), "left": fields(end)}
-    for name, half in zip(("grid", "inverter"), halves):
-        snapshot[name] = {"start": fields(half)}
+    for name, part in zip(("grid", "inverter", "sun"), parts):
+        snapshot[name] = {"start": fields(part)}
     return snapshot
 
 
@@ -815,11 +817,24 @@ def _calculate_site_limit(
     return constraints, grid_constraints, inverter_constraints
 
 
-def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
+def _calculate_solar_surplus(
+    site: SiteContext,
+) -> tuple[PhaseConstraints, PhaseConstraints]:
     """
     Step 2: Calculate solar available power.
 
-    Returns PhaseConstraints for ALL phase combinations.
+    Returns ``(pool, sun)``, PhaseConstraints for ALL phase combinations. The
+    pool is what Solar Only / Solar Priority loads are offered; ``sun`` is its
+    sun's share - the same pool built without the battery's surplus (the
+    discharge rating above the SOC target), so the export plus the charge the
+    sun is putting into the pack, less the pack's discharge the export
+    carries. Solar Remaining Power publishes ``sun`` (engine/hub_result.py)
+    rather than working "solar less the house" out a second time: that
+    re-derivation had no house to take off wherever no production sensor
+    feeds the household total, and published the whole production - 3000 W
+    where the sun and a 1 kW house leave 2000 W - or, from the meter alone,
+    the battery's discharge carrying our car (dev/tests/
+    test_gridtied_inverter_pool.py, test_site_remaining_power.py).
 
     Export current IS the measured surplus per phase (derived from grid CT).
     If battery_power data is available and battery is charging, add it back
@@ -912,43 +927,49 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
         inverter_headroom = max(0, inverter_max_current - estimated_output)
         discharge_potential = min(discharge_potential, inverter_headroom)
 
-    battery_adjustment_total = charge_back + discharge_potential - discharge_drain
+    def build(battery_adjustment_total: float) -> PhaseConstraints:
+        battery_adjustment_per_phase = battery_adjustment_total / (
+            site.export_current.active_count or site.consumption.active_count or 1
+        ) if battery_adjustment_total else 0
 
-    battery_adjustment_per_phase = battery_adjustment_total / (
-        site.export_current.active_count or site.consumption.active_count or 1
-    ) if battery_adjustment_total else 0
+        max_per_phase = site.inverter_max_power_per_phase / site.voltage if site.inverter_max_power_per_phase else float('inf')
 
-    max_per_phase = site.inverter_max_power_per_phase / site.voltage if site.inverter_max_power_per_phase else float('inf')
+        # Off-grid a symmetric inverter pools as well - see _build_inverter_constraints.
+        if site.inverter_supports_asymmetric or site.is_off_grid:
+            total_pool = (export.total if export else 0) + battery_adjustment_total
+            constraints = _build_inverter_constraints(site, total_pool)
+        else:
+            # Symmetric: per-phase export + battery adjustment = per-phase surplus,
+            # capped by the per-phase inverter capacity left after the household
+            # (mirrors _build_inverter_constraints).
+            hh_a, hh_b, hh_c = _get_household_per_phase(site)
+            cap_a = max(0, max_per_phase - hh_a)
+            cap_b = max(0, max_per_phase - hh_b)
+            cap_c = max(0, max_per_phase - hh_c)
+            phase_a_available = min((export.a or 0) + battery_adjustment_per_phase, cap_a) if export.a is not None else 0
+            phase_b_available = min((export.b or 0) + battery_adjustment_per_phase, cap_b) if export.b is not None else 0
+            phase_c_available = min((export.c or 0) + battery_adjustment_per_phase, cap_c) if export.c is not None else 0
+            constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
 
-    # Off-grid a symmetric inverter pools as well - see _build_inverter_constraints.
-    if site.inverter_supports_asymmetric or site.is_off_grid:
-        total_pool = (export.total if export else 0) + battery_adjustment_total
-        constraints = _build_inverter_constraints(site, total_pool)
-    else:
-        # Symmetric: per-phase export + battery adjustment = per-phase surplus,
-        # capped by the per-phase inverter capacity left after the household
-        # (mirrors _build_inverter_constraints).
-        hh_a, hh_b, hh_c = _get_household_per_phase(site)
-        cap_a = max(0, max_per_phase - hh_a)
-        cap_b = max(0, max_per_phase - hh_b)
-        cap_c = max(0, max_per_phase - hh_c)
-        phase_a_available = min((export.a or 0) + battery_adjustment_per_phase, cap_a) if export.a is not None else 0
-        phase_b_available = min((export.b or 0) + battery_adjustment_per_phase, cap_b) if export.b is not None else 0
-        phase_c_available = min((export.c or 0) + battery_adjustment_per_phase, cap_c) if export.c is not None else 0
-        constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
+        # Apply total inverter limit if configured, accounting for household.
+        # Cap combination fields (not per-phase) - same principle as grid limit.
+        if site.inverter_max_power:
+            max_total = site.inverter_max_power / site.voltage
+            household = sum(_get_household_per_phase(site))
+            max_for_loads = max(0, max_total - household)
+            constraints.ABC = min(constraints.ABC, max_for_loads)
+            constraints = constraints.normalize()
+        return constraints
 
-    # Apply total inverter limit if configured, accounting for household.
-    # Cap combination fields (not per-phase) - same principle as grid limit.
-    if site.inverter_max_power:
-        max_total = site.inverter_max_power / site.voltage
-        household = sum(_get_household_per_phase(site))
-        max_for_loads = max(0, max_total - household)
-        constraints.ABC = min(constraints.ABC, max_for_loads)
-        constraints = constraints.normalize()
+    constraints = build(charge_back + discharge_potential - discharge_drain)
+    # The sun's share: the battery's surplus left out, and the discharge in
+    # flight - inside the export above the target, stripped as drain below
+    # it - taken off either way.
+    sun = build(charge_back - max(0, site.battery_power or 0) / site.voltage)
 
-    _LOGGER.debug(f"Solar available constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}")
+    _LOGGER.debug(f"Solar available constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}): {constraints}, sun's share {sun.ABC:.1f}A")
 
-    return constraints
+    return constraints, sun
 
 
 def _charge_allowance(site: SiteContext) -> float:
