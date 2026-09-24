@@ -105,13 +105,10 @@ def _disagreements(site):
             ("available_inverter_current", detail["inverter"]["start"]["ABC"], TOLERANCE_A),
         ]
         solar_keys = ("available_solar_power", "available_solar_current")
-        # Grid-tied, a battery whose power is unread: the export the pool
-        # starts from may be the battery's, and nothing takes it back off.
-        battery_unread = (
-            not site.is_off_grid
-            and site.battery_power is None
-            and site.battery_soc is not None
-        )
+        # A battery whose power is unread: grid-tied the export the pool
+        # starts from may be the battery's, and nothing takes it back off;
+        # off-grid the pool is built from its flow.
+        battery_unread = site.battery_power is None and site.battery_soc is not None
         if household_unknown(site) or battery_unread:
             # Off-grid with nothing measuring the house, the empty pool is not
             # a measurement: Solar Remaining is unknown, not 0 W - nor with

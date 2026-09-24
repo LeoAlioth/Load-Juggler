@@ -248,3 +248,51 @@ async def test_a_battery_less_output_is_still_solar(hass):
     _engine_solar, published = await _cycle(hass, hub, inverter)
 
     assert published == {"hub": (OUTPUT_W, True), "inverter": (OUTPUT_W, True)}
+
+
+@pytest.mark.parametrize(
+    "topology", [WIRING_TOPOLOGY_PARALLEL, WIRING_TOPOLOGY_SERIES]
+)
+async def test_an_output_nothing_splits_leaves_no_solar_remaining(hass, topology):
+    """Battery configured, its power unread: Solar Remaining is unknown too.
+
+    Solar Remaining Power / Current publishes the solar pool's sun share,
+    which off-grid is built from the battery's flow (the supply our loads
+    hold comes back through it). With the flow unread the pool is empty, and
+    the sensors read 0 W beside a Current Solar Power that reads unknown for
+    the same reason - nothing splits the output into sun and battery. Read
+    through the real hub sensors, on either wiring:
+
+    ==========================  ==========  ==================
+    figure                      before      after
+    ==========================  ==========  ==================
+    Solar Remaining Power       0 W         unknown, available
+    Solar Remaining Current     0.0 A       unknown, available
+    ==========================  ==========  ==================
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+    from custom_components.dynamic_ocpp_evse.entities.hub import publish_hub_data
+    from custom_components.dynamic_ocpp_evse.sensor import (
+        DynamicOcppEvseHubDataSensor,
+        HUB_SENSOR_DEFINITIONS,
+    )
+
+    hub, _inverter = _rig(hass, f"remaining{topology}", topology, "60")
+    with freeze_time("2026-08-14 10:30:00+00:00") as frozen:
+        run_hub_calculation(hass, hub)
+        frozen.tick(60.0)
+        publish_hub_data(hass, hub.entry_id, run_hub_calculation(hass, hub))
+        published = {}
+        for d in HUB_SENSOR_DEFINITIONS:
+            if d["hub_data_key"] in ("available_solar_power", "available_solar_current"):
+                sensor = DynamicOcppEvseHubDataSensor(hass, hub, "Unsplit", "us", d)
+                await sensor.async_update()
+                published[d["hub_data_key"]] = (sensor.native_value, sensor.available)
+
+    assert published == {
+        "available_solar_power": (None, True),
+        "available_solar_current": (None, True),
+    }, f"published (value, available): {published}, nothing splitting the output"
