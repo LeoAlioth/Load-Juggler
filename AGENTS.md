@@ -149,7 +149,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 1. Calculate absolute site limits (per-phase physical constraints)
    → _calculate_site_limit()
      ├─ _calculate_grid_limit()      (grid capacity based on breaker rating)
-     └─ _calculate_inverter_limit()  (solar + battery)
+     └─ _calculate_inverter_limit()  (export with our loads off + battery headroom)
    ↓
 2. Calculate solar surplus power (includes battery charge/discharge)
    → _calculate_solar_surplus()

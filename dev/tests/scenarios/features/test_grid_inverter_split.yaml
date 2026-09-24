@@ -1,0 +1,370 @@
+# Test scenarios: how the grid pool and the inverter pool split the supply
+#
+# Found 2026-09-24 (reported with 8d3553e, the off-grid battery headroom fix).
+# Every configuration has to satisfy ONE identity: what our managed loads may
+# be offered is the supply the site can reach less the household, within each
+# limit -
+#
+#     import allowance + solar + usable battery discharge - household
+#
+# and the physical pool reaches it as two halves read with our loads off:
+#
+#     grid pool     = allowance - the import the site would show
+#     inverter pool = the export the site would show + (discharge rating -
+#                     the battery's flow)
+#
+# The grid pool always had its half (the feedback loop takes our draws off the
+# meter). The inverter pool was built from GROSS production - solar + the
+# discharge rating - which only lands on the identity when "solar" is itself
+# the export-derived figure (no output sensors, no solar sensor). Anywhere else
+# the inverter's output was credited twice where it serves the house - once as
+# the import it saves, again as supply - or, where the battery carries our own
+# load, the load's own draw was booked as spent. And a series inverter's output
+# sensor reads the grid import passing through it, so solar derived from it
+# carried the import, which both pools then offered.
+#
+# The identity holds per phase too, for a SYMMETRIC inverter, whose supply
+# stays on the phase it is on: breaker - that phase's import + that phase's
+# export + its share of the battery headroom. The inverter pool was split
+# evenly, so a phase whose house takes more than its share of the output got
+# the other phases' export on top of its breaker (dev/TODO.md, "credits the
+# inverter's output twice on a net-exporting phase").
+#
+# None of these reached the suite before: the harness derived solar from the
+# export on every grid-tied site, output sensors or not (production derives it
+# from the output), and no invariant held a site to its import allowance.
+# Invariant D in run_tests.check_physical_invariants now does.
+
+scenarios:
+
+  # ── (a) series hybrid with output sensors, battery carries the car ─────────
+
+  - name: "grid-series-output-battery-car-zero-import"
+    description: "Series hybrid, output sensors, night, 1 kW house, 5 kW battery, 0 W import allowance → car gets the battery's 4 kW (17.4 A); before: 0 A, hunting"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # 0 + 0 + 5000 - 1000 = 4000 W = 17.4 A. The pool was solar
+        # (output - battery = 0) + rating - discharge in flight: the discharge
+        # carries the car, so its own draw came off its own pool - 4000 W less
+        # the car's draw, under its minimum once it ran.
+        allocated: 17.4
+
+  - name: "grid-series-output-battery-car-2kw-import"
+    description: "Same site, 2 kW import allowance → 2000 + 5000 - 1000 = 6 kW (26.1 A); before: the pool shrank one-for-one with the car's draw"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 2000
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (2000 + 5000 - 1000) / 230 = 26.09 A; the battery then discharges
+        # its 5 kW and the grid carries exactly the 2 kW allowance.
+        allocated: 26.1
+
+  - name: "grid-series-output-battery-at-rating-grid-passes-through"
+    description: "Series hybrid, output sensors, night, 1 kW house, 2 kW battery, 2 kW allowance → 2000 + 2000 - 1000 = 3 kW (13.0 A); before: 32 A, 4.4 kW over the allowance"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 2000
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 2000
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (2000 + 2000 - 1000) / 230 = 13.04 A. Once the battery is at its
+        # rating the grid carries the rest THROUGH the hybrid, so its output
+        # sensor reads the import too, and solar derived as output - battery
+        # was the grid import: offered once by the grid pool and again as
+        # "solar" by the inverter pool, it grew with every amp the car took.
+        allocated: 13.0
+
+  - name: "grid-series-output-no-battery-grid-passes-through"
+    description: "Series inverter, output sensors, no battery, night, 1 kW house, 3 kW allowance → 2 kW (8.7 A); before: 32 A, the car's own import read back as solar"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 3000
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 8.7
+
+  - name: "grid-derived-battery-car-zero-import"
+    description: "Control: no output or solar sensor, night, 1 kW house, 5 kW battery, 0 W allowance → 17.4 A - the configuration that was already right"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # Solar derived from the export after the feedback loop hands the
+        # car's draw back: the gross formula lands on the identity here, which
+        # is why only the other configurations went wrong.
+        allocated: 17.4
+
+  # ── (b) the inverter's output serving the house, offered again ─────────────
+
+  - name: "grid-solar-sensor-no-battery-zero-import"
+    description: "Dedicated solar sensor, 5 kW sun, 1 kW house, 0 W import allowance → 4 kW (17.4 A); before: a 5 kW pool, 1 kW over the allowance"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 5000
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # 5000 - 1000 = 4000 W = 17.4 A. The pool was the grid's 0 plus the
+        # sensor's full 5000 W, of which the house already takes 1000 W.
+        allocated: 17.4
+
+  - name: "grid-solar-sensor-battery-zero-import"
+    description: "Dedicated solar sensor + a 2 kW-discharge battery, 5 kW sun, 1 kW house, 0 W allowance → 6 kW (26.1 A); before: 7 kW"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 5000
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 2000
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # 5000 + 2000 - 1000 = 6000 W = 26.1 A; the battery (charging the
+        # 4 kW surplus with the car off) ends up discharging its 2 kW.
+        allocated: 26.1
+
+  - name: "grid-parallel-output-no-battery-zero-import"
+    description: "Parallel PV inverter with output sensors, 5 kW sun, 1 kW house, 0 W allowance → 4 kW (17.4 A); before: 5 kW, the same double credit through the output sensor"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 5000
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      inverter_output_sensors: true
+      wiring_topology: parallel
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 17.4
+
+  - name: "grid-solar-sensor-breaker-binds"
+    description: "Dedicated solar sensor, 25 A breaker, 5 kW sun, 1 kW house, two 32 A cars → 25 + 21.7 - 4.35 = 42.4 A between them; before: 46.7 A, 4.35 A through the breaker"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      distribution_mode: priority
+      solar_production: 5000
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+    loads:
+      - entity_id: "car_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+      - entity_id: "car_2"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 2
+        l1_phase: "A"
+    expected:
+      car_1:
+        allocated: 32.0
+      car_2:
+        # 25 A of breaker + 21.74 A of sun - 4.35 A of house = 42.39 A, less
+        # car_1's 32 A. The house's share of the sun was offered again, and the
+        # site imported 29.35 A through its 25 A breaker.
+        allocated: 10.4
+
+  # ── Per phase: a symmetric inverter's supply stays on its own phase ────────
+
+  - name: "grid-symmetric-house-on-one-phase-breaker-binds"
+    description: "3-phase symmetric inverter, 6 kW sun, 15 A of house all on A, 25 A breaker, 1-phase car on A → 25 - (15 - 8.7) = 18.7 A; before: 24.5 A, 30.8 A through the breaker"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      distribution_mode: priority
+      solar_production: 6000      # 8.7 A per phase
+      phase_a_consumption: 15.0
+      phase_b_consumption: 0.0
+      phase_c_consumption: 0.0
+      inverter_supports_asymmetric: false
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # Phase A: the house takes all 8.7 A of the inverter's A leg and
+        # imports 6.3 A, so 25 - 6.3 = 18.7 A is left, and a symmetric
+        # inverter has nothing more to give A. The inverter pool was split
+        # evenly - 17.4 A of export on B and C, a third of it (5.8 A) handed to
+        # A on top of its whole breaker allowance.
+        allocated: 18.7
+
+  # ── Allow Grid Charging off: the export in both pools ──────────────────────
+
+  - name: "grid-no-grid-charging-export-counted-once"
+    description: "Grid charging off, no output/solar sensors, 5 kW sun, 1 kW house, 2 kW-discharge battery → solar + battery - house = 6 kW (26.1 A); before: the export in both pools, 32 A and 1.36 kW of import"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      allow_grid_charging: false
+      solar_production: 5000
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 2000
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (5000 + 2000 - 1000) / 230 = 26.09 A, all of it inverter supply.
+        # The grid pool was capped at the export - which the inverter pool
+        # already offers - so the export was counted twice.
+        allocated: 26.1

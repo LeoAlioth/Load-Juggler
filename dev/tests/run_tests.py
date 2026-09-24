@@ -322,14 +322,23 @@ def apply_feedback_adjustment(site):
     # Derived mode: recalculate solar_production_total from adjusted export.
     # Battery charging absorbs solar power invisible to grid CT - add it back.
     if site.solar_is_derived:
-        if site.is_off_grid and site.inverter_output_per_phase is not None:
-            # Off-grid: export is always 0 - production's _derive_solar_production
-            # uses the inverter output instead.
-            # Either wiring: inverter_output = solar + battery_power → solar =
-            # output − battery (production's fleet.member_solar off-grid).
+        if site.inverter_output_per_phase is not None:
+            # With output sensors, grid-tied as well as off-grid, production
+            # derives solar from the inverter output (engine/fleet.member_solar),
+            # never from the export - so must the harness. Until 2026-09-24 it
+            # took the export-derived path on a grid-tied site, which is the
+            # one configuration where the feedback loop's handed-back draw
+            # reaches the inverter pool: it could not see the pool booking a
+            # battery-fed car's own draw as spent.
+            # Series, and off-grid on either wiring: inverter_output = solar +
+            # battery_power, so solar = output - battery. Grid-tied parallel:
+            # the inverter output IS solar.
             inv_watts = site.inverter_output_per_phase.total * site.voltage
-            bp = site.battery_power if site.battery_power is not None else 0
-            site.solar_production_total = max(0, inv_watts - bp)
+            if site.wiring_topology == 'series' or site.is_off_grid:
+                bp = site.battery_power if site.battery_power is not None else 0
+                site.solar_production_total = max(0, inv_watts - bp)
+            else:
+                site.solar_production_total = max(0, inv_watts)
         else:
             site.solar_production_total = site.export_current.total * site.voltage
             if site.battery_power is not None and site.battery_power < 0:
@@ -1007,6 +1016,17 @@ def check_physical_invariants(site, household, physical_solar_w):
     all below it, and the inverter up to its rating - never past what the house
     alone already asks of either.
 
+    **D - grid-tied, our loads stay inside the import allowance.** With the
+    allocations drawn, the site's grid import (summed over the phases that
+    import, the figure the engine budgets ``max_grid_import_power`` on) may not
+    exceed the allowance - or, when the house alone already imports past it,
+    what the house alone imports. With *Allow Grid Charging* off on a battery
+    site the allowance is 0 W ("charging stops when it would require grid
+    import", README). The breaker (A) is per phase and an Excess load's import
+    (B) is only one behaviour; this is the site-wide limit every behaviour
+    shares, and the one a pool that credits the inverter's output twice
+    breaks.
+
     Returns a list of violation strings; empty means legal.
     """
     saved = [(c, c.l1_current, c.l2_current, c.l3_current) for c in site.loads]
@@ -1041,10 +1061,9 @@ def check_physical_invariants(site, household, physical_solar_w):
             if load.mode_behavior == BEHAVIOR_EXCESS:
                 set_load_phase_currents(load, 0)
         without_excess = simulate_grid_ct(site, household, *_phase_draws())[:3]
-        if site.is_off_grid:
-            for load in site.loads:
-                set_load_phase_currents(load, 0)
-            without_loads_sim = simulate_grid_ct(site, household, *_phase_draws())
+        for load in site.loads:
+            set_load_phase_currents(load, 0)
+        without_loads_sim = simulate_grid_ct(site, household, *_phase_draws())
     finally:
         for load, l1, l2, l3 in saved:
             load.l1_current, load.l2_current, load.l3_current = l1, l2, l3
@@ -1067,6 +1086,33 @@ def check_physical_invariants(site, household, physical_solar_w):
     if site.is_off_grid:
         violations.extend(
             _off_grid_violations(site, household, drawn, with_all_sim, without_loads_sim)
+        )
+    else:
+        violations.extend(_import_violations(site, with_all_sim, without_loads_sim))
+    return violations
+
+
+def _import_violations(site, with_all_sim, without_loads_sim):
+    """Invariant D of check_physical_invariants - see there."""
+    violations = []
+    if not site.allow_grid_charging and site.battery_soc is not None:
+        allowance = 0.0
+    elif site.max_grid_import_power is not None:
+        allowance = site.max_grid_import_power / site.voltage
+    else:
+        return violations
+
+    def _import(sim):
+        return sum(max(0.0, net) for net in sim[:3] if net is not None)
+
+    import_with = _import(with_all_sim)
+    import_bare = _import(without_loads_sim)
+    allowed = max(import_bare, allowance)
+    if import_with > allowed + INVARIANT_TOLERANCE:
+        violations.append(
+            f"grid import {import_with:.2f} A against the {allowed:.2f} A "
+            f"our loads may take it to ({(import_with - allowed) * site.voltage:.0f} W "
+            f"over; allowance {allowance:.2f} A, house alone {import_bare:.2f} A)"
         )
     return violations
 

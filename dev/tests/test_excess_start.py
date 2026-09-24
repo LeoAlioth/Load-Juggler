@@ -946,10 +946,16 @@ def test_a_circuit_group_that_cannot_fit_the_minimum_still_stops_the_load():
 
 
 def test_a_wire_that_cannot_fit_the_minimum_still_stops_the_load():
-    """The physical pool is checked before the floor is ever reserved: a 4 A
-    main breaker leaves no room for a 6 A minimum."""
+    """The physical pool is checked before the floor is ever reserved: a 3 A
+    main breaker beside a 2 A export leaves 5 A - no room for a 6 A minimum.
+
+    (Until 2026-09-24 this site exported 15 A through a 4 A breaker, and the
+    load was stopped only because the inverter pool was built from a solar
+    figure this fixture never sets. The pool now reads the inverter's supply
+    off the export itself, where a 6 A draw only cancels export - so the wire
+    has to be one the export cannot already overrun.)"""
     load = _evse()
-    _prepare(_site(THRESHOLD, loads=[load], breaker=4.0))
+    _prepare(_site(2.0 * V, loads=[load], breaker=3.0, threshold=2.0 * V))
     assert _close(load.allocated_current, 0.0)
 
 
