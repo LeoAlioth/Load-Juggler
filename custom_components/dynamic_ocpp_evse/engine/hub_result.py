@@ -873,6 +873,13 @@ def _build_hub_result(
     solar_available = 0
     if site.solar_production_total and site.solar_production_total > 0:
         household = getattr(site, "household_consumption_total", None)
+        if household is None and site.is_off_grid and hh_phases is not None:
+            # Off-grid the inverters serve the whole house, and with output
+            # sensors the per-phase household is it (the total is built only
+            # beside a measured production). Taken off nothing, this published
+            # the whole production - 3000 W where a 1 kW house leaves 2000 W
+            # (dev/tests/test_offgrid_parallel_household.py).
+            household = household_power
         if household is not None:
             solar_available = max(0, site.solar_production_total - household)
         else:
