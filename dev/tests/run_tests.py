@@ -323,11 +323,20 @@ def apply_feedback_adjustment(site):
                 site.solar_production_total += abs(site.battery_power)
     else:
         # Dedicated solar entity mode: compute household_consumption_total
-        # via energy balance: household = solar + battery_power - export
+        # via energy balance: household = solar + battery_power - export.
+        # Off-grid no draw was put back onto the export above, so solar +
+        # battery still carries the loads' own draw - take it off here, as
+        # production's _apply_household_figures does.
         if site.solar_production_total > 0:
             export_power = site.export_current.total * site.voltage
             bp = float(site.battery_power) if site.battery_power is not None else 0
-            site.household_consumption_total = max(0, site.solar_production_total + bp - export_power)
+            managed_power = (
+                (total_l1 + total_l2 + total_l3) * site.voltage
+                if site.is_off_grid else 0.0
+            )
+            site.household_consumption_total = max(
+                0, site.solar_production_total + bp - export_power - managed_power
+            )
 
     # Per-phase household from inverter output entities
     household = compute_household_per_phase(site, site.wiring_topology)
