@@ -506,21 +506,31 @@ async def test_off_grid_the_household_check_stops_the_hunting(hass, off_grid_sit
 
     assert readout_watch.is_stuck(watch)
     assert watch["stuck_how"] == readout_watch.HOUSEHOLD_LOCKSTEP
-    # Off-grid the hunt does not even get to a stop: the engine ramps the
-    # charger down towards its minimum on the inverter's slower output, and
-    # that up-and-down is already the evidence.
+    # As on the grid: the first start and cut are the evidence, and from the
+    # restart after the one pause the charger is controlled blind. (Until
+    # 2026-09-24 it did not even get to a stop off-grid - but only because the
+    # 0 A the reading had held since the car arrived counted as a SETTLED draw
+    # once charging began, and lifted every permit through the squeeze by the
+    # car's 6 A minimum: 15.4 A where 9.4 A was right. See
+    # dev/tests/test_start_settle.py.)
     assert _stops(second) <= 1, f"stopped {_stops(second)} times"
-    entered = watch["stuck_since"]
-    tail = [(t, limit, supply) for t, limit, supply, _ in second if t > entered + 60]
+    restart = next(
+        (
+            t for (t, a, _, _), (_, b, _, _) in zip(second, second[1:])
+            if (a or 0) < MIN_A and (b or 0) >= MIN_A and t > second[0][0] + 60
+        ),
+        watch["stuck_since"],
+    )
+    tail = [(t, limit, supply) for t, limit, supply, _ in second if t > restart + 30]
     assert tail and min(limit for _, limit, _ in tail) >= MIN_A
     # The inverter carries house + car at its 6 kW rating, and not over it,
-    # once settled. (The first minute after the verdict rides up to ~200 W
+    # once settled. (The first minute after the restart rides up to ~500 W
     # over, and so does the HEALTHY off-grid session after every start - up to
     # ~520 W: the engine's off-grid household is the SMOOTHED inverter output
     # minus the RAW managed draws, so a draw that steps reads as the house
     # shrinking until the output filter catches up. Pre-existing, not the
     # watch; only the settled tail is pinned.)
-    tail = [(t, limit, supply) for t, limit, supply in tail if t > entered + 120]
+    tail = [(t, limit, supply) for t, limit, supply in tail if t > restart + 60]
     assert max(supply for _, _, supply in tail) <= SETTLED_W, max(s for *_, s in tail)
     assert min(supply for _, _, supply in tail) >= ALLOWANCE_W - DEAD_BAND * V - V
 

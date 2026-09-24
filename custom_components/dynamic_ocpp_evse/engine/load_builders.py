@@ -642,7 +642,17 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     # Blind: the "draw" is our own command echoed back, so it settling proves
     # nothing about the car - the footprint rule for blind loads lives in
     # target_calculator._pool_deduction instead.
-    if load.unmetered or load.draw_blind:
+    #
+    # And the window runs only while the connector is Charging, opening afresh
+    # each time charging (re)starts. A draw can settle at the car's own ceiling
+    # only while energy flows; the 0 A of an empty connector, a car waiting to
+    # start (Preparing) or one paused (SuspendedEV, SuspendedEVSE) is steady
+    # for that reason alone. Counted, 15 s of it settled at 0 A and stayed
+    # settled into the first Charging cycle, while the meter still read 0: a
+    # footprint of 0 A instead of the car's minimum, and pass 2 then permitted
+    # the minimum ON TOP of the whole pool - 23 A against a 17 A allowance on
+    # a 25 A breaker with an 8 A house (dev/tests/test_start_settle.py).
+    if load.unmetered or load.draw_blind or connector_status != "Charging":
         load.draw_settled = False
         load_rt.pop("_settle_last_draw", None)
         load_rt.pop("_settle_since", None)
