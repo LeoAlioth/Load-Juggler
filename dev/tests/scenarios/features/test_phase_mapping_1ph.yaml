@@ -43,7 +43,7 @@ scenarios:
   # sorted({"A","A","A"}) = "A", so the engine treats it as single-phase.
   - name: "1ph-1c-standard-phases3-all-mapped-to-A"
     description: "phases=3 with all L1/L2/L3 mapped to A - works because mask becomes 'A'"
-    human_verified: true
+    human_verified: false
     # UNDECIDED SEMANTICS, surfaced by the physical-invariant check 2026-09-07
     # (dev/TODO.md): a three-leg charger with every leg mapped to phase A is a
     # misconfiguration, and this scenario only pins that the engine reduces the
