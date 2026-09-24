@@ -661,6 +661,7 @@ def _build_hub_result(
     grid_stale=False,
     grid_assumed=False,
     solar_assumed=False,
+    solar_metered=False,
     hub_status="OK",
     hub_warnings=None,
     excess_available=False,
@@ -705,6 +706,12 @@ def _build_hub_result(
     its solar is derived from the inverter output or grid export, and nothing
     there is invented. Per-inverter figures are handled one member at a time in
     hub_calculation.py, where each member has a published sensor of its own.
+
+    ``solar_metered`` (``fleet.solar_is_metered``): no member knows its
+    production, so the engine's solar is the meter's export with our loads
+    handed back, plus the batteries' charge - which carries their discharge
+    too. The published solar, and the household identity built on it, take
+    that discharge back off; the engine keeps its figure.
 
     The third case is the managed draws (``LoadContext.draw_assumed``, resolved
     per load by ``_draw_is_unknown`` below): an unreadable current or power
@@ -821,10 +828,24 @@ def _build_hub_result(
     #     since derived solar is itself built from these terms.
     #  3. Last resort: the identity with derived solar - best effort.
     hh_phases = getattr(site, "household_consumption", None)
+    # The production as published. From the meter alone (solar_metered) the
+    # engine's solar is the export with our loads handed back plus the
+    # batteries' charge, and that export carries their discharge too: the car
+    # the battery covers comes back as export, so 3 kW of sun read 6992 W by
+    # day and 4000 W at night, and the house the identity below is built on
+    # read 4992 W and 5000 W where it drew 1 kW
+    # (dev/tests/test_gridtied_inverter_pool.py). Battery power is +
+    # discharging, so export - battery power is export + charge - discharge:
+    # the sun the house does not use itself (the rest reaches no meter). The
+    # engine keeps its figure - the control reads it. With a battery's power
+    # unread nothing takes the discharge off, and solar_assumed publishes None.
+    solar_w = site.solar_production_total or 0
+    if solar_metered:
+        solar_w = max(0.0, site.total_export_power - (battery_power or 0))
     _identity_household = max(
         0,
         net_consumption
-        + (site.solar_production_total or 0)
+        + solar_w
         + (battery_power or 0)
         - total_evse_power,
     )
@@ -956,7 +977,7 @@ def _build_hub_result(
     # Same for solar, and for the household figure whenever it was derived FROM
     # solar (see the docstring and household_from_solar above).
     published_solar_power = (
-        None if solar_assumed else round(site.solar_production_total or 0, 0)
+        None if solar_assumed else round(solar_w, 0)
     )
     published_household_power = (
         None

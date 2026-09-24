@@ -553,3 +553,88 @@ async def test_solar_remaining_is_the_sun_the_house_leaves(hass, site):
         f"and a {HOUSE_W:.0f} W house"
     )
     assert current == pytest.approx(expected_w / V, abs=0.1)
+
+
+# A meter-only site - no solar sensor, no inverter output sensor - its solar
+# worked out from the meter; (site as above, whether the battery's power
+# sensor reads). The unread night runs at a 2 kW allowance, so the car starts
+# and the battery covers it.
+METER_ONLY_SITES = pytest.mark.parametrize(
+    "site,battery_read",
+    [
+        (("meter-only", 3000.0, 5000.0, 0.0), True),
+        (("meter-only", 0.0, 5000.0, 0.0), True),
+        (("meter-only", 3000.0, None, 0.0), True),
+        (("meter-only", 3000.0, 5000.0, 0.0), False),
+        (("meter-only", 0.0, 5000.0, 2000.0), False),
+    ],
+    ids=[
+        "battery-day",
+        "battery-night",
+        "no-battery-day",
+        "battery-unread-day",
+        "battery-unread-night-2kw",
+    ],
+    indirect=["site"],
+)
+
+
+@METER_ONLY_SITES
+async def test_meter_only_solar_power_is_the_sun_not_the_battery(
+    hass, site, battery_read
+):
+    """Current Solar Power and Household Power, read through the real hub
+    sensors once the car has settled.
+
+    From the meter alone the solar is the export with our loads handed back
+    plus the battery's charge - and that export carries the battery's
+    discharge too: the car the battery covers comes back as export. With the
+    battery's power read the discharge is known and comes back off (+ is
+    discharging), which leaves the sun the house does not use itself - the
+    rest of it reaches no meter - so 2000 W by day, nothing at night; the
+    household identity built on it is the house the battery and the grid
+    carry. With the power unread nothing takes the discharge off, and both
+    read unknown. Measured:
+
+    ========================  ===========================  ====================
+    meter only                before: solar, household     after
+    ========================  ===========================  ====================
+    battery, day              6992 W, 4992 W               2000 W, 0 W
+    battery, night            4000 W, 5000 W               0 W, 1000 W
+    no battery, day           2001 W, 1 W                  unchanged
+    battery unread, day       0 W, 0 W (car 0 A)           unknown, unknown
+    battery unread, night     4000 W, 0 W (2 kW, 26.1 A)   unknown, unknown
+    ========================  ===========================  ====================
+
+    The forecast observers take no part: they learn from fleet.solar_total,
+    which is None wherever no member knows its production.
+    """
+    from custom_components.dynamic_ocpp_evse.sensor import (
+        DynamicOcppEvseHubDataSensor,
+        HUB_SENSOR_DEFINITIONS,
+    )
+
+    def _read(world, seconds):
+        world.battery_read = battery_read
+
+    await _session(hass, site, minutes=3, on_cycle=_read)
+    published = {}
+    for d in HUB_SENSOR_DEFINITIONS:
+        if d["hub_data_key"] in ("solar_power", "household_power"):
+            sensor = DynamicOcppEvseHubDataSensor(hass, site.hub, "Hub", "hub", d)
+            await sensor.async_update()
+            published[d["hub_data_key"]] = (sensor.native_value, sensor.available)
+
+    if not battery_read:
+        assert published == {
+            "solar_power": (None, True), "household_power": (None, True),
+        }, f"published (value, available): {published}, the battery unread"
+        return
+    solar, available = published["solar_power"]
+    assert available and solar == pytest.approx(
+        max(0.0, site.solar_w - HOUSE_W), abs=5.0
+    ), f"Current Solar Power {solar} W with {site.solar_w:.0f} W of sun"
+    house, available = published["household_power"]
+    assert available and house == pytest.approx(
+        max(0.0, HOUSE_W - site.solar_w), abs=5.0
+    ), f"Household Power {house} W with a {HOUSE_W:.0f} W house"
