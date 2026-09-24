@@ -295,14 +295,18 @@ def _mixed_household_per_phase(site, members, draws):
     members' - grid-bus loads show on the CT + parallel outputs, behind-series
     loads show in the series outputs. Best-effort superposition; uniform
     fleets never come here and keep the exact single-formula path. ``draws``
-    is what the series half subtracts (see _apply_household_figures)."""
+    is what the series half subtracts (see _apply_household_figures), and only
+    the series half: off-grid the parallel formula takes the draws off too, so
+    the parallel half is handed none, or they would come off twice."""
     original = site.inverter_output_per_phase
     try:
         site.inverter_output_per_phase = fleet.sum_outputs(
             members, WIRING_TOPOLOGY_PARALLEL
         )
         parallel_hh = (
-            compute_household_per_phase(site, WIRING_TOPOLOGY_PARALLEL)
+            compute_household_per_phase(
+                site, WIRING_TOPOLOGY_PARALLEL, (0.0, 0.0, 0.0)
+            )
             if site.inverter_output_per_phase is not None
             else None
         )
@@ -623,13 +627,14 @@ def _apply_household_figures(
     and owns the asymmetric hold state in ``hub_runtime``.
 
     ``managed_draws`` is this cycle's smoothed draw from _managed_phase_draws -
-    the one list every other view subtracts too. The series household is the
-    SMOOTHED inverter output minus the managed draw, so the draw has to be on
-    the same EMA step: with the raw draw, a charger's start came off at once
-    while the output it is part of was still catching up, the household read
-    low by the filter's lag and the permit went over the inverter's allowance
-    by as much (off-grid, where the inverter rating is the whole allowance:
-    up to 773 W, dev/tests/test_offgrid_household_smoothing.py).
+    the one list every other view subtracts too. The series household - and
+    off-grid the parallel one - is the SMOOTHED inverter output minus the
+    managed draw, so the draw has to be on the same EMA step: with the raw
+    draw, a charger's start came off at once while the output it is part of
+    was still catching up, the household read low by the filter's lag and the
+    permit went over the inverter's allowance by as much (off-grid, where the
+    inverter rating is the whole allowance: up to 773 W,
+    dev/tests/test_offgrid_household_smoothing.py).
     Off-grid the feedback loop never ran, so the off-grid household total
     takes the same draw off itself.
     """
@@ -1267,7 +1272,8 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         solar_production_total,
         battery_power,
         # This cycle's one smoothed draw, not a raw re-sum: the series
-        # household subtracts it from the SMOOTHED inverter output, and an
+        # household (off-grid, either wiring's) subtracts it from the SMOOTHED
+        # inverter output, and an
         # off-grid site with no output sensors takes it off the solar-sensor
         # total the same way.
         managed_draws,
