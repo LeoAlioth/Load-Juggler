@@ -18,33 +18,53 @@ separate signal from scatter.
 WHAT IS REAL HERE AND WHAT IS NOT
 ---------------------------------
 Real, imported rather than reimplemented:
-  * ``calculate_all_load_targets`` - the whole allocator
-  * ``apply_smoothing``            - EMA, Schmitt trigger, adaptive rate limit
-  * ``readers._smooth``            - the input filter, on the same keys
-  * ``excess_margin``              - the verdict, with its hysteresis latch
-  * ``grid_without_managed_draws`` - the feedback subtraction
+  * ``run_hub_calculation``        - the whole site cycle (``Engine``): the
+                                     input EMAs on the grid phases AND on the
+                                     managed draw, each advanced once, the
+                                     feedback subtraction, the Excess verdict
+                                     and its latch, the allocator
+  * ``apply_smoothing``            - EMA, Schmitt trigger, adaptive rate limit,
+                                     fed the permit rounded as the load
+                                     processor rounds it
 
 Modelled, mirroring ``dev/ha-test`` rather than Home Assistant:
   * the site's physics, including inverter curtailment to an export limit
   * the CT measurement delay
   * the device's own ramp toward its setpoint
+  * the loads themselves: the plant builds each ``LoadContext`` (what it
+    draws, its status) where production's load builders read entity states
 
-VALIDATED, not assumed. On first run (2026-09-08) the PERMIT_TAU_S sweep
-reproduced the rig's own conclusion from that day: a sustained ~1 kW ring at
-every tau up to 4 s, decaying at 5.6 s, fully settled at 8 s. The rig reached
-that over 40 minutes of wall clock and two noisy columns; this reaches it in
-0.8 s. It also reproduces the trap - mean tracking error is BEST in the
-oscillating region (264 W at tau 1.0 against 289 W at 5.6), while curtailed
-energy, which is the quantity that actually costs anything, is best where the
-ring is zero. Trust the ORDERING here, not the absolute figures: the moving
-error runs about half the rig's, because the omissions below all cost real
-watts.
+Until 2026-09-24 the first line was a hand-assembled copy - ``_smooth`` on the
+grid keys, then the managed draws subtracted RAW - while production smoothed
+the draw on the grid's EMA (201e2bb), and from 2.1.1 advanced that EMA twice a
+cycle (fixed in 4cbbdd1). The copy could model neither. Going through the real
+cycle, ``RampSim`` reproduces that bug's overshoot to the watt when it is put
+back, and dev/tests/test_dynamics_harness.py keeps it that way.
+
+VALIDATED, not assumed - but see the note after this. On first run
+(2026-09-08) the PERMIT_TAU_S sweep reproduced the rig's own conclusion from
+that day: a sustained ~1 kW ring at every tau up to 4 s, decaying at 5.6 s,
+fully settled at 8 s. The rig reached that over 40 minutes of wall clock and
+two noisy columns; this reaches it in 0.8 s. It also reproduces the trap -
+mean tracking error is BEST in the oscillating region (264 W at tau 1.0
+against 289 W at 5.6), while curtailed energy, which is the quantity that
+actually costs anything, is best where the ring is zero. Trust the ORDERING
+here, not the absolute figures: the moving error runs about half the rig's,
+because the omissions below all cost real watts.
+
+Those figures came off the RAW-draw copy. With production's smoothed draw the
+same sweep (2026-09-24) rings only at tau 1.0 (300 W) and is flat from 1.5 s
+up, while tracking error and curtailment rise with tau - 330 W / 30 W at 1.5
+against 469 W / 82 W at 8.0 - so the agreement with the rig's ring is no
+longer reproduced here, and the ordering that chose PERMIT_TAU_S = 7.0 does
+not come out of this model any more. Re-check on the rig before tuning on it.
 
 NOT modelled at all, and this is the limit of the tool: everything on the Home
 Assistant path. The per-load ``update_frequency`` gate, the charge pause, entity
-restore across restarts, template staleness, the grace window. Every one of
-those has produced a real bug in this project, and none of them would show up
-here. Screen candidates with this; confirm the winner on the rig.
+restore across restarts, template staleness, the grace window, the load
+builders (settle detection, the stuck-readout watch). Every one of those has
+produced a real bug in this project, and none of them would show up here.
+Screen candidates with this; confirm the winner on the rig.
 
     python3 dev/tests/dynamics.py                 # the standard comparison
     python3 dev/tests/dynamics.py --plot out.html # and a chart to eyeball
@@ -69,29 +89,134 @@ load_pure_modules(
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E402
     LoadContext,
-    PhaseValues,
-    SiteContext,
-)
-from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (  # noqa: E402
-    calculate_all_load_targets,
-    excess_margin,
-)
-from custom_components.dynamic_ocpp_evse.calculations.utils import (  # noqa: E402
-    grid_without_managed_draws,
 )
 from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+    CONF_EXCESS_HYSTERESIS,
+    CONF_EXCESS_TRIGGER_MARGIN,
+    CONF_GRID_EXPORT_LIMIT,
+    CONF_MAIN_BREAKER_RATING,
+    CONF_PHASE_A_CURRENT_ENTITY_ID,
+    CONF_PHASE_B_CURRENT_ENTITY_ID,
+    CONF_PHASE_C_CURRENT_ENTITY_ID,
+    CONF_PHASE_VOLTAGE,
     CONF_SITE_UPDATE_FREQUENCY,
+    DOMAIN,
     STATION_CHARGE_POWER_STEP,
 )
 from custom_components.dynamic_ocpp_evse.control.smoothing import (  # noqa: E402
     apply_smoothing,
 )
-from custom_components.dynamic_ocpp_evse.engine.readers import (  # noqa: E402
-    _smooth,
-    set_ema_interval,
+from custom_components.dynamic_ocpp_evse.engine import (  # noqa: E402
+    hub_calculation,
 )
 
 V = 230.0
+
+
+# -- the engine -----------------------------------------------------------
+HUB_ID = "dynamics_hub"
+GRID_CTS = (
+    (CONF_PHASE_A_CURRENT_ENTITY_ID, "sensor.dynamics_grid_a"),
+    (CONF_PHASE_B_CURRENT_ENTITY_ID, "sensor.dynamics_grid_b"),
+    (CONF_PHASE_C_CURRENT_ENTITY_ID, "sensor.dynamics_grid_c"),
+)
+
+
+class _Reading:
+    """A Home Assistant state, as far as the readers look at one."""
+
+    __slots__ = ("state", "attributes")
+
+    def __init__(self, value, unit):
+        # repr round-trips a float exactly, so publishing a reading costs it
+        # no precision the plant had.
+        self.state = repr(float(value))
+        self.attributes = {"unit_of_measurement": unit}
+
+
+class Engine:
+    """The production site cycle, ``run_hub_calculation``, fed by a plant.
+
+    Called once per cycle, it keeps everything the engine carries between
+    cycles - every input EMA, the Excess latch - where production keeps it, in
+    the hub's runtime bucket, and advances it exactly as often as production
+    does. That is why the harness goes through the whole cycle instead of
+    calling its parts in an order of its own. Until 2026-09-24 it did the
+    latter: it smoothed the grid phases itself and subtracted RAW managed
+    draws, while production smoothed the draw on the grid's EMA - and, from
+    2.1.1 until 4cbbdd1, advanced that EMA twice a cycle, which let a charger
+    ramping on a breaker-limited phase be permitted 414 W past its allowance.
+    A harness wiring the pieces together itself can model neither the design
+    nor a bug in how the cycle wires it; this one exercises both
+    (dev/tests/test_dynamics_harness.py).
+
+    Two things stand in for Home Assistant, and nothing else does:
+      * the grid CTs are states in a dict, read through the real readers;
+      * the loads are the plant's own ``LoadContext``s, handed to the cycle
+        where ``_add_loads_to_site`` would have built them from entity states.
+        The builders are on the HA path this harness does not model (see NOT
+        modelled above), and the plant owns what a load draws.
+    """
+
+    def __init__(self, *, site_freq, phases=3, breaker_a=25.0,
+                 export_limit_w=0.0, trigger_margin_w=500.0, hysteresis_w=0.0):
+        options = {
+            CONF_PHASE_VOLTAGE: V,
+            CONF_MAIN_BREAKER_RATING: breaker_a,
+            CONF_SITE_UPDATE_FREQUENCY: site_freq,
+            CONF_GRID_EXPORT_LIMIT: export_limit_w,
+            CONF_EXCESS_TRIGGER_MARGIN: trigger_margin_w,
+            # Explicit, because the hub's default band is 500 W, not none.
+            CONF_EXCESS_HYSTERESIS: hysteresis_w,
+        }
+        self._cts = [entity for _, entity in GRID_CTS[:phases]]
+        options.update(GRID_CTS[:phases])
+        # One entry for the engine AND the permit pipeline, as in production:
+        # apply_smoothing reads its cadence and dials off the same hub entry.
+        self.hub_entry = SimpleNamespace(entry_id=HUB_ID, data={}, options=options)
+        self.runtime = {}
+        self._states = {}
+        self.hass = SimpleNamespace(
+            states=self._states,
+            data={DOMAIN: {"hubs": {HUB_ID: self.runtime}, "loads": {}}},
+            # No inverter or circuit-group entries: the plant has none.
+            config_entries=SimpleNamespace(async_entries=lambda domain=None: []),
+        )
+
+    def cycle(self, grid_a, loads):
+        """One site cycle. ``grid_a``: what each CT reads (A, + import)."""
+        for entity, amps in zip(self._cts, grid_a):
+            self._states[entity] = _Reading(amps, "A")
+
+        def plant_loads(hass, site, hub_entry_id, load_entries=None, **_):
+            site.loads.extend(loads)
+
+        # Swapped for the one call, so nothing else sharing the module (the
+        # pytest tier imports the real package) ever sees the stand-in.
+        builders = hub_calculation._add_loads_to_site
+        hub_calculation._add_loads_to_site = plant_loads
+        try:
+            return hub_calculation.run_hub_calculation(self.hass, self.hub_entry)
+        finally:
+            hub_calculation._add_loads_to_site = builders
+
+
+def permit_a(result, load_id):
+    """The permit the load processor hands ``apply_smoothing``, rounded as
+    entities/load.py rounds it."""
+    return round(result["load_available"][load_id], 1)
+
+
+def _permit_state(name):
+    """What ``apply_smoothing`` keeps on the load's sensor entity. It only ever
+    touches these five attributes, so a namespace is the whole contract."""
+    return SimpleNamespace(
+        _attr_name=name,
+        _ema_current=None,
+        _schmitt_current=None,
+        _schmitt_state="rising",
+        _rate_limited_current=0.0,
+    )
 
 
 class Sim:
@@ -122,7 +247,6 @@ class Sim:
         self.hh_w = household_phase_w
         self.export_limit_w = export_limit_w
         self.threshold_w = export_limit_w - trigger_margin_w
-        self.hysteresis_w = hysteresis_w
         self.tank_w = tank_w
         self.station_min_w = station_min_w
         self.station_max_w = station_max_w
@@ -134,24 +258,16 @@ class Sim:
         # what actually costs the loop its phase margin.
         self.lag = deque([(0.0, 0.0, 0.0)] * max(1, round(ct_lag_s / self.dt)))
 
-        self.ema = {}
-        set_ema_interval(self.ema, self.dt)
-        self.excess_on = False
+        self.engine = Engine(
+            site_freq=self.dt,
+            export_limit_w=export_limit_w,
+            trigger_margin_w=trigger_margin_w,
+            hysteresis_w=hysteresis_w,
+        )
+        self.hub_entry = self.engine.hub_entry
         self.station_draw_w = 0.0
         self.commanded_w = 0.0
-
-        # apply_smoothing keeps its state on the sensor entity. It only ever
-        # touches these five attributes, so a namespace is the whole contract.
-        self.sensor = SimpleNamespace(
-            _attr_name="station",
-            _ema_current=None,
-            _schmitt_current=None,
-            _schmitt_state="rising",
-            _rate_limited_current=0.0,
-        )
-        self.hub_entry = SimpleNamespace(
-            options={CONF_SITE_UPDATE_FREQUENCY: self.dt}, data={}
-        )
+        self.sensor = _permit_state("station")
 
     # -- loads ------------------------------------------------------------
     def _loads(self):
@@ -216,43 +332,16 @@ class Sim:
         )
 
         self.lag.append(true)
-        delayed = self.lag.popleft()
-        measured = [
-            _smooth(self.ema, f"grid_{i}", g) or 0.0 for i, g in enumerate(delayed)
-        ]
+        # The CTs report the site as it was ct_lag_s ago, the loads their draw
+        # as it is now. From here the whole site cycle - input EMAs, the
+        # managed-draw subtraction, the Excess latch, the allocator - is
+        # production's.
+        result = self.engine.cycle(self.lag.popleft(), self._loads())
+        margin = result["excess_margin_power"]
 
-        site = SiteContext(
-            voltage=V,
-            main_breaker_rating=25.0,
-            consumption=PhaseValues(*[max(0.0, g) for g in measured]),
-            export_current=PhaseValues(*[max(0.0, -g) for g in measured]),
-            grid_current=PhaseValues(*measured),
-            excess_export_threshold=self.threshold_w,
-            battery_soc=None,
-            battery_power=None,
-            battery_max_charge_power=None,
-            battery_max_discharge_power=None,
-            loads=self._loads(),
-            circuit_groups=[],
-        )
-
-        draws = tuple(sum(c.get_site_phase_draw()[i] for c in site.loads) for i in range(3))
-        if any(d > 0 for d in draws):
-            site.consumption, site.export_current = grid_without_managed_draws(
-                site.consumption, site.export_current, draws
-            )
-
-        margin = excess_margin(site, self.hysteresis_w if self.excess_on else 0.0)
-        self.excess_on = margin >= 0
-        site.excess_hysteresis = self.hysteresis_w if self.excess_on else 0.0
-
-        calculate_all_load_targets(site)
-        station = next(c for c in site.loads if c.entity_id == "station")
-
-        permit_a = apply_smoothing(
-            self.sensor, station.available_current, False, self.hub_entry
-        )
-        permit_w = permit_a * V
+        permit_w = apply_smoothing(
+            self.sensor, permit_a(result, "station"), False, self.hub_entry
+        ) * V
 
         # The register the engine writes, floored to the step the device
         # accepts - the same rule as resolve_station_charge_speed.
@@ -277,6 +366,94 @@ class Sim:
             "curtailed": curtailed_w,
             "margin": margin,
         }
+
+
+class RampSim:
+    """A charger ramping up on a breaker-limited phase, one cycle at a time.
+
+    One phase, a 25 A breaker and 8 A of household that never moves, so the
+    right permit is the 17 A left over and it never moves either. The car
+    plugs in once every input EMA has settled on the household alone, then
+    slews its draw toward its last command; the CT reads household plus that
+    draw and the charger reports the draw, both on the same cycle. Whatever the
+    permit reaches above 17 A is the reconstruction (grid - managed draw)
+    reading the household low while the car ramps - which is what a draw
+    filter running ahead of the grid filter does, and what 4cbbdd1 fixed.
+
+    The same loop dev/tests/test_managed_draw_smoothing.py closes through Home
+    Assistant, with the same numbers, so the two tiers can be held against
+    each other.
+    """
+
+    def __init__(self, *, car_ramp_a_s=1.0, site_freq=2.0, breaker_a=25.0,
+                 household_a=8.0, plug_in_cycle=30):
+        self.dt = float(site_freq)
+        self.car_step_a = car_ramp_a_s * self.dt
+        self.breaker_a = breaker_a
+        self.household_a = household_a
+        self.allowance_a = breaker_a - household_a
+        self.plug_in_cycle = plug_in_cycle
+        self.engine = Engine(site_freq=self.dt, phases=1, breaker_a=breaker_a)
+        self.hub_entry = self.engine.hub_entry
+        self.sensor = _permit_state("evse")
+        self.cycle = 0
+        self.draw_a = 0.0
+        self.command_a = 0.0
+
+    def _load(self, plugged):
+        """A 1-phase 6-32 A Standard EVSE: the breaker binds, not the car."""
+        return LoadContext(
+            load_id="evse",
+            entity_id="evse",
+            min_current=6.0,
+            max_current=32.0,
+            rated_current=32.0,
+            phases=1,
+            l1_phase="A",
+            l1_current=self.draw_a,
+            connector_status="Charging" if plugged else "Available",
+        )
+
+    def step(self):
+        plugged = self.cycle >= self.plug_in_cycle
+        if plugged:
+            gap = self.command_a - self.draw_a
+            self.draw_a += max(-self.car_step_a, min(self.car_step_a, gap))
+        result = self.engine.cycle(
+            (self.household_a + self.draw_a,), [self._load(plugged)]
+        )
+        permit = permit_a(result, "evse")
+        self.command_a = apply_smoothing(self.sensor, permit, False, self.hub_entry)
+        row = {
+            "t": self.cycle * self.dt,
+            "draw": self.draw_a,
+            "permit": permit,
+            "command": self.command_a,
+            "import": self.household_a + self.draw_a,
+        }
+        self.cycle += 1
+        return row
+
+
+def ramp(car_ramp_a_s=1.0, cycles=120, **kw):
+    """Run a RampSim; return its rows and the two overshoots, in W.
+
+    ``permit_over``: the most the permit went past the allowance. ``site_over``:
+    the most the site's import went past the breaker - the physical cost.
+    """
+    sim = RampSim(car_ramp_a_s=car_ramp_a_s, **kw)
+    rows = [sim.step() for _ in range(cycles)]
+
+    def over(key, limit_a):
+        return max(0.0, max(r[key] for r in rows) - limit_a) * V
+
+    return {
+        "rows": rows,
+        "permit_over": over("permit", sim.allowance_a),
+        "site_over": over("import", sim.breaker_a),
+        "final_draw": rows[-1]["draw"],
+        "allowance": sim.allowance_a,
+    }
 
 
 # -- drivers --------------------------------------------------------------
@@ -631,6 +808,13 @@ def main(argv):
         print(f"  {row['tau']:>5.1f} {row['ring_late_mean']:>10,.0f} "
               f"{row['ring_last']:>10,.0f} {row['err_mean']:>9,.0f} "
               f"{row['curtailed_mean']:>10,.0f} {row['writes_per_min']:>11.1f}")
+
+    print("\nRAMP ON A BREAKER-LIMITED PHASE - 25 A breaker, 8 A household, "
+          "17 A allowance\n")
+    for label, rate in (("car at 1 A/s", 1.0), ("instant step", 100.0)):
+        r = ramp(rate)
+        print(f"  {label:<13} permit {r['permit_over']:>5,.0f} W over the "
+              f"allowance, site {r['site_over']:>5,.0f} W over the breaker")
 
     if plot_path:
         plot(runs, plot_path, summaries)
