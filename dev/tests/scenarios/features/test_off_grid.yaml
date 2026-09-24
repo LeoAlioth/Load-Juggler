@@ -159,3 +159,281 @@ scenarios:
         # 6000 W / 230 V = 26.09 A of inverter, less the 4.35 A house = 21.7 A.
         # With the car's own draw left in the household it settled at 10.9 A.
         allocated: 21.7
+
+# ── Battery-limited off-grid: a managed load keeps the supply it holds ──────
+#
+# Found 2026-09-24 while testing the stuck-readout fix (9660cfc): with a
+# CORRECT meter reading, a 3 kW car behind a 1 kW house on a 5 kW battery was
+# permitted 0. Off-grid the battery's discharge in flight carries the car's own
+# draw, and the pool was sized as ``solar + (max discharge - discharge in
+# flight)`` - so the 3 kW the car already held was booked as spent, leaving
+# 1 kW (4.3 A, under its 6 A minimum). Cut to 0 the discharge falls back to the
+# house, the 4 kW returns, the car is allowed again: it hunts. Grid-tied the
+# feedback loop hands every managed draw back as export; off-grid it returns
+# early (no CT reading ever contained the draws), so nothing handed it back.
+# Correct: supply capacity minus the household, i.e.
+# ``solar + max discharge - household`` = 5000 - 1000 = 4000 W for the car.
+# None of the scenarios above reached it - their plugs fit either way.
+#
+# The harness's off-grid battery now covers every deficit, past its rating and
+# below the SOC floor alike (nothing else can, off-grid), and invariant C in
+# run_tests.check_physical_invariants fails any scenario whose loads take the
+# pack past its rating, below its floor, or the inverter past its own.
+
+  - name: "off-grid-battery-limited-car-keeps-its-3kw"
+    description: "Off-grid night, 1 kW house, 5 kW battery, a 3 kW (13 A) car → keeps its 13 A (before the fix: cut, hunting)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 13
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # 5000 W - 1000 W household = 4000 W (17.4 A) of battery for the car;
+        # its own 13 A cap binds.
+        allocated: 13.0
+
+  - name: "off-grid-battery-limited-car-gets-the-4kw"
+    description: "Same site, a 32 A car → the battery's 4 kW left after the house (17.4 A), and not more"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (5000 - 1000) / 230 = 17.4 A. The battery then discharges exactly its
+        # 5 kW rating.
+        allocated: 17.4
+
+  - name: "off-grid-battery-limited-car-with-solar"
+    description: "Off-grid day, 1.5 kW solar, 2.6 kW house, 5 kW battery → car gets solar + battery - house (17.0 A)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 1500
+      phase_a_consumption: 11.3   # household ≈ 2600 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (1500 + 5000 - 2599) / 230 = 16.96 A. Before the fix the pool was
+        # solar + (max - discharge in flight), which both books the car's own
+        # draw as spent and counts the solar the house is already using.
+        allocated: 17.0
+
+  - name: "off-grid-solar-only-car-keeps-its-surplus"
+    description: "Off-grid, battery AT its target, 4 kW solar, 1 kW house → Solar Only car keeps the 3 kW surplus (13.0 A)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 4000
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 80      # at target: no discharge surplus, pure solar
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # Surplus = solar - household = 3000 W = 13.0 A. The solar pool is the
+        # same shape of bug: its only term off-grid was the battery's charge
+        # rate, which the car's own draw takes away one-for-one.
+        allocated: 13.0
+
+  - name: "off-grid-solar-entity-battery-limited-car"
+    description: "Off-grid, dedicated solar sensor only (no inverter output sensors), 1.5 kW solar, 2.6 kW house, 5 kW battery → 17.0 A"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 1500
+      solar_production_direct: true
+      phase_a_consumption: 11.3   # household ≈ 2600 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # Same 16.96 A. With a dedicated solar sensor the pool was the other
+        # error on the same term: solar + the FULL discharge rating, the
+        # household never taken off - 28.3 A offered, 7.6 kW asked of a 5 kW
+        # battery.
+        allocated: 17.0
+
+  - name: "off-grid-solar-entity-night-car-does-not-overdraw-battery"
+    description: "Off-grid night, dedicated solar sensor only, 1 kW house, 5 kW battery → 17.4 A, not the full 5 kW (21.7 A)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 0
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # Same error at night: the full rating with the house never taken off
+        # - 21.7 A offered, 6 kW asked of a 5 kW battery.
+        allocated: 17.4
+
+  - name: "off-grid-solar-entity-inverter-limited-car"
+    description: "Off-grid, dedicated solar sensor only, 4 kW inverter, 1 kW house, 1.5 kW solar → car gets the inverter's 3 kW (13.0 A)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 1500
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 4000
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (4000 - 1000) / 230 = 13.0 A: the inverter binds, not the battery.
+        # Its capacity is sized on the household, and with only a solar
+        # sensor that is solar + battery - off-grid the WHOLE site, the car's
+        # own draw included, until the managed draws are taken off it
+        # (engine/hub_calculation._apply_household_figures).
+        allocated: 13.0
+
+  - name: "off-grid-below-soc-min-car-gets-solar-surplus-only"
+    description: "Off-grid, battery BELOW its SOC minimum, 3 kW solar, 1 kW house → car gets the 2 kW surplus (8.7 A), never the pack"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 3000
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 15
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # Below the floor the discharge rating drops out of the pool and the
+        # flow in flight still comes off, leaving solar - household = 2000 W.
+        # Before the fix the pool was the solar alone - the house never taken
+        # off - and the car's extra 1 kW came out of a pack below its minimum.
+        allocated: 8.7

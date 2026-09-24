@@ -184,7 +184,9 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     # Self-consumption battery: buffer to minimize grid flow
     battery_per_phase = 0.0
     if site.battery_soc is not None:
-        if total_raw > 0 and site.battery_soc > (site.battery_soc_min or 0):
+        if total_raw > 0 and (
+            site.is_off_grid or site.battery_soc > (site.battery_soc_min or 0)
+        ):
             # Deficit: battery discharges to cover it
             max_discharge = (site.battery_max_discharge_power or 0) / site.voltage
             # Inverter output cap: battery discharge goes through the inverter.
@@ -192,7 +194,17 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
             # Off-grid the battery covers the whole deficit regardless - the
             # inverter physically overloads past its rating (observed in the
             # field), which is exactly the state the engine must correct.
-            if site.inverter_max_power and not site.is_off_grid:
+            # The same holds for the battery's own discharge rating and for
+            # the engine's SOC floor: with no grid nothing else can cover the
+            # deficit, so the pack does, and the battery power sensor reads
+            # it. Capping it here left the modelled inverter output at the
+            # site's demand while the battery flow stopped at its rating, so
+            # the sim's energy balance broke and the missing watts turned up
+            # as solar. Honouring the rating and the floor is the engine's
+            # job; invariant C in check_physical_invariants holds it to it.
+            if site.is_off_grid:
+                max_discharge = float("inf")
+            elif site.inverter_max_power:
                 inverter_max_current = site.inverter_max_power / site.voltage
                 inverter_headroom = max(0, inverter_max_current - solar_total)
                 max_discharge = min(max_discharge, inverter_headroom)
@@ -976,6 +988,15 @@ def check_physical_invariants(site, household, physical_solar_w):
     export), and Solar Priority is exempt because it deliberately runs on a
     grid-backed minimum below the SOC target.
 
+    **C - off-grid, our loads stay inside the battery and the inverter.** With
+    no grid the pack covers every deficit (see ``simulate_grid_ct``), so an
+    over-allocation shows up as the battery discharging past its rating, or
+    below the SOC floor, and as the inverter delivering past its own. Measured
+    against the site with every managed load off: our loads may take the pack
+    up to its discharge rating while the SOC is at/above its minimum and not at
+    all below it, and the inverter up to its rating - never past what the house
+    alone already asks of either.
+
     Returns a list of violation strings; empty means legal.
     """
     saved = [(c, c.l1_current, c.l2_current, c.l3_current) for c in site.loads]
@@ -1003,11 +1024,17 @@ def check_physical_invariants(site, household, physical_solar_w):
             # give them together. The allocation is the engine's actual
             # decision, and the only figure physics has to honour.
             set_load_phase_currents(load, load.allocated_current)
-        with_all = simulate_grid_ct(site, household, *_phase_draws())[:3]
+        drawn = _phase_draws()
+        with_all_sim = simulate_grid_ct(site, household, *drawn)
+        with_all = with_all_sim[:3]
         for load in site.loads:
             if load.mode_behavior == BEHAVIOR_EXCESS:
                 set_load_phase_currents(load, 0)
         without_excess = simulate_grid_ct(site, household, *_phase_draws())[:3]
+        if site.is_off_grid:
+            for load in site.loads:
+                set_load_phase_currents(load, 0)
+            without_loads_sim = simulate_grid_ct(site, household, *_phase_draws())
     finally:
         for load, l1, l2, l3 in saved:
             load.l1_current, load.l2_current, load.l3_current = l1, l2, l3
@@ -1026,6 +1053,41 @@ def check_physical_invariants(site, household, physical_solar_w):
         if extra > INVARIANT_TOLERANCE:
             violations.append(
                 f"phase {label}: modulating Excess loads add {extra:.2f} A of import"
+            )
+    if site.is_off_grid:
+        violations.extend(
+            _off_grid_violations(site, household, drawn, with_all_sim, without_loads_sim)
+        )
+    return violations
+
+
+def _off_grid_violations(site, household, drawn, with_all_sim, without_loads_sim):
+    """Invariant C of check_physical_invariants - see there."""
+    violations = []
+    n = household.active_count or 1
+    # battery_per_phase (the sim's 5th value) is negative while discharging.
+    discharge_with = max(0.0, -with_all_sim[4]) * n
+    discharge_bare = max(0.0, -without_loads_sim[4]) * n
+    dischargeable = (
+        site.battery_soc is not None
+        and site.battery_soc >= (site.battery_soc_min or 0)
+    )
+    rating = (site.battery_max_discharge_power or 0) / site.voltage if dischargeable else 0.0
+    allowed = max(discharge_bare, rating)
+    if discharge_with > allowed + INVARIANT_TOLERANCE:
+        violations.append(
+            f"battery discharges {discharge_with:.2f} A against the {allowed:.2f} A "
+            f"our loads may take it to (house alone {discharge_bare:.2f} A)"
+        )
+    if site.inverter_max_power:
+        # Off-grid the inverter delivers everything the site draws.
+        output_bare = household.total
+        output_with = output_bare + sum(drawn)
+        allowed_out = max(output_bare, site.inverter_max_power / site.voltage)
+        if output_with > allowed_out + INVARIANT_TOLERANCE:
+            violations.append(
+                f"inverter delivers {output_with:.2f} A against its "
+                f"{allowed_out:.2f} A rating (house alone {output_bare:.2f} A)"
             )
     return violations
 

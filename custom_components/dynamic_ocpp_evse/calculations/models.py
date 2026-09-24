@@ -272,6 +272,13 @@ class SiteContext:
     # Net grid flow right now (W): positive = importing, negative = exporting.
     # Smoothed, and 0 on an off-grid site (no CTs, nothing to import).
     net_grid_power: float | None = None
+    # Per-phase managed draw (A, ``(a, b, c)``) this cycle - the figure the
+    # feedback loop subtracts, smoothed on the grid/battery EMA (see
+    # engine/hub_calculation._managed_phase_draws). Off-grid there is nothing
+    # to subtract it from, and the calculator hands it back to the loads
+    # directly (target_calculator._off_grid_held_supply). None = not supplied;
+    # the calculator then sums the loads' own draws.
+    managed_phase_draws: tuple | None = None
 
     # Settings
     allow_grid_charging: bool = True
