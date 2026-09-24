@@ -522,6 +522,13 @@ def _compute_forecast_advice(
         if off_grid
         else export_is_clamped(site.total_export_power, export_limit)
     )
+    # The observers learn from PUBLISHED production, not the calculation's:
+    # None wherever the figure is not a measurement (fleet.solar_is_assumed) -
+    # a dead sensor's 0 W, an off-grid output nothing splits from its battery.
+    production_w = (
+        None if fleet.solar_is_assumed(members)
+        else fleet.solar_total(members, site.voltage)
+    )
 
     for m in members:
         if not m.forecast_device_ids:
@@ -537,7 +544,7 @@ def _compute_forecast_advice(
             m.entry_id,
             local_day,
             block_power_at(member_series, now_local),
-            fleet.member_solar_production(m, site.voltage),
+            fleet.member_solar_published(m, site.voltage),
             dt_hours,
             constrained,
             now_local=now_local,
@@ -549,7 +556,7 @@ def _compute_forecast_advice(
         now_local,
         local_day,
         clip_threshold,
-        fleet.solar_total(members, site.voltage),
+        production_w,
         dt_hours,
     )
     # SATURATION is the Excess verdict, not a second test of the same thing:
@@ -561,7 +568,7 @@ def _compute_forecast_advice(
         hub_runtime,
         local_day,
         block_power_at(series, now_local),
-        fleet.solar_total(members, site.voltage),
+        production_w,
         constrained,
         dt_hours,
     )

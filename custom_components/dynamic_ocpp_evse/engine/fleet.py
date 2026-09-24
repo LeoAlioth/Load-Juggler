@@ -555,7 +555,7 @@ def member_solar(member, voltage: float) -> Optional[float]:
     headroom, so a Solar Only car settled at 12.4 A where series gave 21.7 A
     (dev/tests/test_offgrid_parallel_household.py). Without a battery power
     reading nothing separates the two and the whole output stands, as on
-    series.
+    series - for the calculation; it is not published (solar_is_unsplit).
 
     The max(0, ·) is a physical clamp, and it matters now that outputs are
     signed (see hub_calculation._read_inverter_output): a negative result means
@@ -604,22 +604,46 @@ def solar_total(members, voltage: float) -> Optional[float]:
     return max(0.0, sum(readings))
 
 
+def solar_is_unsplit(member) -> bool:
+    """Off-grid, this member's "production" is its whole output: derived from
+    the output sensors (no production sensor), with a battery configured whose
+    power is not read (no power sensor, or one unreadable with nothing to
+    hold). The output carries that battery's flow (see member_solar) and
+    nothing takes it back out, so at night every watt of it is the battery's.
+
+    The figure stays in the calculation - the off-grid pool is built from it,
+    and taking it away would hand the chargers nothing - but it is not a
+    production figure, so it is not published (member_solar_published /
+    solar_is_assumed). A member with no battery entity has no battery
+    (engine/readers), and its output is all panels.
+    """
+    return (
+        member.off_grid
+        and not member.has_solar_entity
+        and member.output is not None
+        and member.has_battery
+        and member.battery_power is None
+    )
+
+
 def member_solar_published(member, voltage: float) -> Optional[float]:
     """One member's production for PUBLICATION - None while its own figure is
-    the invented 0 W (``solar_assumed``), its real production otherwise.
+    the invented 0 W (``solar_assumed``) or an output nothing splits from its
+    battery (``solar_is_unsplit``), its real production otherwise.
 
     Per member on purpose: unlike the grid phases, each inverter publishes a
     production sensor of its OWN, so a healthy sibling has a measurement worth
     keeping and only the dead member's device sensor reads unknown. The FLEET
     total is a different question - see solar_is_assumed.
     """
-    if member.solar_assumed:
+    if member.solar_assumed or solar_is_unsplit(member):
         return None
     return member_solar_production(member, voltage)
 
 
 def solar_is_assumed(members) -> bool:
-    """True when any member's production figure is an invented 0 W.
+    """True when any member's production figure is not a measurement: an
+    invented 0 W, or an off-grid output nothing splits from its battery.
 
     The fleet total sums every member, so one fabricated term makes the whole
     sum fabricated - the same rule the grid phases follow, and for the same
@@ -628,7 +652,7 @@ def solar_is_assumed(members) -> bool:
     unknowable in BOTH directions (the array could be idle or at full output),
     which is an argument for silence rather than against it.
     """
-    return any(m.solar_assumed for m in members)
+    return any(m.solar_assumed or solar_is_unsplit(m) for m in members)
 
 
 def solar_is_measured(members) -> bool:
