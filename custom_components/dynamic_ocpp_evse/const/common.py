@@ -166,17 +166,19 @@ RAMP_TAU_S = 5.6
 # from the raw draw), and on rig runs made while production advanced that
 # smoothing twice a cycle (until 4cbbdd1). Closed through the production cycle,
 # the harness rings only at 1 s and tracks best at 1.5 s; the rig rings at
-# 1.5 s. The ring comes from two things the harness does not model: the rig's
+# 1.5 s. The ring comes from what the harness did not then model: the rig's
 # station has no AC output sensor, so it is booked at its COMMANDED speed
-# (load_builders' fallback) while the CTs see the real draw 5-10 s later, and
-# its register moves every 5 s, not every cycle. A copy of dynamics.Sim given
-# both rings 140-330 W at 1-3 s and under one register step at 7 s, as the rig
-# does; given the timing alone it does not ring at all. A station read through
-# both AC sensors lacks the first, but a charger whose readout is judged stuck
-# is also controlled on its command, so the value has to hold for that loop.
-# Only the rig's 1 s refresh was measured; the harness finds 7 s ring-free at
-# 2, 5 and 10 s as well, which is weaker evidence, since it misses this ring at
-# 1 s too.
+# (load_builders' fallback) while the CTs see the real draw 5-10 s later; its
+# register moves every 5 s, not every cycle; and the rig's instruments tick
+# every 5 s. Since ad9f5d9 the harness models all three through production's
+# own code and rings as the rig does (mean of the five tick phases: 290 W at
+# 1 s, 190 W at 2 s, 0 at 7 s - dev/tests/test_dynamics_harness.py). A station
+# read through both AC sensors lacks the first, but a charger whose readout is
+# judged stuck is also controlled on its command, so the value has to hold for
+# that loop. At the production default 2 s refresh the faithful harness rings
+# 305/240/150/70/60/20 W at 1/1.5/2/3/4/5 s and not at all at 7 or 10 s, so
+# 7 s holds there too; at the default 15 s command interval nothing rings at
+# any value (2026-09-24).
 #
 # It is deliberately no longer equal to EMA_TAU_S. The two are cascaded on one
 # signal, so they are not the same design decision: the input filter answers
