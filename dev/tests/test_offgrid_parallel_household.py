@@ -217,7 +217,8 @@ async def _run(hass, slug, topology, car_ramp_a_s, cycles=200, mixed=False,
             trace.append({"i": i, "draw": draw, "permit": permit,
                           "command": command, "supply": supply,
                           "household_w": result["household_power"],
-                          "solar_w": result["solar_power"]})
+                          "solar_w": result["solar_power"],
+                          "result": result})
     return trace
 
 
@@ -415,3 +416,57 @@ async def test_a_solar_only_car_gets_the_same_on_either_wiring(hass, solar_w):
         f"{len(differing)} cycles where parallel and series disagree, first "
         f"(cycle, parallel permit, series permit): {differing[0]}"
     )
+
+
+@pytest.mark.parametrize("topology", [WIRING_TOPOLOGY_PARALLEL, WIRING_TOPOLOGY_SERIES])
+@pytest.mark.parametrize("solar_w", [0.0, 3000.0], ids=["night", "day"])
+async def test_the_published_solar_remaining_is_the_solar_less_the_house(
+    hass, solar_w, topology
+):
+    """Solar Remaining Power is what solar offers the managed loads: the
+    production less the house, as grid-tied with a production sensor
+    (``solar - household``, the household the inverters serve - off-grid that
+    is all of it), and what the engine's off-grid solar pool is made of short
+    of the battery's surplus: the draw our loads hold plus the battery's
+    charge less its discharge, which by the bus balance is the same figure.
+    Off-grid with output sensors the household total is never built, so the
+    figure fell through to the whole production - the house taken off
+    nothing. Read through the real sensors, car off and settled alike:
+
+    =====================  ==========  ===========  ==========  ===========
+    Solar Remaining Power  night, off  night, car   day, off    day, car
+    =====================  ==========  ===========  ==========  ===========
+    either wiring, before  0 W         0 W          3000 W      3000 W
+    either wiring, after   0 W         0 W          2000 W      2000 W
+    =====================  ==========  ===========  ==========  ===========
+    """
+    from custom_components.dynamic_ocpp_evse.entities.hub import publish_hub_data
+    from custom_components.dynamic_ocpp_evse.sensor import (
+        DynamicOcppEvseHubDataSensor,
+        HUB_SENSOR_DEFINITIONS,
+    )
+
+    slug = f"remaining_{topology}{solar_w:g}"
+    trace = await _run(hass, slug, topology, 100.0, solar_w=solar_w)
+    hub = next(
+        e for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(CONF_ENTITY_ID) == f"ogp_hub_{slug}"
+    )
+    sensors = {
+        d["hub_data_key"]: DynamicOcppEvseHubDataSensor(hass, hub, "Hub", slug, d)
+        for d in HUB_SENSOR_DEFINITIONS
+        if d["hub_data_key"] in ("available_solar_power", "available_solar_current")
+    }
+
+    expected_w = max(0.0, solar_w - HOUSE_A * V)
+    for label, row in (("car off", trace[START - 1]), ("car settled", trace[-1])):
+        publish_hub_data(hass, hub.entry_id, row["result"])
+        for sensor in sensors.values():
+            await sensor.async_update()
+        power = sensors["available_solar_power"].native_value
+        current = sensors["available_solar_current"].native_value
+        assert power == pytest.approx(expected_w, abs=0.1 * V), (
+            f"{topology}, {label}: Solar Remaining Power {power:.0f} W with "
+            f"{solar_w:.0f} W of solar and a {HOUSE_A * V:.0f} W house"
+        )
+        assert current == pytest.approx(expected_w / V, abs=0.1)
