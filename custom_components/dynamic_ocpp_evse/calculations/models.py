@@ -254,6 +254,11 @@ class SiteContext:
     battery_soc_hysteresis: float = 5
     battery_max_charge_power: float | None = None
     battery_max_discharge_power: float | None = None
+    # The most the battery is taken to discharge (W), below its rating: set
+    # while a meter-only hybrid is seen at its limit - the grid, not the
+    # battery, carrying our loads' growth (engine/hub_calculation.
+    # _apply_saturation_latch). None everywhere else.
+    battery_discharge_ceiling: float | None = None
     
     # Grid import limit (from smart meter / grid operator)
     max_grid_import_power: float | None = None  # Max total power allowed from grid (W)

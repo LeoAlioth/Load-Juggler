@@ -864,6 +864,13 @@ def _build_hub_result(
     # discharge already serving the household.
     current_battery_discharge = max(0, battery_power or 0)
     battery_remaining = max(0, battery_rated_discharge - current_battery_discharge)
+    # A meter-only hybrid seen at its limit gives no more than it did then,
+    # and the pool offers no more (hub_calculation._apply_saturation_latch).
+    if site.battery_discharge_ceiling is not None:
+        battery_remaining = min(
+            battery_remaining,
+            max(0.0, site.battery_discharge_ceiling - current_battery_discharge),
+        )
 
     # Battery Remaining Power is bounded by the inverter: the battery cannot
     # deliver more to loads than the inverter can pass - its rating less what

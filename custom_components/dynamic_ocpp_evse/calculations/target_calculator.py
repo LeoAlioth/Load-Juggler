@@ -466,6 +466,26 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
     return constraints
 
 
+def grid_overdraw(site: SiteContext) -> float:
+    """What the grid carries for our managed loads beyond what the grid half
+    grants them (A, over all phases; negative while inside the grant).
+
+    Their share of the import is, per phase, the import with them on less the
+    import they would leave (the consumption the feedback loop reconstructs).
+    The grid half (``_calculate_grid_limit``) grants them the allowance, the
+    breaker's room, or nothing with Allow Grid Charging off; whatever the grid
+    carries for them beyond that is supply the inverter half offered and the
+    inverters did not deliver. 0 off-grid, where there is no grid to carry it.
+
+    Read by the saturation latch (engine/hub_calculation.
+    _apply_saturation_latch).
+    """
+    if site.is_off_grid or site.net_grid_power is None:
+        return 0.0
+    carried = site.net_grid_power / site.voltage - site.consumption.total
+    return carried - _calculate_grid_limit(site).ABC
+
+
 def _get_household_per_phase(site: SiteContext) -> tuple[float, float, float]:
     """Get per-phase household consumption in Amps using best available data.
 
@@ -849,6 +869,10 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
         )
         total_inverter_current = solar_current + rating
     else:
+        if site.battery_discharge_ceiling is not None:
+            # A meter-only hybrid seen at its limit: the battery adds no more
+            # than it gave then (the latch keeps this at or above the flow).
+            rating = min(rating, site.battery_discharge_ceiling / site.voltage)
         headroom = rating - flow
         exports = (site.export_current.a, site.export_current.b, site.export_current.c)
         spare = [
