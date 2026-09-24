@@ -143,6 +143,7 @@ class World:
         self.hass = hass
         self.site = site
         self.limit = None          # the last limit the charger accepted (A)
+        self.battery_read = True   # False: its power sensor is unavailable
 
     @property
     def draw(self):
@@ -186,7 +187,11 @@ class World:
         else:
             set_state("sensor.solar_production", str(self.site.solar_w), power)
         if self.site.discharge_w is not None:
-            set_state("sensor.battery_power", str(round(self.battery_w, 1)), power)
+            set_state(
+                "sensor.battery_power",
+                str(round(self.battery_w, 1)) if self.battery_read else "unavailable",
+                power,
+            )
             set_state("sensor.battery_soc", "80",
                       {"device_class": "battery", "unit_of_measurement": "%"})
         set_state("sensor.evse_status_connector", self.charger_status())
@@ -291,10 +296,11 @@ def _headroom_w(site):
     return site.allowance_w + site.solar_w + (site.discharge_w or 0.0) - HOUSE_W
 
 
-async def _session(hass, site, minutes, published=None):
+async def _session(hass, site, minutes, published=None, on_cycle=None):
     """``minutes`` of real site cycles against the world, one CYCLE_S apart.
     Returns [(seconds, accepted limit, import W, battery W)] per cycle, and
-    appends each cycle's published hub data to ``published`` when given."""
+    appends each cycle's published hub data to ``published`` when given.
+    ``on_cycle(world, seconds)`` runs before each cycle's readings go out."""
     world = World(hass, site)
     clock = _Clock(10_000.0)
     hass.data[DOMAIN].setdefault("load_processors", {}).setdefault(
@@ -312,6 +318,8 @@ async def _session(hass, site, minutes, published=None):
     log = []
     try:
         for _ in range(int(minutes * 60 / CYCLE_S)):
+            if on_cycle is not None:
+                on_cycle(world, clock.now - 10_000.0)
             world.publish()
             await sensor_platform.async_run_hub_cycle(hass, site.hub)
             log.append((clock.now, world.limit, world.import_w, world.battery_w))
@@ -408,3 +416,54 @@ async def test_site_remaining_power_is_the_pool_the_car_is_offered(hass, site):
     pools = last["pool_detail"]
     assert abs(last["available_grid_power"] - pools["grid"]["start"]["ABC"] * V) <= 2.0
     assert abs(last["available_inverter_current"] - pools["inverter"]["start"]["ABC"]) <= 0.051
+
+
+UNREAD_FROM_S, READ_AGAIN_S = 240.0, 480.0
+
+
+def _battery_reading_drops_out(world, seconds):
+    world.battery_read = not UNREAD_FROM_S <= seconds < READ_AGAIN_S
+
+
+@pytest.mark.parametrize(
+    "site",
+    [("solar-sensor", 0.0, 5000.0, 0.0), ("solar-sensor", 0.0, 5000.0, 2000.0)],
+    ids=["solar-sensor-battery-0w", "solar-sensor-battery-2kw"],
+    indirect=True,
+)
+async def test_an_unread_battery_power_offers_nothing_on_the_batterys_word(hass, site):
+    """Night, a solar production sensor, a car the battery carries: the
+    battery's power sensor goes unavailable for four minutes and comes back.
+
+    Held for INPUT_STALE_TIMEOUT, the reading then counts as unread, and its
+    flow is unknown in both directions - so no headroom is offered on it, only
+    what the meter measures. The car the battery is carrying reads as export
+    once its draw is handed back, so it is neither cut nor pushed; when the
+    reading returns, nothing has moved.
+
+    Before the fix, measured: with the flow taken as 0 the whole discharge
+    rating came back on top of that export, the car rose to 32 A, the battery
+    stopped at its 5 kW and the grid carried 3360 W past a 0 W allowance
+    (1360 W past 2 kW) until the reading returned."""
+    log = await _session(
+        hass, site, minutes=12, on_cycle=_battery_reading_drops_out
+    )
+    start = log[0][0]
+    target_w = _headroom_w(site)
+    worst = max(log, key=lambda row: row[2])
+    assert worst[2] <= site.allowance_w + DEADBAND_W, (
+        f"imported {worst[2]:.0f} W against a {site.allowance_w:.0f} W allowance "
+        f"at {worst[0] - start:.0f} s - {worst[2] - site.allowance_w:.0f} W over "
+        f"(car at {worst[1]:.1f} A)"
+    )
+    stops = _stops(log, since=start + 60)
+    assert stops == 0, f"the car was cut {stops} times"
+    for label, since, until in (
+        ("unread", start + UNREAD_FROM_S + 120, start + READ_AGAIN_S),
+        ("read again", start + READ_AGAIN_S + 120, start + 1e9),
+    ):
+        drawn_w = [limit * V for t, limit, *_ in log if since <= t < until]
+        assert min(drawn_w) >= target_w - DEADBAND_W - V, (
+            f"{label}: the car fell to {min(drawn_w):.0f} W of the "
+            f"{target_w:.0f} W the site can give it"
+        )

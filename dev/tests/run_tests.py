@@ -897,6 +897,11 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
             load_phase_c += c_draw
         ct_a_net, ct_b_net, ct_c_net, solar_pp, bat_pp = simulate_grid_ct(
             site, household, load_phase_a, load_phase_b, load_phase_c)
+        # A battery whose power is not read (no sensor, or one past its
+        # INPUT_STALE_TIMEOUT): it still does what the CT simulation says, the
+        # engine just cannot see it - production's reader leaves None.
+        if scenario['site'].get('battery_power_unread'):
+            site.battery_power = None
 
         # 4b. Read-time figures the engine captures before its feedback loop and
         #     the calculator's inverter coverage gate reads: the raw meter and

@@ -32,6 +32,7 @@ from ..calculations.calibration import (
     export_is_clamped,
 )
 from ..calculations import (
+    discharge_headroom_unknown,
     merge_forecast_series,
     select_clipping_window,
     first_production_at,
@@ -748,14 +749,13 @@ def _build_hub_result(
     # Battery rated discharge power (gated by SOC >= minimum). This is the
     # battery's capability, not what is spare right now - see battery_remaining.
     #
-    # Mirror the distribution engine's gate (_calculate_inverter_limit): in
-    # derived-solar mode the engine can only add battery discharge to the pool
-    # when a battery-power sensor is present (without it the battery's effect on
-    # the grid CT can't be untangled, so the engine treats it as 0). The display
-    # must use the same gate or these sensors would advertise battery headroom
-    # the engine never actually grants - masking exactly the case where a large
-    # load stays off despite a healthy SOC.
-    battery_discharge_unusable = site.solar_is_derived and battery_power is None
+    # The distribution engine's own gate (discharge_headroom_unknown): with
+    # the battery's flow unread the pool offers none of its headroom grid-tied,
+    # nor off-grid on a derived solar figure. The display must use the same
+    # gate or these sensors would advertise battery headroom the engine never
+    # actually grants - masking exactly the case where a large load stays off
+    # despite a healthy SOC.
+    battery_discharge_unusable = discharge_headroom_unknown(site)
     if (
         battery_soc is not None
         and battery_soc_min is not None
