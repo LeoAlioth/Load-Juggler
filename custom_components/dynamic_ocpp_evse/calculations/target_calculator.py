@@ -580,15 +580,32 @@ def _build_inverter_constraints(
 ) -> PhaseConstraints:
     """Build PhaseConstraints for inverter-limited power (solar/battery/excess).
 
-    For ASYMMETRIC inverters: power is a flexible pool, per-phase capped by
-    inverter_max_power_per_phase minus household.
-    For SYMMETRIC inverters: power is fixed per-phase - ``per_phase_pool``
-    ``(a, b, c)`` when the caller knows where it is, else total_pool /
-    num_phases - capped by inverter_max_power_per_phase.
+    For ASYMMETRIC inverters, and for every inverter OFF-GRID: power is a
+    flexible pool, per-phase capped by the leg's rating minus household.
+    For SYMMETRIC inverters grid-tied: power is fixed per-phase -
+    ``per_phase_pool`` ``(a, b, c)`` when the caller knows where it is, else
+    total_pool / num_phases - capped by inverter_max_power_per_phase.
+
+    Off-grid a symmetric inverter is pooled too. Grid-tied its extra output
+    lands a third on each phase and the rest is exported; off-grid there is
+    nothing to export to - it delivers what each phase draws, from a battery
+    and a sun on the shared DC side, so the whole pool can reach one phase as
+    far as that leg carries it. Its leg rating is the configured per-phase one,
+    or a third of its total - what symmetric means for the legs. Split into
+    thirds instead, a single-phase car on a 4 kW battery with 1.5 kW of house
+    was offered 3.6 A of its 10.9 A and never started, and with no per-phase
+    rating configured one that did climbed to 19.6 A on a 2 kW leg
+    (dev/tests/scenarios/features/test_off_grid_3ph_symmetric.yaml).
     """
     max_per_phase = site.inverter_max_power_per_phase / site.voltage if site.inverter_max_power_per_phase else float('inf')
     hh_a, hh_b, hh_c = _get_household_per_phase(site)
-    if site.inverter_supports_asymmetric:
+    if site.inverter_supports_asymmetric or site.is_off_grid:
+        if (
+            not site.inverter_supports_asymmetric
+            and not site.inverter_max_power_per_phase
+            and site.inverter_max_power
+        ):
+            max_per_phase = site.inverter_max_power / (site.num_phases or 1) / site.voltage
         phase_a = min(total_pool, max(0, max_per_phase - hh_a)) if site.consumption.a is not None else 0
         phase_b = min(total_pool, max(0, max_per_phase - hh_b)) if site.consumption.b is not None else 0
         phase_c = min(total_pool, max(0, max_per_phase - hh_c)) if site.consumption.c is not None else 0
@@ -708,8 +725,9 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
         total_inverter_current = max(
             0.0, sum(x for x in spare if x is not None) + headroom
         )
-        # A SYMMETRIC inverter's supply stays on the phase it is on: each phase
-        # offers its own spare plus its even share of the battery's headroom.
+        # A SYMMETRIC inverter's supply stays on the phase it is on, grid-tied:
+        # each phase offers its own spare plus its even share of the battery's
+        # headroom (off-grid it pools - _build_inverter_constraints).
         # Split evenly instead, a phase whose house takes more than its share
         # of the output was handed the other phases' export on top of the
         # whole breaker - the inverter output serving that house, credited
@@ -877,7 +895,8 @@ def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
 
     max_per_phase = site.inverter_max_power_per_phase / site.voltage if site.inverter_max_power_per_phase else float('inf')
 
-    if site.inverter_supports_asymmetric:
+    # Off-grid a symmetric inverter pools as well - see _build_inverter_constraints.
+    if site.inverter_supports_asymmetric or site.is_off_grid:
         total_pool = (export.total if export else 0) + battery_adjustment_total
         constraints = _build_inverter_constraints(site, total_pool)
     else:
