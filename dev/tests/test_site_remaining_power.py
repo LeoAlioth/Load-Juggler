@@ -31,7 +31,10 @@ offers). It now reads the pool's ``sun`` share
 (``target_calculator._calculate_solar_surplus``) - and publishes None
 (unknown) off-grid where nothing measures the house
 (``target_calculator.household_unknown``), where the pool is empty for want
-of the battery's flow and the whole production used to be published.
+of the battery's flow and the whole production used to be published; and
+grid-tied beside a battery whose power is unread, where the pool's sun is the
+bare export, every watt of it the battery's at night (4 000 W in
+grid-battery-power-unread-2kw-import).
 
 Pure Python, no Home Assistant dependencies. Runnable two ways:
   python3 dev/tests/test_site_remaining_power.py   (standalone, no pytest)
@@ -102,11 +105,19 @@ def _disagreements(site):
             ("available_inverter_current", detail["inverter"]["start"]["ABC"], TOLERANCE_A),
         ]
         solar_keys = ("available_solar_power", "available_solar_current")
-        if household_unknown(site):
+        # Grid-tied, a battery whose power is unread: the export the pool
+        # starts from may be the battery's, and nothing takes it back off.
+        battery_unread = (
+            not site.is_off_grid
+            and site.battery_power is None
+            and site.battery_soc is not None
+        )
+        if household_unknown(site) or battery_unread:
             # Off-grid with nothing measuring the house, the empty pool is not
-            # a measurement: Solar Remaining is unknown, not 0 W.
+            # a measurement: Solar Remaining is unknown, not 0 W - nor with
+            # nothing telling the sun from the battery.
             out += [
-                f"{key} {result[key]} where nothing measures the house"
+                f"{key} {result[key]} where nothing tells the sun's share"
                 for key in solar_keys
                 if result[key] is not None
             ]
