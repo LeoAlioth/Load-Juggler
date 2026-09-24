@@ -149,6 +149,43 @@ def set_load_phase_currents(load, commanded_limit):
             setattr(load, attr, commanded_limit)
 
 
+def place_asymmetric_output(demand, total, cap):
+    """Per-phase output of an ASYMMETRIC inverter putting out ``total`` A net.
+
+    Anže, 2026-09-24: his asymmetric inverter "puts/pulls power on the phases in
+    a way to always try to balance them on the grid". So it places its net
+    output - and its charging draw - to bring every phase's grid current
+    (``demand[i] - out[i]``, demand being household + managed loads) to one
+    common level, each phase's output within +-``cap``; a phase the cap stops
+    short of that level keeps what is left. The outputs sum to ``total``, so the
+    site's net grid flow is the even spread's; only the split moves. A total
+    no placement within the caps can carry falls back to the even spread.
+    """
+    # ponytail: the net total is held to the inverter's rating (the battery
+    # model caps discharge at it); what a pull lets it push on top is bounded
+    # only per phase. No scenario pulls today - sum the pushes against
+    # inverter_max_power if one ever does.
+    n = len(demand)
+    if abs(total) > n * cap:
+        return [total / n] * n
+
+    def outputs(level):
+        return [min(cap, max(-cap, d - level)) for d in demand]
+
+    level = (sum(demand) - total) / n  # every phase equal, if the caps allow
+    if all(abs(d - level) <= cap for d in demand):
+        return outputs(level)
+    # sum(outputs(level)) falls from n*cap at lo to -n*cap at hi: bisect onto total.
+    lo, hi = min(demand) - cap, max(demand) + cap
+    for _ in range(100):
+        level = (lo + hi) / 2
+        if sum(outputs(level)) > total:
+            lo = level
+        else:
+            hi = level
+    return outputs((lo + hi) / 2)
+
+
 def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     """Compute grid CT readings using self-consumption battery model.
 
@@ -157,7 +194,9 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     2. Battery responds to minimize grid flow (self-consumption):
        - Deficit (raw > 0): discharges min(deficit, max_discharge) if SOC > min_soc
        - Surplus (raw < 0): charges min(surplus, max_charge) if SOC < 97%
-    3. Grid CT = raw demand + battery effect
+    3. Grid CT = raw demand + battery effect - spread evenly over the phases
+       for a symmetric inverter, placed to balance them for an asymmetric one
+       (place_asymmetric_output)
 
     Positive net = importing, negative net = exporting.
     Decomposed for engine: consumption = max(0, net), export = max(0, -net).
@@ -216,16 +255,33 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
             charge = min(abs(total_raw), max_charge)
             battery_per_phase = charge / num_phases
 
-    # Grid CT = raw + battery effect
-    def _ct(raw_val):
-        if raw_val is None:
+    # Grid CT = raw + battery effect: a symmetric inverter's solar and battery
+    # flow land evenly on every phase.
+    nets = [None if r is None else r + battery_per_phase for r in (raw_a, raw_b, raw_c)]
+    if site.inverter_supports_asymmetric and num_phases > 1:
+        # An asymmetric one places the same net output per phase so the grid
+        # phases come out as equal as it can make them (place_asymmetric_output).
+        # The site total is unchanged; only its split over the phases moves.
+        demand = [
+            None if h is None else h + draw
+            for h, draw in ((household.a, load_l1), (household.b, load_l2), (household.c, load_l3))
+        ]
+        cap_w = site.inverter_max_power_per_phase or site.inverter_max_power
+        outputs = iter(place_asymmetric_output(
+            [d for d in demand if d is not None],
+            solar_total - battery_per_phase * num_phases,
+            cap_w / site.voltage if cap_w else float("inf"),
+        ))
+        nets = [None if d is None else d - next(outputs) for d in demand]
+
+    def _ct(net):
+        if net is None:
             return None, None, None
-        net = raw_val + battery_per_phase
         return net, max(0.0, net), max(0.0, -net)
 
-    ct_a_net, ct_a_cons, ct_a_exp = _ct(raw_a)
-    ct_b_net, ct_b_cons, ct_b_exp = _ct(raw_b)
-    ct_c_net, ct_c_cons, ct_c_exp = _ct(raw_c)
+    ct_a_net, ct_a_cons, ct_a_exp = _ct(nets[0])
+    ct_b_net, ct_b_cons, ct_b_exp = _ct(nets[1])
+    ct_c_net, ct_c_cons, ct_c_exp = _ct(nets[2])
 
     site.consumption = PhaseValues(ct_a_cons, ct_b_cons, ct_c_cons)
     site.export_current = PhaseValues(ct_a_exp, ct_b_exp, ct_c_exp)
