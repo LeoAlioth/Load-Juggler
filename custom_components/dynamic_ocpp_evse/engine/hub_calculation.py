@@ -16,6 +16,7 @@ import logging
 import math
 import time
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 from ..calculations import (
     SiteContext,
@@ -74,6 +75,8 @@ from ..const import (
     HOUSEHOLD_HOLD_BRIDGE_SECONDS,
     HOUSEHOLD_HOLD_RESIDUAL,
     INPUT_STALE_TIMEOUT,
+    LOAD_RT_SUN_PROBE,
+    SUN_PROBE_MAX_PAUSE_S,
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
 )
@@ -901,6 +904,16 @@ def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
       step is offered for the load's own restart dwell (its charge pause; a
       plug's or tank's minimum off time) plus one command interval: the stop
       may wait that long to be sent, and the load's dwell only counts from it.
+      Each failed try in a row - a start or a growth step, one count per load
+      - doubles that pause, up to SUN_PROBE_MAX_PAUSE_S: on a marginal site
+      every try asks the array for a step past the sun, and an inverter that
+      trips on overload drops out on each. A try production follows resets it.
+      Nothing else does: every other signal is either blind here (a solar
+      sensor alone reads the demand, not the sun) or a guess (the forecast; a
+      new day, whose dawn is the weakest sun) - and the house "dropping", read
+      here as production less our loads, is also how an inverter that has
+      tripped reads: a house gone to nothing. The count and the next try are shown on the load's status
+      (``LOAD_RT_SUN_PROBE`` in its runtime bucket, entities/sun_probe.py).
 
     The step is the minimum of the first load in rank order that could take
     more: what a load at 0 A needs to start, and for a running one the same
@@ -911,8 +924,10 @@ def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
     the household hold bridge (how far an inverter output lags a draw) -
     15 + 15 + 15 = 45 s at the defaults (dev/tests/test_offgrid_sun_probe.py).
 
-    State in ``hub_runtime["_sun_probe"]``, dropped wherever the gate fails.
+    State in ``hub_runtime["_sun_probe"]`` and each load's backoff, dropped
+    wherever the gate fails.
     """
+    loads_rt = hass.data[DOMAIN].get("loads", {})
     if (
         not site.is_off_grid
         or site.battery_power is not None
@@ -920,29 +935,44 @@ def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
         or site.solar_is_derived == (site.inverter_output_per_phase is None)
     ):
         hub_runtime.pop("_sun_probe", None)
+        for load in site.loads:
+            loads_rt.get(load.load_id, {}).pop(LOAD_RT_SUN_PROBE, None)
         return
     now = time.monotonic()
     supply = (site.solar_production_total or 0.0) / site.voltage
     held = sum(site.managed_phase_draws or ())
     probe = hub_runtime.get("_sun_probe")
     if probe and probe["step"]:
+        load_rt = loads_rt.get(probe["load"], {})
         followed = max(0.0, supply - probe["supply"])
         if followed >= probe["step"] - probe["band"]:
             _LOGGER.debug("Sun probe: production followed %.1f A", followed)
+            load_rt.pop(LOAD_RT_SUN_PROBE, None)
             probe = None
         elif now < probe["until"]:
             site.sun_probe = probe["held"] + probe["step"] + probe["band"] - held
             return
         else:
+            last = load_rt.get(LOAD_RT_SUN_PROBE) or {}
+            pause = max(
+                probe["pause"],
+                min(2 * last.get("pause_s", 0.0), SUN_PROBE_MAX_PAUSE_S),
+            )
+            failed = last.get("failed_tries", 0) + 1
+            load_rt[LOAD_RT_SUN_PROBE] = {
+                "failed_tries": failed,
+                "pause_s": pause,
+                "next_try_at": datetime.now(timezone.utc) + timedelta(seconds=pause),
+            }
             _LOGGER.debug(
                 "Sun probe: production followed %.1f A of %.1f A - holding "
-                "our loads to it for %.0f s",
-                followed, probe["step"], probe["pause"],
+                "our loads to it for %.0f s (failed try %d in a row)",
+                followed, probe["step"], pause, failed,
             )
             probe = hub_runtime["_sun_probe"] = {
                 "step": 0.0,
                 "held": probe["held"] + followed,
-                "until": now + probe["pause"],
+                "until": now + pause,
             }
     if probe and now < probe["until"]:
         site.sun_probe = min(0.0, probe["held"] - held)
@@ -966,7 +996,7 @@ def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
     if not wanting:
         return
     load = wanting[0]
-    entry = hass.data[DOMAIN]["loads"].get(load.load_id, {}).get("entry")
+    entry = loads_rt.get(load.load_id, {}).get("entry")
 
     def setting(key, default):
         return float((get_entry_value(entry, key, default) if entry else default) or 0)
@@ -982,6 +1012,7 @@ def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
     step = load.min_current * len(load.active_phases_mask)
     band = DEAD_BAND * len(load.active_phases_mask)
     hub_runtime["_sun_probe"] = {
+        "load": load.load_id,
         "step": step,
         "band": band,
         "held": held,

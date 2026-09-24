@@ -295,6 +295,23 @@ SUSPENDED_EV_IDLE_TIMEOUT = 60  # Seconds of SuspendedEV + near-zero draw before
 HOUSEHOLD_HOLD_BRIDGE_SECONDS = 15.0  # Wall-clock length of the bridge window
 HOUSEHOLD_HOLD_RESIDUAL = 0.1         # Fraction of the held value left after the window
 
+# Off-grid sun probe (engine/hub_calculation._apply_sun_probe): each failed try
+# in a row doubles the pause before the next, from the load's own restart
+# dwell + one command interval (3 min 15 s at the defaults), up to this cap; a
+# try the production follows resets it. A JUDGEMENT, not a measurement: the
+# longest wait between tries a person still reads as "it is trying" rather
+# than "it gave up" - and so the longest a sun that comes back can go unfound.
+# On a marginal 12 h day it leaves 26 tries where the fixed pause made 179
+# (dev/tests/test_offgrid_sun_probe.py). Not tied to the daylight left or the
+# forecast: neither says when a cloud clears or the house frees the sun, which
+# is all the next try is for.
+SUN_PROBE_MAX_PAUSE_S = 30 * 60
+# The probe's per-load backoff, in the load's ``hass.data[DOMAIN]["loads"]``
+# bucket: ``{"failed_tries", "pause_s", "next_try_at" (UTC)}``, absent until a
+# try fails and again once one succeeds. Shown on the load's status
+# (entities/sun_probe.py).
+LOAD_RT_SUN_PROBE = "sun_probe"
+
 # EVSE draw-settle detection - the measured draw is trusted as the EVSE's real
 # footprint (freeing the unused gap to lower-priority loads) only once it has
 # held steady for SETTLE_DRAW_SECONDS within SETTLE_DRAW_TOLERANCE.
