@@ -1379,7 +1379,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         site,
         raw_phases,
         voltage,
-        main_breaker_rating,
         battery_soc,
         battery_soc_min,
         battery_max_discharge_power,

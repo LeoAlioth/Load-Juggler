@@ -144,7 +144,7 @@ def calculate_all_load_targets(site: SiteContext) -> None:
     )
 
     # Steps 1-3: Calculate pools (always, even with no active loads)
-    physical_pool = _calculate_site_limit(site)
+    physical_pool, grid_pool, inverter_pool = _calculate_site_limit(site)
     _LOGGER.debug(f"Step 1 - Physical pool (grid+inverter): {physical_pool}")
 
     solar_pool = _calculate_solar_surplus(site)
@@ -179,7 +179,8 @@ def calculate_all_load_targets(site: SiteContext) -> None:
             site.excess_potential_claims = ()
 
     site.pool_snapshot = _pool_snapshot(
-        site, (physical_pool, solar_pool, excess_pool), pools_left
+        site, (physical_pool, solar_pool, excess_pool), pools_left,
+        (grid_pool, inverter_pool),
     )
 
     # Set inactive loads to 0 allocated
@@ -232,13 +233,18 @@ def _pool_snapshot(
     site: SiteContext,
     start: tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints],
     left: tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints],
+    halves: tuple[PhaseConstraints, PhaseConstraints],
 ) -> dict:
     """The three pools as plain rounded dicts - for display, never for maths.
 
-    It exists because the watt figures the publisher shows are RE-DERIVED from
-    the site's headroom terms, while these are the ``PhaseConstraints`` the
-    distribution actually consulted. The two have disagreed before, and only
-    one of them decided anything.
+    It exists because the watt figures the publisher shows used to be
+    RE-DERIVED from the site's headroom terms, while these are the
+    ``PhaseConstraints`` the distribution actually consulted - and the two
+    disagreed on 95 of 223 scenarios, by up to 22 kW. Site Remaining Power,
+    Remaining Current A/B/C and the grid and inverter remaining figures are
+    now read FROM here (engine/hub_result.py), so the physical pool's two
+    halves travel too, as ``grid`` and ``inverter`` (start only: the
+    distribution deducts from their sum, never from a half).
 
     ``asdict`` rather than a hand-written field list, so a new
     ``PhaseConstraints`` field reaches the dump without a second edit. The
@@ -265,6 +271,8 @@ def _pool_snapshot(
     snapshot = {"phases": phases}
     for name, begin, end in zip(("physical", "solar", "excess"), start, left):
         snapshot[name] = {"start": fields(begin), "left": fields(end)}
+    for name, half in zip(("grid", "inverter"), halves):
+        snapshot[name] = {"start": fields(half)}
     return snapshot
 
 
@@ -738,11 +746,16 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     return constraints
 
 
-def _calculate_site_limit(site: SiteContext) -> PhaseConstraints:
+def _calculate_site_limit(
+    site: SiteContext,
+) -> tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints]:
     """
     Step 1: Calculate absolute site power limit (prevents breaker trips).
 
-    Returns PhaseConstraints for ALL phase combinations (Multi-Phase Constraint Principle).
+    Returns ``(physical, grid, inverter)``: the pool and its two halves, each
+    PhaseConstraints for ALL phase combinations (Multi-Phase Constraint
+    Principle). The halves are returned so the published figures can show
+    them rather than work them out again (see _pool_snapshot).
 
     Always includes grid + inverter (solar + battery when SOC >= min).
     Mode-specific limits are handled by per-load ceilings, not by reducing
@@ -756,7 +769,7 @@ def _calculate_site_limit(site: SiteContext) -> PhaseConstraints:
                  f"inverter={inverter_constraints.ABC:.1f}A = "
                  f"total={constraints.ABC:.1f}A")
 
-    return constraints
+    return constraints, grid_constraints, inverter_constraints
 
 
 def _calculate_solar_surplus(site: SiteContext) -> PhaseConstraints:
