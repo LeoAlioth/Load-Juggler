@@ -24,9 +24,12 @@ from ..calculations import (
     calculate_all_load_targets,
     excess_margin,
 )
+from ..calculations.models import INACTIVE_STATUSES
 from ..const import (
     CONF_AUTO_DETECT_PHASE_MAPPING,
     CONF_BATTERY_SOC_HYSTERESIS,
+    CONF_BINARY_MIN_OFF_TIME,
+    CONF_CHARGE_PAUSE_DURATION,
     CONF_ENABLE_MAX_IMPORT_POWER,
     CONF_EXCESS_HYSTERESIS,
     CONF_EXCESS_TRIGGER_MARGIN,
@@ -43,7 +46,11 @@ from ..const import (
     CONF_FILTER_INPUT_TAU_S,
     CONF_FILTER_SETTLE_SECONDS,
     CONF_SITE_UPDATE_FREQUENCY,
+    CONF_UPDATE_FREQUENCY,
+    DEAD_BAND,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
+    DEFAULT_BINARY_MIN_OFF_TIME,
+    DEFAULT_CHARGE_PAUSE_DURATION,
     DEFAULT_BATTERY_SOC_MIN,
     DEFAULT_BATTERY_SOC_TARGET,
     DEFAULT_DISTRIBUTION_MODE,
@@ -54,9 +61,12 @@ from ..const import (
     DEFAULT_PHASE_VOLTAGE,
     CTRL_FAST_TAU_S,
     DEFAULT_SITE_UPDATE_FREQUENCY,
+    DEFAULT_UPDATE_FREQUENCY,
     EMA_TAU_S,
     SETTLE_DRAW_SECONDS,
     DEVICE_TYPE_EVSE,
+    DEVICE_TYPE_HOT_WATER_TANK,
+    DEVICE_TYPE_PLUG,
     DOMAIN,
     GRID_STALE_TIMEOUT,
     HOUSEHOLD_HOLD_BRIDGE_SECONDS,
@@ -734,6 +744,127 @@ def _apply_household_figures(
         hub_runtime.pop("_household_held", None)
 
 
+def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
+    """Off-grid with no battery, where nothing measures the spare sun: probe it.
+
+    A PV-only array follows demand, so read through its output sensors alone,
+    or a solar sensor alone, the sun it is not asked for shows nowhere: the
+    unused sun is 0 by identity (target_calculator._off_grid_unused_sun), a
+    running load keeps what it draws and one at 0 A never starts. (A solar
+    sensor beside output sensors measures the spare and needs none of this.)
+
+    So offer one STEP on top of what our loads hold (``site.sun_probe``, which
+    every pool carries and caps at the rating less the house and each leg,
+    like the rest of the unused sun) and watch the production:
+
+    - it rose by the step, to within DEAD_BAND: the sun had room. The loads
+      keep it - a running load keeps what it draws - and the next step may
+      follow on the next cycle: growth, one step at a time, only while
+      production does. The offer itself is the step PLUS DEAD_BAND, so what a
+      started load is left drawing clears its minimum by the band: offered
+      exactly its minimum, a reading a hair low cuts it (on the closed loop
+      below, behind a solar sensor alone, the pool came out a float's width
+      under 6 A and the car was stopped 16 s after it started).
+    - it had not by the end of the window: the loads are held to what the
+      production DID follow - a car left under its minimum stops - and no
+      step is offered for the load's own restart dwell (its charge pause; a
+      plug's or tank's minimum off time) plus one command interval: the stop
+      may wait that long to be sent, and the load's dwell only counts from it.
+
+    The step is the minimum of the first load in rank order that could take
+    more: what a load at 0 A needs to start, and for a running one the same
+    size, so a failed growth step never asks more of the sun than a failed
+    start. The window is the chain a step travels before production can show
+    it, each link a figure the integration already uses for it: the load's
+    command interval (the send gate), the draw settle time (a car's ramp) and
+    the household hold bridge (how far an inverter output lags a draw) -
+    15 + 15 + 15 = 45 s at the defaults (dev/tests/test_offgrid_sun_probe.py).
+
+    State in ``hub_runtime["_sun_probe"]``, dropped wherever the gate fails.
+    """
+    if (
+        not site.is_off_grid
+        or site.battery_power is not None
+        or site.battery_soc is not None
+        or site.solar_is_derived == (site.inverter_output_per_phase is None)
+    ):
+        hub_runtime.pop("_sun_probe", None)
+        return
+    now = time.monotonic()
+    supply = (site.solar_production_total or 0.0) / site.voltage
+    held = sum(site.managed_phase_draws or ())
+    probe = hub_runtime.get("_sun_probe")
+    if probe and probe["step"]:
+        followed = max(0.0, supply - probe["supply"])
+        if followed >= probe["step"] - probe["band"]:
+            _LOGGER.debug("Sun probe: production followed %.1f A", followed)
+            probe = None
+        elif now < probe["until"]:
+            site.sun_probe = probe["held"] + probe["step"] + probe["band"] - held
+            return
+        else:
+            _LOGGER.debug(
+                "Sun probe: production followed %.1f A of %.1f A - holding "
+                "our loads to it for %.0f s",
+                followed, probe["step"], probe["pause"],
+            )
+            probe = hub_runtime["_sun_probe"] = {
+                "step": 0.0,
+                "held": probe["held"] + followed,
+                "until": now + probe["pause"],
+            }
+    if probe and now < probe["until"]:
+        site.sun_probe = min(0.0, probe["held"] - held)
+        return
+    hub_runtime.pop("_sun_probe", None)
+
+    wanting = sorted(
+        (
+            load for load in site.loads
+            if load.dynamic_control
+            and load.active_phases_mask
+            and not load.unmetered
+            and (
+                load.device_type == DEVICE_TYPE_PLUG
+                or load.connector_status not in INACTIVE_STATUSES
+            )
+            and max(load.get_site_phase_draw()) < load.max_current - DEAD_BAND
+        ),
+        key=lambda load: (load.mode_priority, load.priority),
+    )
+    if not wanting:
+        return
+    load = wanting[0]
+    entry = hass.data[DOMAIN]["loads"].get(load.load_id, {}).get("entry")
+
+    def setting(key, default):
+        return float((get_entry_value(entry, key, default) if entry else default) or 0)
+
+    if load.device_type in (DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK):
+        dwell = setting(CONF_BINARY_MIN_OFF_TIME, DEFAULT_BINARY_MIN_OFF_TIME)
+    else:
+        dwell = setting(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
+    interval = setting(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
+    settle = float(
+        get_entry_value(hub_entry, CONF_FILTER_SETTLE_SECONDS, SETTLE_DRAW_SECONDS)
+    )
+    step = load.min_current * len(load.active_phases_mask)
+    band = DEAD_BAND * len(load.active_phases_mask)
+    hub_runtime["_sun_probe"] = {
+        "step": step,
+        "band": band,
+        "held": held,
+        "supply": supply,
+        "until": now + interval + settle + HOUSEHOLD_HOLD_BRIDGE_SECONDS,
+        "pause": dwell * 60 + interval,
+    }
+    site.sun_probe = step + band
+    _LOGGER.debug(
+        "Sun probe: offering %.1f A more (for %s) on %.1f A held",
+        step + band, load.entity_id, held,
+    )
+
+
 def _apply_grid_stale_fallback(site, grid_stale_duration):
     """Override the calculated permits once the grid CTs have been blind too long.
 
@@ -1307,6 +1438,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         # total the same way.
         managed_draws,
     )
+    _apply_sun_probe(hass, hub_entry, hub_runtime, site)
 
     # --- Calculate targets ---
     calculate_all_load_targets(site)

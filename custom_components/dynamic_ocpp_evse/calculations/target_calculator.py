@@ -577,6 +577,10 @@ def _off_grid_unused_sun(site: SiteContext) -> Optional[float]:
     when the house and our loads outrun that reading, which takes our loads
     back down with it.
 
+    Where it is 0 by identity the engine probes for the sun instead, and its
+    offer rides here (``site.sun_probe``, engine/hub_calculation.
+    _apply_sun_probe), so every pool carries it and caps it alike.
+
     "No battery" is the calculator's usual test (see ``_charge_allowance``):
     no battery power and no SOC. None anywhere else, and where nothing
     measures the house (``household_unknown``).
@@ -592,6 +596,7 @@ def _off_grid_unused_sun(site: SiteContext) -> Optional[float]:
         (site.solar_production_total or 0) / site.voltage
         - sum(_get_household_per_phase(site))
         - sum(_held_draws(site))
+        + site.sun_probe
     )
 
 

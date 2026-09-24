@@ -284,6 +284,11 @@ class SiteContext:
     # directly (target_calculator._off_grid_held_supply). None = not supplied;
     # the calculator then sums the loads' own draws.
     managed_phase_draws: tuple | None = None
+    # Off-grid with no battery, where nothing measures the sun the house
+    # leaves: the probe's offer (A, signed) on top of what our loads hold -
+    # set by engine/hub_calculation._apply_sun_probe, added to the unused sun
+    # (target_calculator._off_grid_unused_sun). 0 everywhere else.
+    sun_probe: float = 0.0
 
     # Settings
     allow_grid_charging: bool = True
