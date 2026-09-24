@@ -406,6 +406,25 @@ def test_one_dead_member_keeps_its_sibling_honest_and_silences_the_total():
     assert solar_is_assumed([live, dead]) is True
 
 
+def test_an_off_grid_output_nothing_splits_is_not_published():
+    """Off-grid with the battery's power unread, the output is the site's whole
+    supply and nothing takes the battery back out: the engine keeps the output
+    as its solar, the publisher gets None. A read battery (held or live), a
+    grid-tied site and a battery-less inverter all publish."""
+    out = PhaseValues(a=10.0, b=None, c=None)
+    unread = _battery(soc=80, power=None, output=out, off_grid=True)
+    read = _battery(soc=80, power=1000.0, output=out, off_grid=True)
+    grid_tied = _battery(soc=80, power=None, output=out)
+    pv_only = _member(output=out, off_grid=True)
+    assert solar_total([unread], V) == 10.0 * V
+    assert member_solar_published(unread, V) is None
+    assert solar_is_assumed([unread]) is True
+    assert member_solar_published(read, V) == 10.0 * V - 1000.0
+    assert member_solar_published(grid_tied, V) == 10.0 * V
+    assert member_solar_published(pv_only, V) == 10.0 * V
+    assert solar_is_assumed([read, grid_tied, pv_only]) is False
+
+
 def test_forecast_device_ids_merge_and_dedupe():
     """Each PV array belongs to an inverter, but clipping is site-wide - the
     fleet's devices merge into one list, with shared devices counted once."""
