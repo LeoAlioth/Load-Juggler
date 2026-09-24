@@ -1024,6 +1024,10 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # member (the classic setup) each aggregate reduces to exactly the old
     # singleton value - see engine/fleet.py for the per-member gating rules.
     members = _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage)
+    # Off-grid every output carries its own battery's flow, parallel included
+    # (fleet.member_solar) - the one place the solar derivation learns it.
+    for m in members:
+        m.off_grid = not has_grid_cts
 
     # --- Solar production (unified for grid and off-grid) ---
     # Per member: its own production sensor when configured, else derived from

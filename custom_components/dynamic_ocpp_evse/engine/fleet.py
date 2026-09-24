@@ -26,7 +26,8 @@ express:
 - **Solar** sums per member: its own production sensor when configured,
   otherwise derived from its inverter output - a parallel member's output is
   production; a series member's output carries its battery flow, so its
-  production is ``output − its battery power``. Applied to the summed outputs
+  production is ``output − its battery power`` (off-grid on either wiring -
+  see ``member_solar``). Applied to the summed outputs
   with the summed battery power, the series formula is algebraically exact
   for ANY mix, because parallel members contribute no battery term.
 - **Inverter capacity**: total = Σ; the single per-phase scalar collapses
@@ -109,6 +110,11 @@ class FleetMember:
     # never yet been readable - and anchors that member at 100 %.
     soc_target: Optional[float] = None
     capacity_kwh: Optional[float] = None
+    # The site has no grid CTs. Set by the engine after reading (not a reading
+    # itself): off-grid the output is what the site draws from this inverter
+    # whatever its wiring, so it carries this member's battery flow even on
+    # parallel wiring (see member_solar).
+    off_grid: bool = False
 
     def spans_phase(self, phase: str) -> bool:
         """Which site phases this inverter feeds - the phases its output
@@ -540,6 +546,17 @@ def member_solar(member, voltage: float) -> Optional[float]:
     entities: a parallel output IS production; a series output carries the
     battery flow, so production = output − its own battery power.
 
+    Off-grid a parallel output carries it too: with no grid, the output is
+    what the site draws, solar plus the battery's flow (compute_household_per_
+    phase reads it the same way), so production = output − battery power on
+    either wiring. Taken as production, a parallel member published its
+    battery's discharge as solar - 5992 W at night on a 6 kW inverter - and
+    the solar pool counted that discharge twice against the inverter's
+    headroom, so a Solar Only car settled at 12.4 A where series gave 21.7 A
+    (dev/tests/test_offgrid_parallel_household.py). Without a battery power
+    reading nothing separates the two and the whole output stands, as on
+    series.
+
     The max(0, ·) is a physical clamp, and it matters now that outputs are
     signed (see hub_calculation._read_inverter_output): a negative result means
     power is flowing INTO this inverter - a cascaded child inverter back-feeding
@@ -550,7 +567,7 @@ def member_solar(member, voltage: float) -> Optional[float]:
     if member.output is None:
         return None
     out_watts = (member.output.total or 0) * voltage
-    if member.topology == WIRING_TOPOLOGY_SERIES:
+    if member.topology == WIRING_TOPOLOGY_SERIES or member.off_grid:
         out_watts -= member.battery_power or 0
     return max(0.0, out_watts)
 

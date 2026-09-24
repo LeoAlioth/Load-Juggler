@@ -50,6 +50,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PHASE_VOLTAGE,
     CONF_WIRING_TOPOLOGY,
     DOMAIN,
+    EVSE_MODE_SOLAR_ONLY,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
@@ -134,14 +135,18 @@ def _amps(value):
     return {"device_class": "current", "unit_of_measurement": "A"}, f"{value:.3f}"
 
 
-async def _run(hass, slug, topology, car_ramp_a_s, cycles=200, mixed=False):
+async def _run(hass, slug, topology, car_ramp_a_s, cycles=200, mixed=False,
+               solar_w=0.0, mode=None):
     """Close the loop: engine permit → permit pipeline → car → inverter → engine.
 
     The connector reads Available for ``START`` cycles, so every input EMA is
     settled on the household alone; then the car plugs in and slews toward its
     last command at ``car_ramp_a_s``. ``mixed`` adds a parallel PV inverter
     putting out ``PV_A`` on the same bus, so the hub's own inverter carries
-    the rest. One row per cycle.
+    the rest. ``solar_w`` is the hub inverter's own (unmetered) production:
+    its battery carries the supply less that, charging when it is negative.
+    ``mode`` is the car's operating mode (Standard when None). One row per
+    cycle.
     """
     from freezegun import freeze_time
     from custom_components.dynamic_ocpp_evse.control.smoothing import (
@@ -166,6 +171,7 @@ async def _run(hass, slug, topology, car_ramp_a_s, cycles=200, mixed=False):
         "loads": {evse.entry_id: {
             "entry": evse, "hub_entry_id": hub.entry_id,
             "dynamic_control": True,
+            **({"operating_mode": mode} if mode else {}),
         }},
         "load_allocations": {evse.entry_id: 0},
         "inverters": {},
@@ -200,7 +206,7 @@ async def _run(hass, slug, topology, car_ramp_a_s, cycles=200, mixed=False):
             attrs, state = _amps(supply - pv_a)
             hass.states.async_set(OUTPUT, state, attrs)
             hass.states.async_set(
-                BATTERY, f"{(supply - pv_a) * V:.1f}",
+                BATTERY, f"{(supply - pv_a) * V - solar_w:.1f}",
                 {"device_class": "power", "unit_of_measurement": "W"})
             attrs, state = _amps(draw)
             hass.states.async_set(CAR, state, attrs)
@@ -210,7 +216,8 @@ async def _run(hass, slug, topology, car_ramp_a_s, cycles=200, mixed=False):
             command = apply_smoothing(permit_state, permit, False, hub)
             trace.append({"i": i, "draw": draw, "permit": permit,
                           "command": command, "supply": supply,
-                          "household_w": result["household_power"]})
+                          "household_w": result["household_power"],
+                          "solar_w": result["solar_power"]})
     return trace
 
 
@@ -332,4 +339,79 @@ async def test_a_mixed_fleet_takes_the_draw_off_once(hass, car_ramp_a_s):
     assert permit_over <= 0.1 * V, (
         f"mixed fleet: permit {permit_over:.0f} W over the allowance - the "
         f"draw came off the household twice"
+    )
+
+
+@pytest.mark.parametrize("topology", [WIRING_TOPOLOGY_PARALLEL, WIRING_TOPOLOGY_SERIES])
+@pytest.mark.parametrize("solar_w", [0.0, 3000.0], ids=["night", "day"])
+async def test_the_published_solar_is_the_panels_not_the_battery(
+    hass, solar_w, topology
+):
+    """Off-grid the output is the site's supply on either wiring - solar plus
+    the battery's flow - so the derived solar is the output less the battery
+    power (``fleet.member_solar``). On the parallel wiring it was the whole
+    output: at night, with the car settled, 5992 W of "solar" that was all
+    battery. Checked with the car off (the house alone; by day the battery
+    charging on the rest) and settled (the battery covering what the panels
+    do not):
+
+    =====================  ==========  ===========  ==========  ===========
+    published solar        night, off  night, car   day, off    day, car
+    =====================  ==========  ===========  ==========  ===========
+    parallel, before       1000 W      5992 W       1000 W      5992 W
+    parallel, after        0 W         0 W          3000 W      3000 W
+    series (unchanged)     0 W         0 W          3000 W      3000 W
+    =====================  ==========  ===========  ==========  ===========
+    """
+    trace = await _run(
+        hass, f"solar_{topology}{solar_w:g}", topology, 100.0, solar_w=solar_w
+    )
+
+    for label, row in (("car off", trace[START - 1]), ("car settled", trace[-1])):
+        assert row["solar_w"] == pytest.approx(solar_w, abs=5), (
+            f"{topology}, {label}: solar published as {row['solar_w']:.0f} W "
+            f"with {solar_w:.0f} W from the panels and the battery at "
+            f"{(row['supply'] * V) - solar_w:.0f} W"
+        )
+
+
+@pytest.mark.parametrize("solar_w", [0.0, 3000.0], ids=["night", "day"])
+async def test_a_solar_only_car_gets_the_same_on_either_wiring(hass, solar_w):
+    """The solar pool bounds the battery's surplus above its SOC target (80 %
+    against 50 % here) by the inverter's headroom, rating less solar less the
+    discharge in flight (target_calculator._calculate_solar_surplus). With
+    the parallel "solar" the whole output, the discharge was in it twice: the
+    output was set against the rating twice, past half the rating the battery
+    offered nothing more, and a Solar Only car was held at what it drew, far
+    short of the series one. Off-grid the wiring does not change
+    what the output contains, so the two must agree cycle for cycle.
+
+    ================  =================  ===============  =============
+    Solar Only car    parallel, before   series, before   after, either
+    ================  =================  ===============  =============
+    night             12.4 A (-2139 W)   21.7 A           21.7 A
+    day, 3 kW panels  18.0 A (-851 W)    21.7 A           21.7 A
+    ================  =================  ===============  =============
+    """
+    mode = EVSE_MODE_SOLAR_ONLY.key
+    parallel = await _run(
+        hass, f"so_p{solar_w:g}", WIRING_TOPOLOGY_PARALLEL, 100.0,
+        solar_w=solar_w, mode=mode)
+    series = await _run(
+        hass, f"so_s{solar_w:g}", WIRING_TOPOLOGY_SERIES, 100.0,
+        solar_w=solar_w, mode=mode)
+
+    assert parallel[-1]["draw"] >= series[-1]["draw"] - 0.1, (
+        f"Solar Only car settled at {parallel[-1]['draw']:.1f} A on parallel "
+        f"against {series[-1]['draw']:.1f} A on series "
+        f"({(series[-1]['draw'] - parallel[-1]['draw']) * V:.0f} W short)"
+    )
+    differing = [
+        (p["i"], p["permit"], s["permit"])
+        for p, s in zip(parallel, series)
+        if (p["permit"], p["draw"]) != (s["permit"], s["draw"])
+    ]
+    assert not differing, (
+        f"{len(differing)} cycles where parallel and series disagree, first "
+        f"(cycle, parallel permit, series permit): {differing[0]}"
     )
