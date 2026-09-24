@@ -617,7 +617,8 @@ def _apply_household_figures(
     """Fill in what the household (everything unmanaged) is drawing.
 
     Post-feedback on purpose: both the total and the per-phase figures are
-    derived from readings the managed draws have already been taken out of.
+    derived from readings the managed draws have already been taken out of
+    (off-grid the total takes them out itself - see below).
     Sets ``site.household_consumption_total`` / ``site.household_consumption``
     and owns the asymmetric hold state in ``hub_runtime``.
 
@@ -634,15 +635,31 @@ def _apply_household_figures(
     if not solar_is_derived and solar_production_total > 0:
         export_power_after_feedback = site.export_current.total * site.voltage
         bp = float(battery_power) if battery_power is not None else 0
+        # Grid-tied the feedback loop has put the managed draws back onto the
+        # export, so they come off here through it. Off-grid it leaves the
+        # synthetic zero phases alone, and solar + battery is the inverters'
+        # whole supply, our own loads included - left in, a charger's draw was
+        # house load and the allowance it is sized on (rating - household)
+        # shrank by that draw: a car meant to get 21.7 A settled at 10.9 A
+        # (dev/tests/test_offgrid_solar_household.py). ``managed_draws`` is the
+        # one smoothed list every view subtracts, on the same EMA step as the
+        # solar and battery readings it comes off.
+        managed_power = (
+            sum(managed_draws) * site.voltage if site.is_off_grid else 0.0
+        )
         site.household_consumption_total = max(
-            0, solar_production_total + bp - export_power_after_feedback
+            0,
+            solar_production_total + bp - export_power_after_feedback
+            - managed_power,
         )
         _LOGGER.debug(
-            "Computed household_consumption_total=%.1fW (solar=%.1fW + bat=%.1fW - export=%.1fW)",
+            "Computed household_consumption_total=%.1fW (solar=%.1fW + bat=%.1fW "
+            "- export=%.1fW - managed=%.1fW)",
             site.household_consumption_total,
             solar_production_total,
             bp,
             export_power_after_feedback,
+            managed_power,
         )
 
     # Compute per-phase household from inverter output entities (after feedback)
@@ -1246,7 +1263,9 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         solar_production_total,
         battery_power,
         # This cycle's one smoothed draw, not a raw re-sum: the series
-        # household subtracts it from the SMOOTHED inverter output.
+        # household subtracts it from the SMOOTHED inverter output, and an
+        # off-grid site with no output sensors takes it off the solar-sensor
+        # total the same way.
         managed_draws,
     )
 

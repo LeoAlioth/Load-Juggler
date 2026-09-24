@@ -119,3 +119,43 @@ scenarios:
       boiler:
         # Full 4000 W (17.4 A) inverter capacity available → 7.6 A boiler on.
         allocated: 7.6
+
+  # Off-grid with a solar production sensor and NO inverter output sensors:
+  # the household total is solar + battery - export, and export is 0 with no
+  # grid - so it is the inverter's whole supply, our own charger included.
+  # Grid-tied the feedback loop has already put the managed draws back onto
+  # the export; off-grid it does not touch the synthetic zero phases, so the
+  # draws have to come off the supply itself. Before 2026-09-24 they did not,
+  # and the car's own draw was read as house load: allowance - car = car, and
+  # it settled at about half the inverter's rating less the house.
+  - name: "off-grid-solar-sensor-charger-gets-inverter-rating"
+    description: "Off-grid, solar sensor, no output sensors: 6kW inverter, 1kW house → charger 21.7A, its own draw not counted as house load"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 2000
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 20000
+      inverter_max_power: 6000
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+        operating_mode: "Standard"
+    expected:
+      car:
+        # 6000 W / 230 V = 26.09 A of inverter, less the 4.35 A house = 21.7 A.
+        # With the car's own draw left in the household it settled at 10.9 A.
+        allocated: 21.7
