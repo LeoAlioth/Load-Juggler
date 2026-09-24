@@ -630,6 +630,8 @@ def _apply_household_figures(
     low by the filter's lag and the permit went over the inverter's allowance
     by as much (off-grid, where the inverter rating is the whole allowance:
     up to 773 W, dev/tests/test_offgrid_household_smoothing.py).
+    Off-grid the feedback loop never ran, so the off-grid household total
+    takes the same draw off itself.
     """
     # Compute household_consumption_total when solar entity provides ground truth
     if not solar_is_derived and solar_production_total > 0:
@@ -641,7 +643,8 @@ def _apply_household_figures(
         # whole supply, our own loads included - left in, a charger's draw was
         # house load and the allowance it is sized on (rating - household)
         # shrank by that draw: a car meant to get 21.7 A settled at 10.9 A
-        # (dev/tests/test_offgrid_solar_household.py). ``managed_draws`` is the
+        # (dev/tests/test_offgrid_solar_household.py), and an
+        # inverter-limited car hunted (dev/tests/test_offgrid_battery_headroom.py). ``managed_draws`` is the
         # one smoothed list every view subtracts, on the same EMA step as the
         # solar and battery readings it comes off.
         managed_power = (
@@ -1240,6 +1243,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # The managed-draw EMA advances HERE, once per cycle, like every other
     # input filter - and both views subtract this one result.
     managed_draws = _managed_phase_draws(site, ema_inputs)
+    site.managed_phase_draws = tuple(managed_draws)
     _apply_feedback_loop(site, solar_is_derived, members, managed_draws)
     ctrl_site = _charge_control_view(
         site,
