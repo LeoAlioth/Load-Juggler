@@ -1201,6 +1201,26 @@ def _off_grid_violations(site, household, drawn, with_all_sim, without_loads_sim
                 f"inverter delivers {output_with:.2f} A against its "
                 f"{allowed_out:.2f} A rating (house alone {output_bare:.2f} A)"
             )
+    # ...and each phase's leg what is on that phase, up to the leg's rating:
+    # the configured per-phase one, or for a SYMMETRIC inverter a third of the
+    # total - what symmetric means for its legs.
+    leg = site.inverter_max_power_per_phase or (
+        site.inverter_max_power / n
+        if site.inverter_max_power and not site.inverter_supports_asymmetric
+        else None
+    )
+    if leg:
+        houses = (household.a, household.b, household.c)
+        for label, house, draw in zip("ABC", houses, drawn):
+            if house is None:
+                continue
+            allowed_leg = max(house, leg / site.voltage)
+            if house + draw > allowed_leg + INVARIANT_TOLERANCE:
+                violations.append(
+                    f"phase {label}: inverter leg delivers {house + draw:.2f} A "
+                    f"against its {allowed_leg:.2f} A rating "
+                    f"({(house + draw - allowed_leg) * site.voltage:.0f} W over)"
+                )
     return violations
 
 
