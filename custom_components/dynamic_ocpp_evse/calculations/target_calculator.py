@@ -535,6 +535,32 @@ def _off_grid_held_supply(site: SiteContext) -> Optional[tuple[float, float, flo
     return tuple(draws)
 
 
+def discharge_headroom_unknown(site: SiteContext) -> bool:
+    """True when the battery's spare discharge cannot be offered at all.
+
+    The headroom is rating − flow, and with the flow unread (no battery power
+    sensor, or one past its INPUT_STALE_TIMEOUT - engine/readers._stale_guard
+    holds the last reading until then) it is unknown in both directions. It
+    used to be taken as 0 beside a solar production sensor, offering the whole
+    rating - but a self-consumption battery is rarely idle: the discharge
+    carrying our own car already comes back as export when the feedback loop
+    hands the car's draw back, so taking the flow as 0 offered it twice, and
+    the car rose until the battery hit its rating and the grid carried the
+    rest: 32 A and 1.36 kW past a 2 kW import allowance, 3.36 kW past a 0 W one
+    (dev/tests/scenarios/features/test_battery_power_unread.yaml). So
+    grid-tied nothing is offered on the battery's word until the reading
+    returns; what it really gives still reaches our loads through the meter,
+    as that export. Off-grid there is no meter, and the rating stays beside a
+    measured solar figure - a derived one already contains the discharge.
+
+    Shared with engine/hub_result.py, whose Battery Remaining Power must not
+    advertise what the pool will not grant.
+    """
+    return site.battery_power is None and (
+        site.solar_is_derived or not site.is_off_grid
+    )
+
+
 def _house_on_inverters(site: SiteContext, flow: float) -> float:
     """What the household already takes from the inverters (A), our loads off.
 
@@ -667,12 +693,11 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     SOC minimum the rating drops out and the flow in flight still comes off, so
     our loads get the sun's surplus and never the pack.
 
-    With the battery's flow unread, the flow is taken as 0 - the same the
-    household total already assumes (engine/hub_calculation.
-    _apply_household_figures) - and the rating is offered only beside a
-    measured solar figure; on a derived one it never was (hub_result mirrors
-    that gate). Off-grid with the flow unread there is no export to start from
-    either, and the gross sum stays.
+    With the battery's flow unread the flow term is 0, and grid-tied no
+    headroom is offered on the battery's word (``discharge_headroom_unknown``,
+    which hub_result shares): the pool is the export the meter measures.
+    Off-grid with the flow unread there is no export to start from, and the
+    gross sum stays.
 
     For ASYMMETRIC inverters: Solar+battery power can be allocated to any phase.
     For SYMMETRIC inverters: Solar+battery power is fixed per-phase.
@@ -702,7 +727,7 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
         and site.battery_max_discharge_power
     )
     rating = site.battery_max_discharge_power / site.voltage if dischargeable else 0.0
-    if site.battery_power is None and site.solar_is_derived:
+    if discharge_headroom_unknown(site):
         rating = 0.0
 
     flow = site.battery_power / site.voltage if site.battery_power is not None else 0.0
