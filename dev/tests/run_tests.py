@@ -1075,7 +1075,8 @@ def check_physical_invariants(site, household, physical_solar_w):
     against the site with every managed load off: our loads may take the pack
     up to its discharge rating while the SOC is at/above its minimum and not at
     all below it, and the inverter up to its rating - never past what the house
-    alone already asks of either.
+    alone already asks of either. With no pack at all nothing covers a deficit,
+    and the sun is the whole supply: our loads may take the site up to it.
 
     **D - grid-tied, our loads stay inside the import allowance.** With the
     allocations drawn, the site's grid import (summed over the phases that
@@ -1146,7 +1147,9 @@ def check_physical_invariants(site, household, physical_solar_w):
             )
     if site.is_off_grid:
         violations.extend(
-            _off_grid_violations(site, household, drawn, with_all_sim, without_loads_sim)
+            _off_grid_violations(
+                site, household, drawn, with_all_sim, without_loads_sim, physical_solar_w
+            )
         )
     else:
         violations.extend(_import_violations(site, with_all_sim, without_loads_sim))
@@ -1178,9 +1181,21 @@ def _import_violations(site, with_all_sim, without_loads_sim):
     return violations
 
 
-def _off_grid_violations(site, household, drawn, with_all_sim, without_loads_sim):
+def _off_grid_violations(site, household, drawn, with_all_sim, without_loads_sim,
+                         physical_solar_w):
     """Invariant C of check_physical_invariants - see there."""
     violations = []
+    if site.battery_soc is None:
+        # No pack: the sun is all there is, and simulate_grid_ct lets the
+        # deficit vanish (no battery takes it), so it has to be checked here.
+        sun = (physical_solar_w or 0) / site.voltage
+        demand = household.total + sum(drawn)
+        allowed_sun = max(household.total, sun)
+        if demand > allowed_sun + INVARIANT_TOLERANCE:
+            violations.append(
+                f"site draws {demand:.2f} A against the {sun:.2f} A of sun, "
+                f"with no battery to cover it ({(demand - allowed_sun) * site.voltage:.0f} W over)"
+            )
     n = household.active_count or 1
     # battery_per_phase (the sim's 5th value) is negative while discharging.
     discharge_with = max(0.0, -with_all_sim[4]) * n

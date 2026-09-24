@@ -519,13 +519,33 @@ def _off_grid_held_supply(site: SiteContext) -> Optional[tuple[float, float, flo
     figure (the pure test tier) the loads' own draws stand in, which is the
     same number when nothing is filtered.
 
-    None on a grid-tied site, or with the battery's flow unknown - the pools
-    set this against it, and keep their earlier form without it.
+    With no battery at all the flow is not unknown but 0, and the sun is the
+    whole supply: this is then what our loads hold plus the sun nothing uses
+    (``_off_grid_unused_sun``), spread over the site's phases - solar less the
+    household, the same identity with no rating to add.
+
+    None on a grid-tied site, or with a battery whose flow is unknown - the
+    pools set this against it, and keep their earlier form without it.
 
     Pure function - unit-testable.
     """
-    if not site.is_off_grid or site.battery_power is None:
+    if not site.is_off_grid:
         return None
+    unused = _off_grid_unused_sun(site)
+    if site.battery_power is None and unused is None:
+        return None
+    held = _held_draws(site)
+    if unused is None:
+        return held
+    phases = (site.consumption.a, site.consumption.b, site.consumption.c)
+    share = unused / (site.consumption.active_count or 1)
+    return tuple(h + share if p is not None else h for h, p in zip(held, phases))
+
+
+def _held_draws(site: SiteContext) -> tuple[float, float, float]:
+    """Per site phase (A), what our managed loads draw: the engine's smoothed
+    figure when it supplied one (see ``_off_grid_held_supply``), else the sum
+    of the loads' own draws."""
     if site.managed_phase_draws is not None:
         return tuple(site.managed_phase_draws)
     draws = [0.0, 0.0, 0.0]
@@ -535,6 +555,44 @@ def _off_grid_held_supply(site: SiteContext) -> Optional[tuple[float, float, flo
         for i, draw in enumerate(load.get_site_phase_draw()):
             draws[i] += draw
     return tuple(draws)
+
+
+def _off_grid_unused_sun(site: SiteContext) -> Optional[float]:
+    """Off-grid with NO battery at all: the sun nothing is using (A, signed).
+
+    With no pack and no grid the sun is the site's whole supply, so what our
+    loads may have is solar less the household; less what they already hold,
+    it is the sun no one is drawing. Every off-grid pool used to be sized from
+    the battery's flow, and with no battery that term was taken as unread: the
+    solar pool had nothing at all (a Solar Only car got 0 A in 3 kW of spare
+    sun) and the physical pool fell back to the gross solar figure, the house
+    never taken off (a Standard car was handed the house's own share again
+    and climbed on it) - dev/tests/scenarios/features/
+    test_off_grid_no_battery.yaml.
+
+    An off-grid array with no pack follows demand, so its output - and a solar
+    figure derived from output sensors - is house + our draws, and this is 0:
+    the sun it is not asked for shows nowhere. Only a solar production sensor
+    read apart from the house the output sensors measure can show it. Negative
+    when the house and our loads outrun that reading, which takes our loads
+    back down with it.
+
+    "No battery" is the calculator's usual test (see ``_charge_allowance``):
+    no battery power and no SOC. None anywhere else, and where nothing
+    measures the house (``household_unknown``).
+    """
+    if (
+        not site.is_off_grid
+        or site.battery_power is not None
+        or site.battery_soc is not None
+        or household_unknown(site)
+    ):
+        return None
+    return (
+        (site.solar_production_total or 0) / site.voltage
+        - sum(_get_household_per_phase(site))
+        - sum(_held_draws(site))
+    )
 
 
 def discharge_headroom_unknown(site: SiteContext) -> bool:
@@ -719,7 +777,9 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
     headroom is offered on the battery's word (``discharge_headroom_unknown``,
     which hub_result shares): the pool is the export the meter measures.
     Off-grid with the flow unread there is no export to start from, and the
-    gross sum stays.
+    gross sum stays. With no battery at all the flow is 0, not unread: the
+    held supply then carries the sun nothing uses too, and the pool is solar
+    less the household (``_off_grid_unused_sun``).
 
     For ASYMMETRIC inverters: Solar+battery power can be allocated to any phase.
     For SYMMETRIC inverters: Solar+battery power is fixed per-phase.
@@ -1338,9 +1398,15 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     # battery power reading the term is 0 - the degraded mode can only fail
     # to release, never refuse to engage.
     discharge = max(0.0, site.battery_power or 0)
+    # Off-grid with no battery the sun no one draws has nowhere to go - it is
+    # surplus by definition, and the one figure that measures it is the same
+    # the pools use (_off_grid_unused_sun; 0 on a demand-following array read
+    # through its output alone). Without it the margin held our own draw only,
+    # and an Excess car sat at its minimum in 3 kW of spare sun.
+    unused_sun = (_off_grid_unused_sun(site) or 0.0) * site.voltage
 
     allowance = max(0.0, export_allowance + charge_allowance - hysteresis)
-    absorbed = export - discharge + charge_power + battery_restored
+    absorbed = export - discharge + charge_power + battery_restored + unused_sun
     margin = absorbed - allowance
 
     _LOGGER.debug(
