@@ -4,8 +4,7 @@ The Docker rig in ``dev/ha-test`` answers "does this work on a real Home
 Assistant". This answers a narrower question much faster: given a site whose
 production is MOVING, does the loop track it, and does it ring at a fixed
 operating point? A 300 s scenario at a 1 s cadence is 300 iterations, so a
-sweep that costs 40 minutes of wall clock on the rig runs here in under a
-second.
+sweep that costs 40 minutes of wall clock on the rig runs here in seconds.
 
 That speed is the point. Tuning a control loop from single runs is how you end
 up preferring an unstable configuration: on 2026-09-08 a shorter permit filter
@@ -26,13 +25,22 @@ Real, imported rather than reimplemented:
   * ``apply_smoothing``            - EMA, Schmitt trigger, adaptive rate limit,
                                      fed the permit rounded as the load
                                      processor rounds it
+  * ``_build_power_station_load``  - the station, built from its config entry
+                                     and the entities the plant publishes, so
+                                     what its draw is BOOKED at is production's
+                                     choice: its commanded speed when it has no
+                                     AC output sensor, as on the rig
+  * ``send_power_station_command`` - the station's register and reserve
+                                     writes, behind the load processor's
+                                     command gate (CONF_UPDATE_FREQUENCY)
 
 Modelled, mirroring ``dev/ha-test`` rather than Home Assistant:
   * the site's physics, including inverter curtailment to an export limit
-  * the CT measurement delay
-  * the device's own ramp toward its setpoint
-  * the loads themselves: the plant builds each ``LoadContext`` (what it
-    draws, its status) where production's load builders read entity states
+  * the CT measurement delay - by default the rig's: sampled on a 5 s tick,
+    each sample publishing the previous one
+  * the station's converter ramping toward its register on that tick
+  * the load processor's command gate (one comparison, entities/load.py)
+  * the tank, a ``LoadContext`` the plant builds itself
 
 Until 2026-09-24 the first line was a hand-assembled copy - ``_smooth`` on the
 grid keys, then the managed draws subtracted RAW - while production smoothed
@@ -57,14 +65,26 @@ same sweep (2026-09-24) rings only at tau 1.0 (300 W) and is flat from 1.5 s
 up, while tracking error and curtailment rise with tau - 330 W / 30 W at 1.5
 against 469 W / 82 W at 8.0 - so the agreement with the rig's ring is no
 longer reproduced here, and the ordering that chose PERMIT_TAU_S = 7.0 does
-not come out of this model any more. Re-check on the rig before tuning on it.
+not come out of this model any more.
 
-NOT modelled at all, and this is the limit of the tool: everything on the Home
-Assistant path. The per-load ``update_frequency`` gate, the charge pause, entity
-restore across restarts, template staleness, the grace window, the load
-builders (settle detection, the stuck-readout watch). Every one of those has
-produced a real bug in this project, and none of them would show up here.
-Screen candidates with this; confirm the winner on the rig.
+The rig re-measurement (8151a69) said why: its station has no AC output
+sensor, so production books it at its COMMANDED speed while the CTs see the
+draw ramping toward it, and its instruments and its register move on a 5 s
+clock rather than every cycle. With all of that in (``Sim``; 2026-09-24) the
+sweep reproduces the rig's table: 290 W of ring at tau 1.0 against the rig's
+300, some tick phases ringing up to 5 s, none at 7 s, tracking error 5-85 W
+under the rig's and curtailment within 15 W of it. Each part is needed: the
+command interval alone damps the old 300 W ring away; the booked command rings
+not at all without the rig's clock, and with only the converter on it (the CTs
+a pure delay) in 2 of 5 phases and about a third as hard; and a metered
+station on the same clock never rings.
+
+NOT modelled at all, and this is the limit of the tool: the rest of the Home
+Assistant path. The charge pause, entity restore across restarts, template
+staleness, the grace window, the EVSE builder (settle detection, the
+stuck-readout watch). Every one of those has produced a real bug in this
+project, and none of them would show up here. Screen candidates with this;
+confirm the winner on the rig.
 
     python3 dev/tests/dynamics.py                 # the standard comparison
     python3 dev/tests/dynamics.py --plot out.html # and a chart to eyeball
@@ -73,6 +93,7 @@ Screen candidates with this; confirm the winner on the rig.
 import math
 import sys
 from collections import deque
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -84,30 +105,50 @@ from standalone_loader import load_pure_modules
 # calculations package __init__ executed. Same combination the
 # availability-contract tests use.
 load_pure_modules(
-    engine_modules=("hub_calculation",), control_modules=("smoothing",)
+    engine_modules=("hub_calculation",),
+    control_modules=("smoothing", "power_station"),
 )
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E402
     LoadContext,
 )
 from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+    CONF_CONNECTED_TO_PHASE,
+    CONF_DEVICE_TYPE,
+    CONF_ENTITY_ID,
     CONF_EXCESS_HYSTERESIS,
     CONF_EXCESS_TRIGGER_MARGIN,
     CONF_GRID_EXPORT_LIMIT,
+    CONF_LOAD_PRIORITY,
     CONF_MAIN_BREAKER_RATING,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     CONF_SITE_UPDATE_FREQUENCY,
+    CONF_STATION_AC_INPUT_ENTITY_ID,
+    CONF_STATION_AC_OUTPUT_ENTITY_ID,
+    CONF_STATION_BATTERY_LEVEL_ENTITY_ID,
+    CONF_STATION_CHARGE_SPEED_ENTITY_ID,
+    CONF_STATION_MAX_CHARGE_POWER,
+    CONF_STATION_MIN_CHARGE_POWER,
+    CONF_STATION_RESERVE_ENTITY_ID,
+    CONF_UPDATE_FREQUENCY,
+    DEFAULT_UPDATE_FREQUENCY,
+    DEVICE_TYPE_POWER_STATION,
     DOMAIN,
-    STATION_CHARGE_POWER_STEP,
+)
+from custom_components.dynamic_ocpp_evse.control.power_station import (  # noqa: E402
+    send_power_station_command,
 )
 from custom_components.dynamic_ocpp_evse.control.smoothing import (  # noqa: E402
     apply_smoothing,
 )
 from custom_components.dynamic_ocpp_evse.engine import (  # noqa: E402
     hub_calculation,
+)
+from custom_components.dynamic_ocpp_evse.helpers import (  # noqa: E402
+    get_entry_value,
 )
 
 V = 230.0
@@ -150,12 +191,16 @@ class Engine:
     nor a bug in how the cycle wires it; this one exercises both
     (dev/tests/test_dynamics_harness.py).
 
-    Two things stand in for Home Assistant, and nothing else does:
-      * the grid CTs are states in a dict, read through the real readers;
-      * the loads are the plant's own ``LoadContext``s, handed to the cycle
-        where ``_add_loads_to_site`` would have built them from entity states.
-        The builders are on the HA path this harness does not model (see NOT
-        modelled above), and the plant owns what a load draws.
+    Three things stand in for Home Assistant, and nothing else does:
+      * the grid CTs and the devices' own entities are states in a dict, read
+        through the real readers;
+      * a ``number.set_value`` call just lands the value in that dict, which is
+        all a register write is to the device on the other side;
+      * a load is EITHER the plant's own ``LoadContext``, handed to the cycle
+        where ``_add_loads_to_site`` would have built it, OR a config entry
+        that the real ``_add_loads_to_site`` builds from those states - what a
+        load's draw is booked at is then production's decision, not the
+        plant's. The station is the second kind (see ``Sim``).
     """
 
     def __init__(self, *, site_freq, phases=3, breaker_a=25.0,
@@ -181,24 +226,53 @@ class Engine:
             data={DOMAIN: {"hubs": {HUB_ID: self.runtime}, "loads": {}}},
             # No inverter or circuit-group entries: the plant has none.
             config_entries=SimpleNamespace(async_entries=lambda domain=None: []),
+            services=SimpleNamespace(async_call=self._set_value),
         )
 
-    def cycle(self, grid_a, loads):
-        """One site cycle. ``grid_a``: what each CT reads (A, + import)."""
-        for entity, amps in zip(self._cts, grid_a):
-            self._states[entity] = _Reading(amps, "A")
+    def publish(self, entity, value, unit):
+        """Put a reading where the readers look for it."""
+        self._states[entity] = _Reading(value, unit)
 
-        def plant_loads(hass, site, hub_entry_id, load_entries=None, **_):
+    async def _set_value(self, domain, service, data, blocking=False):
+        """``number.set_value``, the only service the command modules call
+        here. The register keeps its unit; the plant reads it back."""
+        entity = data["entity_id"]
+        self.publish(entity, data["value"],
+                     self._states[entity].attributes["unit_of_measurement"])
+
+    def cycle(self, grid_a, loads, entries=()):
+        """One site cycle. ``grid_a``: what each CT reads (A, + import).
+
+        ``loads``: the plant's own ``LoadContext``s. ``entries``: load config
+        entries for the real ``_add_loads_to_site`` to build."""
+        for entity, amps in zip(self._cts, grid_a):
+            self.publish(entity, amps, "A")
+
+        builders = hub_calculation._add_loads_to_site
+
+        def plant_loads(hass, site, hub_entry_id, load_entries=None, **kw):
             site.loads.extend(loads)
+            builders(hass, site, hub_entry_id, list(entries), **kw)
 
         # Swapped for the one call, so nothing else sharing the module (the
         # pytest tier imports the real package) ever sees the stand-in.
-        builders = hub_calculation._add_loads_to_site
         hub_calculation._add_loads_to_site = plant_loads
         try:
             return hub_calculation.run_hub_calculation(self.hass, self.hub_entry)
         finally:
             hub_calculation._add_loads_to_site = builders
+
+
+def _complete(coro):
+    """Run a command coroutine whose only await is the plant's own service
+    call, which never suspends - so it finishes on the first step, and needs
+    no event loop (the pytest tier may already own one)."""
+    try:
+        coro.send(None)
+    except StopIteration:
+        return
+    coro.close()
+    raise RuntimeError("the command awaited something the plant does not provide")
 
 
 def permit_a(result, load_id):
@@ -219,12 +293,54 @@ def _permit_state(name):
     )
 
 
+STATION_SPEED = "number.dynamics_station_charge_speed"
+STATION_RESERVE = "number.dynamics_station_reserve"
+STATION_BATTERY = "sensor.dynamics_station_battery"
+STATION_AC_IN = "sensor.dynamics_station_ac_input"
+STATION_AC_OUT = "sensor.dynamics_station_ac_output"
+
+
 class Sim:
     """One site, stepped a cycle at a time.
 
     Defaults mirror ``dev/ha-test/moving_surplus.py`` exactly, so a number out
     of here is comparable in shape to one off the rig. Changing a default here
     without changing it there silently ends that.
+
+    The station is a config entry, built each cycle by production's own
+    ``_build_power_station_load`` from the entities the plant publishes, and
+    driven by production's own ``send_power_station_command`` - so what its
+    draw is booked at, and when its register moves, are production's answers:
+
+      * ``station_metered=False`` (the rig's station,
+        dev/ha-test/config/packages/station.yaml): an AC input sensor and no
+        AC output sensor.
+        The builder can only measure ``ac_input - ac_output`` with both, so it
+        books the station at the speed REGISTER while the station was last
+        told to charge - its command, not its draw. The CTs see the draw that
+        is ramping toward that register. The same shape as a charger whose
+        readout is judged stuck (blind mode), which is controlled on its
+        command too.
+      * ``station_metered=True``: both sensors, so it is booked at what its
+        AC input shows - live on the continuous clock (what this harness
+        modelled for every station until 2026-09-24), a tick behind on the
+        rig's.
+      * ``update_frequency``: the station entry's CONF_UPDATE_FREQUENCY, the
+        load processor's command gate (entities/load.py): a command goes out
+        once that long has passed since the last one, and the register moves
+        only then. 5 s is the rig's setting (dev/ha-test/README.md); None
+        leaves it unset, so production's DEFAULT_UPDATE_FREQUENCY applies,
+        resolved as the processor resolves it.
+      * ``tick_s``: the rig's instruments run on their own 5 s clock
+        (``time_pattern /5``): every tick the CTs and the station's AC input
+        take a sample and publish the previous one (5-10 s behind), and the
+        station's converter closes ``device_ramp`` of the gap to its register.
+        So a register write reaches the draw 0-5 s later, depending on where
+        the tick falls against the command gate - ``tick_phase_s``, which a
+        rig restart lands at random, and which decides how far the booked
+        command runs ahead of what the CTs can see. None is the model until
+        2026-09-24: CTs a pure ``ct_lag_s`` delay, the AC input live, the
+        converter stepping every cycle.
     """
 
     def __init__(
@@ -240,6 +356,10 @@ class Sim:
         tank_w=2000.0,
         station_min_w=200.0,
         station_max_w=2400.0,
+        station_metered=False,
+        update_frequency=5.0,
+        tick_s=5.0,
+        tick_phase_s=2.0,
         curtail=True,
     ):
         self.dt = float(site_freq)
@@ -257,6 +377,10 @@ class Sim:
         # the filtering; what this stands in for is the transport lag, which is
         # what actually costs the loop its phase margin.
         self.lag = deque([(0.0, 0.0, 0.0)] * max(1, round(ct_lag_s / self.dt)))
+        # Or the rig's sampled instruments: (CTs, AC input), taken and shown.
+        self.tick_s = tick_s
+        self.tick_phase_s = tick_phase_s
+        self.sampled = self.shown = ((0.0, 0.0, 0.0), 0.0)
 
         self.engine = Engine(
             site_freq=self.dt,
@@ -267,10 +391,49 @@ class Sim:
         self.hub_entry = self.engine.hub_entry
         self.station_draw_w = 0.0
         self.commanded_w = 0.0
+        self.now = 0.0
+
+        # The station as the rig configures it: speed and reserve registers,
+        # its battery level, its AC input - and its AC output only if metered.
+        data = {
+            CONF_DEVICE_TYPE: DEVICE_TYPE_POWER_STATION,
+            CONF_ENTITY_ID: "station",
+            CONF_LOAD_PRIORITY: 2,
+            CONF_CONNECTED_TO_PHASE: "C",
+            CONF_STATION_MIN_CHARGE_POWER: station_min_w,
+            CONF_STATION_MAX_CHARGE_POWER: station_max_w,
+            CONF_STATION_CHARGE_SPEED_ENTITY_ID: STATION_SPEED,
+            CONF_STATION_RESERVE_ENTITY_ID: STATION_RESERVE,
+            CONF_STATION_BATTERY_LEVEL_ENTITY_ID: STATION_BATTERY,
+            CONF_STATION_AC_INPUT_ENTITY_ID: STATION_AC_IN,
+        }
+        if station_metered:
+            data[CONF_STATION_AC_OUTPUT_ENTITY_ID] = STATION_AC_OUT
+        if update_frequency is not None:
+            data[CONF_UPDATE_FREQUENCY] = update_frequency
+        self.station = SimpleNamespace(entry_id="station", data=data, options={})
+        self.metered = station_metered
+        # Half full, as the rig's station starts: below every reserve the
+        # command module writes while charging, above the one it drops to.
+        self.station_soc = 50.0
+        self.engine.hass.data[DOMAIN]["loads"]["station"] = {}
+        self.engine.publish(STATION_SPEED, 0.0, "W")
+        self.engine.publish(STATION_RESERVE, 0.0, "%")
+        self.engine.publish(STATION_BATTERY, self.station_soc, "%")
+
+        # What the load processor keeps between cycles, as far as
+        # apply_smoothing and send_power_station_command look at it.
         self.sensor = _permit_state("station")
+        self.sensor.config_entry = self.station
+        self.sensor.hass = self.engine.hass
+        self.sensor._last_command_time = -math.inf
+
+    def _register(self, entity):
+        return float(self.engine.hass.states[entity].state)
 
     # -- loads ------------------------------------------------------------
     def _loads(self):
+        """The plant's own loads; the station is built from its entry."""
         tank_a = self.tank_w / V
         return [
             LoadContext(
@@ -289,22 +452,6 @@ class Sim:
                 l1_current=tank_a,
                 rated_current=tank_a,
             ),
-            LoadContext(
-                load_id="station",
-                entity_id="station",
-                min_current=self.station_min_w / V,
-                max_current=self.station_max_w / V,
-                phases=1,
-                priority=2,
-                device_type="power_station",
-                operating_mode="Excess",
-                mode_behavior="excess",
-                mode_priority=4,
-                active_phases_mask="C",
-                l1_phase="C",
-                l1_current=self.station_draw_w / V,
-                connector_status="Charging",
-            ),
         ]
 
     # -- physics ----------------------------------------------------------
@@ -313,7 +460,8 @@ class Sim:
         left = solar_w - 3 * self.hh_w - self.tank_w - self.threshold_w
         return 0.0 if left < self.station_min_w else min(left, self.station_max_w)
 
-    def step(self, solar_w):
+    def _site(self, solar_w):
+        """The true per-phase grid position (A, + import) and the curtailment."""
         managed = (0.0, self.tank_w, self.station_draw_w)
         demand_w = 3 * self.hh_w + sum(managed)
 
@@ -325,34 +473,67 @@ class Sim:
         )
         curtailed_w = max(0.0, potential_w - delivered_w)
         inv_phase_a = delivered_w / 3.0 / V
+        return tuple((self.hh_w + m) / V - inv_phase_a for m in managed), curtailed_w
 
-        # True per-phase grid position, positive = importing.
-        true = tuple(
-            (self.hh_w + m) / V - inv_phase_a for m in managed
-        )
+    def _ramp(self):
+        self.station_draw_w += (self.commanded_w - self.station_draw_w) * self.device_ramp
 
-        self.lag.append(true)
-        # The CTs report the site as it was ct_lag_s ago, the loads their draw
-        # as it is now. From here the whole site cycle - input EMAs, the
-        # managed-draw subtraction, the Excess latch, the allocator - is
-        # production's.
-        result = self.engine.cycle(self.lag.popleft(), self._loads())
+    def _ticks(self, t):
+        """How many instrument ticks fall in this cycle, [t, t + dt)."""
+        def before(x):
+            return math.ceil((x - self.tick_phase_s) / self.tick_s - 1e-9)
+        return before(t + self.dt) - before(t)
+
+    def step(self, solar_w):
+        true, curtailed_w = self._site(solar_w)
+
+        # The CTs report the site as it was a while ago, the station's AC input
+        # its draw. From here the whole site cycle - the station's builder,
+        # input EMAs, the managed-draw subtraction, the Excess latch, the
+        # allocator - is production's.
+        if self.tick_s is None:
+            self.lag.append(true)
+            cts, ac_in = self.lag.popleft(), self.station_draw_w
+        else:
+            cts, ac_in = self.shown
+        self.engine.publish(STATION_AC_IN, ac_in, "W")
+        if self.metered:
+            self.engine.publish(STATION_AC_OUT, 0.0, "W")
+        result = self.engine.cycle(cts, self._loads(), [self.station])
         margin = result["excess_margin_power"]
 
-        permit_w = apply_smoothing(
+        permit = apply_smoothing(
             self.sensor, permit_a(result, "station"), False, self.hub_entry
-        ) * V
+        )
+        permit_w = permit * V
 
-        # The register the engine writes, floored to the step the device
-        # accepts - the same rule as resolve_station_charge_speed.
-        if permit_w < self.station_min_w:
-            self.commanded_w = 0.0
+        # The load processor's command gate (entities/load.py), then its
+        # command: the limit rounded as it rounds it, quantised, written and
+        # the reserve set by production's command module.
+        interval = get_entry_value(
+            self.station, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
+        )
+        t = self.now
+        if t - self.sensor._last_command_time >= interval:
+            _complete(send_power_station_command(
+                self.sensor, round(permit, 1), self.hub_entry, t
+            ))
+        self.now += self.dt
+
+        # The device: it charges toward its speed register while its reserve
+        # is above its battery level (the reserve is the on/off gate), closing
+        # a fraction of the remaining gap each cycle - or, on the rig's clock,
+        # at each tick, when its instruments take their sample first.
+        charging = self._register(STATION_RESERVE) > self.station_soc
+        self.commanded_w = self._register(STATION_SPEED) if charging else 0.0
+        if self.tick_s is None:
+            self._ramp()
         else:
-            speed = int(permit_w // STATION_CHARGE_POWER_STEP) * STATION_CHARGE_POWER_STEP
-            self.commanded_w = max(self.station_min_w, min(speed, self.station_max_w))
-
-        # The device closes a fraction of the remaining gap each cycle.
-        self.station_draw_w += (self.commanded_w - self.station_draw_w) * self.device_ramp
+            for _ in range(self._ticks(t)):
+                self.shown, self.sampled = (
+                    self.sampled, (self._site(solar_w)[0], self.station_draw_w)
+                )
+                self._ramp()
 
         export_w = -sum(true) * V
         return {
@@ -728,47 +909,78 @@ def _configs():
     ]
 
 
-def sweep_permit_tau(values=(1.0, 1.5, 2.0, 3.0, 4.0, 5.6, 8.0), **kw):
+# Every whole second of the rig's 5 s instrument tick (Sim's tick_phase_s).
+TICK_PHASES = (0.0, 1.0, 2.0, 3.0, 4.0)
+
+
+@contextmanager
+def permit_tau(tau):
+    """PERMIT_TAU_S set to ``tau`` for the block, where apply_smoothing reads it.
+
+    ``smoothing`` binds the constant at import (``from ..const import ...``),
+    so it is rebound on that module rather than on ``const`` - patching const
+    would change nothing already imported.
+    """
+    from custom_components.dynamic_ocpp_evse.control import smoothing
+
+    original = smoothing.PERMIT_TAU_S
+    smoothing.PERMIT_TAU_S = tau
+    try:
+        yield
+    finally:
+        smoothing.PERMIT_TAU_S = original
+
+
+def fixed_point_ring(**kw):
+    """Solar held flat: (register peak-to-peak, mean of the second half's
+    windows, and the last window's). The last window says whether it settles;
+    the second half says whether it is still hunting."""
+    sim = Sim(**kw)
+    pp = [w[1] for w in ring(run(sim, hold(14700.0, 210.0, sim.dt), warmup_s=120.0))]
+    late = pp[len(pp) // 2:]
+    return sum(late) / len(late), pp[-1]
+
+
+def sweep_permit_tau(values=(1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0),
+                     phases=TICK_PHASES, **kw):
     """Where does the permit filter stop damping the loop?
 
     A single run cannot answer this. On the rig each point costs seven minutes
     and the window-to-window scatter is as large as the effect, so the
     2026-09-08 A/B of 5.6 against 2.0 came down to reading two noisy columns.
-    Here the whole curve costs a second.
+    Here the whole curve costs seconds. ``values`` are the ones the rig
+    measured on 2026-09-24 (const/common.py), so the two tables line up.
 
-    ``smoothing`` binds the constant at import (``from ..const import ...``),
-    so the sweep rebinds it on that module rather than on ``const`` - patching
-    const would change nothing already imported.
+    Each point is the mean over ``phases`` - every whole second of the rig's
+    5 s instrument tick - because a rig restart lands the tick anywhere
+    against the command gate, and that decides whether a short filter rings:
+    at 1 s, from 25 W to over 600 W. ``ring_late_worst`` is the worst phase.
     """
-    from custom_components.dynamic_ocpp_evse.control import smoothing
+    def mean(xs):
+        return sum(xs) / len(xs)
 
-    original = smoothing.PERMIT_TAU_S
     out = []
-    try:
-        for tau in values:
-            smoothing.PERMIT_TAU_S = tau
-            sim = Sim(**kw)
-            flat = run(sim, hold(14700.0, 210.0, sim.dt), warmup_s=120.0)
-            pp = ring(flat)
-            sim2 = Sim(**kw)
-            moving = run(sim2, sine(dt=sim2.dt), warmup_s=120.0)
-            r = report(moving, f"tau {tau}")
-            # The last window says whether it settles; the mean over the second
-            # half says whether it is still hunting.
-            late = [w[1] for w in pp[len(pp) // 2:]]
-            out.append(
-                {
-                    "tau": tau,
-                    "ring_last": pp[-1][1],
-                    "ring_late_mean": sum(late) / len(late),
-                    "err_mean": r["err_mean"],
-                    "curtailed_mean": r["curtailed_mean"],
-                    "writes_per_min": r["writes_per_min"],
-                }
-            )
-    finally:
-        smoothing.PERMIT_TAU_S = original
+    for tau in values:
+        with permit_tau(tau):
+            rings = [fixed_point_ring(tick_phase_s=p, **kw) for p in phases]
+            reports = []
+            for phase in phases:
+                sim = Sim(tick_phase_s=phase, **kw)
+                reports.append(report(run(sim, sine(dt=sim.dt), warmup_s=120.0)))
+        out.append(
+            {
+                "tau": tau,
+                "ring_last": mean([last for _, last in rings]),
+                "ring_late_mean": mean([late for late, _ in rings]),
+                "ring_late_worst": max(late for late, _ in rings),
+                "err_mean": mean([r["err_mean"] for r in reports]),
+                "curtailed_mean": mean([r["curtailed_mean"] for r in reports]),
+                "writes_per_min": mean([r["writes_per_min"] for r in reports]),
+            }
+        )
     return out
+
+
 def main(argv):
     plot_path = None
     if "--plot" in argv:
@@ -801,11 +1013,13 @@ def main(argv):
             print(f"      {lo:>4.0f}-{lo + 30:<4.0f}  reg {reg_pp:>6,.0f} W   "
                   f"export {exp_pp:>6,.0f} W")
 
-    print("\nPERMIT_TAU_S SWEEP - ring in the second half vs tracking\n")
-    print(f"  {'tau':>5} {'ring late':>10} {'ring last':>10} "
+    print("\nPERMIT_TAU_S SWEEP - ring in the second half vs tracking, "
+          "mean of the five tick phases\n")
+    print(f"  {'tau':>5} {'ring late':>10} {'worst':>6} {'ring last':>10} "
           f"{'err mean':>9} {'curtailed':>10} {'writes/min':>11}")
     for row in sweep_permit_tau():
         print(f"  {row['tau']:>5.1f} {row['ring_late_mean']:>10,.0f} "
+              f"{row['ring_late_worst']:>6,.0f} "
               f"{row['ring_last']:>10,.0f} {row['err_mean']:>9,.0f} "
               f"{row['curtailed_mean']:>10,.0f} {row['writes_per_min']:>11.1f}")
 
