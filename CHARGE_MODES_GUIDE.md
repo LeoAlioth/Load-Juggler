@@ -606,7 +606,7 @@ A hot water tank is a binary (on/off) load driven through a Home Assistant `clim
 
 ### Setpoints
 
-The tank has three configurable target temperatures - set during setup and adjustable afterwards as number sliders:
+The tank has three target temperatures, set on its three number sliders - the only place they are set. The sliders are bounded by the thermostat's own minimum and maximum temperature, and move into that range if it changes; until the thermostat reports one they run from 10 to 90 °C. A new tank starts them at 30, 45 and 65 °C, moved into the thermostat's range:
 
 | Setpoint | Typical use |
 | -------- | ----------- |

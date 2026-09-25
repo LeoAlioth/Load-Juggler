@@ -115,9 +115,6 @@ from ..const import (
     CONF_STATION_NORMAL_RESERVE,
     CONF_STATION_RESERVE_ENTITY_ID,
     CONF_STATION_STORM_RESERVE,
-    CONF_TANK_AWAY_TEMPERATURE,
-    CONF_TANK_BOOST_TEMPERATURE,
-    CONF_TANK_NORMAL_TEMPERATURE,
     CONF_TANK_POWER_DEVICE_ID,
     CONF_TANK_POWER_ENTITY_ID,
     CONF_TANK_PRIORITIZE_BELOW_NORMAL,
@@ -157,9 +154,6 @@ from ..const import (
     DEFAULT_STATION_MIN_CHARGE_POWER,
     DEFAULT_STATION_NORMAL_RESERVE,
     DEFAULT_STATION_STORM_RESERVE,
-    DEFAULT_TANK_AWAY_TEMPERATURE,
-    DEFAULT_TANK_BOOST_TEMPERATURE,
-    DEFAULT_TANK_NORMAL_TEMPERATURE,
     DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL,
     DEFAULT_UPDATE_FREQUENCY,
     DEFAULT_WIRING_TOPOLOGY,
@@ -1738,19 +1732,6 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
     """Build schema for hot water tank configuration."""
     defaults = defaults or {}
 
-    def _temp_selector():
-        return selector(
-            {
-                "number": {
-                    "min": 10,
-                    "max": 90,
-                    "step": 1,
-                    "mode": "box",
-                    "unit_of_measurement": "°C",
-                }
-            }
-        )
-
     return vol.Schema(
         {
             vol.Required(
@@ -1773,24 +1754,6 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
                     }
                 }
             ),
-            vol.Required(
-                CONF_TANK_AWAY_TEMPERATURE,
-                default=defaults.get(
-                    CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE
-                ),
-            ): _temp_selector(),
-            vol.Required(
-                CONF_TANK_NORMAL_TEMPERATURE,
-                default=defaults.get(
-                    CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE
-                ),
-            ): _temp_selector(),
-            vol.Required(
-                CONF_TANK_BOOST_TEMPERATURE,
-                default=defaults.get(
-                    CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE
-                ),
-            ): _temp_selector(),
             vol.Required(
                 CONF_TANK_PRIORITIZE_BELOW_NORMAL,
                 default=defaults.get(

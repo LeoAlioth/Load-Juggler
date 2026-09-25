@@ -2595,8 +2595,7 @@ async def test_slider_backed_config_fields_say_the_slider_owns_them(hass: HomeAs
     from pathlib import Path
 
     seeds_a_slider = {
-        "plug_power_rating", "tank_away_temperature", "tank_normal_temperature",
-        "tank_boost_temperature", "heating_element_power",
+        "plug_power_rating", "heating_element_power",
         "station_min_charge_power", "station_max_charge_power",
         "station_normal_reserve", "station_storm_reserve",
         "evse_minimum_charge_current", "evse_maximum_charge_current",
@@ -2621,7 +2620,7 @@ async def test_slider_backed_config_fields_say_the_slider_owns_them(hass: HomeAs
                     assert marker[lang] in help_text.lower(), (
                         f"{name} {section}/{step}/{field} does not mention the slider"
                     )
-        assert seen == 22, f"{name}: found {seen} slider-backed fields, expected 22"
+        assert seen == 16, f"{name}: found {seen} slider-backed fields, expected 16"
 
 
 def test_the_filters_page_is_translated_in_every_file():
