@@ -97,6 +97,7 @@ run, but have no Home Assistant dependency of their own:
 |---|---|
 | `test_hot_water_tank.py` | Tank setpoint resolution and urgency-tier promotion/demotion |
 | `test_water_heater_tank.py` | A tank on a `water_heater` entity - heating read off its power sensor, gated by its target temperature alone |
+| `test_tank_slider_range.py` | A tank's temperature sliders take the thermostat's own range, and follow it when it changes |
 | `test_excess_margin.py` | The Excess trigger - `excess_margin()` across grid/battery/off-grid states |
 | `test_power_station.py` | Power station charge-speed quantisation and reserve resolution |
 | `test_auto_detect.py` | Grid CT inversion + phase-mapping auto-detection (26 tests) |

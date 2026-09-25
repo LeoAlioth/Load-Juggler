@@ -41,7 +41,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 |------|---------------|-----------------|-------------|
 | **EVSE** | OCPP 1.6J current/power profiles | Standard, Solar Priority, Solar Only, Excess | EV chargers with variable current control |
 | **Smart Plug** | On/off switch | Continuous, Solar Priority, Solar Only, Excess | Any device behind a smart plug (heaters, pumps, etc.) |
-| **Hot Water Tank** | Climate entity (on/off + setpoint) | Freeze Protection, Normal, Solar Priority | Tank with a thermostat (e.g. Generic Thermostat); the mode picks an away/normal/boost setpoint |
+| **Hot Water Tank** | Climate or water heater entity (on/off + setpoint) | Freeze Protection, Normal, Solar Priority | Tank with a thermostat (e.g. Generic Thermostat); the mode picks an away/normal/boost setpoint |
 | **Power Station** | Charge-speed + backup-reserve numbers | Standard, Solar Priority, Solar Only, Excess | Portable station (EcoFlow Delta and similar); modulates its charge rate, and its reserve is the on/off gate |
 | **SG Ready** | *Planned* | Automatic | 2-relay site-state mapping (Block/Normal/Recommend/Force) |
 
@@ -65,7 +65,7 @@ Each load has its own operating mode, set independently. This allows mixing mode
 
 ### Hot Water Tank Modes
 
-A hot water tank is driven through a `climate` entity (e.g. a Generic Thermostat) or a `water_heater` entity - that entity handles temperature regulation, while Load Juggler picks one of three setpoints (**Away**, **Normal**, **Boost**) based on the mode and conditions.
+A hot water tank is driven through a `climate` entity (e.g. a Generic Thermostat) or a `water_heater` entity - that entity handles temperature regulation, while Load Juggler picks one of three setpoints (**Away**, **Normal**, **Boost**) based on the mode and conditions. The setpoints are set on the tank's sliders, which are bounded by the thermostat's own temperature range.
 
 - **Freeze Protection**: Targets the Away setpoint (minimal / frost protection), raised to Boost when there is surplus energy - the hub reports Excess (see Excess mode above), or the home battery is above its target SOC.
 - **Normal**: Targets the Normal setpoint, raised to Boost on the same surplus test.

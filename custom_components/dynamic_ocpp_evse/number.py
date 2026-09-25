@@ -2,12 +2,14 @@
 import logging
 from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
 from .entities.mixins import HubEntityMixin, LoadEntityMixin
 from .const import (
+    CONF_CLIMATE_ENTITY_ID,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
@@ -335,7 +337,14 @@ class LoadPowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
 
 
 class TankTemperatureSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
-    """Slider for a hot water tank setpoint temperature (away / normal / boost)."""
+    """Slider for a hot water tank setpoint temperature (away / normal / boost).
+
+    The only place these are set: the setup and settings pages no longer ask
+    (Anze, 2026-09-25) - an entry from before keeps its saved value as the
+    starting one. Bounded by the thermostat's own min_temp / max_temp, which
+    both climate and water_heater entities publish, and moved into them when
+    they change; 10-90 °C until the thermostat reports.
+    """
 
     _attr_entity_category = EntityCategory.CONFIG
 
@@ -355,10 +364,41 @@ class TankTemperatureSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
         self._attr_native_value = get_entry_value(config_entry, conf_key, default)
         self._attr_native_unit_of_measurement = "°C"
         self._attr_icon = "mdi:thermometer-water"
+        self._thermostat = config_entry.data.get(CONF_CLIMATE_ENTITY_ID)
+
+    def _sync_to_thermostat(self) -> bool:
+        """Take the thermostat's range; True when anything shown changed."""
+        state = self.hass.states.get(self._thermostat) if self._thermostat else None
+        try:
+            low = float(state.attributes["min_temp"])
+            high = float(state.attributes["max_temp"])
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return False
+        if low > high:
+            return False
+        before = (self._attr_native_min_value, self._attr_native_max_value, self._attr_native_value)
+        self._attr_native_min_value, self._attr_native_max_value = low, high
+        if self._attr_native_value is not None:
+            self._attr_native_value = min(max(float(self._attr_native_value), low), high)
+        return before != (low, high, self._attr_native_value)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
+        # Before the restore, so a restored value is clamped into this range.
+        self._sync_to_thermostat()
         await self._restore_and_publish_number()
+        if self._thermostat:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, [self._thermostat], self._thermostat_changed
+                )
+            )
+
+    @callback
+    def _thermostat_changed(self, _event) -> None:
+        if self._sync_to_thermostat():
+            self.async_write_ha_state()
+            self._write_to_load_data(self._attr_native_value)
 
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
