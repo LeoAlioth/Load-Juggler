@@ -16,6 +16,7 @@ import logging
 import math
 import time
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 from ..calculations import (
     SiteContext,
@@ -23,10 +24,14 @@ from ..calculations import (
     PhaseValues,
     calculate_all_load_targets,
     excess_margin,
+    grid_overdraw,
 )
+from ..calculations.models import INACTIVE_STATUSES
 from ..const import (
     CONF_AUTO_DETECT_PHASE_MAPPING,
     CONF_BATTERY_SOC_HYSTERESIS,
+    CONF_BINARY_MIN_OFF_TIME,
+    CONF_CHARGE_PAUSE_DURATION,
     CONF_ENABLE_MAX_IMPORT_POWER,
     CONF_EXCESS_HYSTERESIS,
     CONF_EXCESS_TRIGGER_MARGIN,
@@ -43,7 +48,11 @@ from ..const import (
     CONF_FILTER_INPUT_TAU_S,
     CONF_FILTER_SETTLE_SECONDS,
     CONF_SITE_UPDATE_FREQUENCY,
+    CONF_UPDATE_FREQUENCY,
+    DEAD_BAND,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
+    DEFAULT_BINARY_MIN_OFF_TIME,
+    DEFAULT_CHARGE_PAUSE_DURATION,
     DEFAULT_BATTERY_SOC_MIN,
     DEFAULT_BATTERY_SOC_TARGET,
     DEFAULT_DISTRIBUTION_MODE,
@@ -53,14 +62,21 @@ from ..const import (
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
     CTRL_FAST_TAU_S,
+    DEAD_BAND,
     DEFAULT_SITE_UPDATE_FREQUENCY,
+    DEFAULT_UPDATE_FREQUENCY,
     EMA_TAU_S,
     SETTLE_DRAW_SECONDS,
     DEVICE_TYPE_EVSE,
+    DEVICE_TYPE_HOT_WATER_TANK,
+    DEVICE_TYPE_PLUG,
     DOMAIN,
     GRID_STALE_TIMEOUT,
     HOUSEHOLD_HOLD_BRIDGE_SECONDS,
     HOUSEHOLD_HOLD_RESIDUAL,
+    INPUT_STALE_TIMEOUT,
+    LOAD_RT_SUN_PROBE,
+    SUN_PROBE_MAX_PAUSE_S,
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
 )
@@ -73,7 +89,11 @@ from ..helpers import get_entry_value
 from .auto_detect import check_inversion, check_phase_mapping
 from . import fleet
 from .hub_result import _build_hub_result, _compute_forecast_advice
-from .load_builders import _add_loads_to_site, _build_circuit_groups
+from .load_builders import (
+    _add_loads_to_site,
+    _build_circuit_groups,
+    _watch_readouts_against_household,
+)
 from .readers import (
     _PHASE_LABELS,
     _check_entity_availability,
@@ -107,6 +127,16 @@ def _managed_phase_draws(site, ema_inputs=None):
     the rig, 2026-09-08: a station hunting 299-828 W against a 600 W target,
     seven register writes a minute).
 
+    With ``ema_inputs`` every call ADVANCES that EMA, so it is taken exactly
+    once per site cycle (``run_hub_calculation``) and the one result is handed
+    to every view that subtracts it. Two calls a cycle ran the draw's filter
+    at twice the grid's speed: during a ramp the draw term led the grid term,
+    the household read low by the difference and the permit overshot the
+    allowance (dev/tests/test_managed_draw_smoothing.py). The same holds for
+    the series household, the SMOOTHED inverter output minus this draw - the
+    only household an off-grid site has - so it takes this one result too
+    (_apply_household_figures; dev/tests/test_offgrid_household_smoothing.py).
+
     Callers that work on the RAW grid basis must leave ``ema_inputs`` unset and
     get raw draws, so their pairing stays consistent too -
     ``engine/hub_result.py`` adds draws back to ``raw_phases`` and wants raw
@@ -135,7 +165,7 @@ def _managed_phase_draws(site, ema_inputs=None):
     ]
 
 
-def _charge_control_view(site, consumption, export, battery_power, ema_inputs=None):
+def _charge_control_view(site, consumption, export, battery_power, draws):
     """The site as the battery CHARGE CONTROLLER reads it.
 
     Same loads, same allowance, same feedback subtraction as ``site`` - only
@@ -149,10 +179,11 @@ def _charge_control_view(site, consumption, export, battery_power, ema_inputs=No
     fast, 1 with the view scoped here - dev/tests/test_charge_control_loop.py).
 
     Built AFTER ``_apply_feedback_loop`` ran on the site, so the same
-    managed-draw subtraction is applied to these phases here; off-grid the
-    phases are synthetic zeros on both views and there is nothing to subtract.
+    managed-draw subtraction is applied to these phases here - ``draws`` is the
+    very list the site view subtracted, not a second smoothing of it; off-grid
+    the phases are synthetic zeros on both views and there is nothing to
+    subtract.
     """
-    draws = _managed_phase_draws(site, ema_inputs)
     if not site.is_off_grid and any(d > 0 for d in draws):
         consumption, export = grid_without_managed_draws(consumption, export, draws)
     return replace(
@@ -160,13 +191,54 @@ def _charge_control_view(site, consumption, export, battery_power, ema_inputs=No
     )
 
 
-def _apply_feedback_loop(site, solar_is_derived, members, ema_inputs=None):
+def _supply_per_phase(raw_phases, grid_assumed, has_grid_cts, members,
+                      output_total_w, voltage):
+    """Per phase, what the site is drawing WITH our managed loads in it (A) -
+    the quantity the household is reconstructed from by taking every managed
+    draw off. Returns ``(phases, unusable, source)``, one entry per site
+    phase: None where there is no usable reading, and ``unusable`` flagging a
+    value that stands on an assumption rather than a reading; ``source`` names
+    where it was measured, for the watch's log line.
+
+    * Grid-tied: the signed grid reading, unsmoothed - the feedback loop's own
+      basis (_apply_feedback_loop). ``unusable`` is the breaker worst case an
+      unreadable CT with no history stands on.
+    * Off-grid: the inverter fleet's AC output. With no grid, everything the
+      site consumes - managed loads included - comes out of the inverters, so
+      the fleet's summed output IS the site's consumption, per phase where the
+      output sensors are per phase (unsmoothed, like the grid path). A site
+      with no output sensors at all is modelled single-phase
+      (_read_site_phases), and the fleet's total output - measured, else the
+      topology-aware estimate - stands on that one phase.
+
+    Read only by the stuck-readout watch (engine/load_builders.
+    _watch_readouts_against_household); the allocation's own household is
+    untouched by it.
+    """
+    if has_grid_cts:
+        return list(raw_phases), tuple(grid_assumed), "the grid"
+    exists = [r is not None for r in raw_phases]
+    outputs = fleet.sum_outputs(members, raw=True)
+    if outputs is not None:
+        values = [
+            getattr(outputs, p) if exists[i] else None
+            for i, p in enumerate(("a", "b", "c"))
+        ]
+    elif sum(exists) == 1 and output_total_w is not None and voltage > 0:
+        values = [output_total_w / voltage if e else None for e in exists]
+    else:
+        values = [None, None, None]
+    return values, (False, False, False), "the inverter output"
+
+
+def _apply_feedback_loop(site, solar_is_derived, members, total_draws):
     """Subtract load draws from grid readings to prevent double-counting.
 
     Grid CTs measure total site current INCLUDING load draws. Without this
     adjustment, the engine double-counts load power as both 'consumption'
     and 'load demand'. Modifies site.consumption and site.export_current
-    in-place.
+    in-place. ``total_draws`` is this cycle's smoothed per-phase managed draw
+    from ``_managed_phase_draws``.
     """
     # Off-grid: the grid phase readings are synthetic zeros (no CTs exist) and
     # never contained the load draws - subtracting them here would fabricate
@@ -175,7 +247,6 @@ def _apply_feedback_loop(site, solar_is_derived, members, ema_inputs=None):
     if site.is_off_grid:
         return
 
-    total_draws = _managed_phase_draws(site, ema_inputs)
     if not any(d > 0 for d in total_draws):
         return
 
@@ -234,19 +305,24 @@ def _apply_feedback_loop(site, solar_is_derived, members, ema_inputs=None):
     )
 
 
-def _mixed_household_per_phase(site, members):
+def _mixed_household_per_phase(site, members, draws):
     """Per-phase household for a mixed-topology fleet: the parallel formula on
     the parallel members' summed outputs plus the series formula on the series
     members' - grid-bus loads show on the CT + parallel outputs, behind-series
     loads show in the series outputs. Best-effort superposition; uniform
-    fleets never come here and keep the exact single-formula path."""
+    fleets never come here and keep the exact single-formula path. ``draws``
+    is what the series half subtracts (see _apply_household_figures), and only
+    the series half: off-grid the parallel formula takes the draws off too, so
+    the parallel half is handed none, or they would come off twice."""
     original = site.inverter_output_per_phase
     try:
         site.inverter_output_per_phase = fleet.sum_outputs(
             members, WIRING_TOPOLOGY_PARALLEL
         )
         parallel_hh = (
-            compute_household_per_phase(site, WIRING_TOPOLOGY_PARALLEL)
+            compute_household_per_phase(
+                site, WIRING_TOPOLOGY_PARALLEL, (0.0, 0.0, 0.0)
+            )
             if site.inverter_output_per_phase is not None
             else None
         )
@@ -254,7 +330,7 @@ def _mixed_household_per_phase(site, members):
             members, WIRING_TOPOLOGY_SERIES
         )
         series_hh = (
-            compute_household_per_phase(site, WIRING_TOPOLOGY_SERIES)
+            compute_household_per_phase(site, WIRING_TOPOLOGY_SERIES, draws)
             if site.inverter_output_per_phase is not None
             else None
         )
@@ -548,6 +624,134 @@ def _apply_excess_latch(hub_runtime, site, excess_hysteresis):
     return excess_on, margin
 
 
+# How long the saturation sign must hold before it is believed: the engine
+# drives the pools on a battery reading up to INPUT_STALE_TIMEOUT old
+# (readers._stale_guard), so a battery that answers our loads inside that
+# window is never taken for one that cannot.
+SATURATION_CONFIRM_S = INPUT_STALE_TIMEOUT
+# How long a verdict holds before the rating is offered again - judgements,
+# not measurements: from the meter nothing tells a limit that has gone from one
+# that has not, so the only test is to offer the rating and watch, and a limit
+# still there costs one detection's overrun (and, where what fits is below a
+# load's minimum, one start). A quarter hour is the block a capacity tariff
+# averages import over, so each block pays for one at most; every offer the
+# limit answers doubles the wait, up to an hour - the longest a verdict that
+# has gone stale may keep the battery from the loads.
+SATURATION_HOLD_S = 15 * 60.0
+SATURATION_HOLD_MAX_S = 60 * 60.0
+
+
+def _apply_saturation_latch(hub_runtime, site, now):
+    """A meter-only hybrid at its limit: hold its battery at what it gave then.
+
+    With no solar and no output sensor the sun the house uses itself reaches
+    no meter, so by day the rating cap is short by it and the inverter pool
+    offers the battery's rating less its flow where the inverter cannot pass
+    it: 3 kW of sun and a 1 kW house on a 7 kW inverter permitted a car 30.4 A
+    where 26.1 A fits, and the grid carried the 1 kW past the allowance
+    (dev/tests/test_gridtied_inverter_pool.py). A hybrid at its limit cannot
+    answer more load from sun + battery, so the grid does. The SIGN, all of
+    it for SATURATION_CONFIRM_S on end:
+
+        the grid carries our loads more than the grid half grants them
+        (``grid_overdraw``) by over DEAD_BAND - the least the permit acts on;
+        the site's import rose by over DEAD_BAND since the grid last stood
+        inside the grant (or our loads last drew less), and our loads grew by
+        at least that rise; the battery, more than DEAD_BAND below its
+        rating, did not rise by DEAD_BAND (a rise restarts the count).
+
+    Seen, the battery is held at the flow it gave (``site.
+    battery_discharge_ceiling``): the inverter pool offers what the inverters
+    already give beyond the house and no more, the grid half its grant as
+    usual. The ceiling follows the flow up (the battery showed it can) and
+    down to it at each new verdict; it goes when the flow reaches the rating,
+    or SATURATION_HOLD_S after the verdict, doubled for every offer the limit
+    answered, to SATURATION_HOLD_MAX_S - from the meter a sun that rises looks
+    like a house that falls, so only an offer can show the limit has gone.
+
+    What else shows the sign, and why it is excluded or harmless:
+      * a battery slow to answer our loads moves inside the window; one whose
+        answer takes longer than INPUT_STALE_TIMEOUT is not told apart;
+      * an import our loads did not raise - the battery's own grid setpoint,
+        the house - is not the site's import rising with them, so a steady
+        one never latches, nor ratchets our loads down;
+      * a battery its own logic holds (a BMS limit, its own reserve, a charge
+        priority, a forced charge) gives no more than its flow either, so the
+        ceiling is the truth there too; below the hub's SOC minimum its rating
+        is 0 already and nothing latches;
+      * at night the rating cap is exact, and a healthy battery never shows it;
+      * an import inside the allowance is inside the grant.
+
+    Grid-tied, solar from the meter alone (``solar_is_metered``), the
+    battery's power read, a usable rating, an Inverter Max Power - everywhere
+    else the state is dropped. It lives in ``hub_runtime`` so the calculator
+    stays stateless.
+    """
+    state = hub_runtime.setdefault("_saturation", {})
+    rating = site.battery_max_discharge_power or 0.0
+    if (
+        site.is_off_grid
+        or not site.solar_is_metered
+        or not site.inverter_max_power
+        or site.battery_power is None
+        or rating <= 0
+    ):
+        state.clear()
+        return
+    band = DEAD_BAND * site.voltage
+    flow = site.battery_power
+    draw = sum(site.managed_phase_draws or ()) * site.voltage
+    over = grid_overdraw(site) * site.voltage
+    ceiling = state.get("ceiling")
+    hold = state.get("hold", SATURATION_HOLD_S)
+    if ceiling is not None and flow >= rating - band:
+        ceiling, hold = None, SATURATION_HOLD_S
+    elif ceiling is not None and now - state["seen"] > hold:
+        ceiling = None
+        state["offered"] = now
+    # Where growth is measured from, (our draw, the site's import): the last
+    # cycle inside the grant, or the least our loads have drawn since. None
+    # until the grid has stood inside it once.
+    net = site.net_grid_power or 0.0
+    ref = state.get("ref")
+    if over <= 0 or (ref is not None and draw < ref[0]):
+        ref = (draw, net)
+    if (
+        ref is not None
+        and over > band
+        and net - ref[1] > band
+        and draw - ref[0] >= net - ref[1] - band
+        and flow < rating - band
+    ):
+        since, flow0 = state.get("episode", (now, flow))
+        if flow > flow0 + band:
+            since, flow0 = now, flow
+        state["episode"] = (since, flow0)
+        if now - since >= SATURATION_CONFIRM_S:
+            if ceiling is None:
+                answered = now - state.get("offered", -math.inf) <= hold
+                hold = (
+                    min(2 * hold, SATURATION_HOLD_MAX_S)
+                    if answered
+                    else SATURATION_HOLD_S
+                )
+            ceiling = flow if ceiling is None else min(ceiling, flow)
+            state["seen"] = now
+            ref = (draw, net)  # another verdict needs more growth
+    else:
+        state.pop("episode", None)
+    if ceiling is not None:
+        ceiling = max(ceiling, flow)
+    state.update(ref=ref, ceiling=ceiling, hold=hold)
+    site.battery_discharge_ceiling = ceiling
+    if ceiling is not None:
+        _LOGGER.debug(
+            "Inverter at its limit: battery held at %.0fW (flow %.0fW, "
+            "rating %.0fW, grid %+.0fW past its grant, next offer in %.0fs)",
+            ceiling, flow, rating, over, hold - (now - state["seen"]),
+        )
+
+
 def _apply_household_figures(
     site,
     members,
@@ -556,40 +760,98 @@ def _apply_household_figures(
     solar_is_derived,
     solar_production_total,
     battery_power,
+    managed_draws,
 ):
     """Fill in what the household (everything unmanaged) is drawing.
 
     Post-feedback on purpose: both the total and the per-phase figures are
-    derived from readings the managed draws have already been taken out of.
+    derived from readings the managed draws have already been taken out of
+    (off-grid the total takes them out itself - see below).
     Sets ``site.household_consumption_total`` / ``site.household_consumption``
-    and owns the asymmetric hold state in ``hub_runtime``.
+    and owns the asymmetric hold state in ``hub_runtime``. ``members`` also
+    says whether every battery's power is read - off-grid with no output
+    sensors, the condition for knowing the site's supply at all.
+
+    ``managed_draws`` is this cycle's smoothed draw from _managed_phase_draws -
+    the one list every other view subtracts too. The series household - and
+    off-grid the parallel one - is the SMOOTHED inverter output minus the
+    managed draw, so the draw has to be on the same EMA step: with the raw
+    draw, a charger's start came off at once while the output it is part of
+    was still catching up, the household read low by the filter's lag and the
+    permit went over the inverter's allowance by as much (off-grid, where the
+    inverter rating is the whole allowance: up to 773 W,
+    dev/tests/test_offgrid_household_smoothing.py).
+    Off-grid the feedback loop never ran, so the off-grid household total
+    takes the same draw off itself.
     """
-    # Compute household_consumption_total when solar entity provides ground truth
-    if not solar_is_derived and solar_production_total > 0:
+    if site.is_off_grid and site.inverter_output_per_phase is None:
+        # Off-grid with no inverter output sensors, solar + battery is the
+        # whole supply on the AC bus - the site's one measure of what it draws
+        # - and it is known whenever every battery's power is read. A solar
+        # sensor reading 0 W at night is a reading, not an absent one; with no
+        # solar sensor at all the solar figure is the engine's own (inferred
+        # from battery charging, so 0 while the battery discharges) and the
+        # battery's discharge is the supply. Built only from a solar reading
+        # above 0, the household fell back to the synthetic 0 A grid phases at
+        # night and on a battery-only site, and the inverter's whole rating
+        # went out as headroom: on a 6 kW inverter with a 1 kW house the car
+        # got 26.1 A and the inverter ran 1003 W - the house - over its rating
+        # (dev/tests/test_offgrid_battery_household.py). A battery whose power
+        # is not read leaves the supply unknowable, and no total is built:
+        # _calculate_inverter_limit then hands out nothing rather than the
+        # whole rating.
+        build_total = all(
+            m.battery_power is not None for m in members if m.has_battery
+        )
+    else:
+        # Grid-tied (and off-grid with output sensors) only a measured
+        # production figure provides the ground truth.
+        build_total = not solar_is_derived and solar_production_total > 0
+    if build_total:
         export_power_after_feedback = site.export_current.total * site.voltage
         bp = float(battery_power) if battery_power is not None else 0
+        # Grid-tied the feedback loop has put the managed draws back onto the
+        # export, so they come off here through it. Off-grid it leaves the
+        # synthetic zero phases alone, and solar + battery is the inverters'
+        # whole supply, our own loads included - left in, a charger's draw was
+        # house load and the allowance it is sized on (rating - household)
+        # shrank by that draw: a car meant to get 21.7 A settled at 10.9 A
+        # (dev/tests/test_offgrid_solar_household.py), and an
+        # inverter-limited car hunted (dev/tests/test_offgrid_battery_headroom.py). ``managed_draws`` is the
+        # one smoothed list every view subtracts, on the same EMA step as the
+        # solar and battery readings it comes off.
+        managed_power = (
+            sum(managed_draws) * site.voltage if site.is_off_grid else 0.0
+        )
         site.household_consumption_total = max(
-            0, solar_production_total + bp - export_power_after_feedback
+            0,
+            solar_production_total + bp - export_power_after_feedback
+            - managed_power,
         )
         _LOGGER.debug(
-            "Computed household_consumption_total=%.1fW (solar=%.1fW + bat=%.1fW - export=%.1fW)",
+            "Computed household_consumption_total=%.1fW (solar=%.1fW + bat=%.1fW "
+            "- export=%.1fW - managed=%.1fW)",
             site.household_consumption_total,
             solar_production_total,
             bp,
             export_power_after_feedback,
+            managed_power,
         )
 
     # Compute per-phase household from inverter output entities (after feedback)
     if fleet.mixed_topologies(members):
-        household = _mixed_household_per_phase(site, members)
+        household = _mixed_household_per_phase(site, members, managed_draws)
     else:
-        household = compute_household_per_phase(site, site.wiring_topology)
+        household = compute_household_per_phase(
+            site, site.wiring_topology, managed_draws
+        )
     if household is not None:
         # Asymmetric hold on the household floor. The managed draw side of the
-        # subtraction (OCPP, sub-second) reacts before the polled inverter
-        # output does, so a ramping car transiently zeroes household and the
-        # engine would hand the real household's power out as headroom. Rises
-        # pass straight through; falls are bridged over
+        # subtraction (OCPP, sub-second) can report before the polled inverter
+        # output does - the two share one input EMA, but not one sensor
+        # cadence - so a ramping car can still transiently zero household and
+        # the engine would hand the real household's power out as headroom.
+        # Rises pass straight through; falls are bridged over
         # HOUSEHOLD_HOLD_BRIDGE_SECONDS of wall clock.
         decay = _household_hold_decay(hub_entry)
         raw_household = household
@@ -614,6 +876,155 @@ def _apply_household_figures(
         # No inverter output data at all - nothing to hold, and the held value
         # must be dropped so it cannot resurrect on a later cycle.
         hub_runtime.pop("_household_held", None)
+
+
+def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
+    """Off-grid with no battery, where nothing measures the spare sun: probe it.
+
+    A PV-only array follows demand, so read through its output sensors alone,
+    or a solar sensor alone, the sun it is not asked for shows nowhere: the
+    unused sun is 0 by identity (target_calculator._off_grid_unused_sun), a
+    running load keeps what it draws and one at 0 A never starts. (A solar
+    sensor beside output sensors measures the spare and needs none of this.)
+
+    So offer one STEP on top of what our loads hold (``site.sun_probe``, which
+    every pool carries and caps at the rating less the house and each leg,
+    like the rest of the unused sun) and watch the production:
+
+    - it rose by the step, to within DEAD_BAND: the sun had room. The loads
+      keep it - a running load keeps what it draws - and the next step may
+      follow on the next cycle: growth, one step at a time, only while
+      production does. The offer itself is the step PLUS DEAD_BAND, so what a
+      started load is left drawing clears its minimum by the band: offered
+      exactly its minimum, a reading a hair low cuts it (on the closed loop
+      below, behind a solar sensor alone, the pool came out a float's width
+      under 6 A and the car was stopped 16 s after it started).
+    - it had not by the end of the window: the loads are held to what the
+      production DID follow - a car left under its minimum stops - and no
+      step is offered for the load's own restart dwell (its charge pause; a
+      plug's or tank's minimum off time) plus one command interval: the stop
+      may wait that long to be sent, and the load's dwell only counts from it.
+      Each failed try in a row - a start or a growth step, one count per load
+      - doubles that pause, up to SUN_PROBE_MAX_PAUSE_S: on a marginal site
+      every try asks the array for a step past the sun, and an inverter that
+      trips on overload drops out on each. A try production follows resets it.
+      Nothing else does: every other signal is either blind here (a solar
+      sensor alone reads the demand, not the sun) or a guess (the forecast; a
+      new day, whose dawn is the weakest sun) - and the house "dropping", read
+      here as production less our loads, is also how an inverter that has
+      tripped reads: a house gone to nothing. The count and the next try are shown on the load's status
+      (``LOAD_RT_SUN_PROBE`` in its runtime bucket, entities/sun_probe.py).
+
+    The step is the minimum of the first load in rank order that could take
+    more: what a load at 0 A needs to start, and for a running one the same
+    size, so a failed growth step never asks more of the sun than a failed
+    start. The window is the chain a step travels before production can show
+    it, each link a figure the integration already uses for it: the load's
+    command interval (the send gate), the draw settle time (a car's ramp) and
+    the household hold bridge (how far an inverter output lags a draw) -
+    15 + 15 + 15 = 45 s at the defaults (dev/tests/test_offgrid_sun_probe.py).
+
+    State in ``hub_runtime["_sun_probe"]`` and each load's backoff, dropped
+    wherever the gate fails.
+    """
+    loads_rt = hass.data[DOMAIN].get("loads", {})
+    if (
+        not site.is_off_grid
+        or site.battery_power is not None
+        or site.battery_soc is not None
+        or site.solar_is_derived == (site.inverter_output_per_phase is None)
+    ):
+        hub_runtime.pop("_sun_probe", None)
+        for load in site.loads:
+            loads_rt.get(load.load_id, {}).pop(LOAD_RT_SUN_PROBE, None)
+        return
+    now = time.monotonic()
+    supply = (site.solar_production_total or 0.0) / site.voltage
+    held = sum(site.managed_phase_draws or ())
+    probe = hub_runtime.get("_sun_probe")
+    if probe and probe["step"]:
+        load_rt = loads_rt.get(probe["load"], {})
+        followed = max(0.0, supply - probe["supply"])
+        if followed >= probe["step"] - probe["band"]:
+            _LOGGER.debug("Sun probe: production followed %.1f A", followed)
+            load_rt.pop(LOAD_RT_SUN_PROBE, None)
+            probe = None
+        elif now < probe["until"]:
+            site.sun_probe = probe["held"] + probe["step"] + probe["band"] - held
+            return
+        else:
+            last = load_rt.get(LOAD_RT_SUN_PROBE) or {}
+            pause = max(
+                probe["pause"],
+                min(2 * last.get("pause_s", 0.0), SUN_PROBE_MAX_PAUSE_S),
+            )
+            failed = last.get("failed_tries", 0) + 1
+            load_rt[LOAD_RT_SUN_PROBE] = {
+                "failed_tries": failed,
+                "pause_s": pause,
+                "next_try_at": datetime.now(timezone.utc) + timedelta(seconds=pause),
+            }
+            _LOGGER.debug(
+                "Sun probe: production followed %.1f A of %.1f A - holding "
+                "our loads to it for %.0f s (failed try %d in a row)",
+                followed, probe["step"], pause, failed,
+            )
+            probe = hub_runtime["_sun_probe"] = {
+                "step": 0.0,
+                "held": probe["held"] + followed,
+                "until": now + pause,
+            }
+    if probe and now < probe["until"]:
+        site.sun_probe = min(0.0, probe["held"] - held)
+        return
+    hub_runtime.pop("_sun_probe", None)
+
+    wanting = sorted(
+        (
+            load for load in site.loads
+            if load.dynamic_control
+            and load.active_phases_mask
+            and not load.unmetered
+            and (
+                load.device_type == DEVICE_TYPE_PLUG
+                or load.connector_status not in INACTIVE_STATUSES
+            )
+            and max(load.get_site_phase_draw()) < load.max_current - DEAD_BAND
+        ),
+        key=lambda load: (load.mode_priority, load.priority),
+    )
+    if not wanting:
+        return
+    load = wanting[0]
+    entry = loads_rt.get(load.load_id, {}).get("entry")
+
+    def setting(key, default):
+        return float((get_entry_value(entry, key, default) if entry else default) or 0)
+
+    if load.device_type in (DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK):
+        dwell = setting(CONF_BINARY_MIN_OFF_TIME, DEFAULT_BINARY_MIN_OFF_TIME)
+    else:
+        dwell = setting(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION)
+    interval = setting(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY)
+    settle = float(
+        get_entry_value(hub_entry, CONF_FILTER_SETTLE_SECONDS, SETTLE_DRAW_SECONDS)
+    )
+    step = load.min_current * len(load.active_phases_mask)
+    band = DEAD_BAND * len(load.active_phases_mask)
+    hub_runtime["_sun_probe"] = {
+        "load": load.load_id,
+        "step": step,
+        "band": band,
+        "held": held,
+        "supply": supply,
+        "until": now + interval + settle + HOUSEHOLD_HOLD_BRIDGE_SECONDS,
+        "pause": dwell * 60 + interval,
+    }
+    site.sun_probe = step + band
+    _LOGGER.debug(
+        "Sun probe: offering %.1f A more (for %s) on %.1f A held",
+        step + band, load.entity_id, held,
+    )
 
 
 def _apply_grid_stale_fallback(site, grid_stale_duration):
@@ -906,6 +1317,10 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # member (the classic setup) each aggregate reduces to exactly the old
     # singleton value - see engine/fleet.py for the per-member gating rules.
     members = _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage)
+    # Off-grid every output carries its own battery's flow, parallel included
+    # (fleet.member_solar) - the one place the solar derivation learns it.
+    for m in members:
+        m.off_grid = not has_grid_cts
 
     # --- Solar production (unified for grid and off-grid) ---
     # Per member: its own production sensor when configured, else derived from
@@ -1075,6 +1490,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         export_current=export_pv,
         solar_production_total=solar_production_total,
         solar_is_derived=solar_is_derived,
+        solar_is_metered=fleet.solar_is_metered(members),
         battery_soc=float(battery_soc) if battery_soc is not None else None,
         battery_power=float(battery_power) if battery_power is not None else None,
         battery_soc_min=float(battery_soc_min) if battery_soc_min is not None else None,
@@ -1136,17 +1552,35 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     auto_detect_state = hub_runtime.setdefault("_auto_detect", {})
     _apply_phase_remaps(site, auto_detect_state)
 
+    # --- Stuck charger readouts, judged against the household ---
+    # On the phases as remapped, and on the household as the engine is about
+    # to reconstruct it - the grid reading minus our draws, or off-grid the
+    # inverter output minus our draws - which is where a readout stuck LOW
+    # does its damage (see engine/readout_watch.observe_household).
+    _watch_readouts_against_household(
+        hass,
+        site,
+        *_supply_per_phase(
+            raw_phases, grid_assumed_phases, has_grid_cts, members,
+            inverter_output_total, voltage,
+        ),
+    )
+
     # --- Feedback loop ---
-    _apply_feedback_loop(site, solar_is_derived, members, ema_inputs)
+    # The managed-draw EMA advances HERE, once per cycle, like every other
+    # input filter - and both views subtract this one result.
+    managed_draws = _managed_phase_draws(site, ema_inputs)
+    site.managed_phase_draws = tuple(managed_draws)
+    _apply_feedback_loop(site, solar_is_derived, members, managed_draws)
     ctrl_site = _charge_control_view(
         site,
         ctrl_consumption_pv,
         ctrl_export_pv,
         float(battery_power_ctrl) if battery_power_ctrl is not None else None,
         # Its phases come from the DIRECTIONAL smoothers, but the draw it
-        # subtracts is the same smoothed term the site view used - one EMA
-        # state, so the two views cannot disagree about what our loads draw.
-        ema_inputs,
+        # subtracts is the same smoothed term the site view used - one value,
+        # so the two views cannot disagree about what our loads draw.
+        managed_draws,
     )
 
     excess_on, margin = _apply_excess_latch(hub_runtime, site, excess_hysteresis)
@@ -1159,7 +1593,16 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         solar_is_derived,
         solar_production_total,
         battery_power,
+        # This cycle's one smoothed draw, not a raw re-sum: the series
+        # household (off-grid, either wiring's) subtracts it from the SMOOTHED
+        # inverter output, and an
+        # off-grid site with no output sensors takes it off the solar-sensor
+        # total the same way.
+        managed_draws,
     )
+    _apply_sun_probe(hass, hub_entry, hub_runtime, site)
+
+    _apply_saturation_latch(hub_runtime, site, time.monotonic())
 
     # --- Calculate targets ---
     calculate_all_load_targets(site)
@@ -1233,7 +1676,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         site,
         raw_phases,
         voltage,
-        main_breaker_rating,
         battery_soc,
         battery_soc_min,
         battery_max_discharge_power,

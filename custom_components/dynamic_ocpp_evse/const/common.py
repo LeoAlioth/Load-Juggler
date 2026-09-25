@@ -104,46 +104,81 @@ RAMP_DOWN_RATE = 0.2     # Max 0.2 A/s ramp down
 # are different design decisions that should be retunable apart. The measured
 # optimum was tau ~6.2 s (0.15/s at 1 s), well inside the rig's resolution.
 RAMP_TAU_S = 5.6
-# The PERMIT filter's own time constant, shorter than the input filter's on
-# purpose. `apply_smoothing`'s EMA is the second exponential lag on the same
-# signal: its input is the engine's answer, which was already computed from
-# readings smoothed at EMA_TAU_S. A second 5.6 s of it buys no further noise
-# rejection - there is little noise left to reject - and costs another 5.6 s of
-# phase, which the rate limiter then inherits.
+# The PERMIT filter's own time constant. `apply_smoothing`'s EMA is the second
+# exponential lag on the same signal: its input is the engine's answer, which
+# was already computed from readings smoothed at EMA_TAU_S. The first guess was
+# that it should be SHORTER than the input filter - a second 5.6 s buys no
+# further noise rejection and costs another 5.6 s of phase - and the rig says
+# the opposite (below): what it is for is damping the loop, not the noise.
 #
-# Measured on the rig (2026-09-08), and this is the failure it caused rather
-# than a preference: the ramp's proportional term never engaged at all. It
-# closes `|delta| * approach` where delta is the distance to the SMOOTHED
-# target, and the matched filter held that within 140 W of where the ramp
-# already stood, so `max(floor, proportional)` chose the floor every cycle. The
-# permit rose in near-constant 115 W steps (0.1 A/s, exactly RAMP_UP_RATE)
-# while the real error was 600 W, and the adaptive rate that was added to fix
-# constant-slew tracking was doing nothing.
+# Measured on the rig (2026-09-08), and this is the failure a matched 5.6 s
+# caused rather than a preference: the ramp's proportional term never engaged
+# at all. It closes `|delta| * approach` where delta is the distance to the
+# SMOOTHED target, and the matched filter held that within 140 W of where the
+# ramp already stood, so `max(floor, proportional)` chose the floor every
+# cycle. The permit rose in near-constant 115 W steps (0.1 A/s, exactly
+# RAMP_UP_RATE) while the real error was 600 W, and the adaptive rate that was
+# added to fix constant-slew tracking was doing nothing.
 #
 # The same lag holds the permit UP after a surplus falls: export dipped to
 # 9 147 W against an 11 000 W limit while the station drew 2 392 W against a
 # 1 527 W ideal.
 #
-# 7 s, and it went UP rather than down, which was the opposite of the first
-# guess. 2 s was tried first, on the reasoning that a second helping of the
-# input filter's smoothing buys no noise rejection. It tracked better on every
-# average and rang 600 W peak-to-peak indefinitely on a dead-flat input (rig,
-# 2026-09-08) - the averages preferred it precisely BECAUSE it rang, since
-# mean-|error| rewards a ring centred on the right answer over an honest lag.
-#
 # The real fault was in the rate limiter, not here: it took its proportional
 # step from the distance to the SMOOTHED target, which this filter holds inside
 # the fixed floor, so the adaptive step was frequently not the binding one.
 # With the limiter reading the raw error instead, the loop moves faster and
-# then needs MORE damping here, not less - and once damped it wastes less,
-# because it is no longer hunting.
+# then needs MORE damping here, not less.
 #
-# Swept on dev/tests/dynamics.py across four refresh rates and two device ramp
-# speeds. Against the previous pairing (5.6 s with the old limiter) 7 s is
-# better on the fixed-point ring in 8 configurations of 8, on step rise time in
-# 7, on tracking in 7 and on curtailed energy in 7. The one loss is a 10 s site
-# with a slow device, by about 1% on two figures. At the 2 s default:
-#     ring 300 W -> 0 W, rise 60 s -> 48 s, curtailed 55 W -> 33 W
+# 7 s is the shortest value clear of the ring, measured on the rig
+# (dev/ha-test, 2026-09-24: 1 s site refresh, the station's register written
+# every 5 s, CTs 5-10 s behind, curtailment on). Each value was run cold from a
+# Home Assistant restart, changing nothing else: solar held flat at 14.7 kW
+# (register peak-to-peak per 30 s window, mean of the second half, per run), a
+# step from 800 to 2 000 W of surplus (overshoot above where it settled), and
+# moving_surplus.py (14.7 kW +/- 1.1 kW over 2 x 150 s, mean of 3-6 runs):
+#
+#     tau   flat ring       step overshoot   tracking error   curtailed
+#     1.0   300 W           -                434 W            105 W
+#     1.5   225 W           -                422 W            121 W
+#     2.0   150, 250 W      312 W, rings on  441 W            128 W
+#     3.0   0, 200 W        276 W, rings on  482 W            128 W
+#     4.0   0, 0 W          100 W            530 W            134 W
+#     5.0   0, 75 W         263 W, rings on  509 W            134 W
+#     7.0   0, 0, 0 W       0 W              533 W            149 W
+#    10.0   0 W             -                655 W            189 W
+#
+# Up to 2 s every run rang, indefinitely, on a dead-flat input - and tracked
+# better on the averages BECAUSE it rang, since mean-|error| rewards a ring
+# centred on the right answer over an honest lag. 3 and 5 s ring in some runs
+# and not in others, and 4 s, clean in its two, sits between them: a loop at
+# the edge of its margin. 7 s never rang, and what 4-5 s would buy for that
+# risk is small: tracking no better (530 and 509 against 533 W, run-to-run
+# standard deviation 14-34 W), 15 W less curtailed, and no faster rise (44-48 s
+# against 47 s to 90% of the step). 10 s costs 120 W of tracking and 40 W of
+# curtailment. 6 s was not run: half of the 15 W is below what three to six
+# runs resolve. Register writes were 7-8 per minute at every value.
+#
+# The FIRST choice of 7 s (2026-09-08) was right for a reason that was not. It
+# stood on a sweep of dev/tests/dynamics.py that subtracted the managed draw
+# RAW while production smoothed it, so the ~1 kW ring that sweep showed up to
+# 4 s came from the harness, not the loop (79dc691 reproduces it byte for byte
+# from the raw draw), and on rig runs made while production advanced that
+# smoothing twice a cycle (until 4cbbdd1). Closed through the production cycle,
+# the harness rings only at 1 s and tracks best at 1.5 s; the rig rings at
+# 1.5 s. The ring comes from what the harness did not then model: the rig's
+# station has no AC output sensor, so it is booked at its COMMANDED speed
+# (load_builders' fallback) while the CTs see the real draw 5-10 s later; its
+# register moves every 5 s, not every cycle; and the rig's instruments tick
+# every 5 s. Since ad9f5d9 the harness models all three through production's
+# own code and rings as the rig does (mean of the five tick phases: 290 W at
+# 1 s, 190 W at 2 s, 0 at 7 s - dev/tests/test_dynamics_harness.py). A station
+# read through both AC sensors lacks the first, but a charger whose readout is
+# judged stuck is also controlled on its command, so the value has to hold for
+# that loop. At the production default 2 s refresh the faithful harness rings
+# 305/240/150/70/60/20 W at 1/1.5/2/3/4/5 s and not at all at 7 or 10 s, so
+# 7 s holds there too; at the default 15 s command interval nothing rings at
+# any value (2026-09-24).
 #
 # It is deliberately no longer equal to EMA_TAU_S. The two are cascaded on one
 # signal, so they are not the same design decision: the input filter answers
@@ -260,6 +295,23 @@ SUSPENDED_EV_IDLE_TIMEOUT = 60  # Seconds of SuspendedEV + near-zero draw before
 HOUSEHOLD_HOLD_BRIDGE_SECONDS = 15.0  # Wall-clock length of the bridge window
 HOUSEHOLD_HOLD_RESIDUAL = 0.1         # Fraction of the held value left after the window
 
+# Off-grid sun probe (engine/hub_calculation._apply_sun_probe): each failed try
+# in a row doubles the pause before the next, from the load's own restart
+# dwell + one command interval (3 min 15 s at the defaults), up to this cap; a
+# try the production follows resets it. A JUDGEMENT, not a measurement: the
+# longest wait between tries a person still reads as "it is trying" rather
+# than "it gave up" - and so the longest a sun that comes back can go unfound.
+# On a marginal 12 h day it leaves 26 tries where the fixed pause made 179
+# (dev/tests/test_offgrid_sun_probe.py). Not tied to the daylight left or the
+# forecast: neither says when a cloud clears or the house frees the sun, which
+# is all the next try is for.
+SUN_PROBE_MAX_PAUSE_S = 30 * 60
+# The probe's per-load backoff, in the load's ``hass.data[DOMAIN]["loads"]``
+# bucket: ``{"failed_tries", "pause_s", "next_try_at" (UTC)}``, absent until a
+# try fails and again once one succeeds. Shown on the load's status
+# (entities/sun_probe.py).
+LOAD_RT_SUN_PROBE = "sun_probe"
+
 # EVSE draw-settle detection - the measured draw is trusted as the EVSE's real
 # footprint (freeing the unused gap to lower-priority loads) only once it has
 # held steady for SETTLE_DRAW_SECONDS within SETTLE_DRAW_TOLERANCE.
@@ -277,6 +329,23 @@ SETTLE_DRAW_SECONDS = 15.0
 # offered (util ≈ 1.0) is using all of it, so the permit, not the draw, is
 # the correct pool footprint.
 SETTLE_PERMIT_MARGIN = 1.0    # Amps - draw must be this far below last permit
+
+# A charger leg counts as CARRYING current above this (A). It is what tells a
+# 1-phase car on a 3-phase charger apart from a 3-phase one - a leg reading a
+# few tenths of an amp is a meter's noise floor, not a car. Read by the
+# published active-phase count and phase mask (engine/hub_result.py) and by
+# the stuck-readout watch, which assumes the commanded limit only on the legs
+# that were carrying current when the reading froze.
+LEG_DRAWING_CURRENT = 1.0
+
+# How far a W-encoded charging profile may legitimately let a leg's current
+# sit above the amps it was computed from, as a fraction: the limit is sent as
+# A x V x phases, and the charger converts it back with ITS voltage, not ours,
+# so voltage and rounding variance put a genuine draw a little above the amps
+# we meant. Used where a reported draw is judged against a limit - the clamp on
+# a charger reporting its total as a per-phase figure (engine/readers.py) and
+# the stuck-readout watch (engine/readout_watch.py).
+WATTS_PROFILE_TOLERANCE = 0.10
 
 # Auto-reset detection - triggers reset_ocpp_evse when charger ignores profiles.
 # How long the charger must keep offering something other than what it was

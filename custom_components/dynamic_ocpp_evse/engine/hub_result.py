@@ -32,6 +32,8 @@ from ..calculations.calibration import (
     export_is_clamped,
 )
 from ..calculations import (
+    discharge_headroom_unknown,
+    household_unknown,
     merge_forecast_series,
     select_clipping_window,
     first_production_at,
@@ -41,6 +43,7 @@ from ..calculations import (
     headroom_deficit_kwh,
     reconstructed_export_power,
     recommended_charge_limit,
+    sun_power,
     yields_to_excess,
 )
 from ..const import (
@@ -57,6 +60,7 @@ from ..const import (
     DEFAULT_GRID_EXPORT_LIMIT,
     DEFAULT_SOC_LIMIT_NORMAL,
     FORECAST_SOC_HYSTERESIS,
+    LEG_DRAWING_CURRENT,
 )
 from ..helpers import get_entry_value
 from . import fleet
@@ -521,6 +525,13 @@ def _compute_forecast_advice(
         if off_grid
         else export_is_clamped(site.total_export_power, export_limit)
     )
+    # The observers learn from PUBLISHED production, not the calculation's:
+    # None wherever the figure is not a measurement (fleet.solar_is_assumed) -
+    # a dead sensor's 0 W, an off-grid output nothing splits from its battery.
+    production_w = (
+        None if fleet.solar_is_assumed(members)
+        else fleet.solar_total(members, site.voltage)
+    )
 
     for m in members:
         if not m.forecast_device_ids:
@@ -536,7 +547,7 @@ def _compute_forecast_advice(
             m.entry_id,
             local_day,
             block_power_at(member_series, now_local),
-            fleet.member_solar_production(m, site.voltage),
+            fleet.member_solar_published(m, site.voltage),
             dt_hours,
             constrained,
             now_local=now_local,
@@ -548,7 +559,7 @@ def _compute_forecast_advice(
         now_local,
         local_day,
         clip_threshold,
-        fleet.solar_total(members, site.voltage),
+        production_w,
         dt_hours,
     )
     # SATURATION is the Excess verdict, not a second test of the same thing:
@@ -560,7 +571,7 @@ def _compute_forecast_advice(
         hub_runtime,
         local_day,
         block_power_at(series, now_local),
-        fleet.solar_total(members, site.voltage),
+        production_w,
         constrained,
         dt_hours,
     )
@@ -639,7 +650,6 @@ def _build_hub_result(
     site,
     raw_phases,
     voltage,
-    main_breaker_rating,
     battery_soc,
     battery_soc_min,
     battery_max_discharge_power,
@@ -697,6 +707,12 @@ def _build_hub_result(
     there is invented. Per-inverter figures are handled one member at a time in
     hub_calculation.py, where each member has a published sensor of its own.
 
+    ``site.solar_is_metered`` (``fleet.solar_is_metered``): no member knows
+    its production, so the engine's solar is the meter's export with our loads
+    handed back, plus the batteries' charge - which carries their discharge
+    too. The published solar, and the household identity built on it, take
+    that discharge back off (``sun_power``); the engine keeps its figure.
+
     The third case is the managed draws (``LoadContext.draw_assumed``, resolved
     per load by ``_draw_is_unknown`` below): an unreadable current or power
     monitor leaves its load carrying 0 A, so a charging car could publish 0 W
@@ -710,6 +726,13 @@ def _build_hub_result(
     does NOT: with the draw at 0 the feedback loop subtracts nothing, so the
     published export degrades to the CT's own reading rather than to an
     invented number.
+
+    A charger whose readout is judged STUCK is not that case: its draw is the
+    limit it last accepted (``LoadContext.draw_blind``, engine/readout_watch.py)
+    - an estimate, not an invented 0 - so it is published, in its own
+    ``load_draw``, in ``total_evse_power`` and in the household, and
+    ``draw_estimated`` names it so the entities can mark those figures as
+    estimates (entities/readout.py).
     """
     # Which loads carry an invented 0 draw this cycle (see _draw_is_unknown).
     # Resolved once, here, because both the per-load figure and the total need
@@ -719,29 +742,28 @@ def _build_hub_result(
         for c in site.loads
     }
     managed_draw_assumed = any(draw_unknown.values())
-
-    # Grid available power (based on consumption after feedback loop).
-    # Off-grid there is no grid feed at all - headroom is 0 by definition.
-    if site.is_off_grid:
-        grid_headroom = 0.0
-    else:
-        grid_headroom = sum(
-            max(0, main_breaker_rating - c) * voltage
-            for c in (site.consumption.a, site.consumption.b, site.consumption.c)
-            if c is not None
-        )
+    # Chargers whose readout is stuck and whose draw is the ASSUMED one - the
+    # limit they last accepted (see engine/readout_watch.py). Not unknown: an
+    # estimate, published as one. Every figure that nets in their draw -
+    # their own load_draw, total_evse_power, household_power - carries it, and
+    # this map is what marks those figures estimated on their entities
+    # (entities/readout.py). A charger handed back to the user is household.
+    draw_estimated = {
+        c.load_id: dict(c.draw_estimate)
+        for c in site.loads
+        if c.draw_blind and c.dynamic_control and c.draw_estimate
+    }
 
     # Battery rated discharge power (gated by SOC >= minimum). This is the
     # battery's capability, not what is spare right now - see battery_remaining.
     #
-    # Mirror the distribution engine's gate (_calculate_inverter_limit): in
-    # derived-solar mode the engine can only add battery discharge to the pool
-    # when a battery-power sensor is present (without it the battery's effect on
-    # the grid CT can't be untangled, so the engine treats it as 0). The display
-    # must use the same gate or these sensors would advertise battery headroom
-    # the engine never actually grants - masking exactly the case where a large
-    # load stays off despite a healthy SOC.
-    battery_discharge_unusable = site.solar_is_derived and battery_power is None
+    # The distribution engine's own gate (discharge_headroom_unknown): with
+    # the battery's flow unread the pool offers none of its headroom grid-tied,
+    # nor off-grid on a derived solar figure. The display must use the same
+    # gate or these sensors would advertise battery headroom the engine never
+    # actually grants - masking exactly the case where a large load stays off
+    # despite a healthy SOC.
+    battery_discharge_unusable = discharge_headroom_unknown(site)
     if (
         battery_soc is not None
         and battery_soc_min is not None
@@ -806,10 +828,18 @@ def _build_hub_result(
     #     since derived solar is itself built from these terms.
     #  3. Last resort: the identity with derived solar - best effort.
     hh_phases = getattr(site, "household_consumption", None)
+    # The production as published: sun_power, which from the meter alone
+    # takes the batteries' discharge back off the engine's solar - built on
+    # the engine's figure, the house the identity below gives read 4992 W by
+    # day and 5000 W at night where it drew 1 kW
+    # (dev/tests/test_gridtied_inverter_pool.py).
+    # With a battery's power unread nothing takes the discharge off, and
+    # solar_assumed publishes None.
+    solar_w = sun_power(site)
     _identity_household = max(
         0,
         net_consumption
-        + (site.solar_production_total or 0)
+        + solar_w
         + (battery_power or 0)
         - total_evse_power,
     )
@@ -830,66 +860,36 @@ def _build_hub_result(
         household_power = round(_identity_household, 0)
         household_from_solar = True
 
-    # Cap grid headroom by max grid import power limit (if configured)
-    if site.max_grid_import_power is not None:
-        post_feedback_import = sum(
-            c * voltage
-            for c in (site.consumption.a, site.consumption.b, site.consumption.c)
-            if c is not None
-        )
-        grid_headroom = min(
-            grid_headroom,
-            max(0, site.max_grid_import_power - max(0, post_feedback_import)),
-        )
-
-    # Solar power available to loads = solar production - household loads
-    # (household_consumption_total is set after feedback loop, so it excludes load draws)
-    solar_available = 0
-    if site.solar_production_total and site.solar_production_total > 0:
-        household = getattr(site, "household_consumption_total", None)
-        if household is not None:
-            solar_available = max(0, site.solar_production_total - household)
-        else:
-            # Derived solar mode: export IS the solar available (best approximation)
-            solar_available = max(0, site.solar_production_total)
-
     # Battery power still spare for managed loads = rated discharge minus the
     # discharge already serving the household.
     current_battery_discharge = max(0, battery_power or 0)
     battery_remaining = max(0, battery_rated_discharge - current_battery_discharge)
+    # A meter-only hybrid seen at its limit gives no more than it did then,
+    # and the pool offers no more (hub_calculation._apply_saturation_latch).
+    if site.battery_discharge_ceiling is not None:
+        battery_remaining = min(
+            battery_remaining,
+            max(0.0, site.battery_discharge_ceiling - current_battery_discharge),
+        )
 
-    # Site remaining power = grid import headroom + power the inverter can
-    # still source from solar and battery for managed loads. On an off-grid
-    # system grid_headroom is 0, so this is purely inverter-sourced; on a
-    # grid-tied system it is the sum of both paths.
-    #
-    # Two ceilings apply, and we take the lower:
-    #  - Source: solar surplus + spare battery discharge.
-    #  - Inverter: rated capacity minus what the inverters are *already*
-    #    outputting. That output is MEASURED when output entities exist and
-    #    otherwise estimated topology-aware per fleet member - the old
-    #    solar + battery_power form was the series (DC-coupled) model only, and
-    #    on a parallel (AC-coupled) site it understated the output by the whole
-    #    battery charge power, advertising headroom the site does not have.
-    #
-    #    The figure is site.inverter_output_total - captured at READ time,
-    #    before the feedback loop, the same one the calculator's coverage gate
-    #    consumes (#17). Recomputing it here from the post-feedback scalars
-    #    inflated the estimate on a derived-solar site by the managed draws the
-    #    feedback loop folds back into solar, understating Site Remaining Power
-    #    by exactly the running loads' draw (issue #48).
-    inverter_sourced = solar_available + battery_remaining
+    # Battery Remaining Power is bounded by the inverter: the battery cannot
+    # deliver more to loads than the inverter can pass - its rating less what
+    # it is already outputting. That output is MEASURED when output entities
+    # exist and otherwise estimated topology-aware per fleet member, and it is
+    # site.inverter_output_total - captured at READ time, before the feedback
+    # loop, the same one the calculator's coverage gate consumes (#17).
+    # Recomputing it here from the post-feedback scalars inflated the estimate
+    # on a derived-solar site by the managed draws the feedback loop folds back
+    # into solar (issue #48).
     if site.inverter_max_power:
         current_inverter_output = (
             site.inverter_output_total
             if site.inverter_output_total is not None
             else 0.0
         )
-        # Headroom is clamped to the inverter's own rating: a negative measured
-        # output (a cascaded inverter feeding power IN through the load port)
-        # means the site is absorbing, but it does NOT raise this inverter's AC
-        # output capability above its nameplate - so it cannot buy extra
-        # headroom. Above the rating the headroom is 0, as before.
+        # Clamped to the inverter's own rating: a negative measured output (a
+        # cascaded inverter feeding power IN through the load port) does NOT
+        # raise this inverter's AC output capability above its nameplate.
         inverter_headroom = max(
             0.0,
             min(
@@ -897,58 +897,87 @@ def _build_hub_result(
                 site.inverter_max_power - current_inverter_output,
             ),
         )
-        inverter_sourced = min(inverter_sourced, inverter_headroom)
-        # Battery Remaining Power is likewise bounded by the inverter: the
-        # battery cannot deliver more to loads than the inverter can pass.
         battery_remaining = min(battery_remaining, inverter_headroom)
-    total_site_available = grid_headroom + inverter_sourced
 
-    # Per-phase remaining current (A) = total remaining current on that phase,
-    # i.e. grid + inverter. Each phase gets its share of grid headroom
-    # (proportional to its raw breaker headroom, preserving asymmetric
-    # loading) plus an equal share of inverter-sourced power. Summed across
-    # the active phases this matches Site Remaining Power / voltage.
+    # Site Remaining Power, Remaining Current A/B/C and the grid and inverter
+    # remaining figures are the PHYSICAL POOL the distribution sized the loads
+    # from (calculations.target_calculator._calculate_site_limit), read from
+    # its snapshot - never worked out a second time. They used to be: grid
+    # breaker headroom + solar less the house + battery discharge not yet
+    # flowing, capped at the inverter's rating less its current output. That
+    # disagreed with the pool on 95 of 223 scenarios - 22 kW over it with
+    # Allow Grid Charging off (the breaker counted as headroom the engine
+    # never grants), up to 15 kW under it where the output our own loads were
+    # drawing was booked as spent (dev/tests/test_site_remaining_power.py).
+    # The pool is what the loads may be offered with their own draw handed
+    # back, so a running charger's draw is inside it, as it always was for the
+    # grid half.
     #
-    # A phase is gated on whether IT exists (consumption is not None), never on
-    # its index versus the phase count: the site's phases need not be a prefix
-    # of A/B/C - a B+C-only installation is explicitly supported. Indexing by
-    # count would zero phase C and hand phase A (which does not exist) the
-    # inverter share.
-    phase_cons = (site.consumption.a, site.consumption.b, site.consumption.c)
-    num_phases = site.num_phases or 1
-    raw_phase_headroom = [
-        max(0, main_breaker_rating - c) if c is not None else 0.0
-        for c in phase_cons
-    ]
-    total_raw_headroom = sum(raw_phase_headroom)
-    grid_current = grid_headroom / voltage if voltage else 0
-    inverter_current_share = (
-        inverter_sourced / voltage / num_phases if voltage else 0
-    )
-    available_per_phase = []
-    for i, raw_hr in enumerate(raw_phase_headroom):
-        if phase_cons[i] is None:
-            available_per_phase.append(0)
-            continue
-        if total_raw_headroom > 0:
-            grid_part = grid_current * (raw_hr / total_raw_headroom)
-        else:
-            grid_part = 0
-        available_per_phase.append(round(grid_part + inverter_current_share, 1))
+    # Remaining Current A/B/C is what a single-phase load on that phase could
+    # be offered - its own phase within the site total (PhaseConstraints.
+    # get_available) - so where a site-wide limit binds (an import allowance,
+    # the inverter's rating) the three no longer add up to the total: each of
+    # them can have it, not all of them at once. A phase the site does not
+    # have reads 0.
+    pools = site.pool_snapshot or {}
 
-    # Per-pool remaining current (A) - the headroom each source still offers to
-    # managed loads, broken out for diagnostics. grid + inverter is the total
-    # remaining current available to loads. solar and battery are the two parts
-    # that feed the inverter pool: the inverter figure is their sum capped by
-    # the inverter's own rated headroom, so it can be smaller than solar +
-    # battery when the inverter is the binding constraint. A managed load only
-    # turns on if its minimum current fits within the inverter (off-grid) or
-    # grid + inverter (grid-tied) figure - so a battery reading of ~0 here is
-    # the usual reason a large load stays off despite a healthy SOC.
-    grid_remaining_current = grid_headroom / voltage if voltage else 0
-    solar_remaining_current = solar_available / voltage if voltage else 0
+    def _offered(name, key="ABC"):
+        return ((pools.get(name) or {}).get("start") or {}).get(key, 0.0)
+
+    total_site_available = _offered("physical") * voltage
+    grid_headroom = _offered("grid") * voltage
+    available_per_phase = [
+        round(min(_offered("physical", phase), _offered("physical")), 1)
+        if phase in pools.get("phases", "")
+        else 0
+        for phase in "ABC"
+    ]
+    grid_remaining_current = _offered("grid")
+    inverter_remaining_current = _offered("inverter")
+
+    # Solar Remaining Power / Current is the sun's share of the SOLAR pool the
+    # Solar Only / Solar Priority loads are offered (target_calculator.
+    # _calculate_solar_surplus): the export with our loads off, plus the charge
+    # the sun puts into the pack, less the discharge the export carries - the
+    # sun the house leaves, per exporting phase and within the inverter's
+    # rating. It used to be re-derived here as solar production less
+    # household_consumption_total, a total built only beside a production
+    # sensor; everywhere else nothing was taken off, and the whole solar
+    # figure was published - 3000 W where 3 kW of sun and a 1 kW house leave
+    # 2000 W on an output sensor, and from the meter alone the battery's
+    # discharge carrying the car, 4000 W at night
+    # (dev/tests/test_gridtied_inverter_pool.py). The pool can read below 0
+    # where the pack's discharge outruns the export; nothing is spare then.
+    #
+    # Off-grid with nothing measuring the house (household_unknown - no output
+    # sensors, the battery's power unread) there is no house to take off and
+    # the pool, built from the battery's flow, is empty: that 0 is not a
+    # measurement, and the whole production was published before it. Both
+    # publish None - available, unknown - as Solar Power does for an output
+    # nothing splits (fleet.solar_is_unsplit); the Overview shows a dash.
+    #
+    # With a battery whose power is unread (no sensor, or one past its hold)
+    # neither battery term is known. Grid-tied the pool's sun is the bare
+    # export - at night, the battery covering the car, every watt of it the
+    # battery's: 4000 W beside a solar sensor reading 0 W
+    # (dev/tests/test_gridtied_inverter_pool.py); off-grid with output
+    # sensors it is built from the battery's flow and is empty, 0 W beside a
+    # Current Solar Power that reads unknown (dev/tests/
+    # test_offgrid_unsplit_solar.py). Nothing tells the sun from the battery
+    # there either, so the same None.
+    battery_unread = site.battery_power is None and site.battery_soc is not None
+    if household_unknown(site) or battery_unread:
+        solar_remaining_current = solar_available = None
+    else:
+        solar_remaining_current = max(0.0, _offered("sun"))
+        solar_available = solar_remaining_current * voltage
+
+    # Battery remaining is a source diagnostic, not a pool: the rated
+    # discharge not yet flowing (bounded by the inverter above). A managed load
+    # only turns on if its minimum current fits within the physical pool, so a
+    # reading of ~0 here is the usual reason a large load stays off despite a
+    # healthy SOC.
     battery_remaining_current = battery_remaining / voltage if voltage else 0
-    inverter_remaining_current = inverter_sourced / voltage if voltage else 0
 
     # The grid measurements, or None while any phase is the breaker assumption
     # (see the docstring). Computed either way - the household identity above
@@ -960,7 +989,7 @@ def _build_hub_result(
     # Same for solar, and for the household figure whenever it was derived FROM
     # solar (see the docstring and household_from_solar above).
     published_solar_power = (
-        None if solar_assumed else round(site.solar_production_total or 0, 0)
+        None if solar_assumed else round(solar_w, 0)
     )
     published_household_power = (
         None
@@ -1016,13 +1045,17 @@ def _build_hub_result(
     load_phase_masks = {}
     for c in site.loads:
         active = sum(
-            1 for cur in (c.l1_current, c.l2_current, c.l3_current) if cur > 1.0
+            1
+            for cur in (c.l1_current, c.l2_current, c.l3_current)
+            if cur > LEG_DRAWING_CURRENT
         )
         load_active_phases[c.load_id] = active if active > 0 else c.phases
         # Live site-phase mask: which site phases A/B/C are actively drawing
         site_draw = c.get_site_phase_draw()
         load_phase_masks[c.load_id] = "".join(
-            phase for phase, draw in zip(("A", "B", "C"), site_draw) if draw > 1.0
+            phase
+            for phase, draw in zip(("A", "B", "C"), site_draw)
+            if draw > LEG_DRAWING_CURRENT
         )
 
     return {
@@ -1038,7 +1071,10 @@ def _build_hub_result(
         "available_current_b": available_per_phase[1],
         "available_current_c": available_per_phase[2],
         "available_grid_current": round(grid_remaining_current, 1),
-        "available_solar_current": round(solar_remaining_current, 1),
+        "available_solar_current": (
+            None if solar_remaining_current is None
+            else round(solar_remaining_current, 1)
+        ),
         "available_battery_current": round(battery_remaining_current, 1),
         "available_inverter_current": round(inverter_remaining_current, 1),
         # The pools THEMSELVES, per phase and per combination, exactly as the
@@ -1062,7 +1098,9 @@ def _build_hub_result(
         "total_evse_power": published_evse_power,
         "household_power": published_household_power,
         "solar_power": published_solar_power,
-        "available_solar_power": round(solar_available, 0),
+        "available_solar_power": (
+            None if solar_available is None else round(solar_available, 0)
+        ),
         "total_export_power": published_export_power,
         # The one Excess decision, computed by excess_margin() with the hysteresis
         # latch applied. Every Excess-mode load reads this rather than re-deriving
@@ -1078,6 +1116,7 @@ def _build_hub_result(
         "load_modes": load_modes,
         "load_rank": load_rank,
         "load_draw": load_draw,
+        "draw_estimated": draw_estimated,
         "load_connector_status": load_connector_status,
         "load_active_phases": load_active_phases,
         "load_phase_masks": load_phase_masks,

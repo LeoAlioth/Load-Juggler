@@ -40,11 +40,15 @@ from ..const import (
     EVSE_MODE_EXCESS,
     EVSE_MODE_SOLAR_ONLY,
     EVSE_MODE_SOLAR_PRIORITY,
+    EVSE_RT_READOUT_WATCH,
+    LOAD_RT_SUN_PROBE,
 )
 from ..helpers import get_entry_value
 from ..ocpp_discovery import ocpp_charge_control_entity, ocpp_connector_status_entity
 from .. import units
 from .mixins import LoadEntityMixin, SiteFreshnessMixin
+from .readout import readout_attributes
+from .sun_probe import sun_probe_attributes
 from ..registry import get_hub_for_load
 from ..control.smoothing import apply_smoothing
 from ..control.status import determine_charging_status
@@ -295,7 +299,18 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             "last_auto_reset": self._last_auto_reset_at,
             "profile_reset_count": self._profile_reset_count,
             "last_hard_reset": self._last_hard_reset_at,
+            # Any load type the off-grid sun probe may try (entities/sun_probe.py).
+            **sun_probe_attributes(self._load_runtime().get(LOAD_RT_SUN_PROBE)),
         }
+        if (
+            self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+            == DEVICE_TYPE_EVSE
+        ):
+            attrs.update(
+                readout_attributes(
+                    self._load_runtime().get(EVSE_RT_READOUT_WATCH)
+                )
+            )
         return attrs
 
     async def async_process(self, hub_data):

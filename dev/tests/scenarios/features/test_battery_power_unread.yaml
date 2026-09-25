@@ -1,0 +1,133 @@
+# Test scenarios: grid-tied, the battery's power not read
+#
+# Found 2026-09-24 (follow-up to 1e482b0). The inverters' half of the pool is
+# the export with our loads off plus the battery's headroom, rating - flow.
+# With the flow unread it was taken as 0 and, beside a solar production
+# sensor, the whole discharge rating was offered. But a self-consumption
+# battery is rarely idle: it covers the house, and then our own car, and the
+# discharge carrying the car already comes back as export when the feedback
+# loop hands the car's draw back. Taken as 0, that discharge was offered
+# twice - once as export, again as rating - and the car rose until the
+# battery hit its rating and the grid carried the rest.
+#
+# An unknown flow is unknown in both directions, so the safe reading is the
+# one that assumes nothing: no battery headroom beyond what the meter
+# measures, until the reading returns - the same the engine already did on
+# a derived-solar site. What the battery really gives still reaches the
+# loads, through the meter: a car the battery is carrying reads as export
+# once its draw is handed back, so it is never cut; it just cannot be offered
+# more than that on the battery's word. (A reading that drops out is held for
+# INPUT_STALE_TIMEOUT before it counts as unread - dev/tests/
+# test_gridtied_inverter_pool.py runs that through the real site cycle.)
+#
+# Both sites: solar production sensor, night, 1 kW house, a 5 kW battery
+# above its SOC target covering whatever the site draws, a 32 A car.
+
+scenarios:
+
+  - name: "grid-battery-power-unread-2kw-import"
+    description: "Solar sensor, battery power unread, 2 kW import allowance → the car climbs on what the meter shows to the 6 kW the site really has (26.1 A); before: 32 A, 1.36 kW over the allowance"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 2000
+      distribution_mode: priority
+      solar_production: 0
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      battery_power_unread: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (2000 + 5000 - 1000) / 230 = 26.09 A. The allowance starts it; the
+        # battery covering it reads as export once its draw is handed back,
+        # so the pool grows with what the battery really gives and stops
+        # where the battery does - the grid then carries exactly the 2 kW.
+        allocated: 26.1
+
+  - name: "grid-battery-power-unread-zero-import"
+    description: "Solar sensor, battery power unread, 0 W import allowance → nothing measured spare, the car does not start (0 A); before: 32 A, 3.36 kW imported"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 0
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      battery_power_unread: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # The cost of not knowing: the battery could carry 4 kW (17.4 A), but
+        # nothing measures it - no export, no allowance - so nothing is
+        # offered on its word. A car already running when the reading died
+        # keeps its draw (dev/tests/test_gridtied_inverter_pool.py).
+        allocated: 0.0
+
+  # Off-grid with no inverter output sensors, solar + battery power is the
+  # site's one measure of what it draws. With the battery's power unread
+  # nothing measures the house, so the inverters offer nothing on their word
+  # (target_calculator.household_unknown) - and Solar Remaining Power, which
+  # published the whole 2000 W here, reads unknown
+  # (dev/tests/test_site_remaining_power.py, test_offgrid_solar_household.py).
+  - name: "off-grid-battery-power-unread-solar-sensor"
+    description: "Off-grid, solar sensor, no output sensors, battery power unread → nothing measures the house, nothing offered (0 A); Solar Remaining Power unknown"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 2000
+      solar_production_direct: true
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 20000
+      battery_power_unread: true
+      inverter_max_power: 6000
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+        operating_mode: "Standard"
+    expected:
+      car:
+        # No household figure: the inverter pool hands out nothing rather
+        # than its whole rating, which would run it over by the house.
+        allocated: 0.0

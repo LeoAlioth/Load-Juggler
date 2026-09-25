@@ -875,11 +875,12 @@ condition, and lives in Home Assistant's own storage.
 
 ### Off-Grid Sites
 
-All operating modes work on off-grid sites (no grid CT entities configured). The system treats grid current as 0A and derives solar production from inverter output:
-- **Series topology**: solar = inverter output - battery power
-- **Parallel topology**: solar = inverter output
+All operating modes work on off-grid sites (no grid CT entities configured). The system treats grid current as 0A and derives solar production from inverter output. With no grid, the output is everything the site draws from the inverter, so on either wiring:
+- **solar = inverter output - battery power**
+- With a battery configured but no battery power sensor, nothing splits the two, and solar production reads unknown
+- With no battery at all, solar = inverter output
 
-Standard and Solar Priority modes work identically - the grid portion of available power is simply 0. Solar Only and Excess modes rely on solar production, which is derived from inverter output sensors instead of grid export.
+Standard and Solar Priority modes work identically - the grid portion of available power is simply 0. Solar Only and Excess modes rely on solar production, which is derived from inverter output sensors instead of grid export. With no battery, the loads get the sun less the house. Where nothing measures the spare sun (inverter output sensors alone, or a solar sensor alone), a waiting load is started by trying its minimum and keeps it only if production follows; each failed try in a row doubles the wait before the next, up to 30 minutes, and the load's *Charging Status* shows the next try, for example *Insufficient Solar (no spare sun on 3 tries, next try 14:32)*.
 
 ### Load-Level Configuration
 

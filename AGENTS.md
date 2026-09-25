@@ -62,6 +62,11 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   grid/inverter/fleet-member reading
 │   ├── load_builders.py           # _build_[evse|plug|power_station|hot_water_tank]_load(),
 │   │                              #   _add_loads_to_site(), _build_circuit_groups()
+│   ├── readout_watch.py           # Pure: judges an EVSE's reported draw STUCK - it claims more than
+│   │                              #   the limit in force for 2x its learned reporting gap, OR the
+│   │                              #   reconstructed household steps with our commands to it (both
+│   │                              #   ways, repeatedly) while it reads nothing; load_builders then
+│   │                              #   controls it blind (assumed draw = the accepted command)
 │   ├── hub_result.py              # _compute_forecast_advice(), _build_hub_result() (the published dict)
 │   ├── fleet.py                   # Multi-inverter fleet aggregation (solar_total, weighted_soc, inverter_limits)
 │   ├── auto_detect.py             # Grid CT inversion + phase mapping auto-detection
@@ -144,7 +149,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 1. Calculate absolute site limits (per-phase physical constraints)
    → _calculate_site_limit()
      ├─ _calculate_grid_limit()      (grid capacity based on breaker rating)
-     └─ _calculate_inverter_limit()  (solar + battery)
+     └─ _calculate_inverter_limit()  (export with our loads off + battery headroom)
    ↓
 2. Calculate solar surplus power (includes battery charge/discharge)
    → _calculate_solar_surplus()

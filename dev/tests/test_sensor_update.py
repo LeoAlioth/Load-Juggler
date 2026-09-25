@@ -651,6 +651,10 @@ async def test_cycle_counted_engine_state_advances_once_per_cycle(
         }
         hass.data[DOMAIN]["hubs"][hub_entry.entry_id]["loads"].append(extra.entry_id)
         hass.data[DOMAIN]["load_allocations"][extra.entry_id] = 0
+        # Charging like the first: the settle window runs only while energy
+        # flows (dev/tests/test_start_settle.py), and without a status sensor
+        # these two read Unknown.
+        hass.states.async_set(f"sensor.charger_{suffix}_status_connector", "Charging")
 
     # Two cycles with an unchanged measured draw: the first seeds the counter,
     # the second is the first one that can increment it.
@@ -4674,7 +4678,10 @@ async def test_the_verdict_does_not_flap_while_the_battery_yields_above_target(h
         #    exported. The verdict must not move - and the battery yields.
         engaged = stage(2200.0, 3000.0, 3000.0, 10.0)
         assert engaged["excess_available"] is True
-        assert engaged["excess_margin_power"] >= idle["excess_margin_power"]
+        # Unmoved to within the EMAs' own 0.01 A (2.3 W) output rounding, one
+        # step per term. A bare >= passed only while the draw's EMA advanced
+        # twice a cycle: converged ahead of the grid's, it read the margin high.
+        assert engaged["excess_margin_power"] >= idle["excess_margin_power"] - 5
         assert engaged["forecast_charge_limit_w"] == pytest.approx(
             3000 - 2300, abs=2
         )

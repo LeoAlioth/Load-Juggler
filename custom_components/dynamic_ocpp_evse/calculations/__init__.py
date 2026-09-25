@@ -8,9 +8,13 @@ All calculations unified in target_calculator.py.
 from .models import SiteContext, LoadContext, PhaseConstraints, PhaseValues, CircuitGroup
 from .target_calculator import (
     calculate_all_load_targets,
+    discharge_headroom_unknown,
     excess_load_draw_power,
+    household_unknown,
     excess_margin,
+    grid_overdraw,
     reconstructed_export_power,
+    sun_power,
 )
 from .forecast import (
     ClippingForecast,
@@ -37,9 +41,13 @@ __all__ = [
     "PhaseValues",
     "CircuitGroup",
     "calculate_all_load_targets",
+    "discharge_headroom_unknown",
+    "household_unknown",
     "excess_load_draw_power",
     "excess_margin",
+    "grid_overdraw",
     "reconstructed_export_power",
+    "sun_power",
     "ClippingForecast",
     "FORECAST_EARLY_START_FACTOR",
     "FORECAST_LOOKAHEAD_DAYS",

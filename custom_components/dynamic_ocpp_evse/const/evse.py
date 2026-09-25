@@ -49,6 +49,19 @@ OCPP_ENTITY_SUFFIX_STATUS = "_status"
 OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR = "_status_connector"
 OCPP_ENTITY_SUFFIX_STOP_REASON = "_stop_reason"
 
+# Runtime keys in an EVSE's ``hass.data[DOMAIN]["loads"][entry_id]`` bucket.
+#
+# The limit the charger was last told, in amps, and the unit its profile was
+# encoded in ("A" or "W") - written by control/ocpp.py only after
+# set_charge_rate returned without raising, so it is what the charger actually
+# holds, not what the engine wished for. Read by the engine's stuck-readout
+# watch, which judges the charger's reported draw against it.
+EVSE_RT_COMMANDED_LIMIT = "commanded_limit"
+EVSE_RT_COMMANDED_RATE_UNIT = "commanded_rate_unit"
+# The stuck-readout watch's state (engine/readout_watch.py), plus the display
+# fields the builder adds for the load's Available Current attributes.
+EVSE_RT_READOUT_WATCH = "readout_watch"
+
 # EVSE default values
 DEFAULT_MIN_CHARGE_CURRENT = 6
 DEFAULT_MAX_CHARGE_CURRENT = 16

@@ -149,6 +149,43 @@ def set_load_phase_currents(load, commanded_limit):
             setattr(load, attr, commanded_limit)
 
 
+def place_asymmetric_output(demand, total, cap):
+    """Per-phase output of an ASYMMETRIC inverter putting out ``total`` A net.
+
+    Anže, 2026-09-24: his asymmetric inverter "puts/pulls power on the phases in
+    a way to always try to balance them on the grid". So it places its net
+    output - and its charging draw - to bring every phase's grid current
+    (``demand[i] - out[i]``, demand being household + managed loads) to one
+    common level, each phase's output within +-``cap``; a phase the cap stops
+    short of that level keeps what is left. The outputs sum to ``total``, so the
+    site's net grid flow is the even spread's; only the split moves. A total
+    no placement within the caps can carry falls back to the even spread.
+    """
+    # ponytail: the net total is held to the inverter's rating (the battery
+    # model caps discharge at it); what a pull lets it push on top is bounded
+    # only per phase. No scenario pulls today - sum the pushes against
+    # inverter_max_power if one ever does.
+    n = len(demand)
+    if abs(total) > n * cap:
+        return [total / n] * n
+
+    def outputs(level):
+        return [min(cap, max(-cap, d - level)) for d in demand]
+
+    level = (sum(demand) - total) / n  # every phase equal, if the caps allow
+    if all(abs(d - level) <= cap for d in demand):
+        return outputs(level)
+    # sum(outputs(level)) falls from n*cap at lo to -n*cap at hi: bisect onto total.
+    lo, hi = min(demand) - cap, max(demand) + cap
+    for _ in range(100):
+        level = (lo + hi) / 2
+        if sum(outputs(level)) > total:
+            lo = level
+        else:
+            hi = level
+    return outputs((lo + hi) / 2)
+
+
 def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     """Compute grid CT readings using self-consumption battery model.
 
@@ -157,7 +194,9 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     2. Battery responds to minimize grid flow (self-consumption):
        - Deficit (raw > 0): discharges min(deficit, max_discharge) if SOC > min_soc
        - Surplus (raw < 0): charges min(surplus, max_charge) if SOC < 97%
-    3. Grid CT = raw demand + battery effect
+    3. Grid CT = raw demand + battery effect - spread evenly over the phases
+       for a symmetric inverter, placed to balance them for an asymmetric one
+       (place_asymmetric_output)
 
     Positive net = importing, negative net = exporting.
     Decomposed for engine: consumption = max(0, net), export = max(0, -net).
@@ -184,7 +223,9 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     # Self-consumption battery: buffer to minimize grid flow
     battery_per_phase = 0.0
     if site.battery_soc is not None:
-        if total_raw > 0 and site.battery_soc > (site.battery_soc_min or 0):
+        if total_raw > 0 and (
+            site.is_off_grid or site.battery_soc > (site.battery_soc_min or 0)
+        ):
             # Deficit: battery discharges to cover it
             max_discharge = (site.battery_max_discharge_power or 0) / site.voltage
             # Inverter output cap: battery discharge goes through the inverter.
@@ -192,7 +233,17 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
             # Off-grid the battery covers the whole deficit regardless - the
             # inverter physically overloads past its rating (observed in the
             # field), which is exactly the state the engine must correct.
-            if site.inverter_max_power and not site.is_off_grid:
+            # The same holds for the battery's own discharge rating and for
+            # the engine's SOC floor: with no grid nothing else can cover the
+            # deficit, so the pack does, and the battery power sensor reads
+            # it. Capping it here left the modelled inverter output at the
+            # site's demand while the battery flow stopped at its rating, so
+            # the sim's energy balance broke and the missing watts turned up
+            # as solar. Honouring the rating and the floor is the engine's
+            # job; invariant C in check_physical_invariants holds it to it.
+            if site.is_off_grid:
+                max_discharge = float("inf")
+            elif site.inverter_max_power:
                 inverter_max_current = site.inverter_max_power / site.voltage
                 inverter_headroom = max(0, inverter_max_current - solar_total)
                 max_discharge = min(max_discharge, inverter_headroom)
@@ -204,16 +255,33 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
             charge = min(abs(total_raw), max_charge)
             battery_per_phase = charge / num_phases
 
-    # Grid CT = raw + battery effect
-    def _ct(raw_val):
-        if raw_val is None:
+    # Grid CT = raw + battery effect: a symmetric inverter's solar and battery
+    # flow land evenly on every phase.
+    nets = [None if r is None else r + battery_per_phase for r in (raw_a, raw_b, raw_c)]
+    if site.inverter_supports_asymmetric and num_phases > 1:
+        # An asymmetric one places the same net output per phase so the grid
+        # phases come out as equal as it can make them (place_asymmetric_output).
+        # The site total is unchanged; only its split over the phases moves.
+        demand = [
+            None if h is None else h + draw
+            for h, draw in ((household.a, load_l1), (household.b, load_l2), (household.c, load_l3))
+        ]
+        cap_w = site.inverter_max_power_per_phase or site.inverter_max_power
+        outputs = iter(place_asymmetric_output(
+            [d for d in demand if d is not None],
+            solar_total - battery_per_phase * num_phases,
+            cap_w / site.voltage if cap_w else float("inf"),
+        ))
+        nets = [None if d is None else d - next(outputs) for d in demand]
+
+    def _ct(net):
+        if net is None:
             return None, None, None
-        net = raw_val + battery_per_phase
         return net, max(0.0, net), max(0.0, -net)
 
-    ct_a_net, ct_a_cons, ct_a_exp = _ct(raw_a)
-    ct_b_net, ct_b_cons, ct_b_exp = _ct(raw_b)
-    ct_c_net, ct_c_cons, ct_c_exp = _ct(raw_c)
+    ct_a_net, ct_a_cons, ct_a_exp = _ct(nets[0])
+    ct_b_net, ct_b_cons, ct_b_exp = _ct(nets[1])
+    ct_c_net, ct_c_cons, ct_c_exp = _ct(nets[2])
 
     site.consumption = PhaseValues(ct_a_cons, ct_b_cons, ct_c_cons)
     site.export_current = PhaseValues(ct_a_exp, ct_b_exp, ct_c_exp)
@@ -235,15 +303,18 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     # Update per-phase inverter output to reflect actual physical state.
     # Parallel: inverter output = solar per phase (inverter only carries solar)
     # Series: inverter output = household + load draws per phase (all loads go through inverter)
+    # Off-grid, either wiring: household + load draws - with no grid to carry
+    # the rest, everything the site consumes comes out of the inverter
+    # (production's _supply_per_phase reads the output the same way).
     if site.inverter_output_per_phase is not None:
-        if site.wiring_topology == 'parallel':
+        if site.wiring_topology == 'parallel' and not site.is_off_grid:
             site.inverter_output_per_phase = PhaseValues(
                 solar_per_phase if household.a is not None else None,
                 solar_per_phase if household.b is not None else None,
                 solar_per_phase if household.c is not None else None,
             )
         else:
-            # Series: everything downstream goes through inverter
+            # Series, or off-grid: everything downstream goes through inverter
             site.inverter_output_per_phase = PhaseValues(
                 ((household.a or 0) + load_l1) if household.a is not None else None,
                 ((household.b or 0) + load_l2) if household.b is not None else None,
@@ -278,7 +349,8 @@ def apply_feedback_adjustment(site):
     get_site_phase_draw()) to recover the true household consumption/export
     before load was drawing.
     In derived mode, recalculates solar_production_total from adjusted export.
-    In dedicated solar entity mode, computes household_consumption_total instead.
+    In dedicated solar entity mode, computes household_consumption_total instead
+    - and off-grid with no output sensors whenever the battery's power is known.
     """
     # Use phase mapping to get site-phase draws (A, B, C)
     total_phase_a = total_phase_b = total_phase_c = 0.0
@@ -306,13 +378,19 @@ def apply_feedback_adjustment(site):
     # Derived mode: recalculate solar_production_total from adjusted export.
     # Battery charging absorbs solar power invisible to grid CT - add it back.
     if site.solar_is_derived:
-        if site.is_off_grid and site.inverter_output_per_phase is not None:
-            # Off-grid: export is always 0 - production's _derive_solar_production
-            # uses the inverter output instead.
-            # Series: inverter_output = solar + battery_power → solar = output − battery.
-            # Parallel: inverter output IS solar.
+        if site.inverter_output_per_phase is not None:
+            # With output sensors, grid-tied as well as off-grid, production
+            # derives solar from the inverter output (engine/fleet.member_solar),
+            # never from the export - so must the harness. Until 2026-09-24 it
+            # took the export-derived path on a grid-tied site, which is the
+            # one configuration where the feedback loop's handed-back draw
+            # reaches the inverter pool: it could not see the pool booking a
+            # battery-fed car's own draw as spent.
+            # Series, and off-grid on either wiring: inverter_output = solar +
+            # battery_power, so solar = output - battery. Grid-tied parallel:
+            # the inverter output IS solar.
             inv_watts = site.inverter_output_per_phase.total * site.voltage
-            if site.wiring_topology == 'series':
+            if site.wiring_topology == 'series' or site.is_off_grid:
                 bp = site.battery_power if site.battery_power is not None else 0
                 site.solar_production_total = max(0, inv_watts - bp)
             else:
@@ -321,13 +399,31 @@ def apply_feedback_adjustment(site):
             site.solar_production_total = site.export_current.total * site.voltage
             if site.battery_power is not None and site.battery_power < 0:
                 site.solar_production_total += abs(site.battery_power)
+
+    # household_consumption_total via energy balance: household = solar +
+    # battery_power - export. Off-grid no draw was put back onto the export
+    # above, so solar + battery still carries the loads' own draw - take it
+    # off here, as production's _apply_household_figures does. Off-grid with no
+    # output sensors that balance is the whole supply, built whenever the
+    # battery's power is known - at night (solar 0 W) and with no solar sensor
+    # too; elsewhere only from a dedicated solar entity reading above 0.
+    if site.is_off_grid and site.inverter_output_per_phase is None:
+        build_total = site.battery_power is not None or site.battery_soc is None
     else:
-        # Dedicated solar entity mode: compute household_consumption_total
-        # via energy balance: household = solar + battery_power - export
-        if site.solar_production_total > 0:
-            export_power = site.export_current.total * site.voltage
-            bp = float(site.battery_power) if site.battery_power is not None else 0
-            site.household_consumption_total = max(0, site.solar_production_total + bp - export_power)
+        build_total = (
+            not site.solar_is_derived and site.solar_production_total > 0
+        )
+    if build_total:
+        export_power = site.export_current.total * site.voltage
+        bp = float(site.battery_power) if site.battery_power is not None else 0
+        managed_power = (
+            (total_l1 + total_l2 + total_l3) * site.voltage
+            if site.is_off_grid else 0.0
+        )
+        site.household_consumption_total = max(
+            0, (site.solar_production_total or 0) + bp - export_power
+            - managed_power
+        )
 
     # Per-phase household from inverter output entities
     household = compute_household_per_phase(site, site.wiring_topology)
@@ -443,6 +539,9 @@ def build_site_from_scenario(scenario, excess_on=False):
             0.0 if phase_b_cons is not None else None,
             0.0 if phase_c_cons is not None else None,
         )
+    # No solar sensor and no output sensors: solar from the meter alone, as
+    # production flags it (engine/fleet.solar_is_metered).
+    site.solar_is_metered = solar_is_derived and site.inverter_output_per_phase is None
 
     # Build loads
     # Per-load operating_mode; fallback to site-level charging_mode for migration
@@ -772,6 +871,14 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
 
             eid = load.entity_id
             draw = max(load.l1_current, load.l2_current, load.l3_current)
+            # Like the HA layer, the window runs only while Charging and opens
+            # afresh when charging starts: a 0 A held while waiting or
+            # suspended is not a settled draw.
+            if load.connector_status != "Charging":
+                settle_last_draw.pop(eid, None)
+                settle_count[eid] = 0
+                load.draw_settled = False
+                continue
             prev = settle_last_draw.get(eid)
             if prev is not None and abs(draw - prev) <= SETTLE_TOLERANCE:
                 settle_count[eid] = settle_count.get(eid, 0) + 1
@@ -793,6 +900,11 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
             load_phase_c += c_draw
         ct_a_net, ct_b_net, ct_c_net, solar_pp, bat_pp = simulate_grid_ct(
             site, household, load_phase_a, load_phase_b, load_phase_c)
+        # A battery whose power is not read (no sensor, or one past its
+        # INPUT_STALE_TIMEOUT): it still does what the CT simulation says, the
+        # engine just cannot see it - production's reader leaves None.
+        if scenario['site'].get('battery_power_unread'):
+            site.battery_power = None
 
         # 4b. Read-time figures the engine captures before its feedback loop and
         #     the calculator's inverter coverage gate reads: the raw meter and
@@ -959,6 +1071,27 @@ def check_physical_invariants(site, household, physical_solar_w):
     export), and Solar Priority is exempt because it deliberately runs on a
     grid-backed minimum below the SOC target.
 
+    **C - off-grid, our loads stay inside the battery and the inverter.** With
+    no grid the pack covers every deficit (see ``simulate_grid_ct``), so an
+    over-allocation shows up as the battery discharging past its rating, or
+    below the SOC floor, and as the inverter delivering past its own. Measured
+    against the site with every managed load off: our loads may take the pack
+    up to its discharge rating while the SOC is at/above its minimum and not at
+    all below it, and the inverter up to its rating - never past what the house
+    alone already asks of either. With no pack at all nothing covers a deficit,
+    and the sun is the whole supply: our loads may take the site up to it.
+
+    **D - grid-tied, our loads stay inside the import allowance.** With the
+    allocations drawn, the site's grid import (summed over the phases that
+    import, the figure the engine budgets ``max_grid_import_power`` on) may not
+    exceed the allowance - or, when the house alone already imports past it,
+    what the house alone imports. With *Allow Grid Charging* off on a battery
+    site the allowance is 0 W ("charging stops when it would require grid
+    import", README). The breaker (A) is per phase and an Excess load's import
+    (B) is only one behaviour; this is the site-wide limit every behaviour
+    shares, and the one a pool that credits the inverter's output twice
+    breaks.
+
     Returns a list of violation strings; empty means legal.
     """
     saved = [(c, c.l1_current, c.l2_current, c.l3_current) for c in site.loads]
@@ -986,11 +1119,16 @@ def check_physical_invariants(site, household, physical_solar_w):
             # give them together. The allocation is the engine's actual
             # decision, and the only figure physics has to honour.
             set_load_phase_currents(load, load.allocated_current)
-        with_all = simulate_grid_ct(site, household, *_phase_draws())[:3]
+        drawn = _phase_draws()
+        with_all_sim = simulate_grid_ct(site, household, *drawn)
+        with_all = with_all_sim[:3]
         for load in site.loads:
             if load.mode_behavior == BEHAVIOR_EXCESS:
                 set_load_phase_currents(load, 0)
         without_excess = simulate_grid_ct(site, household, *_phase_draws())[:3]
+        for load in site.loads:
+            set_load_phase_currents(load, 0)
+        without_loads_sim = simulate_grid_ct(site, household, *_phase_draws())
     finally:
         for load, l1, l2, l3 in saved:
             load.l1_current, load.l2_current, load.l3_current = l1, l2, l3
@@ -1010,6 +1148,102 @@ def check_physical_invariants(site, household, physical_solar_w):
             violations.append(
                 f"phase {label}: modulating Excess loads add {extra:.2f} A of import"
             )
+    if site.is_off_grid:
+        violations.extend(
+            _off_grid_violations(
+                site, household, drawn, with_all_sim, without_loads_sim, physical_solar_w
+            )
+        )
+    else:
+        violations.extend(_import_violations(site, with_all_sim, without_loads_sim))
+    return violations
+
+
+def _import_violations(site, with_all_sim, without_loads_sim):
+    """Invariant D of check_physical_invariants - see there."""
+    violations = []
+    if not site.allow_grid_charging and site.battery_soc is not None:
+        allowance = 0.0
+    elif site.max_grid_import_power is not None:
+        allowance = site.max_grid_import_power / site.voltage
+    else:
+        return violations
+
+    def _import(sim):
+        return sum(max(0.0, net) for net in sim[:3] if net is not None)
+
+    import_with = _import(with_all_sim)
+    import_bare = _import(without_loads_sim)
+    allowed = max(import_bare, allowance)
+    if import_with > allowed + INVARIANT_TOLERANCE:
+        violations.append(
+            f"grid import {import_with:.2f} A against the {allowed:.2f} A "
+            f"our loads may take it to ({(import_with - allowed) * site.voltage:.0f} W "
+            f"over; allowance {allowance:.2f} A, house alone {import_bare:.2f} A)"
+        )
+    return violations
+
+
+def _off_grid_violations(site, household, drawn, with_all_sim, without_loads_sim,
+                         physical_solar_w):
+    """Invariant C of check_physical_invariants - see there."""
+    violations = []
+    if site.battery_soc is None:
+        # No pack: the sun is all there is, and simulate_grid_ct lets the
+        # deficit vanish (no battery takes it), so it has to be checked here.
+        sun = (physical_solar_w or 0) / site.voltage
+        demand = household.total + sum(drawn)
+        allowed_sun = max(household.total, sun)
+        if demand > allowed_sun + INVARIANT_TOLERANCE:
+            violations.append(
+                f"site draws {demand:.2f} A against the {sun:.2f} A of sun, "
+                f"with no battery to cover it ({(demand - allowed_sun) * site.voltage:.0f} W over)"
+            )
+    n = household.active_count or 1
+    # battery_per_phase (the sim's 5th value) is negative while discharging.
+    discharge_with = max(0.0, -with_all_sim[4]) * n
+    discharge_bare = max(0.0, -without_loads_sim[4]) * n
+    dischargeable = (
+        site.battery_soc is not None
+        and site.battery_soc >= (site.battery_soc_min or 0)
+    )
+    rating = (site.battery_max_discharge_power or 0) / site.voltage if dischargeable else 0.0
+    allowed = max(discharge_bare, rating)
+    if discharge_with > allowed + INVARIANT_TOLERANCE:
+        violations.append(
+            f"battery discharges {discharge_with:.2f} A against the {allowed:.2f} A "
+            f"our loads may take it to (house alone {discharge_bare:.2f} A)"
+        )
+    if site.inverter_max_power:
+        # Off-grid the inverter delivers everything the site draws.
+        output_bare = household.total
+        output_with = output_bare + sum(drawn)
+        allowed_out = max(output_bare, site.inverter_max_power / site.voltage)
+        if output_with > allowed_out + INVARIANT_TOLERANCE:
+            violations.append(
+                f"inverter delivers {output_with:.2f} A against its "
+                f"{allowed_out:.2f} A rating (house alone {output_bare:.2f} A)"
+            )
+    # ...and each phase's leg what is on that phase, up to the leg's rating:
+    # the configured per-phase one, or for a SYMMETRIC inverter a third of the
+    # total - what symmetric means for its legs.
+    leg = site.inverter_max_power_per_phase or (
+        site.inverter_max_power / n
+        if site.inverter_max_power and not site.inverter_supports_asymmetric
+        else None
+    )
+    if leg:
+        houses = (household.a, household.b, household.c)
+        for label, house, draw in zip("ABC", houses, drawn):
+            if house is None:
+                continue
+            allowed_leg = max(house, leg / site.voltage)
+            if house + draw > allowed_leg + INVARIANT_TOLERANCE:
+                violations.append(
+                    f"phase {label}: inverter leg delivers {house + draw:.2f} A "
+                    f"against its {allowed_leg:.2f} A rating "
+                    f"({(house + draw - allowed_leg) * site.voltage:.0f} W over)"
+                )
     return violations
 
 

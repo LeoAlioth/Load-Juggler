@@ -63,6 +63,7 @@ from ..const import (
     ema_alpha_for,
     INPUT_STALE_TIMEOUT,
     INVERTER_RT_ENFORCED_CHARGE_W,
+    WATTS_PROFILE_TOLERANCE,
 )
 from ..calculations.utils import is_number
 from ..helpers import get_entry_value
@@ -252,12 +253,15 @@ def _clamp_reported_phase_draw(charger, entry, charger_entity_id, max_current):
     grid consumption, fabricates export, and the engine hands out phantom
     surplus. Applies to every path that derives all phases from one number.
 
-    Allows 10 % tolerance when using W-based charging profiles (voltage and
-    rounding variance make a legitimate draw sit just above max_current).
+    Allows WATTS_PROFILE_TOLERANCE (10 %) when using W-based charging profiles
+    (voltage and rounding variance make a legitimate draw sit just above
+    max_current).
     """
     cru = get_entry_value(entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
     clamp_threshold = (
-        max_current * 1.1 if cru == CHARGE_RATE_UNIT_WATTS else max_current
+        max_current * (1 + WATTS_PROFILE_TOLERANCE)
+        if cru == CHARGE_RATE_UNIT_WATTS
+        else max_current
     )
     for attr in ("l1_current", "l2_current", "l3_current"):
         val = getattr(charger, attr)
@@ -712,6 +716,11 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         output_pv,
     ) = _read_inverter_config(hass, entry, voltage)
     output_prefix = "inv_" if legacy else f"inv_{entry.entry_id}_"
+    output_raw = (
+        None
+        if output_pv is None
+        else PhaseValues(*(_coerce(v, None) for v in (output_pv.a, output_pv.b, output_pv.c)))
+    )
     output_pv = _smooth_member_output(output_pv, hub_runtime, ema_inputs, output_prefix)
 
     # Solar production sensor: this inverter's own PV output. The legacy hub
@@ -839,6 +848,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         supports_asymmetric=supports_asymmetric,
         topology=topology,
         output=output_pv,
+        output_raw=output_raw,
         has_solar_entity=bool(solar_entity),
         solar_measured=solar_measured,
         solar_assumed=solar_assumed,

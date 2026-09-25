@@ -112,6 +112,24 @@ class LoadContext:
     # Set by the HA layer (or the test harness) from per-load draw history.
     draw_settled: bool = False
 
+    # EVSE only: True while the charger's readout is judged STUCK (see
+    # engine/readout_watch.py) and the load is controlled blind. The HA layer
+    # has then replaced l1/l2/l3 with the ASSUMED draw - the limit the charger
+    # was last told, on the legs the verdict chose. Unlike draw_assumed (an
+    # invented 0) this is a real estimate, so it IS published - as one: see
+    # draw_estimate below and engine/hub_result.py.
+    #
+    # Its footprint is the LARGER of its allocation and that assumed draw (see
+    # _pool_deduction): while the permit rises, it reserves the permit, as an
+    # unsettled EVSE always does; while the permit falls, the charger may still
+    # be taking what it was last told until the lower command lands, and the
+    # pools must not hand that out before it has.
+    draw_blind: bool = False
+    # While draw_blind: what the estimate rests on, for the figures published
+    # from it - ``{"load": entity id, "evidence": "above_limit" |
+    # "household_lockstep", "since": UTC datetime}``. Set by the HA layer.
+    draw_estimate: dict | None = None
+
     # The current this load will draw the moment the Excess verdict starts it -
     # its rating for a binary load (a plug in Excess mode, a tank whose mode
     # boosts on surplus and is below its boost setpoint), its minimum for a
@@ -215,6 +233,11 @@ class SiteContext:
     # Solar
     solar_production_total: float = 0
     solar_is_derived: bool = True  # True = derived from grid meter, False = dedicated entity
+    # No member knows its production - no production sensor, no inverter
+    # output sensors (engine/fleet.solar_is_metered): solar_production_total is
+    # then worked out from the meter and carries the batteries' discharge
+    # (target_calculator.sun_power).
+    solar_is_metered: bool = False
     household_consumption_total: float | None = None  # Computed when solar entity available (W)
     household_consumption: PhaseValues | None = None  # Per-phase household (A), from inverter entities
 
@@ -231,6 +254,11 @@ class SiteContext:
     battery_soc_hysteresis: float = 5
     battery_max_charge_power: float | None = None
     battery_max_discharge_power: float | None = None
+    # The most the battery is taken to discharge (W), below its rating: set
+    # while a meter-only hybrid is seen at its limit - the grid, not the
+    # battery, carrying our loads' growth (engine/hub_calculation.
+    # _apply_saturation_latch). None everywhere else.
+    battery_discharge_ceiling: float | None = None
     
     # Grid import limit (from smart meter / grid operator)
     max_grid_import_power: float | None = None  # Max total power allowed from grid (W)
@@ -254,6 +282,18 @@ class SiteContext:
     # Net grid flow right now (W): positive = importing, negative = exporting.
     # Smoothed, and 0 on an off-grid site (no CTs, nothing to import).
     net_grid_power: float | None = None
+    # Per-phase managed draw (A, ``(a, b, c)``) this cycle - the figure the
+    # feedback loop subtracts, smoothed on the grid/battery EMA (see
+    # engine/hub_calculation._managed_phase_draws). Off-grid there is nothing
+    # to subtract it from, and the calculator hands it back to the loads
+    # directly (target_calculator._off_grid_held_supply). None = not supplied;
+    # the calculator then sums the loads' own draws.
+    managed_phase_draws: tuple | None = None
+    # Off-grid with no battery, where nothing measures the sun the house
+    # leaves: the probe's offer (A, signed) on top of what our loads hold -
+    # set by engine/hub_calculation._apply_sun_probe, added to the unused sun
+    # (target_calculator._off_grid_unused_sun). 0 everywhere else.
+    sun_probe: float = 0.0
 
     # Settings
     allow_grid_charging: bool = True
@@ -268,10 +308,11 @@ class SiteContext:
     # calculate_all_load_targets around the distribution, consumed by the
     # pass-1 ledger (see LoadContext.excess_claim_current).
     excess_potential_claims: tuple = ()
-    # The three pools the allocator worked from this cycle, as plain rounded
-    # dicts - OBSERVABILITY ONLY. Written by calculate_all_load_targets, read
-    # by engine/hub_result.py for the Overview page and the diagnostics dump.
-    # Nothing in the calculation reads it back.
+    # The three pools the allocator worked from this cycle (and the physical
+    # pool's grid and inverter halves), as plain rounded dicts - OBSERVABILITY
+    # ONLY. Written by calculate_all_load_targets, read by engine/hub_result.py
+    # for Site Remaining Power and its breakdown, the Overview page and the
+    # diagnostics dump. Nothing in the calculation reads it back.
     pool_snapshot: dict = field(default_factory=dict)
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
     is_off_grid: bool = False  # True when no grid CT sensors are configured

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from ..const import DOMAIN
 from ..helpers import get_entry_value
 from .mixins import HubEntityMixin, SiteCycleConsumerMixin
+from .readout import hub_estimate_attributes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -151,6 +152,8 @@ HUB_SENSOR_DEFINITIONS = [
         "device_class": SensorDeviceClass.POWER,
         "icon": "mdi:home-lightning-bolt",
         "decimals": 0,
+        # Nets out every managed draw, so a charger's assumed draw is in it.
+        "nets_managed_draw": True,
     },
     {
         "name_suffix": "Current Battery Power",
@@ -264,6 +267,7 @@ HUB_SENSOR_DEFINITIONS = [
         "device_class": SensorDeviceClass.POWER,
         "icon": "mdi:ev-station",
         "decimals": 0,
+        "nets_managed_draw": True,
     },
     # PV clipping forecast - advisory battery headroom. The kWh sensors carry
     # device_class ENERGY with state_class TOTAL (developer decision,
@@ -381,6 +385,11 @@ _HUB_REPUBLISH_KEYS = frozenset(
     # test_the_overview_reads_only_republished_keys pins the set.
     "total_export_power_raw",
     "load_draw",
+    # Which chargers' draws are estimates this cycle (a stuck readout, see
+    # engine/readout_watch.py) - read by the Current Managed Power and
+    # Household Power sensors to mark themselves estimated, and by the
+    # Overview.
+    "draw_estimated",
     "load_targets",
     "load_available",
     "forecast_window_tomorrow",
@@ -447,6 +456,17 @@ class LoadJugglerHubDataSensor(
         )
         self._attr_icon = defn["icon"]
         self._attr_native_value = None
+        self._estimate = None
+
+    @property
+    def extra_state_attributes(self):
+        """For a figure that nets in the managed draws: whether it is an
+        ESTIMATE this cycle - a charger's readout is stuck and its assumed draw
+        is in the figure - with which chargers, on what evidence, since when
+        (entities/readout.py). Nothing for every other hub figure."""
+        if not self._defn.get("nets_managed_draw"):
+            return None
+        return hub_estimate_attributes(self._estimate)
 
     def _read_site_data(self):
         """Publish this cycle's figure, or unknown when there isn't one.
@@ -466,6 +486,7 @@ class LoadJugglerHubDataSensor(
         hub_data = self._hub_data()
         if not hub_data:
             return
+        self._estimate = hub_data.get("draw_estimated")
         value = hub_data.get(self._defn["hub_data_key"])
         self._attr_native_value = (
             None if value is None else round(float(value), self._defn["decimals"])

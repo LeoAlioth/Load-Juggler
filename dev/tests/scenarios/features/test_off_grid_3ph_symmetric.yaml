@@ -1,0 +1,205 @@
+# Test scenarios: off-grid, three-phase, SYMMETRIC inverter, single-phase loads
+#
+# Found 2026-09-24 (follow-up to 1e482b0). Grid-tied, a symmetric inverter
+# puts the same out on every phase, so its extra output lands a third on each
+# and a load on one phase gets that phase's third - the rest is exported. Off
+# grid there is nothing to export to: the inverter delivers exactly what each
+# phase draws, and the battery (and the sun) behind it are on the shared DC
+# side, so the whole of the battery's headroom can go to one phase - as far as
+# that phase's leg can carry it. What a symmetric three-phase inverter can
+# supply on one phase is
+#
+#     min(battery headroom (+ the draw our loads already hold),
+#         per-phase rating - that phase's house,
+#         total rating - the whole house)
+#
+# with the per-phase rating the configured one, or a third of the total -
+# what "symmetric" means for the legs. The pools gave a single-phase load its
+# own draw back plus a THIRD of the battery headroom: too little to start a
+# load the battery could carry, and - with no per-phase rating configured -
+# no bound at all on the leg, so a load that did start climbed, cycle by
+# cycle, past what its phase can deliver. No scenario covered it: every
+# off-grid scenario was single-phase.
+#
+# Every site: 230 V, night unless stated, 500 W of house on each phase,
+# inverter output sensors.
+
+scenarios:
+
+  - name: "off-grid-3ph-symmetric-single-phase-car-gets-the-battery"
+    description: "Off-grid 3ph symmetric 12 kW inverter, 4 kW battery, 1.5 kW house, car on A → the battery's 2.5 kW (10.9 A); before: a third of it (3.6 A), under the car's minimum - never starts"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 32
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.17   # ≈ 500 W each
+      phase_b_consumption: 2.17
+      phase_c_consumption: 2.17
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 4000
+      battery_max_discharge_power: 4000
+      inverter_max_power: 12000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # min(4000 - 1497 house, 4000 - 499 on A) / 230 = 10.88 A: the battery
+        # binds, its whole headroom on one phase. Before: 2503 / 3 = 834 W =
+        # 3.6 A on A, under 6 A.
+        allocated: 10.9
+
+  - name: "off-grid-3ph-symmetric-single-phase-car-held-to-its-leg"
+    description: "Off-grid 3ph symmetric 6 kW inverter (2 kW per leg), 10 kW battery, car on A → 2000 - 500 W = 6.5 A; before: 19.6 A, 5 kW through a 2 kW leg"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 32
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.17
+      phase_b_consumption: 2.17
+      phase_c_consumption: 2.17
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 10000
+      battery_max_discharge_power: 10000
+      inverter_max_power: 6000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # No per-phase rating configured: a symmetric inverter's leg is a
+        # third of its 6 kW. (2000 - 499) / 230 = 6.53 A. Before: the car's
+        # own draw back plus a third of the headroom, every cycle, climbed to
+        # the total cap - 6000 - 1497 = 4.5 kW = 19.6 A on one 2 kW leg.
+        allocated: 6.5
+
+  - name: "off-grid-3ph-symmetric-configured-leg-rating"
+    description: "Off-grid 3ph symmetric 9 kW inverter, 3 kW per leg configured, 10 kW battery, car on A → 3000 - 500 W = 10.9 A (unchanged: the configured leg rating already bound it)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 32
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.17
+      phase_b_consumption: 2.17
+      phase_c_consumption: 2.17
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 10000
+      battery_max_discharge_power: 10000
+      inverter_max_power: 9000
+      inverter_max_power_per_phase: 3000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 10.9
+
+  - name: "off-grid-3ph-symmetric-solar-only-car-gets-the-surplus"
+    description: "Off-grid 3ph symmetric 12 kW inverter, 3 kW of sun, 1.5 kW of it into a battery above its target with 1 kW to give, Solar Only car on A → 2.5 kW (10.9 A); before: a third of it (3.6 A) - never starts"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 32
+      distribution_mode: priority
+      solar_production: 3000
+      phase_a_consumption: 2.17
+      phase_b_consumption: 2.17
+      phase_c_consumption: 2.17
+      battery_soc: 90
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 1000
+      inverter_max_power: 12000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # The solar pool: the 1503 W the battery is charging with, plus the
+        # 1000 W it may give above its target = 2503 W = 10.88 A, all of it
+        # reachable on A. Before: a third of it, 3.6 A, under 6 A.
+        allocated: 10.9
+
+  - name: "off-grid-3ph-symmetric-three-phase-car"
+    description: "Off-grid 3ph symmetric 12 kW inverter, 6 kW battery, 3-phase car → (6000 - 1500) / 3 per phase = 6.5 A (unchanged: a three-phase load takes a third on each leg)"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 32
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 2.17
+      phase_b_consumption: 2.17
+      phase_c_consumption: 2.17
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 6000
+      battery_max_discharge_power: 6000
+      inverter_max_power: 12000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        l1_phase: "A"
+        l2_phase: "B"
+        l3_phase: "C"
+    expected:
+      car:
+        allocated: 6.5
