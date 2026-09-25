@@ -6,7 +6,7 @@
   "dependencies": [],
   "after_dependencies": ["ocpp"],
   "codeowners": ["@LeoAlioth"],
-  "version": "2.1.3",
+  "version": "2.1.4",
   "requirements": [],
   "integration_type": "device",
   "iot_class": "local_polling",

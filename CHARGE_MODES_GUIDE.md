@@ -602,11 +602,11 @@ Result: No charging - stored energy is not surplus, whatever the meter reads.
 
 **Available for:** Hot Water Tank
 
-A hot water tank is a binary (on/off) load driven through a Home Assistant `climate` entity - for example a [Generic Thermostat](https://www.home-assistant.io/integrations/generic_thermostat/). The climate entity owns all temperature regulation (hysteresis, minimum cycle duration, the temperature sensor). Load Juggler only decides **when** heating is allowed and **which target temperature** to write.
+A hot water tank is a binary (on/off) load driven through a Home Assistant `climate` entity - for example a [Generic Thermostat](https://www.home-assistant.io/integrations/generic_thermostat/) - or a `water_heater` entity. That entity owns all temperature regulation (hysteresis, minimum cycle duration, the temperature sensor). Load Juggler only decides **when** heating is allowed and **which target temperature** to write.
 
 ### Setpoints
 
-The tank has three configurable target temperatures - set during setup and adjustable afterwards as number sliders:
+The tank has three target temperatures, set on its three number sliders - the only place they are set. The sliders are bounded by the thermostat's own minimum and maximum temperature, and move into that range if it changes; until the thermostat reports one they run from 10 to 90 °C. A new tank starts them at 30, 45 and 65 °C, moved into the thermostat's range:
 
 | Setpoint | Typical use |
 | -------- | ----------- |
@@ -626,8 +626,8 @@ The operating mode decides which setpoint the tank targets, based on conditions:
 
 ### How It Works
 
-- Load Juggler reads the climate entity's `hvac_action`. When the thermostat reports `idle` (water already at temperature), the tank frees its reserved power for other loads.
-- When heating is allowed, Load Juggler sets the climate entity to `heat` and writes the resolved setpoint; when not, it sets the entity to `off`.
+- Load Juggler reads the climate entity's `hvac_action`. When the thermostat reports `idle` (water already at temperature), the tank frees its reserved power for other loads. A `water_heater` entity does not report whether it is heating, so there the tank's power sensor decides: above 10 W it is heating, below it the water is hot and the power is freed. Without a power sensor a water heater is taken as heating, at the tank's *Heating element power*, while the tank is colder than the water heater's own target, and as satisfied once it is not.
+- When heating is allowed, Load Juggler sets the climate entity to `heat` and writes the resolved setpoint; when not, it sets the entity to `off`. A water heater is gated by its target temperature alone: the resolved setpoint while heating is allowed, its lowest target while it is not, so a tank colder than that still heats. It is never switched off - on some integrations that powers down a whole heat pump, space heating included - and its operation mode is never changed. The target is written only when it differs from the one already set, since a water heater is often a cloud device that limits how often it can be written.
 - To the power-distribution engine the tank behaves like a smart load - a fixed-power binary draw - so it competes for power with EVSEs and smart plugs by mode urgency, then priority. Freeze Protection and Normal compete at **Continuous** urgency (must-run); Solar Priority competes at **Solar Priority** urgency, so it yields to must-run loads but still outranks Solar Only / Excess loads.
 - **Surplus demotion:** whichever mode is selected, a tank aiming at its `Boost` setpoint drops to the **Excess** urgency tier for as long as it is boosting. Heating past the temperature the mode actually asks for is opportunistic, so it must not outrank must-run loads. The cold-tank promotion takes precedence: a Solar Priority tank below its Normal temperature keeps tier 1 even while boosting.
 - Every tank mode always keeps heating *permitted* - the mode moves the target temperature, and the grid may cover the floor. A tank is only starved of power by contention (its tier losing out), never by its mode.
