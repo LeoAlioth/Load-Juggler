@@ -4,10 +4,11 @@
 Machine-authored tests - not yet human-reviewed.
 
 A water heater has no hvac_mode and reports no hvac_action, so the tank reads
-whether it is heating off its power sensor and switches it through the
-water_heater services. The one met in the field (Kozolec, 2026-09-25) is a
-Vaillant with TARGET_TEMPERATURE | OPERATION_MODE, no ON_OFF, and operation
-modes heating / hot_water_only / stand_by.
+whether it is heating off its power sensor and gates it by its target
+temperature alone. Two met in the field (2026-09-25): a Vaillant with
+TARGET_TEMPERATURE | OPERATION_MODE, no ON_OFF, operation modes heating /
+hot_water_only / stand_by; and a MELCloud heat pump with ON_OFF too, whose
+turn_off powers down the whole unit.
 
 Runnable two ways:
   python3 dev/tests/test_water_heater_tank.py   (standalone, no pytest needed)
@@ -42,7 +43,7 @@ from custom_components.dynamic_ocpp_evse.engine.load_builders import (  # noqa: 
 V = 230.0
 WH = "water_heater.tank"
 VAILLANT = 3  # TARGET_TEMPERATURE | OPERATION_MODE, no ON_OFF
-SWITCHABLE = 1 | 8  # TARGET_TEMPERATURE | ON_OFF
+MELCLOUD = 11  # TARGET_TEMPERATURE | OPERATION_MODE | ON_OFF
 
 
 class FakeState:
@@ -148,12 +149,12 @@ def test_an_unreadable_power_sensor_decides_nothing():
 
 
 def test_a_water_heater_switched_off_reads_off():
-    hass = FakeHass({WH: _heater("off", SWITCHABLE), "sensor.tank_power": FakeState("0", "W")})
+    hass = FakeHass({WH: _heater("off", MELCLOUD), "sensor.tank_power": FakeState("0", "W")})
     _build_hot_water_tank_load(hass, _entry(), V, "tank_1", 1)
     assert hass.data[DOMAIN]["loads"]["tank"]["tank_hvac_action"] == "off"
 
 
-# --- control: the water_heater services, never climate's ---
+# --- control: the water heater's target, never its power or its mode ---
 
 
 def _command(heater, limit):
@@ -164,17 +165,15 @@ def _command(heater, limit):
     return hass.services.calls
 
 
-def test_a_switchable_water_heater_is_turned_on_and_set():
-    calls = _command(_heater(features=SWITCHABLE), limit=8.7)
-    assert calls == [
-        ("water_heater", "turn_on", {"entity_id": WH}),
+def test_a_water_heater_is_never_switched_off():
+    # MELCloud's turn_off powers down the whole heat pump, space heating
+    # included, so even a heater that offers it is only ever given a target.
+    assert _command(_heater(features=MELCLOUD), limit=0) == [
+        ("water_heater", "set_temperature", {"entity_id": WH, "temperature": 35}),
+    ]
+    assert _command(_heater(features=MELCLOUD), limit=8.7) == [
         ("water_heater", "set_temperature", {"entity_id": WH, "temperature": 45}),
     ]
-
-
-def test_a_switchable_water_heater_is_turned_off():
-    calls = _command(_heater(features=SWITCHABLE), limit=0)
-    assert calls == [("water_heater", "turn_off", {"entity_id": WH})]
 
 
 def test_a_water_heater_with_no_off_switch_is_held_at_its_lowest_target():
@@ -182,13 +181,20 @@ def test_a_water_heater_with_no_off_switch_is_held_at_its_lowest_target():
     assert _command(_heater(features=VAILLANT), limit=0) == [
         ("water_heater", "set_temperature", {"entity_id": WH, "temperature": 35}),
     ]
-    assert _command(_heater(features=VAILLANT), limit=8.7) == [
-        ("water_heater", "set_temperature", {"entity_id": WH, "temperature": 45}),
-    ]
+
+
+def test_a_target_already_in_place_is_not_written_again():
+    # A cloud water heater rate-limits writes; the climate path's every-cycle
+    # re-assert would be one call per cycle for ever.
+    heater = _heater()
+    heater.attributes["temperature"] = 45.0
+    assert _command(heater, limit=8.7) == []
+    heater.attributes["temperature"] = 35
+    assert _command(heater, limit=0) == []
 
 
 def test_the_setpoint_is_clamped_to_the_water_heaters_range():
-    heater = _heater(features=SWITCHABLE)
+    heater = _heater(features=MELCLOUD)
     heater.attributes["max_temp"] = 40  # below the 45 C normal setpoint
     calls = _command(heater, limit=8.7)
     assert calls[-1] == (

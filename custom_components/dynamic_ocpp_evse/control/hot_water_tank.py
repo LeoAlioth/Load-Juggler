@@ -27,10 +27,6 @@ from ..helpers import get_entry_value
 
 _LOGGER = logging.getLogger(__name__)
 
-# WaterHeaterEntityFeature.ON_OFF, spelled out so this module keeps
-# importing nothing from Home Assistant.
-WATER_HEATER_ON_OFF = 8
-
 
 def resolve_tank_setpoint(
     mode: str,
@@ -247,36 +243,32 @@ async def send_hot_water_tank_command(
 
 
 async def _command_water_heater(hass, entity_id, state, permitted, setpoint):
-    """A water heater has no hvac_mode: it switches with ``turn_on`` /
-    ``turn_off`` where it supports ON_OFF, and its operation modes are the
-    integration's own words (a Vaillant offers heating / hot_water_only /
-    stand_by), so none of them can be picked as "off" for it."""
+    """A water heater is gated by its target temperature alone: the setpoint
+    while the tank may heat, its lowest target while it may not.
+
+    Never ``turn_off``: what that switches off is the integration's choice, and
+    MELCloud's powers down the whole heat pump, space heating included
+    (a user's site, 2026-09-25). Never an operation mode either - they are the
+    integration's own words (Vaillant: heating / hot_water_only / stand_by;
+    MELCloud: auto / force_hot_water), so none can be picked as "off". And
+    written only when the target differs, where the climate path re-asserts
+    every cycle: a water heater is often a cloud device (MELCloud) that
+    rate-limits writes.
+    """
     attrs = state.attributes if state is not None else {}
+    target = setpoint if permitted else attrs.get("min_temp")
+    if target is None:
+        return
     try:
-        can_switch = bool(int(attrs.get("supported_features") or 0) & WATER_HEATER_ON_OFF)
+        if abs(float(attrs.get("temperature")) - float(target)) < 0.05:
+            return
     except (TypeError, ValueError):
-        can_switch = False
-    if permitted:
-        if can_switch:
-            await hass.services.async_call(
-                "water_heater", "turn_on", {"entity_id": entity_id}, blocking=False
-            )
-        await hass.services.async_call(
-            "water_heater",
-            "set_temperature",
-            {"entity_id": entity_id, "temperature": setpoint},
-            blocking=False,
-        )
-    elif can_switch:
-        await hass.services.async_call(
-            "water_heater", "turn_off", {"entity_id": entity_id}, blocking=False
-        )
-    elif attrs.get("min_temp") is not None:
-        # ponytail: no off switch, so held at its lowest target - a tank colder
-        # than that still heats. A per-tank "off" operation mode if that bites.
-        await hass.services.async_call(
-            "water_heater",
-            "set_temperature",
-            {"entity_id": entity_id, "temperature": attrs["min_temp"]},
-            blocking=False,
-        )
+        pass
+    # ponytail: held at its lowest target rather than off, so a tank colder
+    # than that still heats. A per-tank "off" operation mode if that bites.
+    await hass.services.async_call(
+        "water_heater",
+        "set_temperature",
+        {"entity_id": entity_id, "temperature": target},
+        blocking=False,
+    )
