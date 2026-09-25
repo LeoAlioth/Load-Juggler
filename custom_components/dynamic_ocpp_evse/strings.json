@@ -306,7 +306,7 @@
                 "data": {
                     "name": "Name for this device",
                     "entity_id": "Entity ID prefix",
-                    "climate_entity_id": "Climate entity (thermostat)",
+                    "climate_entity_id": "Thermostat (climate or water heater entity)",
                     "heating_element_power": "Heating element power",
                     "tank_away_temperature": "Away temperature",
                     "tank_normal_temperature": "Normal temperature",
@@ -322,7 +322,7 @@
                 },
                 "data_description": {
                     "entity_id": "Used as a prefix for entities created by this integration.",
-                    "climate_entity_id": "The climate entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint.",
+                    "climate_entity_id": "The climate or water heater entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint. A water heater does not report whether it is heating, so add its power sensor (or power device) to let the tank free its power once the water is hot.",
                     "heating_element_power": "Rated power of the heating element - used for power allocation when no power sensor is configured. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                     "tank_away_temperature": "Minimal / frost-protection setpoint. Used by Freeze Protection mode and as the low end of Solar Priority. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                     "tank_normal_temperature": "Baseline target temperature. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
@@ -833,7 +833,7 @@
                 "title": "Update Hot Water Tank Settings",
                 "description": "Update hot water tank settings",
                 "data": {
-                    "climate_entity_id": "Climate entity (thermostat)",
+                    "climate_entity_id": "Thermostat (climate or water heater entity)",
                     "heating_element_power": "Heating element power",
                     "tank_away_temperature": "Away temperature",
                     "tank_normal_temperature": "Normal temperature",
@@ -848,7 +848,7 @@
                     "binary_min_off_time": "Minimum off time"
                 },
                 "data_description": {
-                    "climate_entity_id": "The climate entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint.",
+                    "climate_entity_id": "The climate or water heater entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint. A water heater does not report whether it is heating, so add its power sensor (or power device) to let the tank free its power once the water is hot.",
                     "heating_element_power": "Rated power of the heating element - used for power allocation when no power sensor is configured. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                     "tank_away_temperature": "Minimal / frost-protection setpoint. Used by Freeze Protection mode and as the low end of Solar Priority. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                     "tank_normal_temperature": "Baseline target temperature. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",

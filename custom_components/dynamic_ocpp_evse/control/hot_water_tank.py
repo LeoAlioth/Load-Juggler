@@ -1,8 +1,8 @@
-"""Hot water tank control - setpoint resolution and climate-entity commands.
+"""Hot water tank control - setpoint resolution and thermostat commands.
 
-The climate entity owns all temperature regulation (hysteresis, min cycle,
-sensor). Load Juggler only gates power (hvac_mode heat/off) and writes the
-setpoint chosen by the tank's operating mode.
+The thermostat - a ``climate`` or a ``water_heater`` entity - owns all
+temperature regulation (hysteresis, min cycle, sensor). Load Juggler only gates
+power (on/off) and writes the setpoint chosen by the tank's operating mode.
 """
 
 import logging
@@ -26,6 +26,10 @@ from ..const import (
 from ..helpers import get_entry_value
 
 _LOGGER = logging.getLogger(__name__)
+
+# WaterHeaterEntityFeature.ON_OFF, spelled out so this module keeps
+# importing nothing from Home Assistant.
+WATER_HEATER_ON_OFF = 8
 
 
 def resolve_tank_setpoint(
@@ -107,7 +111,7 @@ def resolve_tank_setpoint(
 async def send_hot_water_tank_command(
     sensor, limit: float, hub_data: dict, now_mono: float
 ) -> None:
-    """Drive a hot water tank's climate entity: gate heating and set the target.
+    """Drive a hot water tank's thermostat: gate heating and set the target.
 
     ``limit`` is the engine's allocated current after smoothing - > 0 means the
     engine found power for the tank, so heating is permitted.
@@ -207,7 +211,11 @@ async def send_hot_water_tank_command(
 
     # The integration is the master controller - re-assert each command cycle.
     try:
-        if heating_permitted:
+        if climate_entity.startswith("water_heater."):
+            await _command_water_heater(
+                sensor.hass, climate_entity, climate_state, heating_permitted, setpoint
+            )
+        elif heating_permitted:
             await sensor.hass.services.async_call(
                 "climate",
                 "set_temperature",
@@ -236,3 +244,39 @@ async def send_hot_water_tank_command(
 
     sensor._last_update = datetime.now(timezone.utc)
     sensor._last_command_time = now_mono
+
+
+async def _command_water_heater(hass, entity_id, state, permitted, setpoint):
+    """A water heater has no hvac_mode: it switches with ``turn_on`` /
+    ``turn_off`` where it supports ON_OFF, and its operation modes are the
+    integration's own words (a Vaillant offers heating / hot_water_only /
+    stand_by), so none of them can be picked as "off" for it."""
+    attrs = state.attributes if state is not None else {}
+    try:
+        can_switch = bool(int(attrs.get("supported_features") or 0) & WATER_HEATER_ON_OFF)
+    except (TypeError, ValueError):
+        can_switch = False
+    if permitted:
+        if can_switch:
+            await hass.services.async_call(
+                "water_heater", "turn_on", {"entity_id": entity_id}, blocking=False
+            )
+        await hass.services.async_call(
+            "water_heater",
+            "set_temperature",
+            {"entity_id": entity_id, "temperature": setpoint},
+            blocking=False,
+        )
+    elif can_switch:
+        await hass.services.async_call(
+            "water_heater", "turn_off", {"entity_id": entity_id}, blocking=False
+        )
+    elif attrs.get("min_temp") is not None:
+        # ponytail: no off switch, so held at its lowest target - a tank colder
+        # than that still heats. A per-tank "off" operation mode if that bites.
+        await hass.services.async_call(
+            "water_heater",
+            "set_temperature",
+            {"entity_id": entity_id, "temperature": attrs["min_temp"]},
+            blocking=False,
+        )

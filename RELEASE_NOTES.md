@@ -1,5 +1,13 @@
 # Release Notes
 
+## 2.1.4
+
+### Bug Fixes
+
+- **A hot water tank can be driven through a water heater**: the tank's thermostat could only be a `climate` entity, so a device that Home Assistant exposes as a `water_heater` - a Vaillant boiler's hot water, for example - could not be picked at all. It can now. A water heater is switched with its own `turn_on` / `turn_off` where it supports them, and one that cannot be switched off (the Vaillant offers only *heating*, *hot water only* and *stand by*) is set to its lowest target temperature while the tank may not heat, so a tank colder than that still heats. Its operation mode is never changed. A water heater does not say whether it is heating, which is how a tank frees its power for other loads once the water is hot: with the tank's power sensor configured, above 10 W it is heating and below it the power is freed, exactly as a thermostat reporting *idle* does. Without one the tank keeps its power reserved whenever it is allowed to heat, and its *Tank Status* reads *Idle*. Tanks on a `climate` entity are unchanged.
+
+---
+
 ## 2.1.3
 
 ### Bug Fixes

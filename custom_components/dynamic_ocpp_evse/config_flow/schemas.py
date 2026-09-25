@@ -1756,7 +1756,7 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
             vol.Required(
                 CONF_CLIMATE_ENTITY_ID,
                 default=defaults.get(CONF_CLIMATE_ENTITY_ID),
-            ): selector({"entity": {"domain": "climate"}}),
+            ): selector({"entity": {"domain": ["climate", "water_heater"]}}),
             vol.Required(
                 CONF_HEATING_ELEMENT_POWER,
                 default=defaults.get(
