@@ -133,11 +133,37 @@ def test_a_satisfied_water_heater_frees_its_power():
     assert "device_power" not in rt  # nothing learned from standby watts
 
 
-def test_without_a_power_sensor_a_water_heater_counts_as_calling_for_heat():
-    hass = FakeHass({WH: _heater()})
+def test_without_a_power_sensor_a_water_heater_colder_than_its_target_draws_its_rating():
+    # The configured rating stands in for the missing meter, as it does for a
+    # heating climate - so a boost does not read the tank's own draw as the
+    # house eating the surplus that started it.
+    heater = _heater()
+    heater.attributes.update(current_temperature=42.5, temperature=60)
+    hass = FakeHass({WH: heater})
+    load = _build_hot_water_tank_load(hass, _entry(power_sensor=False), V, "tank_1", 1)
+    assert hass.data[DOMAIN]["loads"]["tank"]["tank_hvac_action"] == "heating"
+    assert load.connector_status == "Charging"
+    assert abs(load.l1_current - 2000 / V) < 0.01
+
+
+def test_without_a_power_sensor_a_water_heater_at_its_target_frees_its_power():
+    heater = _heater()
+    heater.attributes.update(current_temperature=60, temperature=60)
+    hass = FakeHass({WH: heater})
+    load = _build_hot_water_tank_load(hass, _entry(power_sensor=False), V, "tank_1", 1)
+    assert hass.data[DOMAIN]["loads"]["tank"]["tank_hvac_action"] == "idle"
+    assert load.connector_status == "Available"
+    assert load.l1_current == 0
+
+
+def test_without_a_power_sensor_or_a_temperature_nothing_is_assumed():
+    heater = _heater()
+    heater.attributes.pop("current_temperature")
+    hass = FakeHass({WH: heater})
     load = _build_hot_water_tank_load(hass, _entry(power_sensor=False), V, "tank_1", 1)
     assert hass.data[DOMAIN]["loads"]["tank"]["tank_hvac_action"] is None
     assert load.connector_status == "Charging"
+    assert load.l1_current == 0
 
 
 def test_an_unreadable_power_sensor_decides_nothing():

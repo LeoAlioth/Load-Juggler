@@ -1089,12 +1089,26 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         live = _coerce(raw_live)
     # A water heater reports no hvac_action, so its power sensor says whether
     # the element is heating, on the same 10 W line the learning below uses.
-    # Without one nothing does, and the tank counts as calling for heat.
+    # Without one, it is taken as heating - at its configured rating, as a
+    # heating climate is below - while it is colder than its own target: a
+    # boost on the rating's surplus must not read the tank's own draw as the
+    # house eating that surplus (a heat pump with no meter, 2026-09-25).
+    # ponytail: the target alone, so the heater's own restart hysteresis reads
+    # as heating; that errs toward booking power that is not drawn.
     if climate_entity and climate_entity.startswith("water_heater.") and climate_state:
         if climate_state.state == "off":
             hvac_action = "off"
-        elif power_entity and not power_unreadable:
-            hvac_action = "heating" if live and live > 10 else "idle"
+        elif power_entity:
+            if not power_unreadable:
+                hvac_action = "heating" if live and live > 10 else "idle"
+        else:
+            try:
+                below = float(climate_state.attributes["current_temperature"]) < float(
+                    climate_state.attributes["temperature"]
+                )
+                hvac_action = "heating" if below else "idle"
+            except (KeyError, TypeError, ValueError):
+                pass
     load_rt["tank_hvac_action"] = hvac_action
     connector_status = "Available" if hvac_action == "idle" else "Charging"
     if live and live > 10 and hvac_action == "heating":
