@@ -1,8 +1,8 @@
-"""Hot water tank control - setpoint resolution and climate-entity commands.
+"""Hot water tank control - setpoint resolution and thermostat commands.
 
-The climate entity owns all temperature regulation (hysteresis, min cycle,
-sensor). Load Juggler only gates power (hvac_mode heat/off) and writes the
-setpoint chosen by the tank's operating mode.
+The thermostat - a ``climate`` or a ``water_heater`` entity - owns all
+temperature regulation (hysteresis, min cycle, sensor). Load Juggler only gates
+power (on/off) and writes the setpoint chosen by the tank's operating mode.
 """
 
 import logging
@@ -107,7 +107,7 @@ def resolve_tank_setpoint(
 async def send_hot_water_tank_command(
     sensor, limit: float, hub_data: dict, now_mono: float
 ) -> None:
-    """Drive a hot water tank's climate entity: gate heating and set the target.
+    """Drive a hot water tank's thermostat: gate heating and set the target.
 
     ``limit`` is the engine's allocated current after smoothing - > 0 means the
     engine found power for the tank, so heating is permitted.
@@ -207,7 +207,11 @@ async def send_hot_water_tank_command(
 
     # The integration is the master controller - re-assert each command cycle.
     try:
-        if heating_permitted:
+        if climate_entity.startswith("water_heater."):
+            await _command_water_heater(
+                sensor.hass, climate_entity, climate_state, heating_permitted, setpoint
+            )
+        elif heating_permitted:
             await sensor.hass.services.async_call(
                 "climate",
                 "set_temperature",
@@ -236,3 +240,35 @@ async def send_hot_water_tank_command(
 
     sensor._last_update = datetime.now(timezone.utc)
     sensor._last_command_time = now_mono
+
+
+async def _command_water_heater(hass, entity_id, state, permitted, setpoint):
+    """A water heater is gated by its target temperature alone: the setpoint
+    while the tank may heat, its lowest target while it may not.
+
+    Never ``turn_off``: what that switches off is the integration's choice, and
+    MELCloud's powers down the whole heat pump, space heating included
+    (a user's site, 2026-09-25). Never an operation mode either - they are the
+    integration's own words (Vaillant: heating / hot_water_only / stand_by;
+    MELCloud: auto / force_hot_water), so none can be picked as "off". And
+    written only when the target differs, where the climate path re-asserts
+    every cycle: a water heater is often a cloud device (MELCloud) that
+    rate-limits writes.
+    """
+    attrs = state.attributes if state is not None else {}
+    target = setpoint if permitted else attrs.get("min_temp")
+    if target is None:
+        return
+    try:
+        if abs(float(attrs.get("temperature")) - float(target)) < 0.05:
+            return
+    except (TypeError, ValueError):
+        pass
+    # ponytail: held at its lowest target rather than off, so a tank colder
+    # than that still heats. A per-tank "off" operation mode if that bites.
+    await hass.services.async_call(
+        "water_heater",
+        "set_temperature",
+        {"entity_id": entity_id, "temperature": target},
+        blocking=False,
+    )

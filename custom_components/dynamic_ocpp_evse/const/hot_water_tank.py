@@ -1,12 +1,12 @@
-"""Hot water tank constants - climate-entity-driven binary heating load.
+"""Hot water tank constants - thermostat-driven binary heating load.
 
-The climate entity owns all temperature regulation; Load Juggler only gates
+The thermostat (a climate or water_heater entity) owns all temperature regulation; Load Juggler only gates
 power and writes the setpoint.
 """
 
 from .common import OperatingMode
 
-CONF_CLIMATE_ENTITY_ID = "climate_entity_id"              # HA climate entity (read + control)
+CONF_CLIMATE_ENTITY_ID = "climate_entity_id"              # HA climate or water_heater entity (read + control)
 CONF_HEATING_ELEMENT_POWER = "heating_element_power"      # Element rating in watts
 CONF_TANK_POWER_ENTITY_ID = "tank_power_entity_id"        # Optional live power sensor
 CONF_TANK_POWER_DEVICE_ID = "tank_power_device_id"        # Optional device to resolve a power sensor from
