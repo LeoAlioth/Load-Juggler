@@ -96,6 +96,7 @@ run, but have no Home Assistant dependency of their own:
 | File | What it tests |
 |---|---|
 | `test_hot_water_tank.py` | Tank setpoint resolution and urgency-tier promotion/demotion |
+| `test_water_heater_tank.py` | A tank on a `water_heater` entity - heating read off its power sensor, switched through the water_heater services |
 | `test_excess_margin.py` | The Excess trigger - `excess_margin()` across grid/battery/off-grid states |
 | `test_power_station.py` | Power station charge-speed quantisation and reserve resolution |
 | `test_auto_detect.py` | Grid CT inversion + phase-mapping auto-detection (26 tests) |

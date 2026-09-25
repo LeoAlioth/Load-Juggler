@@ -417,16 +417,16 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
         return self._attrs
 
     def _read_site_data(self):
-        """Derive the tank state from the climate entity + shared load data."""
+        """Derive the tank state from the thermostat + shared load data."""
         load_rt = self._load_runtime()
         climate_state = (
             self.hass.states.get(self._climate_entity)
             if self._climate_entity
             else None
         )
-        hvac_action = (
-            climate_state.attributes.get("hvac_action") if climate_state else None
-        )
+        # What the site cycle read (engine/load_builders): a climate's own
+        # hvac_action, or a water heater's from its power sensor.
+        hvac_action = load_rt.get("tank_hvac_action")
         current_temp = (
             climate_state.attributes.get("current_temperature")
             if climate_state

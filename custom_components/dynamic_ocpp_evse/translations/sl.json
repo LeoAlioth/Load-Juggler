@@ -306,7 +306,7 @@
                 "data": {
                     "name": "Ime te naprave",
                     "entity_id": "Predpona ID entitete",
-                    "climate_entity_id": "Entiteta climate (termostat)",
+                    "climate_entity_id": "Termostat (entiteta climate ali water_heater)",
                     "heating_element_power": "Moč grelnega elementa",
                     "tank_away_temperature": "Temperatura ob odsotnosti",
                     "tank_normal_temperature": "Normalna temperatura",
@@ -322,7 +322,7 @@
                 },
                 "data_description": {
                     "entity_id": "Uporabljeno kot predpona za entitete, ki jih ustvari ta integracija.",
-                    "climate_entity_id": "Entiteta climate, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo.",
+                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode ne sporoča, ali greje, zato dodajte njegov senzor moči (ali napravo za merjenje moči), da grelnik sprosti moč, ko je voda topla.",
                     "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "tank_away_temperature": "Minimalna / protizmrzovalna ciljna temperatura. Uporablja jo način Zaščita pred zmrzaljo in kot spodnja meja načina Prednost sonca. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "tank_normal_temperature": "Osnovna ciljna temperatura. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
@@ -833,7 +833,7 @@
                 "title": "Posodobi nastavitve grelnika vode",
                 "description": "Posodobite nastavitve grelnika vode",
                 "data": {
-                    "climate_entity_id": "Entiteta climate (termostat)",
+                    "climate_entity_id": "Termostat (entiteta climate ali water_heater)",
                     "heating_element_power": "Moč grelnega elementa",
                     "tank_away_temperature": "Temperatura ob odsotnosti",
                     "tank_normal_temperature": "Normalna temperatura",
@@ -848,7 +848,7 @@
                     "binary_min_off_time": "Najkrajši čas izklopa"
                 },
                 "data_description": {
-                    "climate_entity_id": "Entiteta climate, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo.",
+                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode ne sporoča, ali greje, zato dodajte njegov senzor moči (ali napravo za merjenje moči), da grelnik sprosti moč, ko je voda topla.",
                     "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "tank_away_temperature": "Minimalna / protizmrzovalna ciljna temperatura. Uporablja jo način Zaščita pred zmrzaljo in kot spodnja meja načina Prednost sonca. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "tank_normal_temperature": "Osnovna ciljna temperatura. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",

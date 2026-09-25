@@ -29,7 +29,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 - **Off-grid support** - grid CTs optional, infers phases from inverter output
 - **Auto-detection** of sensors, phase mapping, and charger settings
 - **OCPP 1.6J** control for EV chargers (Amps or Watts, auto-detected)
-- **Hot water tank control** - climate-entity-driven binary heating loads with away/normal/boost setpoints
+- **Hot water tank control** - thermostat-driven (climate or water heater entity) binary heating loads with away/normal/boost setpoints
 - **Portable power station control** - modulated charge rate plus a managed backup reserve, so a station soaks up surplus and spends it again
 - **Relative and absolute OCPP profile modes** for different charger compatibility
 - **Current rate limiting** (ramp up/down) for stable operation
@@ -65,7 +65,7 @@ Each load has its own operating mode, set independently. This allows mixing mode
 
 ### Hot Water Tank Modes
 
-A hot water tank is driven through a `climate` entity (e.g. a Generic Thermostat) - the climate entity handles temperature regulation, while Load Juggler picks one of three setpoints (**Away**, **Normal**, **Boost**) based on the mode and conditions.
+A hot water tank is driven through a `climate` entity (e.g. a Generic Thermostat) or a `water_heater` entity - that entity handles temperature regulation, while Load Juggler picks one of three setpoints (**Away**, **Normal**, **Boost**) based on the mode and conditions.
 
 - **Freeze Protection**: Targets the Away setpoint (minimal / frost protection), raised to Boost when there is surplus energy - the hub reports Excess (see Excess mode above), or the home battery is above its target SOC.
 - **Normal**: Targets the Normal setpoint, raised to Boost on the same surplus test.

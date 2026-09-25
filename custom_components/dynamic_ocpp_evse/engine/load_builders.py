@@ -1044,27 +1044,25 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
 
 
 def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
-    """Build a LoadContext for a hot water tank (climate-driven binary load).
+    """Build a LoadContext for a hot water tank (thermostat-driven binary load).
 
     To the engine the tank is a smart load (plug): a fixed-power binary draw.
-    The climate entity owns temperature regulation; the HA layer reads its
+    The thermostat (a climate or water_heater entity) owns temperature regulation; the HA layer reads its
     hvac_action and writes the setpoint. Tank operating modes (Freeze
     Protection / Normal / Solar Priority / Solar Excess) map to engine modes
     here.
     """
     load_rt = hass.data[DOMAIN]["loads"].get(entry.entry_id, {})
 
-    # Connector status from the climate entity's hvac_action: a thermostat
-    # reporting "idle" means the tank is satisfied - mark it inactive so the
-    # engine reallocates that power. Anything else is treated as an active load.
+    # Connector status from the thermostat's hvac_action (set below, once a
+    # water heater's is read off its power sensor): "idle" means the tank is
+    # satisfied - mark it inactive so the engine reallocates that power.
+    # Anything else is treated as an active load.
     climate_entity = entry.data.get(CONF_CLIMATE_ENTITY_ID)
-    connector_status = "Charging"
     climate_state = hass.states.get(climate_entity) if climate_entity else None
     hvac_action = (
         climate_state.attributes.get("hvac_action") if climate_state else None
     )
-    if hvac_action == "idle":
-        connector_status = "Available"
 
     # Set power: the runtime slider if set, else the configured element
     # power. A configured tank power sensor overrides it with the live draw
@@ -1089,9 +1087,19 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         # tank must not be published as drawing nothing (draw_assumed).
         power_unreadable = raw_live is _UNAVAILABLE
         live = _coerce(raw_live)
-        if live and live > 10 and hvac_action == "heating":
-            power_rating = live
-            load_rt["device_power"] = round(live, 0)
+    # A water heater reports no hvac_action, so its power sensor says whether
+    # the element is heating, on the same 10 W line the learning below uses.
+    # Without one nothing does, and the tank counts as calling for heat.
+    if climate_entity and climate_entity.startswith("water_heater.") and climate_state:
+        if climate_state.state == "off":
+            hvac_action = "off"
+        elif power_entity and not power_unreadable:
+            hvac_action = "heating" if live and live > 10 else "idle"
+    load_rt["tank_hvac_action"] = hvac_action
+    connector_status = "Available" if hvac_action == "idle" else "Charging"
+    if live and live > 10 and hvac_action == "heating":
+        power_rating = live
+        load_rt["device_power"] = round(live, 0)
 
     connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
     phases = len(connected_to_phase)
