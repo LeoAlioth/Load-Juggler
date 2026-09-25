@@ -19,6 +19,7 @@ from ..const import (
     CONF_FILTER_RAMP_DOWN_RATE,
     CONF_PHASE_VOLTAGE,
     DEFAULT_PHASE_VOLTAGE,
+    EVSE_RT_COMMANDED_LIMIT,
 )
 from ..helpers import get_entry_value
 from .. import units
@@ -267,6 +268,17 @@ async def perform_hard_reset(sensor) -> None:
         return
 
     _LOGGER.info("Hard OCPP reset for %s via %s", sensor._attr_name, reset_entity_id)
+    # A rebooting charger may come back on its own default limit rather than
+    # the one last recorded as accepted, so that record stops being a fact
+    # about it until the next command lands (see the same step in the
+    # reset_ocpp_evse service, which the fallback above goes through).
+    load_rt = (
+        sensor.hass.data.get(DOMAIN, {})
+        .get("loads", {})
+        .get(sensor.config_entry.entry_id)
+    )
+    if load_rt is not None:
+        load_rt.pop(EVSE_RT_COMMANDED_LIMIT, None)
     try:
         await sensor.hass.services.async_call(
             "button",

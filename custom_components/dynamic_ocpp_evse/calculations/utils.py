@@ -92,13 +92,32 @@ def grid_without_managed_draws(
 def compute_household_per_phase(
     site: SiteContext,
     wiring_topology: str,
+    draws: tuple[float, float, float] | None = None,
 ) -> PhaseValues | None:
     """Compute per-phase household consumption from inverter output entities.
 
-    Shared between HA integration (dynamic_ocpp_evse.py) and test simulation (run_tests.py).
+    Shared between HA integration (engine/hub_calculation.py) and test simulation (run_tests.py).
 
     Parallel (AC-coupled): household = grid_consumption + inverter_output - grid_export
     Series (hybrid):       household = inverter_output - load_draws
+    Off-grid, either:      household = inverter_output - load_draws
+
+    Off-grid the wiring changes nothing about what the output contains: with
+    no grid for a parallel inverter to feed beside, everything the site
+    consumes - our own loads included - comes out of the inverters. The
+    parallel formula leans on the feedback loop having taken the draws off its
+    grid terms; off-grid those are synthetic zeros it leaves alone, so the
+    parallel household was the whole output and a charger's own draw was read
+    as house load (a car meant to get 21.7 A settled at 10.9 A,
+    dev/tests/test_offgrid_parallel_household.py).
+
+    ``draws`` is the per-site-phase managed draw the series formula subtracts.
+    The HA engine passes the SAME smoothed draw it subtracts everywhere else
+    (``hub_calculation._managed_phase_draws``), because the inverter output it
+    is subtracted from is smoothed too: a smoothed output minus a raw
+    draw reads the household low for every cycle the output filter lags a
+    charger's start. None sums every load's own reading - the single-cycle
+    scenario runner, where there is no filter state for the two to disagree on.
 
     Returns PhaseValues with per-phase household in Amps, or None if no inverter output data.
     """
@@ -107,15 +126,18 @@ def compute_household_per_phase(
     if site.inverter_output_per_phase is None:
         return None
 
-    # Accumulate load draws per site phase
-    ch_a = ch_b = ch_c = 0.0
-    for c in site.loads:
-        a_d, b_d, c_d = c.get_site_phase_draw()
-        ch_a += a_d
-        ch_b += b_d
-        ch_c += c_d
+    if draws is not None:
+        ch_a, ch_b, ch_c = draws
+    else:
+        # Accumulate load draws per site phase
+        ch_a = ch_b = ch_c = 0.0
+        for c in site.loads:
+            a_d, b_d, c_d = c.get_site_phase_draw()
+            ch_a += a_d
+            ch_b += b_d
+            ch_c += c_d
 
-    if wiring_topology == "parallel":
+    if wiring_topology == "parallel" and not site.is_off_grid:
         def _hh(inv_out, cons, exp):
             if cons is None:
                 return None
@@ -125,7 +147,7 @@ def compute_household_per_phase(
         hh_b = _hh(site.inverter_output_per_phase.b, site.consumption.b, site.export_current.b)
         hh_c = _hh(site.inverter_output_per_phase.c, site.consumption.c, site.export_current.c)
     else:
-        # Series: household = inverter_output - load_draws
+        # Series, and off-grid either wiring: household = inverter_output - load_draws
         hh_a = max(0, (site.inverter_output_per_phase.a or 0) - ch_a) if site.consumption.a is not None else None
         hh_b = max(0, (site.inverter_output_per_phase.b or 0) - ch_b) if site.consumption.b is not None else None
         hh_c = max(0, (site.inverter_output_per_phase.c or 0) - ch_c) if site.consumption.c is not None else None

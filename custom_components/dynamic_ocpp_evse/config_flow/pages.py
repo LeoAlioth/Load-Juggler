@@ -13,6 +13,8 @@ from homeassistant.helpers.entity_registry import (
     async_get as async_get_entity_registry,
 )
 from .. import units
+from ..entities.readout import status_with_readout_note
+from ..entities.sun_probe import status_with_sun_probe_note
 from ..const import (
     CONF_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
@@ -79,6 +81,8 @@ from ..const import (
     ENTRY_TYPE_GROUP,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
+    EVSE_RT_READOUT_WATCH,
+    LOAD_RT_SUN_PROBE,
     resolve_operating_mode,
 )
 from ..helpers import get_entry_value
@@ -186,9 +190,12 @@ def _pool_pairs_are_sums(fields: dict) -> bool:
 def _pool_detail_lines(hub_data: dict) -> list[str]:
     """The three pools as the allocator built them, per phase.
 
-    The watt figures above this are re-derived from the site's headroom terms;
-    these are the objects the distribution actually consulted. Both are shown
-    because when they disagree, the disagreement is the bug.
+    Site available, grid headroom and the per-phase headroom above this are
+    read from the physical pool's offered figures, and the solar surplus is
+    the solar pool's sun share (engine/hub_result.py); the battery discharge
+    line is a source figure, not a pool.
+    These are the objects the distribution actually consulted, per phase and
+    per combination.
 
     "Left" is what survived each load's MEASURED draw, not its permit - a plug
     that is switched off takes nothing from the pool however large a permit it
@@ -415,6 +422,29 @@ def _device_status(hass, load_entry) -> str | None:
     return state.state
 
 
+def _load_status(runtime: dict, entry_id: str):
+    """The EVSE status the load processor published, with the stuck-readout
+    note while the charger is controlled blind and the sun probe's while it
+    backs off - the same words its Charging Status sensor shows
+    (entities/readout.py, entities/sun_probe.py)."""
+    load_rt = (runtime.get("loads") or {}).get(entry_id) or {}
+    return status_with_sun_probe_note(
+        status_with_readout_note(
+            (runtime.get("load_status") or {}).get(entry_id),
+            load_rt.get(EVSE_RT_READOUT_WATCH),
+        ),
+        load_rt.get(LOAD_RT_SUN_PROBE),
+    )
+
+
+def _estimated(hub_data: dict, entry_id: str | None = None) -> str:
+    """" (estimated)" after a figure built on an assumed charger draw - one
+    charger's, or (no ``entry_id``) any charger's."""
+    estimated = hub_data.get("draw_estimated") or {}
+    hit = entry_id in estimated if entry_id is not None else bool(estimated)
+    return " (estimated)" if hit else ""
+
+
 def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
     """One "name · mode · priority · permit · draw · status" line."""
     runtime = _runtime(hass)
@@ -442,11 +472,9 @@ def _load_line(hass, hub_entry_id: str, load_entry, hub_data: dict) -> str:
         draw = (runtime.get("load_allocations") or {}).get(load_entry.entry_id)
         if draw is None:
             draw = (hub_data.get("load_targets") or {}).get(load_entry.entry_id)
-    parts.append(f"drawing {_fmt(draw, 'A')}")
+    parts.append(f"drawing {_fmt(draw, 'A')}{_estimated(hub_data, load_entry.entry_id)}")
 
-    status = _device_status(hass, load_entry) or (runtime.get("load_status") or {}).get(
-        load_entry.entry_id
-    )
+    status = _device_status(hass, load_entry) or _load_status(runtime, load_entry.entry_id)
     parts.append(status or "status unknown")
 
     mask = (runtime.get("load_phase_masks") or {}).get(load_entry.entry_id)
@@ -681,11 +709,13 @@ def _hub_overview_lines(hass, entry) -> list[str]:
     lines += _pool_detail_lines(hub_data)
     lines.append(
         f"- Managed loads drawing: {_fmt(hub_data.get('total_evse_power'), 'W', 0)}"
+        f"{_estimated(hub_data)}"
     )
     unmanaged = _unmanaged_household_w(hub_data)
     if unmanaged is not None:
         lines.append(
             f"- Unmanaged loads (household): {_fmt(unmanaged, 'W', 0)}"
+            f"{_estimated(hub_data)}"
         )
 
     lines += _forecast_overview_lines(hub_data)
@@ -750,8 +780,8 @@ def _load_overview_lines(hass, entry) -> list[str]:
     lines += ["", "**📊 Right now**"]
     lines.append(f"- Permitted: {_fmt(_load_permit(hass, entry, hub_data), 'A')}")
     draw = (runtime.get("load_allocations") or {}).get(entry.entry_id)
-    lines.append(f"- Actual draw: {_fmt(draw, 'A')}")
-    status = (runtime.get("load_status") or {}).get(entry.entry_id)
+    lines.append(f"- Actual draw: {_fmt(draw, 'A')}{_estimated(hub_data, entry.entry_id)}")
+    status = _load_status(runtime, entry.entry_id)
     lines.append(f"- Status: {status or 'unknown'}")
     mask = (runtime.get("load_phase_masks") or {}).get(entry.entry_id)
     if mask:
@@ -904,7 +934,7 @@ def _group_overview_lines(hass, entry) -> list[str]:
             lines.append(f"- (removed entry {member_id[-8:]})")
             continue
         draw = (runtime.get("load_allocations") or {}).get(member_id)
-        status = (runtime.get("load_status") or {}).get(member_id)
+        status = _load_status(runtime, member_id)
         lines.append(
             f"- **{member.title}**: drawing {_fmt(draw, 'A')}"
             f" · {status or 'status unknown'}"

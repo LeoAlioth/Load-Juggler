@@ -53,18 +53,29 @@ scenarios:
   - name: "3ph-1c-standard-heavy-importing"
     description: "Home consuming more than solar produces (importing)"
     human_verified: false
-    # KNOWN BUG, found by the physical-invariant check 2026-09-07 (dev/TODO.md):
-    # _calculate_site_limit credits the inverter's output TWICE on a phase that
-    # nets to export while still carrying household load - once by netting
-    # `consumption` down to 0 (so the grid pool is the whole breaker) and again
-    # as the separate inverter pool. Phase A here carries 8 A of household
-    # against 4.33 A/phase of solar and 6 A/phase of battery discharge, so it
-    # nets 2.33 A of export: true headroom is 25 + 2.33 = 27.33 A, the pool
-    # offers 25 + 4.33 = 29.33 A, and the 2 A gap is the inverter output already
-    # serving the household. The allocation lands only 0.97 A over here because
-    # max-import caps it before the full error can show.
-    known_invariant_breaches:
-      - "phase A: 25.97 A drawn against a 25 A breaker"
+    # Found by the physical-invariant check 2026-09-07: phase A
+    # carries 8 A of household against 4.33 A/phase of solar and 6 A/phase of
+    # battery discharge, so it nets 2.33 A of export and its headroom is
+    # 25 + 2.33 = 27.33 A IF the inverter's output stays where it is - the
+    # harness spreads every inverter's output evenly over the phases.
+    #
+    # 2026-09-24: for a SYMMETRIC inverter that was a real double credit and
+    # is fixed - the inverter pool now offers each phase its own export plus
+    # its share of the battery headroom (the same site with a symmetric
+    # inverter now gets 27.3 A, and no breach). THIS site declares an
+    # ASYMMETRIC inverter, which the engine models as one pool it can place on
+    # any phase, and the total is exact: 75 A of import allowance + 13 A of sun
+    # + 18 A of battery - 21 A of house = 85 A = 3 x 28.3 A. Placing 11.3 /
+    # 10.3 / 9.3 A of its 31 A on A / B / C keeps every phase at 25 A; the
+    # harness's even 10.33 A per phase does not. So what is left is a question
+    # about the hardware - does an asymmetric inverter place its output where
+    # the breaker needs it - not an inverter output counted twice.
+    #
+    # Settled 2026-09-24 (Anže): it does - his asymmetric inverter "puts/pulls
+    # power on the phases in a way to always try to balance them on the grid".
+    # The harness now places it that way (run_tests.place_asymmetric_output):
+    # 11.33 / 10.33 / 9.33 A, every phase at 24.97 A, so the known breach of
+    # phase A (25.97 A on the even spread) is gone. The allocation is unchanged.
     site:
       voltage: 230
       main_breaker_rating: 25

@@ -1,0 +1,293 @@
+# Test scenarios: the inverter's rating, less what the house already takes
+#
+# Found 2026-09-24 (follow-up to 1e482b0, "Offer the loads the inverters' net
+# supply"). The inverters' half of the physical pool is their net supply beyond
+# the house - the export with our loads off plus the battery's headroom - and
+# it was capped at the inverters' FULL rating. But the output that serves the
+# house is already inside that rating, so what our loads can still be given
+# under it is the rating LESS that share:
+#
+#     inverter pool <= rating - (what the house takes from the inverters)
+#
+# which is the same as saying the battery can add no more than the rating
+# leaves beside the sun (rating - solar). With the cap at the full rating a
+# hybrid near its rating with a big house on its side offered its whole
+# rating to the car; the inverter clips, and the grid carries the difference -
+# past the import allowance (invariant D) or the breaker (invariant A).
+#
+# Every site here: 5 kW inverter, 3 kW of sun, 3 kW of house, a 5 kW battery
+# above its SOC target. The inverter can add 5 - 3 = 2 kW (8.7 A) beside the
+# sun, and the grid its allowance.
+
+scenarios:
+
+  - name: "grid-rating-cap-series-solar-sensor"
+    description: "Series hybrid, solar sensor, 3 kW sun, 3 kW house, 5 kW inverter, 5 kW battery, 0 W allowance → car gets the 2 kW the inverter has left (8.7 A); before: its whole 5 kW rating (21.7 A), 3 kW imported"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 3000
+      solar_production_direct: true
+      phase_a_consumption: 13.04   # household ≈ 3000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 5000
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (5000 - 3000 house on the inverter) / 230 = 8.70 A: the sun serves
+        # the house, and the battery can add only the 2 kW the rating leaves.
+        allocated: 8.7
+
+  - name: "grid-rating-cap-series-output-sensors-grid-passes-through"
+    description: "Series hybrid, output sensors, same site, 2 kW allowance → 2 kW from the inverter + 2 kW from the grid (17.4 A); before: 30.4 A, 5 kW imported against 2 kW"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 2000
+      distribution_mode: priority
+      solar_production: 3000
+      phase_a_consumption: 13.04   # household ≈ 3000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 5000
+      inverter_output_sensors: true
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (2000 + 5000 - 3000) / 230 = 17.39 A. The output sensor reads the
+        # load port, so it carries the 2 kW the grid passes through the hybrid;
+        # the house's share of the inverter is what it takes less what the
+        # grid carries, never "solar" derived from that output.
+        allocated: 17.4
+
+  - name: "grid-rating-cap-parallel-output-sensors"
+    description: "Parallel (AC-coupled), output sensors, same site, 0 W allowance → 8.7 A; before: 21.7 A, 3 kW imported"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 3000
+      phase_a_consumption: 13.04   # household ≈ 3000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 5000
+      inverter_output_sensors: true
+      wiring_topology: parallel
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 8.7
+
+  - name: "grid-rating-cap-breaker-binds"
+    description: "Series hybrid, solar sensor, same site, no import limit, 20 A breaker → the breaker's 20 A + the inverter's 8.7 A (28.7 A); before: 32 A, 23.3 A through the 20 A breaker"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 20
+      distribution_mode: priority
+      solar_production: 3000
+      solar_production_direct: true
+      phase_a_consumption: 13.04   # household ≈ 3000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 5000
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # The house takes nothing from the grid (the sun covers it), so the
+        # breaker offers its whole 20 A and the inverter its 8.7 A - but the
+        # breaker is also where every amp the inverter cannot give ends up.
+        # 20 + 8.7 = 28.7 A drawn, 8.7 A of it from the inverter: 20 A on the
+        # breaker. (Before: the inverter's 21.7 A on top of the breaker's
+        # 20 A, capped at the car's 32 A - 32 - 8.7 = 23.3 A through it.)
+        allocated: 28.7
+
+  - name: "grid-rating-cap-derived-solar-sees-only-the-battery"
+    description: "No solar or output sensor, same site, 0 W allowance → 21.7 A where 8.7 A is right; the sun covers the house, the battery carries only the car, and the house's share of the inverter reaches no meter (13.0 A while the car's own supply counted as house)"
+    human_verified: false
+    # The ceiling of this fix, recorded so it cannot be forgotten: with solar
+    # from the meter alone the 3 kW of sun the house takes itself shows up
+    # nowhere, and only the battery's share of the house is seen - here none:
+    # the sun covers the house and the battery's 2 kW carries the car. So the
+    # cap is the whole 5 kW, the battery's 3 kW below its rating is offered
+    # though the inverter has no room for it, and the site settles 2990 W past
+    # its 0 W allowance. It read 13.0 A (989 W over) while the house on the
+    # inverters was taken as the whole discharge - the car's own 2 kW counted
+    # as house, which hunted and fell short wherever the battery carried the
+    # car within the rating (grid-rating-cap-meter-only-* below). One cycle
+    # cannot see the saturation; over a few the site cycle does and holds the
+    # battery at its flow (engine/hub_calculation._apply_saturation_latch,
+    # dev/tests/test_gridtied_inverter_pool.py) - this stays the first cycle.
+    known_invariant_breaches:
+      - "grid import 13.00 A against the 0.00 A"
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 3000
+      phase_a_consumption: 13.04   # household ≈ 3000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 5000
+      wiring_topology: series
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 21.7
+
+  # Meter only - no solar or output sensor - and the car's own supply. The
+  # engine's solar is the export with our loads handed back plus the battery's
+  # charge, and that export carries the discharge feeding the car; the house on
+  # the inverters, read as solar + battery flow - export, came out as the whole
+  # discharge, the car's share included. A 1 kW house, a 5 kW battery above its
+  # SOC target, 0 W allowance (dev/tests/test_gridtied_inverter_pool.py runs
+  # the same sites through the real site cycle).
+
+  - name: "grid-rating-cap-meter-only-night-car-on-the-battery"
+    description: "Meter only, night, 1 kW house, 5 kW battery, 6 kW inverter, 0 W allowance → the battery's 4 kW left beside the house (17.4 A); before: the car's own 4 kW counted as house, cap 6 - 5 kW, cut to 0 and back"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 6000
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (5000 - 1000) / 230 = 17.39 A; the rating leaves 6000 - 1000.
+        allocated: 17.4
+
+  - name: "grid-rating-cap-meter-only-day-car-on-the-battery"
+    description: "Meter only, 3 kW sun, 1 kW house, 5 kW battery, 8 kW inverter, 0 W allowance → 3 + 5 - 1 kW (30.4 A), the inverter at its rating; before: 21.7 A"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 3000
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 8000
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (3000 + 5000 - 1000) / 230 = 30.43 A: 8 kW out of the inverter.
+        allocated: 30.4
+
+  - name: "grid-rating-cap-meter-only-night-rating-binds"
+    description: "Meter only, night, 1 kW house, 5 kW battery, 4 kW inverter, 0 W allowance → the rating less the house (13.0 A); before: the car's own draw counted as house"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 4.35   # household ≈ 1000 W
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 4000
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        # (4000 - 1000) / 230 = 13.04 A: the battery could give 4 kW, the
+        # inverter only 3 kW beside the house.
+        allocated: 13.0

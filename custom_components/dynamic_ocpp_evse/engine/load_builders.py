@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from datetime import datetime, timezone
 
 from ..calculations import LoadContext, CircuitGroup
 from ..calculations.models import INACTIVE_STATUSES
@@ -40,8 +41,10 @@ from ..const import (
     CONF_EVSE_CURRENT_IMPORT_L2_ENTITY_ID,
     CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
+    CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_POWER_IMPORT_ENTITY_ID,
+    CONF_EVSE_POWER_OFFERED_ENTITY_ID,
     CONF_HEATING_ELEMENT_POWER,
     CONF_NAME,
     CONF_PHASES,
@@ -83,11 +86,16 @@ from ..const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
+    EVSE_RT_COMMANDED_LIMIT,
+    EVSE_RT_COMMANDED_RATE_UNIT,
+    EVSE_RT_READOUT_WATCH,
+    LEG_DRAWING_CURRENT,
     SETTLE_DRAW_SECONDS,
     SETTLE_DRAW_TOLERANCE,
     SETTLE_PERMIT_MARGIN,
     STATION_MODE_STANDARD,
     SUSPENDED_EV_IDLE_TIMEOUT,
+    WATTS_PROFILE_TOLERANCE,
     behavior_for,
     resolve_operating_mode,
     resolve_tank_mode_priority,
@@ -105,6 +113,7 @@ from ..helpers import get_entry_value
 from ..ocpp_discovery import ocpp_connector_status_entity
 from ..registry import get_loads_for_hub, get_groups_for_hub
 from .. import units
+from . import readout_watch
 from .readers import (
     _PHASE_LABELS,
     _UNAVAILABLE,
@@ -116,6 +125,260 @@ from .readers import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _offered_reading(hass, entry):
+    """The charger's offered current (or power) as a bare number, or None.
+
+    Only ever used as the stuck-readout watch's COMPANION: a second reading
+    from the same charger's meter reports, whose changes say how often those
+    reports arrive while the draw reading itself has not yet shown enough of
+    them - see engine/readout_watch.py. The unit does not matter; only whether
+    the value moved.
+    """
+    for key in (CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, CONF_EVSE_POWER_OFFERED_ENTITY_ID):
+        entity_id = get_entry_value(entry, key, None)
+        if entity_id:
+            return _coerce(_read_entity(hass, entity_id, None), None)
+    return None
+
+
+def _fmt_legs(legs) -> str:
+    return "/".join(f"{v:.1f}" for v in legs)
+
+
+def _watch_readout(hass, entry, load, load_rt, connector_status):
+    """Run the stuck-readout watch on this EVSE and, while it judges the
+    reading stuck, control the load BLIND. The rules, and why they cannot trip
+    on a car that is merely steady or drawing less than offered, are in
+    engine/readout_watch.py.
+
+    This is the per-load half: the reading's own tracker and the frozen-HIGH
+    evidence (the reading claims more than the limit in force). The frozen-LOW
+    evidence needs every managed draw on the site and runs after all loads are
+    built - ``_watch_readouts_against_household`` below. This half records the
+    cycle's inputs for it in ``watch["cycle"]``.
+
+    Blind mode, for as long as the episode lasts:
+
+    * l1..l3 become the ASSUMED draw: the limit the charger last accepted on
+      the legs the verdict decided carry current, 0 A on the others and 0 A
+      throughout a no-energy status. Deliberately NOT capped at the load's
+      max-current slider: lowered mid-episode, the charger still holds the old
+      limit until the next command lands, and the footprint must not assume it
+      already obeys. On the feedback loop the assumption is exact for a car
+      that follows its limit - which is what ends the hunting a frozen-low
+      reading causes; a car that sits below it makes the household read low by
+      the difference, the same exposure the settled-draw rule already accepts.
+    * ``draw_blind`` makes the footprint the larger of the allocation and that
+      assumption (target_calculator._pool_deduction), and stops the frozen
+      number from ever counting as a settled draw - which, for a reading
+      pinned at 0, would otherwise book a charging car at NO footprint at all.
+    * ``draw_estimate`` publishes it AS an estimate: Current Managed Power,
+      the household and the charger's own draw carry the assumed figure,
+      marked estimated on their entities (engine/hub_result.py,
+      entities/readout.py) - rather than going unknown for what may be the
+      whole session.
+
+    One warning when an episode starts, one info line when it ends - never one
+    per cycle.
+    """
+    watch = load_rt.setdefault(EVSE_RT_READOUT_WATCH, {})
+    now = time.monotonic()
+    started = watch.get("stuck_since")
+    watch["cycle"] = None
+
+    # Nothing to judge: a load handed back to the user (its draw is household),
+    # a monitor that produced no reading or only part of one (the unreadable-
+    # monitor handling above owns those), or no car at all (its draw is
+    # already 0). The learned gaps survive; the episode does not.
+    if not load.dynamic_control:
+        reason = "Dynamic Control is off"
+    elif load.unmetered or load.draw_assumed:
+        reason = "the readout is unavailable"
+    elif connector_status == "Available":
+        reason = "the connector is Available (no car)"
+    else:
+        reason = None
+    if reason is not None:
+        if readout_watch.reset(watch):
+            _LOGGER.info(
+                "EVSE %s: leaving blind mode after %.0f s - %s",
+                load.entity_id,
+                now - (started if started is not None else now),
+                reason,
+            )
+        for key in ("stuck_at", "assumed"):
+            watch.pop(key, None)
+        watch["normal_gap_s"] = readout_watch.normal_gap(watch)
+        return
+
+    commanded = load_rt.get(EVSE_RT_COMMANDED_LIMIT)
+    margin = SETTLE_PERMIT_MARGIN
+    if commanded and load_rt.get(EVSE_RT_COMMANDED_RATE_UNIT) == "W":
+        margin += WATTS_PROFILE_TOLERANCE * float(commanded)
+    event = readout_watch.observe(
+        watch,
+        now=now,
+        legs=(load.l1_current, load.l2_current, load.l3_current),
+        status=connector_status,
+        commanded=commanded,
+        margin=margin,
+        drawing_current=LEG_DRAWING_CURRENT,
+        companion=_offered_reading(hass, entry),
+    )
+    watch["normal_gap_s"] = readout_watch.normal_gap(watch)
+    watch["cycle"] = {"status": connector_status, "commanded": commanded}
+
+    if event == "left":
+        _LOGGER.info(
+            "EVSE %s: current readout is moving again (now %s A) - leaving "
+            "blind mode after %.0f s",
+            load.entity_id,
+            _fmt_legs((load.l1_current, load.l2_current, load.l3_current)),
+            now - (started if started is not None else now),
+        )
+        for key in ("stuck_at", "assumed"):
+            watch.pop(key, None)
+    if readout_watch.is_stuck(watch):
+        _go_blind(load, watch, connector_status, commanded, event == "entered", now)
+
+
+def _go_blind(load, watch, status, commanded, entered, now):
+    """Put the assumed draw in place of the stuck reading, for this cycle.
+
+    ``entered`` says this is the cycle the episode began, which is the one that
+    gets the warning - whichever evidence path reached the verdict.
+    """
+    assumed = readout_watch.assumed_legs(watch, status, commanded)
+    if entered:
+        watch["stuck_at"] = datetime.now(timezone.utc)
+        silent_for = now - watch.get("changed_at", now)
+        gap = watch.get("stuck_gap")
+        cadence = (
+            f"this reading normally changes at least every {gap:.0f} s"
+            if gap is not None
+            else "this reading has not been seen to change since start-up"
+        )
+        legs = "/".join(
+            f"L{i + 1}" for i, on in enumerate(watch.get("stuck_legs") or ()) if on
+        ) or "no leg"
+        now_txt = (
+            f"0 A while the connector is {status}"
+            if status in readout_watch.NO_ENERGY_STATUSES
+            else f"{_fmt_legs(assumed)} A now"
+        )
+        if watch.get("stuck_how") == readout_watch.HOUSEHOLD_LOCKSTEP:
+            _LOGGER.warning(
+                "EVSE %s: current readout looks stuck - it has read %s A "
+                "(L1/L2/L3), unchanged for %.0f s, while the house load "
+                "measured at %s followed the last %d changes of this charger's "
+                "limit, up and down, on phase(s) %s - that is the charger's "
+                "own draw, not the house's; %s. Controlling blind until it "
+                "moves again, assuming the charger draws what it was told on "
+                "%s (%s).",
+                load.entity_id,
+                _fmt_legs(watch.get("stuck_value") or ()),
+                silent_for,
+                watch.get("stuck_source") or "the grid",
+                watch.get("stuck_run") or 0,
+                ",".join(watch.get("stuck_phases") or ()),
+                cadence,
+                legs,
+                now_txt,
+            )
+        else:
+            in_force = watch.get("stuck_limit")
+            _LOGGER.warning(
+                "EVSE %s: current readout looks stuck - it has read %s A "
+                "(L1/L2/L3), unchanged for %.0f s, while the charger may "
+                "deliver at most %.1f A (%s); %s. Controlling blind until it "
+                "moves again, assuming the charger draws what it was told on "
+                "%s (%s).",
+                load.entity_id,
+                _fmt_legs(watch.get("stuck_value") or ()),
+                silent_for,
+                in_force if in_force is not None else 0.0,
+                (
+                    f"connector {status}, no energy flowing"
+                    if status in readout_watch.NO_ENERGY_STATUSES
+                    else "its commanded limit"
+                ),
+                cadence,
+                legs,
+                now_txt,
+            )
+    load.l1_current, load.l2_current, load.l3_current = assumed
+    load.draw_blind = True
+    load.draw_settled = False
+    load.draw_estimate = {
+        "load": load.entity_id,
+        "evidence": watch.get("stuck_how"),
+        "since": watch.get("stuck_at"),
+    }
+    watch["assumed"] = assumed
+    _LOGGER.debug(
+        "EVSE %s: blind - reading frozen at %s A, assuming %s A",
+        load.entity_id,
+        _fmt_legs(watch.get("stuck_value") or ()),
+        _fmt_legs(assumed),
+    )
+
+
+def _watch_readouts_against_household(hass, site, supply_phases, unusable,
+                                      source="the grid"):
+    """The frozen-LOW evidence path, for every EVSE on the site.
+
+    Runs once all loads are built (after any phase remap) and BEFORE the
+    feedback loop, on the household as the engine is about to reconstruct it:
+    ``supply_phases`` - what the site draws with our loads in it, per phase
+    (the signed grid reading, or off-grid the inverter output; see
+    hub_calculation._supply_per_phase) - minus every managed draw, blind loads
+    at their assumed draw and everything else as read. A charger whose reading
+    is stuck low shows up there as house load that steps with our own
+    commands to it (engine/readout_watch.observe_household).
+
+    A phase with no usable reading - None, or ``unusable`` (an unreadable CT
+    standing on the breaker assumption) - is skipped rather than judged.
+
+    A load judged stuck here goes blind on this very cycle; from the next one
+    its builder does it, ahead of the settle and SuspendedEV logic.
+    """
+    draws = [0.0, 0.0, 0.0]
+    for load in site.loads:
+        if load.dynamic_control:
+            for i, amps in enumerate(load.get_site_phase_draw()):
+                draws[i] += amps
+    household = {
+        phase: (
+            None
+            if supply_phases[i] is None or unusable[i]
+            else supply_phases[i] - draws[i]
+        )
+        for i, phase in enumerate(_PHASE_LABELS)
+    }
+    loads_rt = hass.data.get(DOMAIN, {}).get("loads", {})
+    now = time.monotonic()
+    for load in site.loads:
+        if load.device_type != DEVICE_TYPE_EVSE:
+            continue
+        watch = (loads_rt.get(load.load_id) or {}).get(EVSE_RT_READOUT_WATCH)
+        cycle = watch.get("cycle") if watch else None
+        if not cycle:
+            continue
+        legs = max(1, min(3, int(load.phases or 1)))
+        event = readout_watch.observe_household(
+            watch,
+            now=now,
+            household=household,
+            leg_phases=(load.l1_phase, load.l2_phase, load.l3_phase)[:legs],
+            status=cycle["status"],
+            commanded=cycle["commanded"],
+            drawing_current=LEG_DRAWING_CURRENT,
+        )
+        if event == "entered":
+            watch["stuck_source"] = source
+            _go_blind(load, watch, cycle["status"], cycle["commanded"], True, now)
 
 
 def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
@@ -360,6 +623,14 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     ):
         load.draw_assumed = True
 
+    # Stuck readout: a reading that goes on claiming a draw the charger has
+    # since been told it may not deliver is replaced by the draw it WAS told
+    # (blind mode). Ahead of the settle and SuspendedEV logic below, so both
+    # judge the draw the engine will actually use. Takes the RAW connector
+    # status: the SuspendedEV -> Finishing substitution below is the engine's
+    # verdict on the session, not a report from the charger.
+    _watch_readout(hass, entry, load, load_rt, connector_status)
+
     # Draw-settle detection: the measured draw is trusted as the EVSE's real
     # footprint - freeing the unused gap to lower-priority loads - only when
     # two conditions hold: it has held steady for SETTLE_DRAW_SECONDS
@@ -368,7 +639,20 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     # we keep treating the permit as its footprint. A still-ramping car keeps
     # changing and stays unsettled. Unmetered loads have no draw to settle.
     measured_draw = max(load.l1_current, load.l2_current, load.l3_current)
-    if load.unmetered:
+    # Blind: the "draw" is our own command echoed back, so it settling proves
+    # nothing about the car - the footprint rule for blind loads lives in
+    # target_calculator._pool_deduction instead.
+    #
+    # And the window runs only while the connector is Charging, opening afresh
+    # each time charging (re)starts. A draw can settle at the car's own ceiling
+    # only while energy flows; the 0 A of an empty connector, a car waiting to
+    # start (Preparing) or one paused (SuspendedEV, SuspendedEVSE) is steady
+    # for that reason alone. Counted, 15 s of it settled at 0 A and stayed
+    # settled into the first Charging cycle, while the meter still read 0: a
+    # footprint of 0 A instead of the car's minimum, and pass 2 then permitted
+    # the minimum ON TOP of the whole pool - 23 A against a 17 A allowance on
+    # a 25 A breaker with an 8 A house (dev/tests/test_start_settle.py).
+    if load.unmetered or load.draw_blind or connector_status != "Charging":
         load.draw_settled = False
         load_rt.pop("_settle_last_draw", None)
         load_rt.pop("_settle_since", None)

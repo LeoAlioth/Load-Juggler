@@ -43,7 +43,7 @@ scenarios:
   # sorted({"A","A","A"}) = "A", so the engine treats it as single-phase.
   - name: "1ph-1c-standard-phases3-all-mapped-to-A"
     description: "phases=3 with all L1/L2/L3 mapped to A - works because mask becomes 'A'"
-    human_verified: true
+    human_verified: false
     # UNDECIDED SEMANTICS, surfaced by the physical-invariant check 2026-09-07
     # (dev/TODO.md): a three-leg charger with every leg mapped to phase A is a
     # misconfiguration, and this scenario only pins that the engine reduces the
@@ -51,9 +51,11 @@ scenarios:
     # with three legs on one phase would draw 48 A there - 53 A with the 5 A
     # household, against a 35 A breaker. Either the permit should be divided by
     # the legs sharing the phase, or the config should be refused at setup. Not
-    # a regression: the permit is what it always was.
+    # a regression: the permit is what it always was. The same 48 A shows up
+    # as import past the 8050 W allowance (invariant D, 2026-09-24).
     known_invariant_breaches:
       - "phase A: 53.00 A drawn against a 35 A breaker"
+      - "grid import 53.00 A against the 35.00 A"
     site:
       voltage: 230
       main_breaker_rating: 35

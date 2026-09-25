@@ -292,6 +292,18 @@ def test_solar_series_output_subtracts_own_battery():
     assert member_solar(m, V) == 10.0 * V - 500
 
 
+def test_solar_off_grid_parallel_output_subtracts_own_battery():
+    # Off-grid the output is the site's supply: 2300 W out, 2300 W of it from
+    # the battery at night is 0 W of solar, not 2300 W; by day, charging
+    # 1000 W beside a 2300 W output, the panels make 3300 W.
+    out = PhaseValues(a=10.0, b=None, c=None)
+    night = _battery(soc=80, power=10.0 * V, output=out, topology="parallel")
+    day = _battery(soc=80, power=-1000, output=out, topology="parallel")
+    night.off_grid = day.off_grid = True
+    assert member_solar(night, V) == 0.0
+    assert member_solar(day, V) == 10.0 * V + 1000
+
+
 def test_solar_mixed_fleet_sums_per_member():
     par = _member("p", output=PhaseValues(a=10.0, b=None, c=None), topology="parallel")
     ser = _battery(
@@ -392,6 +404,25 @@ def test_one_dead_member_keeps_its_sibling_honest_and_silences_the_total():
     assert solar_total([live, dead], V) == 3000.0
     # ...and the publisher is told the sum cannot be shown as a measurement.
     assert solar_is_assumed([live, dead]) is True
+
+
+def test_an_off_grid_output_nothing_splits_is_not_published():
+    """Off-grid with the battery's power unread, the output is the site's whole
+    supply and nothing takes the battery back out: the engine keeps the output
+    as its solar, the publisher gets None. A read battery (held or live), a
+    grid-tied site and a battery-less inverter all publish."""
+    out = PhaseValues(a=10.0, b=None, c=None)
+    unread = _battery(soc=80, power=None, output=out, off_grid=True)
+    read = _battery(soc=80, power=1000.0, output=out, off_grid=True)
+    grid_tied = _battery(soc=80, power=None, output=out)
+    pv_only = _member(output=out, off_grid=True)
+    assert solar_total([unread], V) == 10.0 * V
+    assert member_solar_published(unread, V) is None
+    assert solar_is_assumed([unread]) is True
+    assert member_solar_published(read, V) == 10.0 * V - 1000.0
+    assert member_solar_published(grid_tied, V) == 10.0 * V
+    assert member_solar_published(pv_only, V) == 10.0 * V
+    assert solar_is_assumed([read, grid_tied, pv_only]) is False
 
 
 def test_forecast_device_ids_merge_and_dedupe():
