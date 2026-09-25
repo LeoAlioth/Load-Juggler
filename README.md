@@ -117,7 +117,7 @@ When multiple loads share a sub-breaker (e.g., two chargers on a 20A circuit), c
 Load Juggler works on off-grid installations. When no grid CT entities are configured:
 - Active phases are inferred from inverter output entities
 - Grid current is treated as 0A (same calculation engine, no separate code paths)
-- Solar production is derived from inverter output less its battery power (`solar = inverter - battery`), on either wiring: with no grid, the inverter's output is everything the site draws from it. Without a battery power sensor (and with a battery configured) nothing splits the two, and Solar Power and Solar Remaining Power read unknown. With no battery at all, what solar loads may use is the sun less the house
+- Solar production is derived from inverter output less its battery power (`solar = inverter - battery`), on either wiring: with no grid, the inverter's output is everything the site draws from it. Without a battery power sensor (and with a battery configured) nothing splits the two, and Solar Power and Solar Remaining Power read unknown. With no battery at all, what solar loads may use is the sun less the house. Where nothing measures the spare sun (inverter output sensors alone, or a solar sensor alone), a waiting load is started by trying: it is offered its minimum and keeps it only if production follows, and each failed try in a row doubles the wait before the next, up to 30 minutes. A solar production sensor beside the inverter output sensors measures the spare sun, so nothing needs trying.
 
 Configure inverter output entities on the inverter entry. The hub status sensor shows "Off-grid mode" when no grid CTs are present.
 
@@ -453,6 +453,14 @@ The hub creates a **Status** sensor that shows the site health:
 - **Grid sensors unavailable** - configured grid CT sensors are returning unavailable/unknown. Chargers hold last known values for 60s, then fall to minimum current as a safety measure.
 
 Check the sensor's `warnings` attribute for details.
+
+### Charging Status says "readout stuck"
+
+**Symptom:** a charger's *Charging Status* reads, for example, "Charging (readout stuck - controlled on assumed current)"
+
+**Cause:** the charger goes on obeying its charging profiles while the current or power it reports has stopped changing. Load Juggler controls it on the current it was told to draw and reserves that in full, so the other loads stay inside your limits. *Current Managed Power*, *Household Power* and the charger's *Allocated Current* show estimates meanwhile, with an `estimated: true` attribute, and the charger's *Available Current* sensor carries the details as `readout_*` attributes.
+
+**Solution:** nothing is needed to recover - it ends by itself once the reading moves again, or when the car is unplugged. If it keeps happening, check the charger's meter values in its OCPP settings or firmware.
 
 ### No entities showing up
 
