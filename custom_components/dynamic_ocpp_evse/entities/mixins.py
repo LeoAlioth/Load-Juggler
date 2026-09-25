@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.restore_state import RestoredExtraData
 
 from ..const import (
     DOMAIN,
@@ -496,9 +497,31 @@ class LoadEntityMixin(LoadJugglerEntity):
         if load_data is not None:
             load_data[self._load_data_key] = value
 
+    @property
+    def extra_restore_state_data(self):
+        """The configured value this slider was seeded from (see below)."""
+        seed = getattr(self, "_seed", None)
+        if seed is None:
+            return super().extra_restore_state_data
+        return RestoredExtraData({"seed": seed})
+
     async def _restore_and_publish_number(self):
-        """Restore a NumberEntity's last state and publish to shared load data."""
-        _apply_restored_number(self, await self.async_get_last_state())
+        """Restore a NumberEntity's last state and publish to shared load data.
+
+        Every load slider is seeded from its configured value, and the restored
+        state used to win over it for ever - so a setpoint, power or current
+        changed on the load's settings page (or entered for a tank re-created
+        under the same name) never reached the slider. The seed is now saved
+        beside the state: a restore whose seed differs from today's is from
+        before the setting changed, and the new setting wins. A slider moved by
+        hand keeps its value while the setting stays put. A state saved without
+        a seed (before 2.1.4) restores as it always did.
+        """
+        self._seed = self._attr_native_value
+        last_extra = await self.async_get_last_extra_data()
+        saved_seed = (last_extra.as_dict() if last_extra else {}).get("seed")
+        if saved_seed is None or saved_seed == self._seed:
+            _apply_restored_number(self, await self.async_get_last_state())
         self.async_write_ha_state()
         self._write_to_load_data(self._attr_native_value)
 
