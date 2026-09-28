@@ -1,5 +1,13 @@
 # Release Notes
 
+## 2.1.5
+
+### Bug Fixes
+
+- **A smart load's switch picked again on its settings page is now used**: the switch was read from what the load was set up with and never from its settings page, so a switch changed there was saved but ignored - the load went on switching, and reading the state of, the old one. Renaming the switch's entity made that visible: once the old entity ID was gone the load commanded a switch that no longer existed, Home Assistant logged it as missing every cycle, the load's Status read *Unavailable*, and the device was never switched again (a well pump, from the day its switch was renamed). The switch is now read like the load's other settings, the settings page's choice first, by the switching, the on/off reading and the Status sensor alike. A load whose settings were never changed keeps the switch it was set up with; one whose switch was renamed needs it picked again on its settings page.
+
+---
+
 ## 2.1.4
 
 ### Bug Fixes
