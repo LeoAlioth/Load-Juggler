@@ -96,3 +96,20 @@ def get_inverters_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[Config
 def get_groups_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigEntry]:
     """Get all circuit group config entries for a hub."""
     return _children_of_hub(hass, hub_entry_id, ENTRY_TYPE_GROUP)
+
+
+def follow_renames(value, renames: dict):
+    """``value`` - an entry's data or options - with every string that IS a
+    renamed entity id, key or value, swapped for its new id. Home Assistant
+    moves an entity's history on a rename but not the settings that name it:
+    after Anze's renames of 2026-09-28 the well pump's switch, the plugs and
+    the meters here pointed at entities that no longer existed."""
+    if isinstance(value, str):
+        return renames.get(value, value)
+    if isinstance(value, list):
+        return [follow_renames(v, renames) for v in value]
+    if isinstance(value, tuple):
+        return tuple(follow_renames(v, renames) for v in value)
+    if isinstance(value, dict):
+        return {follow_renames(k, renames): follow_renames(v, renames) for k, v in value.items()}
+    return value
