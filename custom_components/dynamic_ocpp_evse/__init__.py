@@ -1,4 +1,4 @@
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.config_entries import (
     ConfigEntry,
     SOURCE_IMPORT,
@@ -8,7 +8,8 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.script import Script
-from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from homeassistant.helpers.debounce import Debouncer
+from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED, async_get as async_get_entity_registry
 from datetime import datetime, timedelta
 import logging
 import voluptuous as vol
@@ -104,6 +105,7 @@ from .helpers import (
 from . import units
 from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
 from .registry import (  # noqa: F401 - re-exported; canonical home is registry.py
+    follow_renames,
     get_loads_for_hub,
     get_groups_for_hub,
     get_hub_for_load,
@@ -111,6 +113,9 @@ from .registry import (  # noqa: F401 - re-exported; canonical home is registry.
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# how long renamed entities are gathered before they are followed
+RENAME_SETTLE_S = 5.0
 
 # Define the config schema
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -693,6 +698,36 @@ async def async_setup(hass: HomeAssistant, config: dict):
             vol.Required("current"): vol.Coerce(float),
         }),
     )
+
+    # Renamed entities: gathered for a few seconds - a rename tool changes
+    # dozens at once - then written into every entry that names them, each
+    # of which then reloads. Registered here rather than per entry so a
+    # rename landing while an entry reloads is not missed.
+    pending: dict = {}
+
+    async def _follow() -> None:
+        renames = dict(pending)
+        pending.clear()
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            data, options = follow_renames(dict(entry.data), renames), follow_renames(dict(entry.options), renames)
+            if data != dict(entry.data) or options != dict(entry.options):
+                _LOGGER.info("Following renamed entities in %s: %s", entry.title, renames)
+                hass.config_entries.async_update_entry(entry, data=data, options=options)
+
+    flush = Debouncer(hass, _LOGGER, cooldown=RENAME_SETTLE_S, immediate=False, function=_follow)
+
+    @callback
+    def _renamed(event) -> None:
+        old, new = event.data.get("old_entity_id"), event.data.get("entity_id")
+        if event.data.get("action") != "update" or not old or not new or old == new:
+            return
+        for k, v in list(pending.items()):   # renamed twice before the flush: a to b to c
+            if v == old:
+                pending[k] = new
+        pending[old] = new
+        hass.async_create_task(flush.async_call())
+
+    hass.bus.async_listen(EVENT_ENTITY_REGISTRY_UPDATED, _renamed)
 
     return True
 
