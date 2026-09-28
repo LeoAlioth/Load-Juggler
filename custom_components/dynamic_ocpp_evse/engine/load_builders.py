@@ -754,7 +754,7 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
     connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
     phases = len(connected_to_phase)
 
-    plug_switch_entity = entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
+    plug_switch_entity = get_entry_value(entry, CONF_PLUG_SWITCH_ENTITY_ID)
     plug_switch_state = (
         hass.states.get(plug_switch_entity) if plug_switch_entity else None
     )

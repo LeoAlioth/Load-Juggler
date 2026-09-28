@@ -237,7 +237,7 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
             # in place (the entity is renamed, not duplicated).
             f"{entity_id}_charging_status",
         )
-        self._switch_entity = config_entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
+        self._switch_entity = get_entry_value(config_entry, CONF_PLUG_SWITCH_ENTITY_ID)
         self._attr_native_value = "Unknown"
         self._attr_icon = "mdi:power-plug-off-outline"
 
