@@ -7,6 +7,9 @@ from ..const import (
     AUTO_RESET_COOLDOWN_SECONDS,
     AUTO_RESET_MISMATCH_SECONDS,
     ESCALATION_PROFILE_RESET_LIMIT,
+    COMPLIANCE_IDLE_CONNECTOR_STATUSES,
+    FIRMWARE_BUSY_STATES,
+    FIRMWARE_BUSY_HOLD_SECONDS,
     DEFAULT_UPDATE_FREQUENCY,
     RAMP_DOWN_RATE,
     DEAD_BAND,
@@ -25,6 +28,22 @@ from ..helpers import get_entry_value
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _charger_id(sensor):
+    """The OCPP charge point id the charger's own entities are named after."""
+    return sensor.config_entry.data.get(CONF_CHARGER_ID) or sensor.config_entry.data.get(CONF_ENTITY_ID)
+
+
+def firmware_busy(sensor) -> bool:
+    """The charger said, within FIRMWARE_BUSY_HOLD_SECONDS, that it is
+    fetching or installing firmware - see FIRMWARE_BUSY_STATES."""
+    charger_id = _charger_id(sensor)
+    state = sensor.hass.states.get(f"sensor.{charger_id}_status_firmware") if charger_id else None
+    if state is None or state.state not in FIRMWARE_BUSY_STATES:
+        return False
+    changed = getattr(state, "last_changed", None)
+    return changed is not None and (datetime.now(timezone.utc) - changed).total_seconds() < FIRMWARE_BUSY_HOLD_SECONDS
 
 
 def _clear_mismatch(sensor) -> None:
@@ -62,6 +81,11 @@ async def check_profile_compliance(
     connector_status = units.state_or_unknown(connector_status_state)
     # No car, or a status we cannot read - nothing to be compliant about.
     if connector_status == "Available" or units.is_unavailable_state(connector_status):
+        _clear_mismatch(sensor)
+        return
+    # The car is not drawing, or the charger is updating itself: nothing a
+    # reset could fix, and a reset mid-update is one that can hurt.
+    if connector_status in COMPLIANCE_IDLE_CONNECTOR_STATUSES or firmware_busy(sensor):
         _clear_mismatch(sensor)
         return
 
@@ -237,9 +261,7 @@ async def perform_hard_reset(sensor) -> None:
     # The OCPP reset button is named after the OCPP charge point ID, not the
     # Load Juggler entity_id - same resolution as the connector/control
     # entities in load.py and hub_calculation.py.
-    charger_id = sensor.config_entry.data.get(
-        CONF_CHARGER_ID
-    ) or sensor.config_entry.data.get(CONF_ENTITY_ID)
+    charger_id = _charger_id(sensor)
     if not charger_id:
         _LOGGER.error(
             "Cannot hard reset %s: no OCPP charger ID configured", sensor._attr_name

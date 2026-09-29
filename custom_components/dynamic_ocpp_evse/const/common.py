@@ -361,6 +361,20 @@ AUTO_RESET_MISMATCH_SECONDS = 60.0
 AUTO_RESET_COOLDOWN_SECONDS = 120    # seconds to wait after reset before checking again
 ESCALATION_PROFILE_RESET_LIMIT = 3   # profile resets before escalating to hard reset
 HARD_RESET_COOLDOWN_SECONDS = 300    # seconds to wait after hard reset (5 minutes)
+# Connector states in which the car is not drawing, so there is nothing to
+# comply with: a suspended car's charger reports its offered current rarely -
+# Home's Elvi said 6-8 A all night against 16 A commanded, the car drawing
+# nothing - and no reset changes that. Judged anyway, it was a profile reset
+# every three minutes and a hard reset every fourteen, for nine nights
+# (2026-09-29).
+COMPLIANCE_IDLE_CONNECTOR_STATUSES = ("SuspendedEV", "SuspendedEVSE")
+# A charger fetching or installing firmware is not reset: FirmwareStatus as
+# the OCPP integration's "status firmware" sensor carries it...
+FIRMWARE_BUSY_STATES = ("Downloading", "Downloaded", "Installing")
+# ...but only a report this recent counts. The sensor keeps the last one
+# for good, and the Elvi's has said Downloading since 21 Sep; restored on a
+# restart, it holds the checks for this long after one.
+FIRMWARE_BUSY_HOLD_SECONDS = 3600
 
 # Operating mode configuration (per-load). The shared pieces are only the
 # OperatingMode dataclass and the BEHAVIOR_* engine behaviors below. Each
