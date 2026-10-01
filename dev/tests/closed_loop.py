@@ -1,4 +1,4 @@
-"""The closed-loop rig the HA-tier permit tests share.
+"""The closed-loop rigs the HA-tier tests share.
 
 Machine-authored - not yet human-reviewed.
 
@@ -7,9 +7,16 @@ the real permit pipeline (``control.smoothing.apply_smoothing``) - against a
 plant the test supplies: each cycle the plant moves its cars on the commands
 in force and sets its meters, the engine sizes the permits on what they read,
 and the pipeline turns those into the next commands.
+
+``clocked`` is for the rigs that run the whole hub cycle
+(``sensor.async_run_hub_cycle``) instead, load processor and OCPP call
+included, on a monotonic clock the test advances.
 """
 
+import time
+from contextlib import ExitStack, contextmanager
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from freezegun import freeze_time
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -28,10 +35,19 @@ from custom_components.dynamic_ocpp_evse.const import (
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
 )
+from custom_components.dynamic_ocpp_evse.control import compliance, status
 from custom_components.dynamic_ocpp_evse.control.smoothing import apply_smoothing
+from custom_components.dynamic_ocpp_evse.engine import (
+    auto_detect,
+    hub_calculation,
+    hub_result,
+    load_builders,
+    readers,
+)
 from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
     run_hub_calculation,
 )
+from custom_components.dynamic_ocpp_evse.entities import load as load_entity
 
 V = 230.0
 DT = 2                                # the default site cycle, seconds
@@ -130,3 +146,42 @@ async def close_loop(hass, hub, evses, cycles, plant, *, at,
                        permit=permits[0] if single else permits)
             trace.append(row)
     return trace
+
+
+# Every module of the hub cycle that reads time.monotonic().
+_CLOCKED = (
+    load_builders, hub_calculation, readers, hub_result, auto_detect,
+    load_entity, status, compliance,
+)
+
+
+class Clock:
+    """``time`` as the modules above see it: monotonic() is ours to advance,
+    everything else is the real module."""
+
+    def __init__(self, start):
+        self.now = start
+
+    def monotonic(self):
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+@contextmanager
+def clocked(accept, *patches):
+    """The hub cycle's modules on a ``Clock`` from 10 000 s, which it yields,
+    and every service call it makes answered by ``accept`` - plus any further
+    ``patches``, all undone on the way out."""
+    clock = Clock(10_000.0)
+    with ExitStack() as stack:
+        for module in _CLOCKED:
+            stack.enter_context(patch.object(module, "time", clock))
+        stack.enter_context(patch(
+            "homeassistant.core.ServiceRegistry.async_call",
+            new_callable=AsyncMock, side_effect=accept,
+        ))
+        for extra in patches:
+            stack.enter_context(extra)
+        yield clock
