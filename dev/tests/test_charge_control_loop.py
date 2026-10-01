@@ -45,17 +45,11 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_ENTITY_ID,
-    CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
-    CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
-    CONF_EVSE_MINIMUM_CHARGE_CURRENT,
-    CONF_CHARGER_ID,
     CONF_FORECAST_SOC_FLOOR,
     CONF_GRID_EXPORT_LIMIT,
     CONF_HUB_ENTRY_ID,
-    CONF_LOAD_PRIORITY,
     CONF_MAIN_BREAKER_RATING,
     CONF_NAME,
-    CONF_PHASES,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
@@ -65,9 +59,10 @@ from custom_components.dynamic_ocpp_evse.const import (
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
-    ENTRY_TYPE_LOAD,
     INVERTER_RT_CONTROL_ENABLED,
 )
+
+from .closed_loop import evse_entry
 
 LIMIT = 5000.0          # export limit, and the wall the inverter enforces
 MARGIN = 500.0          # Excess trigger margin - the register's slew step too
@@ -125,31 +120,13 @@ def _inverter(hub, slug, interval=None):
     )
 
 
-def _evse(hub):
-    """A 1-phase 6→16 A Excess EVSE, for the yield row."""
-    return MockConfigEntry(
-        domain=DOMAIN, version=2, minor_version=4, title="Loop EVSE",
-        data={CONF_NAME: "Loop EVSE",
-              CONF_ENTITY_ID: "loop_evse",
-              ENTRY_TYPE: ENTRY_TYPE_LOAD,
-              CONF_CHARGER_ID: "loop_evse",
-              CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.loop_evse_current",
-              CONF_HUB_ENTRY_ID: hub.entry_id},
-        options={
-            CONF_LOAD_PRIORITY: 1,
-            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
-            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 16,
-            CONF_PHASES: 1,
-        },
-    )
-
-
 async def _rig(hass, slug, soc, clip=False, interval=None, writes=None,
                with_evse=False):
     hub = _hub(slug)
     inverter = _inverter(hub, slug, interval=interval)
     inverter.add_to_hass(hass)
-    load = _evse(hub) if with_evse else None
+    # A 1-phase 6→16 A Excess EVSE, for the yield row.
+    load = evse_entry(hub, "loop_evse", hi=16) if with_evse else None
     loads = {}
     if load is not None:
         load.add_to_hass(hass)
