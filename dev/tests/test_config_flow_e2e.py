@@ -188,11 +188,6 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
     assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_HUB
     assert entry.data[CONF_NAME] == "My Solar Hub"
     assert entry.data[CONF_ENTITY_ID] == "my_solar_hub"
-    # Born imported: the legacy hub inverter/battery pages never show
-    from custom_components.dynamic_ocpp_evse.const import (
-        MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
-    )
-    assert entry.data[MIGRATE_HUB_INVERTER_IMPORTED_FLAG] is True
 
     # Verify options were seeded (background task runs immediately in tests)
     await hass.async_block_till_done()
@@ -241,10 +236,6 @@ def _make_forecast_device(hass, slug, watts=True, name=None):
 
 def _bare_hub(hass, name="Forecast Hub", slug="forecast_hub", **options):
     """A hub with no hardware of its own - the post-slimming shape."""
-    from custom_components.dynamic_ocpp_evse.const import (
-        MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
-    )
-
     hub = MockConfigEntry(
         domain=DOMAIN,
         version=2,
@@ -254,7 +245,6 @@ def _bare_hub(hass, name="Forecast Hub", slug="forecast_hub", **options):
             CONF_NAME: name,
             CONF_ENTITY_ID: slug,
             ENTRY_TYPE: ENTRY_TYPE_HUB,
-            MIGRATE_HUB_INVERTER_IMPORTED_FLAG: True,
         },
         options={CONF_GRID_EXPORT_LIMIT: 5000, **options},
     )
@@ -1768,10 +1758,9 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
 
 async def test_hub_inverter_auto_import(hass: HomeAssistant):
     """The import flow moves the hub's legacy inverter/battery fields onto a
-    new inverter entry, blanks them from the hub and sets the imported flag."""
+    new inverter entry and blanks them from the hub."""
     from custom_components.dynamic_ocpp_evse.const import (
         ENTRY_TYPE_INVERTER,
-        MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
         CONF_BATTERY_CAPACITY_KWH,
         CONF_WIRING_TOPOLOGY,
         CONF_BATTERY_SOC_HYSTERESIS,
@@ -1825,8 +1814,7 @@ async def test_hub_inverter_auto_import(hass: HomeAssistant):
     assert inverter.options[CONF_SOLAR_PRODUCTION_ENTITY_ID] == "sensor.pv_power"
     assert inverter.options[CONF_SOLAR_FORECAST_DEVICE_IDS] == ["dev_east"]
 
-    # The hub is blanked and flagged; site policy stays behind.
-    assert hub.data[MIGRATE_HUB_INVERTER_IMPORTED_FLAG] is True
+    # The hub is blanked; site policy stays behind.
     assert CONF_INVERTER_MAX_POWER not in hub.options
     assert CONF_BATTERY_SOC_ENTITY_ID not in hub.options
     assert CONF_SOLAR_PRODUCTION_ENTITY_ID not in hub.options
@@ -1881,10 +1869,6 @@ async def test_hub_inverter_auto_import_is_idempotent(hass: HomeAssistant):
     """A second import run (restart between entry creation and blanking)
     aborts on the unique_id but STILL blanks the re-appeared hub fields -
     the double-count window must close on every path."""
-    from custom_components.dynamic_ocpp_evse.const import (
-        MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
-    )
-
     hub = MockConfigEntry(
         domain=DOMAIN,
         version=2,
@@ -1919,7 +1903,6 @@ async def test_hub_inverter_auto_import_is_idempotent(hass: HomeAssistant):
     assert result["reason"] == "already_configured"
     # Blanked again despite the abort
     assert CONF_BATTERY_SOC_ENTITY_ID not in hub.options
-    assert hub.data[MIGRATE_HUB_INVERTER_IMPORTED_FLAG] is True
 
     # Only one inverter entry exists
     inverters = [
@@ -1940,7 +1923,6 @@ async def test_hub_inverter_import_merges_later_fields(hass: HomeAssistant):
         ENTRY_TYPE_INVERTER,
         DEVICE_TYPE_INVERTER,
         CONF_DEVICE_TYPE,
-        MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
     )
 
     hub = MockConfigEntry(
@@ -1952,7 +1934,6 @@ async def test_hub_inverter_import_merges_later_fields(hass: HomeAssistant):
             CONF_NAME: "Migrated Hub",
             CONF_ENTITY_ID: "migrated_hub",
             ENTRY_TYPE: ENTRY_TYPE_HUB,
-            MIGRATE_HUB_INVERTER_IMPORTED_FLAG: True,
         },
         options={
             CONF_GRID_EXPORT_LIMIT: 13500,

@@ -28,8 +28,6 @@ from ..const import (
     CONF_CIRCUIT_GROUP_MEMBERS,
     CONF_DEVICE_TYPE,
     CONF_HUB_ENTRY_ID,
-    CONF_INVERTER_MAX_POWER,
-    CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_OCPP_DEVICE_ID,
     CONF_PRIORITY_ORDER,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
@@ -52,14 +50,12 @@ from ..const import (
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
     FIELD_OCPP_DEVICE,
-    MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
     OCPP_INTEGRATION_DOMAIN,
     CONF_INVERTER_FEATURES,
     INVERTER_FEATURE_BATTERY,
     INVERTER_FEATURE_BATTERY_CONTROL,
     INVERTER_FEATURE_SOLAR,
 )
-from ..detection_patterns import BATTERY_MAX_DISCHARGE_POWER_PATTERNS
 from ..helpers import (
     get_entry_value,
     validate_charger_settings,
@@ -67,7 +63,6 @@ from ..helpers import (
 )
 from ..helpers import hub_has_battery, inverter_features, strip_unfeatured_inverter_options
 from .helpers import (
-    _BATTERY_ENTITY_KEYS,
     _BATTERY_UNIT_MAP,
     _GRID_ENTITY_KEYS,
     _GRID_UNIT_MAP,
@@ -75,13 +70,11 @@ from .helpers import (
     _INVERTER_OUTPUT_UNIT_MAP,
     _LOGGER,
     _PLUG_ENTITY_KEYS,
-    _POWER_FACTOR,
     _SOLAR_UNIT_MAP,
     _STATION_ENTITY_KEYS,
     _TANK_ENTITY_KEYS,
     _WRITE_CONTROL_UNIT_MAP,
     _apply_priority_order,
-    _auto_detect_entity_value,
     _controlled_devices,
     _detect_charge_rate_unit,
     _hub_phase_count,
@@ -107,9 +100,6 @@ from .schemas import (
     _charger_current_schema,
     _charger_timing_schema,
     _hot_water_tank_schema,
-    _hub_battery_schema,
-    _hub_grid_schema,
-    _hub_inverter_schema,
     _plug_schema,
     _power_station_schema,
     _inverter_features_schema,
@@ -209,58 +199,41 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         step_id: str,
         schema,
         next_step,
-        entity_keys: list[str] | None = None,
-        list_normalizers: tuple = (),
-        unit_map: dict | None = None,
         validate=None,
-        finalize=None,
-        show_defaults=None,
         placeholders=None,
     ) -> config_entries.FlowResult:
-        """Run one page of a multi-step edit wizard: normalize → validate → on.
+        """Run one page of the charger edit wizard: validate → on.
 
         The same skeleton as _async_edit_page, except a clean submit routes to
         ``next_step`` instead of saving - the input piles up in ``self._data``
         until the wizard's final step calls _save(). A failed validation
         re-shows the form over the submitted input alone; the first show uses
-        the stored config, or ``show_defaults`` where a page has to massage it.
+        the stored config.
 
-        Hooks beyond _async_edit_page's:
-            show_defaults: replaces the stored config on the first show.
-            placeholders: form placeholders every show needs (a detected-value
-                hint); ``validate`` may add more, for the error re-show only.
+        Hooks:
+            validate: check(data, errors), may rewrite ``data``.
+            placeholders: form placeholders every show needs.
         """
         errors: dict[str, str] = {}
-        extra_placeholders = None
 
         if user_input is not None:
-            user_input = _normalize_optional_inputs(user_input, entity_keys)
-            for normalize_list in list_normalizers:
-                user_input = normalize_list(user_input)
-            if unit_map:
-                _validate_entity_units(self.hass, user_input, unit_map, errors)
+            user_input = dict(user_input)
             if validate is not None:
-                extra_placeholders = validate(user_input, errors)
+                validate(user_input, errors)
             if not errors:
                 self._data.update(user_input)
-                if finalize is not None:
-                    finalize(self._data)
                 return await next_step()
             form_defaults = user_input
-        elif show_defaults is not None:
-            form_defaults = show_defaults()
         else:
             form_defaults = self._defaults
 
-        shown = {
-            **(placeholders() if placeholders is not None else {}),
-            **(extra_placeholders or {}),
-        }
         return self.async_show_form(
             step_id=step_id,
             data_schema=schema(form_defaults),
             errors=errors,
-            description_placeholders=shown or None,
+            description_placeholders=(
+                placeholders() if placeholders is not None else None
+            ),
             last_step=False,
         )
 
@@ -287,13 +260,13 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 menu_options.append("inverter_control")
             menu_options.append("overview")
             return self.async_show_menu(step_id="init", menu_options=menu_options)
-        if entry_type == ENTRY_TYPE_HUB and self.config_entry.data.get(
-            MIGRATE_HUB_INVERTER_IMPORTED_FLAG
-        ):
-            # A hub whose hardware lives on inverter entries edits its own
-            # settings one question per page. The battery/forecast policy is
-            # offered only while some inverter on it declares a battery; the
-            # priority order only while it has loads to order.
+        if entry_type == ENTRY_TYPE_HUB:
+            # A hub edits its own settings one question per page - its
+            # hardware lives on inverter entries (a hub still carrying legacy
+            # hardware fields has them moved there on its next setup). The
+            # battery/forecast policy is offered only while some inverter on
+            # it declares a battery; the priority order only while it has
+            # loads to order.
             menu_options = ["hub_connection", "hub_export"]
             if hub_has_battery(self.hass, self.config_entry):
                 menu_options.append("hub_policy")
@@ -303,12 +276,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 menu_options.append("priority")
             menu_options += ["overview", "summary"]
             return self.async_show_menu(step_id="init", menu_options=menu_options)
-        # A hub still carrying legacy hardware fields (never auto-imported)
-        # keeps the wizard, whose later pages edit those fields.
-        menu_options = ["settings", "overview"]
-        if entry_type == ENTRY_TYPE_HUB:
-            menu_options.append("summary")
-        return self.async_show_menu(step_id="init", menu_options=menu_options)
+        return self.async_show_menu(
+            step_id="init", menu_options=["settings", "overview"]
+        )
 
     async def async_step_overview(
         self, user_input: dict[str, Any] | None = None
@@ -354,12 +324,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Route to the editable pages for this entry type."""
-        # A pre-2.0 entry carries no entry_type - those are hubs (async_setup
-        # stamps the type on load, so this only matters before the first load).
-        entry_type = self.config_entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
-
-        if entry_type == ENTRY_TYPE_HUB:
-            return await self.async_step_hub_grid()
+        entry_type = self.config_entry.data.get(ENTRY_TYPE)
         if entry_type == ENTRY_TYPE_LOAD:
             device_type = self.config_entry.data.get(CONF_DEVICE_TYPE)
             if device_type == DEVICE_TYPE_PLUG:
@@ -477,44 +442,6 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             ),
         )
 
-    async def async_step_hub_grid(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """Hub settings step 1: the grid connection and the site policy.
-
-        No auto-detection when editing an existing hub - only the initial
-        install scans for entities. Re-detecting here can grab entities from an
-        unrelated system (e.g. a second inverter in another building), silently
-        adding phantom phases. The stored values are shown as-is.
-        """
-
-        def _require_battery_when_offgrid(data, errors) -> None:
-            # Dropping the grid CTs here is what makes a hub off-grid, so this
-            # is where the battery requirement belongs now that the battery
-            # itself lives on an inverter entry.
-            validate_offgrid_battery_requirement(
-                data, self._defaults, errors,
-                hass=self.hass, hub_entry_id=self.config_entry.entry_id,
-            )
-
-        async def _next() -> config_entries.FlowResult:
-            # Post-import the hardware (inverters, batteries, PV sensors and
-            # forecast sources) is edited on the inverter entries - the legacy
-            # hub pages are skipped entirely.
-            if self.config_entry.data.get(MIGRATE_HUB_INVERTER_IMPORTED_FLAG):
-                return await self.async_step_priority()
-            return await self.async_step_hub_inverter()
-
-        return await self._async_wizard_page(
-            user_input,
-            step_id="hub_grid",
-            schema=lambda defaults: _hub_grid_schema(self.hass, defaults),
-            next_step=_next,
-            entity_keys=_GRID_ENTITY_KEYS,
-            unit_map=_GRID_UNIT_MAP,
-            validate=_require_battery_when_offgrid,
-        )
-
     async def async_step_hub_connection(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
@@ -586,88 +513,10 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             validate=validate_hub_filters,
         )
 
-    async def async_step_hub_inverter(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """LEGACY hub inverter page - reachable only while the hub still
-        carries those fields (i.e. before the one-time auto-import).
-
-        No auto-detection when editing an existing hub: re-detecting the
-        inverter output phases here can grab a different inverter's per-phase
-        sensors (e.g. a 3-phase system in another building), creating phantom
-        L2/L3 phases that split the available power across phases that don't
-        exist on this site. The stored values are shown as-is.
-        """
-
-        def _battery_power_hint() -> dict[str, str]:
-            """Detected battery discharge power - form text only, sets nothing."""
-            hint = _auto_detect_entity_value(
-                self.hass, BATTERY_MAX_DISCHARGE_POWER_PATTERNS, _POWER_FACTOR
-            )
-            return {
-                "battery_power_hint": f"{hint}W detected" if hint else "not detected"
-            }
-
-        def _stored_with_zeroed_caps() -> dict[str, Any]:
-            """Stored values, with 0 standing in for an unset power cap."""
-            defaults = self._defaults
-            return {
-                **defaults,
-                **{
-                    key: 0
-                    for key in (
-                        CONF_INVERTER_MAX_POWER,
-                        CONF_INVERTER_MAX_POWER_PER_PHASE,
-                    )
-                    if defaults.get(key) is None
-                },
-            }
-
-        return await self._async_wizard_page(
-            user_input,
-            step_id="hub_inverter",
-            schema=lambda defaults: _hub_inverter_schema(self.hass, defaults),
-            next_step=self.async_step_hub,
-            entity_keys=_INVERTER_ENTITY_KEYS,
-            unit_map=_INVERTER_OUTPUT_UNIT_MAP,
-            finalize=_normalize_inverter_power_caps,
-            show_defaults=_stored_with_zeroed_caps,
-            placeholders=_battery_power_hint,
-        )
-
-    async def async_step_hub(
-        self, user_input: dict[str, Any] | None = None
-    ) -> config_entries.FlowResult:
-        """LEGACY hub solar/battery page - reachable only while the hub still
-        carries those fields (i.e. before the one-time auto-import).
-
-        No auto-detection here either: re-detecting can grab battery/solar
-        entities from an unrelated system. The stored values are shown as-is.
-        """
-
-        def _validate(data, errors) -> dict[str, str] | None:
-            bad_forecast_entity = _validate_forecast_devices(self.hass, data, errors)
-            validate_offgrid_battery_requirement(
-                {**self._defaults, **self._data}, data, errors,
-                hass=self.hass, hub_entry_id=self.config_entry.entry_id,
-            )
-            return {"entity": bad_forecast_entity} if bad_forecast_entity else None
-
-        return await self._async_wizard_page(
-            user_input,
-            step_id="hub",
-            schema=lambda defaults: _hub_battery_schema(self.hass, defaults),
-            next_step=self.async_step_priority,
-            entity_keys=_BATTERY_ENTITY_KEYS,
-            list_normalizers=(_normalize_forecast_list,),
-            unit_map=_SOLAR_UNIT_MAP | _BATTERY_UNIT_MAP,
-            validate=_validate,
-        )
-
     async def async_step_priority(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Hub options final step: reorder all controlled devices by priority.
+        """Hub options: reorder all controlled devices by priority.
 
         Presents one ordered multi-select listing every load (EVSE, smart plug,
         hot-water tank) linked to this hub. The selection order becomes the

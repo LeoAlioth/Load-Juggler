@@ -850,9 +850,9 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Auto-import: a hub still carrying legacy hub-level HARDWARE config
     # (inverter, battery or PV entities and capacities - bare charge/discharge
     # defaults don't count) gets it moved onto a standalone inverter entry.
-    # The trigger is the presence of a field, not the imported flag, so a
-    # release that moves one more field onto the inverter converges on the
-    # next restart; blanking removes the trigger, making it self-terminating.
+    # The trigger is the presence of a field, so a release that moves one
+    # more field onto the inverter converges on the next restart; blanking
+    # removes the trigger, making it self-terminating.
     # Until the import lands the engine keeps treating the hub's fields as one
     # implicit fleet member, so nothing is lost or double-counted in between.
     if any(

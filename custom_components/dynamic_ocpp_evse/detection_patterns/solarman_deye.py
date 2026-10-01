@@ -56,8 +56,3 @@ GRID_CT = [
         "unit": "A",
     },
 ]
-
-BATTERY_MAX_DISCHARGE_POWER = [
-    {"name": "Solarman/Deye", "pattern": r'number\..*(?:battery.*discharge.*power|discharge.*power.*limit)'},
-    {"name": "Solarman/Deye (program)", "pattern": r'number\..*inverter_program.*discharge.*power'},
-]

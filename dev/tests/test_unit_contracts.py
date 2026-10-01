@@ -119,14 +119,7 @@ def test_config_flow_unit_validation_matches_the_declared_contracts():
 _RAW_PARSE_BUDGET = {
     # Our own min/max-current number entities, in our own amps.
     "__init__.py": 1,
-    # One each since config_flow became a package (the total is unchanged).
-    # The battery discharge power hint in the hub_inverter form description -
-    # only this detected preview text is unit-naive and never stored; the value
-    # the user then types into the field is a real engine input, user-vetted.
-    # It moved from flow.py to helpers.py with _auto_detect_entity_value, when
-    # the two flow handlers stopped borrowing helpers off each other's class.
-    "config_flow/helpers.py": 1,
-    # And _entry_sensor_value on the Overview page, which reads back this
+    # _entry_sensor_value on the Overview page, which reads back this
     # integration's OWN sensors (our units by construction) for display only
     # and is unit-agnostic on purpose (also passes through status strings).
     "config_flow/pages.py": 1,

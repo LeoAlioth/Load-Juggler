@@ -16,7 +16,3 @@ GRID_CT = [
         "unit": "A",
     },
 ]
-
-BATTERY_MAX_DISCHARGE_POWER = [
-    {"name": "Huawei", "pattern": r'sensor\..*battery_maximum_discharge_power$'},
-]

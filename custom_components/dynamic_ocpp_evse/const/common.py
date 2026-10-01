@@ -378,11 +378,6 @@ CONF_OPERATING_MODE = "operating_mode"
 # state to "Solar Priority" once, then clears the marker.
 MIGRATE_PLUG_SOLAR_ONLY_FLAG = "_migrate_plug_solar_only"
 
-# Set in a hub entry's data once its legacy hub-level inverter/battery fields
-# have been imported into a standalone inverter entry (or for new hubs, which
-# never had them) - makes the one-time auto-import idempotent across restarts.
-MIGRATE_HUB_INVERTER_IMPORTED_FLAG = "_hub_inverter_imported"
-
 # Engine behaviors - how a load competes for power. The distribution engine
 # switches on the behavior, never on the device type or the mode label. Which
 # behavior each operating mode uses is mapped centrally in const/modes.py

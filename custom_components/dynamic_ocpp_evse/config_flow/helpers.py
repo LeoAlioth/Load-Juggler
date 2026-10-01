@@ -71,7 +71,6 @@ from ..helpers import get_entry_value, normalize_optional_entity
 from ..registry import get_inverters_for_hub
 
 _LOGGER = logging.getLogger(__name__)
-_POWER_FACTOR = 0.9  # 90% of detected limit for safe headroom
 
 # One declaration, shared with the readers: a unit offered here must be one
 # units.py can convert (see ENTITY_UNIT_CONTRACTS and test_unit_contracts.py).
@@ -88,9 +87,7 @@ _VOLTAGE_UNITS = units.VOLTAGE_UNITS
 #   inverter config (create)      _INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP
 #   inverter battery (create)     _BATTERY_UNIT_MAP
 #   inverter control (create)     _WRITE_CONTROL_UNIT_MAP
-#   inverter (options, one page)  all four of the above
-#   hub inverter (options)        _INVERTER_OUTPUT_UNIT_MAP
-#   hub battery (options)         _SOLAR_UNIT_MAP | _BATTERY_UNIT_MAP
+#   inverter (options, per page)  the matching one of the above
 #
 # Grouping rather than paging is what keeps a create/options twin pair honest:
 # both sides of a group get the same units by construction, and a multi-step
@@ -205,7 +202,7 @@ def _normalize_inverter_power_caps(data: dict) -> None:
     """0 means "not configured" for the inverter power caps → store as None.
 
     In-place, and the one copy for every page that collects them: the inverter
-    create chain, the inverter options page and the legacy hub-inverter page.
+    create chain and the inverter options page.
     The schema builders do the reverse (``or 0``) so the round-trip holds.
     """
     for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
@@ -368,26 +365,6 @@ def _auto_detect_entity(
         if match:
             return match
     return None
-
-
-def _auto_detect_entity_value(
-    hass, pattern_sets: list[dict], factor: float = 1.0
-) -> int | None:
-    """Auto-detect an entity and read its numeric state value.
-
-    Returns int(state * factor), or None if not found / not numeric. Scans the
-    registry itself - the one caller (a form hint) detects exactly once.
-    """
-    entity_id = _auto_detect_entity(_entity_registry_ids(hass), pattern_sets)
-    if not entity_id:
-        return None
-    state = hass.states.get(entity_id)
-    if not state:
-        return None
-    try:
-        return int(float(state.state) * factor)
-    except (ValueError, TypeError):
-        return None
 
 
 def _resolve_device_power_entity(hass, device_id: str) -> str | None:
