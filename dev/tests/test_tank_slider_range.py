@@ -39,7 +39,7 @@ def _slider(kind, conf_key, default, thermostat, restored=None):
         return_value=None if restored is None else SimpleNamespace(state=str(restored))
     )
     slider.async_write_ha_state = MagicMock()
-    slider._write_to_load_data = MagicMock()
+    slider._publish = MagicMock()
     # What async_added_to_hass does, less HA's own setup and the listener.
     slider._sync_to_thermostat()
     asyncio.run(slider._restore_and_publish_number())
@@ -56,7 +56,7 @@ def test_the_defaults_land_inside_the_thermostats_range():
     assert (away.native_min_value, away.native_max_value) == (40.0, 60.0)
     assert away.native_value == 40.0  # 30 by default
     assert boost.native_value == 60.0  # 65 by default
-    boost._write_to_load_data.assert_called_once_with(60.0)
+    boost._publish.assert_called_once_with(60.0)
 
 
 def test_a_restored_value_is_clamped_into_the_range():
@@ -83,12 +83,12 @@ def test_the_slider_follows_the_thermostat_when_its_range_arrives():
         heater, restored=75,
     )
     assert boost.native_value == 75.0
-    boost._write_to_load_data.reset_mock()
+    boost._publish.reset_mock()
     heater.attributes.update(min_temp=40.0, max_temp=60.0)
     boost._thermostat_changed(None)
     assert boost.native_max_value == 60.0
     assert boost.native_value == 60.0
-    boost._write_to_load_data.assert_called_once_with(60.0)
+    boost._publish.assert_called_once_with(60.0)
 
 
 def test_an_unchanged_thermostat_writes_nothing():
@@ -96,7 +96,7 @@ def test_an_unchanged_thermostat_writes_nothing():
         "boost", CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE, _heater(),
     )
     boost.async_write_ha_state.reset_mock()
-    boost._write_to_load_data.reset_mock()
+    boost._publish.reset_mock()
     boost._thermostat_changed(None)
     boost.async_write_ha_state.assert_not_called()
-    boost._write_to_load_data.assert_not_called()
+    boost._publish.assert_not_called()

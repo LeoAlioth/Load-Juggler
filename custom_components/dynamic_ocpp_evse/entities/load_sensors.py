@@ -61,7 +61,7 @@ class LoadJugglerLoadSensor(SiteCycleConsumerMixin, LoadEntityMixin, SensorEntit
         """This charger's stuck-readout watch state (engine/readout_watch.py),
         or None for a load that has none - every non-EVSE, and an EVSE before
         its first cycle."""
-        return self._load_runtime().get(EVSE_RT_READOUT_WATCH)
+        return self._runtime().get(EVSE_RT_READOUT_WATCH)
 
 
 class LoadJugglerAllocatedCurrentSensor(LoadJugglerLoadSensor):
@@ -196,7 +196,7 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
     def extra_state_attributes(self):
         return {
             **readout_attributes(self._readout_watch()),
-            **sun_probe_attributes(self._load_runtime().get(LOAD_RT_SUN_PROBE)),
+            **sun_probe_attributes(self._runtime().get(LOAD_RT_SUN_PROBE)),
         }
 
     def _read_site_data(self):
@@ -207,7 +207,7 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
                 status.get(self.config_entry.entry_id, "Unknown"),
                 self._readout_watch(),
             ),
-            self._load_runtime().get(LOAD_RT_SUN_PROBE),
+            self._runtime().get(LOAD_RT_SUN_PROBE),
         )
 
 
@@ -294,7 +294,7 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
         return self._attrs
 
     def _read_site_data(self):
-        load_rt = self._load_runtime()
+        load_rt = self._runtime()
         speed_entity = self.config_entry.data.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID)
         soc = _read_float(
             self.hass,
@@ -417,7 +417,7 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
 
     def _read_site_data(self):
         """Derive the tank state from the thermostat + shared load data."""
-        load_rt = self._load_runtime()
+        load_rt = self._runtime()
         climate_state = (
             self.hass.states.get(self._climate_entity)
             if self._climate_entity
