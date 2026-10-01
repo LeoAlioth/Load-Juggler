@@ -25,8 +25,6 @@ anything above the inverter's allowance is the reconstruction reading the
 household low while the charger starts.
 """
 
-from types import SimpleNamespace
-
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -35,39 +33,33 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
-    CONF_CHARGER_ID,
     CONF_ENTITY_ID,
-    CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
-    CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
-    CONF_EVSE_MINIMUM_CHARGE_CURRENT,
-    CONF_HUB_ENTRY_ID,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-    CONF_LOAD_PRIORITY,
     CONF_MAIN_BREAKER_RATING,
     CONF_NAME,
-    CONF_PHASES,
     CONF_PHASE_VOLTAGE,
     CONF_WIRING_TOPOLOGY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    ENTRY_TYPE_LOAD,
     WIRING_TOPOLOGY_SERIES,
 )
 
-V = 230.0
+from .closed_loop import (
+    AMPS, BATTERY_PCT, DT, SOC_BOUNDS, V, WATTS, close_loop, evse_entry, over_w, slew,
+)
+
 RATING_W = 6000.0
 RATING_A = RATING_W / V               # 26.09 A: the inverter carries all of it
 HOUSE_A = 1000.0 / V                  # a steady 1 kW house
 ALLOWANCE_A = RATING_A - HOUSE_A      # 21.74 A: all the charger may take
-DT = 2                                # the default site cycle, seconds
 START = 30                            # cycles on the household alone first
 OUTPUT = "sensor.og_inverter_out_a"
 STATUS = "sensor.og_evse_status_connector"
 
 
-def _hub(slug, options=None):
+def _hub(slug):
     """No grid CT at all: an off-grid series hybrid, output metered on A."""
     return MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=4, title=f"Off-grid Hub {slug}",
@@ -85,37 +77,13 @@ def _hub(slug, options=None):
             # A large pack, so the inverter's rating binds and not the battery.
             CONF_BATTERY_MAX_DISCHARGE_POWER: 20000,
             CONF_BATTERY_MAX_CHARGE_POWER: 5000,
-            **(options or {}),
         },
     )
 
 
-def _evse(hub):
-    """A 1-phase 6→32 A Standard EVSE: the inverter binds, not the car."""
-    return MockConfigEntry(
-        domain=DOMAIN, version=2, minor_version=4, title="Off-grid EVSE",
-        data={CONF_NAME: "Off-grid EVSE",
-              CONF_ENTITY_ID: "og_evse",
-              ENTRY_TYPE: ENTRY_TYPE_LOAD,
-              CONF_CHARGER_ID: "og_evse",
-              CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.og_evse_current",
-              CONF_HUB_ENTRY_ID: hub.entry_id},
-        options={
-            CONF_LOAD_PRIORITY: 1,
-            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
-            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 32,
-            CONF_PHASES: 1,
-        },
-    )
-
-
-def _amps(value):
-    return {"device_class": "current", "unit_of_measurement": "A"}, f"{value:.3f}"
-
-
-async def _run(hass, slug, car_ramp_a_s, cycles=120, house=None, each_cycle=None,
-               options=None, car=None, dynamic_control=True):
-    """Close the loop: engine permit → permit pipeline → car → inverter → engine.
+async def _run(hass, slug, car_ramp_a_s, cycles=120, house=None, car=None,
+               dynamic_control=True):
+    """A 1-phase 6→32 A Standard EVSE on the inverter: it binds, not the car.
 
     The connector reads Available (no car) for ``START`` cycles, so every input
     EMA is settled on the household alone. Then the car plugs in and slews its
@@ -123,80 +91,31 @@ async def _run(hass, slug, car_ramp_a_s, cycles=120, house=None, each_cycle=None
     Charging from that cycle on. ``house(i)`` overrides the household current
     per cycle (default: a steady ``HOUSE_A``), ``car(i)`` the car's draw (a
     car that ignores its command). At night the battery supplies the whole
-    output. ``each_cycle(i, result)`` runs after every engine cycle;
-    ``options`` adds hub options. One row per cycle.
+    output. One row per cycle.
     """
-    from freezegun import freeze_time
-    from custom_components.dynamic_ocpp_evse.control.smoothing import (
-        apply_smoothing,
-    )
-    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
-        run_hub_calculation,
-    )
-
-    hub = _hub(slug, options)
-    hub.add_to_hass(hass)
-    evse = _evse(hub)
-    evse.add_to_hass(hass)
-    hass.data[DOMAIN] = {
-        "hubs": {hub.entry_id: {
-            "loads": [evse.entry_id],
-            "battery_soc_min": 20,
-            "battery_soc_target": 50,
-        }},
-        "loads": {evse.entry_id: {
-            "entry": evse, "hub_entry_id": hub.entry_id,
-            "dynamic_control": dynamic_control,
-        }},
-        "load_allocations": {evse.entry_id: 0},
-        "inverters": {},
-    }
+    hub = _hub(slug)
     hass.states.async_set(STATUS, "Available")
-    hass.states.async_set(
-        "sensor.og_battery_soc", "80",
-        {"device_class": "battery", "unit_of_measurement": "%"})
-    # apply_smoothing keeps its state on the load entity and touches only these.
-    permit_state = SimpleNamespace(
-        _attr_name="og_evse", _ema_current=None, _schmitt_current=None,
-        _schmitt_state="rising", _rate_limited_current=0.0,
-    )
+    hass.states.async_set("sensor.og_battery_soc", "80", BATTERY_PCT)
+    draw = 0.0
 
-    trace = []
-    draw = command = 0.0
-    step = car_ramp_a_s * DT
-    with freeze_time("2026-09-24 22:00:00+00:00") as frozen:
-        for i in range(cycles):
-            frozen.tick(DT)
-            if i == START:
-                hass.states.async_set(STATUS, "Charging")
-            if car is not None:
-                draw = car(i)
-            elif i >= START:
-                draw += max(-step, min(step, command - draw))
-            house_a = HOUSE_A if house is None else house(i)
-            supply = house_a + draw
-            attrs, state = _amps(supply)
-            hass.states.async_set(OUTPUT, state, attrs)
-            attrs, state = _amps(draw)
-            hass.states.async_set("sensor.og_evse_current", state, attrs)
-            hass.states.async_set(
-                "sensor.og_battery_power", f"{supply * V:.1f}",
-                {"device_class": "power", "unit_of_measurement": "W"})
-            result = run_hub_calculation(hass, hub)
-            if each_cycle is not None:
-                each_cycle(i, result)
-            # The load processor's own rounding (entities/load.py).
-            permit = round(result["load_available"][evse.entry_id], 1)
-            command = apply_smoothing(permit_state, permit, False, hub)
-            trace.append({"i": i, "draw": draw, "permit": permit,
-                          "command": command, "supply": supply,
-                          "household_w": result["household_power"],
-                          "managed_w": result["total_evse_power"]})
-    return trace
+    def plant(i, command):
+        nonlocal draw
+        if i == START:
+            hass.states.async_set(STATUS, "Charging")
+        if car is not None:
+            draw = car(i)
+        elif i >= START:
+            draw = slew(draw, command, car_ramp_a_s * DT)
+        supply = (HOUSE_A if house is None else house(i)) + draw
+        hass.states.async_set(OUTPUT, f"{supply:.3f}", AMPS)
+        hass.states.async_set("sensor.og_evse_current", f"{draw:.3f}", AMPS)
+        hass.states.async_set("sensor.og_battery_power", f"{supply * V:.1f}", WATTS)
+        return {"draw": draw, "supply": supply}
 
-
-def _over_w(trace, key, limit_a):
-    return max(0.0, max(row[key] - limit_a for row in trace)) * V
+    return await close_loop(
+        hass, hub, evse_entry(hub, "og_evse"), cycles, plant,
+        at="2026-09-24 22:00:00+00:00", hub_data=SOC_BOUNDS,
+        load_data={"dynamic_control": dynamic_control})
 
 
 @pytest.mark.parametrize("car_ramp_a_s", [1.0, 100.0], ids=["car-1A/s", "step"])
@@ -227,8 +146,8 @@ async def test_a_starting_charger_is_never_permitted_past_the_inverter(
     """
     trace = await _run(hass, f"s{car_ramp_a_s:g}", car_ramp_a_s)
 
-    permit_over = _over_w(trace, "permit", ALLOWANCE_A)
-    supply_over = _over_w(trace, "supply", RATING_A)
+    permit_over = over_w(trace, "permit", ALLOWANCE_A)
+    supply_over = over_w(trace, "supply", RATING_A)
     assert permit_over <= 0.1 * V, (
         f"permit {permit_over:.0f} W over the inverter's allowance"
     )
@@ -310,8 +229,9 @@ async def test_a_load_with_dynamic_control_off_is_household_off_grid(hass):
         dynamic_control=False,
     )
     last = trace[-1]
-    assert last["managed_w"] == 0
-    assert last["household_w"] == pytest.approx((HOUSE_A + unmanaged_a) * V, abs=5), (
-        f"household {last['household_w']:.0f} W, inverter output "
+    household_w = last["result"]["household_power"]
+    assert last["result"]["total_evse_power"] == 0
+    assert household_w == pytest.approx((HOUSE_A + unmanaged_a) * V, abs=5), (
+        f"household {household_w:.0f} W, inverter output "
         f"{last['supply'] * V:.0f} W"
     )

@@ -25,8 +25,6 @@ car. The house never moves, so the right permit is the inverter's rating less
 the house - 21.74 A - on every cycle, and the output must never pass 6 kW.
 """
 
-from types import SimpleNamespace
-
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -35,18 +33,12 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
-    CONF_CHARGER_ID,
     CONF_ENTITY_ID,
-    CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
-    CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
-    CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_HUB_ENTRY_ID,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-    CONF_LOAD_PRIORITY,
     CONF_MAIN_BREAKER_RATING,
     CONF_NAME,
-    CONF_PHASES,
     CONF_PHASE_VOLTAGE,
     CONF_WIRING_TOPOLOGY,
     DOMAIN,
@@ -54,17 +46,18 @@ from custom_components.dynamic_ocpp_evse.const import (
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
-    ENTRY_TYPE_LOAD,
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
 )
 
-V = 230.0
+from .closed_loop import (
+    AMPS, BATTERY_PCT, DT, SOC_BOUNDS, V, WATTS, close_loop, evse_entry, over_w, slew,
+)
+
 RATING_W = 6000.0
 RATING_A = RATING_W / V               # 26.09 A: the inverter carries all of it
 HOUSE_A = 1000.0 / V                  # a steady 1 kW house
 ALLOWANCE_A = RATING_A - HOUSE_A      # 21.74 A: all the charger may take
-DT = 2                                # the default site cycle, seconds
 START = 30                            # cycles on the household alone first
 OUTPUT = "sensor.ogp_inverter_out_a"
 BATTERY = "sensor.ogp_battery_power"
@@ -112,32 +105,9 @@ def _pv_inverter(hub):
     )
 
 
-def _evse(hub):
-    """A 1-phase 6→32 A Standard EVSE: the inverter binds, not the car."""
-    return MockConfigEntry(
-        domain=DOMAIN, version=2, minor_version=4, title="Off-grid EVSE",
-        data={CONF_NAME: "Off-grid EVSE",
-              CONF_ENTITY_ID: "ogp_evse",
-              ENTRY_TYPE: ENTRY_TYPE_LOAD,
-              CONF_CHARGER_ID: "ogp_evse",
-              CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: CAR,
-              CONF_HUB_ENTRY_ID: hub.entry_id},
-        options={
-            CONF_LOAD_PRIORITY: 1,
-            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
-            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 32,
-            CONF_PHASES: 1,
-        },
-    )
-
-
-def _amps(value):
-    return {"device_class": "current", "unit_of_measurement": "A"}, f"{value:.3f}"
-
-
 async def _run(hass, slug, topology, car_ramp_a_s, cycles=200, mixed=False,
                solar_w=0.0, mode=None):
-    """Close the loop: engine permit → permit pipeline → car → inverter → engine.
+    """A 1-phase 6→32 A Standard EVSE on the inverter: it binds, not the car.
 
     The connector reads Available for ``START`` cycles, so every input EMA is
     settled on the household alone; then the car plugs in and slews toward its
@@ -148,82 +118,34 @@ async def _run(hass, slug, topology, car_ramp_a_s, cycles=200, mixed=False,
     ``mode`` is the car's operating mode (Standard when None). One row per
     cycle.
     """
-    from freezegun import freeze_time
-    from custom_components.dynamic_ocpp_evse.control.smoothing import (
-        apply_smoothing,
-    )
-    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
-        run_hub_calculation,
-    )
-
     hub = _hub(slug, topology)
-    hub.add_to_hass(hass)
-    if mixed:
-        _pv_inverter(hub).add_to_hass(hass)
-    evse = _evse(hub)
-    evse.add_to_hass(hass)
-    hass.data[DOMAIN] = {
-        "hubs": {hub.entry_id: {
-            "loads": [evse.entry_id],
-            "battery_soc_min": 20,
-            "battery_soc_target": 50,
-        }},
-        "loads": {evse.entry_id: {
-            "entry": evse, "hub_entry_id": hub.entry_id,
-            "dynamic_control": True,
-            **({"operating_mode": mode} if mode else {}),
-        }},
-        "load_allocations": {evse.entry_id: 0},
-        "inverters": {},
-    }
-    hass.states.async_set(STATUS, "Available")
-    hass.states.async_set(
-        "sensor.ogp_battery_soc", "80",
-        {"device_class": "battery", "unit_of_measurement": "%"})
     pv_a = PV_A if mixed else 0.0
     if mixed:
-        attrs, state = _amps(pv_a)
-        hass.states.async_set(PV_OUTPUT, state, attrs)
-    # apply_smoothing keeps its state on the load entity and touches only these.
-    permit_state = SimpleNamespace(
-        _attr_name="ogp_evse", _ema_current=None, _schmitt_current=None,
-        _schmitt_state="rising", _rate_limited_current=0.0,
-    )
+        _pv_inverter(hub).add_to_hass(hass)
+        hass.states.async_set(PV_OUTPUT, f"{pv_a:.3f}", AMPS)
+    hass.states.async_set(STATUS, "Available")
+    hass.states.async_set("sensor.ogp_battery_soc", "80", BATTERY_PCT)
+    draw = 0.0
 
-    trace = []
-    draw = command = 0.0
-    step = car_ramp_a_s * DT
-    with freeze_time("2026-09-24 22:00:00+00:00") as frozen:
-        for i in range(cycles):
-            frozen.tick(DT)
-            if i == START:
-                hass.states.async_set(STATUS, "Charging")
-            if i >= START:
-                draw += max(-step, min(step, command - draw))
-            supply = HOUSE_A + draw
-            # The hub's own inverter carries whatever the PV inverter does not,
-            # all of it from its battery at night.
-            attrs, state = _amps(supply - pv_a)
-            hass.states.async_set(OUTPUT, state, attrs)
-            hass.states.async_set(
-                BATTERY, f"{(supply - pv_a) * V - solar_w:.1f}",
-                {"device_class": "power", "unit_of_measurement": "W"})
-            attrs, state = _amps(draw)
-            hass.states.async_set(CAR, state, attrs)
-            result = run_hub_calculation(hass, hub)
-            # The load processor's own rounding (entities/load.py).
-            permit = round(result["load_available"][evse.entry_id], 1)
-            command = apply_smoothing(permit_state, permit, False, hub)
-            trace.append({"i": i, "draw": draw, "permit": permit,
-                          "command": command, "supply": supply,
-                          "household_w": result["household_power"],
-                          "solar_w": result["solar_power"],
-                          "result": result})
-    return trace
+    def plant(i, command):
+        nonlocal draw
+        if i == START:
+            hass.states.async_set(STATUS, "Charging")
+        if i >= START:
+            draw = slew(draw, command, car_ramp_a_s * DT)
+        supply = HOUSE_A + draw
+        # The hub's own inverter carries whatever the PV inverter does not,
+        # all of it from its battery at night.
+        hass.states.async_set(OUTPUT, f"{supply - pv_a:.3f}", AMPS)
+        hass.states.async_set(
+            BATTERY, f"{(supply - pv_a) * V - solar_w:.1f}", WATTS)
+        hass.states.async_set(CAR, f"{draw:.3f}", AMPS)
+        return {"draw": draw, "supply": supply}
 
-
-def _over_w(trace, key, limit_a):
-    return max(0.0, max(row[key] - limit_a for row in trace)) * V
+    return await close_loop(
+        hass, hub, evse_entry(hub, "ogp_evse"), cycles, plant,
+        at="2026-09-24 22:00:00+00:00", hub_data=SOC_BOUNDS,
+        load_data={"operating_mode": mode} if mode else None)
 
 
 @pytest.mark.parametrize("topology", [WIRING_TOPOLOGY_PARALLEL, WIRING_TOPOLOGY_SERIES])
@@ -259,8 +181,8 @@ async def test_a_charger_gets_the_inverter_rating_less_the_house(
         f"draw was counted as house load"
     )
     # And not by going past the inverter while it started.
-    permit_over = _over_w(trace, "permit", ALLOWANCE_A)
-    supply_over = _over_w(trace, "supply", RATING_A)
+    permit_over = over_w(trace, "permit", ALLOWANCE_A)
+    supply_over = over_w(trace, "supply", RATING_A)
     assert permit_over <= 0.1 * V, (
         f"{topology}: permit {permit_over:.0f} W over the inverter's allowance"
     )
@@ -304,8 +226,9 @@ async def test_the_published_household_is_the_house_not_the_charger(hass):
     trace = await _run(hass, "published", WIRING_TOPOLOGY_PARALLEL, 100.0)
 
     last = trace[-1]
-    assert last["household_w"] == pytest.approx(HOUSE_A * V, abs=0.1 * V), (
-        f"household published as {last['household_w']:.0f} W with a "
+    household_w = last["result"]["household_power"]
+    assert household_w == pytest.approx(HOUSE_A * V, abs=0.1 * V), (
+        f"household published as {household_w:.0f} W with a "
         f"{HOUSE_A * V:.0f} W house and the car drawing {last['draw'] * V:.0f} W"
     )
 
@@ -336,7 +259,7 @@ async def test_a_mixed_fleet_takes_the_draw_off_once(hass, car_ramp_a_s):
         f"{ALLOWANCE_A:.1f} A allowance - "
         f"{(ALLOWANCE_A - settled) * V:.0f} W short"
     )
-    permit_over = _over_w(trace, "permit", ALLOWANCE_A)
+    permit_over = over_w(trace, "permit", ALLOWANCE_A)
     assert permit_over <= 0.1 * V, (
         f"mixed fleet: permit {permit_over:.0f} W over the allowance - the "
         f"draw came off the household twice"
@@ -369,8 +292,9 @@ async def test_the_published_solar_is_the_panels_not_the_battery(
     )
 
     for label, row in (("car off", trace[START - 1]), ("car settled", trace[-1])):
-        assert row["solar_w"] == pytest.approx(solar_w, abs=5), (
-            f"{topology}, {label}: solar published as {row['solar_w']:.0f} W "
+        published = row["result"]["solar_power"]
+        assert published == pytest.approx(solar_w, abs=5), (
+            f"{topology}, {label}: solar published as {published:.0f} W "
             f"with {solar_w:.0f} W from the panels and the battery at "
             f"{(row['supply'] * V) - solar_w:.0f} W"
         )

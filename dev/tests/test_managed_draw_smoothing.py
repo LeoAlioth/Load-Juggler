@@ -21,35 +21,25 @@ excursion above the breaker's allowance is the reconstruction reading the
 household low while the charger ramps.
 """
 
-from types import SimpleNamespace
-
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dynamic_ocpp_evse.const import (
-    CONF_CHARGER_ID,
     CONF_ENTITY_ID,
-    CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
-    CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
-    CONF_EVSE_MINIMUM_CHARGE_CURRENT,
-    CONF_HUB_ENTRY_ID,
-    CONF_LOAD_PRIORITY,
     CONF_MAIN_BREAKER_RATING,
     CONF_NAME,
-    CONF_PHASES,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    ENTRY_TYPE_LOAD,
 )
 
-V = 230.0
+from .closed_loop import AMPS, DT, V, close_loop, evse_entry, over_w, slew
+
 BREAKER_A = 25.0
 HOUSE_A = 8.0
 ALLOWANCE_A = BREAKER_A - HOUSE_A     # 17 A: all the charger may take
-DT = 2                                # the default site cycle, seconds
 START = 30                            # cycles on the household alone first
 STATUS = "sensor.ramp_evse_status_connector"
 
@@ -68,90 +58,33 @@ def _hub(slug):
     )
 
 
-def _evse(hub):
-    """A 1-phase 6→32 A Standard EVSE: the breaker binds, not the car."""
-    return MockConfigEntry(
-        domain=DOMAIN, version=2, minor_version=4, title="Ramp EVSE",
-        data={CONF_NAME: "Ramp EVSE",
-              CONF_ENTITY_ID: "ramp_evse",
-              ENTRY_TYPE: ENTRY_TYPE_LOAD,
-              CONF_CHARGER_ID: "ramp_evse",
-              CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.ramp_evse_current",
-              CONF_HUB_ENTRY_ID: hub.entry_id},
-        options={
-            CONF_LOAD_PRIORITY: 1,
-            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
-            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 32,
-            CONF_PHASES: 1,
-        },
-    )
-
-
 async def _ramp(hass, slug, car_ramp_a_s, cycles=120, each_cycle=None):
-    """Close the loop: engine permit → permit pipeline → car → meters → engine.
+    """A 1-phase 6→32 A Standard EVSE on the breaker-limited phase.
 
     The connector reads Available (no car) for ``START`` cycles, so every input
     EMA is settled on the household alone. Then the car plugs in and slews its
     draw toward its last command at ``car_ramp_a_s``; the connector reports
     Charging on the cycle current starts flowing, as a real charger does.
-    ``each_cycle(i)`` runs after every engine cycle. One row per cycle.
+    ``each_cycle(i)`` runs as cycle ``i`` starts. One row per cycle.
     """
-    from freezegun import freeze_time
-    from custom_components.dynamic_ocpp_evse.control.smoothing import (
-        apply_smoothing,
-    )
-    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
-        run_hub_calculation,
-    )
-
     hub = _hub(slug)
-    hub.add_to_hass(hass)
-    evse = _evse(hub)
-    evse.add_to_hass(hass)
-    hass.data[DOMAIN] = {
-        "hubs": {hub.entry_id: {"loads": [evse.entry_id]}},
-        "loads": {evse.entry_id: {
-            "entry": evse, "hub_entry_id": hub.entry_id, "dynamic_control": True,
-        }},
-        "load_allocations": {evse.entry_id: 0},
-        "inverters": {},
-    }
     hass.states.async_set(STATUS, "Available")
-    # apply_smoothing keeps its state on the load entity and touches only these.
-    permit_state = SimpleNamespace(
-        _attr_name="ramp_evse", _ema_current=None, _schmitt_current=None,
-        _schmitt_state="rising", _rate_limited_current=0.0,
-    )
+    draw = 0.0
 
-    trace = []
-    draw = command = 0.0
-    step = car_ramp_a_s * DT
-    with freeze_time("2026-09-24 10:00:00+00:00") as frozen:
-        for i in range(cycles):
-            frozen.tick(DT)
-            if i == START:
-                hass.states.async_set(STATUS, "Charging")
-            if i >= START:
-                draw += max(-step, min(step, command - draw))
-            hass.states.async_set(
-                "sensor.ramp_phase_a", f"{HOUSE_A + draw:.3f}",
-                {"device_class": "current", "unit_of_measurement": "A"})
-            hass.states.async_set(
-                "sensor.ramp_evse_current", f"{draw:.3f}",
-                {"device_class": "current", "unit_of_measurement": "A"})
-            result = run_hub_calculation(hass, hub)
-            if each_cycle is not None:
-                each_cycle(i)
-            # The load processor's own rounding (entities/load.py).
-            permit = round(result["load_available"][evse.entry_id], 1)
-            command = apply_smoothing(permit_state, permit, False, hub)
-            trace.append({"i": i, "draw": draw, "permit": permit,
-                          "command": command, "import": HOUSE_A + draw})
-    return trace
+    def plant(i, command):
+        nonlocal draw
+        if each_cycle is not None:
+            each_cycle(i)
+        if i == START:
+            hass.states.async_set(STATUS, "Charging")
+        if i >= START:
+            draw = slew(draw, command, car_ramp_a_s * DT)
+        hass.states.async_set("sensor.ramp_phase_a", f"{HOUSE_A + draw:.3f}", AMPS)
+        hass.states.async_set("sensor.ramp_evse_current", f"{draw:.3f}", AMPS)
+        return {"draw": draw, "import": HOUSE_A + draw}
 
-
-def _over_w(trace, key, limit_a):
-    return max(0.0, max(row[key] - limit_a for row in trace)) * V
+    return await close_loop(hass, hub, evse_entry(hub, "ramp_evse"), cycles,
+                            plant, at="2026-09-24 10:00:00+00:00")
 
 
 @pytest.mark.parametrize("car_ramp_a_s", [1.0, 100.0], ids=["car-1A/s", "step"])
@@ -178,8 +111,8 @@ async def test_a_ramping_charger_is_never_permitted_past_the_breaker(
     """
     trace = await _ramp(hass, f"r{car_ramp_a_s:g}", car_ramp_a_s)
 
-    permit_over = _over_w(trace, "permit", ALLOWANCE_A)
-    import_over = _over_w(trace, "import", BREAKER_A)
+    permit_over = over_w(trace, "permit", ALLOWANCE_A)
+    import_over = over_w(trace, "import", BREAKER_A)
     assert permit_over <= 0.1 * V, f"permit {permit_over:.0f} W over the allowance"
     assert import_over <= 0.1 * V, f"site {import_over:.0f} W over the breaker"
     # And not by holding the car back: it ramped all the way to the allowance.
@@ -198,20 +131,16 @@ async def test_both_views_subtract_one_smoothed_draw_per_cycle(hass, monkeypatch
     from custom_components.dynamic_ocpp_evse.engine import hub_calculation
 
     real = hub_calculation.grid_without_managed_draws
-    seen = []
+    now = {}
+    per_cycle = {}
 
     def spy(consumption, export, draws):
-        seen.append(list(draws))
+        per_cycle.setdefault(now["i"], []).append(list(draws))
         return real(consumption, export, draws)
 
     monkeypatch.setattr(hub_calculation, "grid_without_managed_draws", spy)
-    per_cycle = {}
-
-    def collect(i):
-        per_cycle[i] = list(seen)
-        seen.clear()
-
-    await _ramp(hass, "views", 1.0, cycles=START + 20, each_cycle=collect)
+    await _ramp(hass, "views", 1.0, cycles=START + 20,
+                each_cycle=lambda i: now.update(i=i))
 
     ramping = [per_cycle[i] for i in range(START, START + 20)]
     assert all(len(calls) == 2 for calls in ramping)
