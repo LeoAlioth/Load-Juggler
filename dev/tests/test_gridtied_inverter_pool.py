@@ -554,13 +554,13 @@ async def test_solar_remaining_is_the_sun_the_house_leaves(hass, site):
     published as spare sun.
     """
     from custom_components.dynamic_ocpp_evse.sensor import (
-        DynamicOcppEvseHubDataSensor,
+        LoadJugglerHubDataSensor,
         HUB_SENSOR_DEFINITIONS,
     )
 
     await _session(hass, site, minutes=3)
     sensors = {
-        d["hub_data_key"]: DynamicOcppEvseHubDataSensor(hass, site.hub, "Hub", "hub", d)
+        d["hub_data_key"]: LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
         for d in HUB_SENSOR_DEFINITIONS
         if d["hub_data_key"] in ("available_solar_power", "available_solar_current")
     }
@@ -632,7 +632,7 @@ async def test_meter_only_solar_power_is_the_sun_not_the_battery(
     which is None wherever no member knows its production.
     """
     from custom_components.dynamic_ocpp_evse.sensor import (
-        DynamicOcppEvseHubDataSensor,
+        LoadJugglerHubDataSensor,
         HUB_SENSOR_DEFINITIONS,
     )
 
@@ -643,7 +643,7 @@ async def test_meter_only_solar_power_is_the_sun_not_the_battery(
     published = {}
     for d in HUB_SENSOR_DEFINITIONS:
         if d["hub_data_key"] in ("solar_power", "household_power"):
-            sensor = DynamicOcppEvseHubDataSensor(hass, site.hub, "Hub", "hub", d)
+            sensor = LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
             await sensor.async_update()
             published[d["hub_data_key"]] = (sensor.native_value, sensor.available)
 
@@ -698,7 +698,7 @@ async def test_solar_remaining_is_unknown_with_the_battery_unread(hass, site):
     is unchanged.
     """
     from custom_components.dynamic_ocpp_evse.sensor import (
-        DynamicOcppEvseHubDataSensor,
+        LoadJugglerHubDataSensor,
         HUB_SENSOR_DEFINITIONS,
     )
 
@@ -709,7 +709,7 @@ async def test_solar_remaining_is_unknown_with_the_battery_unread(hass, site):
     published = {}
     for d in HUB_SENSOR_DEFINITIONS:
         if d["hub_data_key"] in ("available_solar_power", "available_solar_current"):
-            sensor = DynamicOcppEvseHubDataSensor(hass, site.hub, "Hub", "hub", d)
+            sensor = LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
             await sensor.async_update()
             published[d["hub_data_key"]] = (sensor.native_value, sensor.available)
 

@@ -442,7 +442,7 @@ async def test_the_published_solar_remaining_is_the_solar_less_the_house(
     """
     from custom_components.dynamic_ocpp_evse.entities.hub import publish_hub_data
     from custom_components.dynamic_ocpp_evse.sensor import (
-        DynamicOcppEvseHubDataSensor,
+        LoadJugglerHubDataSensor,
         HUB_SENSOR_DEFINITIONS,
     )
 
@@ -453,7 +453,7 @@ async def test_the_published_solar_remaining_is_the_solar_less_the_house(
         if e.data.get(CONF_ENTITY_ID) == f"ogp_hub_{slug}"
     )
     sensors = {
-        d["hub_data_key"]: DynamicOcppEvseHubDataSensor(hass, hub, "Hub", slug, d)
+        d["hub_data_key"]: LoadJugglerHubDataSensor(hass, hub, "Hub", slug, d)
         for d in HUB_SENSOR_DEFINITIONS
         if d["hub_data_key"] in ("available_solar_power", "available_solar_current")
     }

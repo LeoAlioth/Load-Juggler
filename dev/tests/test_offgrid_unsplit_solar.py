@@ -137,7 +137,7 @@ def _sensors(hass, hub, inverter):
         LoadJugglerInverterDataSensor,
     )
     from custom_components.dynamic_ocpp_evse.sensor import (
-        DynamicOcppEvseHubDataSensor,
+        LoadJugglerHubDataSensor,
         HUB_SENSOR_DEFINITIONS,
     )
 
@@ -148,7 +148,7 @@ def _sensors(hass, hub, inverter):
         d for d in INVERTER_SENSOR_DEFINITIONS if d["data_key"] == "solar_w"
     )
     return {
-        "hub": DynamicOcppEvseHubDataSensor(hass, hub, "Unsplit", "us", hub_defn),
+        "hub": LoadJugglerHubDataSensor(hass, hub, "Unsplit", "us", hub_defn),
         "inverter": LoadJugglerInverterDataSensor(hass, inverter, "us_inv", inv_defn),
     }
 
@@ -276,7 +276,7 @@ async def test_an_output_nothing_splits_leaves_no_solar_remaining(hass, topology
     )
     from custom_components.dynamic_ocpp_evse.entities.hub import publish_hub_data
     from custom_components.dynamic_ocpp_evse.sensor import (
-        DynamicOcppEvseHubDataSensor,
+        LoadJugglerHubDataSensor,
         HUB_SENSOR_DEFINITIONS,
     )
 
@@ -288,7 +288,7 @@ async def test_an_output_nothing_splits_leaves_no_solar_remaining(hass, topology
         published = {}
         for d in HUB_SENSOR_DEFINITIONS:
             if d["hub_data_key"] in ("available_solar_power", "available_solar_current"):
-                sensor = DynamicOcppEvseHubDataSensor(hass, hub, "Unsplit", "us", d)
+                sensor = LoadJugglerHubDataSensor(hass, hub, "Unsplit", "us", d)
                 await sensor.async_update()
                 published[d["hub_data_key"]] = (sensor.native_value, sensor.available)
 

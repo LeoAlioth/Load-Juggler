@@ -46,9 +46,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_HYSTERESIS,
-    CONF_BATTERY_SOC_TARGET_ENTITY_ID,
-    CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
-    CONF_POWER_BUFFER_ENTITY_ID,
     CONF_LOAD_PRIORITY,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
@@ -93,8 +90,8 @@ from custom_components.dynamic_ocpp_evse.const import (
 )
 from custom_components.dynamic_ocpp_evse.sensor import (
     LoadJugglerDeviceSensor,
-    DynamicOcppEvseHubSensor,
-    DynamicOcppEvseHubDataSensor,
+    LoadJugglerHubSensor,
+    LoadJugglerHubDataSensor,
     HUB_SENSOR_DEFINITIONS,
 )
 from custom_components.dynamic_ocpp_evse.entities.inverter import (
@@ -125,9 +122,6 @@ def hub_entry() -> MockConfigEntry:
             CONF_NAME: "Test Hub",
             CONF_ENTITY_ID: "test_hub",
             ENTRY_TYPE: ENTRY_TYPE_HUB,
-            CONF_BATTERY_SOC_TARGET_ENTITY_ID: "number.test_hub_home_battery_soc_target",
-            CONF_ALLOW_GRID_CHARGING_ENTITY_ID: "switch.test_hub_allow_grid_charging",
-            CONF_POWER_BUFFER_ENTITY_ID: "number.test_hub_power_buffer",
         },
         options={
             CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
@@ -327,7 +321,7 @@ async def test_charger_sensor_initializes(hass, hub_entry, charger_entry):
 
 async def test_hub_sensor_initializes(hass, hub_entry):
     """Test that the hub sensor initializes with correct attributes."""
-    sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
+    sensor = LoadJugglerHubSensor(hass, hub_entry, "Test Hub", "test_hub")
     # Unknown, NOT 0.0: 0 W of remaining site power is a real reading (the site
     # is at its limit) and must not stand in for "nothing calculated yet".
     assert sensor.native_value is None
@@ -343,7 +337,7 @@ async def test_hub_data_sensors_initialize(hass, hub_entry):
     """Test that all hub data sensors from HUB_SENSOR_DEFINITIONS are created."""
     sensors = []
     for defn in HUB_SENSOR_DEFINITIONS:
-        sensor = DynamicOcppEvseHubDataSensor(
+        sensor = LoadJugglerHubDataSensor(
             hass, hub_entry, "Test Hub", "test_hub", defn
         )
         sensors.append(sensor)
@@ -712,7 +706,7 @@ async def test_site_cycle_publishes_hub_data_with_no_loads(
     assert published["last_update"] is not None
 
     # And the hub sensor reads it without running anything itself.
-    hub_sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
+    hub_sensor = LoadJugglerHubSensor(hass, hub_entry, "Test Hub", "test_hub")
     await hub_sensor.async_update()
     assert hub_sensor._total_site_available_power is not None
     assert hub_sensor.native_value is not None
@@ -737,7 +731,7 @@ async def test_hub_sensor_reads_hub_data(
         await _run_site_cycle(hass, hub_entry, charger_sensor)
 
     # Then: run hub sensor update
-    hub_sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
+    hub_sensor = LoadJugglerHubSensor(hass, hub_entry, "Test Hub", "test_hub")
     await hub_sensor.async_update()
 
     # Hub sensor should have read the data - and publish it as its own value.
@@ -766,7 +760,7 @@ async def test_hub_data_sensor_reads_values(
 
     # Create a hub data sensor for "grid_power"
     defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
-    data_sensor = DynamicOcppEvseHubDataSensor(hass, hub_entry, "Test Hub", "test_hub", defn)
+    data_sensor = LoadJugglerHubDataSensor(hass, hub_entry, "Test Hub", "test_hub", defn)
     await data_sensor.async_update()
 
     # The sensor should have read from hub_data
@@ -787,7 +781,7 @@ async def test_site_remaining_power_is_unknown_not_zero_without_hub_data(
     sensor reports unknown, and unavailable on top, because its producer has
     never run.
     """
-    hub_sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
+    hub_sensor = LoadJugglerHubSensor(hass, hub_entry, "Test Hub", "test_hub")
     await hub_sensor.async_update()
 
     assert hub_sensor.native_value is None
@@ -815,9 +809,9 @@ async def test_hub_sensors_go_unavailable_when_the_producer_goes_stale(
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         await _run_site_cycle(hass, hub_entry, charger_sensor)
 
-    hub_sensor = DynamicOcppEvseHubSensor(hass, hub_entry, "Test Hub", "test_hub")
+    hub_sensor = LoadJugglerHubSensor(hass, hub_entry, "Test Hub", "test_hub")
     defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
-    data_sensor = DynamicOcppEvseHubDataSensor(
+    data_sensor = LoadJugglerHubDataSensor(
         hass, hub_entry, "Test Hub", "test_hub", defn
     )
     await hub_sensor.async_update()
@@ -895,7 +889,7 @@ async def test_site_cycle_adopts_readers_registered_before_the_hub(
             self.listeners.append(cb)
             return lambda: self.listeners.remove(cb)
 
-    reader = DynamicOcppEvseHubDataSensor(
+    reader = LoadJugglerHubDataSensor(
         hass,
         hub_entry,
         "Test Hub",
@@ -1579,7 +1573,7 @@ async def test_current_grid_power_sensor_reads_unknown_on_a_cold_start(
         await _run_site_cycle(hass, hub_entry, charger_sensor)
 
     defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
-    sensor = DynamicOcppEvseHubDataSensor(
+    sensor = LoadJugglerHubDataSensor(
         hass, hub_entry, "Test Hub", "test_hub", defn
     )
     await sensor.async_update()
@@ -1856,7 +1850,7 @@ async def test_current_solar_power_clears_when_the_sensor_dies_mid_run(hass):
     defn = next(
         d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "solar_power"
     )
-    sensor = DynamicOcppEvseHubDataSensor(
+    sensor = LoadJugglerHubDataSensor(
         hass, hub, "Solar Hub", "solar_hub_midrun", defn
     )
 
@@ -2109,7 +2103,7 @@ async def test_current_managed_power_sensor_reads_unknown_mid_charge(
     defn = next(
         d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "total_evse_power"
     )
-    sensor = DynamicOcppEvseHubDataSensor(
+    sensor = LoadJugglerHubDataSensor(
         hass, hub_entry, "Test Hub", "test_hub", defn
     )
 
@@ -2161,7 +2155,6 @@ async def test_result_dict_all_keys_populated(
     expected_keys = {
         CONF_TOTAL_ALLOCATED_CURRENT,
         CONF_PHASES,
-        "calc_used",
         "battery_soc",
         "battery_soc_min",
         "battery_soc_target",
@@ -6481,7 +6474,7 @@ async def test_every_inverter_sensor_has_a_name_translation(hass: HomeAssistant)
     hub, inverter, _rt = _no_clip_rig(hass, "invtrans", soc=90)
     defns, _sensors = _inverter_defn_sensors(hass, inverter)
 
-    for name in ("strings.json", "translations/en.json", "translations/sl.json"):
+    for name in ("translations/en.json", "translations/sl.json"):
         names = json.loads((root / name).read_text())["entity"]["sensor"]
         for defn in defns:
             key = defn["unique_id_suffix"]

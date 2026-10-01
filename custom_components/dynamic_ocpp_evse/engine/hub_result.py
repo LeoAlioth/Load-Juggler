@@ -80,9 +80,6 @@ def _compute_forecast_advice(
     site,
     battery_soc,
     members,
-    excess_on=False,  # noqa: ARG001 - kept for callers; the observers now
-    # gate on physical curtailment (``export_is_clamped``) rather than on the
-    # Excess verdict, which is a different question entirely.
     ctrl_site=None,
 ):
     """Advisory battery headroom from the PV clipping forecast.
@@ -1061,7 +1058,6 @@ def _build_hub_result(
     return {
         CONF_TOTAL_ALLOCATED_CURRENT: round(sum(load_targets.values()), 1),
         CONF_PHASES: site.num_phases,
-        "calc_used": "calculate_all_load_targets",
         # Site-level data for hub sensor
         "battery_soc": site.battery_soc,
         "battery_soc_min": site.battery_soc_min,

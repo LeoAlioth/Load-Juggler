@@ -6,11 +6,9 @@ from homeassistant.config_entries import (
 )
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.script import Script
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED, async_get as async_get_entity_registry
-from datetime import datetime, timedelta
 import logging
 import voluptuous as vol
 from .const import (
@@ -18,13 +16,11 @@ from .const import (
     CHARGE_RATE_UNIT_AMPS,
     CHARGE_RATE_UNIT_AUTO,
     CHARGE_RATE_UNIT_WATTS,
-    CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_SOC_HYSTERESIS,
-    CONF_BATTERY_SOC_TARGET_ENTITY_ID,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
@@ -52,7 +48,6 @@ from .const import (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
-    CONF_POWER_BUFFER_ENTITY_ID,
     CONF_PROFILE_VALIDITY_MODE,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -104,13 +99,7 @@ from .helpers import (
 )
 from . import units
 from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
-from .registry import (  # noqa: F401 - re-exported; canonical home is registry.py
-    follow_renames,
-    get_loads_for_hub,
-    get_groups_for_hub,
-    get_hub_for_load,
-    get_inverters_for_hub,
-)
+from .registry import follow_renames
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,9 +108,6 @@ RENAME_SETTLE_S = 5.0
 
 # Define the config schema
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-
-# Integration version for entity migration
-INTEGRATION_VERSION = "2.0.0"
 
 # The stored strings the generic charger → load rename replaced (2.4 → 2.5).
 # Named here rather than in const/ because nothing outside the migration may
@@ -146,15 +132,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         # Mark this as a hub entry (legacy entries become hubs)
         new_data[ENTRY_TYPE] = ENTRY_TYPE_HUB
-        
-        # Generate entity IDs for hub-created entities if not present
-        entity_id = new_data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
-        if CONF_BATTERY_SOC_TARGET_ENTITY_ID not in new_data:
-            new_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
-        if CONF_ALLOW_GRID_CHARGING_ENTITY_ID not in new_data:
-            new_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
-        if CONF_POWER_BUFFER_ENTITY_ID not in new_data:
-            new_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
         
         # Update the config entry with new version
         options = dict(entry.options)
@@ -763,7 +740,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data.setdefault(DOMAIN, {
         "hubs": {},
         "loads": {},
-        "groups": {},  # Circuit group entries
         "inverters": {},  # Inverter entries (power sources, optional battery)
         "load_allocations": {},  # Stores current allocation for each load
     })
@@ -843,8 +819,6 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data[DOMAIN]["hubs"][entry.entry_id] = {
         "entry": entry,
         "loads": [],  # List of load entry_ids linked to this hub
-        "groups": [],    # List of circuit group entry_ids linked to this hub
-        "inverters": [],  # List of inverter entry_ids linked to this hub
         "distribution_mode": DEFAULT_DISTRIBUTION_MODE,
         "allow_grid_charging": True,
         "power_buffer": 0,
@@ -973,15 +947,6 @@ async def _setup_group_entry(hass: HomeAssistant, entry: ConfigEntry):
             f"Hub {hub_entry_id} not ready for group {entry.title}"
         )
 
-    # Store group data
-    hass.data[DOMAIN]["groups"][entry.entry_id] = {
-        "entry": entry,
-        "hub_entry_id": hub_entry_id,
-    }
-
-    # Link group to hub
-    hass.data[DOMAIN]["hubs"][hub_entry_id]["groups"].append(entry.entry_id)
-
     # Forward setup to sensor platform only (group sensors)
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
 
@@ -1006,11 +971,6 @@ async def _setup_inverter_entry(hass: HomeAssistant, entry: ConfigEntry):
         "entry": entry,
         "hub_entry_id": hub_entry_id,
     }
-
-    # Link inverter to hub
-    hass.data[DOMAIN]["hubs"][hub_entry_id].setdefault("inverters", []).append(
-        entry.entry_id
-    )
 
     # Sensors plus the Battery Charge Control switch (write-control opt-in)
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "switch"])
@@ -1064,7 +1024,6 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
     }
     
     # Check and update existing entities to be associated with this config entry
-    entities_migrated = []
     for entity_entity_id, unique_id in expected_entities.items():
         # Try to find entity by unique_id (this is the key for matching)
         existing_entity = None
@@ -1081,27 +1040,10 @@ async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntr
                     existing_entity.entity_id,
                     config_entry_id=entry.entry_id
                 )
-                entities_migrated.append(unique_id)
             else:
                 _LOGGER.debug(f"Entity {existing_entity.entity_id} already associated with hub config entry")
-                entities_migrated.append(unique_id)
         else:
             _LOGGER.info(f"Entity with unique_id {unique_id} will be created when the platform is set up")
-    
-    # Update the config entry to ensure it has the required entity IDs
-    updated_data = dict(entry.data)
-    updated_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
-    updated_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
-    updated_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
-    updated_data["integration_version"] = INTEGRATION_VERSION
-
-    # Only write the entry when something actually changed - an unconditional
-    # async_update_entry on every startup triggers an extra hub reload.
-    if updated_data != dict(entry.data):
-        hass.config_entries.async_update_entry(entry, data=updated_data)
-        _LOGGER.info(f"Updated hub config entry with entity IDs. Migrated {len(entities_migrated)} entities")
-    else:
-        _LOGGER.debug("Hub config entry already current - no entity-ID migration needed")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -1151,28 +1093,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         # Unload group platforms
         await hass.config_entries.async_forward_entry_unload(entry, "sensor")
 
-        # Remove group from hub's list
-        hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
-        if hub_entry_id in hass.data[DOMAIN]["hubs"]:
-            groups_list = hass.data[DOMAIN]["hubs"][hub_entry_id].get("groups", [])
-            if entry.entry_id in groups_list:
-                groups_list.remove(entry.entry_id)
-
-        # Remove group from data
-        if entry.entry_id in hass.data[DOMAIN]["groups"]:
-            del hass.data[DOMAIN]["groups"][entry.entry_id]
-
     elif entry_type == ENTRY_TYPE_INVERTER:
         # Unload inverter platforms
         await hass.config_entries.async_forward_entry_unload(entry, "sensor")
         await hass.config_entries.async_forward_entry_unload(entry, "switch")
-
-        # Remove inverter from hub's list
-        hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
-        if hub_entry_id in hass.data[DOMAIN]["hubs"]:
-            inverters_list = hass.data[DOMAIN]["hubs"][hub_entry_id].get("inverters", [])
-            if entry.entry_id in inverters_list:
-                inverters_list.remove(entry.entry_id)
 
         # Remove inverter from data
         if entry.entry_id in hass.data[DOMAIN].get("inverters", {}):

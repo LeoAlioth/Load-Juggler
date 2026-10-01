@@ -15,24 +15,3 @@ GRID_CT = [
         "unit": "A",
     },
 ]
-
-INVERTER_OUTPUT = [
-    {
-        "name": "Sofar - output current",
-        "patterns": {
-            "phase_a": r'sensor\..*_current_output_l1$',
-            "phase_b": r'sensor\..*_current_output_l2$',
-            "phase_c": r'sensor\..*_current_output_l3$',
-        },
-    },
-    {
-        "name": "Sofar - output power",
-        "patterns": {
-            "phase_a": r'sensor\..*_active_power_output_l1$',
-            "phase_b": r'sensor\..*_active_power_output_l2$',
-            "phase_c": r'sensor\..*_active_power_output_l3$',
-        },
-    },
-]
-
-# Battery SOC/power and solar use common naming - handled by generic patterns.

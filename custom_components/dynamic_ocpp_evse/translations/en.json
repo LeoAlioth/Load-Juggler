@@ -1,28 +1,5 @@
 {
     "entity": {
-        "select": {
-            "distribution_mode": {
-                "name": "Distribution Mode",
-                "state": {
-                    "shared": "Shared",
-                    "priority": "Priority",
-                    "sequential___optimized": "Sequential - Optimized",
-                    "sequential___strict": "Sequential - Strict"
-                }
-            },
-            "operating_mode": {
-                "name": "Operating Mode",
-                "state": {
-                    "standard": "Standard",
-                    "continuous": "Continuous",
-                    "solar_priority": "Solar Priority",
-                    "solar_only": "Solar Only",
-                    "excess": "Excess",
-                    "freeze_protection": "Freeze Protection",
-                    "normal": "Normal"
-                }
-            }
-        },
         "sensor": {
             "solar_production": {
                 "name": "Solar production"
@@ -118,25 +95,6 @@
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. The band sits on the safe side of each setting: with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%; with a 20% minimum, discharging stops at 20% and resumes at 23% - the battery never runs below the floor.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable - entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
-                }
-            },
-            "hub_inverter": {
-                "title": "Inverter Configuration",
-                "description": "Configure inverter power limits and per-phase output sensors (optional - set power to 0 to leave unconstrained)\n\nBattery max discharge power: {battery_power_hint}",
-                "data": {
-                    "inverter_max_power": "Total inverter power capacity",
-                    "inverter_max_power_per_phase": "Maximum inverter power per phase",
-                    "inverter_supports_asymmetric": "Inverter supports asymmetric phase output",
-                    "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
-                    "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
-                    "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
-                    "wiring_topology": "Wiring topology"
-                },
-                "data_description": {
-                    "inverter_max_power": "Nameplate rated power from your inverter's datasheet. Set to 0 to skip inverter limits entirely.",
-                    "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase inverter limits.",
-                    "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
-                    "wiring_topology": "Parallel: inverter and grid feed independently (AC-coupled solar, no battery). Series: all power flows through the inverter (hybrid inverter with DC-coupled battery)."
                 }
             },
             "inverter_features": {
@@ -432,7 +390,6 @@
             "invalid_current": "Charge current values must be greater than zero.",
             "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
             "entity_id_in_use": "This entity ID is already used by another Load Juggler device - choose a unique one.",
-            "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. A battery SOC entity and a battery power entity are both required.",
             "invalid_unit": "Sensor unit mismatch - check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V).",
             "unknown": "An unknown error occurred",
             "control_needs_battery": "Battery charge management needs a battery - tick “Battery” as well."

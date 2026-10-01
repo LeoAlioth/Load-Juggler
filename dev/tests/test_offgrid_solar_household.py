@@ -269,7 +269,7 @@ async def test_solar_remaining_is_unknown_with_nothing_to_measure_the_house(
     )
     from custom_components.dynamic_ocpp_evse.entities.hub import publish_hub_data
     from custom_components.dynamic_ocpp_evse.sensor import (
-        DynamicOcppEvseHubDataSensor,
+        LoadJugglerHubDataSensor,
         HUB_SENSOR_DEFINITIONS,
     )
 
@@ -308,7 +308,7 @@ async def test_solar_remaining_is_unknown_with_nothing_to_measure_the_house(
             result = run_hub_calculation(hass, hub)
     publish_hub_data(hass, hub.entry_id, result)
     sensors = {
-        d["hub_data_key"]: DynamicOcppEvseHubDataSensor(hass, hub, "Hub", slug, d)
+        d["hub_data_key"]: LoadJugglerHubDataSensor(hass, hub, "Hub", slug, d)
         for d in HUB_SENSOR_DEFINITIONS
         if d["hub_data_key"] in ("available_solar_power", "available_solar_current")
     }

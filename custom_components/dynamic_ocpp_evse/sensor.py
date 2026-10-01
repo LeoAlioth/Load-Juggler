@@ -64,9 +64,6 @@ from .entities.inverter import (
 from .control.inverter import soc_targets
 from .registry import get_hub_for_load
 
-DynamicOcppEvseHubSensor = LoadJugglerHubSensor
-DynamicOcppEvseHubDataSensor = LoadJugglerHubDataSensor
-
 _LOGGER = logging.getLogger(__name__)
 
 # No SCAN_INTERVAL: nothing on this platform polls. Every sensor here is either

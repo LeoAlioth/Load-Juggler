@@ -148,20 +148,6 @@ def _parse_watts(entity_id, watts):
     return series
 
 
-def read_forecast_series(hass, entity_ids, hub_runtime):
-    """Read and sum the configured forecast entities into one site series.
-
-    The parse is memoized per entity on the State object's identity - HA
-    replaces the immutable State on every update, so an unchanged object means
-    an unchanged attribute (a timestamp key would miss two updates landing on
-    the same clock tick). The attribute holds 48–200 entries and this runs
-    every site refresh (default 2 s), while the forecast integration updates a
-    few times per hour. A memo, not a fallback cache: a missing or unavailable
-    entity contributes nothing (fail open), it does not serve stale data.
-    """
-    return read_forecast_series_pair(hass, entity_ids, hub_runtime)[0]
-
-
 def read_forecast_series_pair(hass, entity_ids, hub_runtime, inflation_by_entity=None):
     '''``(raw, inflated, by_entity)`` - both site series, and their parts.
 
@@ -180,6 +166,14 @@ def read_forecast_series_pair(hass, entity_ids, hub_runtime, inflation_by_entity
     gain observer needs it to split the site forecast back out per inverter
     (each array belongs to one), and rebuilding it there would parse every
     entity a second time.
+
+    The parse is memoized per entity on the State object's identity - HA
+    replaces the immutable State on every update, so an unchanged object means
+    an unchanged attribute (a timestamp key would miss two updates landing on
+    the same clock tick). The attribute holds 48–200 entries and this runs
+    every site refresh (default 2 s), while the forecast integration updates a
+    few times per hour. A memo, not a fallback cache: a missing or unavailable
+    entity contributes nothing (fail open), it does not serve stale data.
     '''
     memo = hub_runtime.setdefault("_forecast_parse_memo", {})
     for stale_id in set(memo) - set(entity_ids):

@@ -773,8 +773,6 @@ def test_the_netting_flag_survives_every_pool_operation():
     for name, obj in (
         ("copy", base.copy()),
         ("add", base + other),
-        ("element_min", base.element_min(other)),
-        ("element_max", base.element_max(other)),
         ("deduct", base.deduct(0.5, "A")),
         ("normalize", base.normalize()),
         ("zeros", PhaseConstraints.zeros(netting=True)),

@@ -16,15 +16,3 @@ GRID_CT = [
         "unit": "W",
     },
 ]
-
-BATTERY_SOC = [
-    {"name": "Enphase Encharge", "pattern": r'sensor\.encharge.*_soc$'},
-]
-
-BATTERY_POWER = [
-    {"name": "Enphase Encharge", "pattern": r'sensor\.encharge.*_power$'},
-]
-
-SOLAR_PRODUCTION = [
-    {"name": "Enphase Envoy", "pattern": r'sensor\.envoy.*_current_power_production$'},
-]

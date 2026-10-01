@@ -57,35 +57,6 @@ GRID_CT = [
     },
 ]
 
-INVERTER_OUTPUT = [
-    {
-        "name": "Solarman/Deye",
-        "patterns": {
-            "phase_a": r'sensor\..*(?:output|inverter)_(?:current_)?(?:l1|1|phase_?a).*',
-            "phase_b": r'sensor\..*(?:output|inverter)_(?:current_)?(?:l2|2|phase_?b).*',
-            "phase_c": r'sensor\..*(?:output|inverter)_(?:current_)?(?:l3|3|phase_?c).*',
-        },
-    },
-]
-
-BATTERY_SOC = [
-    {"name": "Solarman/Deye", "pattern": r'sensor\..*_battery_capacity$'},
-]
-
-BATTERY_POWER = [
-    {"name": "Solarman/Deye", "pattern": r'sensor\..*battery.*charge.*discharge.*power.*'},
-]
-
-SOLAR_PRODUCTION = [
-    {"name": "Solarman/Deye", "pattern": r'sensor\..*_total_dc_power$'},
-]
-
-# Battery max charge/discharge power (number entities with inverter program limits)
-BATTERY_MAX_CHARGE_POWER = [
-    {"name": "Solarman/Deye", "pattern": r'number\..*(?:battery.*charge.*power|charge.*power.*limit)'},
-    {"name": "Solarman/Deye (program)", "pattern": r'number\..*inverter_program.*charge.*power'},
-]
-
 BATTERY_MAX_DISCHARGE_POWER = [
     {"name": "Solarman/Deye", "pattern": r'number\..*(?:battery.*discharge.*power|discharge.*power.*limit)'},
     {"name": "Solarman/Deye (program)", "pattern": r'number\..*inverter_program.*discharge.*power'},

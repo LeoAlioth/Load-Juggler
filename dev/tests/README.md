@@ -31,11 +31,8 @@ python3 dev/tests/run_tests.py "scenario-name"
 
 ### Scenario files
 
-Scenario YAML files live in `dev/tests/scenarios/`:
-- `test_scenarios_1ph.yaml` - Single-phase scenarios
-- `test_scenarios_1ph_battery.yaml` - Single-phase with battery
-- `test_scenarios_3ph.yaml` - Three-phase scenarios
-- `test_scenarios_3ph_battery.yaml` - Three-phase with battery
+Scenario YAML files live in `dev/tests/scenarios/`, one folder per site shape
+(`1ph/`, `1ph_battery/`, `3ph/`, `3ph_battery/`) plus `features/`.
 
 Each YAML file contains a `scenarios:` list with inputs and expected targets for loads.
 

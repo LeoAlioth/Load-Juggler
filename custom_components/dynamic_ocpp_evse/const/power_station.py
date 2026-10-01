@@ -30,7 +30,6 @@ CONF_STATION_BATTERY_LEVEL_ENTITY_ID = "station_battery_level_entity_id"  # sens
 CONF_STATION_CHARGE_LIMIT_ENTITY_ID = "station_charge_limit_entity_id"    # number, % - max charge limit (read only)
 CONF_STATION_AC_INPUT_ENTITY_ID = "station_ac_input_entity_id"            # sensor, W - total wall draw
 CONF_STATION_AC_OUTPUT_ENTITY_ID = "station_ac_output_entity_id"          # sensor, W - pass-through + battery output
-CONF_STATION_DEVICE_ID = "station_device_id"                              # device to resolve the above from
 
 # --- Charge rate bounds: configured, not read from the device, so the station
 # can be held below what its hardware allows. Runtime sliders override these.
@@ -57,11 +56,6 @@ DEFAULT_STATION_NORMAL_RESERVE = 30
 DEFAULT_STATION_STORM_RESERVE = 80
 # Fallback when the station's own Max Charge Limit can't be read.
 DEFAULT_STATION_CHARGE_LIMIT = 90
-
-# Storm reserve: fill from any source and hold the charge for an outage. A
-# reserve that may only be filled from surplus is not a reserve, so this
-# overrides the operating mode while it is on.
-CONF_STATION_STORM_RESERVE_ON = "station_storm_reserve_on"
 
 # Operating modes - priority is the distribution urgency tier (1-4). The station
 # modulates, so these are the EVSE behaviors; the mapping lives in const/modes.py.

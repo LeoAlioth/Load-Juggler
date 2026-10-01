@@ -15,8 +15,6 @@ from ..const import (
     CHARGE_RATE_UNIT_WATTS,
     CONF_PHASE_VOLTAGE,
     DEFAULT_PHASE_VOLTAGE,
-    CONF_UPDATE_FREQUENCY,
-    DEFAULT_UPDATE_FREQUENCY,
     DOMAIN,
     EVSE_RT_COMMANDED_LIMIT,
     EVSE_RT_COMMANDED_RATE_UNIT,
@@ -72,7 +70,7 @@ async def detect_charge_rate_unit(sensor, ocpp_device_id: str) -> str | None:
 
 
 async def send_ocpp_command(
-    sensor, limit: float, hub_entry, dynamic_control_on: bool, now_mono: float,
+    sensor, limit: float, hub_entry, now_mono: float,
     effective_status: str | None = None,
 ) -> None:
     """Send OCPP charging profile to an EVSE charger.

@@ -85,7 +85,7 @@ def _renamed():
 
 def test_the_switch_from_the_settings_page_is_commanded():
     hass = FakeHass({NEW: FakeState("off")})
-    asyncio.run(send_plug_command(FakeSensor(hass, _renamed()), 10, {}, 0.0))
+    asyncio.run(send_plug_command(FakeSensor(hass, _renamed()), 10, 0.0))
     assert hass.services.calls == [("switch", "turn_on", {"entity_id": NEW})]
 
 
@@ -100,7 +100,7 @@ def test_the_switch_from_the_settings_page_is_read():
 def test_an_entry_never_edited_still_uses_its_setup_switch():
     hass = FakeHass({OLD: FakeState("off")})
     entry = FakeEntry({CONF_PLUG_SWITCH_ENTITY_ID: OLD}, {})
-    asyncio.run(send_plug_command(FakeSensor(hass, entry), 0, {}, 0.0))
+    asyncio.run(send_plug_command(FakeSensor(hass, entry), 0, 0.0))
     assert hass.services.calls == [("switch", "turn_off", {"entity_id": OLD})]
 
 
