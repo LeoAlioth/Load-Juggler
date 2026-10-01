@@ -60,6 +60,15 @@ BRANDS = {
         ("deye_grid_l{}_power", "123"),
         ("deye_grid_l{}_power", "123"),
     ),
+    # StephanJoubert's Solarman, deye_sg04lp3: "External CT L1 Power"
+    "Deye, old Solarman": (
+        {"Solarman": [("solarman_total_grid_power", "W")]
+            + _ph("solarman_grid_voltage_l{}", "V") + _ph("solarman_internal_ct_l{}_power", "W")
+            + _ph("solarman_external_ct_l{}_power", "W") + _ph("solarman_load_l{}_power", "W")
+            + _ph("solarman_current_l{}", "A") + _ph("solarman_inverter_l{}_power", "W")},
+        ("solarman_external_ct_l{}_power", "123"),
+        ("solarman_external_ct_l{}_power", "123"),
+    ),
     "Fronius": (
         {"Smart Meter 63A": _ph("smart_meter_63a_voltage_ac_phase_{}", "V")
             + [("smart_meter_63a_energy_real_consumed", "kWh")]
@@ -69,6 +78,27 @@ BRANDS = {
             + _ph("smart_meter_63a_power_reactive_phase_{}", "var")},
         ("smart_meter_63a_current_ac_phase_{}", "123"),
         ("smart_meter_63a_power_real_phase_{}", "123"),
+    ),
+    # HA core names them from its translations today ("Current phase 1")
+    "Fronius, translated names": (
+        {"Smart Meter TS 65A-3": _ph("smart_meter_ts_65a_3_voltage_phase_{}", "V")
+            + _ph("smart_meter_ts_65a_3_voltage_phase_{}", "V", ("1_2", "2_3", "3_1"))
+            + [("smart_meter_ts_65a_3_real_energy_consumed", "kWh")]
+            + _ph("smart_meter_ts_65a_3_current_phase_{}", "A")
+            + _ph("smart_meter_ts_65a_3_real_power_phase_{}", "W")
+            + _ph("smart_meter_ts_65a_3_apparent_power_phase_{}", "VA")
+            + _ph("smart_meter_ts_65a_3_reactive_power_phase_{}", "var")},
+        ("smart_meter_ts_65a_3_current_phase_{}", "123"),
+        ("smart_meter_ts_65a_3_real_power_phase_{}", "123"),
+    ),
+    # a Zaptec charger's "Current phase 1" is not a Fronius meter's
+    "Huawei, Zaptec charger beside": (
+        {"Zaptec Go": _ph("zaptec_go_available_current_phase_{}", "A")
+            + _ph("zaptec_go_current_phase_{}", "A"),
+         "Power meter": _ph("power_meter_phase_{}_current", "A", "abc")
+            + _ph("power_meter_phase_{}_active_power", "W", "abc")},
+        ("power_meter_phase_{}_current", "abc"),
+        ("power_meter_phase_{}_active_power", "abc"),
     ),
     "Huawei": (
         {"Power meter": _ph("power_meter_phase_{}_voltage", "V", "abc")
@@ -96,11 +126,32 @@ BRANDS = {
         ("victron_grid_l{}_power", "123"),
         ("victron_grid_l{}_power", "123"),
     ),
-    "Sofar": (
-        {"Sofar": _ph("sofar_voltage_grid_l{}", "V") + _ph("sofar_current_grid_l{}", "A")
-            + _ph("sofar_active_power_grid_l{}", "W")},
-        ("sofar_current_grid_l{}", "123"),
-        ("sofar_active_power_grid_l{}", "123"),
+    # Solarman sofar_g3hyd (both integrations): the grid meter is the PCC;
+    # StephanJoubert's publishes the reactive power as W
+    "Sofar G3 hybrid": (
+        {"Sofar": _ph("sofar_voltage_phase_{}", "V", "rst") + _ph("sofar_current_output_{}", "A", "rst")
+            + _ph("sofar_activepower_output_{}", "W", "rst") + _ph("sofar_reactivepower_pcc_{}", "W", "rst")
+            + _ph("sofar_current_pcc_{}", "A", "rst") + _ph("sofar_activepower_pcc_{}", "W", "rst")
+            + [("sofar_activepower_pcc_total", "W")]},
+        ("sofar_activepower_pcc_{}", "rst"),
+        ("sofar_activepower_pcc_{}", "rst"),
+    ),
+    # HA core's Sofar: the same readings, translated names, kW
+    "Sofar, HA core": (
+        {"Sofar": _ph("sofar_voltage_l{}", "V") + _ph("sofar_current_output_l{}", "A")
+            + _ph("sofar_active_power_output_l{}", "kW") + _ph("sofar_reactive_power_pcc_l{}", "kvar")
+            + _ph("sofar_active_power_pcc_l{}n", "kW", "12") + _ph("sofar_current_pcc_l{}", "A")
+            + _ph("sofar_active_power_pcc_l{}", "kW")},
+        ("sofar_active_power_pcc_l{}", "123"),
+        ("sofar_active_power_pcc_l{}", "123"),
+    ),
+    # ha-solarman sofar_hybrid (HYD-ES): "Grid L1 Current", which is the
+    # Victron entry's spelling; no power per phase
+    "Sofar HYD-ES": (
+        {"Sofar": _ph("sofar_grid_l{}_voltage", "V") + _ph("sofar_grid_l{}_current", "A")
+            + [("sofar_grid_power", "W")]},
+        ("sofar_grid_l{}_current", "123"),
+        ("sofar_grid_l{}_current", "123"),
     ),
     # mkaiser's Modbus YAML: registered, but no device
     "Sungrow": (
@@ -127,8 +178,8 @@ def test_patterns_find_each_brands_meter(brand):
     assert _auto_detect_phase_entities(ids, PHASE_PATTERNS) == _triple(expected)
 
 
-_DEVICE_CLASS = {"W": "power", "A": "current", "V": "voltage", "kWh": "energy",
-                 "VA": "apparent_power", "var": "reactive_power"}
+_DEVICE_CLASS = {"W": "power", "kW": "power", "A": "current", "V": "voltage", "kWh": "energy",
+                 "VA": "apparent_power", "var": "reactive_power", "kvar": "reactive_power"}
 
 # Only the setup page tells these apart from "nothing": no pattern set
 # matches all three phases. (object ids the page offers for A, B, C)
