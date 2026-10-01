@@ -730,14 +730,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 limit,
             )
         elif self._available_current < min_charge_current:
-            pause_duration_s = (
-                get_entry_value(
-                    self.config_entry,
-                    CONF_CHARGE_PAUSE_DURATION,
-                    DEFAULT_CHARGE_PAUSE_DURATION,
-                )
-                * 60
-            )
             # The pause bounds cycle FREQUENCY (see the minimum-off-time
             # comment below for why that is the quantity that matters), and a
             # cycle needs a previous ON: a load that has never held a runnable

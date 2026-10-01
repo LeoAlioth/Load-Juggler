@@ -29,7 +29,6 @@ from ..const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_POWER_STATION,
 )
-from ..registry import get_hub_for_load
 from ..helpers import get_entry_value
 from .. import units
 from .freshness import is_producer_fresh
@@ -126,6 +125,25 @@ class LoadJugglerEntity:
         if name is not None:
             self._attr_name = name
         self._attr_unique_id = unique_id
+
+    # The model of this entity's device, set by each device mixin.
+    _device_model = None
+
+    @property
+    def _site_hub_entry_id(self):
+        """The hub entry this entity's entry belongs to (a hub's is itself)."""
+        return self.config_entry.data.get(CONF_HUB_ENTRY_ID)
+
+    @property
+    def device_info(self):
+        """This entry's device, shown under its hub's (the hub's own differs)."""
+        return {
+            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
+            "name": self.config_entry.data.get(CONF_NAME),
+            "manufacturer": "Load Juggler",
+            "model": self._device_model,
+            "via_device_id": via_device_id(self.hass, self._site_hub_entry_id),
+        }
 
     # The key this entity's value goes under in its runtime dict - the
     # ``_runtime()`` each device mixin answers, which the engine reads back.
@@ -437,14 +455,15 @@ class HubEntityMixin(LoadJugglerEntity):
 class LoadEntityMixin(LoadJugglerEntity):
     """Mixin for load-level entities: the EV Charger / Smart Load / ... device
     linked to its hub, and ``hass.data[DOMAIN]["loads"][entry_id]`` as the
-    runtime dict.
-
-    Uses self.hub_entry if stored, otherwise looks up via get_hub_for_load().
-    """
+    runtime dict."""
 
     @property
-    def _site_hub_entry_id(self):
-        return self.config_entry.data.get(CONF_HUB_ENTRY_ID)
+    def _device_model(self):
+        return {
+            DEVICE_TYPE_PLUG: "Smart Load",
+            DEVICE_TYPE_HOT_WATER_TANK: "Hot Water Tank",
+            DEVICE_TYPE_POWER_STATION: "Power Station",
+        }.get(self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE), "EV Charger")
 
     def _runtime(self) -> dict:
         """This load's runtime dict in ``hass.data[DOMAIN]["loads"]``.
@@ -463,52 +482,12 @@ class LoadEntityMixin(LoadJugglerEntity):
         """One of the flat, domain-wide buckets in ``hass.data[DOMAIN]``."""
         return self.hass.data.get(DOMAIN, {}).get(key, {})
 
-    @property
-    def _hub_entry(self):
-        """Get the hub ConfigEntry for this load."""
-        if hasattr(self, 'hub_entry') and self.hub_entry:
-            return self.hub_entry
-        return get_hub_for_load(self.hass, self.config_entry.entry_id)
-
-    @property
-    def device_info(self):
-        device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        model = {
-            DEVICE_TYPE_PLUG: "Smart Load",
-            DEVICE_TYPE_HOT_WATER_TANK: "Hot Water Tank",
-            DEVICE_TYPE_POWER_STATION: "Power Station",
-        }.get(device_type, "EV Charger")
-        hub = self._hub_entry
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME),
-            "manufacturer": "Load Juggler",
-            "model": model,
-            "via_device_id": via_device_id(self.hass, hub.entry_id if hub else None),
-        }
 
 
 class GroupEntityMixin(LoadJugglerEntity):
-    """Mixin for circuit group entities.
+    """Mixin for circuit group entities: the Circuit Group device."""
 
-    Provides:
-      - device_info property (Circuit Group, linked to hub via via_device)
-    """
-
-    @property
-    def _site_hub_entry_id(self):
-        return self.config_entry.data.get(CONF_HUB_ENTRY_ID)
-
-    @property
-    def device_info(self):
-        hub_entry_id = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME),
-            "manufacturer": "Load Juggler",
-            "model": "Circuit Group",
-            "via_device_id": via_device_id(self.hass, hub_entry_id),
-        }
+    _device_model = "Circuit Group"
 
 
 class InverterEntityMixin(LoadJugglerEntity):
@@ -516,19 +495,16 @@ class InverterEntityMixin(LoadJugglerEntity):
     Inverter device, and ``hass.data[DOMAIN]["inverters"][entry_id]`` as the
     runtime dict."""
 
-    @property
-    def _site_hub_entry_id(self):
-        return self.config_entry.data.get(CONF_HUB_ENTRY_ID)
+    _device_model = "Inverter"
 
     @property
     def _hub_entry(self):
         """This inverter's hub ConfigEntry, or None if it has no resolvable hub.
 
-        The same idea as ``LoadEntityMixin._hub_entry``, resolved from the config
-        entries rather than from the hub's runtime bucket: an inverter's write
-        controls need site-level settings (the Excess trigger margin that bounds
-        their slew), and config is config - a hub mid-reload must not read as a
-        site with no settings.
+        Resolved from the config entries rather than from the hub's runtime
+        bucket: an inverter's write controls need site-level settings (the
+        Excess trigger margin that bounds their slew), and config is config - a
+        hub mid-reload must not read as a site with no settings.
         """
         hub_entry_id = self._site_hub_entry_id
         if not hub_entry_id:
@@ -559,13 +535,3 @@ class InverterEntityMixin(LoadJugglerEntity):
         """This inverter's section of the hub's published fleet aggregate."""
         return self._inverter_section(self._hub_data())
 
-    @property
-    def device_info(self):
-        hub_entry_id = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
-        return {
-            "identifiers": {(DOMAIN, self.config_entry.entry_id)},
-            "name": self.config_entry.data.get(CONF_NAME),
-            "manufacturer": "Load Juggler",
-            "model": "Inverter",
-            "via_device_id": via_device_id(self.hass, hub_entry_id),
-        }

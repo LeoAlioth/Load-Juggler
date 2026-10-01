@@ -72,10 +72,7 @@ from .const import (
     DEFAULT_UPDATE_FREQUENCY,
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
-    DISTRIBUTION_MODE_PRIORITY,
-    DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED,
-    DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
-    DISTRIBUTION_MODE_SHARED,
+    DISTRIBUTION_MODES,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
@@ -124,6 +121,30 @@ _LEGACY_CONF_CHARGER_PRIORITY = "charger_priority"
 _LEGACY_CONF_CHARGE_CONTROL_DEADBAND = "inverter_charge_control_deadband"
 
 
+# The options a 2.x entry starts from, seeded from its data (by the v1 → v2
+# step and by the 2.0 → 2.1 one): (key, default when data lacks it too).
+_V2_SEEDED_OPTIONS = (
+    (CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT),
+    (CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT),
+    (CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY),
+    (CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT),
+    (CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION),
+    (CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL),
+    (CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT),
+    (CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE),
+    (CONF_BATTERY_SOC_ENTITY_ID, None),
+    (CONF_BATTERY_POWER_ENTITY_ID, None),
+    (CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER),
+    (CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER),
+    (CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS),
+)
+
+
+def _seed_v2_options(options: dict, data) -> None:
+    for key, default in _V2_SEEDED_OPTIONS:
+        options.setdefault(key, data.get(key, default))
+
+
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate old entry to new version."""
     _LOGGER.info("Migrating from version %s.%s to version 2.5",
@@ -139,19 +160,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         # Update the config entry with new version
         options = dict(entry.options)
-        options.setdefault(CONF_EVSE_MINIMUM_CHARGE_CURRENT, new_data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT))
-        options.setdefault(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, new_data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT))
-        options.setdefault(CONF_UPDATE_FREQUENCY, new_data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY))
-        options.setdefault(CONF_OCPP_PROFILE_TIMEOUT, new_data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT))
-        options.setdefault(CONF_CHARGE_PAUSE_DURATION, new_data.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION))
-        options.setdefault(CONF_STACK_LEVEL, new_data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
-        options.setdefault(CONF_CHARGE_RATE_UNIT, new_data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT))
-        options.setdefault(CONF_PROFILE_VALIDITY_MODE, new_data.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE))
-        options.setdefault(CONF_BATTERY_SOC_ENTITY_ID, new_data.get(CONF_BATTERY_SOC_ENTITY_ID))
-        options.setdefault(CONF_BATTERY_POWER_ENTITY_ID, new_data.get(CONF_BATTERY_POWER_ENTITY_ID))
-        options.setdefault(CONF_BATTERY_MAX_CHARGE_POWER, new_data.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
-        options.setdefault(CONF_BATTERY_MAX_DISCHARGE_POWER, new_data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
-        options.setdefault(CONF_BATTERY_SOC_HYSTERESIS, new_data.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS))
+        _seed_v2_options(options, new_data)
 
         hass.config_entries.async_update_entry(
             entry,
@@ -171,20 +180,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Handle minor version updates if version is already 2
     if entry.version == 2 and getattr(entry, 'minor_version', 0) < 1:
         options = dict(entry.options)
-        data = entry.data
-        options.setdefault(CONF_EVSE_MINIMUM_CHARGE_CURRENT, data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT))
-        options.setdefault(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT))
-        options.setdefault(CONF_UPDATE_FREQUENCY, data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY))
-        options.setdefault(CONF_OCPP_PROFILE_TIMEOUT, data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT))
-        options.setdefault(CONF_CHARGE_PAUSE_DURATION, data.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION))
-        options.setdefault(CONF_STACK_LEVEL, data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
-        options.setdefault(CONF_CHARGE_RATE_UNIT, data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT))
-        options.setdefault(CONF_PROFILE_VALIDITY_MODE, data.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE))
-        options.setdefault(CONF_BATTERY_SOC_ENTITY_ID, data.get(CONF_BATTERY_SOC_ENTITY_ID))
-        options.setdefault(CONF_BATTERY_POWER_ENTITY_ID, data.get(CONF_BATTERY_POWER_ENTITY_ID))
-        options.setdefault(CONF_BATTERY_MAX_CHARGE_POWER, data.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
-        options.setdefault(CONF_BATTERY_MAX_DISCHARGE_POWER, data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
-        options.setdefault(CONF_BATTERY_SOC_HYSTERESIS, data.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS))
+        _seed_v2_options(options, entry.data)
 
         hass.config_entries.async_update_entry(
             entry,
@@ -583,10 +579,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
         ("set_distribution_mode", _forward("_distribution_mode", "select", "mode"),
          vol.Schema({
              vol.Required("entry_id"): cv.string,
-             vol.Required("mode"): vol.In([
-                 DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
-                 DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
-             ]),
+             vol.Required("mode"): vol.In(DISTRIBUTION_MODES),
          })),
         ("set_max_current", _forward("_max_current", "number", "current", ("_min_current", operator.lt)), current),
         ("set_min_current", _forward("_min_current", "number", "current", ("_max_current", operator.gt)), current),
@@ -681,6 +674,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass.data[DOMAIN].setdefault(PENDING_PLUG_MODE_MIGRATION, set()).add(
             entry.entry_id
         )
+
+    # Every child entry needs its hub up first. HA sets up config entries
+    # concurrently in arbitrary order, so the hub may not be ready yet -
+    # ConfigEntryNotReady has HA retry the child once it has finished.
+    if entry_type in (ENTRY_TYPE_LOAD, ENTRY_TYPE_GROUP, ENTRY_TYPE_INVERTER):
+        hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
+        if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
+            raise ConfigEntryNotReady(
+                f"Hub {hub_entry_id} not ready for {entry_type} {entry.title}"
+            )
 
     if entry_type == ENTRY_TYPE_HUB:
         await _setup_hub_entry(hass, entry)
@@ -802,14 +805,6 @@ async def _setup_load_entry(hass: HomeAssistant, entry: ConfigEntry):
     
     hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
 
-    # Verify hub exists. HA sets up config entries concurrently in arbitrary
-    # order, so the hub may not be ready yet - raise ConfigEntryNotReady so HA
-    # retries this load once the hub has finished setting up.
-    if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
-        raise ConfigEntryNotReady(
-            f"Hub {hub_entry_id} not ready for load {entry.title}"
-        )
-
     # Before any entity is built: an entry still carrying a pre-2026-02-19
     # device-registry UUID as its charge point id has every OCPP command
     # rejected by ocpp 0.11.2+, and composes the wrong charge-control switch
@@ -844,16 +839,6 @@ async def _setup_load_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def _setup_group_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up a circuit group config entry."""
     _LOGGER.info("Setting up circuit group entry: %s", entry.title)
-
-    hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
-
-    # Verify hub exists - raise ConfigEntryNotReady so HA retries this group
-    # once the hub has finished setting up (entry setup order is concurrent).
-    if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
-        raise ConfigEntryNotReady(
-            f"Hub {hub_entry_id} not ready for group {entry.title}"
-        )
-
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS[ENTRY_TYPE_GROUP])
 
     return True
@@ -864,13 +849,6 @@ async def _setup_inverter_entry(hass: HomeAssistant, entry: ConfigEntry):
     _LOGGER.info("Setting up inverter entry: %s", entry.title)
 
     hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
-
-    # Verify hub exists - raise ConfigEntryNotReady so HA retries this inverter
-    # once the hub has finished setting up (entry setup order is concurrent).
-    if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
-        raise ConfigEntryNotReady(
-            f"Hub {hub_entry_id} not ready for inverter {entry.title}"
-        )
 
     # Store inverter data
     hass.data[DOMAIN]["inverters"][entry.entry_id] = {
