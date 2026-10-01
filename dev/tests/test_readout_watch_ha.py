@@ -214,11 +214,11 @@ async def test_an_accepted_command_is_published_for_the_engine(hass, site):
         "homeassistant.core.ServiceRegistry.async_call",
         new_callable=AsyncMock, side_effect=Exception("charger said no"),
     ):
-        await send_ocpp_command(sensor, 12.0, hub_entry, True, time.monotonic())
+        await send_ocpp_command(sensor, 12.0, hub_entry, time.monotonic())
     assert EVSE_RT_COMMANDED_LIMIT not in _runtime(hass, first)
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        await send_ocpp_command(sensor, 12.0, hub_entry, True, time.monotonic())
+        await send_ocpp_command(sensor, 12.0, hub_entry, time.monotonic())
     assert _runtime(hass, first)[EVSE_RT_COMMANDED_LIMIT] == 12.0
     assert _runtime(hass, first)[EVSE_RT_COMMANDED_RATE_UNIT] == "A"
 

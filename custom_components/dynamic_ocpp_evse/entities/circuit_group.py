@@ -4,7 +4,6 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from ..helpers import get_entry_value
 from .mixins import GroupEntityMixin, SiteCycleConsumerMixin
 
 _LOGGER = logging.getLogger(__name__)

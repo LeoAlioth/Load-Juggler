@@ -38,9 +38,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_HYSTERESIS,
-    CONF_BATTERY_SOC_TARGET_ENTITY_ID,
-    CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
-    CONF_POWER_BUFFER_ENTITY_ID,
     CONF_GRID_EXPORT_LIMIT,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_BATTERY_CAPACITY_KWH,
@@ -2588,7 +2585,7 @@ async def test_slider_backed_config_fields_say_the_slider_owns_them(hass: HomeAs
     Editing one of these after setup changes nothing the device does - the
     restored slider keeps its value - which cost a live site its intended
     boiler setpoints (options said 30/80, the sliders held 20/75, 2026-09-07).
-    Pinned across all three translation files so a new field cannot be added
+    Pinned across both translation files so a new field cannot be added
     without the note, or the note lost in one language.
     """
     import json
@@ -2603,7 +2600,6 @@ async def test_slider_backed_config_fields_say_the_slider_owns_them(hass: HomeAs
     marker = {"en": "slider", "sl": "drsnik"}
     base = Path("custom_components/dynamic_ocpp_evse")
     for name, lang in (
-        ("strings.json", "en"),
         ("translations/en.json", "en"),
         ("translations/sl.json", "sl"),
     ):
@@ -2625,7 +2621,7 @@ async def test_slider_backed_config_fields_say_the_slider_owns_them(hass: HomeAs
 
 def test_the_filters_page_is_translated_in_every_file():
     """The menu entry, every dial's label and help text, and the one error the
-    page can raise exist in all three translation files, with the same keys.
+    page can raise exist in both translation files, with the same keys.
     A field added in one language and missed in another shows the raw key in
     the other UI, with no test to notice."""
     import json
@@ -2637,7 +2633,7 @@ def test_the_filters_page_is_translated_in_every_file():
         "filter_ctrl_fast_tau_s", "filter_settle_seconds", "filter_dead_band",
         "filter_ramp_up_rate", "filter_ramp_down_rate",
     }
-    for name in ("strings.json", "translations/en.json", "translations/sl.json"):
+    for name in ("translations/en.json", "translations/sl.json"):
         opt = json.loads((base / name).read_text(encoding="utf-8"))["options"]
         assert opt["step"]["init"]["menu_options"]["hub_filters"], name
         page = opt["step"]["hub_filters"]

@@ -48,16 +48,7 @@ CONF_UPDATE_FREQUENCY = "update_frequency"
 
 # sensor attributes
 CONF_PHASES = "phases"
-CONF_CHARGING_MODE = "charging_mode"  # Legacy key - kept for hub_data result dict backward compat
 CONF_TOTAL_ALLOCATED_CURRENT = "total_allocated_current"
-CONF_PHASE_A_CURRENT = "phase_a_current"
-CONF_PHASE_B_CURRENT = "phase_b_current"
-CONF_PHASE_C_CURRENT = "phase_c_current"
-CONF_EVSE_CURRENT_IMPORT = "evse_current_import"
-CONF_EVSE_CURRENT_OFFERED = "evse_current_offered"
-CONF_MAX_IMPORT_POWER = "max_import_power"
-CONF_MIN_CURRENT = "min_current"
-CONF_MAX_CURRENT = "max_current"
 
 # Shared default values
 DEFAULT_PHASE_VOLTAGE = 230

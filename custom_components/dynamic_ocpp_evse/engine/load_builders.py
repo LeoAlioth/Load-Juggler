@@ -1321,8 +1321,6 @@ def _build_circuit_groups(hass, hub_entry_id):
     }
     groups = []
     for entry in group_entries:
-        if entry is None:
-            continue
         options = {**entry.data, **entry.options}
         current_limit = options.get(
             CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT

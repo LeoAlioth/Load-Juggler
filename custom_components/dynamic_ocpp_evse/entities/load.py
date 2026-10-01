@@ -14,7 +14,6 @@ from ..const import (
     CONF_CHARGE_PAUSE_DURATION,
     CONF_CONNECTED_TO_PHASE,
     CONF_DEVICE_TYPE,
-    CONF_ENTITY_ID,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_HUB_ENTRY_ID,
@@ -160,7 +159,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             f"{entity_id}_available_current",
         )
         self.hub_entry = hub_entry
-        load_entity_id = config_entry.data.get(CONF_ENTITY_ID)
         # Classified out of the registries, shared with the engine (same cache),
         # so a renamed status entity and a multi-connector charger both resolve.
         self._connector_status_entity = ocpp_connector_status_entity(
@@ -174,7 +172,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # encode Watts-mode OCPP limits (control/ocpp.py, control/compliance.py).
         self._car_active_phases = None
         self._operating_mode = None
-        self._calc_used = None
         self._allocated_current = None
         self._available_current = None
         # UTC timestamp of the last cycle this load was processed without error.
@@ -210,11 +207,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self._last_auto_reset_at = None
         self._profile_reset_count = 0
         self._last_hard_reset_at = None
-        self._target_evse = None
-        self._target_evse_standard = None
-        self._target_evse_eco = None
-        self._target_evse_solar = None
-        self._target_evse_excess = None
         self._charging_status = "Unknown"
 
     async def async_added_to_hass(self):
@@ -395,7 +387,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self._prev_operating_mode = self._operating_mode
         self._prev_distribution_mode = current_distribution_mode
 
-        self._calc_used = hub_data.get("calc_used")
 
         # The site-level republish into hass.data is the hub coordinator's job
         # (one writer per cycle) - see publish_hub_data in entities/hub.py.
@@ -809,7 +800,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             # Dynamic Control off → hands off: leave the plug in whatever
             # state the user set, like an un-managed switch.
             if dynamic_control_on:
-                await send_plug_command(self, limit, hub_data, now_mono)
+                await send_plug_command(self, limit, now_mono)
         elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
             # Dynamic Control off → Load Juggler does not touch the climate
             # entity at all. The tank then behaves as a normal, un-managed
@@ -831,7 +822,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 self,
                 limit,
                 hub_entry,
-                dynamic_control_on,
                 now_mono,
                 # The engine's verdict on this connector, which is what makes
                 # the load inactive - see send_ocpp_command for why re-reading

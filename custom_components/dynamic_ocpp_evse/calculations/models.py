@@ -155,11 +155,6 @@ class LoadContext:
     allocated_current: float = 0
     available_current: float = 0
 
-    # OCPP settings
-    ocpp_device_id: str = None
-    stack_level: int = 2
-    charge_rate_unit: str = "auto"  # "amps", "watts", or "auto"
-
     @property
     def reports_idle(self) -> bool:
         """True when the load itself says it is drawing nothing.
@@ -251,7 +246,6 @@ class SiteContext:
     battery_soc_target: float | None = None
     battery_soc_min: float | None = None
     battery_soc_full: float | None = None  # SOC at/above which the battery counts as "full"
-    battery_soc_hysteresis: float = 5
     battery_max_charge_power: float | None = None
     battery_max_discharge_power: float | None = None
     # The most the battery is taken to discharge (W), below its rating: set
@@ -442,20 +436,6 @@ class PhaseConstraints:
             netting=self.netting,
         )
 
-    def _element_op(self, other: PhaseConstraints, op) -> PhaseConstraints:
-        return PhaseConstraints(
-            A=op(self.A, other.A), B=op(self.B, other.B), C=op(self.C, other.C),
-            AB=op(self.AB, other.AB), AC=op(self.AC, other.AC), BC=op(self.BC, other.BC),
-            ABC=op(self.ABC, other.ABC),
-            netting=self.netting,
-        )
-
-    def element_min(self, other: PhaseConstraints) -> PhaseConstraints:
-        return self._element_op(other, min)
-
-    def element_max(self, other: PhaseConstraints) -> PhaseConstraints:
-        return self._element_op(other, max)
-
     def get_available(self, mask: str) -> float:
         """Get per-phase current available for a load with given phase mask.
 
@@ -499,9 +479,6 @@ class PhaseConstraints:
                 self.AB / 2, self.AC / 2, self.BC / 2,
                 self.ABC / 3,
             )
-
-        _LOGGER.warning("Unknown phase mask '%s', returning 0", mask)
-        return 0
 
     def deduct(self, current: float, mask: str) -> PhaseConstraints:
         """Deduct current from all affected phase combinations. Returns new instance."""

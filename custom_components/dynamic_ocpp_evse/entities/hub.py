@@ -6,7 +6,6 @@ from homeassistant.components.sensor import (
 )
 from datetime import datetime, timezone
 from ..const import DOMAIN
-from ..helpers import get_entry_value
 from .mixins import HubEntityMixin, SiteCycleConsumerMixin
 from .readout import hub_estimate_attributes
 

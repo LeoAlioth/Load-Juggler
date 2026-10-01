@@ -77,7 +77,7 @@ custom_components/dynamic_ocpp_evse/
 │   ├── models.py                  # Data models (SiteContext, LoadContext, CircuitGroup, PhaseConstraints, PhaseValues)
 │   ├── target_calculator.py       # Main calculation engine
 │   ├── forecast.py                # Forecast-based charging advice
-│   ├── context.py                 # Unused (no callers) - candidate for deletion
+│   ├── calibration.py             # Forecast calibration (level-bias gain, peakiness)
 │   └── utils.py                   # Utility functions (is_number, compute_household_per_phase)
 ├── control/                       # Actuation layer (imports only const/helpers/units - never entities or engine)
 │   ├── ocpp.py                    # OCPP charging-profile service calls
@@ -95,7 +95,7 @@ custom_components/dynamic_ocpp_evse/
 │   ├── freshness.py               # Pure producer-freshness predicate behind every sensor's `available`
 │   └── mixins.py                  # LoadJugglerEntity base + device mixins + SiteFreshnessMixin /
 │                                  #   SiteCycleConsumerMixin (push readers) / SiteCycleWorkerMixin (async per-cycle actuators)
-├── detection_patterns/            # Per-brand entity-naming patterns for auto-detection (fronius, sma, victron, …)
+├── detection_patterns/            # Per-brand entity-naming patterns for grid CT auto-detection (fronius, victron, …)
 ├── [button|number|select|sensor|switch].py  # HA platform files (thin wiring around entities/)
 ├── units.py                       # Unit conversion helpers
 ├── helpers.py                     # get_entry_value() and misc helpers

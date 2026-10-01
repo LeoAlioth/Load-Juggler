@@ -17,22 +17,6 @@ GRID_CT = [
     },
 ]
 
-BATTERY_SOC = [
-    {"name": "Huawei", "pattern": r'sensor\..*battery_state_of_capacity$'},
-]
-
-BATTERY_POWER = [
-    {"name": "Huawei", "pattern": r'sensor\..*battery_charge_discharge_power$'},
-]
-
-SOLAR_PRODUCTION = [
-    {"name": "Huawei", "pattern": r'sensor\..*inverter_input_power$'},
-]
-
-BATTERY_MAX_CHARGE_POWER = [
-    {"name": "Huawei", "pattern": r'sensor\..*battery_maximum_charge_power$'},
-]
-
 BATTERY_MAX_DISCHARGE_POWER = [
     {"name": "Huawei", "pattern": r'sensor\..*battery_maximum_discharge_power$'},
 ]

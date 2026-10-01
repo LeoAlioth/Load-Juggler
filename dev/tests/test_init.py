@@ -244,7 +244,7 @@ async def test_fleet_survives_a_hub_reload(
     missing inverters - silently taking their capacity out of the site limit -
     until the next Home Assistant restart.
     """
-    from custom_components.dynamic_ocpp_evse import get_inverters_for_hub
+    from custom_components.dynamic_ocpp_evse.registry import get_inverters_for_hub
     from custom_components.dynamic_ocpp_evse.const import (
         ENTRY_TYPE_INVERTER,
         DEVICE_TYPE_INVERTER,
@@ -299,7 +299,7 @@ async def test_chargers_are_readopted_after_a_hub_reload(
 ):
     """Same regression for chargers, which keep a runtime list because their
     allocation state lives beside it - the hub re-adopts them on setup."""
-    from custom_components.dynamic_ocpp_evse import get_loads_for_hub
+    from custom_components.dynamic_ocpp_evse.registry import get_loads_for_hub
 
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)

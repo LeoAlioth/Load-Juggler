@@ -30,15 +30,11 @@ DEFAULT_WIRING_TOPOLOGY = WIRING_TOPOLOGY_PARALLEL
 # Battery support configuration constants (hub-level)
 CONF_BATTERY_POWER_ENTITY_ID = "battery_power_entity_id"
 CONF_BATTERY_SOC_ENTITY_ID = "battery_soc_entity_id"
-CONF_BATTERY_SOC_TARGET_ENTITY_ID = "battery_soc_target_entity_id"
 CONF_BATTERY_SOC_MIN = "battery_soc_min"  # Minimum SOC below which EV should not charge
 CONF_BATTERY_SOC_FULL = "battery_soc_full"  # SOC at/above which the battery counts as "full" (plug Excess mode)
 CONF_BATTERY_SOC_HYSTERESIS = "battery_soc_hysteresis"  # Hysteresis percentage for SOC thresholds
 CONF_BATTERY_MAX_CHARGE_POWER = "battery_max_charge_power"  # W
 CONF_BATTERY_MAX_DISCHARGE_POWER = "battery_max_discharge_power"  # W
-CONF_ALLOW_GRID_CHARGING_ENTITY_ID = "allow_grid_charging_entity_id"
-CONF_POWER_BUFFER_ENTITY_ID = "power_buffer_entity_id"
-CONF_POWER_BUFFER = "power_buffer"
 
 # Site-level timing / detection
 CONF_SITE_UPDATE_FREQUENCY = "site_update_frequency"  # Hub-level: how often site sensors refresh

@@ -307,13 +307,13 @@ async def test_solar_remaining_is_the_sun_less_the_house(hass, site):
     where the house takes it all. (Before the fix it read 0 W: the pool it is
     published from had nothing in it without a battery flow.)"""
     from custom_components.dynamic_ocpp_evse.sensor import (
-        DynamicOcppEvseHubDataSensor,
+        LoadJugglerHubDataSensor,
         HUB_SENSOR_DEFINITIONS,
     )
 
     await _session(hass, site, minutes=3)
     sensor = next(
-        DynamicOcppEvseHubDataSensor(hass, site.hub, "Hub", "hub", d)
+        LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
         for d in HUB_SENSOR_DEFINITIONS
         if d["hub_data_key"] == "available_solar_power"
     )

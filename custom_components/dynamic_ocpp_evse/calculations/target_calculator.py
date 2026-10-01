@@ -21,7 +21,6 @@ from .models import (
     LoadContext,
     PhaseConstraints,
     PhaseValues,
-    CircuitGroup,
 )
 from ..const import (
     BEHAVIOR_FULL_POWER,
@@ -199,7 +198,7 @@ def calculate_all_load_targets(site: SiteContext) -> None:
 
     # Step 5: Calculate available current for the loads we actually manage.
     _set_available_current_for_loads(
-        managed, active_loads, inactive_loads,
+        active_loads, inactive_loads,
         physical_pool, solar_pool, excess_pool, site,
     )
 
@@ -279,7 +278,6 @@ def _pool_snapshot(
 
 
 def _set_available_current_for_loads(
-    all_loads: list,
     active_loads: list,
     inactive_loads: list,
     physical_pool: PhaseConstraints,

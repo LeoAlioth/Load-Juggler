@@ -18,7 +18,6 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from ..const import (
-    DOMAIN,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,

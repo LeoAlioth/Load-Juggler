@@ -43,11 +43,9 @@ OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L3 = "_current_import_l3"
 OCPP_ENTITY_SUFFIX_CURRENT_OFFERED = "_current_offered"
 OCPP_ENTITY_SUFFIX_POWER_OFFERED = "_power_offered"
 OCPP_ENTITY_SUFFIX_POWER_IMPORT = "_power_active_import"
-OCPP_ENTITY_SUFFIX_STATUS = "_status"
 # The connector status ("Status.Connector") - classified like the metrics above
 # but never stored on an entry: it is resolved from the registries at setup.
 OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR = "_status_connector"
-OCPP_ENTITY_SUFFIX_STOP_REASON = "_stop_reason"
 
 # Runtime keys in an EVSE's ``hass.data[DOMAIN]["loads"][entry_id]`` bucket.
 #

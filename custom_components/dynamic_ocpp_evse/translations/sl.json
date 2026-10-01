@@ -1,28 +1,5 @@
 {
     "entity": {
-        "select": {
-            "distribution_mode": {
-                "name": "Način porazdelitve",
-                "state": {
-                    "shared": "Deljeno",
-                    "priority": "Prioriteta",
-                    "sequential___optimized": "Zaporedno - optimizirano",
-                    "sequential___strict": "Zaporedno - strogo"
-                }
-            },
-            "operating_mode": {
-                "name": "Način delovanja",
-                "state": {
-                    "standard": "Standardni",
-                    "continuous": "Neprekinjeni",
-                    "solar_priority": "Prednost sonca",
-                    "solar_only": "Samo sonce",
-                    "excess": "Presežek",
-                    "freeze_protection": "Zaščita pred zmrzaljo",
-                    "normal": "Normalni"
-                }
-            }
-        },
         "sensor": {
             "solar_production": {
                 "name": "Sončna proizvodnja"
@@ -118,25 +95,6 @@
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % - baterija nikoli ne pade pod spodnjo mejo.",
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva - vnos vršne porabe funkcijo v praksi izklopi.",
                     "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
-                }
-            },
-            "hub_inverter": {
-                "title": "Konfiguracija razsmernika",
-                "description": "Nastavite omejitve moči razsmernika in senzorje izhoda po fazah (neobvezno - nastavite moč na 0 za brez omejitev)\n\nMaksimalna moč praznjenja baterije: {battery_power_hint}",
-                "data": {
-                    "inverter_max_power": "Skupna moč razsmernika",
-                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo",
-                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrični izhod po fazah",
-                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
-                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
-                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
-                    "wiring_topology": "Topologija ožičenja"
-                },
-                "data_description": {
-                    "inverter_max_power": "Nazivna moč iz podatkovnega lista razsmernika. Nastavite na 0 za preskočitev omejitev razsmernika.",
-                    "inverter_max_power_per_phase": "Običajno skupna moč deljena s številom faz. Nastavite na 0 za preskočitev omejitev po fazah.",
-                    "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
-                    "wiring_topology": "Vzporedno: razsmernik in omrežje napajata neodvisno (AC-sklopljena sončna, brez baterije). Zaporedno: vsa energija teče skozi razsmernik (hibridni razsmernik z DC-sklopljeno baterijo)."
                 }
             },
             "inverter_features": {
@@ -432,7 +390,6 @@
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
             "entity_id_in_use": "Ta ID entitete že uporablja druga naprava Load Juggler - izberite enoličen ID.",
-            "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta napolnjenosti baterije in entiteta moči baterije.",
             "invalid_unit": "Neujemanje enote senzorja - preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V).",
             "unknown": "Prišlo je do neznane napake",
             "control_needs_battery": "Upravljanje polnjenja baterije potrebuje baterijo - označite tudi »Baterija«."

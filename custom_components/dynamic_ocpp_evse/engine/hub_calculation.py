@@ -20,7 +20,6 @@ from datetime import datetime, timedelta, timezone
 
 from ..calculations import (
     SiteContext,
-    LoadContext,  # noqa: F401 - re-exported via __all__
     PhaseValues,
     calculate_all_load_targets,
     excess_margin,
@@ -62,7 +61,6 @@ from ..const import (
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
     CTRL_FAST_TAU_S,
-    DEAD_BAND,
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DEFAULT_UPDATE_FREQUENCY,
     EMA_TAU_S,
@@ -1243,7 +1241,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         dict with calculated values including:
             - CONF_TOTAL_ALLOCATED_CURRENT: Total allocated current (A)
             - CONF_PHASES: Number of phases
-            - CONF_CHARGING_MODE: Current charging mode
             - load_targets: per-load target currents
             - Other site/load data
     """
@@ -1500,9 +1497,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         battery_soc_full=float(battery_soc_full)
         if battery_soc_full is not None
         else None,
-        battery_soc_hysteresis=float(battery_soc_hysteresis)
-        if battery_soc_hysteresis is not None
-        else 5,
         battery_max_charge_power=float(battery_max_charge_power)
         if battery_max_charge_power is not None
         else None,
@@ -1533,11 +1527,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     )
 
     # --- Add loads ---
-    hub_entry_id = (
-        hub_entry.entry_id
-        if hasattr(hub_entry, "entry_id")
-        else hub_entry.data.get("hub_entry_id")
-    )
+    hub_entry_id = hub_entry.entry_id
     _add_loads_to_site(
         hass, site, hub_entry_id, load_entries,
         settle_seconds=get_entry_value(
@@ -1664,7 +1654,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         site,
         battery_soc,
         members,
-        excess_on,
         ctrl_site=ctrl_site,
     )
     for inv_id, advice in forecast_per_inverter.items():
@@ -1697,12 +1686,3 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         forecast_advice=forecast_advice,
         inverters_data=inverters_data,
     )
-
-
-__all__ = [
-    "SiteContext",
-    "LoadContext",
-    "PhaseValues",
-    "calculate_all_load_targets",
-    "run_hub_calculation",
-]

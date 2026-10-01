@@ -1,18 +1,16 @@
-"""Auto-detection patterns for grid CTs, inverter outputs, battery, and solar entities.
+"""Auto-detection patterns for grid CTs, battery discharge limits and plug monitors.
 
 Each brand is defined in its own module. To add support for a new brand:
 
 1. Create a new file in this package (e.g., ``mybrand.py``)
-2. Define any combination of: GRID_CT, INVERTER_OUTPUT, BATTERY_SOC,
-   BATTERY_POWER, SOLAR_PRODUCTION
+2. Define GRID_CT and/or BATTERY_MAX_DISCHARGE_POWER
 3. Add the module to ``_BRANDS`` below
 
-**Phase patterns** (GRID_CT, INVERTER_OUTPUT):
+**Phase patterns** (GRID_CT):
   Each entry has a ``patterns`` dict with keys phase_a / phase_b / phase_c.
   Tried in order - first complete 3-phase match wins.
 
-**Single-entity patterns** (BATTERY_SOC, BATTERY_POWER, SOLAR_PRODUCTION,
-  BATTERY_MAX_CHARGE_POWER, BATTERY_MAX_DISCHARGE_POWER):
+**Single-entity patterns** (BATTERY_MAX_DISCHARGE_POWER):
   Each entry has a single ``pattern`` regex.  First match wins.
 """
 
@@ -25,10 +23,6 @@ from . import (
     victron,
     sofar,
     sungrow,
-    sma,
-    goodwe,
-    growatt,
-    foxess,
     generic,
     smart_plugs,
 )
@@ -44,10 +38,6 @@ _BRANDS = [
     victron,
     sofar,
     sungrow,
-    sma,
-    goodwe,
-    growatt,
-    foxess,
     generic,
 ]
 
@@ -75,11 +65,6 @@ def _power_first(pattern_sets: list) -> list:
 
 
 PHASE_PATTERNS = _power_first(_collect("GRID_CT"))
-INVERTER_OUTPUT_PATTERNS = _collect("INVERTER_OUTPUT")
-BATTERY_SOC_PATTERNS = _collect("BATTERY_SOC")
-BATTERY_POWER_PATTERNS = _collect("BATTERY_POWER")
-SOLAR_PRODUCTION_PATTERNS = _collect("SOLAR_PRODUCTION")
-BATTERY_MAX_CHARGE_POWER_PATTERNS = _collect("BATTERY_MAX_CHARGE_POWER")
 BATTERY_MAX_DISCHARGE_POWER_PATTERNS = _collect("BATTERY_MAX_DISCHARGE_POWER")
 # Smart plugs are not solar/inverter brands - collect directly.
 PLUG_POWER_MONITOR_PATTERNS = smart_plugs.PLUG_POWER_MONITOR

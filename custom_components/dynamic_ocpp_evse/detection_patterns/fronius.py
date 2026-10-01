@@ -16,22 +16,3 @@ GRID_CT = [
         "unit": "A",
     },
 ]
-
-INVERTER_OUTPUT = [
-    {
-        "name": "Fronius SmartMeter - real power",
-        "patterns": {
-            "phase_a": r'sensor\..*_power_real_phase_1$',
-            "phase_b": r'sensor\..*_power_real_phase_2$',
-            "phase_c": r'sensor\..*_power_real_phase_3$',
-        },
-    },
-]
-
-BATTERY_SOC = [
-    {"name": "Fronius", "pattern": r'sensor\..*_state_of_charge$'},
-]
-
-SOLAR_PRODUCTION = [
-    {"name": "Fronius", "pattern": r'sensor\..*_power_photovoltaics$'},
-]

@@ -159,7 +159,6 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         unit_map: dict | None = None,
         validate=None,
         finalize=None,
-        last_step: bool | None = True,
     ) -> config_entries.FlowResult:
         """Run one self-contained edit page: normalize → validate → save.
 
@@ -200,7 +199,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             data_schema=schema({**self._defaults, **self._data}),
             errors=errors,
             description_placeholders=({"entity": placeholder} if placeholder else None),
-            last_step=last_step,
+            last_step=True,
         )
 
     async def _async_wizard_page(

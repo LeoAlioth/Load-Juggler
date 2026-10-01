@@ -166,8 +166,6 @@ from ..const import (
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
     CONF_INVERTER_FEATURES,
-    INVERTER_FEATURE_BATTERY,
-    INVERTER_FEATURE_BATTERY_CONTROL,
     INVERTER_FEATURE_SOLAR,
     INVERTER_FEATURES,
 )
@@ -1217,19 +1215,14 @@ def _inverter_features_schema(defaults: dict | None = None) -> vol.Schema:
     )
 
 
-def _inverter_config_schema(hass, defaults: dict | None = None, features=None):
+def _inverter_config_schema(hass, defaults: dict | None, features):
     """The inverter's own page on setup: the AC side, plus the PV section when
     the solar feature is declared. Returns the field list (the create step
     adds name and entity id in front of it)."""
     fields = _build_hub_inverter_schema(hass, defaults)
-    if _has_feature(features, INVERTER_FEATURE_SOLAR):
+    if INVERTER_FEATURE_SOLAR in features:
         fields.extend(_build_inverter_solar_schema(hass, defaults))
     return fields
-
-
-def _has_feature(features, feature) -> bool:
-    """None means "everything" - the pre-features shape of these pages."""
-    return features is None or feature in features
 
 
 def _hub_schema(

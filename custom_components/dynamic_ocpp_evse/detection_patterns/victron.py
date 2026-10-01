@@ -16,10 +16,3 @@ GRID_CT = [
         "unit": "A",
     },
 ]
-
-BATTERY_POWER = [
-    {"name": "Victron", "pattern": r'sensor\..*_battery_power_system$'},
-]
-
-# Battery SOC: uses common _battery_soc naming - handled by generic patterns.
-# Solar: uses common _pv_power naming - handled by generic patterns.

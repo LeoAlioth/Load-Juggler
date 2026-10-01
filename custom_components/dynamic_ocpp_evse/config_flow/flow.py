@@ -20,7 +20,6 @@ from homeassistant.helpers.device_registry import async_get as async_get_device_
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.selector import selector
 from ..const import (
-    CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
     CONF_AUTO_DETECT_PHASE_MAPPING,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_MAX_CHARGE_POWER,
@@ -29,7 +28,6 @@ from ..const import (
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_SOC_FULL,
     CONF_BATTERY_SOC_HYSTERESIS,
-    CONF_BATTERY_SOC_TARGET_ENTITY_ID,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_CHARGER_ID,
     CONF_CHARGER_L1_PHASE,
@@ -79,7 +77,6 @@ from ..const import (
     CONF_PLUG_POWER_MONITOR_ENTITY_ID,
     CONF_PLUG_POWER_RATING,
     CONF_PLUG_SWITCH_ENTITY_ID,
-    CONF_POWER_BUFFER_ENTITY_ID,
     CONF_PROFILE_VALIDITY_MODE,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
@@ -357,18 +354,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _validate_entity_units(self.hass, user_input, _GRID_UNIT_MAP, errors)
             if not errors:
                 self._data.update(user_input)
-
-                # Generate entity IDs for hub-created entities
-                entity_id = self._data.get(CONF_ENTITY_ID)
-                self._data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = (
-                    f"number.{entity_id}_home_battery_soc_target"
-                )
-                self._data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = (
-                    f"switch.{entity_id}_allow_grid_charging"
-                )
-                self._data[CONF_POWER_BUFFER_ENTITY_ID] = (
-                    f"number.{entity_id}_power_buffer"
-                )
 
                 # Split static vs mutable fields:
                 static_data = {

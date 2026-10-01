@@ -30,10 +30,6 @@ _LOGGER = logging.getLogger(__name__)
 # is a misconfigured kWp or a dead sensor, not something to absorb quietly.
 GAIN_CLAMP_LOW = 0.75
 GAIN_CLAMP_HIGH = 1.25
-# Weight of one day in the running gain. Slow on purpose: the quantity is
-# stationary, so there is nothing to chase, and a single freak day must not move
-# the reserve.
-GAIN_DAY_WEIGHT = 0.1
 # A day contributes only if its comparable forecast energy reaches this. Below
 # it the ratio is dominated by dawn/dusk noise and by whatever fraction of the
 # day survived the constrained-interval exclusion.
@@ -170,31 +166,6 @@ def day_skipped_share(state):
     if total <= 0:
         return None
     return skipped_wh / total
-
-
-def update_gain(
-    gain,
-    ratio,
-    weight=GAIN_DAY_WEIGHT,
-    low=GAIN_CLAMP_LOW,
-    high=GAIN_CLAMP_HIGH,
-):
-    """Fold one day's ratio into the running gain, clamped.
-
-    A plain exponential average, and deliberately a slow one. The clamp is on
-    the RESULT rather than on the incoming ratio, so a run of extreme days
-    pushes the gain to the bound and holds it there instead of being averaged
-    into something that looks moderate - the bound is then visible in the
-    published value, which is the point of an observer.
-
-    ``ratio`` of None leaves the gain untouched (an uninformative day).
-
-    Pure function - unit-testable.
-    """
-    if ratio is None:
-        return gain
-    moved = float(gain) + weight * (float(ratio) - float(gain))
-    return min(high, max(low, moved))
 
 
 # --- The 15-minute gain series -------------------------------------------------

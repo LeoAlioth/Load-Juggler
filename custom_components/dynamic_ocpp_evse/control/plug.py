@@ -6,9 +6,7 @@ from ..helpers import get_entry_value
 _LOGGER = logging.getLogger(__name__)
 
 
-async def send_plug_command(
-    sensor, limit: float, hub_data: dict, now_mono: float
-) -> None:
+async def send_plug_command(sensor, limit: float, now_mono: float) -> None:
     """Send on/off command to a smart load device."""
     # The settings page saves a changed switch to options, so read it there first.
     plug_switch_entity = get_entry_value(sensor.config_entry, CONF_PLUG_SWITCH_ENTITY_ID)
