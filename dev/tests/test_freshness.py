@@ -12,8 +12,6 @@ What the tests pin:
     flapping, the multiplier lets a slow one miss a tick;
   * never-updated (None) is stale, which is what makes a sensor unavailable
     before the first cycle instead of publishing a 0 that reads as real;
-  * a garbage cycle length degrades to the 30 s floor rather than to "always
-    stale" - one bad option must not blank out an entire site;
   * a future timestamp counts as fresh, so a clock step cannot black out every
     sensor on the site.
 """
@@ -25,7 +23,6 @@ from custom_components.dynamic_ocpp_evse.entities.freshness import (
     FRESHNESS_MIN_WINDOW_SECONDS,
     freshness_window_seconds,
     is_producer_fresh,
-    producer_age_seconds,
 )
 
 NOW = datetime(2026, 8, 18, 12, 0, 0, tzinfo=timezone.utc)
@@ -57,40 +54,6 @@ def test_the_crossover_is_exactly_ten_seconds():
     assert freshness_window_seconds(10) == FRESHNESS_MIN_WINDOW_SECONDS
     assert freshness_window_seconds(10.1) > FRESHNESS_MIN_WINDOW_SECONDS
     assert FRESHNESS_CYCLE_MULTIPLIER == 3
-
-
-def test_unusable_cycle_lengths_fall_back_to_the_floor():
-    # A misconfigured or unreadable interval must not blank out the whole site.
-    for bad in (None, "", "fast", 0, -5, float("nan"), float("inf")):
-        assert freshness_window_seconds(bad) == FRESHNESS_MIN_WINDOW_SECONDS, bad
-
-
-# ---------------------------------------------------------------------------
-# Age
-# ---------------------------------------------------------------------------
-
-
-def test_never_updated_has_no_age():
-    assert producer_age_seconds(None, NOW) is None
-
-
-def test_age_is_measured_from_now():
-    assert producer_age_seconds(_ago(12), NOW) == 12.0
-
-
-def test_a_future_timestamp_is_clamped_to_zero_not_negative():
-    assert producer_age_seconds(NOW + timedelta(seconds=90), NOW) == 0.0
-
-
-def test_a_naive_timestamp_cannot_be_aged():
-    # Mixing naive and aware datetimes raises; the answer is "cannot tell",
-    # which the predicate treats as stale rather than crashing a sensor.
-    assert producer_age_seconds(datetime(2026, 8, 18, 12, 0, 0), NOW) is None
-
-
-def test_a_non_datetime_cannot_be_aged():
-    assert producer_age_seconds("2026-08-18T12:00:00", NOW) is None
-    assert producer_age_seconds(1755518400, NOW) is None
 
 
 # ---------------------------------------------------------------------------
@@ -127,10 +90,3 @@ def test_a_slow_site_gets_its_longer_window():
 
 def test_a_future_timestamp_is_fresh():
     assert is_producer_fresh(NOW + timedelta(hours=1), 2, NOW) is True
-
-
-def test_now_defaults_to_the_wall_clock():
-    # Called without `now` the predicate must still answer sensibly - the
-    # entity property does pass one, but nothing in the signature requires it.
-    assert is_producer_fresh(datetime.now(timezone.utc), 2) is True
-    assert is_producer_fresh(datetime(2000, 1, 1, tzinfo=timezone.utc), 2) is False

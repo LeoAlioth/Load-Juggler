@@ -15,9 +15,6 @@ Pure Python: no Home Assistant, and no package-relative imports, so the pure
 test tier can load this file straight from its path.
 """
 
-import math
-from datetime import datetime, timezone
-
 # Never call a producer stale sooner than this, however fast its cycle is.
 FRESHNESS_MIN_WINDOW_SECONDS = 30.0
 
@@ -26,49 +23,23 @@ FRESHNESS_CYCLE_MULTIPLIER = 3
 
 
 def freshness_window_seconds(site_update_frequency) -> float:
-    """Seconds a producer's last update stays usable, given its cycle length.
-
-    Anything unparseable or nonsensical (None, a string, NaN, a negative
-    period) degrades to the 30 s floor rather than to "always stale" - a
-    misconfigured interval must not blank out every sensor on the site.
-    """
-    try:
-        cycle = float(site_update_frequency)
-    except (TypeError, ValueError):
-        cycle = 0.0
-    if not math.isfinite(cycle) or cycle < 0:
-        cycle = 0.0
-    return max(FRESHNESS_MIN_WINDOW_SECONDS, FRESHNESS_CYCLE_MULTIPLIER * cycle)
+    """Seconds a producer's last update stays usable, given its cycle length."""
+    return max(
+        FRESHNESS_MIN_WINDOW_SECONDS,
+        FRESHNESS_CYCLE_MULTIPLIER * site_update_frequency,
+    )
 
 
-def producer_age_seconds(last_update, now=None):
-    """Age of ``last_update`` in seconds, or None when it cannot be measured.
+def is_producer_fresh(last_update, site_update_frequency, now) -> bool:
+    """True when ``last_update`` is recent enough to trust its readers' values.
 
-    None is the answer for "never updated" (``last_update`` is None) and for a
-    timestamp that cannot be compared with ``now`` - mixing a naive datetime
-    with an aware one raises, and a producer that cannot be dated is exactly
-    the case this module exists to report as stale.
-
-    A timestamp in the future (clock stepped backwards, or a producer stamping
-    with a skewed clock) is clamped to age 0: it is evidence of a recent write,
-    not of staleness.
+    Never updated (None) is stale. A timestamp in the future (clock stepped
+    backwards) is fresh: it is evidence of a recent write, not of staleness.
+    Every producer stamps an aware ``datetime.now(timezone.utc)`` (the hub's
+    publish_hub_data, a load's processor and its control/ senders), and the
+    cycle length is the hub form's 1-60 s number.
     """
     if last_update is None:
-        return None
-    if now is None:
-        now = datetime.now(timezone.utc)
-    try:
-        age = (now - last_update).total_seconds()
-    except (TypeError, AttributeError):
-        return None
-    if not math.isfinite(age):
-        return None
-    return max(0.0, age)
-
-
-def is_producer_fresh(last_update, site_update_frequency, now=None) -> bool:
-    """True when ``last_update`` is recent enough to trust its readers' values."""
-    age = producer_age_seconds(last_update, now)
-    if age is None:
         return False
+    age = (now - last_update).total_seconds()
     return age <= freshness_window_seconds(site_update_frequency)
