@@ -34,15 +34,6 @@ from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
 from custom_components.dynamic_ocpp_evse.const import DEFAULT_BATTERY_SOC_FULL, DEFAULT_PLUG_MAX_CURRENT
 
 # ---------------------------------------------------------------------------
-# Mode name migration (old YAML → new operating modes)
-# ---------------------------------------------------------------------------
-_MIGRATE_MODE_NAMES = {
-    "Eco": "Solar Priority",
-    "Solar": "Solar Only",
-    # Standard and Excess are unchanged
-}
-
-# ---------------------------------------------------------------------------
 # Simulation constants
 # ---------------------------------------------------------------------------
 RAMP_UP_CYCLES = 5
@@ -531,9 +522,6 @@ def build_site_from_scenario(scenario, excess_on=False):
     site.solar_is_metered = solar_is_derived and site.inverter_output_per_phase is None
 
     # Build loads
-    # Per-load operating_mode; fallback to site-level charging_mode for migration
-    site_mode = site_data.get('charging_mode')
-
     for idx, load_data in enumerate(scenario['loads']):
         device_type = load_data.get("device_type", "evse")
         phases = load_data.get("phases", 1)
@@ -559,16 +547,9 @@ def build_site_from_scenario(scenario, excess_on=False):
             max_current = load_data.get("max_current", 16)
             rated_current = max_current
 
-        # Resolve operating mode: per-load > site-level fallback > device default
-        operating_mode = load_data.get("operating_mode")
-        if operating_mode is None and site_mode is not None:
-            operating_mode = site_mode
-        if operating_mode is None:
-            operating_mode = "Continuous" if device_type == "plug" else "Standard"
-        # Migrate old mode names
-        operating_mode = _MIGRATE_MODE_NAMES.get(operating_mode, operating_mode)
-        # Resolve to the device type's OperatingMode → engine behavior + urgency
-        _mode = resolve_operating_mode(device_type, operating_mode)
+        # The device type's OperatingMode (its default when the YAML names
+        # none) → engine behavior + urgency
+        _mode = resolve_operating_mode(device_type, load_data.get("operating_mode"))
 
         # Cold-tank promotion: a Solar Priority tank below its normal temperature
         # is bumped to the Normal urgency tier (behavior unchanged). Mirrors the
@@ -660,115 +641,46 @@ def build_site_from_scenario(scenario, excess_on=False):
 # ---------------------------------------------------------------------------
 
 def print_scenario_params(scenario):
-    """Print scenario parameters for trace/verbose output."""
-    site_data = scenario['site']
-    loads = scenario['loads']
+    """Print the site and loads build_site_from_scenario makes of a scenario,
+    for trace/verbose output."""
+    site = build_site_from_scenario(scenario)
+    cons = [(ph, val) for ph, val in zip("ABC", (
+        site.consumption.a, site.consumption.b, site.consumption.c)) if val is not None]
+    cons_str = '/'.join(f"{ph}={val}A" for ph, val in cons) or 'none'
 
-    # Site basics
-    voltage = site_data.get('voltage', 230)
-    breaker = site_data.get('main_breaker_rating', 63)
-    dist = site_data.get('distribution_mode', 'priority')
-    solar = site_data.get('solar_production', 0)
-    max_import = site_data.get('max_import_power')
-
-    # Phases from consumption
-    cons_parts = []
-    for ph, key in [('A', 'phase_a_consumption'), ('B', 'phase_b_consumption'), ('C', 'phase_c_consumption')]:
-        val = site_data.get(key)
-        if val is not None:
-            cons_parts.append(f"{ph}={val}A")
-    cons_str = '/'.join(cons_parts) if cons_parts else 'none'
-    num_phases = len(cons_parts) or 1
-
-    has_battery = site_data.get('battery_soc') is not None
-
-    print(f"  Site: {voltage}V {breaker}A breaker {num_phases}ph | Solar {solar}W | Dist: {dist}")
-    if max_import:
-        print(f"        Max import: {max_import}W")
+    print(f"  Site: {site.voltage}V {site.main_breaker_rating}A breaker {len(cons) or 1}ph"
+          f" | Solar {site.solar_production_total}W | Dist: {site.distribution_mode}")
+    if site.max_grid_import_power:
+        print(f"        Max import: {site.max_grid_import_power}W")
     print(f"  Consumption: {cons_str}")
-
-    # Battery
-    if has_battery:
-        soc = site_data.get('battery_soc')
-        soc_min = site_data.get('battery_soc_min', 20)
-        soc_target = site_data.get('battery_soc_target', 80)
-        charge = site_data.get('battery_max_charge_power', 5000)
-        discharge = site_data.get('battery_max_discharge_power', 5000)
-        print(f"  Battery: soc={soc}% min={soc_min}% target={soc_target}% | charge={charge}W discharge={discharge}W")
-
-    # Inverter
-    inv_max = site_data.get('inverter_max_power')
-    inv_pp = site_data.get('inverter_max_power_per_phase')
-    inv_asym = site_data.get('inverter_supports_asymmetric', False)
-    if inv_max or inv_pp or inv_asym:
+    if site.battery_soc is not None:
+        print(f"  Battery: soc={site.battery_soc}% min={site.battery_soc_min}% "
+              f"target={site.battery_soc_target}% | charge={site.battery_max_charge_power}W "
+              f"discharge={site.battery_max_discharge_power}W")
+    if site.inverter_max_power or site.inverter_max_power_per_phase or site.inverter_supports_asymmetric:
         parts = []
-        if inv_max:
-            parts.append(f"max={inv_max}W")
-        if inv_pp:
-            parts.append(f"per_phase={inv_pp}W")
-        parts.append(f"asymmetric={inv_asym}")
+        if site.inverter_max_power:
+            parts.append(f"max={site.inverter_max_power}W")
+        if site.inverter_max_power_per_phase:
+            parts.append(f"per_phase={site.inverter_max_power_per_phase}W")
+        parts.append(f"asymmetric={site.inverter_supports_asymmetric}")
         print(f"  Inverter: {' '.join(parts)}")
+    print(f"  Excess threshold: {site.excess_export_threshold}W")
 
-    # Excess threshold
-    excess_thresh = site_data.get('excess_export_threshold')
-    if excess_thresh:
-        print(f"  Excess threshold: {excess_thresh}W")
-
-    # Loads
-    site_mode = site_data.get('charging_mode')
-    for ch in loads:
-        eid = ch.get('entity_id', '?')
-        dev_type = ch.get('device_type', 'evse')
-        phases = ch.get('phases', 1)
-        priority = ch.get('priority', 0)
-        status = ch.get('connector_status', 'Charging' if ch.get('active') is not False else 'Available')
-        op_mode = ch.get('operating_mode', site_mode or ("Continuous" if dev_type == "plug" else "Standard"))
-        # Phase mapping
-        l1p = ch.get('l1_phase', 'A')
-        l2p = ch.get('l2_phase', 'B')
-        l3p = ch.get('l3_phase', 'C')
-
-        # Derive mask the same way LoadContext.__post_init__ does
-        if ch.get('active_phases_mask'):
-            mask = ch['active_phases_mask']
-        elif ch.get('connected_to_phase'):
-            mask = ch['connected_to_phase']
-        elif phases == 3:
-            mask = "".join(sorted({l1p, l2p, l3p}))
-        elif phases == 2:
-            mask = "".join(sorted({l1p, l2p}))
-        else:
-            mask = l1p
+    for ch, load in zip(scenario['loads'], site.loads):
         phase_map_str = ""
-        if l1p != 'A' or l2p != 'B' or l3p != 'C':
-            phase_map_str = f" map=L1→{l1p}/L2→{l2p}/L3→{l3p}"
-
-        if dev_type == 'plug':
-            power = ch.get('power_rating', 2000)
-            print(f"  Load {eid}: plug {power}W {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
-        elif dev_type == 'hot_water_tank':
-            power = ch.get('power_rating', 2000)
-            ctemp = ch.get('current_temperature')
-            ntemp = ch.get('normal_temperature', DEFAULT_TANK_NORMAL_TEMPERATURE)
-            # Mirror resolve_tank_mode_priority: a cold Solar Priority tank is
-            # promoted to the Normal urgency tier (1) for the distribution sort.
-            promoted = (
-                ch.get('prioritize_below_normal', True)
-                and op_mode == 'Solar Priority'
-                and ctemp is not None
-                and ctemp < ntemp
-            )
-            if ctemp is None:
-                temp_str = ""
-            elif promoted:
-                temp_str = f" temp={ctemp}<{ntemp}°C→PROMOTED(tier 1)"
-            else:
-                temp_str = f" temp={ctemp}°C"
-            print(f"  Load {eid}: tank {power}W {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str}{temp_str} [{status}]")
-        else:
-            min_c = ch.get('min_current', 6)
-            max_c = ch.get('max_current', 16)
-            print(f"  Load {eid}: evse {min_c}-{max_c}A {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
+        if (load.l1_phase, load.l2_phase, load.l3_phase) != ("A", "B", "C"):
+            phase_map_str = f" map=L1→{load.l1_phase}/L2→{load.l2_phase}/L3→{load.l3_phase}"
+        kind = {'hot_water_tank': 'tank'}.get(load.device_type, load.device_type)
+        what = f"{kind} {load.min_current}-{load.max_current}A"
+        if kind in ('plug', 'tank'):
+            what = f"{kind} {ch.get('power_rating', 2000)}W"
+        temp_str = ""
+        if ch.get('current_temperature') is not None:
+            temp_str = f" temp={ch['current_temperature']}°C tier={load.mode_priority}"
+        print(f"  Load {load.entity_id}: {what} {load.phases}ph mask={load.active_phases_mask} "
+              f"prio={load.priority} mode={load.operating_mode}{phase_map_str}{temp_str} "
+              f"[{load.connector_status}]")
 
     # Expected
     expected = scenario.get('expected', {})
