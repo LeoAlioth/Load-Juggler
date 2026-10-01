@@ -308,9 +308,9 @@ async def test_solar_remaining_is_unknown_with_nothing_to_measure_the_house(
             result = run_hub_calculation(hass, hub)
     publish_hub_data(hass, hub.entry_id, result)
     sensors = {
-        d["hub_data_key"]: LoadJugglerHubDataSensor(hass, hub, "Hub", slug, d)
+        d.data_key: LoadJugglerHubDataSensor(hass, hub, "Hub", slug, d)
         for d in HUB_SENSOR_DEFINITIONS
-        if d["hub_data_key"] in ("available_solar_power", "available_solar_current")
+        if d.data_key in ("available_solar_power", "available_solar_current")
     }
     published = {}
     for key, sensor in sensors.items():

@@ -560,9 +560,9 @@ async def test_solar_remaining_is_the_sun_the_house_leaves(hass, site):
 
     await _session(hass, site, minutes=3)
     sensors = {
-        d["hub_data_key"]: LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
+        d.data_key: LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
         for d in HUB_SENSOR_DEFINITIONS
-        if d["hub_data_key"] in ("available_solar_power", "available_solar_current")
+        if d.data_key in ("available_solar_power", "available_solar_current")
     }
     for sensor in sensors.values():
         await sensor.async_update()
@@ -642,10 +642,10 @@ async def test_meter_only_solar_power_is_the_sun_not_the_battery(
     await _session(hass, site, minutes=3, on_cycle=_read)
     published = {}
     for d in HUB_SENSOR_DEFINITIONS:
-        if d["hub_data_key"] in ("solar_power", "household_power"):
+        if d.data_key in ("solar_power", "household_power"):
             sensor = LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
             await sensor.async_update()
-            published[d["hub_data_key"]] = (sensor.native_value, sensor.available)
+            published[d.data_key] = (sensor.native_value, sensor.available)
 
     if not battery_read:
         assert published == {
@@ -708,10 +708,10 @@ async def test_solar_remaining_is_unknown_with_the_battery_unread(hass, site):
     await _session(hass, site, minutes=3, on_cycle=_unread)
     published = {}
     for d in HUB_SENSOR_DEFINITIONS:
-        if d["hub_data_key"] in ("available_solar_power", "available_solar_current"):
+        if d.data_key in ("available_solar_power", "available_solar_current"):
             sensor = LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
             await sensor.async_update()
-            published[d["hub_data_key"]] = (sensor.native_value, sensor.available)
+            published[d.data_key] = (sensor.native_value, sensor.available)
 
     assert published == {
         "available_solar_power": (None, True),

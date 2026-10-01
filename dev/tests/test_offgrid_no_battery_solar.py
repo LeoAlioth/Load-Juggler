@@ -315,7 +315,7 @@ async def test_solar_remaining_is_the_sun_less_the_house(hass, site):
     sensor = next(
         LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
         for d in HUB_SENSOR_DEFINITIONS
-        if d["hub_data_key"] == "available_solar_power"
+        if d.data_key == "available_solar_power"
     )
     await sensor.async_update()
     expected_w = max(0.0, site.sun_w - site.house_w)
