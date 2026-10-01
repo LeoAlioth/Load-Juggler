@@ -1,6 +1,12 @@
 """Smart-plug constants - switch entity, power rating, modes."""
 
-from .common import OperatingMode
+from .common import (
+    BEHAVIOR_BINARY_ABOVE_MIN,
+    BEHAVIOR_BINARY_ABOVE_TARGET,
+    BEHAVIOR_BINARY_EXCESS,
+    BEHAVIOR_FULL_POWER,
+    OperatingMode,
+)
 
 CONF_PLUG_SWITCH_ENTITY_ID = "plug_switch_entity_id"  # HA switch entity to control on/off
 CONF_PLUG_POWER_RATING = "plug_power_rating"  # Set power - the load's draw, in watts
@@ -18,15 +24,19 @@ DEFAULT_PLUG_MAX_CURRENT = 16
 #   Excess         → only when the battery is near-full or the site is exporting
 PLUG_MODE_CONTINUOUS = OperatingMode(
     key="Continuous", label="Continuous", priority=1, icon="mdi:flash",
+    behavior=BEHAVIOR_FULL_POWER,
 )
 PLUG_MODE_SOLAR_PRIORITY = OperatingMode(
     key="Solar Priority", label="Solar Priority", priority=2, icon="mdi:leaf",
+    behavior=BEHAVIOR_BINARY_ABOVE_MIN,
 )
 PLUG_MODE_SOLAR_ONLY = OperatingMode(
     key="Solar Only", label="Solar Only", priority=3, icon="mdi:solar-power",
+    behavior=BEHAVIOR_BINARY_ABOVE_TARGET,
 )
 PLUG_MODE_EXCESS = OperatingMode(
     key="Excess", label="Excess", priority=4, icon="mdi:solar-power-variant",
+    behavior=BEHAVIOR_BINARY_EXCESS,
 )
 OPERATING_MODES_PLUG = [
     PLUG_MODE_CONTINUOUS,

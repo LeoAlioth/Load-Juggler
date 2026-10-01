@@ -66,18 +66,12 @@ from .const import (
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_OCPP_PROFILE_TIMEOUT,
-    DEFAULT_OPERATING_MODE_EVSE,
-    DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
-    DEFAULT_OPERATING_MODE_PLUG,
-    DEFAULT_OPERATING_MODE_POWER_STATION,
     DEFAULT_PHASE_VOLTAGE,
     DEFAULT_PROFILE_VALIDITY_MODE,
     DEFAULT_STACK_LEVEL,
     DEFAULT_UPDATE_FREQUENCY,
     DEVICE_TYPE_EVSE,
-    DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
-    DEVICE_TYPE_POWER_STATION,
     DISTRIBUTION_MODE_PRIORITY,
     DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED,
     DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
@@ -90,6 +84,7 @@ from .const import (
     ENTRY_TYPE_INVERTER,
     EVSE_RT_COMMANDED_LIMIT,
     MIGRATE_PLUG_SOLAR_ONLY_FLAG,
+    modes_for,
     CONF_INVERTER_FEATURES,
 )
 from .helpers import (
@@ -903,15 +898,7 @@ async def _setup_load_entry(hass: HomeAssistant, entry: ConfigEntry):
     repair_ocpp_device_id(hass, entry)
 
     # Store load data (runtime state written by entities, read by calculation)
-    device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-    if device_type == DEVICE_TYPE_PLUG:
-        default_mode = DEFAULT_OPERATING_MODE_PLUG
-    elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
-        default_mode = DEFAULT_OPERATING_MODE_HOT_WATER_TANK
-    elif device_type == DEVICE_TYPE_POWER_STATION:
-        default_mode = DEFAULT_OPERATING_MODE_POWER_STATION
-    else:
-        default_mode = DEFAULT_OPERATING_MODE_EVSE
+    default_mode = modes_for(entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE))[1]
     hass.data[DOMAIN]["loads"][entry.entry_id] = {
         "entry": entry,
         "hub_entry_id": hub_entry_id,

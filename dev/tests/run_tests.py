@@ -19,9 +19,8 @@ from custom_components.dynamic_ocpp_evse.calculations.utils import (
     compute_household_per_phase,
     grid_without_managed_draws,
 )
-from custom_components.dynamic_ocpp_evse.const.modes import (
+from custom_components.dynamic_ocpp_evse.const import (
     resolve_operating_mode,
-    behavior_for,
     BEHAVIOR_EXCESS,
     BEHAVIOR_BINARY_EXCESS,
 )
@@ -575,7 +574,7 @@ def build_site_from_scenario(scenario, excess_on=False):
         # is bumped to the Normal urgency tier (behavior unchanged). Mirrors the
         # production builder in engine/hub_calculation.py.
         mode_priority = _mode.priority
-        mode_behavior = behavior_for(_mode)
+        mode_behavior = _mode.behavior
         if device_type == "hot_water_tank":
             # The setpoint label, as control/hot_water_tank.py resolves it:
             # Freeze Protection and Normal both ride surplus up to the boost

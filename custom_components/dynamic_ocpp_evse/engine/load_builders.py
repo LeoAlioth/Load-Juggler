@@ -88,10 +88,9 @@ from ..const import (
     SETTLE_DRAW_SECONDS,
     SETTLE_DRAW_TOLERANCE,
     SETTLE_PERMIT_MARGIN,
-    STATION_MODE_STANDARD,
+    EVSE_MODE_STANDARD,
     SUSPENDED_EV_IDLE_TIMEOUT,
     WATTS_PROFILE_TOLERANCE,
-    behavior_for,
     resolve_operating_mode,
     resolve_tank_mode_priority,
     tank_boost_is_opportunistic,
@@ -435,12 +434,12 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         # "Hands off" reaches the calculation too - see LoadContext.
         dynamic_control=load_rt.get("dynamic_control", True),
         operating_mode=mode.key,
-        mode_behavior=behavior_for(mode),
+        mode_behavior=mode.behavior,
         mode_priority=mode.priority,
         rated_current=max_current,
         excess_claim_current=(
             min_current
-            if behavior_for(mode) == BEHAVIOR_EXCESS
+            if mode.behavior == BEHAVIOR_EXCESS
             and connector_status not in INACTIVE_STATUSES
             else 0.0
         ),
@@ -840,11 +839,11 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
         dynamic_control=load_rt.get("dynamic_control", True),
         device_type=DEVICE_TYPE_PLUG,
         operating_mode=mode.key,
-        mode_behavior=behavior_for(mode),
+        mode_behavior=mode.behavior,
         mode_priority=mode.priority,
         rated_current=plug_max_current,
         excess_claim_current=(
-            equivalent_current if behavior_for(mode) == BEHAVIOR_BINARY_EXCESS else 0.0
+            equivalent_current if mode.behavior == BEHAVIOR_BINARY_EXCESS else 0.0
         ),
         draw_assumed=monitor_unreadable,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
@@ -994,7 +993,7 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     # Storm reserve overrides the mode: filling a backup reserve only from
     # surplus is not a reserve, so it competes as a must-run load.
     if load_rt.get("station_storm_reserve"):
-        mode = STATION_MODE_STANDARD
+        mode = EVSE_MODE_STANDARD
 
     load = LoadContext(
         load_id=entry.entry_id,
@@ -1009,12 +1008,12 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
         dynamic_control=load_rt.get("dynamic_control", True),
         device_type=DEVICE_TYPE_POWER_STATION,
         operating_mode=mode.key,
-        mode_behavior=behavior_for(mode),
+        mode_behavior=mode.behavior,
         mode_priority=mode.priority,
         rated_current=max_current,
         excess_claim_current=(
             min_current
-            if behavior_for(mode) == BEHAVIOR_EXCESS
+            if mode.behavior == BEHAVIOR_EXCESS
             and connector_status not in INACTIVE_STATUSES
             else 0.0
         ),
@@ -1125,8 +1124,8 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         actual_draw_w = power_rating if hvac_action == "heating" else 0
 
     # Resolve the tank's operating mode. Its behavior (Freeze Protection /
-    # Normal are must-run Full Power; Solar Priority follows the sun) is mapped
-    # centrally in const/modes.py. resolve_tank_setpoint() independently picks
+    # Normal are must-run Full Power; Solar Priority follows the sun) is part
+    # of the mode (const/hot_water_tank.py). resolve_tank_setpoint() picks
     # *which* setpoint (away/normal/boost) to aim at - the mode behavior only
     # decides how the tank competes for power, not whether it runs.
     mode = resolve_operating_mode(
@@ -1192,7 +1191,7 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         current_temp,
         away_temp if mode.key == TANK_MODE_FREEZE_PROTECTION.key else normal_temp,
     )
-    mode_behavior = BEHAVIOR_BINARY_EXCESS if opportunistic else behavior_for(mode)
+    mode_behavior = BEHAVIOR_BINARY_EXCESS if opportunistic else mode.behavior
 
     load = LoadContext(
         load_id=entry.entry_id,
