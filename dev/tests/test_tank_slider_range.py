@@ -15,8 +15,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_CLIMATE_ENTITY_ID,
-    CONF_TANK_AWAY_TEMPERATURE,
-    CONF_TANK_BOOST_TEMPERATURE,
     DEFAULT_TANK_AWAY_TEMPERATURE,
     DEFAULT_TANK_BOOST_TEMPERATURE,
 )
@@ -25,7 +23,7 @@ from custom_components.dynamic_ocpp_evse.number import TankTemperatureSlider
 WH = "water_heater.tc"
 
 
-def _slider(kind, conf_key, default, thermostat, restored=None):
+def _slider(kind, default, thermostat, restored=None):
     states = {WH: thermostat} if thermostat is not None else {}
     hass = MagicMock()
     hass.states.get = states.get
@@ -33,7 +31,8 @@ def _slider(kind, conf_key, default, thermostat, restored=None):
         entry_id="tank", data={CONF_CLIMATE_ENTITY_ID: WH}, options={}
     )
     slider = TankTemperatureSlider(
-        hass, entry, "Tank", "tank", kind, conf_key, default, kind.title()
+        hass, entry, f"Tank {kind.title()} Temperature", f"tank_tank_{kind}_temperature",
+        f"tank_{kind}_temperature", 10, 90, 1, default, "°C", "mdi:thermometer-water",
     )
     slider.async_get_last_state = AsyncMock(
         return_value=None if restored is None else SimpleNamespace(state=str(restored))
@@ -51,8 +50,8 @@ def _heater(low=40.0, high=60.0):
 
 
 def test_the_defaults_land_inside_the_thermostats_range():
-    away = _slider("away", CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE, _heater())
-    boost = _slider("boost", CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE, _heater())
+    away = _slider("away", DEFAULT_TANK_AWAY_TEMPERATURE, _heater())
+    boost = _slider("boost", DEFAULT_TANK_BOOST_TEMPERATURE, _heater())
     assert (away.native_min_value, away.native_max_value) == (40.0, 60.0)
     assert away.native_value == 40.0  # 30 by default
     assert boost.native_value == 60.0  # 65 by default
@@ -61,7 +60,7 @@ def test_the_defaults_land_inside_the_thermostats_range():
 
 def test_a_restored_value_is_clamped_into_the_range():
     boost = _slider(
-        "boost", CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE,
+        "boost", DEFAULT_TANK_BOOST_TEMPERATURE,
         _heater(), restored=75,
     )
     assert boost.native_value == 60.0
@@ -69,7 +68,7 @@ def test_a_restored_value_is_clamped_into_the_range():
 
 def test_without_a_thermostat_reading_the_wide_range_stays():
     boost = _slider(
-        "boost", CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE,
+        "boost", DEFAULT_TANK_BOOST_TEMPERATURE,
         None, restored=75,
     )
     assert (boost.native_min_value, boost.native_max_value) == (10, 90)
@@ -79,7 +78,7 @@ def test_without_a_thermostat_reading_the_wide_range_stays():
 def test_the_slider_follows_the_thermostat_when_its_range_arrives():
     heater = SimpleNamespace(state="unavailable", attributes={})
     boost = _slider(
-        "boost", CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE,
+        "boost", DEFAULT_TANK_BOOST_TEMPERATURE,
         heater, restored=75,
     )
     assert boost.native_value == 75.0
@@ -93,7 +92,7 @@ def test_the_slider_follows_the_thermostat_when_its_range_arrives():
 
 def test_an_unchanged_thermostat_writes_nothing():
     boost = _slider(
-        "boost", CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE, _heater(),
+        "boost", DEFAULT_TANK_BOOST_TEMPERATURE, _heater(),
     )
     boost.async_write_ha_state.reset_mock()
     boost._publish.reset_mock()
