@@ -562,17 +562,7 @@ def _apply_phase_remaps(site, auto_detect_state):
             load.l1_phase = remap["l1_phase"]
             load.l2_phase = remap["l2_phase"]
             load.l3_phase = remap["l3_phase"]
-            # Recalculate active_phases_mask from new mapping
-            if load.phases == 3:
-                load.active_phases_mask = "".join(
-                    sorted({load.l1_phase, load.l2_phase, load.l3_phase})
-                )
-            elif load.phases == 2:
-                load.active_phases_mask = "".join(
-                    sorted({load.l1_phase, load.l2_phase})
-                )
-            elif load.phases == 1:
-                load.active_phases_mask = load.l1_phase
+            load.mask_from_mapping()
             _LOGGER.debug(
                 "Auto-remap applied for %s: L1:%s→%s L2:%s→%s L3:%s→%s mask=%s",
                 load.entity_id,
@@ -1569,10 +1559,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
 
     grid_stale = _apply_grid_stale_fallback(site, grid_stale_duration)
 
-    load_targets = {c.load_id: c.allocated_current for c in site.loads}
-    load_available = {c.load_id: c.available_current for c in site.loads}
-    load_names = {c.load_id: c.entity_id for c in site.loads}
-
     # Persist this cycle's permit for next-cycle settle detection - an EVSE
     # only counts as "settled and under-drawing" when its measured draw stays
     # below the permit we last offered it.
@@ -1622,7 +1608,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         hub_entry,
         hub_runtime,
         site,
-        battery_soc,
         members,
         ctrl_site=ctrl_site,
     )
@@ -1633,15 +1618,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # --- Build result ---
     return _build_hub_result(
         site,
-        raw_phases,
-        voltage,
-        battery_soc,
-        battery_soc_min,
-        battery_max_discharge_power,
-        battery_power,
-        load_targets,
-        load_available,
-        load_names,
         auto_notifications,
         group_data,
         grid_stale=grid_stale,
