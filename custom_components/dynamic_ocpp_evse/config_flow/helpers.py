@@ -4,9 +4,10 @@ The module-level utilities the flow steps lean on, none of them bound to a flow
 instance: the unit sets a form may offer (one declaration, shared with the
 readers), the entity-unit and forecast-device validators, the optional-entity
 key groups and the normalizers that clear them, entity auto-detection,
-entry-title composition, the controlled-device and
-priority-order helpers behind the priority page, the two OCPP probes the
-charger wizard asks the charger, and the hub phase count derived from the
+entry-title composition, the controlled-device and priority-order helpers
+behind the priority page (and the circuit-group load pickers), the two OCPP
+probes the charger wizard asks the charger, the station power-window check,
+the charger's hidden-leg fill, and the hub phase count derived from the
 configured grid CTs. The OCPP registry scan itself lives in the package-root
 ``ocpp_discovery.py``, where the engine can reach it too.
 
@@ -29,6 +30,9 @@ from ..const import (
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
+    CONF_CHARGER_L1_PHASE,
+    CONF_CHARGER_L2_PHASE,
+    CONF_CHARGER_L3_PHASE,
     CONF_LOAD_PRIORITY,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
@@ -51,12 +55,16 @@ from ..const import (
     CONF_STATION_AC_INPUT_ENTITY_ID,
     CONF_STATION_AC_OUTPUT_ENTITY_ID,
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
+    CONF_STATION_MAX_CHARGE_POWER,
+    CONF_STATION_MIN_CHARGE_POWER,
     CONF_TANK_POWER_ENTITY_ID,
     CHARGE_LIMIT_UNIT_AMPS,
     CHARGE_RATE_UNIT_AMPS,
     CHARGE_RATE_UNIT_WATTS,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CHARGE_LIMIT_UNIT,
+    DEFAULT_STATION_MAX_CHARGE_POWER,
+    DEFAULT_STATION_MIN_CHARGE_POWER,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
@@ -361,6 +369,14 @@ def _controlled_devices(hass, hub_entry_id: str) -> list:
     ]
 
 
+def _load_options(hass, hub_entry_id: str) -> list[dict]:
+    """Select options for every load on a hub (the circuit-group pickers)."""
+    return [
+        {"value": e.entry_id, "label": e.title}
+        for e in _controlled_devices(hass, hub_entry_id)
+    ]
+
+
 def _devices_by_priority(devices: list) -> list:
     """Devices sorted by effective priority, then title for a stable tie-break."""
     return sorted(
@@ -456,6 +472,24 @@ async def _detect_meter_value_interval(hass, ocpp_device_id: str) -> int | None:
         return None
     _LOGGER.info("OCPP MeterValueSampleInterval = %ds", interval)
     return max(5, min(300, interval))
+
+
+def _check_power_window(data: dict, errors: dict) -> None:
+    """A power station's max charge power may not sit below its min."""
+    if data.get(
+        CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
+    ) < data.get(CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER):
+        errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
+
+
+def _fill_hidden_legs(data: dict, hub_phases: int) -> None:
+    """Map the charger legs a site with fewer phases hides onto L1's phase -
+    in place - so the stored mask matches the phases the charger can use."""
+    l1 = data.get(CONF_CHARGER_L1_PHASE, "A")
+    if hub_phases < 2:
+        data[CONF_CHARGER_L2_PHASE] = l1
+    if hub_phases < 3:
+        data[CONF_CHARGER_L3_PHASE] = l1
 
 
 def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
