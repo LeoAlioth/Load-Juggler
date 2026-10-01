@@ -12,7 +12,6 @@ scenarios:
       main_breaker_rating: 25
       max_import_power: 17250
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 5520  # 24A total, 8A per phase
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -27,6 +26,7 @@ scenarios:
       inverter_max_power: 17000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
@@ -46,7 +46,6 @@ scenarios:
       main_breaker_rating: 25
       max_import_power: 17250
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 7590  # 33A total, 11A/phase
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -61,6 +60,7 @@ scenarios:
       inverter_max_power: 17000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
@@ -69,6 +69,7 @@ scenarios:
         l2_phase: "A"
         l3_phase: "B"
       - entity_id: "load_2"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 1
@@ -88,7 +89,6 @@ scenarios:
       main_breaker_rating: 25
       max_import_power: 17250
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
       phase_b_consumption: 3.0
@@ -101,6 +101,7 @@ scenarios:
       inverter_supports_asymmetric: false
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
