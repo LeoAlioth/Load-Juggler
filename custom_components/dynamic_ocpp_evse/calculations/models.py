@@ -71,12 +71,17 @@ class LoadContext:
         connected_to_phase in config and this default is skipped.
         """
         if self.active_phases_mask is None:
-            if self.phases == 3:
-                self.active_phases_mask = "".join(sorted({self.l1_phase, self.l2_phase, self.l3_phase}))
-            elif self.phases == 2:
-                self.active_phases_mask = "".join(sorted({self.l1_phase, self.l2_phase}))
-            elif self.phases == 1:
-                self.active_phases_mask = self.l1_phase
+            self.mask_from_mapping()
+
+    def mask_from_mapping(self) -> None:
+        """Set ``active_phases_mask`` to the site phases L1..L(phases) map to
+        (left as it is for a phase count other than 1-3)."""
+        if self.phases == 3:
+            self.active_phases_mask = "".join(sorted({self.l1_phase, self.l2_phase, self.l3_phase}))
+        elif self.phases == 2:
+            self.active_phases_mask = "".join(sorted({self.l1_phase, self.l2_phase}))
+        elif self.phases == 1:
+            self.active_phases_mask = self.l1_phase
     
     # L1/L2/L3 → site phase mapping (configurable, default L1=A, L2=B, L3=C)
     l1_phase: str = "A"

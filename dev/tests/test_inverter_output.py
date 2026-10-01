@@ -331,6 +331,7 @@ def _derived_solar_site(**overrides):
     defaults = dict(
         voltage=V,
         main_breaker_rating=63,
+        grid_current=PhaseValues(0.0, None, None),
         consumption=PhaseValues(0.0, None, None),
         export_current=PhaseValues(0.0, None, None),
         solar_is_derived=True,
@@ -346,18 +347,7 @@ def _derived_solar_site(**overrides):
 
 
 def _display_result(site):
-    return _build_hub_result(
-        site,
-        raw_phases=(0.0, None, None),
-        voltage=V,
-        battery_soc=site.battery_soc,
-        battery_soc_min=site.battery_soc_min,
-        battery_max_discharge_power=site.battery_max_discharge_power,
-        battery_power=site.battery_power,
-        load_targets={},
-        load_available={},
-        load_names={},
-    )
+    return _build_hub_result(site)
 
 
 def test_display_headroom_uses_prefeedback_output():

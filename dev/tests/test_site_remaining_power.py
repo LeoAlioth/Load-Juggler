@@ -59,22 +59,7 @@ TOLERANCE_A = 0.051
 
 def _published(site):
     """The hub result for a site the calculator has just run on."""
-    return _build_hub_result(
-        site,
-        raw_phases=(
-            (site.grid_current.a, site.grid_current.b, site.grid_current.c)
-            if site.grid_current is not None
-            else (None, None, None)
-        ),
-        voltage=site.voltage,
-        battery_soc=site.battery_soc,
-        battery_soc_min=site.battery_soc_min,
-        battery_max_discharge_power=site.battery_max_discharge_power,
-        battery_power=site.battery_power,
-        load_targets={},
-        load_available={},
-        load_names={},
-    )
+    return _build_hub_result(site)
 
 
 def _disagreements(site):

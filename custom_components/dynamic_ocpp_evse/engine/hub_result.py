@@ -66,13 +66,21 @@ from .forecast_reader import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# The forecast advice's carried state in hub_runtime (see
+# _compute_forecast_advice), dropped together whenever the advice is off.
+_FORECAST_LATCHES = (
+    "_forecast_max_soc",
+    "_forecast_reservation_due",
+    "_forecast_charge_limiting",
+    "_forecast_soc_yielding",
+)
+
 
 def _compute_forecast_advice(
     hass,
     hub_entry,
     hub_runtime,
     site,
-    battery_soc,
     members,
     ctrl_site=None,
 ):
@@ -197,6 +205,7 @@ def _compute_forecast_advice(
     measurements, so a reload, a cloud or an hour of release leaves nothing
     stale to carry back in.
     """
+    battery_soc = site.battery_soc
     export_limit = (
         get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT)
         or 0
@@ -226,11 +235,8 @@ def _compute_forecast_advice(
         or capacity_kwh <= 0
         or not (device_ids or legacy_entity_ids)
     ):
-        hub_runtime.pop("_forecast_max_soc", None)
-        hub_runtime.pop("_forecast_reservation_due", None)
-        hub_runtime.pop("_forecast_charge_limiting", None)
-        hub_runtime.pop("_forecast_soc_yielding", None)
-        hub_runtime.pop("_forecast_parse_memo", None)
+        for key in (*_FORECAST_LATCHES, "_forecast_parse_memo"):
+            hub_runtime.pop(key, None)
         return None, {}
 
     base_consumption = (
@@ -369,10 +375,8 @@ def _compute_forecast_advice(
     # they say how much surplus the day will waste, which is what load
     # scheduling wants.
     if off_grid:
-        hub_runtime.pop("_forecast_max_soc", None)
-        hub_runtime.pop("_forecast_reservation_due", None)
-        hub_runtime.pop("_forecast_charge_limiting", None)
-        hub_runtime.pop("_forecast_soc_yielding", None)
+        for key in _FORECAST_LATCHES:
+            hub_runtime.pop(key, None)
 
     deficit = headroom_deficit_kwh(fc.absorbable_kwh, capacity_kwh, battery_soc)
     # The figure the ENGINE acts on, published because ``absorbable_kwh`` is
@@ -639,15 +643,6 @@ def _draw_is_unknown(load, booked):
 
 def _build_hub_result(
     site,
-    raw_phases,
-    voltage,
-    battery_soc,
-    battery_soc_min,
-    battery_max_discharge_power,
-    battery_power,
-    load_targets,
-    load_available,
-    load_names,
     auto_detect_notifications=None,
     group_data=None,
     grid_stale=False,
@@ -725,6 +720,11 @@ def _build_hub_result(
     ``draw_estimated`` names it so the entities can mark those figures as
     estimates (entities/readout.py).
     """
+    voltage = site.voltage
+    battery_power = site.battery_power
+    # The raw (unsmoothed, resolved) grid phases the site was built from.
+    raw_phases = (site.grid_current.a, site.grid_current.b, site.grid_current.c)
+    load_targets = {c.load_id: c.allocated_current for c in site.loads}
     # Which loads carry an invented 0 draw this cycle (see _draw_is_unknown).
     # Resolved once, here, because both the per-load figure and the total need
     # the same answer, and it needs this cycle's permits.
@@ -756,13 +756,13 @@ def _build_hub_result(
     # despite a healthy SOC.
     battery_discharge_unusable = discharge_headroom_unknown(site)
     if (
-        battery_soc is not None
-        and battery_soc_min is not None
-        and battery_soc >= battery_soc_min
-        and battery_max_discharge_power
+        site.battery_soc is not None
+        and site.battery_soc_min is not None
+        and site.battery_soc >= site.battery_soc_min
+        and site.battery_max_discharge_power
         and not battery_discharge_unusable
     ):
-        battery_rated_discharge = round(float(battery_max_discharge_power), 0)
+        battery_rated_discharge = round(float(site.battery_max_discharge_power), 0)
     else:
         battery_rated_discharge = 0
 
@@ -1096,8 +1096,8 @@ def _build_hub_result(
         "excess_margin_power": round(excess_margin_power, 0),
         # Per-load targets
         "load_targets": load_targets,
-        "load_available": load_available,
-        "load_names": load_names,
+        "load_available": {c.load_id: c.available_current for c in site.loads},
+        "load_names": {c.load_id: c.entity_id for c in site.loads},
         "load_modes": load_modes,
         "load_rank": load_rank,
         "load_draw": load_draw,
