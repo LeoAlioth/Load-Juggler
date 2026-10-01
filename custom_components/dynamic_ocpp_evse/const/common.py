@@ -370,7 +370,7 @@ FIRMWARE_BUSY_HOLD_SECONDS = 3600
 # Operating mode configuration (per-load). The shared pieces are only the
 # OperatingMode dataclass and the BEHAVIOR_* engine behaviors below. Each
 # device type defines its own operating modes independently - see
-# const/evse.py, const/plug.py, const/hot_water_tank.py.
+# const/evse.py, const/plug.py, const/hot_water_tank.py, const/power_station.py.
 CONF_OPERATING_MODE = "operating_mode"
 
 # Transient marker set in a plug load entry's data by async_migrate_entry
@@ -379,9 +379,8 @@ CONF_OPERATING_MODE = "operating_mode"
 MIGRATE_PLUG_SOLAR_ONLY_FLAG = "_migrate_plug_solar_only"
 
 # Engine behaviors - how a load competes for power. The distribution engine
-# switches on the behavior, never on the device type or the mode label. Which
-# behavior each operating mode uses is mapped centrally in const/modes.py
-# (BEHAVIOR_BY_MODE) - the const device modules stay free of engine concepts.
+# switches on the behavior, never on the device type or the mode label; each
+# OperatingMode names the one it competes with.
 # Modulating behaviors (EVSE - varies the current).
 BEHAVIOR_FULL_POWER = "full_power"          # draw at max from any source
 BEHAVIOR_SOLAR_PRIORITY = "solar_priority"  # follow solar, grid-backed minimum
@@ -408,23 +407,19 @@ BEHAVIOR_BINARY_ABOVE_TARGET = "binary_above_target"  # run while battery > targ
 BEHAVIOR_BINARY_EXCESS = "binary_excess"              # run while battery near-full or exporting
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True)
 class OperatingMode:
-    """One device-type operating mode - the user-facing definition.
+    """One device-type operating mode.
 
     key       stored string value (select entity state + runtime dict)
     label     user-facing display name
     priority  distribution urgency tier, 1-4 (lower = served first)
     icon      mdi icon for the select entity
-
-    The engine behavior a mode competes with is mapped separately in
-    const/modes.py, keyed by the mode object - so each module-level instance
-    is a distinct mode. ``eq=False`` keeps identity equality/hashing: two
-    device types whose modes coincide on every display field (e.g. EVSE and
-    plug "Excess") are still distinct modes, never a collapsed dict key.
+    behavior  the engine BEHAVIOR_* it competes with
     """
 
     key: str
     label: str
     priority: int
     icon: str
+    behavior: str

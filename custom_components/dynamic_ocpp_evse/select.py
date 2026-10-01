@@ -8,15 +8,11 @@ from .entities.mixins import HubEntityMixin, LoadEntityMixin
 from . import consume_plug_mode_migration
 from .const import (
     ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, CONF_NAME, CONF_ENTITY_ID,
-    CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK,
-    DEVICE_TYPE_POWER_STATION,
+    CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_HOT_WATER_TANK,
     DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
     DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
     DEFAULT_DISTRIBUTION_MODE,
-    OPERATING_MODES_EVSE, OPERATING_MODES_PLUG, OPERATING_MODES_HOT_WATER_TANK,
-    OPERATING_MODES_POWER_STATION,
-    DEFAULT_OPERATING_MODE_EVSE, DEFAULT_OPERATING_MODE_PLUG,
-    DEFAULT_OPERATING_MODE_HOT_WATER_TANK, DEFAULT_OPERATING_MODE_POWER_STATION,
+    modes_for,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,14 +69,7 @@ class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
         self._attr_unique_id = f"{entity_id}_operating_mode"
 
         self._device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        if self._device_type == DEVICE_TYPE_PLUG:
-            modes, default = OPERATING_MODES_PLUG, DEFAULT_OPERATING_MODE_PLUG
-        elif self._device_type == DEVICE_TYPE_HOT_WATER_TANK:
-            modes, default = OPERATING_MODES_HOT_WATER_TANK, DEFAULT_OPERATING_MODE_HOT_WATER_TANK
-        elif self._device_type == DEVICE_TYPE_POWER_STATION:
-            modes, default = OPERATING_MODES_POWER_STATION, DEFAULT_OPERATING_MODE_POWER_STATION
-        else:
-            modes, default = OPERATING_MODES_EVSE, DEFAULT_OPERATING_MODE_EVSE
+        modes, default = modes_for(self._device_type)
         self._modes = modes
         self._attr_options = [m.key for m in modes]
         self._attr_current_option = default.key
@@ -118,12 +107,10 @@ class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
         self._publish(self._attr_current_option)
 
     async def async_select_option(self, option: str) -> None:
-        if option in self._attr_options:
-            self._attr_current_option = option
-            self._publish(option)
-            _LOGGER.info(f"Operating mode changed to: {option}")
-        else:
-            _LOGGER.error(f"Invalid option selected: {option}")
+        # HA's select.select_option has already rejected an unknown option.
+        self._attr_current_option = option
+        self._publish(option)
+        _LOGGER.info(f"Operating mode changed to: {option}")
 
 
 class LoadJugglerDistributionModeSelect(HubEntityMixin, SelectEntity, RestoreEntity):
@@ -162,9 +149,7 @@ class LoadJugglerDistributionModeSelect(HubEntityMixin, SelectEntity, RestoreEnt
         self._publish(self._attr_current_option)
 
     async def async_select_option(self, option: str) -> None:
-        if option in self._attr_options:
-            self._attr_current_option = option
-            self._publish(option)
-            _LOGGER.info(f"Distribution mode changed to: {option}")
-        else:
-            _LOGGER.error(f"Invalid distribution mode selected: {option}")
+        # HA's select.select_option has already rejected an unknown option.
+        self._attr_current_option = option
+        self._publish(option)
+        _LOGGER.info(f"Distribution mode changed to: {option}")

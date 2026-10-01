@@ -4,7 +4,7 @@ The thermostat (a climate or water_heater entity) owns all temperature regulatio
 power and writes the setpoint.
 """
 
-from .common import OperatingMode
+from .common import BEHAVIOR_FULL_POWER, BEHAVIOR_SOLAR_PRIORITY, OperatingMode
 
 CONF_CLIMATE_ENTITY_ID = "climate_entity_id"              # HA climate or water_heater entity (read + control)
 CONF_HEATING_ELEMENT_POWER = "heating_element_power"      # Element rating in watts
@@ -25,16 +25,18 @@ DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL = True
 
 # Hot water tank operating modes. Each picks a setpoint (away/normal/boost)
 # dynamically via resolve_tank_setpoint(); priority is the distribution
-# urgency tier (1-4). The behavior each maps to is in const/modes.py.
+# urgency tier (1-4).
 TANK_MODE_FREEZE_PROTECTION = OperatingMode(
     key="Freeze Protection", label="Freeze Protection", priority=1,
-    icon="mdi:snowflake",
+    icon="mdi:snowflake", behavior=BEHAVIOR_FULL_POWER,
 )
 TANK_MODE_NORMAL = OperatingMode(
     key="Normal", label="Normal", priority=1, icon="mdi:water-boiler",
+    behavior=BEHAVIOR_FULL_POWER,
 )
 TANK_MODE_SOLAR_PRIORITY = OperatingMode(
     key="Solar Priority", label="Solar Priority", priority=2, icon="mdi:leaf",
+    behavior=BEHAVIOR_SOLAR_PRIORITY,
 )
 OPERATING_MODES_HOT_WATER_TANK = [
     TANK_MODE_FREEZE_PROTECTION,

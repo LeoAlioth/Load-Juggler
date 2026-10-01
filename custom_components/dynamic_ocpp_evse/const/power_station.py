@@ -21,7 +21,7 @@ draw: ``ac_input_power - ac_output_power``, with the commanded speed as a
 fallback when those sensors are missing.
 """
 
-from .common import OperatingMode
+from .evse import EVSE_MODE_EXCESS, OPERATING_MODES_EVSE
 
 # --- Controlled entities (all resolved from the station's device) ---
 CONF_STATION_CHARGE_SPEED_ENTITY_ID = "station_charge_speed_entity_id"    # number, W - the rate ceiling
@@ -57,28 +57,13 @@ DEFAULT_STATION_STORM_RESERVE = 80
 # Fallback when the station's own Max Charge Limit can't be read.
 DEFAULT_STATION_CHARGE_LIMIT = 90
 
-# Operating modes - priority is the distribution urgency tier (1-4). The station
-# modulates, so these are the EVSE behaviors; the mapping lives in const/modes.py.
-STATION_MODE_STANDARD = OperatingMode(
-    key="Standard", label="Standard", priority=1, icon="mdi:flash",
-)
-STATION_MODE_SOLAR_PRIORITY = OperatingMode(
-    key="Solar Priority", label="Solar Priority", priority=2, icon="mdi:leaf",
-)
-STATION_MODE_SOLAR_ONLY = OperatingMode(
-    key="Solar Only", label="Solar Only", priority=3, icon="mdi:solar-power",
-)
-STATION_MODE_EXCESS = OperatingMode(
-    key="Excess", label="Excess", priority=4, icon="mdi:solar-power-variant",
-)
-OPERATING_MODES_POWER_STATION = [
-    STATION_MODE_STANDARD,
-    STATION_MODE_SOLAR_PRIORITY,
-    STATION_MODE_SOLAR_ONLY,
-    STATION_MODE_EXCESS,
-]
+# Operating modes: the station modulates its charge rate, so it competes exactly
+# as an EVSE does - same keys, tiers, icons and behaviors, so the same modes. Its
+# second knob (the backup reserve) is resolved separately below and never
+# reaches the engine.
+OPERATING_MODES_POWER_STATION = OPERATING_MODES_EVSE
 # Absorbing surplus is the point of the device type, so Excess is the default.
-DEFAULT_OPERATING_MODE_POWER_STATION = STATION_MODE_EXCESS
+DEFAULT_OPERATING_MODE_POWER_STATION = EVSE_MODE_EXCESS
 
 
 def resolve_station_charge_speed(allocated_power, min_power, max_power, step=STATION_CHARGE_POWER_STEP):
