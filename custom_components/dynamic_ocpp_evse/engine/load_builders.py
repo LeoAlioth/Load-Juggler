@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from ..calculations import LoadContext, CircuitGroup
 from ..calculations.models import INACTIVE_STATUSES
+from ..calculations.utils import managed_phase_draws
 from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
@@ -336,11 +337,7 @@ def _watch_readouts_against_household(hass, site, supply_phases, unusable,
     A load judged stuck here goes blind on this very cycle; from the next one
     its builder does it, ahead of the settle and SuspendedEV logic.
     """
-    draws = [0.0, 0.0, 0.0]
-    for load in site.loads:
-        if load.dynamic_control:
-            for i, amps in enumerate(load.get_site_phase_draw()):
-                draws[i] += amps
+    draws = managed_phase_draws(site)
     household = {
         phase: (
             None

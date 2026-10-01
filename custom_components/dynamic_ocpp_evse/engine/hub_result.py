@@ -55,6 +55,7 @@ from ..const import (
     FORECAST_SOC_HYSTERESIS,
     LEG_DRAWING_CURRENT,
 )
+from ..calculations.utils import managed_phase_draws
 from ..helpers import get_entry_value
 from . import fleet
 from .forecast_reader import (
@@ -782,12 +783,7 @@ def _build_hub_result(
     net_consumption = sum(r for r in raw_phases if r is not None) * voltage
     # Raw export with the managed draws added back, per phase (an importing
     # phase adds no export - the same clamp the engine's reconstruction uses).
-    _draws = [0.0, 0.0, 0.0]
-    for c in site.loads:
-        if not c.dynamic_control:
-            continue          # unmanaged: its draw is household, not ours
-        for i, d in enumerate(c.get_site_phase_draw()):
-            _draws[i] += d
+    _draws = managed_phase_draws(site)
     # Off-grid there is nothing to export to and the phase readings are
     # synthetic zeros, so adding the draws back would fabricate export equal to
     # whatever our loads are drawing (3141 W on a live off-grid site,
