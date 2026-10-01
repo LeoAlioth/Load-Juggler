@@ -34,8 +34,6 @@ from ..const import (
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_STATION_MAX_CHARGE_POWER,
     CONF_STATION_MIN_CHARGE_POWER,
-    CONF_TANK_POWER_DEVICE_ID,
-    CONF_TANK_POWER_ENTITY_ID,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
     DEFAULT_STATION_MAX_CHARGE_POWER,
@@ -83,7 +81,6 @@ from .helpers import (
     _normalize_optional_inputs,
     _normalize_soc_limit_list,
     _priority_order_schema,
-    _resolve_device_power_entity,
     _validate_charge_limit_unit,
     _validate_entity_units,
     _validate_forecast_devices,
@@ -687,21 +684,11 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_hot_water_tank(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        def _resolve_power_device(data: dict[str, Any]) -> None:
-            """A picked power device becomes its power-sensor entity, so runtime
-            only ever deals with CONF_TANK_POWER_ENTITY_ID."""
-            device_id = data.pop(CONF_TANK_POWER_DEVICE_ID, None)
-            if device_id and not data.get(CONF_TANK_POWER_ENTITY_ID):
-                resolved = _resolve_device_power_entity(self.hass, device_id)
-                if resolved:
-                    data[CONF_TANK_POWER_ENTITY_ID] = resolved
-
         return await self._async_edit_page(
             user_input,
             step_id="hot_water_tank",
             schema=_hot_water_tank_schema,
             entity_keys=_TANK_ENTITY_KEYS,
-            finalize=_resolve_power_device,
         )
 
     async def async_step_power_station(

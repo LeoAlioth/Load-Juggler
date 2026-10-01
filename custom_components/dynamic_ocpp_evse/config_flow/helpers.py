@@ -3,8 +3,8 @@
 The module-level utilities the flow steps lean on, none of them bound to a flow
 instance: the unit sets a form may offer (one declaration, shared with the
 readers), the entity-unit and forecast-device validators, the optional-entity
-key groups and the normalizers that clear them, entity auto-detection, the
-device-power resolver, entry-title composition, the controlled-device and
+key groups and the normalizers that clear them, entity auto-detection,
+entry-title composition, the controlled-device and
 priority-order helpers behind the priority page, the two OCPP probes the
 charger wizard asks the charger, and the hub phase count derived from the
 configured grid CTs. The OCPP registry scan itself lives in the package-root
@@ -53,7 +53,6 @@ from ..const import (
     CONF_STATION_AC_INPUT_ENTITY_ID,
     CONF_STATION_AC_OUTPUT_ENTITY_ID,
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
-    CONF_TANK_POWER_DEVICE_ID,
     CONF_TANK_POWER_ENTITY_ID,
     CHARGE_LIMIT_UNIT_AMPS,
     CHARGE_RATE_UNIT_AMPS,
@@ -230,7 +229,7 @@ _INVERTER_ENTITY_KEYS = [
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
 ]
 _PLUG_ENTITY_KEYS = [CONF_PLUG_POWER_MONITOR_ENTITY_ID]
-_TANK_ENTITY_KEYS = [CONF_TANK_POWER_ENTITY_ID, CONF_TANK_POWER_DEVICE_ID]
+_TANK_ENTITY_KEYS = [CONF_TANK_POWER_ENTITY_ID]
 _STATION_ENTITY_KEYS = [
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
     CONF_STATION_AC_INPUT_ENTITY_ID,
@@ -364,18 +363,6 @@ def _auto_detect_entity(
         )
         if match:
             return match
-    return None
-
-
-def _resolve_device_power_entity(hass, device_id: str) -> str | None:
-    """Return the first power-class sensor entity belonging to a device."""
-    entity_registry = async_get_entity_registry(hass)
-    for entity in entity_registry.entities.values():
-        if entity.device_id != device_id:
-            continue
-        device_class = entity.device_class or entity.original_device_class
-        if device_class == "power":
-            return entity.entity_id
     return None
 
 

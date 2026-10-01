@@ -90,8 +90,6 @@ from ..const import (
     CONF_STATION_NORMAL_RESERVE,
     CONF_STATION_RESERVE_ENTITY_ID,
     CONF_STATION_STORM_RESERVE,
-    CONF_TANK_POWER_DEVICE_ID,
-    CONF_TANK_POWER_ENTITY_ID,
     CONF_UPDATE_FREQUENCY,
     CONF_WIRING_TOPOLOGY,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
@@ -165,7 +163,6 @@ from .helpers import (
     _normalize_inverter_power_caps,
     _normalize_optional_inputs,
     _normalize_soc_limit_list,
-    _resolve_device_power_entity,
     _validate_charge_limit_unit,
     _validate_entity_units,
     _validate_forecast_devices,
@@ -544,7 +541,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         defaults: dict[str, Any],
         entity_keys: list[str] | None = None,
         static_keys: tuple = (),
-        prepare=None,
         validate=None,
     ) -> config_entries.FlowResult:
         """Run a one-page load-creation step: name it, configure it, create it.
@@ -557,15 +553,12 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         editable ``options`` half (everything else).
 
         The EVSE charger does NOT use this - it comes with a discovery step and
-        a three-page wizard. Hooks: ``prepare`` rewrites the submitted data
-        before the checks, ``validate`` adds device-specific ones.
+        a three-page wizard. ``validate`` adds device-specific checks.
         """
         errors: dict[str, str] = {}
 
         if user_input is not None:
             self._data.update(_normalize_optional_inputs(user_input, entity_keys))
-            if prepare is not None:
-                prepare(self._data)
 
             name = self._data.get(CONF_NAME, default_name)
             entity_id = self._data.get(CONF_ENTITY_ID, default_entity_id)
@@ -643,16 +636,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
         """Hot water tank configuration step."""
-
-        def _resolve_power_device(data: dict[str, Any]) -> None:
-            """A picked power device is resolved to its power-sensor entity now,
-            so runtime only ever deals with CONF_TANK_POWER_ENTITY_ID."""
-            device_id = data.pop(CONF_TANK_POWER_DEVICE_ID, None)
-            if device_id and not data.get(CONF_TANK_POWER_ENTITY_ID):
-                resolved = _resolve_device_power_entity(self.hass, device_id)
-                if resolved:
-                    data[CONF_TANK_POWER_ENTITY_ID] = resolved
-
         return await self._async_create_load_page(
             user_input,
             step_id="hot_water_tank_config",
@@ -670,7 +653,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
             entity_keys=_TANK_ENTITY_KEYS,
             static_keys=(CONF_CLIMATE_ENTITY_ID,),
-            prepare=_resolve_power_device,
         )
 
     async def async_step_power_station_config(

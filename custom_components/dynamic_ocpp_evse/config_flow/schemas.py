@@ -115,7 +115,6 @@ from ..const import (
     CONF_STATION_NORMAL_RESERVE,
     CONF_STATION_RESERVE_ENTITY_ID,
     CONF_STATION_STORM_RESERVE,
-    CONF_TANK_POWER_DEVICE_ID,
     CONF_TANK_POWER_ENTITY_ID,
     CONF_TANK_PRIORITIZE_BELOW_NORMAL,
     CONF_UPDATE_FREQUENCY,
@@ -1576,12 +1575,21 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
                     }
                 }
             ),
+            # Power-class sensors only (e.g. the smart relay feeding the
+            # element), plus any input_number standing in for one.
             _optional_entity_field(
                 CONF_TANK_POWER_ENTITY_ID,
                 defaults.get(CONF_TANK_POWER_ENTITY_ID),
-            ): selector({"entity": {"domain": ["sensor", "input_number"]}}),
-            vol.Optional(CONF_TANK_POWER_DEVICE_ID): selector(
-                {"device": {"entity": {"device_class": "power"}}}
+            ): selector(
+                {
+                    "entity": {
+                        "domain": ["sensor", "input_number"],
+                        "filter": [
+                            {"domain": "sensor", "device_class": "power"},
+                            {"domain": "input_number"},
+                        ],
+                    }
+                }
             ),
             vol.Required(
                 CONF_UPDATE_FREQUENCY,
