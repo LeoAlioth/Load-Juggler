@@ -290,41 +290,27 @@ def _entity_registry_ids(hass) -> list[str]:
     ]
 
 
+_PHASE_SLOTS = ("phase_a", "phase_b", "phase_c")
+
+
+def _first_match(entity_ids: list[str], pattern: str) -> str | None:
+    return next((eid for eid in entity_ids if re.match(pattern, eid)), None)
+
+
 def _auto_detect_phase_entities(
     entity_ids: list[str], pattern_sets: list[dict]
 ) -> dict[str, str | None]:
     """Auto-detect a matching set of phase A/B/C entities from pattern sets.
 
-    Returns dict with keys 'phase_a', 'phase_b', 'phase_c' (values may be None).
+    Returns dict with keys 'phase_a', 'phase_b', 'phase_c' - all three set
+    from the first pattern set that matches all three, or all None.
     """
     for pattern_set in pattern_sets:
-        a = next(
-            (
-                eid
-                for eid in entity_ids
-                if re.match(pattern_set["patterns"]["phase_a"], eid)
-            ),
-            None,
-        )
-        b = next(
-            (
-                eid
-                for eid in entity_ids
-                if re.match(pattern_set["patterns"]["phase_b"], eid)
-            ),
-            None,
-        )
-        c = next(
-            (
-                eid
-                for eid in entity_ids
-                if re.match(pattern_set["patterns"]["phase_c"], eid)
-            ),
-            None,
-        )
-        if a and b and c:
-            return {"phase_a": a, "phase_b": b, "phase_c": c}
-    return {"phase_a": None, "phase_b": None, "phase_c": None}
+        found = {slot: _first_match(entity_ids, pattern_set["patterns"][slot])
+                 for slot in _PHASE_SLOTS}
+        if all(found.values()):
+            return found
+    return dict.fromkeys(_PHASE_SLOTS)
 
 
 def _auto_detect_entity(
@@ -332,10 +318,7 @@ def _auto_detect_entity(
 ) -> str | None:
     """Auto-detect a single entity from pattern sets. Returns first match."""
     for pattern_set in pattern_sets:
-        match = next(
-            (eid for eid in entity_ids if re.match(pattern_set["pattern"], eid)),
-            None,
-        )
+        match = _first_match(entity_ids, pattern_set["pattern"])
         if match:
             return match
     return None

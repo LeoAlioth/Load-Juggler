@@ -95,7 +95,8 @@ custom_components/dynamic_ocpp_evse/
 │   ├── freshness.py               # Pure producer-freshness predicate behind every sensor's `available`
 │   └── mixins.py                  # LoadJugglerEntity base + device mixins + SiteFreshnessMixin /
 │                                  #   SiteCycleConsumerMixin (push readers) / SiteCycleWorkerMixin (async per-cycle actuators)
-├── detection_patterns/            # Per-brand entity-naming patterns for grid CT auto-detection (fronius, victron, …)
+├── detection_patterns.py          # Per-brand entity-naming patterns for grid CT auto-detection (GRID_CT, brand
+│                                  #   priority order, watts first) and plug power monitors
 ├── [button|number|select|sensor|switch].py  # HA platform files (thin wiring around entities/)
 ├── units.py                       # Unit conversion helpers
 ├── phases.py                      # Pure, stdlib only: which of a device's sensors are its per-phase

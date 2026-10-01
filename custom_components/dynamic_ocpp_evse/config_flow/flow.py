@@ -80,7 +80,7 @@ from ..const import (
     INVERTER_FEATURE_BATTERY_CONTROL,
     INVERTER_FEATURE_SOLAR,
 )
-from ..detection_patterns import PHASE_PATTERNS, PLUG_POWER_MONITOR_PATTERNS
+from ..detection_patterns import PHASE_PATTERNS, PLUG_POWER_MONITOR
 from ..helpers import (
     get_entry_value,
     infer_inverter_features,
@@ -540,7 +540,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             defaults={
                 CONF_LOAD_PRIORITY: len(self._get_load_entries()) + 1,
                 CONF_PLUG_POWER_MONITOR_ENTITY_ID: _auto_detect_entity(
-                    self._get_entity_registry_ids(), PLUG_POWER_MONITOR_PATTERNS
+                    self._get_entity_registry_ids(), PLUG_POWER_MONITOR
                 ),
             },
             entity_keys=_PLUG_ENTITY_KEYS,
