@@ -35,29 +35,20 @@ of the battery's flow and the whole production used to be published; and
 grid-tied beside a battery whose power is unread, where the pool's sun is the
 bare export, every watt of it the battery's at night (4 000 W in
 grid-battery-power-unread-2kw-import).
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_site_remaining_power.py   (standalone, no pytest)
-  pytest dev/tests/test_site_remaining_power.py    (Docker / CI tier)
 """
 
 import contextlib
 import io
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-load_pure_modules(engine_modules=("fleet", "hub_calculation"))
-
-import run_tests  # noqa: E402 - the scenario harness drives the sites
-from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     household_unknown,
 )
-from custom_components.dynamic_ocpp_evse.engine.hub_result import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.engine.hub_result import (
     _build_hub_result,
 )
+
+from . import run_tests
 
 SCENARIOS = Path(__file__).resolve().parent / "scenarios"
 # The pool snapshot rounds to 0.01 A; at 230 V that is 1.15 W, and the
@@ -189,21 +180,3 @@ def test_every_published_remaining_figure_is_the_pool_it_names():
         )
         + f"; e.g. {found[0][0]} cycle {found[0][1]}: {'; '.join(found[0][2])}"
     )
-
-
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

@@ -17,36 +17,21 @@ through the real reconstruction the engine applies (``grid_without_managed_draws
 the pure core of ``_apply_feedback_loop``) and compare the margin against the
 same site with the load off. The identity is the assertion; the individual
 numbers are only there to show the sums.
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_excess_stayon.py     (standalone, no pytest needed)
-  pytest dev/tests/test_excess_stayon.py      (Docker / CI tier)
 """
 
-import sys
-from pathlib import Path
-
-# ---------------------------------------------------------------------------
-# Module loading - shared stub loader (avoids the HA-importing package root)
-# ---------------------------------------------------------------------------
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-load_pure_modules()
-
-from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext,
     PhaseValues,
     SiteContext,
 )
-from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     excess_margin,
     reconstructed_export_power,
 )
-from custom_components.dynamic_ocpp_evse.calculations.utils import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.utils import (
     grid_without_managed_draws,
 )
-from custom_components.dynamic_ocpp_evse.const.hub import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.const.hub import (
     DEFAULT_EXCESS_HYSTERESIS,
 )
 
@@ -626,24 +611,3 @@ def test_reconstructed_export_still_sees_the_household():
     quiet = _reconstructed(_site(-13500 / V, battery_w=-CHARGE_MAX))
     kettle = _reconstructed(_site(-11500 / V, battery_w=-CHARGE_MAX))
     assert _close(quiet - kettle, 2000.0)
-
-
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

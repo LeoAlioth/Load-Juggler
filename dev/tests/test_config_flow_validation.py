@@ -5,9 +5,6 @@ This exercises the REAL helpers.validate_charger_settings. It used to define a
 local copy of the function and assert against that - which passes no matter what
 the integration actually does. (The equally tautological twin,
 test_validation.py, was deleted rather than kept in sync.)
-
-helpers.py imports homeassistant.config_entries, so this file needs the pytest
-tier (Docker / WSL) - it is no longer runnable under a bare python3.
 """
 
 from custom_components.dynamic_ocpp_evse.helpers import validate_charger_settings
@@ -68,13 +65,3 @@ def test_validate_negative_current():
     assert "base" in errors and errors["base"] == "invalid_current", f"Expected invalid_current for negative max, got {errors}"
 
     print("PASS: test_validate_negative_current")
-
-
-if __name__ == "__main__":
-    # Requires an environment with Home Assistant installed (see module docstring).
-    test_validate_min_max_current_valid()
-    test_validate_min_exceeds_max()
-    test_validate_zero_current()
-    test_validate_equal_min_max()
-    test_validate_negative_current()
-    print("\nAll config flow validation tests passed!")

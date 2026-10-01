@@ -16,43 +16,17 @@ What the tests pin:
     stale" - one bad option must not blank out an entire site;
   * a future timestamp counts as fresh, so a clock step cannot black out every
     sensor on the site.
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_freshness.py     (standalone, no pytest needed)
-  pytest dev/tests/test_freshness.py      (Docker / CI tier)
 """
 
-import importlib.util
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Module loading - freshness.py has no package-relative imports at all, so it
-# loads straight from its path without the stub-package hierarchy the rest of
-# the pure tier needs. Under pytest the real module is preferred when the
-# component package has already been imported.
-# ---------------------------------------------------------------------------
-_FQN = "custom_components.dynamic_ocpp_evse.entities.freshness"
-if _FQN in sys.modules:
-    freshness = sys.modules[_FQN]
-else:
-    _PATH = (
-        Path(__file__).resolve().parents[2]
-        / "custom_components"
-        / "dynamic_ocpp_evse"
-        / "entities"
-        / "freshness.py"
-    )
-    _spec = importlib.util.spec_from_file_location("lj_freshness_pure", _PATH)
-    freshness = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(freshness)
-
-freshness_window_seconds = freshness.freshness_window_seconds
-producer_age_seconds = freshness.producer_age_seconds
-is_producer_fresh = freshness.is_producer_fresh
-FRESHNESS_MIN_WINDOW_SECONDS = freshness.FRESHNESS_MIN_WINDOW_SECONDS
-FRESHNESS_CYCLE_MULTIPLIER = freshness.FRESHNESS_CYCLE_MULTIPLIER
+from custom_components.dynamic_ocpp_evse.entities.freshness import (
+    FRESHNESS_CYCLE_MULTIPLIER,
+    FRESHNESS_MIN_WINDOW_SECONDS,
+    freshness_window_seconds,
+    is_producer_fresh,
+    producer_age_seconds,
+)
 
 NOW = datetime(2026, 8, 18, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -160,24 +134,3 @@ def test_now_defaults_to_the_wall_clock():
     # entity property does pass one, but nothing in the signature requires it.
     assert is_producer_fresh(datetime.now(timezone.utc), 2) is True
     assert is_producer_fresh(datetime(2000, 1, 1, tzinfo=timezone.utc), 2) is False
-
-
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

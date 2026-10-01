@@ -86,8 +86,8 @@ stuck-readout watch). Every one of those has produced a real bug in this
 project, and none of them would show up here. Screen candidates with this;
 confirm the winner on the rig.
 
-    python3 dev/tests/dynamics.py                 # the standard comparison
-    python3 dev/tests/dynamics.py --plot out.html # and a chart to eyeball
+    python -m dev.tests.dynamics                 # the standard comparison
+    python -m dev.tests.dynamics --plot out.html # and a chart to eyeball
 """
 
 import math
@@ -97,22 +97,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-# "hub_calculation" pulls the whole engine chain, which is what makes
-# readers importable - it reaches forecast_reader, which needs the
-# calculations package __init__ executed. Same combination the
-# availability-contract tests use.
-load_pure_modules(
-    engine_modules=("hub_calculation",),
-    control_modules=("smoothing", "power_station"),
-)
-
-from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext,
 )
-from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.const import (
     CONF_CONNECTED_TO_PHASE,
     CONF_DEVICE_TYPE,
     CONF_ENTITY_ID,
@@ -138,16 +126,16 @@ from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     DEVICE_TYPE_POWER_STATION,
     DOMAIN,
 )
-from custom_components.dynamic_ocpp_evse.control.power_station import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.control.power_station import (
     send_power_station_command,
 )
-from custom_components.dynamic_ocpp_evse.control.smoothing import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.control.smoothing import (
     apply_smoothing,
 )
-from custom_components.dynamic_ocpp_evse.engine import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.engine import (
     hub_calculation,
 )
-from custom_components.dynamic_ocpp_evse.helpers import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.helpers import (
     get_entry_value,
 )
 
@@ -721,12 +709,10 @@ def ring(rows, window_s=30.0):
 
 
 # -- plotting -------------------------------------------------------------
-# Deliberately hand-rolled SVG. Nothing under dev/ has a third-party
-# dependency - the pure tier's whole premise is that it runs on a machine with
-# nothing installed - and a chart is not worth breaking that for. The palette
-# and dark ground match Home Assistant's history card so a run here can be held
-# up against "The last hour" on the rig dashboard without re-reading the
-# colours.
+# Deliberately hand-rolled SVG: a chart is not worth a plotting dependency.
+# The palette and dark ground match Home Assistant's history card so a run here
+# can be held up against "The last hour" on the rig dashboard without
+# re-reading the colours.
 SERIES = [
     ("solar", "#f5c518", "Solar"),
     ("managed", "#e8705a", "Managed load total"),

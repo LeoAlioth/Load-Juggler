@@ -10,8 +10,7 @@ annotations only, under ``TYPE_CHECKING``. That is what lets this module live
 outside the package root: it used to sit in ``__init__.py``, where every
 caller in ``engine/``, ``entities/`` and ``config_flow.py`` had to defer its
 import to function scope to dodge the circular dependency back through the
-HA-importing package root. Keeping it HA-import-free also means pure tooling
-(``dev/tests/standalone_loader.py``) can load it directly.
+HA-importing package root.
 """
 
 from __future__ import annotations

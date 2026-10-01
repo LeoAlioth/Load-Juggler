@@ -9,24 +9,10 @@ OWN full-SOC; discharge capacity excludes members below the hub minimum;
 fleet SOC is capacity-weighted; solar sums parallel outputs plus series
 outputs minus their own battery power. With a single member every aggregate
 must reduce to exactly the classic singleton value.
-
-Runnable two ways:
-  python3 dev/tests/test_fleet.py   (standalone, no pytest needed)
-  pytest dev/tests/test_fleet.py    (Docker / CI tier)
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules  # noqa: E402
-
-# engine/fleet.py reaches only for calculations.PhaseValues and const/, so it
-# loads without Home Assistant.
-load_pure_modules(engine_modules=("fleet",))
-
-from custom_components.dynamic_ocpp_evse.calculations import PhaseValues  # noqa: E402
-from custom_components.dynamic_ocpp_evse.engine.fleet import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations import PhaseValues
+from custom_components.dynamic_ocpp_evse.engine.fleet import (
     FleetMember,
     battery_power_total,
     capacity_total,
@@ -577,24 +563,3 @@ def test_split_never_hands_out_more_than_the_caps():
         [_pack("a", 50, 10, charge=500.0), _pack("b", 50, 10, charge=500.0)], 5000.0, 90
     )
     assert shares == {"a": 500.0, "b": 500.0}
-
-
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

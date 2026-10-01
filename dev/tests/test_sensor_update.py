@@ -5028,7 +5028,7 @@ async def test_grid_phase_export_keeps_its_sign(
 # what the inverter last reported rather than an echo of our own intention.
 #
 # The pacing/deadband/release contract itself is tested in
-# dev/tests/test_inverter_control.py, which also runs in the pure tier.
+# dev/tests/test_inverter_control.py.
 
 CHARGE_TARGET = "number.deye_max_charge_current"
 
@@ -5527,8 +5527,7 @@ async def test_removing_the_entity_releases_its_worker_slot(
 # out through the real coordinator cycle, and the sensor reporting the ceiling
 # being enforced with the per-slot read-backs beside it.
 #
-# The min()/deadband/pacing contract itself is in dev/tests/test_inverter_control.py,
-# which also runs in the pure tier.
+# The min()/deadband/pacing contract itself is in dev/tests/test_inverter_control.py.
 
 SOC_SLOTS = ["number.deye_tou_soc_1", "number.deye_tou_soc_2"]
 SOC_NORMAL_ENTITY = "input_number.battery_ceiling"

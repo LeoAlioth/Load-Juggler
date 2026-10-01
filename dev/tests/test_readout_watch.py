@@ -22,31 +22,19 @@ CTs. What the tests pin:
   * a blind charger's footprint is the larger of its allocation and its last
     command: its permits stay inside the breaker like a metered charger's, and
     a cut that has not landed yet frees less than a metered charger's would.
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_readout_watch.py     (standalone, no pytest needed)
-  pytest dev/tests/test_readout_watch.py      (Docker / CI tier)
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules  # noqa: E402
-
-load_pure_modules(engine_modules=("readout_watch",))
-
-from custom_components.dynamic_ocpp_evse.engine import readout_watch as rw  # noqa: E402
-from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.engine import readout_watch as rw
+from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext,
     PhaseValues,
     SiteContext,
 )
-from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     _pool_deduction,
     calculate_all_load_targets,
 )
-from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.const import (
     LEG_DRAWING_CURRENT,
     SETTLE_PERMIT_MARGIN,
 )
@@ -573,24 +561,3 @@ def test_a_blind_charger_being_cut_frees_less_than_a_metered_one():
     # Once the cut has landed, both sit inside the breaker.
     assert household + sum(blind.values()) <= breaker
     assert household + sum(metered.values()) <= breaker
-
-
-# ---------------------------------------------------------------------------
-# Standalone runner
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    failures = 0
-    tests = [
-        (name, fn) for name, fn in sorted(globals().items())
-        if name.startswith("test_") and callable(fn)
-    ]
-    for name, fn in tests:
-        try:
-            fn()
-            print(f"PASS {name}")
-        except Exception as exc:  # noqa: BLE001 - report every failure
-            failures += 1
-            print(f"FAIL {name}: {exc!r}")
-    print(f"\n{'OK' if not failures else 'FAILED'} - {failures} failure(s)")
-    sys.exit(1 if failures else 0)
