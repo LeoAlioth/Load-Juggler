@@ -9,7 +9,6 @@ from .entities.mixins import HubEntityMixin, LoadEntityMixin, InverterEntityMixi
 from .const import (
     ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, ENTRY_TYPE_INVERTER,
     CONF_NAME, CONF_ENTITY_ID,
-    CONF_HUB_ENTRY_ID,
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION,
     CONF_CHARGE_LIMIT_ENTITY_ID, INVERTER_RT_CONTROL_ENABLED,
     INVERTER_RT_SOC_CONTROL_ENABLED,
@@ -27,15 +26,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     if entry_type == ENTRY_TYPE_LOAD:
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "load")
         name = config_entry.data.get(CONF_NAME, "Load")
-        hub_entry_id = config_entry.data.get(CONF_HUB_ENTRY_ID)
-        hub_entry = hass.config_entries.async_get_entry(hub_entry_id) if hub_entry_id else None
-        entities = [DynamicControlSwitch(hass, config_entry, hub_entry, entity_id, name)]
+        entities = [DynamicControlSwitch(hass, config_entry, entity_id, name)]
         device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         if device_type == DEVICE_TYPE_POWER_STATION:
             entities.append(
-                StationStormReserveSwitch(
-                    hass, config_entry, hub_entry, entity_id, name
-                )
+                StationStormReserveSwitch(hass, config_entry, entity_id, name)
             )
         async_add_entities(entities)
         return
@@ -139,11 +134,10 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
     _default = True
     _attr_icon = "mdi:auto-fix"
 
-    def __init__(self, hass, config_entry, hub_entry, entity_id, name):
+    def __init__(self, hass, config_entry, entity_id, name):
         self._init_entity(
             hass, config_entry, f"{name} Dynamic Control", f"{entity_id}_dynamic_control"
         )
-        self.hub_entry = hub_entry
 
 
 class StationStormReserveSwitch(LoadEntityMixin, _FlagSwitch):
@@ -164,11 +158,10 @@ class StationStormReserveSwitch(LoadEntityMixin, _FlagSwitch):
     _data_key = "station_storm_reserve"
     _attr_icon = "mdi:weather-lightning"
 
-    def __init__(self, hass, config_entry, hub_entry, entity_id, name):
+    def __init__(self, hass, config_entry, entity_id, name):
         self._init_entity(
             hass, config_entry, f"{name} Storm Reserve", f"{entity_id}_station_storm_reserve"
         )
-        self.hub_entry = hub_entry
 
 
 class BatteryChargeControlSwitch(InverterEntityMixin, _FlagSwitch):

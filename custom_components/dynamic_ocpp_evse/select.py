@@ -11,7 +11,7 @@ from .const import (
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_HOT_WATER_TANK,
     DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
     DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
-    DEFAULT_DISTRIBUTION_MODE,
+    DEFAULT_DISTRIBUTION_MODE, DISTRIBUTION_MODES,
     modes_for,
 )
 
@@ -123,12 +123,7 @@ class LoadJugglerDistributionModeSelect(HubEntityMixin, SelectEntity, RestoreEnt
         self.config_entry = config_entry
         self._attr_name = f"{name} Distribution Mode"
         self._attr_unique_id = f"{entity_id}_distribution_mode"
-        self._attr_options = [
-            DISTRIBUTION_MODE_SHARED,
-            DISTRIBUTION_MODE_PRIORITY,
-            DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED,
-            DISTRIBUTION_MODE_SEQUENTIAL_STRICT
-        ]
+        self._attr_options = DISTRIBUTION_MODES
         self._attr_current_option = DEFAULT_DISTRIBUTION_MODE
 
     @property
