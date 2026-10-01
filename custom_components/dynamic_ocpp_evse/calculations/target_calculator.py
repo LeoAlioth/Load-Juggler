@@ -1898,10 +1898,7 @@ def _deduct_from_sources(
 
 def _sort_loads(loads: list[LoadContext]) -> list[LoadContext]:
     """Sort loads by (mode urgency tier, per-load priority) for distribution."""
-    return sorted(
-        loads,
-        key=lambda c: (c.mode_priority, c.priority),
-    )
+    return sorted(loads, key=_rank)
 
 
 def _distribute_power(
