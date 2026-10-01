@@ -575,170 +575,6 @@ def _build_inverter_solar_schema(hass, defaults: dict | None = None) -> list[tup
     ]
 
 
-def _build_hub_battery_schema(hass, defaults: dict | None = None) -> list[tuple]:
-    """LEGACY hub solar/battery fields - shown only while a hub still
-    carries them, i.e. before the one-time auto-import moves them onto an
-    inverter entry. New hubs never see this page: their solar sensor,
-    forecast devices and battery hardware are configured per inverter, and
-    the site policy that stays behind lives on the hub settings page.
-    """
-    defaults = defaults or {}
-
-    fields = [
-        (
-            _optional_entity_field(
-                CONF_SOLAR_PRODUCTION_ENTITY_ID,
-                defaults.get(CONF_SOLAR_PRODUCTION_ENTITY_ID),
-            ),
-            selector(
-                {
-                    "entity": {
-                        "include_entities": _entity_ids_for(
-                            hass,
-                            {None, "power"}, valid_units=_POWER_UNITS
-                        ),
-                    }
-                }
-            ),
-        ),
-        (
-            _optional_entity_field(
-                CONF_BATTERY_SOC_ENTITY_ID,
-                defaults.get(CONF_BATTERY_SOC_ENTITY_ID),
-            ),
-            selector(
-                {
-                    "entity": {
-                        "include_entities": _entity_ids_for(
-                            hass,
-                            {None, "battery"}, valid_units=_SOC_UNITS
-                        ),
-                    }
-                }
-            ),
-        ),
-        (
-            _optional_entity_field(
-                CONF_BATTERY_POWER_ENTITY_ID,
-                defaults.get(CONF_BATTERY_POWER_ENTITY_ID),
-            ),
-            selector(
-                {
-                    "entity": {
-                        "include_entities": _entity_ids_for(
-                            hass,
-                            {None, "power"}, valid_units=_POWER_UNITS
-                        ),
-                    }
-                }
-            ),
-        ),
-        (
-            vol.Optional(
-                CONF_BATTERY_MAX_CHARGE_POWER,
-                default=defaults.get(
-                    CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 50000,
-                        "step": 100,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
-        ),
-        (
-            vol.Optional(
-                CONF_BATTERY_MAX_DISCHARGE_POWER,
-                default=defaults.get(
-                    CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 50000,
-                        "step": 100,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
-        ),
-        (
-            vol.Optional(
-                CONF_BATTERY_SOC_FULL,
-                default=defaults.get(
-                    CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 50,
-                        "max": 100,
-                        "step": 1,
-                        "mode": "slider",
-                        "unit_of_measurement": "%",
-                    }
-                }
-            ),
-        ),
-        # --- PV clipping forecast (advisory battery headroom) ---
-        # Active only when the grid export limit (hub grid step), a battery
-        # capacity and at least one forecast entity are all set.
-        (
-            # One forecast DEVICE per PV array - the Open-Meteo Solar
-            # Forecast integration creates one device per array, and
-            # several of its sensors carry the same watts series, so
-            # letting the user pick sensors risks double-counting.
-            vol.Optional(
-                CONF_SOLAR_FORECAST_DEVICE_IDS,
-                # suggested_value, NOT default - same clearing rule as
-                # CONF_SOC_LIMIT_ENTITY_IDS (_normalize_forecast_list).
-                description={
-                    "suggested_value": defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS)
-                    or []
-                },
-            ),
-            selector(
-                {
-                    "device": {
-                        "multiple": True,
-                        "filter": {"integration": "open_meteo_solar_forecast"},
-                    }
-                }
-            ),
-        ),
-        (
-            vol.Optional(
-                CONF_BATTERY_CAPACITY_KWH,
-                default=defaults.get(
-                    CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 1000,
-                        "step": 0.1,
-                        "mode": "box",
-                        "unit_of_measurement": "kWh",
-                    }
-                }
-            ),
-        ),
-    ]
-    return fields
-
-
 def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple]:
     """Build inverter configuration fields as a reusable list."""
     defaults = defaults or {}
@@ -1225,33 +1061,9 @@ def _inverter_config_schema(hass, defaults: dict | None, features):
     return fields
 
 
-def _hub_schema(
-    hass,
-    defaults: dict | None = None,
-    include_grid: bool = True,
-    include_battery: bool = True,
-    include_inverter: bool = False,
-) -> vol.Schema:
-    """
-    Build a combined hub schema from reusable field lists.
-    This centralizes schema construction to reduce duplication.
-    """
-    defaults = defaults or {}
-    fields_list: list[tuple] = []
-
-    if include_grid:
-        fields_list.extend(_build_hub_grid_schema(hass, defaults))
-    if include_battery:
-        fields_list.extend(_build_hub_battery_schema(hass, defaults))
-    if include_inverter:
-        fields_list.extend(_build_hub_inverter_schema(hass, defaults))
-
-    return vol.Schema(dict(fields_list))
-
-
 def _hub_grid_schema(hass, defaults: dict | None = None) -> vol.Schema:
-    """Build schema with only grid/electrical fields."""
-    return _hub_schema(hass, defaults, include_grid=True, include_battery=False)
+    """The hub setup page: grid connection and site policy."""
+    return vol.Schema(dict(_build_hub_grid_schema(hass, defaults)))
 
 
 # The hub's options menu splits the grid page into four pages, one question
@@ -1302,7 +1114,7 @@ def _hub_filters_schema(defaults: dict | None = None) -> vol.Schema:
     """The Filters page: the control pipeline's time constants and slews.
 
     Deliberately NOT drawn from ``_build_hub_grid_schema`` like the other hub
-    pages: that list also builds the hub SETUP form (via ``_hub_schema``), and
+    pages: that list also builds the hub SETUP form (``_hub_grid_schema``), and
     eight filter dials have no business in front of someone wiring up their
     first hub. Options-only, reachable from the hub menu.
 
@@ -1354,22 +1166,6 @@ def validate_hub_filters(data: dict, errors: dict) -> None:
     slow = data.get(CONF_FILTER_INPUT_TAU_S, EMA_TAU_S)
     if fast is not None and slow is not None and float(fast) >= float(slow):
         errors[CONF_FILTER_CTRL_FAST_TAU_S] = "fast_filter_not_below_input"
-
-
-def _hub_battery_schema(hass, defaults: dict | None = None) -> vol.Schema:
-    """Build schema with only the legacy hub solar/battery fields."""
-    return _hub_schema(hass, defaults, include_grid=False, include_battery=True)
-
-
-def _hub_inverter_schema(hass, defaults: dict | None = None) -> vol.Schema:
-    """Build schema with only inverter fields."""
-    return _hub_schema(
-        hass,
-        defaults,
-        include_grid=False,
-        include_battery=False,
-        include_inverter=True,
-    )
 
 
 def _charger_info_schema(defaults: dict | None = None) -> vol.Schema:

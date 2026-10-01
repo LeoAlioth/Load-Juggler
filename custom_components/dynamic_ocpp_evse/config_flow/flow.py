@@ -129,7 +129,6 @@ from ..const import (
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
     FIELD_OCPP_DEVICE,
-    MIGRATE_HUB_INVERTER_IMPORTED_FLAG,
     CONF_INVERTER_FEATURES,
     INVERTER_FEATURE_BATTERY,
     INVERTER_FEATURE_BATTERY_CONTROL,
@@ -360,9 +359,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_NAME: self._data.get(CONF_NAME),
                     CONF_ENTITY_ID: self._data.get(CONF_ENTITY_ID),
                     ENTRY_TYPE: ENTRY_TYPE_HUB,
-                    # Born without legacy inverter/battery fields - nothing to
-                    # auto-import, and the legacy hub pages stay hidden.
-                    MIGRATE_HUB_INVERTER_IMPORTED_FLAG: True,
                 }
                 options_data = {
                     k: v for k, v in self._data.items() if k not in static_data
@@ -1084,13 +1080,14 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     )
 
     def _blank_hub_legacy_inverter_fields(self, hub_entry) -> None:
-        """Strip the imported fields from the hub entry and set the imported
-        flag - the hub must stop acting as the implicit legacy fleet member
-        the moment the standalone inverter entry represents the hardware."""
-        new_data = dict(hub_entry.data)
-        new_data[MIGRATE_HUB_INVERTER_IMPORTED_FLAG] = True
-        for key in self._HUB_INVERTER_IMPORT_FIELDS:
-            new_data.pop(key, None)
+        """Strip the imported fields from the hub entry - the hub must stop
+        acting as the implicit legacy fleet member the moment the standalone
+        inverter entry represents the hardware."""
+        new_data = {
+            k: v
+            for k, v in hub_entry.data.items()
+            if k not in self._HUB_INVERTER_IMPORT_FIELDS
+        }
         new_options = {
             k: v
             for k, v in hub_entry.options.items()
@@ -1144,7 +1141,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         merged into it rather than creating a second one.
 
         Idempotency: the unique_id makes a duplicate entry impossible, and the
-        hub is blanked-and-flagged BEFORE the already-configured abort - so a
+        hub is blanked BEFORE the already-configured abort - so a
         restart between entry creation and blanking still converges instead of
         double-counting the battery (the engine's implicit legacy member and
         the entry would otherwise both exist).

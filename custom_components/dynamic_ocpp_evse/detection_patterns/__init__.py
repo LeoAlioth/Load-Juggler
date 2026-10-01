@@ -1,16 +1,16 @@
-"""Auto-detection patterns for grid CTs, battery discharge limits and plug monitors.
+"""Auto-detection patterns for grid CTs and plug monitors.
 
 Each brand is defined in its own module. To add support for a new brand:
 
 1. Create a new file in this package (e.g., ``mybrand.py``)
-2. Define GRID_CT and/or BATTERY_MAX_DISCHARGE_POWER
+2. Define GRID_CT
 3. Add the module to ``_BRANDS`` below
 
 **Phase patterns** (GRID_CT):
   Each entry has a ``patterns`` dict with keys phase_a / phase_b / phase_c.
   Tried in order - first complete 3-phase match wins.
 
-**Single-entity patterns** (BATTERY_MAX_DISCHARGE_POWER):
+**Single-entity patterns** (PLUG_POWER_MONITOR, in ``smart_plugs``):
   Each entry has a single ``pattern`` regex.  First match wins.
 """
 
@@ -23,12 +23,10 @@ from . import (
     victron,
     sofar,
     sungrow,
-    generic,
     smart_plugs,
 )
 
 # Brand modules in detection priority order.
-# Specific brands first; generic catch-alls last.
 _BRANDS = [
     solaredge,
     solarman_deye,
@@ -38,7 +36,6 @@ _BRANDS = [
     victron,
     sofar,
     sungrow,
-    generic,
 ]
 
 
@@ -65,6 +62,5 @@ def _power_first(pattern_sets: list) -> list:
 
 
 PHASE_PATTERNS = _power_first(_collect("GRID_CT"))
-BATTERY_MAX_DISCHARGE_POWER_PATTERNS = _collect("BATTERY_MAX_DISCHARGE_POWER")
 # Smart plugs are not solar/inverter brands - collect directly.
 PLUG_POWER_MONITOR_PATTERNS = smart_plugs.PLUG_POWER_MONITOR
