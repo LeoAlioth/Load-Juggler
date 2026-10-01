@@ -30,22 +30,23 @@ GRID_CT = [
     # entities of the same name are magnitude-only, so picking those makes
     # export invisible - no Excess mode, and exported power counted as
     # household consumption. Power first, current only as a fallback for
-    # definitions that don't publish it.
+    # definitions that don't publish it. "External CT1 Power" in ha-solarman,
+    # "External CT L1 Power" in StephanJoubert's Solarman (deye_sg04lp3).
     {
         "name": "Solarman/Deye - external CTs (power)",
         "patterns": {
-            "phase_a": r'sensor\..*_external_ct1_power.*',
-            "phase_b": r'sensor\..*_external_ct2_power.*',
-            "phase_c": r'sensor\..*_external_ct3_power.*',
+            "phase_a": r'sensor\..*_external_ct(?:_l)?1_power$',
+            "phase_b": r'sensor\..*_external_ct(?:_l)?2_power$',
+            "phase_c": r'sensor\..*_external_ct(?:_l)?3_power$',
         },
         "unit": "W",
     },
     {
         "name": "Solarman/Deye - internal CTs (power)",
         "patterns": {
-            "phase_a": r'sensor\..*_internal_ct1_power.*',
-            "phase_b": r'sensor\..*_internal_ct2_power.*',
-            "phase_c": r'sensor\..*_internal_ct3_power.*',
+            "phase_a": r'sensor\..*_internal_ct(?:_l)?1_power$',
+            "phase_b": r'sensor\..*_internal_ct(?:_l)?2_power$',
+            "phase_c": r'sensor\..*_internal_ct(?:_l)?3_power$',
         },
         "unit": "W",
     },
@@ -81,13 +82,17 @@ GRID_CT = [
         "unit": "A",
     },
     # Fronius - HA core, Fronius Solar API; a SmartMeter is required for
-    # per-phase grid readings.
+    # per-phase grid readings. Older entity ids read current_ac_phase_1; core
+    # names them from its translations now, "Current phase 1" on a device
+    # named after the meter model ("Smart Meter 63A"). That spelling only on
+    # a smart_meter device: a Zaptec charger's "Current phase 1" (and
+    # "Available current phase 1") is spelled the same.
     {
         "name": "Fronius SmartMeter",
         "patterns": {
-            "phase_a": r'sensor\..*_current_ac_phase_1$',
-            "phase_b": r'sensor\..*_current_ac_phase_2$',
-            "phase_c": r'sensor\..*_current_ac_phase_3$',
+            "phase_a": r'sensor\..*(?:_current_ac|smart_meter.*_current)_phase_1$',
+            "phase_b": r'sensor\..*(?:_current_ac|smart_meter.*_current)_phase_2$',
+            "phase_c": r'sensor\..*(?:_current_ac|smart_meter.*_current)_phase_3$',
         },
         "unit": "A",
     },
@@ -125,14 +130,26 @@ GRID_CT = [
         },
         "unit": "A",
     },
-    # Sofar Solar - on the Solarman integration, OEM platforms included
-    # (Turbo Energy, ...).
+    # Sofar Solar - the grid meter's readings at the PCC: "ActivePower_PCC_R"
+    # in both Solarman integrations' sofar_g3hyd (OEM platforms included:
+    # ZCS, Turbo Energy, ...), "Active power PCC L1" in HA core's sofar (kW).
+    # The power is signed, the current not. ha-solarman's sofar_hybrid
+    # (HYD-ES) publishes "Grid L1 Current", which the Victron entry matches.
     {
-        "name": "Sofar - grid current",
+        "name": "Sofar - grid power (PCC)",
         "patterns": {
-            "phase_a": r'sensor\..*_current_grid_l1$',
-            "phase_b": r'sensor\..*_current_grid_l2$',
-            "phase_c": r'sensor\..*_current_grid_l3$',
+            "phase_a": r'sensor\..*_active_?power_pcc_(?:l1|r)$',
+            "phase_b": r'sensor\..*_active_?power_pcc_(?:l2|s)$',
+            "phase_c": r'sensor\..*_active_?power_pcc_(?:l3|t)$',
+        },
+        "unit": "W",
+    },
+    {
+        "name": "Sofar - grid current (PCC)",
+        "patterns": {
+            "phase_a": r'sensor\..*_current_pcc_(?:l1|r)$',
+            "phase_b": r'sensor\..*_current_pcc_(?:l2|s)$',
+            "phase_c": r'sensor\..*_current_pcc_(?:l3|t)$',
         },
         "unit": "A",
     },
