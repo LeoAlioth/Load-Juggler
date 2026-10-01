@@ -41,7 +41,7 @@ Each In Progress and Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bug
 custom_components/dynamic_ocpp_evse/
 ├── __init__.py                    # HA setup/unload, services (re-exports the registry helpers)
 ├── registry.py                    # Entry-relationship lookups (get_hub_for_load, get_*_for_hub) -
-│                                  #   HA-import-free, so pure tooling can load it without Home Assistant
+│                                  #   HA-import-free, so it sits outside the package root without an import cycle
 ├── manifest.json                  # Component metadata
 ├── config_flow/                   # HA configuration flow (initial setup + options "Configure" flow - the single
 │   │                              #   edit path; no reconfigure flow. Options menu: settings / overview / summary)
@@ -274,33 +274,31 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 
 **Test procedure**: Do not combine multiple shell commands to one line. Always run one test at a time.
 
-### Calculation Scenario Tests (Pure Python)
-
-YAML-driven tests that validate the calculation engine directly. **Run natively on any platform** - no Home Assistant dependencies.
+Every test - unit, HA integration and each YAML scenario - runs under plain pytest from the
+project root (`pip install -r requirements_dev.txt`; `pytest.ini` puts the root on the path):
 
 ```bash
-# Run all scenarios (from project root)
-python3 dev/tests/run_tests.py dev/tests/scenarios
+# Everything (what CI runs)
+pytest dev/tests/ -v
 
-# Run only verified or unverified
-python3 dev/tests/run_tests.py --verified dev/tests/scenarios
-python3 dev/tests/run_tests.py --unverified dev/tests/scenarios
+# Only the YAML scenarios; only the human-verified ones; only the unverified ones
+pytest dev/tests/test_scenarios.py
+pytest dev/tests/ -m verified
+pytest dev/tests/test_scenarios.py -m "not verified"
 
-# Run a single scenario by name
-python3 dev/tests/run_tests.py "scenario-name"
+# One scenario (or any test) by name
+pytest dev/tests/ -k "scenario-name"
 
-# Run a single test with a detailed output
-python3 dev/tests/run_tests.py "scenario-name" --trace
-
+# ... with its cycle-by-cycle trace printed live, plus the engine's debug log
+pytest dev/tests/ -k "scenario-name" -s --log-cli-level=DEBUG
 ```
 
-Test results are written to `dev/tests/test_results.log`.
+### Calculation Scenario Tests
 
-Several pure-tier test files also run natively without Docker or pytest, via the
-shared `dev/tests/standalone_loader.py` (e.g. `python3 dev/tests/test_availability_contract.py`;
-same pattern for test_freshness, test_household_hold, test_excess_stayon,
-test_inverter_gate, test_inverter_output, test_inverter_control, test_auto_detect).
-Under the Docker/pytest tier the loader is a structural no-op.
+YAML-driven tests that validate the calculation engine directly: `dev/tests/test_scenarios.py` runs
+every scenario in `dev/tests/scenarios/` through the 30-cycle simulation in `dev/tests/run_tests.py`,
+one test per scenario, named after it. A failing scenario's assertion message lists its validation
+lines, and its captured output is the cycle-by-cycle trace.
 
 **IMPORTANT**: When creating new or modifying existing test scenarios, always set `human_verified: false`. Only the developer marks scenarios as verified after manual review.
 
@@ -353,8 +351,8 @@ docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests
 # Run with specific test pattern
 docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests/ -v -k "test_async_setup"
 
-# Run only scenario tests (pure Python, no HA dependencies)
-docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python dev/tests/run_tests.py
+# Run only the YAML scenarios
+docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests/test_scenarios.py -v
 ```
 
 **Integration test files:**
@@ -380,8 +378,8 @@ mypy custom_components/dynamic_ocpp_evse
 ### Debugging
 
 1. **Enable verbose logging** in HA: `custom_components.dynamic_ocpp_evse: debug`
-2. **Run specific test**: `python3 dev/tests/run_tests.py "test-name"`
-3. **Debug a single scenario**: `python3 dev/debug_scenario.py "scenario-name" --verbose`
+2. **Run specific test**: `pytest dev/tests/ -k "test-name"`
+3. **Debug a single scenario**: `pytest dev/tests/ -k "scenario-name" -s --log-cli-level=DEBUG` (cycle trace + engine debug log)
 4. **Check calculation steps**: Each step logs its output (site_limit, solar_available, target_power, etc.)
 5. **Per-phase values**: Log phase_a/b/c_export, consumption, available
 

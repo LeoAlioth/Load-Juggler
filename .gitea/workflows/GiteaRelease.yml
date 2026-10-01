@@ -75,11 +75,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          echo "=== Running calculation scenario tests ==="
-          python dev/tests/run_tests.py dev/tests/scenarios
-          echo ""
-          echo "=== Running HA integration tests ==="
-          pytest dev/tests/ -v --ignore=dev/tests/scenarios
+          pytest dev/tests/ -v
 
       - name: Generate release notes
         if: env.SKIP != 'true'

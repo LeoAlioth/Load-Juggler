@@ -1,48 +1,11 @@
 # Dynamic OCPP EVSE Tests
 
-This folder contains two categories of tests:
+Everything in this folder - the YAML calculation scenarios, the unit tests and
+the Home Assistant integration tests (`pytest-homeassistant-custom-component`) -
+is collected by one plain pytest run. That run is what CI gates a release on,
+so it is the one that matters before a push.
 
-## 1. Calculation Scenario Tests (Pure Python)
-
-YAML-driven tests that validate the calculation engine directly. Run on any platform (no HA dependency).
-
-### Run all scenarios
-
-```bash
-python3 dev/tests/run_tests.py dev/tests/scenarios
-# equivalent - the scenarios directory is the default:
-python3 dev/tests/run_tests.py
-```
-
-### Run only verified or unverified scenarios
-
-```bash
-python3 dev/tests/run_tests.py --verified dev/tests/scenarios
-python3 dev/tests/run_tests.py --unverified dev/tests/scenarios
-```
-
-### Run a single scenario by name
-
-```bash
-python3 dev/tests/run_tests.py "scenario-name"
-```
-
-**Test results** are written to `dev/tests/test_results.log`.
-
-### Scenario files
-
-Scenario YAML files live in `dev/tests/scenarios/`, one folder per site shape
-(`1ph/`, `1ph_battery/`, `3ph/`, `3ph_battery/`) plus `features/`.
-
-Each YAML file contains a `scenarios:` list with inputs and expected targets for loads.
-
-## 2. HA Integration Tests
-
-Pytest-based tests using `pytest-homeassistant-custom-component`. This is the
-tier CI runs and gates a release on, so it is the one that matters before a
-push.
-
-### Set it up
+## Set it up
 
 Home Assistant needs a recent Python - newer than the system one on a Mac - so
 let `uv` fetch a standalone build rather than hunting for an interpreter:
@@ -56,25 +19,50 @@ to a Windows path that no longer exists, on the grounds that HA core needs
 `fcntl` - it is in the macOS standard library too, and the whole tier runs in
 about 25 seconds.
 
-**Do not skip this tier because the venv is awkward.** On 2026-09-18 a one-line
+**Do not skip this run because the venv is awkward.** On 2026-09-18 a one-line
 change to `ocpp_discovery.py` shipped unverified for exactly that reason, and
 it turned every charge point into a string: six tests red, every Gitea build
 and the 2.1.2 release blocked, and nobody noticed for four days because the
 only thing that would have caught it was this command.
 
-### Run them
+## Run them
+
+`pytest.ini` puts the project root on the import path, so run from the project
+root with no `PYTHONPATH`:
 
 ```bash
-PYTHONPATH=$PWD .venv/bin/python -m pytest dev/tests/ --ignore=dev/tests/scenarios -q
+.venv/bin/python -m pytest dev/tests/ -q
 ```
-
-### Run a single integration test file
 
 ```bash
-PYTHONPATH=$PWD .venv/bin/python -m pytest dev/tests/test_sensor_update.py -v
+# One file
+.venv/bin/python -m pytest dev/tests/test_sensor_update.py -v
+
+# One test or scenario by name
+.venv/bin/python -m pytest dev/tests/ -k "scenario-name"
+
+# Only the YAML scenarios; only the human-verified ones; only the unverified ones
+.venv/bin/python -m pytest dev/tests/test_scenarios.py
+.venv/bin/python -m pytest dev/tests/ -m verified
+.venv/bin/python -m pytest dev/tests/test_scenarios.py -m "not verified"
+
+# A scenario's cycle-by-cycle trace live, plus the engine's debug log
+.venv/bin/python -m pytest dev/tests/ -k "scenario-name" -s --log-cli-level=DEBUG
 ```
 
-### Integration test files
+## Calculation scenarios
+
+`test_scenarios.py` runs every scenario in `scenarios/**/*.yaml` through the
+30-cycle simulation in `run_tests.py`, one test per scenario, named after it.
+Scenarios with `human_verified: true` carry the `verified` marker. A failing
+scenario's assertion message lists its validation lines; its captured output is
+the cycle-by-cycle trace.
+
+Scenario YAML files live in `scenarios/`, one folder per site shape
+(`1ph/`, `1ph_battery/`, `3ph/`, `3ph_battery/`) plus `features/`. Each file
+contains a `scenarios:` list with inputs and expected targets for loads.
+
+## Integration test files
 
 | File | What it tests |
 |---|---|
@@ -85,10 +73,10 @@ PYTHONPATH=$PWD .venv/bin/python -m pytest dev/tests/test_sensor_update.py -v
 | `test_power_station_ha.py` | Power station builder (bounds, managed draw, status) and command module (what is written where) |
 | `conftest.py` | Shared fixtures (`mock_hub_entry`, `mock_charger_entry`, `mock_setup`) |
 
-### Pure-python unit test files
+## Unit test files
 
-These live alongside the integration tests and are collected by the same pytest
-run, but have no Home Assistant dependency of their own:
+These live alongside the integration tests and are collected by the same run,
+but use no Home Assistant fixtures:
 
 | File | What it tests |
 |---|---|
@@ -98,28 +86,6 @@ run, but have no Home Assistant dependency of their own:
 | `test_excess_margin.py` | The Excess trigger - `excess_margin()` across grid/battery/off-grid states |
 | `test_power_station.py` | Power station charge-speed quantisation and reserve resolution |
 | `test_auto_detect.py` | Grid CT inversion + phase-mapping auto-detection (26 tests) |
-
-These files (and `run_tests.py`) share `dev/tests/standalone_loader.py`, which
-stubs out the HA-importing package root and loads the pure modules directly, so
-they also run standalone on **Python 3.9+** without Home Assistant:
-
-```bash
-python3 dev/tests/test_household_hold.py
-python3 dev/tests/test_excess_stayon.py
-python3 dev/tests/test_inverter_gate.py
-python3 dev/tests/test_inverter_output.py
-# needs pytest installed (its __main__ delegates to pytest with --noconftest):
-python3 dev/tests/test_auto_detect.py
-```
-
-## Debug Runner
-
-Use `dev/debug_scenario.py` to debug a **single calculation scenario** interactively with logging:
-
-```bash
-python3 dev/debug_scenario.py "scenario-name"
-python3 dev/debug_scenario.py "scenario-name" --verbose
-```
 
 ## Notes
 

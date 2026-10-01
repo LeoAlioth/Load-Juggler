@@ -1,19 +1,7 @@
 """Unit tests for auto_detect.py - grid CT inversion and phase mapping detection.
-
-Pure Python, no Home Assistant dependencies.
 """
 
-import sys
 import time
-from pathlib import Path
-
-# ---------------------------------------------------------------------------
-# Module loading - shared stub loader (avoids the HA-importing package root)
-# ---------------------------------------------------------------------------
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-load_pure_modules(engine_modules=("auto_detect",), load_calc_init=True)
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext, SiteContext, PhaseValues,
@@ -596,30 +584,3 @@ class TestTwoPhaseDetection:
         cs = state["phase_map"]["c1"]
         # No 2-phase data accumulated (charger.phases < 3)
         assert sum(cs.get("score_2ph", {"A": 0, "B": 0, "C": 0}).values()) == 0
-
-
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    # Tests here live in Test* classes, so the runner walks those too - a
-    # fresh instance per test method, matching pytest's isolation.
-    failed = []
-
-    def _run(_name, _fn):
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-
-    for _name, _obj in sorted(list(globals().items())):
-        if _name.startswith("test_") and callable(_obj):
-            _run(_name, _obj)
-        elif _name.startswith("Test") and isinstance(_obj, type):
-            for _meth in sorted(dir(_obj)):
-                if _meth.startswith("test_"):
-                    _run(f"{_name}.{_meth}", getattr(_obj(), _meth))
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

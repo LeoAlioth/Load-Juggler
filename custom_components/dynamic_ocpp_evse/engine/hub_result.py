@@ -11,11 +11,6 @@ Split out of hub_calculation.py, which now consumes these rather than defining
 them.
 """
 
-# PEP 604 unions (``float | None``) appear in this module's signatures. Nothing
-# here evaluates annotations at runtime (no dataclasses, NamedTuple/TypedDict or
-# get_type_hints calls), so deferring them keeps the module importable on the
-# Python 3.9 interpreters the standalone test runners use (same arrangement as
-# engine/auto_detect.py).
 from __future__ import annotations
 
 import logging

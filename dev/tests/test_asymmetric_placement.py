@@ -8,17 +8,9 @@ asymmetric inverter's per-phase grid readings from (Anže, 2026-09-24: it
 the grid"). Until then the harness spread its output evenly, and
 3ph-1c-standard-heavy-importing read 25.97 A on a 25 A breaker that the
 hardware never would.
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_asymmetric_placement.py   (standalone, no pytest needed)
-  pytest dev/tests/test_asymmetric_placement.py    (CI tier)
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run_tests import place_asymmetric_output  # noqa: E402
+from .run_tests import place_asymmetric_output
 
 
 def _grid(demand, total, cap):
@@ -45,20 +37,3 @@ def test_pulls_from_a_light_phase_to_balance():
 
 def test_a_total_past_every_cap_falls_back_to_the_even_spread():
     assert place_asymmetric_output([10.0, 0.0, 0.0], 90.0, 26.0) == [30.0, 30.0, 30.0]
-
-
-if __name__ == "__main__":
-    # Deliberately pytest-free, like the other pure-tier files.
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

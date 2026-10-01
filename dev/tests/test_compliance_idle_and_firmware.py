@@ -10,28 +10,17 @@ drew a profile reset every few minutes and a hard reset every fourteen, all
 night, for nine nights. Its firmware status meanwhile read "Downloading" -
 the last one the charger ever sent, on 21 Sep - which must not stop the
 check for good.
-
-Runnable two ways:
-  python3 dev/tests/test_compliance_idle_and_firmware.py   (standalone, no pytest needed)
-  pytest dev/tests/test_compliance_idle_and_firmware.py    (Docker / CI tier)
 """
 
 import asyncio
-import sys
 import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules  # noqa: E402
-
-load_pure_modules(control_modules=("compliance",))
-
-from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.const import (
     CONF_CHARGER_ID,
     CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
 )
-from custom_components.dynamic_ocpp_evse.control.compliance import check_profile_compliance  # noqa: E402
+from custom_components.dynamic_ocpp_evse.control.compliance import check_profile_compliance
 
 NOW = datetime.now(timezone.utc)
 
@@ -117,19 +106,3 @@ def test_a_charger_updating_its_firmware_is_not_reset():
 def test_a_firmware_status_left_over_from_days_ago_does_not_stop_the_check():
     calls, _ = _run("Charging", "Downloading", NOW - timedelta(days=8))
     assert calls, "the Elvi's 'Downloading' is from 21 Sep; it must not switch compliance off for good"
-
-
-if __name__ == "__main__":
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

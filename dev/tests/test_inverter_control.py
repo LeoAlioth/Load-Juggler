@@ -23,27 +23,14 @@ both of them and pins that. The entity-level half of the change (registration
 with the hub's worker bucket, the write happening through the real coordinator
 cycle, and ``async_update`` no longer writing) lives in ``test_sensor_update.py``
 where the HA fixtures are, with source-level guards for it here.
-
-These use a hand-rolled fake hass rather than the HA fixtures, so the file runs
-in the pure tier too. Runnable two ways:
-  python3 dev/tests/test_inverter_control.py   (standalone, no pytest needed)
-  pytest dev/tests/test_inverter_control.py    (Docker / CI tier)
 """
 
 import ast
 import asyncio
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules  # noqa: E402
-
-# control/inverter.py imports nothing but const/helpers/units - the actuation
-# layer's own rule - so it loads without Home Assistant installed.
-load_pure_modules(calc_modules=(), control_modules=("inverter",))
-
-from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     CONF_EXCESS_TRIGGER_MARGIN,
     DEFAULT_EXCESS_TRIGGER_MARGIN,
@@ -70,7 +57,7 @@ from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     INVERTER_RT_SOC_LAST_WRITE,
     INVERTER_RT_SOC_STATUS,
 )
-from custom_components.dynamic_ocpp_evse.control.inverter import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.control.inverter import (
     CONTROL_STATE_IDLE,
     CONTROL_STATE_LIMITING,
     CONTROL_STATE_OFF,
@@ -2177,25 +2164,6 @@ def test_workers_are_awaited_after_the_result_is_published():
     assert len(lines["publish_hub_data"]) == 1, lines
     assert len(lines["async_run_site_cycle"]) == 1, lines
     assert lines["publish_hub_data"][0] < lines["async_run_site_cycle"][0], lines
-
-
-# --- Runner -------------------------------------------------------------------
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)
 
 
 # --- The deadband is directional ---------------------------------------------

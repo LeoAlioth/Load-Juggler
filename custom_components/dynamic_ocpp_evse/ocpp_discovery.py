@@ -23,11 +23,6 @@ Moved here verbatim from ``config_flow/helpers.py``, where it could only be
 reached by the flows.
 """
 
-# PEP 604 unions (``str | None``) appear in this module's signatures, and
-# engine/load_builders.py imports it, so it has to load on the Python 3.9
-# interpreters the standalone test runners use. Nothing here evaluates
-# annotations at runtime, so deferring them is enough (same arrangement as
-# engine/load_builders.py and engine/auto_detect.py).
 from __future__ import annotations
 
 import logging
