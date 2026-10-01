@@ -98,6 +98,12 @@ custom_components/dynamic_ocpp_evse/
 ├── detection_patterns/            # Per-brand entity-naming patterns for grid CT auto-detection (fronius, victron, …)
 ├── [button|number|select|sensor|switch].py  # HA platform files (thin wiring around entities/)
 ├── units.py                       # Unit conversion helpers
+├── phases.py                      # Pure, stdlib only: which of a device's sensors are its per-phase
+│                                  #   readings (match_meter_entities, beside) and which phase each line
+│                                  #   carries (phase_mapping, support - engine/auto_detect.py). A VERBATIM
+│                                  #   copy: canonical in Load Insights (insights/phases.py), synced by hand -
+│                                  #   never edit it here; LI's tests/test_phases.py checks this copy
+│                                  #   byte-for-byte when both repos sit side by side
 ├── helpers.py                     # get_entry_value() and misc helpers
 ├── ocpp_discovery.py              # The ONE OCPP registry derivation, at the package root so BOTH the
 │                                  #   flows and engine/ can reach it (engine must not import config_flow).
