@@ -1,7 +1,7 @@
 import logging
-from datetime import datetime, timezone
 from ..const import CONF_PLUG_SWITCH_ENTITY_ID
 from ..helpers import get_entry_value
+from . import stamp_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,5 +30,4 @@ async def send_plug_command(sensor, limit: float, now_mono: float) -> None:
             "Smart load switch command failed for %s: %s", sensor._attr_name, e
         )
 
-    sensor._last_update = datetime.now(timezone.utc)
-    sensor._last_command_time = now_mono
+    stamp_command(sensor, now_mono)

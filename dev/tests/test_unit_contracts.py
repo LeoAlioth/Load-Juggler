@@ -120,12 +120,9 @@ _RAW_PARSE_BUDGET = {
     # units.read_number: the one "state -> finite float" reader, converting
     # through to_amps/to_watts/to_volts when a unit is asked for. _read_entity
     # (engine/readers.py), the inverter and power-station controls, the station
-    # status sensor and the min/max-current services all read through it.
+    # status sensor, the min/max-current services and the Overview page's
+    # read-back of a load's own permit all read through it.
     "units.py": 1,
-    # _entry_sensor_value on the Overview page, which reads back this
-    # integration's OWN sensors (our units by construction) for display only
-    # and is unit-agnostic on purpose (also passes through status strings).
-    "config_flow/pages.py": 1,
     # The offered-power read, which converts through units.to_watts.
     "control/compliance.py": 1,
     # The EVSE current-import total and power fallbacks (the latter via

@@ -289,16 +289,8 @@ def _entry_sensor_value(hass, entry, unique_id_suffix: str):
     try:
         registry = async_get_entity_registry(hass)
         for ent in er_async_entries_for_config_entry(registry, entry.entry_id):
-            if not (ent.unique_id or "").endswith(unique_id_suffix):
-                continue
-            state = hass.states.get(ent.entity_id)
-            if units.is_unavailable(state):
-                return None
-            try:
-                value = float(state.state)
-            except (TypeError, ValueError):
-                return state.state  # a status string is a legitimate answer here
-            return None if units.is_unusable_number(value) else value
+            if (ent.unique_id or "").endswith(unique_id_suffix):
+                return units.read_number(hass, ent.entity_id)
     except Exception:  # pragma: no cover - a display path must never raise
         _LOGGER.debug("Could not read %s for %s", unique_id_suffix, entry.entry_id)
     return None
