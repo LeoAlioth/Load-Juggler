@@ -505,12 +505,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
                     # A single total-ish reading copied onto every active phase
                     # needs the same clamp: if the entity really carries the
                     # site total, replicating it would triple-book the draw.
-                    current_import = float(evse_state.state)
-                    load.l1_current = current_import
-                    if phases >= 2:
-                        load.l2_current = current_import
-                    if phases >= 3:
-                        load.l3_current = current_import
+                    _on_phases(load, phases, float(evse_state.state))
                     _clamp_reported_phase_draw(
                         load, entry, load_entity_id, max_current
                     )
@@ -535,11 +530,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
                     # Convert W → A (total power across all phases)
                     power_per_phase = power_w / phases
                     current_per_phase = power_per_phase / voltage
-                    load.l1_current = current_per_phase
-                    if phases >= 2:
-                        load.l2_current = current_per_phase
-                    if phases >= 3:
-                        load.l3_current = current_per_phase
+                    _on_phases(load, phases, current_per_phase)
                     current_draw = "power_import"
                     _LOGGER.debug(
                         "EVSE %s: Using Power Active Import fallback: %.1fW → %.1fA per phase",
@@ -697,6 +688,13 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         _fv(load.l3_current),
     )
     return load
+
+
+def _on_phases(load, phases, amps):
+    """The same current on each of the load's first ``phases`` legs (L1..Ln);
+    the others keep theirs."""
+    for leg in ("l1_current", "l2_current", "l3_current")[:phases]:
+        setattr(load, leg, amps)
 
 
 def _phase_draw(draw_w, connected_to_phase, voltage):

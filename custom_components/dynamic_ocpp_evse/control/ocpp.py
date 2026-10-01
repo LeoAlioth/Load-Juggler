@@ -19,6 +19,7 @@ from ..const import (
     EVSE_RT_COMMANDED_RATE_UNIT,
 )
 from ..helpers import get_entry_value, ocpp_config_value
+from . import stamp_command
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
@@ -79,8 +80,7 @@ async def send_ocpp_command(
             sensor._attr_name,
             effective_status,
         )
-        sensor._last_update = datetime.now(timezone.utc)
-        sensor._last_command_time = now_mono
+        stamp_command(sensor, now_mono)
         return
 
     profile_timeout = int(
@@ -248,5 +248,4 @@ async def send_ocpp_command(
     load_rt = sensor._runtime()
     load_rt[EVSE_RT_COMMANDED_LIMIT] = float(limit)
     load_rt[EVSE_RT_COMMANDED_RATE_UNIT] = rate_unit
-    sensor._last_update = datetime.now(timezone.utc)
-    sensor._last_command_time = now_mono
+    stamp_command(sensor, now_mono)

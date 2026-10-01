@@ -55,6 +55,7 @@ from ..const import (
     FORECAST_SOC_HYSTERESIS,
     LEG_DRAWING_CURRENT,
 )
+from ..calculations.target_calculator import _sort_loads
 from ..calculations.utils import managed_phase_draws
 from ..helpers import get_entry_value
 from . import fleet
@@ -993,15 +994,11 @@ def _build_hub_result(
     load_modes = {c.load_id: c.operating_mode for c in site.loads}
 
     # Per-load effective priority rank - the order the engine serves loads
-    # when power is contended: mode urgency first, then the configured priority
-    # number (the same sort key _sort_loads uses to distribute power). Rank
-    # 1 is served first. Exposed so each device can show where it really
-    # stands, since mode urgency can override the configured priority number.
-    _ranked = sorted(
-        site.loads,
-        key=lambda c: (c.mode_priority, c.priority),
-    )
-    load_rank = {c.load_id: idx + 1 for idx, c in enumerate(_ranked)}
+    # when power is contended (_sort_loads: mode urgency first, then the
+    # configured priority number). Rank 1 is served first. Exposed so each
+    # device can show where it really stands, since mode urgency can override
+    # the configured priority number.
+    load_rank = {c.load_id: idx + 1 for idx, c in enumerate(_sort_loads(site.loads))}
 
     # Per-load actual draw - the measured current the load is really
     # pulling (sum of phase currents). For a binary load this is what the

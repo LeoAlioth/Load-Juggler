@@ -10,7 +10,6 @@ So the engine's allocation sets *how fast*, and the reserve sets *whether*.
 """
 
 import logging
-from datetime import datetime, timezone
 
 from ..const import (
     CONF_CONNECTED_TO_PHASE,
@@ -33,6 +32,7 @@ from ..const import (
     resolve_station_reserve,
 )
 from ..helpers import get_entry_value
+from . import stamp_command
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
@@ -145,6 +145,5 @@ async def send_power_station_command(
             "Power station command failed for %s: %s", sensor._attr_name, e
         )
 
-    sensor._last_update = datetime.now(timezone.utc)
-    sensor._last_command_time = now_mono
+    stamp_command(sensor, now_mono)
 
