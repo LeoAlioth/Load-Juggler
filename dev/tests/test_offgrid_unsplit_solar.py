@@ -52,35 +52,11 @@ from custom_components.dynamic_ocpp_evse.const import (
     WIRING_TOPOLOGY_SERIES,
 )
 
+from .test_sensor_update import _forecast_device
+
 V = 230.0
 OUTPUT_A = 10.0
 OUTPUT_W = OUTPUT_A * V  # 2300 W out of the inverter, however it is made
-
-
-def _forecast_device(hass, slug, watts):
-    """A per-array Open-Meteo device with a watts-bearing sensor, as the
-    integration creates them (test_sensor_update.py's rig). Returns its id."""
-    from homeassistant.helpers import device_registry as dr, entity_registry as er
-
-    source = MockConfigEntry(domain="open_meteo_solar_forecast", title=slug)
-    source.add_to_hass(hass)
-    device = dr.async_get(hass).async_get_or_create(
-        config_entry_id=source.entry_id,
-        identifiers={("open_meteo_solar_forecast", slug)},
-        name=slug,
-    )
-    reg = er.async_get(hass).async_get_or_create(
-        "sensor",
-        "open_meteo_solar_forecast",
-        f"{slug}_energy_production_today",
-        device_id=device.id,
-        config_entry=source,
-        suggested_object_id=f"{slug}_energy_production_today",
-    )
-    hass.states.async_set(
-        reg.entity_id, "12.5", {"unit_of_measurement": "kWh", "watts": dict(watts)}
-    )
-    return device.id
 
 
 def _rig(hass, slug, topology, soc, *, battery=True):
