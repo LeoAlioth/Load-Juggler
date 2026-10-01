@@ -284,13 +284,7 @@ async def perform_hard_reset(sensor) -> None:
     # the one last recorded as accepted, so that record stops being a fact
     # about it until the next command lands (see the same step in the
     # reset_ocpp_evse service, which the fallback above goes through).
-    load_rt = (
-        sensor.hass.data.get(DOMAIN, {})
-        .get("loads", {})
-        .get(sensor.config_entry.entry_id)
-    )
-    if load_rt is not None:
-        load_rt.pop(EVSE_RT_COMMANDED_LIMIT, None)
+    sensor._runtime().pop(EVSE_RT_COMMANDED_LIMIT, None)
     try:
         await sensor.hass.services.async_call(
             "button",

@@ -12,6 +12,7 @@ fcntl, so these do not collect on macOS.
 """
 
 import time
+from types import MethodType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -47,6 +48,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     BEHAVIOR_EXCESS,
     BEHAVIOR_FULL_POWER,
 )
+from custom_components.dynamic_ocpp_evse.entities.mixins import LoadEntityMixin
 
 SPEED = "number.ef_test_ac_charging_speed"
 RESERVE = "number.ef_test_backup_reserve"
@@ -369,6 +371,7 @@ def _sensor(hass, station_entry):
     sensor.hass = hass
     sensor.config_entry = station_entry
     sensor._attr_name = "Power Station"
+    sensor._runtime = MethodType(LoadEntityMixin._runtime, sensor)
     return sensor
 
 

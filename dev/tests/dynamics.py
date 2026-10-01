@@ -95,7 +95,7 @@ import sys
 from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext,
@@ -126,6 +126,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     DEVICE_TYPE_POWER_STATION,
     DOMAIN,
 )
+from custom_components.dynamic_ocpp_evse.entities.mixins import LoadEntityMixin
 from custom_components.dynamic_ocpp_evse.control.power_station import (
     send_power_station_command,
 )
@@ -414,6 +415,7 @@ class Sim:
         self.sensor = _permit_state("station")
         self.sensor.config_entry = self.station
         self.sensor.hass = self.engine.hass
+        self.sensor._runtime = MethodType(LoadEntityMixin._runtime, self.sensor)
         self.sensor._last_command_time = -math.inf
 
     def _register(self, entity):

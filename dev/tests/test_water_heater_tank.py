@@ -23,6 +23,7 @@ from custom_components.dynamic_ocpp_evse.const import (
 from custom_components.dynamic_ocpp_evse.control.hot_water_tank import (
     send_hot_water_tank_command,
 )
+from custom_components.dynamic_ocpp_evse.entities.mixins import LoadEntityMixin
 from custom_components.dynamic_ocpp_evse.engine.load_builders import (
     _build_hot_water_tank_load,
 )
@@ -72,6 +73,7 @@ class FakeEntry:
 
 class FakeSensor:
     _attr_name = "Tank"
+    _runtime = LoadEntityMixin._runtime
 
     def __init__(self, hass, entry):
         self.hass = hass
