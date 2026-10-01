@@ -14,25 +14,17 @@ async def send_plug_command(sensor, limit: float, now_mono: float) -> None:
         _LOGGER.error(f"No switch entity configured for plug {sensor._attr_name}")
         return
 
+    on = limit > 0
     try:
-        if limit > 0:
-            _LOGGER.debug(
-                f"Smart load {sensor._attr_name}: turning ON (limit={limit}A)"
-            )
-            await sensor.hass.services.async_call(
-                "switch",
-                "turn_on",
-                {"entity_id": plug_switch_entity},
-                blocking=False,
-            )
-        else:
-            _LOGGER.debug(f"Smart load {sensor._attr_name}: turning OFF (limit=0)")
-            await sensor.hass.services.async_call(
-                "switch",
-                "turn_off",
-                {"entity_id": plug_switch_entity},
-                blocking=False,
-            )
+        _LOGGER.debug(
+            f"Smart load {sensor._attr_name}: turning {'ON' if on else 'OFF'} (limit={limit}A)"
+        )
+        await sensor.hass.services.async_call(
+            "switch",
+            "turn_on" if on else "turn_off",
+            {"entity_id": plug_switch_entity},
+            blocking=False,
+        )
     except Exception as e:
         _LOGGER.warning(
             "Smart load switch command failed for %s: %s", sensor._attr_name, e

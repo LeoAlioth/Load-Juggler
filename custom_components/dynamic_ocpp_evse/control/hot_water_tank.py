@@ -9,7 +9,6 @@ import logging
 from datetime import datetime, timezone
 
 from ..const import (
-    DOMAIN,
     CONF_CLIMATE_ENTITY_ID,
     CONF_HEATING_ELEMENT_POWER,
     DEFAULT_HEATING_ELEMENT_POWER,
@@ -119,11 +118,7 @@ async def send_hot_water_tank_command(
         )
         return
 
-    load_rt = (
-        sensor.hass.data.get(DOMAIN, {})
-        .get("loads", {})
-        .get(sensor.config_entry.entry_id, {})
-    )
+    load_rt = sensor._runtime()
     mode = load_rt.get(
         "operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key
     )

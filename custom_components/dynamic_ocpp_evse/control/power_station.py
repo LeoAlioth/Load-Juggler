@@ -13,7 +13,6 @@ import logging
 from datetime import datetime, timezone
 
 from ..const import (
-    DOMAIN,
     CONF_CONNECTED_TO_PHASE,
     CONF_PHASE_VOLTAGE,
     DEFAULT_PHASE_VOLTAGE,
@@ -60,11 +59,7 @@ async def send_power_station_command(
         )
         return
 
-    load_rt = (
-        sensor.hass.data.get(DOMAIN, {})
-        .get("loads", {})
-        .get(entry.entry_id, {})
-    )
+    load_rt = sensor._runtime()
 
     voltage = get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
     phases = len(get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A")

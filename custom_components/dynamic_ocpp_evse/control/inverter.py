@@ -487,22 +487,6 @@ def down_window_value(samples, now_mono, window_s):
     return max(value for _stamp, value in samples)
 
 
-def ramp_baseline(applied, current):
-    """What an upward move is measured from: the last value we WROTE.
-
-    Our own last write rather than the read-back, so the ramp advances on the
-    same wall clock the pacing already runs on instead of on how promptly the
-    inverter's integration happens to re-poll the register. A ramp that stalled
-    waiting for a read-back would leave the battery limited indefinitely, which
-    is the one failure worse than releasing too fast.
-
-    The read-back is the fallback for the case with no memory to use: the first
-    write after a reload, where the register itself is the only record of where
-    the limit stands.
-    """
-    return applied if applied is not None else current
-
-
 async def send_inverter_charge_limit(
     hass, entry, hub_entry, advice_w, now_mono, limiting=None
 ) -> None:
@@ -587,7 +571,9 @@ async def send_inverter_charge_limit(
     # firmwares put them in EEPROM. See ``should_write`` for why up and down
     # want different bands at all.
     deadband_up = deadband if step is None else min(deadband, abs(step) / 3.0)
-    baseline = ramp_baseline(applied, current)
+    # An upward move is measured from our own last write, not the read-back, so
+    # the ramp never stalls on a slow re-poll; the read-back only after a reload.
+    baseline = applied if applied is not None else current
     releasing = not enabled or advice_w is None
     # The gate edge the exemption keys on. Tracked here rather than handed in as
     # an event because this module is the only thing that needs the edge - and a
@@ -830,20 +816,6 @@ def resolve_normal_soc(hass, entry):
     return units.read_number(hass, normal_entity)
 
 
-def desired_soc(normal, advice_soc) -> float:
-    """The ceiling to enforce: the lower of the normal and the recommendation.
-
-    The whole control, in one line. min() is what makes it safe to point at
-    entities somebody else owns - we can only ever hold the battery lower than
-    they asked, never higher - and it is also the release mechanism: the
-    forecast's advice climbs back to 100 % as the production peak passes, at
-    which point the min() is the normal again and the slots are the user's.
-    """
-    if advice_soc is None:
-        return float(normal)
-    return float(min(normal, advice_soc))
-
-
 async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
     """Drive every configured SOC-ceiling entity toward the desired ceiling.
 
@@ -913,7 +885,9 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
             _warn_floor_misconfig(entry, inverter_rt, now_mono, normal_entity)
             return
 
-    desired = round(desired_soc(normal, advice_soc), 1)
+    # The lower of the normal and the advice: we only ever hold the battery
+    # below what the slots' owner asked, and the advice climbing back releases.
+    desired = round(float(normal if advice_soc is None else min(normal, advice_soc)), 1)
     inverter_rt[INVERTER_RT_SOC_DESIRED] = desired
     # "limiting" is specifically "we are holding it below what its owner asked
     # for". Tracking the normal - no advice, or advice at or above it - is idle,

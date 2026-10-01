@@ -70,11 +70,9 @@ from custom_components.dynamic_ocpp_evse.control.inverter import (
     INVERTER_RT_DOWN_SAMPLES,
     INVERTER_RT_SOC_SLOTS,
     battery_voltage,
-    desired_soc,
     down_window_value,
     from_target_units,
     note_reduction,
-    ramp_baseline,
     resolve_minimum_value,
     resolve_normal_soc,
     resolve_normal_value,
@@ -825,15 +823,6 @@ def test_only_upward_moves_are_limited():
     assert slew_limited(desired=100.0, baseline=None, step=10.0) == 100.0
 
 
-def test_the_ramp_is_measured_from_the_last_value_we_wrote():
-    """Our own write, not the read-back: a ramp that waited for the register to
-    catch up would stall on a slow poll and leave the battery limited."""
-    assert ramp_baseline(applied=50.0, current=187.0) == 50.0
-    # Except when there is no memory to use - the first write after a reload.
-    assert ramp_baseline(applied=None, current=187.0) == 187.0
-    assert ramp_baseline(applied=None, current=None) is None
-
-
 # --- The release ramp ---------------------------------------------------------
 
 
@@ -867,6 +856,21 @@ def test_a_release_ramps_to_full_rate_one_margin_at_a_time():
     # Restored exactly once still holds - at the END of the ramp.
     assert rt[INVERTER_RT_APPLIED] is None
     assert rt[INVERTER_RT_STATUS] == CONTROL_STATE_IDLE
+
+
+def test_the_release_ramp_climbs_from_our_last_write_while_the_register_lags():
+    """The ramp is measured from the value we last WROTE, not the read-back: a
+    ramp that waited for the register to catch up would stall on a slow poll
+    and leave the battery limited."""
+    hass, entry, rt = _accepting_site()
+
+    _cycle(hass, entry, 0.0, 0.0)  # engaged: one write down to the 2 A floor
+    # Released, with the register's read-back still at full rate (no re-poll).
+    asyncio.run(_send(hass, entry, None, SITE_INTERVAL))
+
+    # One margin up from our own 2 A - not "already at 187 A, nothing to do".
+    assert _written(hass) == [2.0, 11.8]
+    assert rt[INVERTER_RT_APPLIED] == 11.8
 
 
 def test_the_release_ramp_respects_the_write_interval():
@@ -1514,16 +1518,6 @@ def _soc_writes(hass):
 
 
 # --- The two inputs and the min() --------------------------------------------
-
-
-def test_desired_is_the_lower_of_the_normal_and_the_advice():
-    assert desired_soc(100.0, 80.0) == 80.0
-    # Advice ABOVE the normal changes nothing - we may only ever hold it lower
-    # than whoever owns the slots asked for.
-    assert desired_soc(80.0, 90.0) == 80.0
-    # No advice at all: track the normal. This is also the release path, since
-    # the forecast's advice self-heals to 100 rather than disappearing.
-    assert desired_soc(80.0, None) == 80.0
 
 
 def test_normal_defaults_to_one_hundred_with_no_entity_configured():
