@@ -45,10 +45,8 @@ from ..const import (
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PLUG_POWER_MONITOR_ENTITY_ID,
     CONF_PRIORITY_ORDER,
-    CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_STATION_AC_INPUT_ENTITY_ID,
     CONF_STATION_AC_OUTPUT_ENTITY_ID,
@@ -85,7 +83,7 @@ _VOLTAGE_UNITS = units.VOLTAGE_UNITS
 #   hub grid (create + options)   _GRID_UNIT_MAP
 #   inverter config (create)      _INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP
 #   inverter battery (create)     _BATTERY_UNIT_MAP
-#   inverter control (create)     _WRITE_CONTROL_UNIT_MAP
+#   inverter control (create)     _write_control_unit_map(data)
 #   inverter (options, per page)  the matching one of the above
 #
 # Grouping rather than paging is what keeps a create/options twin pair honest:
@@ -113,34 +111,22 @@ _BATTERY_UNIT_MAP = {
 _WRITE_CONTROL_UNIT_MAP = {
     # The charge-limit register is NOT here: it is written in whatever unit the
     # user chose (CONF_CHARGE_LIMIT_UNIT), so it has no fixed physical domain -
-    # _validate_charge_limit_unit checks it against the choice instead.
+    # _write_control_unit_map adds it against the choice instead.
     CONF_BATTERY_VOLTAGE_ENTITY_ID: _VOLTAGE_UNITS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID: _SOC_UNITS,
 }
 
 
-def _validate_charge_limit_unit(hass, user_input: dict, errors: dict) -> None:
-    """Validate the charge-limit register entity against the CHOSEN unit.
-
-    The register is written raw in the unit the user declared
-    (CONF_CHARGE_LIMIT_UNIT: DC amps on a Deye, watts elsewhere), so unlike the
-    physical-domain fields there is no canonical unit to convert into - an "A"
-    register configured as watts is exactly the mistake this catches. Skips
-    like _validate_entity_units: no entity, no state, or no unit → no error.
-    """
-    entity_id = user_input.get(CONF_CHARGE_LIMIT_ENTITY_ID)
-    if not entity_id:
-        return
-    state = hass.states.get(entity_id)
-    if units.is_unavailable(state):
-        return
-    unit = state.attributes.get("unit_of_measurement")
-    if not unit:
-        return
-    chosen = user_input.get(CONF_CHARGE_LIMIT_UNIT) or DEFAULT_CHARGE_LIMIT_UNIT
-    expected = _CURRENT_UNITS if chosen == CHARGE_LIMIT_UNIT_AMPS else _POWER_UNITS
-    if unit not in expected:
-        errors[CONF_CHARGE_LIMIT_ENTITY_ID] = "invalid_unit"
+def _write_control_unit_map(data: dict) -> dict:
+    """_WRITE_CONTROL_UNIT_MAP plus the charge-limit register, checked against
+    the CHOSEN unit: the register is written raw in the unit the user declared
+    (CONF_CHARGE_LIMIT_UNIT: DC amps on a Deye, watts elsewhere), so an "A"
+    register configured as watts is exactly the mistake this catches."""
+    chosen = data.get(CONF_CHARGE_LIMIT_UNIT) or DEFAULT_CHARGE_LIMIT_UNIT
+    register_units = (
+        _CURRENT_UNITS if chosen == CHARGE_LIMIT_UNIT_AMPS else _POWER_UNITS
+    )
+    return {**_WRITE_CONTROL_UNIT_MAP, CONF_CHARGE_LIMIT_ENTITY_ID: register_units}
 
 
 def _validate_entity_units(
@@ -265,35 +251,16 @@ def _normalize_optional_inputs(
     return normalized
 
 
-def _normalize_forecast_list(data: dict) -> dict:
-    """Normalize the solar forecast device list (battery step).
+def _normalize_list(data: dict, key: str) -> None:
+    """Store a multi-select's list at ``key``, [] when it was emptied - in place.
 
-    Separate from _normalize_optional_inputs, which is per-key scalar: the
-    multi-device selector yields a list and omits the key entirely when
-    cleared, so an emptied selection must become [] (feature off), not a
-    stale stored value. Submitting the form also drops any legacy
-    directly-configured sensor list - the device selection replaces it.
+    Separate from _normalize_optional_inputs, which is per-key scalar: a
+    multi-select yields a list and omits the key entirely once the user
+    clears it, so an emptied selection must become [] (the forecast devices,
+    the SOC slots - whose [] removes the Battery SOC Control switch and sensor
+    again - the inverter features), never a stale stored value.
     """
-    data[CONF_SOLAR_FORECAST_DEVICE_IDS] = [
-        d for d in (data.get(CONF_SOLAR_FORECAST_DEVICE_IDS) or []) if d
-    ]
-    data[CONF_SOLAR_FORECAST_ENTITY_IDS] = []
-    return data
-
-
-def _normalize_soc_limit_list(data: dict) -> dict:
-    """Normalize the SOC-ceiling target list (inverter write-control step).
-
-    Same reason as the forecast list above and not the scalar path: a
-    multi-entity selector yields a list and omits the key entirely once the
-    user clears it, so an emptied selection must become [] - which is what
-    removes the Battery SOC Control switch and sensor again - rather than
-    leaving the previously stored slots armed.
-    """
-    data[CONF_SOC_LIMIT_ENTITY_IDS] = [
-        e for e in (data.get(CONF_SOC_LIMIT_ENTITY_IDS) or []) if e
-    ]
-    return data
+    data[key] = [item for item in (data.get(key) or []) if item]
 
 
 # --- Entity auto-detection (the suggested defaults a create page opens with) ---
@@ -635,13 +602,6 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
         if any(source.get(key) for source in sources)
     )
     return max(count, 1)
-
-
-def _normalize_features_list(data: dict) -> dict:
-    """The features multi-select omits its key when emptied - store []."""
-    normalized = dict(data)
-    normalized[CONF_INVERTER_FEATURES] = list(normalized.get(CONF_INVERTER_FEATURES) or [])
-    return normalized
 
 
 def _validate_inverter_features(data: dict, errors: dict) -> None:

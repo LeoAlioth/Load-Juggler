@@ -31,7 +31,10 @@ from ..const import (
     CONF_OCPP_DEVICE_ID,
     CONF_PRIORITY_ORDER,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    CONF_SOLAR_FORECAST_DEVICE_IDS,
+    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
+    CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_STATION_MAX_CHARGE_POWER,
     CONF_STATION_MIN_CHARGE_POWER,
     DEFAULT_LOAD_PRIORITY,
@@ -71,20 +74,17 @@ from .helpers import (
     _SOLAR_UNIT_MAP,
     _STATION_ENTITY_KEYS,
     _TANK_ENTITY_KEYS,
-    _WRITE_CONTROL_UNIT_MAP,
     _apply_priority_order,
     _controlled_devices,
     _detect_charge_rate_unit,
     _hub_phase_count,
-    _normalize_forecast_list,
+    _normalize_list,
     _normalize_inverter_power_caps,
     _normalize_optional_inputs,
-    _normalize_soc_limit_list,
     _priority_order_schema,
-    _validate_charge_limit_unit,
     _validate_entity_units,
+    _write_control_unit_map,
     _validate_forecast_devices,
-    _normalize_features_list,
     _validate_inverter_features,
 )
 from ..ocpp_discovery import (
@@ -142,7 +142,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         step_id: str,
         schema,
         entity_keys: list[str] | None = None,
-        list_normalizers: tuple = (),
+        list_keys: tuple = (),
         unit_map: dict | None = None,
         validate=None,
         finalize=None,
@@ -152,7 +152,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         The shape every single-page settings step shares. The stored config is
         the form's defaults; a submit normalizes the page's entity fields
         (``entity_keys`` - omitted ones were cleared) and any multi-select
-        lists, validates units and whatever else the page demands, and saves.
+        lists (``list_keys``), validates units and whatever else the page demands, and saves.
         A failed validation re-shows the form over what the user just typed.
 
         Hooks, all optional:
@@ -169,8 +169,8 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             user_input = _normalize_optional_inputs(user_input, entity_keys)
-            for normalize_list in list_normalizers:
-                user_input = normalize_list(user_input)
+            for key in list_keys:
+                _normalize_list(user_input, key)
             self._data.update(user_input)
             if unit_map:
                 _validate_entity_units(self.hass, self._data, unit_map, errors)
@@ -364,7 +364,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                     CONF_INVERTER_FEATURES: inverter_features(self.config_entry),
                 }
             ),
-            list_normalizers=(_normalize_features_list,),
+            list_keys=(CONF_INVERTER_FEATURES,),
             validate=_validate_inverter_features,
             finalize=_finalize,
         )
@@ -395,12 +395,14 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 dict(_build_inverter_solar_schema(self.hass, defaults))
             ),
             entity_keys=[CONF_SOLAR_PRODUCTION_ENTITY_ID],
-            list_normalizers=(_normalize_forecast_list,),
+            list_keys=(CONF_SOLAR_FORECAST_DEVICE_IDS,),
             unit_map=_SOLAR_UNIT_MAP,
             # Returns a bad forecast device's name for the ``entity`` placeholder.
             validate=lambda data, errors: _validate_forecast_devices(
                 self.hass, data, errors
             ),
+            # The device selection replaces any legacy sensor list.
+            finalize=lambda data: data.update({CONF_SOLAR_FORECAST_ENTITY_IDS: []}),
         )
 
     async def async_step_inverter_battery(
@@ -432,10 +434,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 CONF_BATTERY_VOLTAGE_ENTITY_ID,
                 CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
             ],
-            list_normalizers=(_normalize_soc_limit_list,),
-            unit_map=_WRITE_CONTROL_UNIT_MAP,
-            validate=lambda data, errors: _validate_charge_limit_unit(
-                self.hass, data, errors
+            list_keys=(CONF_SOC_LIMIT_ENTITY_IDS,),
+            validate=lambda data, errors: _validate_entity_units(
+                self.hass, data, _write_control_unit_map(data), errors
             ),
         )
 

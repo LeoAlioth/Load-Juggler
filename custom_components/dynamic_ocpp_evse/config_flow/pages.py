@@ -304,14 +304,9 @@ def _entry_sensor_value(hass, entry, unique_id_suffix: str):
     return None
 
 
-def _groups_for_hub(hass, hub_entry_id: str) -> list:
-    """Circuit group entries linked to a hub (one implementation, in registry.py)."""
-    return get_groups_for_hub(hass, hub_entry_id)
-
-
 def _group_cap_for(hass, hub_entry_id: str, load_entry_id: str) -> str | None:
     """"20 A shared with 2 loads" for a load in a circuit group, else None."""
-    for group in _groups_for_hub(hass, hub_entry_id):
+    for group in get_groups_for_hub(hass, hub_entry_id):
         members = get_entry_value(group, CONF_CIRCUIT_GROUP_MEMBERS, []) or []
         if load_entry_id not in members:
             continue
@@ -732,7 +727,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
         lines.append(f"- {_load_line(hass, entry.entry_id, load, hub_data)}")
 
     group_data = hub_data.get("group_data") or {}
-    groups = _groups_for_hub(hass, entry.entry_id)
+    groups = get_groups_for_hub(hass, entry.entry_id)
     if groups:
         lines += ["", "**⛓ Circuit groups**"]
         for group in groups:
@@ -1079,7 +1074,7 @@ def _summary_text(hass, hub_entry_id: str) -> str:
         lines.append(f"- {' · '.join(bits)}")
 
     # 5 - post-distribution capping
-    groups = _groups_for_hub(hass, hub_entry_id)
+    groups = get_groups_for_hub(hass, hub_entry_id)
     if groups:
         lines += ["", "**⛓ Circuit groups (applied last)**"]
         for group in groups:
