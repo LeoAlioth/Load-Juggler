@@ -506,7 +506,10 @@ async def test_the_form_and_the_slider_offer_the_same_ceiling(hass: HomeAssistan
     from custom_components.dynamic_ocpp_evse.config_flow.schemas import (
         _power_station_schema,
     )
-    from custom_components.dynamic_ocpp_evse.number import StationChargePowerSlider
+    from custom_components.dynamic_ocpp_evse.number import (
+        LoadSlider,
+        async_setup_entry,
+    )
 
     schema = _power_station_schema()
     maxima = {
@@ -517,18 +520,28 @@ async def test_the_form_and_the_slider_offer_the_same_ceiling(hass: HomeAssistan
     assert maxima, "the scan found no watt fields - the schema's shape changed"
     assert set(maxima.values()) == {STATION_CHARGE_POWER_MAX}, maxima
 
-    entry = MockConfigEntry(domain=DOMAIN, data={CONF_NAME: "S"}, options={})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_NAME: "S",
+            CONF_ENTITY_ID: "s",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_POWER_STATION,
+        },
+        options={},
+    )
     entry.add_to_hass(hass)
-    slider = StationChargePowerSlider(
-        hass, entry, "S", "s", "max", "station_max_charge_power", 2400, "Max"
+    sliders = []
+    await async_setup_entry(hass, entry, sliders.extend)
+    slider = next(
+        s for s in sliders if s.unique_id == "s_station_max_charge_power"
     )
     assert slider.native_max_value == STATION_CHARGE_POWER_MAX
 
     # And the clamp really does use it: a value above the ceiling comes back
-    # AT the ceiling, not silently at 5000. (The state write is patched out -
-    # the slider is built by hand here, so it has no platform to write to.)
-    with patch.object(StationChargePowerSlider, "async_write_ha_state"), \
-            patch.object(StationChargePowerSlider, "_publish"):
+    # AT the ceiling, not silently at 5000. (The publish is patched
+    # out - the slider was never added, so it has no platform to write to.)
+    with patch.object(LoadSlider, "_publish"):
         await slider.async_set_native_value(STATION_CHARGE_POWER_MAX + 500)
     assert slider.native_value == STATION_CHARGE_POWER_MAX
 
