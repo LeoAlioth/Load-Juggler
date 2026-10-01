@@ -528,7 +528,7 @@ async def test_the_form_and_the_slider_offer_the_same_ceiling(hass: HomeAssistan
     # AT the ceiling, not silently at 5000. (The state write is patched out -
     # the slider is built by hand here, so it has no platform to write to.)
     with patch.object(StationChargePowerSlider, "async_write_ha_state"), \
-            patch.object(StationChargePowerSlider, "_write_to_load_data"):
+            patch.object(StationChargePowerSlider, "_publish"):
         await slider.async_set_native_value(STATION_CHARGE_POWER_MAX + 500)
     assert slider.native_value == STATION_CHARGE_POWER_MAX
 

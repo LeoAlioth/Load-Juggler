@@ -335,7 +335,7 @@ class LoadJugglerInverterChargeControlSensor(
         limit values are all in this sensor's own unit, so they can be read
         against the state directly.
         """
-        inverter_rt = self._inverter_runtime()
+        inverter_rt = self._runtime()
         last_write = inverter_rt.get(INVERTER_RT_LAST_WRITE)
         return {
             "control_state": inverter_rt.get(INVERTER_RT_STATUS, CONTROL_STATE_OFF),
@@ -398,7 +398,7 @@ class LoadJugglerInverterChargeControlSensor(
         land on None, which HA renders as unknown; the standing that explains
         which one it is rides along in ``control_state``.
         """
-        value = self._inverter_runtime().get(INVERTER_RT_REGISTER)
+        value = self._runtime().get(INVERTER_RT_REGISTER)
         self._attr_native_value = (
             None if value is None else round(float(value), self._decimals)
         )
@@ -476,7 +476,7 @@ class LoadJugglerInverterSocControlSensor(
         to include - or one that is unavailable and being skipped - is visible
         without reading the log.
         """
-        inverter_rt = self._inverter_runtime()
+        inverter_rt = self._runtime()
         last_write = inverter_rt.get(INVERTER_RT_SOC_LAST_WRITE)
         return {
             "control_state": inverter_rt.get(
@@ -526,7 +526,7 @@ class LoadJugglerInverterSocControlSensor(
         inverter. None when the switch is off, when the normal ceiling is
         unreadable and writes are deferred, or before the first cycle.
         """
-        desired = self._inverter_runtime().get(INVERTER_RT_SOC_DESIRED)
+        desired = self._runtime().get(INVERTER_RT_SOC_DESIRED)
         self._attr_native_value = None if desired is None else round(float(desired), 1)
 
     async def async_update(self):

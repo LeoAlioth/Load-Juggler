@@ -292,7 +292,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             "profile_reset_count": self._profile_reset_count,
             "last_hard_reset": self._last_hard_reset_at,
             # Any load type the off-grid sun probe may try (entities/sun_probe.py).
-            **sun_probe_attributes(self._load_runtime().get(LOAD_RT_SUN_PROBE)),
+            **sun_probe_attributes(self._runtime().get(LOAD_RT_SUN_PROBE)),
         }
         if (
             self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
@@ -300,7 +300,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         ):
             attrs.update(
                 readout_attributes(
-                    self._load_runtime().get(EVSE_RT_READOUT_WATCH)
+                    self._runtime().get(EVSE_RT_READOUT_WATCH)
                 )
             )
         return attrs
@@ -452,7 +452,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # measured it against the static one and paused anyway (issue #37).
         # Both branches therefore read the live runtime slider first and fall
         # back to the config value exactly as engine/hub_calculation.py does.
-        load_rt = self._load_runtime()
+        load_rt = self._runtime()
         if device_type == DEVICE_TYPE_POWER_STATION:
             # The station's floor is its minimum charge POWER, not a current -
             # see _build_power_station_load().
@@ -699,7 +699,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             DEFAULT_MAX_CHARGE_CURRENT,
         )
 
-        load_rt = self._load_runtime()
+        load_rt = self._runtime()
         dynamic_control_on = load_rt.get("dynamic_control", True)
 
         if device_type == DEVICE_TYPE_HOT_WATER_TANK:

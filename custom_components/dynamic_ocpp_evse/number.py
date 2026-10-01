@@ -238,14 +238,13 @@ class _EVSECurrentSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
                 )
                 value = sibling
         self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_load_data(value)
+        self._publish(value)
 
 
 class EVSEMinCurrentSlider(_EVSECurrentSlider):
     """Slider for minimum current (load-level)."""
 
-    _load_data_key = "min_current"
+    _data_key = "min_current"
     _sibling_data_key = "max_current"
     _sibling_is_upper_bound = True
 
@@ -265,7 +264,7 @@ class EVSEMinCurrentSlider(_EVSECurrentSlider):
 class EVSEMaxCurrentSlider(_EVSECurrentSlider):
     """Slider for maximum current (load-level)."""
 
-    _load_data_key = "max_current"
+    _data_key = "max_current"
     _sibling_data_key = "min_current"
     _sibling_is_upper_bound = False
 
@@ -291,7 +290,7 @@ class LoadPowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _load_data_key = "device_power"
+    _data_key = "device_power"
 
     def __init__(
         self, hass: HomeAssistant, config_entry: ConfigEntry, name: str,
@@ -319,8 +318,7 @@ class LoadPowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_load_data(value)
+        self._publish(value)
 
     async def async_update(self) -> None:
         """Reflect the value the engine learned from the power-measurement entity."""
@@ -353,7 +351,7 @@ class TankTemperatureSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
         self.hass = hass
         self.config_entry = config_entry
         # Instance-level data key - matches what hot_water_tank.py reads back.
-        self._load_data_key = f"tank_{kind}_temperature"
+        self._data_key = f"tank_{kind}_temperature"
         self._attr_name = f"{name} {label} Temperature"
         self._attr_unique_id = f"{entity_id}_tank_{kind}_temperature"
         self._attr_native_min_value = 10
@@ -395,14 +393,12 @@ class TankTemperatureSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     @callback
     def _thermostat_changed(self, _event) -> None:
         if self._sync_to_thermostat():
-            self.async_write_ha_state()
-            self._write_to_load_data(self._attr_native_value)
+            self._publish(self._attr_native_value)
 
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
         self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_load_data(value)
+        self._publish(value)
 
 
 class StationChargePowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
@@ -423,7 +419,7 @@ class StationChargePowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
         self.hass = hass
         self.config_entry = config_entry
         # Instance-level key - matches what power_station.py reads back.
-        self._load_data_key = f"station_{kind}_charge_power"
+        self._data_key = f"station_{kind}_charge_power"
         self._attr_name = f"{name} {label}"
         self._attr_unique_id = f"{entity_id}_station_{kind}_charge_power"
         self._attr_native_min_value = 0
@@ -444,8 +440,7 @@ class StationChargePowerSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
             min(self._attr_native_max_value, round(value / step) * step),
         )
         self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_load_data(value)
+        self._publish(value)
 
 
 class StationReserveSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
@@ -464,7 +459,7 @@ class StationReserveSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
     ):
         self.hass = hass
         self.config_entry = config_entry
-        self._load_data_key = (
+        self._data_key = (
             "station_normal_reserve" if kind == "normal"
             else "station_storm_reserve_level"
         )
@@ -487,8 +482,7 @@ class StationReserveSlider(LoadEntityMixin, NumberEntity, RestoreEntity):
             min(self._attr_native_max_value, round(value)),
         )
         self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_load_data(value)
+        self._publish(value)
 
 
 # ==================== HUB NUMBER ENTITIES ====================
@@ -501,7 +495,7 @@ class BatterySOCTargetSlider(HubEntityMixin, NumberEntity, RestoreEntity):
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _hub_data_key = "battery_soc_target"
+    _data_key = "battery_soc_target"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -522,8 +516,7 @@ class BatterySOCTargetSlider(HubEntityMixin, NumberEntity, RestoreEntity):
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
         self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_hub_data(value)
+        self._publish(value)
 
 
 class BatterySOCMinSlider(HubEntityMixin, NumberEntity, RestoreEntity):
@@ -534,7 +527,7 @@ class BatterySOCMinSlider(HubEntityMixin, NumberEntity, RestoreEntity):
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _hub_data_key = "battery_soc_min"
+    _data_key = "battery_soc_min"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -555,15 +548,14 @@ class BatterySOCMinSlider(HubEntityMixin, NumberEntity, RestoreEntity):
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value)))
         self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_hub_data(value)
+        self._publish(value)
 
 
 class PowerBufferSlider(HubEntityMixin, NumberEntity, RestoreEntity):
     """Slider for power buffer in Watts (0-5000W, step 100) (hub-level)."""
 
     _attr_entity_category = EntityCategory.CONFIG
-    _hub_data_key = "power_buffer"
+    _data_key = "power_buffer"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -584,15 +576,14 @@ class PowerBufferSlider(HubEntityMixin, NumberEntity, RestoreEntity):
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_hub_data(value)
+        self._publish(value)
 
 
 class MaxImportPowerSlider(HubEntityMixin, NumberEntity, RestoreEntity):
     """Slider for maximum grid import power in Watts (hub-level)."""
 
     _attr_entity_category = EntityCategory.CONFIG
-    _hub_data_key = "max_import_power"
+    _data_key = "max_import_power"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self.hass = hass
@@ -620,5 +611,4 @@ class MaxImportPowerSlider(HubEntityMixin, NumberEntity, RestoreEntity):
     async def async_set_native_value(self, value: float) -> None:
         value = max(self._attr_native_min_value, min(self._attr_native_max_value, round(value / self._attr_native_step) * self._attr_native_step))
         self._attr_native_value = value
-        self.async_write_ha_state()
-        self._write_to_hub_data(value)
+        self._publish(value)

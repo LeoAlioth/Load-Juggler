@@ -1,7 +1,7 @@
 """Shared entity mixins for hub and load entities.
 
 Provides HubEntityMixin and LoadEntityMixin to eliminate duplicated
-device_info, _write_to_*_data, and state-restore boilerplate across
+device_info, runtime-publish, and state-restore boilerplate across
 number.py, select.py, switch.py, sensor.py, and button.py.
 
 Also holds the mixins that define how an entity joins its hub's site cycle
@@ -126,6 +126,24 @@ class LoadJugglerEntity:
         if name is not None:
             self._attr_name = name
         self._attr_unique_id = unique_id
+
+    # The key this entity's value goes under in its runtime dict - the
+    # ``_runtime()`` each device mixin answers, which the engine reads back.
+    _data_key = None
+
+    def _publish(self, value) -> None:
+        """Write this entity's state, and ``value`` to its runtime dict.
+
+        Into a throwaway ``{}`` (no write) before the entry's setup has made
+        that dict.
+        """
+        self.async_write_ha_state()
+        self._runtime()[self._data_key] = value
+
+    async def _restore_and_publish_number(self):
+        """Restore a NumberEntity's last state, clamped to range, and publish it."""
+        _apply_restored_number(self, await self.async_get_last_state())
+        self._publish(self._attr_native_value)
 
     def _hub_data(self) -> dict:
         """The site result this entity's hub last published (``{}`` if none).
@@ -390,17 +408,8 @@ def _apply_restored_number(entity, last_state):
 
 
 class HubEntityMixin(LoadJugglerEntity):
-    """Mixin for hub-level entities.
-
-    Provides:
-      - device_info property (Electrical System Hub)
-      - _write_to_hub_data(value) using class attribute _hub_data_key
-      - _restore_and_publish_number() for NumberEntity + RestoreEntity subclasses
-
-    Subclasses must set _hub_data_key to the dict key in hass.data[DOMAIN]["hubs"][entry_id].
-    """
-
-    _hub_data_key = None
+    """Mixin for hub-level entities: the Electrical System Hub device, and
+    ``hass.data[DOMAIN]["hubs"][entry_id]`` as the runtime dict."""
 
     @property
     def _site_hub_entry_id(self):
@@ -416,40 +425,28 @@ class HubEntityMixin(LoadJugglerEntity):
             "model": "Electrical System Hub",
         }
 
-    def _write_to_hub_data(self, value):
-        """Write a value to hass.data[DOMAIN]['hubs'][entry_id][_hub_data_key]."""
-        hub_data = self.hass.data.get(DOMAIN, {}).get("hubs", {}).get(self.config_entry.entry_id)
-        if hub_data is not None:
-            hub_data[self._hub_data_key] = value
-
-    async def _restore_and_publish_number(self):
-        """Restore a NumberEntity's last state and publish to shared hub data."""
-        _apply_restored_number(self, await self.async_get_last_state())
-        self.async_write_ha_state()
-        self._write_to_hub_data(self._attr_native_value)
+    def _runtime(self) -> dict:
+        """This hub's runtime dict (``{}`` before the entry's setup made it)."""
+        return (
+            self.hass.data.get(DOMAIN, {})
+            .get("hubs", {})
+            .get(self.config_entry.entry_id, {})
+        )
 
 
 class LoadEntityMixin(LoadJugglerEntity):
-    """Mixin for load-level entities.
-
-    Provides:
-      - device_info property (EV Charger / Smart Load, linked to hub)
-      - _write_to_load_data(value) using class attribute _load_data_key
-      - _restore_and_publish_number() for NumberEntity + RestoreEntity subclasses
-
-    Subclasses must set _load_data_key to the dict key in
-    hass.data[DOMAIN]["loads"][entry_id].
+    """Mixin for load-level entities: the EV Charger / Smart Load / ... device
+    linked to its hub, and ``hass.data[DOMAIN]["loads"][entry_id]`` as the
+    runtime dict.
 
     Uses self.hub_entry if stored, otherwise looks up via get_hub_for_load().
     """
-
-    _load_data_key = None
 
     @property
     def _site_hub_entry_id(self):
         return self.config_entry.data.get(CONF_HUB_ENTRY_ID)
 
-    def _load_runtime(self) -> dict:
+    def _runtime(self) -> dict:
         """This load's runtime dict in ``hass.data[DOMAIN]["loads"]``.
 
         Written by the load's own processor and by the control/ modules (mode,
@@ -490,18 +487,6 @@ class LoadEntityMixin(LoadJugglerEntity):
             "via_device_id": via_device_id(self.hass, hub.entry_id if hub else None),
         }
 
-    def _write_to_load_data(self, value):
-        """Write a value to hass.data[DOMAIN]['loads'][entry_id][_load_data_key]."""
-        load_data = self.hass.data.get(DOMAIN, {}).get("loads", {}).get(self.config_entry.entry_id)
-        if load_data is not None:
-            load_data[self._load_data_key] = value
-
-    async def _restore_and_publish_number(self):
-        """Restore a NumberEntity's last state and publish to shared load data."""
-        _apply_restored_number(self, await self.async_get_last_state())
-        self.async_write_ha_state()
-        self._write_to_load_data(self._attr_native_value)
-
 
 class GroupEntityMixin(LoadJugglerEntity):
     """Mixin for circuit group entities.
@@ -527,14 +512,9 @@ class GroupEntityMixin(LoadJugglerEntity):
 
 
 class InverterEntityMixin(LoadJugglerEntity):
-    """Mixin for inverter entities (a power source linked to a hub).
-
-    Provides:
-      - device_info property (Inverter, linked to hub via via_device)
-      - _write_to_inverter_data(value) using class attribute _inverter_data_key
-    """
-
-    _inverter_data_key = None
+    """Mixin for inverter entities (a power source linked to a hub): the
+    Inverter device, and ``hass.data[DOMAIN]["inverters"][entry_id]`` as the
+    runtime dict."""
 
     @property
     def _site_hub_entry_id(self):
@@ -555,7 +535,7 @@ class InverterEntityMixin(LoadJugglerEntity):
             return None
         return self.hass.config_entries.async_get_entry(hub_entry_id)
 
-    def _inverter_runtime(self) -> dict:
+    def _runtime(self) -> dict:
         """This inverter's runtime dict in ``hass.data[DOMAIN]["inverters"]``."""
         return (
             self.hass.data.get(DOMAIN, {})
@@ -589,14 +569,3 @@ class InverterEntityMixin(LoadJugglerEntity):
             "model": "Inverter",
             "via_device_id": via_device_id(self.hass, hub_entry_id),
         }
-
-    def _write_to_inverter_data(self, value):
-        """Write to hass.data[DOMAIN]['inverters'][entry_id][_inverter_data_key].
-
-        setdefault rather than a lookup: the switch can restore its state
-        before the inverter entry's own setup has populated the bucket.
-        """
-        inverters = self.hass.data.setdefault(DOMAIN, {}).setdefault("inverters", {})
-        inverters.setdefault(self.config_entry.entry_id, {})[
-            self._inverter_data_key
-        ] = value

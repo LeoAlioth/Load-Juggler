@@ -92,7 +92,7 @@ class AllowGridChargingSwitch(HubEntityMixin, SwitchEntity, RestoreEntity):
     """Switch to allow/disallow grid charging (hub-level)."""
 
     _attr_entity_category = EntityCategory.CONFIG
-    _hub_data_key = "allow_grid_charging"
+    _data_key = "allow_grid_charging"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, entity_id: str, name: str):
         self.hass = hass
@@ -108,14 +108,12 @@ class AllowGridChargingSwitch(HubEntityMixin, SwitchEntity, RestoreEntity):
 
     async def async_turn_on(self, **kwargs):
         self._state = True
-        self.async_write_ha_state()
-        self._write_to_hub_data(True)
+        self._publish(True)
         _LOGGER.info("Grid charging enabled")
 
     async def async_turn_off(self, **kwargs):
         self._state = False
-        self.async_write_ha_state()
-        self._write_to_hub_data(False)
+        self._publish(False)
         _LOGGER.info("Grid charging disabled")
 
     async def async_added_to_hass(self):
@@ -125,8 +123,7 @@ class AllowGridChargingSwitch(HubEntityMixin, SwitchEntity, RestoreEntity):
             self._state = last_state.state == "on"
         else:
             self._state = True
-        self.async_write_ha_state()
-        self._write_to_hub_data(self._state)
+        self._publish(self._state)
 
 
 class DynamicControlSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
@@ -137,7 +134,7 @@ class DynamicControlSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _load_data_key = "dynamic_control"
+    _data_key = "dynamic_control"
 
     def __init__(self, hass, config_entry, hub_entry, entity_id, name):
         self.hass = hass
@@ -154,14 +151,12 @@ class DynamicControlSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
 
     async def async_turn_on(self, **kwargs):
         self._state = True
-        self.async_write_ha_state()
-        self._write_to_load_data(True)
+        self._publish(True)
         _LOGGER.info("Dynamic control enabled for %s", self._attr_name)
 
     async def async_turn_off(self, **kwargs):
         self._state = False
-        self.async_write_ha_state()
-        self._write_to_load_data(False)
+        self._publish(False)
         _LOGGER.info("Dynamic control disabled for %s - load will use max current", self._attr_name)
 
     async def async_added_to_hass(self):
@@ -171,8 +166,7 @@ class DynamicControlSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
             self._state = last_state.state == "on"
         else:
             self._state = True
-        self.async_write_ha_state()
-        self._write_to_load_data(self._state)
+        self._publish(self._state)
 
 
 class StationStormReserveSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
@@ -188,7 +182,7 @@ class StationStormReserveSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _load_data_key = "station_storm_reserve"
+    _data_key = "station_storm_reserve"
 
     def __init__(self, hass, config_entry, hub_entry, entity_id, name):
         self.hass = hass
@@ -205,8 +199,7 @@ class StationStormReserveSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
 
     async def async_turn_on(self, **kwargs):
         self._state = True
-        self.async_write_ha_state()
-        self._write_to_load_data(True)
+        self._publish(True)
         _LOGGER.info(
             "Storm reserve enabled for %s - charging from any source and holding",
             self._attr_name,
@@ -214,8 +207,7 @@ class StationStormReserveSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
 
     async def async_turn_off(self, **kwargs):
         self._state = False
-        self.async_write_ha_state()
-        self._write_to_load_data(False)
+        self._publish(False)
         _LOGGER.info("Storm reserve disabled for %s", self._attr_name)
 
     async def async_added_to_hass(self):
@@ -224,8 +216,7 @@ class StationStormReserveSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
         # Default off: a storm reserve should be a deliberate act, and it is the
         # one state that lets the station charge from the grid at full rate.
         self._state = last_state is not None and last_state.state == "on"
-        self.async_write_ha_state()
-        self._write_to_load_data(self._state)
+        self._publish(self._state)
 
 
 class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
@@ -243,7 +234,7 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _inverter_data_key = INVERTER_RT_CONTROL_ENABLED
+    _data_key = INVERTER_RT_CONTROL_ENABLED
     # Named off the device, so renaming the inverter renames this too, and the
     # entity half of that name comes from the translations (entity.switch.
     # battery_charge_control.name) so the Slovenian UI names it the same way its
@@ -264,8 +255,7 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
 
     async def async_turn_on(self, **kwargs):
         self._state = True
-        self.async_write_ha_state()
-        self._write_to_inverter_data(True)
+        self._publish(True)
         _LOGGER.info(
             "Battery charge control enabled for %s - the PV clipping forecast "
             "will now write %s",
@@ -275,8 +265,7 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
 
     async def async_turn_off(self, **kwargs):
         self._state = False
-        self.async_write_ha_state()
-        self._write_to_inverter_data(False)
+        self._publish(False)
         # The control loop sees the disabled flag on its next tick and puts
         # the normal value back - no write from here, so the pacing and the
         # write-once-on-release logic stay in one place.
@@ -290,8 +279,7 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
         self._state = last_state is not None and last_state.state == "on"
-        self.async_write_ha_state()
-        self._write_to_inverter_data(self._state)
+        self._publish(self._state)
 
 
 class BatterySocControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
@@ -315,7 +303,7 @@ class BatterySocControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _inverter_data_key = INVERTER_RT_SOC_CONTROL_ENABLED
+    _data_key = INVERTER_RT_SOC_CONTROL_ENABLED
     # Named off the device, so renaming the inverter renames this too, and the
     # entity half of that name comes from the translations (entity.switch.
     # battery_soc_control.name) so the Slovenian UI names it the same way its
@@ -336,8 +324,7 @@ class BatterySocControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
 
     async def async_turn_on(self, **kwargs):
         self._state = True
-        self.async_write_ha_state()
-        self._write_to_inverter_data(True)
+        self._publish(True)
         _LOGGER.info(
             "Battery SOC control enabled for %s - the PV clipping forecast will "
             "now write %s",
@@ -347,8 +334,7 @@ class BatterySocControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
 
     async def async_turn_off(self, **kwargs):
         self._state = False
-        self.async_write_ha_state()
-        self._write_to_inverter_data(False)
+        self._publish(False)
         # No restore write from here, and none from the control loop either: the
         # slots keep whatever ceiling they currently hold, which is either their
         # owner's value or a limit that will simply stop being maintained.
@@ -363,5 +349,4 @@ class BatterySocControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
         self._state = last_state is not None and last_state.state == "on"
-        self.async_write_ha_state()
-        self._write_to_inverter_data(self._state)
+        self._publish(self._state)
