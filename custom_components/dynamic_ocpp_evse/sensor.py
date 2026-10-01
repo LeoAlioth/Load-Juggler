@@ -34,7 +34,12 @@ from .const import (
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
 )
-from .helpers import get_entry_value, hub_has_battery, fleet_has_forecast_sources
+from .helpers import (
+    fleet_battery_capacity,
+    fleet_has_forecast_sources,
+    get_entry_value,
+    hub_has_battery,
+)
 from .engine.hub_calculation import run_hub_calculation
 from .entities.load import LoadJugglerDeviceSensor
 from .entities.load_sensors import (
@@ -203,19 +208,10 @@ async def async_setup_entry(
         # PV clipping forecast needs all three of its inputs configured -
         # matches the gate in _compute_forecast_advice, so a disabled feature
         # creates no sensors rather than five permanently-unknown ones.
-        # Fleet capacity: the hub's own (legacy) capacity plus every linked
-        # inverter entry's - matches the engine's forecast gate.
-        fleet_capacity = get_entry_value(config_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0
-        for child in hass.config_entries.async_entries(DOMAIN):
-            if (
-                child.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
-                and child.data.get(CONF_HUB_ENTRY_ID) == config_entry.entry_id
-            ):
-                fleet_capacity += get_entry_value(child, CONF_BATTERY_CAPACITY_KWH, 0) or 0
         has_forecast = (
             fleet_has_forecast_sources(hass, config_entry)
             and (get_entry_value(config_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
-            and fleet_capacity > 0
+            and fleet_battery_capacity(hass, config_entry) > 0
         )
 
         entities = [
@@ -282,24 +278,11 @@ async def async_setup_entry(
         # forecast_device_ids alone) - plus the engine's own early-return gate,
         # export limit and some fleet battery capacity, or the value would
         # never publish.
-        fleet_capacity = 0
-        if hub_entry is not None:
-            fleet_capacity = (
-                get_entry_value(hub_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0
-            )
-            for child in hass.config_entries.async_entries(DOMAIN):
-                if (
-                    child.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
-                    and child.data.get(CONF_HUB_ENTRY_ID) == hub_entry.entry_id
-                ):
-                    fleet_capacity += (
-                        get_entry_value(child, CONF_BATTERY_CAPACITY_KWH, 0) or 0
-                    )
         inv_observes_forecast = (
             bool(get_entry_value(config_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None))
             and hub_entry is not None
             and (get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
-            and fleet_capacity > 0
+            and fleet_battery_capacity(hass, hub_entry) > 0
         )
         entities = []
         for defn in INVERTER_SENSOR_DEFINITIONS:

@@ -14,10 +14,6 @@ from .const import (
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
-    CONF_HUB_ENTRY_ID,
-    DOMAIN,
-    ENTRY_TYPE,
-    ENTRY_TYPE_INVERTER,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
@@ -39,6 +35,7 @@ from .const import (
     INVERTER_FEATURE_BATTERY_CONTROL,
     INVERTER_FEATURE_SOLAR,
 )
+from .registry import get_inverters_for_hub
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,21 +79,20 @@ def hub_has_battery(hass, hub_entry: ConfigEntry) -> bool:
     sliders, the Allow Grid Charging switch), shared across the sensor,
     number and switch platforms so they cannot drift apart.
     """
-    if get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None) or get_entry_value(
-        hub_entry, CONF_BATTERY_POWER_ENTITY_ID, None
-    ):
-        return True
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if (
-            entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
-            and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry.entry_id
-            and (
-                get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
-                or get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
-            )
-        ):
-            return True
-    return False
+    return any(
+        get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
+        or get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
+        for entry in [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
+    )
+
+
+def fleet_battery_capacity(hass, hub_entry: ConfigEntry) -> float:
+    """kWh of battery on this hub's fleet: the hub's own (legacy) capacity
+    plus every inverter entry's - the engine's forecast gate."""
+    return sum(
+        get_entry_value(entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0
+        for entry in [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
+    )
 
 
 def fleet_has_forecast_sources(hass, hub_entry: ConfigEntry) -> bool:
@@ -107,16 +103,10 @@ def fleet_has_forecast_sources(hass, hub_entry: ConfigEntry) -> bool:
     as soon as ANY member has one. The hub's own (legacy) fields count until
     the auto-import moves them onto an inverter entry.
     """
-    entries = [hub_entry] + [
-        entry
-        for entry in hass.config_entries.async_entries(DOMAIN)
-        if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
-        and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry.entry_id
-    ]
     return any(
         get_entry_value(entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None)
         or get_entry_value(entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None)
-        for entry in entries
+        for entry in [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
     )
 
 
@@ -213,15 +203,12 @@ def validate_offgrid_battery_requirement(
     ):
         # A battery on a linked inverter entry satisfies the requirement -
         # after the auto-import that is where the battery normally lives.
-        if hass is not None and hub_entry_id:
-            for entry in hass.config_entries.async_entries(DOMAIN):
-                if (
-                    entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
-                    and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry_id
-                    and get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
-                    and get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
-                ):
-                    return
+        if hass is not None and hub_entry_id and any(
+            get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
+            and get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
+            for entry in get_inverters_for_hub(hass, hub_entry_id)
+        ):
+            return
         errors["base"] = "battery_required_no_cts"
 
 
