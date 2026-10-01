@@ -3,7 +3,9 @@
 **GRID_CT**: per-brand entries in detection priority order, each a
 ``patterns`` dict with keys phase_a / phase_b / phase_c and the ``unit`` the
 entities publish. Tried in order (watts first, see ``_power_first``) - the
-first complete 3-phase match wins.
+first complete 3-phase match wins; the hub setup page then offers the
+meter's own watts in place of amps where its device publishes both
+(``config_flow/helpers.py`` ``_power_beside``).
 
 **PLUG_POWER_MONITOR**: a single ``pattern`` regex per entry. First match wins.
 

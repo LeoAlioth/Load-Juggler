@@ -73,6 +73,7 @@ from ..const import (
     INVERTER_FEATURE_BATTERY_CONTROL,
 )
 from ..helpers import get_entry_value, normalize_optional_entity, ocpp_config_value
+from ..phases import beside, match_meter_entities
 from ..registry import get_inverters_for_hub
 
 _LOGGER = logging.getLogger(__name__)
@@ -311,6 +312,81 @@ def _auto_detect_phase_entities(
         if all(found.values()):
             return found
     return dict.fromkeys(_PHASE_SLOTS)
+
+
+def _device_rows(hass, entity_registry, device_id: str) -> list[dict]:
+    """A device's sensors that have a state, in the shape
+    phases.match_meter_entities reads: the kind from the device class, or
+    from the unit for a sensor published without one."""
+    rows = []
+    for e in er_async_entries_for_device(entity_registry, device_id):
+        state = hass.states.get(e.entity_id)
+        if e.domain != "sensor" or state is None:
+            continue
+        unit = state.attributes.get("unit_of_measurement")
+        kind = e.device_class or e.original_device_class or (
+            "power" if unit in _POWER_UNITS else "current" if unit in _CURRENT_UNITS else None
+        )
+        rows.append({"entity_id": e.entity_id, "device_class": kind,
+                     "name": e.name or e.original_name or ""})
+    return rows
+
+
+def _power_beside(hass, triple: dict[str, str | None]) -> dict[str, str | None]:
+    """The meter's own watts in place of the amps a pattern found.
+
+    A grid CT's power reading is signed and its current very often is not
+    (see detection_patterns._power_first), and a meter publishing amps per
+    phase usually publishes watts beside them. Each amps entity's DEVICE is
+    asked for its power reading on that phase whose name runs alongside
+    (phases.beside). All three or none, so the triple stays one unit; a
+    triple that is already watts, or has an entity without a device (a YAML
+    sensor), comes back as it is.
+    """
+    entity_registry = async_get_entity_registry(hass)
+    watts = {}
+    for slot, eid in triple.items():
+        entry = entity_registry.async_get(eid) if eid else None
+        if entry is None or entry.device_id is None:
+            return triple
+        rows = _device_rows(hass, entity_registry, entry.device_id)
+        if any(r["entity_id"] == eid and r["device_class"] == "power" for r in rows):
+            return triple
+        watts[slot] = beside(rows, eid, "power", slot[-1])
+    return watts if all(watts.values()) else triple
+
+
+def _same_device_fill(hass, entity_ids: list[str], pattern_sets: list[dict]) -> dict[str, str | None]:
+    """No pattern set matched all three phases: the phases the first set to
+    match any did, completed from that entity's own device - a single-phase
+    site's one CT, never a triple stitched together from several meters.
+
+    The device's readings are matched as a grid connection's
+    (phases.match_meter_entities, role "grid" - only that device's rows,
+    never the whole registry: there a charger's current_import_l1..l3 would
+    win on the shortest name). Its watts when they cover as many phases as
+    its amps, the amps otherwise, and what the pattern found when the
+    device covers fewer phases than that or there is no device.
+    """
+    for pattern_set in pattern_sets:
+        found = {slot: _first_match(entity_ids, pattern_set["patterns"][slot])
+                 for slot in _PHASE_SLOTS}
+        if any(found.values()):
+            break
+    else:
+        return dict.fromkeys(_PHASE_SLOTS)
+    entity_registry = async_get_entity_registry(hass)
+    entry = entity_registry.async_get(next(eid for eid in found.values() if eid))
+    if entry is None or entry.device_id is None:
+        return found
+    meter = match_meter_entities(_device_rows(hass, entity_registry, entry.device_id), "grid")
+
+    def count(triple):
+        return sum(1 for eid in triple.values() if eid)
+
+    best = max(({slot: meter.get(f"{kind}_{slot[-1]}") for slot in _PHASE_SLOTS}
+                for kind in ("power", "current")), key=count)  # power on a tie
+    return best if count(best) >= count(found) else found
 
 
 def _auto_detect_entity(

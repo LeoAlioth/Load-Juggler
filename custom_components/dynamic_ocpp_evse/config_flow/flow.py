@@ -11,7 +11,6 @@ The three one-page load types (plug, hot-water tank, power station) run on the
 shared ``_async_create_load_page``; the hub, inverter and EVSE wizards are
 hand-written, each being a chain with its own routing.
 """
-import re
 import voluptuous as vol
 from typing import Any
 from homeassistant import config_entries
@@ -112,6 +111,8 @@ from .helpers import (
     _normalize_list,
     _normalize_inverter_power_caps,
     _normalize_optional_inputs,
+    _power_beside,
+    _same_device_fill,
     _validate_entity_units,
     _write_control_unit_map,
     _validate_forecast_devices,
@@ -326,52 +327,21 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         try:
-            # Try to find a complete set of phases using pattern sets
-            ct_detected = _auto_detect_phase_entities(
-                self._get_entity_registry_ids(), PHASE_PATTERNS
+            # A complete set of phases from one pattern set, in the meter's
+            # watts where it has them; else the phases one meter has
+            entity_ids = self._get_entity_registry_ids()
+            ct_detected = _power_beside(
+                self.hass, _auto_detect_phase_entities(entity_ids, PHASE_PATTERNS)
             )
-            default_phase_a = ct_detected["phase_a"]
-            default_phase_b = ct_detected["phase_b"]
-            default_phase_c = ct_detected["phase_c"]
-
-            # Fallback: pick individual phases from different pattern sets
-            if not (default_phase_a and default_phase_b and default_phase_c):
-                entity_ids = self._get_entity_registry_ids()
-                for pattern_set in PHASE_PATTERNS:
-                    if not default_phase_a:
-                        default_phase_a = next(
-                            (
-                                eid
-                                for eid in entity_ids
-                                if re.match(pattern_set["patterns"]["phase_a"], eid)
-                            ),
-                            None,
-                        )
-                    if not default_phase_b:
-                        default_phase_b = next(
-                            (
-                                eid
-                                for eid in entity_ids
-                                if re.match(pattern_set["patterns"]["phase_b"], eid)
-                            ),
-                            None,
-                        )
-                    if not default_phase_c:
-                        default_phase_c = next(
-                            (
-                                eid
-                                for eid in entity_ids
-                                if re.match(pattern_set["patterns"]["phase_c"], eid)
-                            ),
-                            None,
-                        )
+            if not all(ct_detected.values()):
+                ct_detected = _same_device_fill(self.hass, entity_ids, PHASE_PATTERNS)
 
             data_schema = _hub_grid_schema(
                 self.hass,
                 {
-                    CONF_PHASE_A_CURRENT_ENTITY_ID: default_phase_a,
-                    CONF_PHASE_B_CURRENT_ENTITY_ID: default_phase_b,
-                    CONF_PHASE_C_CURRENT_ENTITY_ID: default_phase_c,
+                    CONF_PHASE_A_CURRENT_ENTITY_ID: ct_detected["phase_a"],
+                    CONF_PHASE_B_CURRENT_ENTITY_ID: ct_detected["phase_b"],
+                    CONF_PHASE_C_CURRENT_ENTITY_ID: ct_detected["phase_c"],
                 },
             )
 
