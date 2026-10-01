@@ -11,8 +11,6 @@ Split out of hub_calculation.py, which now consumes these builders rather than
 defining them.
 """
 
-from __future__ import annotations
-
 import logging
 import math
 import time
