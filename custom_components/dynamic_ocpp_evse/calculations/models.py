@@ -593,13 +593,8 @@ class PhaseConstraints:
             r.C = min(r.C, r.AC, r.BC, r.ABC)
 
         # Clamp non-negative
-        r.A = max(0, r.A)
-        r.B = max(0, r.B)
-        r.C = max(0, r.C)
-        r.AB = max(0, r.AB)
-        r.AC = max(0, r.AC)
-        r.BC = max(0, r.BC)
-        r.ABC = max(0, r.ABC)
+        for name in ("A", "B", "C", "AB", "AC", "BC", "ABC"):
+            setattr(r, name, max(0, getattr(r, name)))
 
         return r
 
