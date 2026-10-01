@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import time
 
+from ..phases import phase_mapping, support
+
 _LOGGER = logging.getLogger(__name__)
 
 # --- Inversion detection parameters ---
@@ -212,58 +214,43 @@ def _detect_inactive_line(load) -> str:
     return min(currents, key=lambda k: currents[k])
 
 
-def _evaluate_score(score: dict, notify_threshold: float):
+def _evaluate_score(score: dict, line: str, configured: dict):
     """Check score-based confidence for phase mapping detection.
 
     Uses weighted scores instead of flat sample counts.  Higher delta_draw
     values contribute more points, allowing strong signals (oscillation)
-    to trigger faster.
+    to trigger faster. ``score`` is the evidence that ``line`` sits on each
+    site phase, ``configured`` the load's lines as configured.
 
     Returns:
-        str: best phase (e.g., "A") if confident and total >= threshold
+        dict: the mapping the score supports - ``configured`` itself when
+            it agrees, otherwise ``line`` on its phase and swapped with the
+            line that had that phase
         False: inconclusive - caller should apply soft decay
         None: not enough data yet
     """
     total = sum(score.values())
-    if total < notify_threshold:
+    if total < _PM_NOTIFY_SCORE:
         return None
-    best = max(score, key=lambda p: score[p])
-    confidence = score[best] / total if total > 0 else 0
-    if confidence < _PM_CONFIDENCE:
+    votes = {line: score}
+    mapping = phase_mapping(votes, "ABC", current=configured)
+    if support(votes, mapping) < _PM_CONFIDENCE:
         if total >= _PM_DECAY_THRESHOLD:
             return False  # enough data but noisy → decay
         return None  # moderate data, keep collecting
-    return best
+    return mapping
 
 
-def _build_phase_swap(load, line_key: str, detected_phase: str) -> dict:
-    """Build a phase remap by swapping line_key to detected_phase.
-
-    Swaps with whichever line currently occupies detected_phase to avoid
-    duplicate phase assignments.
-    """
-    remap = {
-        "l1_phase": load.l1_phase,
-        "l2_phase": load.l2_phase,
-        "l3_phase": load.l3_phase,
-    }
-    configured_phase = remap[line_key]
-    for key in ("l1_phase", "l2_phase", "l3_phase"):
-        if remap[key] == detected_phase:
-            remap[key] = configured_phase
-            break
-    remap[line_key] = detected_phase
-    return remap
-
-
-def _handle_mismatch(cs: dict, load, hub_entry_id: str, cid: str,
-                     line_key: str, detected_phase: str,
-                     configured_phase: str, line_label: str,
+def _handle_mismatch(cs: dict, load, hub_entry_id: str, line: str,
+                     configured: dict, mapping: dict,
                      best_score: float, notify_key: str) -> dict | None:
     """Handle a detected phase mismatch - notify (stage 1) or auto-remap (stage 2).
 
     Returns a notification dict, or None if waiting for more confidence.
     """
+    cid = load.load_id
+    detected_phase, configured_phase = mapping[line], configured[line]
+    line_label = line.upper()
     # --- Stage 1: Notification ---
     if not cs.get(notify_key, False):
         cs[notify_key] = True
@@ -298,7 +285,9 @@ def _handle_mismatch(cs: dict, load, hub_entry_id: str, cid: str,
     if best_score < _PM_REMAP_SCORE:
         return None
 
-    remap = _build_phase_swap(load, line_key, detected_phase)
+    # a single-phase load's mapping names L1 only; L2/L3 stay as they are
+    remap = {f"{k}_phase": mapping.get(k, getattr(load, f"{k}_phase"))
+             for k in ("l1", "l2", "l3")}
     cs["remapped"] = True
     _LOGGER.warning(
         "AutoDetect: Auto-remapping %s (score: %.1f). "
@@ -439,72 +428,39 @@ def _check_draw_phase_correlation(pm_state: dict,
     cs["prev_grid_b"] = grid_b
     cs["prev_grid_c"] = grid_c
 
-    # --- Evaluate 1-phase detection ---
-    if not cs["confirmed_1ph"]:
-        result_1ph = _evaluate_score(cs["score"], _PM_NOTIFY_SCORE)
-        if result_1ph is False:
-            # Soft decay instead of hard reset. notify_sent_1ph is intentionally
+    # --- Evaluate: the 1-phase car's L1, then the 2-phase car's idle line ---
+    for kind, score_key, line in (("1ph", "score", "l1"),
+                                  ("2ph", "score_2ph", cs.get("inactive_line"))):
+        if cs[f"confirmed_{kind}"] or not line:
+            continue
+        score = cs[score_key]
+        configured = {"l1": load.l1_phase, "l2": load.l2_phase, "l3": load.l3_phase}
+        if (kind == "1ph" and load.active_phases_mask
+                and len(load.active_phases_mask) == 1):
+            configured = {"l1": load.active_phases_mask}  # plug
+        mapping = _evaluate_score(score, line, configured)
+        if mapping is False:
+            # Soft decay instead of hard reset. The notify flag is intentionally
             # NOT reset here - clearing it makes the same mismatch notification
             # re-fire every time the score oscillates around the threshold.
-            for p in cs["score"]:
-                cs["score"][p] *= _PM_DECAY_FACTOR
+            for p in score:
+                score[p] *= _PM_DECAY_FACTOR
             _LOGGER.debug(
-                "AutoDetect 1ph for %s: inconclusive, decaying scores "
+                "AutoDetect %s for %s: inconclusive, decaying scores "
                 "(A:%.1f B:%.1f C:%.1f)",
-                load.entity_id,
-                cs["score"]["A"], cs["score"]["B"], cs["score"]["C"],
+                kind, load.entity_id, score["A"], score["B"], score["C"],
             )
-        elif result_1ph is not None:
-            configured = load.l1_phase
-            if (load.active_phases_mask
-                    and len(load.active_phases_mask) == 1):
-                configured = load.active_phases_mask  # plug
-            if result_1ph == configured:
-                cs["confirmed_1ph"] = True
-                _LOGGER.debug(
-                    "AutoDetect: L1 for %s confirmed on phase %s",
-                    load.entity_id, configured,
-                )
-            else:
-                return _handle_mismatch(
-                    cs, load, hub_entry_id, cid,
-                    "l1_phase", result_1ph, configured,
-                    "L1", cs["score"][result_1ph], "notify_sent_1ph",
-                )
-
-    # --- Evaluate 2-phase detection ---
-    if not cs["confirmed_2ph"] and cs.get("inactive_line"):
-        result_2ph = _evaluate_score(cs["score_2ph"], _PM_NOTIFY_SCORE)
-        if result_2ph is False:
-            # Soft decay instead of hard reset. notify_sent_2ph is intentionally
-            # NOT reset here (see the 1-phase branch above).
-            for p in cs["score_2ph"]:
-                cs["score_2ph"][p] *= _PM_DECAY_FACTOR
+        elif mapping == configured:
+            cs[f"confirmed_{kind}"] = True
             _LOGGER.debug(
-                "AutoDetect 2ph for %s: inconclusive, decaying scores "
-                "(A:%.1f B:%.1f C:%.1f)",
-                load.entity_id,
-                cs["score_2ph"]["A"], cs["score_2ph"]["B"],
-                cs["score_2ph"]["C"],
+                "AutoDetect: %s for %s confirmed on phase %s",
+                line.upper(), load.entity_id, configured[line],
             )
-        elif result_2ph is not None:
-            inactive_line = cs["inactive_line"]
-            line_key = f"{inactive_line}_phase"  # e.g. "l3_phase"
-            configured = getattr(load, line_key)
-            line_label = inactive_line.upper()  # e.g. "L3"
-            if result_2ph == configured:
-                cs["confirmed_2ph"] = True
-                _LOGGER.debug(
-                    "AutoDetect: %s for %s confirmed on phase %s",
-                    line_label, load.entity_id, configured,
-                )
-            else:
-                return _handle_mismatch(
-                    cs, load, hub_entry_id, cid,
-                    line_key, result_2ph, configured,
-                    line_label, cs["score_2ph"][result_2ph],
-                    "notify_sent_2ph",
-                )
+        elif mapping is not None:
+            return _handle_mismatch(
+                cs, load, hub_entry_id, line, configured, mapping,
+                score[mapping[line]], f"notify_sent_{kind}",
+            )
 
     # Log when full mapping is verified
     if cs["confirmed_1ph"] and cs["confirmed_2ph"]:
