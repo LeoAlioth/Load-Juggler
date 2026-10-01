@@ -148,6 +148,30 @@ def scale_forecast_series(series, inflation_pct):
     return {ts: float(watts) * factor for ts, watts in (series or {}).items()}
 
 
+def _blocks(series, cap=None, last_width=_DEFAULT_BLOCK_HOURS):
+    """``(start, width_h, watts)`` for each forecast block, in time order.
+
+    A block runs to the next one's start; the last one repeats the width before
+    it (else ``last_width`` - None gives it no width). A block without a positive
+    width (a duplicate or unsorted timestamp) is skipped defensively. Watts are
+    floored at 0 and capped at ``cap`` when one is given.
+    """
+    blocks = sorted(series.items())
+    prev_width = None
+    for i, (start, watts) in enumerate(blocks):
+        if i + 1 < len(blocks):
+            width = (blocks[i + 1][0] - start).total_seconds() / 3600.0
+        else:
+            width = prev_width if prev_width else last_width
+        if not width or width <= 0:
+            continue
+        prev_width = width
+        power = max(0.0, float(watts))
+        if cap is not None:
+            power = min(power, cap)
+        yield start, width, power
+
+
 def clipping_forecast(
     series,
     threshold_w,
@@ -171,38 +195,21 @@ def clipping_forecast(
     if not series or until <= now:
         return empty
 
-    blocks = sorted(series.items())
     clipped_wh = 0.0
     absorbable_wh = 0.0
     window_hours = 0.0
     peak_w = 0.0
     peak_at = None
-    prev_width = None
 
-    for i, (start, watts) in enumerate(blocks):
-        if i + 1 < len(blocks):
-            width = (blocks[i + 1][0] - start).total_seconds() / 3600.0
-        else:
-            width = prev_width if prev_width else _DEFAULT_BLOCK_HOURS
-        if width <= 0:
-            continue  # duplicate or unsorted timestamp - skip defensively
-        prev_width = width
-
+    for start, width, power in _blocks(series, cap=power_cap_w):
         # Overlap of [start, start + width) with [now, until), in hours.
-        start_h = 0.0
-        block_end_offset = width
-        if start < now:
-            start_h = (now - start).total_seconds() / 3600.0
-        if start_h >= block_end_offset:
+        start_h = (now - start).total_seconds() / 3600.0 if start < now else 0.0
+        if start_h >= width:
             continue
         until_offset = (until - start).total_seconds() / 3600.0
-        overlap = min(block_end_offset, until_offset) - start_h
+        overlap = min(width, until_offset) - start_h
         if overlap <= 0:
             continue
-
-        power = max(0.0, float(watts))
-        if power_cap_w is not None:
-            power = min(power, power_cap_w)
 
         if power > peak_w:
             peak_w = power
@@ -313,23 +320,11 @@ def first_production_at(series, threshold_w, start, until, power_cap_w=None):
     """
     if not series or until <= start:
         return None
-    blocks = sorted(series.items())
-    prev_width = None
-    for i, (block_start, watts) in enumerate(blocks):
-        if i + 1 < len(blocks):
-            width = (blocks[i + 1][0] - block_start).total_seconds() / 3600.0
-        else:
-            width = prev_width if prev_width else _DEFAULT_BLOCK_HOURS
-        if width <= 0:
-            continue  # duplicate or unsorted timestamp - skip defensively
-        prev_width = width
+    for block_start, width, power in _blocks(series, cap=power_cap_w):
         if block_start + timedelta(hours=width) <= start:
             continue
         if block_start >= until:
             break
-        power = max(0.0, float(watts))
-        if power_cap_w is not None:
-            power = min(power, power_cap_w)
         if power > threshold_w:
             return max(block_start, start)
     return None
@@ -438,15 +433,13 @@ def reservation_is_due(
     return due, due
 
 
-def battery_max_soc(
-    absorbable_kwh, capacity_kwh, soc_floor, soc_ceiling=100.0, soc_target=100.0
-):
+def battery_max_soc(absorbable_kwh, capacity_kwh, soc_floor, soc_target=100.0):
     """Recommended battery SOC ceiling that keeps room for the forecast clip.
 
     The battery must be able to take ``absorbable_kwh``, so the ceiling is the
     SOC that leaves exactly that much headroom below the battery's
     DESTINATION - ``soc_target``, where this pack was going to end the day
-    anyway - clamped to ``[soc_floor, soc_ceiling]``. With nothing to absorb
+    anyway - clamped to ``[soc_floor, 100]``. With nothing to absorb
     the answer is the destination itself: fill as full as its owner asked.
 
     The anchor is the destination rather than a flat 100 % because the reserve
@@ -461,23 +454,22 @@ def battery_max_soc(
 
     ``soc_target`` defaults to 100 %, where an unmanaged battery is heading, so
     a site that configures no ceiling source gets exactly the old formula
-    ``100 − absorbable/capacity × 100``. It is deliberately independent of
-    ``soc_ceiling``, which clamps the OUTPUT: the band between the destination
-    and 100 % is the site's safety buffer against a forecast under-read, and
-    this advice never reaches up into it.
+    ``100 − absorbable/capacity × 100``. It is deliberately independent of the
+    100 % that clamps the OUTPUT: the band between the destination and 100 %
+    is the site's safety buffer against a forecast under-read, and this advice
+    never reaches up into it.
 
     Pure function - unit-testable.
     """
     if capacity_kwh <= 0:
         _LOGGER.warning(
-            "battery_max_soc called with capacity %.1f kWh - failing open to %.0f%%",
+            "battery_max_soc called with capacity %.1f kWh - failing open to 100%%",
             capacity_kwh,
-            soc_ceiling,
         )
-        return soc_ceiling
+        return 100.0
     needed = min(max(0.0, absorbable_kwh), capacity_kwh)
     max_soc = soc_target - needed / capacity_kwh * 100.0
-    return min(soc_ceiling, max(soc_floor, max_soc))
+    return min(100.0, max(soc_floor, max_soc))
 
 
 def headroom_deficit_kwh(absorbable_kwh, capacity_kwh, battery_soc):

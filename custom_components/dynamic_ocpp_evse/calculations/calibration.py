@@ -24,6 +24,8 @@ from datetime import timedelta
 
 import logging
 
+from .forecast import _blocks
+
 _LOGGER = logging.getLogger(__name__)
 
 # Bounds on the learned gain. A stationary array-calibration error outside ±25%
@@ -54,21 +56,12 @@ def block_power_at(series, when):
     """
     if not series:
         return None
-    blocks = sorted(series.items())
-    prev_width = None
-    for i, (start, watts) in enumerate(blocks):
-        if i + 1 < len(blocks):
-            width = (blocks[i + 1][0] - start).total_seconds() / 3600.0
-        else:
-            width = prev_width
-        if width and width > 0:
-            prev_width = width
+    # The last block takes the width before it, and a lone block has none.
+    for start, width, power in _blocks(series, last_width=None):
         if start > when:
             break
-        if width and width > 0:
-            end_gap = (when - start).total_seconds() / 3600.0
-            if end_gap < width:
-                return max(0.0, float(watts))
+        if (when - start).total_seconds() / 3600.0 < width:
+            return power
     return None
 
 
