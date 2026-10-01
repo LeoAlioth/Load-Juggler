@@ -78,6 +78,7 @@ from ..const import (
     CONF_PLUG_POWER_RATING,
     CONF_PLUG_SWITCH_ENTITY_ID,
     CONF_PROFILE_VALIDITY_MODE,
+    CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
@@ -151,7 +152,6 @@ from .helpers import (
     _SOLAR_UNIT_MAP,
     _STATION_ENTITY_KEYS,
     _TANK_ENTITY_KEYS,
-    _WRITE_CONTROL_UNIT_MAP,
     _auto_detect_entity,
     _auto_detect_phase_entities,
     _compose_entry_title,
@@ -159,14 +159,12 @@ from .helpers import (
     _detect_meter_value_interval,
     _entity_registry_ids,
     _hub_phase_count,
-    _normalize_forecast_list,
+    _normalize_list,
     _normalize_inverter_power_caps,
     _normalize_optional_inputs,
-    _normalize_soc_limit_list,
-    _validate_charge_limit_unit,
     _validate_entity_units,
+    _write_control_unit_map,
     _validate_forecast_devices,
-    _normalize_features_list,
     _validate_inverter_features,
 )
 from ..ocpp_discovery import (
@@ -181,8 +179,8 @@ from .schemas import (
     _charger_timing_schema,
     _hot_water_tank_schema,
     _hub_grid_schema,
-    _inverter_battery_schema,
-    _inverter_control_schema,
+    _build_inverter_battery_schema,
+    _build_inverter_control_schema,
     _plug_schema,
     _power_station_schema,
     _inverter_config_schema,
@@ -840,7 +838,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """
         errors: dict[str, str] = {}
         if user_input is not None:
-            user_input = _normalize_features_list(user_input)
+            _normalize_list(user_input, CONF_INVERTER_FEATURES)
             _validate_inverter_features(user_input, errors)
             if not errors:
                 self._data.update(user_input)
@@ -884,7 +882,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
             )
             if INVERTER_FEATURE_SOLAR in features:
-                user_input = _normalize_forecast_list(user_input)
+                _normalize_list(user_input, CONF_SOLAR_FORECAST_DEVICE_IDS)
+                # The device selection replaces any legacy sensor list.
+                user_input[CONF_SOLAR_FORECAST_ENTITY_IDS] = []
             _validate_entity_units(
                 self.hass,
                 user_input,
@@ -942,8 +942,12 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._data.update(user_input)
                 return await self._async_after_inverter_battery()
 
-        data_schema = _inverter_battery_schema(
-            self.hass, {**self._data, **(user_input or {})}
+        data_schema = vol.Schema(
+            dict(
+                _build_inverter_battery_schema(
+                    self.hass, {**self._data, **(user_input or {})}
+                )
+            )
         )
         return self.async_show_form(
             step_id="inverter_battery",
@@ -972,17 +976,20 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
                 ],
             )
-            user_input = _normalize_soc_limit_list(user_input)
+            _normalize_list(user_input, CONF_SOC_LIMIT_ENTITY_IDS)
             _validate_entity_units(
-                self.hass, user_input, _WRITE_CONTROL_UNIT_MAP, errors
+                self.hass, user_input, _write_control_unit_map(user_input), errors
             )
-            _validate_charge_limit_unit(self.hass, user_input, errors)
             if not errors:
                 self._data.update(user_input)
                 return await self._async_create_inverter_entry()
 
-        data_schema = _inverter_control_schema(
-            self.hass, {**self._data, **(user_input or {})}
+        data_schema = vol.Schema(
+            dict(
+                _build_inverter_control_schema(
+                    self.hass, {**self._data, **(user_input or {})}
+                )
+            )
         )
         return self.async_show_form(
             step_id="inverter_control",
@@ -1213,7 +1220,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         # Find OCPP devices
-        self._discovered_chargers = await self._discover_ocpp_chargers()
+        self._discovered_chargers = scan_ocpp_chargers(self.hass)
 
         if not self._discovered_chargers:
             errors["base"] = "no_ocpp_chargers_found"
@@ -1258,14 +1265,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
             last_step=False,
         )
-
-    async def _discover_ocpp_chargers(self) -> list:
-        """Discover OCPP chargers from the OCPP integration.
-
-        Thin wrapper around the module-level ``scan_ocpp_chargers``, which the
-        automatic discovery in ``__init__.py`` uses too.
-        """
-        return scan_ocpp_chargers(self.hass)
 
     async def async_step_charger_info(
         self, user_input: dict[str, Any] | None = None

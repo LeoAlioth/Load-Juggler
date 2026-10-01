@@ -556,7 +556,7 @@ def _build_inverter_solar_schema(hass, defaults: dict | None = None) -> list[tup
             vol.Optional(
                 CONF_SOLAR_FORECAST_DEVICE_IDS,
                 # suggested_value, NOT default - same clearing rule as
-                # CONF_SOC_LIMIT_ENTITY_IDS (_normalize_forecast_list).
+                # CONF_SOC_LIMIT_ENTITY_IDS (_normalize_list).
                 description={
                     "suggested_value": defaults.get(CONF_SOLAR_FORECAST_DEVICE_IDS)
                     or []
@@ -949,7 +949,7 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
                 # validation time, so a cleared multi-select (the frontend
                 # omits the key entirely) would resurrect the stored list
                 # and clearing would be impossible. The save paths map the
-                # absent key to [] (_normalize_soc_limit_list).
+                # absent key to [] (_normalize_list).
                 description={
                     "suggested_value": defaults.get(CONF_SOC_LIMIT_ENTITY_IDS)
                     or []
@@ -1008,16 +1008,6 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
             ),
         ),
     ]
-
-
-def _inverter_battery_schema(hass, defaults: dict | None = None) -> vol.Schema:
-    """Schema for the inverter-entry battery step."""
-    return vol.Schema(dict(_build_inverter_battery_schema(hass, defaults)))
-
-
-def _inverter_control_schema(hass, defaults: dict | None = None) -> vol.Schema:
-    """Schema for the inverter-entry charge write-control step."""
-    return vol.Schema(dict(_build_inverter_control_schema(hass, defaults)))
 
 
 def _inverter_features_schema(defaults: dict | None = None) -> vol.Schema:
