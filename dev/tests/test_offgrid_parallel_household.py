@@ -453,9 +453,9 @@ async def test_the_published_solar_remaining_is_the_solar_less_the_house(
         if e.data.get(CONF_ENTITY_ID) == f"ogp_hub_{slug}"
     )
     sensors = {
-        d["hub_data_key"]: LoadJugglerHubDataSensor(hass, hub, "Hub", slug, d)
+        d.data_key: LoadJugglerHubDataSensor(hass, hub, "Hub", slug, d)
         for d in HUB_SENSOR_DEFINITIONS
-        if d["hub_data_key"] in ("available_solar_power", "available_solar_current")
+        if d.data_key in ("available_solar_power", "available_solar_current")
     }
 
     expected_w = max(0.0, solar_w - HOUSE_A * V)

@@ -345,17 +345,15 @@ async def test_hub_data_sensors_initialize(hass, hub_entry):
     assert len(sensors) == len(HUB_SENSOR_DEFINITIONS)
     # Verify each sensor has correct properties from its definition
     for sensor, defn in zip(sensors, HUB_SENSOR_DEFINITIONS):
-        assert sensor._attr_name == f"Test Hub {defn['name_suffix']}"
-        assert sensor._attr_unique_id == f"test_hub_{defn['unique_id_suffix']}"
+        assert sensor._attr_name == f"Test Hub {defn.name}"
+        assert sensor._attr_unique_id == f"test_hub_{defn.key}"
         assert sensor.native_value is None  # No data yet
-        assert sensor.native_unit_of_measurement == defn["unit"]
-        assert sensor.device_class == defn.get("device_class")
+        assert sensor.native_unit_of_measurement == defn.native_unit_of_measurement
+        assert sensor.device_class == defn.device_class
         # W/A/% sensors are instantaneous readings (MEASUREMENT); the advisory
         # kWh forecast sensors override to ENERGY + TOTAL per their definitions
         # (HA rejects ENERGY + MEASUREMENT; TOTAL fits a rises-and-falls amount).
-        assert sensor.state_class == defn.get(
-            "state_class", SensorStateClass.MEASUREMENT
-        )
+        assert sensor.state_class == defn.state_class
         assert sensor.available is False  # nothing published yet
 
 
@@ -493,7 +491,7 @@ async def test_charger_update_republishes_every_hub_sensor_key(
 
     hub_data = hass.data[DOMAIN].get("hub_data", {}).get(hub_entry.entry_id, {})
     missing = [
-        d["hub_data_key"] for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] not in hub_data
+        d.data_key for d in HUB_SENSOR_DEFINITIONS if d.data_key not in hub_data
     ]
     assert not missing, f"hub sensor keys dropped by the load republish: {missing}"
 
@@ -698,9 +696,9 @@ async def test_site_cycle_publishes_hub_data_with_no_loads(
 
     assert published is hass.data[DOMAIN]["hub_data"][hub_entry.entry_id]
     missing = [
-        d["hub_data_key"]
+        d.data_key
         for d in HUB_SENSOR_DEFINITIONS
-        if d["hub_data_key"] not in published
+        if d.data_key not in published
     ]
     assert not missing, f"hub sensor keys missing from the republish: {missing}"
     assert published["last_update"] is not None
@@ -759,7 +757,7 @@ async def test_hub_data_sensor_reads_values(
         await _run_site_cycle(hass, hub_entry, charger_sensor)
 
     # Create a hub data sensor for "grid_power"
-    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
+    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d.data_key == "grid_power")
     data_sensor = LoadJugglerHubDataSensor(hass, hub_entry, "Test Hub", "test_hub", defn)
     await data_sensor.async_update()
 
@@ -810,7 +808,7 @@ async def test_hub_sensors_go_unavailable_when_the_producer_goes_stale(
         await _run_site_cycle(hass, hub_entry, charger_sensor)
 
     hub_sensor = LoadJugglerHubSensor(hass, hub_entry, "Test Hub", "test_hub")
-    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
+    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d.data_key == "grid_power")
     data_sensor = LoadJugglerHubDataSensor(
         hass, hub_entry, "Test Hub", "test_hub", defn
     )
@@ -894,7 +892,7 @@ async def test_site_cycle_adopts_readers_registered_before_the_hub(
         hub_entry,
         "Test Hub",
         "test_hub",
-        next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power"),
+        next(d for d in HUB_SENSOR_DEFINITIONS if d.data_key == "grid_power"),
     )
     hass.data[DOMAIN].setdefault(SITE_CYCLE_LISTENERS, {})[hub_entry.entry_id] = {
         id(reader): reader
@@ -1572,7 +1570,7 @@ async def test_current_grid_power_sensor_reads_unknown_on_a_cold_start(
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
         await _run_site_cycle(hass, hub_entry, charger_sensor)
 
-    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "grid_power")
+    defn = next(d for d in HUB_SENSOR_DEFINITIONS if d.data_key == "grid_power")
     sensor = LoadJugglerHubDataSensor(
         hass, hub_entry, "Test Hub", "test_hub", defn
     )
@@ -1848,7 +1846,7 @@ async def test_current_solar_power_clears_when_the_sensor_dies_mid_run(hass):
         "load_allocations": {},
     }
     defn = next(
-        d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "solar_power"
+        d for d in HUB_SENSOR_DEFINITIONS if d.data_key == "solar_power"
     )
     sensor = LoadJugglerHubDataSensor(
         hass, hub, "Solar Hub", "solar_hub_midrun", defn
@@ -2101,7 +2099,7 @@ async def test_current_managed_power_sensor_reads_unknown_mid_charge(
 
     _set_ha_states(hass, hub_entry)
     defn = next(
-        d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "total_evse_power"
+        d for d in HUB_SENSOR_DEFINITIONS if d.data_key == "total_evse_power"
     )
     sensor = LoadJugglerHubDataSensor(
         hass, hub_entry, "Test Hub", "test_hub", defn
@@ -6452,15 +6450,13 @@ async def test_inverter_data_sensors_initialize(hass: HomeAssistant):
     assert len(sensors) == len(defns)
     for sensor, defn in zip(sensors, defns):
         assert sensor.native_value is None  # nothing published yet
-        assert sensor.native_unit_of_measurement == defn["unit"]
-        assert sensor.device_class == defn.get("device_class")
-        assert sensor.state_class == defn.get(
-            "state_class", SensorStateClass.MEASUREMENT
-        )
-        # unique_id_suffix doubles as the translation key, so it must be the
-        # stable identifier in both places.
-        assert sensor.unique_id == f"test_inv_{defn['unique_id_suffix']}"
-        assert sensor.translation_key == defn["unique_id_suffix"]
+        assert sensor.native_unit_of_measurement == defn.native_unit_of_measurement
+        assert sensor.device_class == defn.device_class
+        assert sensor.state_class == SensorStateClass.MEASUREMENT
+        # The key (unique_id suffix) doubles as the translation key, so it must
+        # be the stable identifier in both places.
+        assert sensor.unique_id == f"test_inv_{defn.key}"
+        assert sensor.translation_key == defn.key
 
 
 async def test_every_inverter_sensor_has_a_name_translation(hass: HomeAssistant):
@@ -6476,7 +6472,7 @@ async def test_every_inverter_sensor_has_a_name_translation(hass: HomeAssistant)
     for name in ("translations/en.json", "translations/sl.json"):
         names = json.loads((root / name).read_text())["entity"]["sensor"]
         for defn in defns:
-            key = defn["unique_id_suffix"]
+            key = defn.key
             assert key in names, f"{name} has no entity.sensor.{key}"
             assert names[key].get("name"), f"{name}: {key} has no name"
 
@@ -6534,9 +6530,9 @@ async def test_battery_less_array_gets_the_accuracy_sensor(hass: HomeAssistant):
             hass, entry, lambda new, **kw: captured.extend(new)
         )
         return {
-            defn["unique_id_suffix"]
+            defn.key
             for s in captured
-            for defn in [getattr(s, "_defn", None)]
+            for defn in [getattr(s, "entity_description", None)]
             if defn is not None
         }
 
@@ -6587,7 +6583,7 @@ async def test_every_inverter_sensor_key_is_published_by_the_engine(
 
     own = result["inverters"][inverter.entry_id]
     defns, _sensors = _inverter_defn_sensors(hass, inverter)
-    missing = [d["data_key"] for d in defns if d["data_key"] not in own]
+    missing = [d.data_key for d in defns if d.data_key not in own]
     assert not missing, f"defined but never published: {missing}"
 
 
@@ -6614,9 +6610,9 @@ async def test_every_hub_sensor_key_is_published_by_the_engine(hass: HomeAssista
         result = run_hub_calculation(hass, hub)
 
     missing = [
-        d["hub_data_key"]
+        d.data_key
         for d in HUB_SENSOR_DEFINITIONS
-        if d["hub_data_key"] not in result
+        if d.data_key not in result
     ]
     assert not missing, f"defined but never published: {missing}"
 
@@ -6966,7 +6962,7 @@ async def test_the_accuracy_sensor_restores_the_gain_series(hass: HomeAssistant)
     array.add_to_hass(hass)
     hass.data[DOMAIN] = {"hubs": {hub.entry_id: {"loads": []}}, "loads": {}, "load_allocations": {}, "inverters": {}}
 
-    defn = next(d for d in INVERTER_SENSOR_DEFINITIONS if d.get("restores_gain"))
+    defn = next(d for d in INVERTER_SENSOR_DEFINITIONS if d.restores_gain)
     sensor = LoadJugglerInverterDataSensor(hass, array, "restore_inv", defn)
     sensor.hass = hass
     sensor.entity_id = "sensor.restore_inv_forecast_accuracy"

@@ -218,17 +218,17 @@ async def async_setup_entry(
             LoadJugglerHubSensor(hass, config_entry, name, entity_id),
             LoadJugglerHubStatusSensor(hass, config_entry, name, entity_id),
         ]
-        for defn in HUB_SENSOR_DEFINITIONS:
-            if defn.get("requires_battery") and not has_battery:
+        for desc in HUB_SENSOR_DEFINITIONS:
+            if desc.requires_battery and not has_battery:
                 continue
-            if defn.get("requires_phase") == "B" and not has_phase_b:
+            if desc.requires_phase == "B" and not has_phase_b:
                 continue
-            if defn.get("requires_phase") == "C" and not has_phase_c:
+            if desc.requires_phase == "C" and not has_phase_c:
                 continue
-            if defn.get("requires_forecast") and not has_forecast:
+            if desc.requires_forecast and not has_forecast:
                 continue
             entities.append(
-                LoadJugglerHubDataSensor(hass, config_entry, name, entity_id, defn)
+                LoadJugglerHubDataSensor(hass, config_entry, name, entity_id, desc)
             )
 
         coordinator = _create_hub_coordinator(hass, config_entry, name)
@@ -285,15 +285,15 @@ async def async_setup_entry(
             and fleet_battery_capacity(hass, hub_entry) > 0
         )
         entities = []
-        for defn in INVERTER_SENSOR_DEFINITIONS:
-            if defn.get("requires_battery") and not inv_has_battery:
+        for desc in INVERTER_SENSOR_DEFINITIONS:
+            if desc.requires_battery and not inv_has_battery:
                 continue
-            if defn.get("requires_forecast") and not inv_has_forecast:
+            if desc.requires_forecast and not inv_has_forecast:
                 continue
-            if defn.get("requires_forecast_device") and not inv_observes_forecast:
+            if desc.requires_forecast_device and not inv_observes_forecast:
                 continue
             entities.append(
-                LoadJugglerInverterDataSensor(hass, config_entry, entity_id, defn)
+                LoadJugglerInverterDataSensor(hass, config_entry, entity_id, desc)
             )
         # Write-control status - created only with a target register, since
         # that sensor is also what drives the writes.

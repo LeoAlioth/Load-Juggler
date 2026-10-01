@@ -142,10 +142,10 @@ def _sensors(hass, hub, inverter):
     )
 
     hub_defn = next(
-        d for d in HUB_SENSOR_DEFINITIONS if d["hub_data_key"] == "solar_power"
+        d for d in HUB_SENSOR_DEFINITIONS if d.data_key == "solar_power"
     )
     inv_defn = next(
-        d for d in INVERTER_SENSOR_DEFINITIONS if d["data_key"] == "solar_w"
+        d for d in INVERTER_SENSOR_DEFINITIONS if d.data_key == "solar_w"
     )
     return {
         "hub": LoadJugglerHubDataSensor(hass, hub, "Unsplit", "us", hub_defn),
@@ -287,10 +287,10 @@ async def test_an_output_nothing_splits_leaves_no_solar_remaining(hass, topology
         publish_hub_data(hass, hub.entry_id, run_hub_calculation(hass, hub))
         published = {}
         for d in HUB_SENSOR_DEFINITIONS:
-            if d["hub_data_key"] in ("available_solar_power", "available_solar_current"):
+            if d.data_key in ("available_solar_power", "available_solar_current"):
                 sensor = LoadJugglerHubDataSensor(hass, hub, "Unsplit", "us", d)
                 await sensor.async_update()
-                published[d["hub_data_key"]] = (sensor.native_value, sensor.available)
+                published[d.data_key] = (sensor.native_value, sensor.available)
 
     assert published == {
         "available_solar_power": (None, True),

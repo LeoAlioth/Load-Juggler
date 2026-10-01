@@ -503,7 +503,7 @@ async def test_while_blind_the_figures_are_estimates_and_the_status_says_so(hass
     )
 
     hub_entry, first, second = site
-    defs = {d["hub_data_key"]: d for d in HUB_SENSOR_DEFINITIONS}
+    defs = {d.data_key: d for d in HUB_SENSOR_DEFINITIONS}
     managed = LoadJugglerHubDataSensor(hass, hub_entry, "Hub", "hub", defs["total_evse_power"])
     household = LoadJugglerHubDataSensor(hass, hub_entry, "Hub", "hub", defs["household_power"])
     solar = LoadJugglerHubDataSensor(hass, hub_entry, "Hub", "hub", defs["solar_power"])
