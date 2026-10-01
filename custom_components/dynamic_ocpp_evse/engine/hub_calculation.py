@@ -75,6 +75,7 @@ from ..calculations.utils import (
     compute_household_per_phase,
     grid_without_managed_draws,
     hold_per_phase_floor,
+    managed_phase_draws,
 )
 from ..helpers import get_entry_value
 from .. import units
@@ -139,14 +140,7 @@ def _managed_phase_draws(site, ema_inputs=None):
     switch is that this load does not stand down for us. Left in, it is
     household consumption, which is what an unmanaged load is.
     """
-    total_draws = [0.0, 0.0, 0.0]
-    for c in site.loads:
-        if not c.dynamic_control:
-            continue
-        a_draw, b_draw, c_draw = c.get_site_phase_draw()
-        total_draws[0] += a_draw
-        total_draws[1] += b_draw
-        total_draws[2] += c_draw
+    total_draws = managed_phase_draws(site)
     if ema_inputs is None:
         return total_draws
     # Same alpha, same shape as readers._smooth on grid_0..2.
