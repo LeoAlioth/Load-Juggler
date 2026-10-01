@@ -24,9 +24,7 @@ house, and a 1-phase car that draws whatever limit the charger last accepted.
 The clock is simulated, so minutes of site cycles run in well under a second.
 """
 
-import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -66,38 +64,14 @@ from custom_components.dynamic_ocpp_evse.const import (
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
 )
-from custom_components.dynamic_ocpp_evse.engine import (
-    auto_detect,
-    hub_calculation,
-    hub_result,
-    load_builders,
-    readers,
-)
-from custom_components.dynamic_ocpp_evse.control import compliance, status
-from custom_components.dynamic_ocpp_evse.entities import load as load_entity
+
+from .closed_loop import clocked
 
 V = 230.0
 MIN_A = 6.0
 RATING_W = 12000.0            # far above the sun: the sun binds
 CYCLE_S = float(DEFAULT_SITE_UPDATE_FREQUENCY)
 DEADBAND_W = DEAD_BAND * V
-
-_CLOCKED = (
-    load_builders, hub_calculation, readers, hub_result, auto_detect,
-    load_entity, status, compliance,
-)
-
-
-class _Clock:
-    def __init__(self, start):
-        self.now = start
-
-    def monotonic(self):
-        return self.now
-
-    def __getattr__(self, name):
-        return getattr(time, name)
-
 
 class World:
     """The off-grid site with no battery, and the car behind the charger."""
@@ -234,29 +208,18 @@ async def _session(hass, site, minutes):
     """``minutes`` of real site cycles against the world. Returns
     [(seconds, accepted limit, site W)] per cycle."""
     world = World(hass, site)
-    clock = _Clock(10_000.0)
     hass.data[DOMAIN].setdefault("load_processors", {}).setdefault(
         site.hub.entry_id, {}
     )[site.evse.entry_id] = sensor_platform.LoadJugglerDeviceSensor(
         hass, site.evse, site.hub, "evse", "evse"
     )
-    patches = [patch.object(module, "time", clock) for module in _CLOCKED]
-    patches.append(patch(
-        "homeassistant.core.ServiceRegistry.async_call",
-        new_callable=AsyncMock, side_effect=world.accept,
-    ))
-    for p in patches:
-        p.start()
     log = []
-    try:
+    with clocked(world.accept) as clock:
         for _ in range(int(minutes * 60 / CYCLE_S)):
             world.publish()
             await sensor_platform.async_run_hub_cycle(hass, site.hub)
             log.append((clock.now, world.limit, world.site_w))
             clock.now += CYCLE_S
-    finally:
-        for p in reversed(patches):
-            p.stop()
     return log
 
 
