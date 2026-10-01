@@ -341,26 +341,11 @@ Scenario files in `dev/tests/scenarios/` (organized by site type × charging mod
 features/       - Cross-cutting tests (test_available, test_plugs, test_phase_mapping, test_circuit_groups)
 ```
 
-### HA Integration Tests (Docker)
+### HA Integration Tests
 
-Integration tests use `pytest-homeassistant-custom-component` and run in Docker for platform independence and system isolation. This ensures tests don't affect the developer's system and work consistently across macOS, Windows, and Linux.
-
-```bash
-# Build the test image (first time only, or after requirements_dev.txt changes)
-docker build -t dynamic-ocpp-evse-test -f dev/Dockerfile.test .
-
-# Run all integration tests
-docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test
-
-# Run a specific test file
-docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests/test_init.py -v
-
-# Run with specific test pattern
-docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests/ -v -k "test_async_setup"
-
-# Run only the YAML scenarios
-docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests/test_scenarios.py -v
-```
+Integration tests use `pytest-homeassistant-custom-component` and are collected by the same plain
+pytest run as everything else. The one local way to run it is the uv venv in `dev/tests/README.md`
+(Python 3.13, what CI runs); there is no Docker test image.
 
 **Integration test files:**
 
