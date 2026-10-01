@@ -12,8 +12,6 @@ Split out of hub_calculation.py, which now consumes these readers rather than
 defining them; config_flow.py reuses two of them for its live previews.
 """
 
-from __future__ import annotations
-
 import logging
 import math
 import time
@@ -146,13 +144,12 @@ def _smooth(ema_dict: dict, key: str, raw, alpha: float | None = None):
     return round(smoothed, 2)
 
 
-def _smooth_directional(ema_dict: dict, key: str, raw, fast_away: bool,
-                        alpha: float | None = None, fast_alpha: float | None = None):
+def _smooth_directional(ema_dict: dict, key: str, raw, fast_away: bool):
     """An EMA whose weight depends on which way the reading is moving.
 
     ``fast_away=True``: a move AWAY from zero - deeper export, heavier import,
-    a sign flip - takes ``fast_alpha``; a move back toward zero keeps ``alpha``.
-    ``fast_away=False`` is the mirror, for battery power: fast toward zero,
+    a sign flip - takes the fast weight; a move back toward zero keeps the slow
+    one. ``fast_away=False`` is the mirror, for battery power: fast toward zero,
     slow away. The two are a matched pair for the charge controller's feedback
     law ``battery + (export − setpoint)``: a permit cut is battery↓ and export↑
     in the same instant, so if export were fast and battery slow the law would
@@ -163,37 +160,28 @@ def _smooth_directional(ema_dict: dict, key: str, raw, fast_away: bool,
     unavailable reading holds the last value, the first reading seeds - which
     is why this only chooses the weight and delegates.
 
-    Both weights are time-based like ``_smooth``'s, and the FAST one keeps its
-    ratio to the slow one rather than being a fixed number - otherwise the
-    matched pair above stops being matched as soon as a site changes its
-    refresh cadence, and the charge controller's feedback law reads a
-    transition twice on one side and once on the other.
+    The fast weight is time-based like ``_smooth``'s slow one: its own time
+    constant (``_FAST_TAU_KEY``) converted at this site's cadence - NOT a ratio
+    against the slow weight. The ratio form saturated at 1.0 from about a 4 s
+    cadence up, which is "no smoothing at all" and breaks the matched pair the
+    feedback law depends on.
 
     Pure function - unit-testable.
     """
-    if alpha is None:
-        alpha = ema_dict.get(_ALPHA_KEY, _default_alpha())
-    if fast_alpha is None:
-        # Its own time constant, converted at this site's cadence - NOT a ratio
-        # against the slow weight. The ratio form saturated at 1.0 from about a
-        # 4 s cadence up, which is "no smoothing at all" and breaks the matched
-        # pair the feedback law depends on.
-        fast_alpha = ema_alpha_for(
-            ema_dict.get(_DT_KEY, DEFAULT_SITE_UPDATE_FREQUENCY),
-            ema_dict.get(_FAST_TAU_KEY, CTRL_FAST_TAU_S),
-        )
     prev = ema_dict.get(key)
-    if prev is None or raw is None or raw is _UNAVAILABLE:
-        return _smooth(ema_dict, key, raw, alpha)
     try:
         val = float(raw)
     except (ValueError, TypeError):
-        return _smooth(ema_dict, key, raw, alpha)
-    if not math.isfinite(val):
-        return _smooth(ema_dict, key, raw, alpha)
-    away = abs(val) > abs(prev) or (val * prev < 0)
-    fast = away if fast_away else not away
-    return _smooth(ema_dict, key, raw, fast_alpha if fast else alpha)
+        val = math.nan
+    alpha = None  # _smooth's own (slow) weight
+    if prev is not None and math.isfinite(val):
+        away = abs(val) > abs(prev) or (val * prev < 0)
+        if away == fast_away:
+            alpha = ema_alpha_for(
+                ema_dict.get(_DT_KEY, DEFAULT_SITE_UPDATE_FREQUENCY),
+                ema_dict.get(_FAST_TAU_KEY, CTRL_FAST_TAU_S),
+            )
+    return _smooth(ema_dict, key, raw, alpha)
 
 
 def _stale_guard(hub_runtime: dict, ema_dict: dict, key: str, raw, fallback):
@@ -300,31 +288,26 @@ def _read_entity(hass, entity_id: str, default=0, unit: str = None, voltage: flo
     return _UNAVAILABLE if value is None else value
 
 
-def _read_inverter_output(hass, entity_id, voltage):
-    """Read one inverter output phase in amps, SIGNED (A/mA/W/kW all accepted).
+def _read_signed_amps(hass, entity_id, voltage):
+    """One grid CT or inverter output phase in amps, SIGNED (A/mA/W/kW accepted).
 
-    The sign is real information, so it is passed straight through. A hybrid
-    with another (AC-coupled) inverter on its load port legitimately reads
-    NEGATIVE output up to the child's production: power flows IN through the
-    parent's AC-out port. Taking a magnitude there fabricates output that does
-    not exist, and clamping it to 0 throws away the very term the fleet sum
-    needs to net the child's back-feed against its parent.
-
-    Consumers must therefore treat a negative reading as "power flowing into
-    this inverter", not as production; the non-negativity clamps live at the
-    aggregates where physics demands them (a member's derived production, the
-    fleet solar total, per-phase household), never on the raw reading.
+    The sign is real information on both, so it is passed straight through. On
+    a grid CT negative is export - a meter's power entity is often the only
+    signed reading it publishes (its current entity is often magnitude-only),
+    which is why watts are accepted at all. On an inverter output negative is
+    power flowing IN: a hybrid with another (AC-coupled) inverter on its load
+    port reads negative output up to the child's production. Taking a magnitude
+    there fabricates output that does not exist, and clamping it to 0 throws
+    away the very term the fleet sum needs to net the child's back-feed against
+    its parent - the non-negativity clamps live at the aggregates where physics
+    demands them (a member's derived production, the fleet solar total,
+    per-phase household), never on the raw reading.
 
     Returns None for an unconfigured phase, _UNAVAILABLE for a configured
-    sensor that is temporarily unreadable (the EMA smoother holds the last
-    known value for those).
+    sensor that is temporarily unreadable - the caller's stale guard and EMA
+    decide what that stands for.
     """
-    if not entity_id:
-        return None
-    value = _read_entity(hass, entity_id, None, unit=units.DOMAIN_AMPS, voltage=voltage)
-    if value is _UNAVAILABLE or value is None:
-        return _UNAVAILABLE
-    return value
+    return _read_entity(hass, entity_id, None, unit=units.DOMAIN_AMPS, voltage=voltage)
 
 
 def _coerce(v, default=0):
@@ -332,7 +315,23 @@ def _coerce(v, default=0):
     return default if v is _UNAVAILABLE else v
 
 
-def _check_entity_availability(hass, hub_entry) -> list:
+def _f(value):
+    """``value`` as a float; None stays None."""
+    return None if value is None else float(value)
+
+
+def _unavailable_entities(hass, entry, checks) -> list:
+    """``(label, entity_id)`` for each of ``checks`` - ``(label, conf key)``
+    pairs - that ``entry`` configures and that cannot be read right now."""
+    found = []
+    for label, conf_key in checks:
+        entity_id = get_entry_value(entry, conf_key, None)
+        if entity_id and units.is_unavailable(hass.states.get(entity_id)):
+            found.append((label, entity_id))
+    return found
+
+
+def _check_entity_availability(hass, hub_entry, members) -> list:
     """Return unavailable hub-configured entities as ``(label, entity_id)``.
 
     Grid CTs are tracked separately (stale-timeout logic); this covers the
@@ -340,9 +339,10 @@ def _check_entity_availability(hass, hub_entry) -> list:
     feed shows up on the hub Status sensor instead of silently defaulting to 0.
     Returns the short label and the entity_id so the caller can both name the
     sensor in the status line and spell out the full detail in a warning.
+    ``members`` is this cycle's fleet (``_read_fleet_members``), whose forecast
+    devices are checked.
     """
-    unavailable = []
-    checks = [
+    unavailable = _unavailable_entities(hass, hub_entry, (
         ("Solar production sensor", CONF_SOLAR_PRODUCTION_ENTITY_ID),
         ("Battery SOC sensor", CONF_BATTERY_SOC_ENTITY_ID),
         ("Battery power sensor", CONF_BATTERY_POWER_ENTITY_ID),
@@ -359,49 +359,27 @@ def _check_entity_availability(hass, hub_entry) -> list:
         # same source as the grid CTs, which is why every load went
         # unavailable in the same instants.
         ("Max import power sensor", CONF_MAX_IMPORT_POWER_ENTITY_ID),
-    ]
-    for label, conf_key in checks:
-        entity_id = get_entry_value(hub_entry, conf_key, None)
-        if not entity_id:
-            continue
-        if units.is_unavailable(hass.states.get(entity_id)):
-            unavailable.append((label, entity_id))
+    ))
     # Per-inverter entries: their output and battery sensors feed the fleet
     # aggregation, which fails open member-by-member - the status sensor is
     # where a dropout becomes visible, named per inverter.
-    inverter_entries = get_inverters_for_hub(hass, hub_entry.entry_id)
-    for inv_entry in inverter_entries:
+    for inv_entry in get_inverters_for_hub(hass, hub_entry.entry_id):
         inv_name = get_entry_value(inv_entry, CONF_NAME, inv_entry.title)
-        inv_checks = (
+        unavailable += _unavailable_entities(hass, inv_entry, (
             (f"Solar production ({inv_name})", CONF_SOLAR_PRODUCTION_ENTITY_ID),
             (f"Inverter {inv_name} output (L1)", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
             (f"Inverter {inv_name} output (L2)", CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
             (f"Inverter {inv_name} output (L3)", CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
             (f"Battery SOC ({inv_name})", CONF_BATTERY_SOC_ENTITY_ID),
             (f"Battery power ({inv_name})", CONF_BATTERY_POWER_ENTITY_ID),
-        )
-        for label, conf_key in inv_checks:
-            entity_id = get_entry_value(inv_entry, conf_key, None)
-            if not entity_id:
-                continue
-            if units.is_unavailable(hass.states.get(entity_id)):
-                unavailable.append((label, entity_id))
+        ))
 
     # Forecast sources fail open in the clipping maths - the status sensor is
     # the only place a dropout is visible. A configured forecast DEVICE with
     # no watts-bearing sensor right now (integration down, states missing)
     # counts as unavailable; legacy directly-configured sensors are checked
     # like any other entity.
-    forecast_devices = list(
-        get_entry_value(hub_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or []
-    )
-    for inv_entry in inverter_entries:
-        for device_id in (
-            get_entry_value(inv_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None) or []
-        ):
-            if device_id not in forecast_devices:
-                forecast_devices.append(device_id)
-    for device_id in forecast_devices:
+    for device_id in fleet.forecast_device_ids(members):
         if resolve_forecast_sensor(hass, device_id) is None:
             unavailable.append(("Solar forecast device", device_id))
     for entity_id in get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []:
@@ -424,22 +402,6 @@ def _fv2(raw, smoothed):
     if raw is None:
         return _fv(smoothed)
     return f"{_fv(smoothed)}({_fv(raw)})"
-
-def _read_grid_phase(hass, entity_id, voltage):
-    """One grid phase in amps, SIGNED (A/mA/W/kW all accepted).
-
-    Sign is the whole point of this reading - negative means export - so
-    unlike the inverter-output reader this one must not take an absolute
-    value. A meter's power entity is usually the only signed option it
-    publishes (its current entity is often magnitude-only), which is why
-    watts are accepted here at all.
-
-    Returns _UNAVAILABLE for a configured-but-unreadable sensor; the caller's
-    stale guard decides what to hold.
-    """
-    if not entity_id:
-        return None
-    return _read_entity(hass, entity_id, None, unit=units.DOMAIN_AMPS, voltage=voltage)
 
 
 def _read_grid_phases(hass, hub_entry, voltage=DEFAULT_PHASE_VOLTAGE):
@@ -478,7 +440,7 @@ def _read_grid_phases(hass, hub_entry, voltage=DEFAULT_PHASE_VOLTAGE):
         if not entity:
             raw_phases.append(None)
             continue
-        raw = _read_grid_phase(hass, entity, voltage)
+        raw = _read_signed_amps(hass, entity, voltage)
         if units.is_unusable_number(raw):
             # Sentinel (or anything else non-numeric) passes straight through -
             # inverting or defaulting it here would destroy the information the
@@ -570,49 +532,6 @@ def _track_grid_stale(hub_runtime, any_stale, now):
     return 0
 
 
-def _read_inverter_config(hass, hub_entry, voltage):
-    """Read inverter configuration and per-phase output entities.
-
-    Returns (inverter_max_power, inverter_max_power_per_phase,
-             inverter_supports_asymmetric, wiring_topology, inverter_output_per_phase).
-    """
-    inverter_max_power = get_entry_value(hub_entry, CONF_INVERTER_MAX_POWER, None)
-    inverter_max_power_per_phase = get_entry_value(
-        hub_entry, CONF_INVERTER_MAX_POWER_PER_PHASE, None
-    )
-    inverter_supports_asymmetric = get_entry_value(
-        hub_entry, CONF_INVERTER_SUPPORTS_ASYMMETRIC, False
-    )
-    wiring_topology = get_entry_value(
-        hub_entry, CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY
-    )
-
-    # Read per-phase inverter output entities (optional)
-    inv_entities = [
-        get_entry_value(hub_entry, conf, None)
-        for conf in (
-            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-        )
-    ]
-    # Each configured phase is read independently - a B/C-only configuration
-    # is valid, and one phase being momentarily unavailable must not discard
-    # the others. Unavailable phases carry the _UNAVAILABLE sentinel, which
-    # the EMA smoothing downstream resolves to the last known value.
-    inverter_output_per_phase = None
-    if any(inv_entities):
-        inv_values = [_read_inverter_output(hass, e, voltage) for e in inv_entities]
-        inverter_output_per_phase = PhaseValues(*inv_values)
-
-    return (
-        inverter_max_power,
-        inverter_max_power_per_phase,
-        inverter_supports_asymmetric,
-        wiring_topology,
-        inverter_output_per_phase,
-    )
-
 # Legacy hub-level fleet fields: while any of these are configured on the hub
 # entry itself (pre-import installs), the hub acts as one implicit inverter
 # merged into the fleet. The one-time auto-import moves them onto a standalone
@@ -684,13 +603,24 @@ def _read_enforced_charge_limit(hass, entry):
 def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy):
     """Read one inverter (an inverter entry, or the hub's legacy fields) into
     a FleetMember. ``legacy`` selects the historic EMA key namespace."""
-    (
-        max_power,
-        max_power_per_phase,
-        supports_asymmetric,
-        topology,
-        output_pv,
-    ) = _read_inverter_config(hass, entry, voltage)
+    # Per-phase output entities (optional). Each configured phase is read
+    # independently - a B/C-only configuration is valid, and one phase being
+    # momentarily unavailable must not discard the others. Unavailable phases
+    # carry the _UNAVAILABLE sentinel, which the EMA smoothing below resolves
+    # to the last known value.
+    output_entities = [
+        get_entry_value(entry, conf, None)
+        for conf in (
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+        )
+    ]
+    output_pv = (
+        PhaseValues(*(_read_signed_amps(hass, e, voltage) for e in output_entities))
+        if any(output_entities)
+        else None
+    )
     output_prefix = "inv_" if legacy else f"inv_{entry.entry_id}_"
     output_raw = (
         None
@@ -816,10 +746,14 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     return fleet.FleetMember(
         entry_id=entry.entry_id,
         name=get_entry_value(entry, CONF_NAME, entry.title if not legacy else "Hub"),
-        max_power=max_power,
-        max_power_per_phase=max_power_per_phase,
-        supports_asymmetric=supports_asymmetric,
-        topology=topology,
+        max_power=get_entry_value(entry, CONF_INVERTER_MAX_POWER, None),
+        max_power_per_phase=get_entry_value(
+            entry, CONF_INVERTER_MAX_POWER_PER_PHASE, None
+        ),
+        supports_asymmetric=get_entry_value(
+            entry, CONF_INVERTER_SUPPORTS_ASYMMETRIC, False
+        ),
+        topology=get_entry_value(entry, CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY),
         output=output_pv,
         output_raw=output_raw,
         has_solar_entity=bool(solar_entity),
@@ -830,11 +764,9 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         ),
         has_battery=has_battery,
         has_battery_power_entity=bool(power_entity),
-        battery_soc=float(battery_soc) if battery_soc is not None else None,
-        battery_power=float(battery_power) if battery_power is not None else None,
-        battery_power_ctrl=(
-            float(battery_power_ctrl) if battery_power_ctrl is not None else None
-        ),
+        battery_soc=_f(battery_soc),
+        battery_power=_f(battery_power),
+        battery_power_ctrl=_f(battery_power_ctrl),
         charge_cap=(
             get_entry_value(entry, CONF_BATTERY_MAX_CHARGE_POWER, None)
             if has_battery

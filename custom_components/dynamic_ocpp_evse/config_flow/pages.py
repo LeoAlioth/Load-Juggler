@@ -815,7 +815,7 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
     lines.append("**🔆 Output**")
     phase_lines: list[str] = []
     try:
-        from ..engine.readers import _read_inverter_output
+        from ..engine.readers import _read_signed_amps
 
         for label, key in (
             ("A", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
@@ -825,7 +825,7 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
             entity_id = get_entry_value(entry, key, None)
             if not entity_id:
                 continue
-            value = _read_inverter_output(hass, entity_id, voltage)
+            value = _read_signed_amps(hass, entity_id, voltage)
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 value = None
             if isinstance(value, (int, float)) and value < 0:

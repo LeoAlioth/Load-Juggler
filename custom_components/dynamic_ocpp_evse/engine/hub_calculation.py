@@ -5,8 +5,6 @@ This file provides a unified interface for EVSE calculations.
 All core calculation logic has been refactored into the calculations/ directory.
 """
 
-from __future__ import annotations
-
 import logging
 import math
 import time
@@ -91,6 +89,7 @@ from .load_builders import (
 from .readers import (
     _PHASE_LABELS,
     _check_entity_availability,
+    _f,
     _fv,
     _fv2,
     _read_fleet_members,
@@ -155,6 +154,15 @@ def _managed_phase_draws(site, ema_inputs=None):
         _smooth(ema_inputs, f"managed_draw_{i}", d) or 0.0
         for i, d in enumerate(total_draws)
     ]
+
+
+def _split_grid(phases):
+    """Signed per-phase grid amps as ``(consumption, export)`` PhaseValues -
+    the import and the export half of each phase, None where it has none."""
+    return (
+        PhaseValues(*[max(0, r) if r is not None else None for r in phases]),
+        PhaseValues(*[max(0, -r) if r is not None else None for r in phases]),
+    )
 
 
 def _charge_control_view(site, consumption, export, battery_power, draws):
@@ -1194,7 +1202,7 @@ def _build_hub_status(
     # Configured non-grid sensors that are currently unavailable. Name them in
     # the status line itself (not just the warnings attribute) so the user sees
     # *which* sensor dropped out at a glance, without expanding attributes.
-    unavailable = _check_entity_availability(hass, hub_entry)
+    unavailable = _check_entity_availability(hass, hub_entry, members)
     if unavailable:
         hub_warnings.extend(
             f"{label} ({entity_id}) is unavailable" for label, entity_id in unavailable
@@ -1280,10 +1288,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     smoothed_phases = [
         _smooth(ema_inputs, f"grid_{i}", r) for i, r in enumerate(raw_phases)
     ]
-    consumption = [max(0, r) if r is not None else None for r in smoothed_phases]
-    export = [max(0, -r) if r is not None else None for r in smoothed_phases]
-    consumption_pv = PhaseValues(*consumption)
-    export_pv = PhaseValues(*export)
+    consumption_pv, export_pv = _split_grid(smoothed_phases)
     # The charge controller's view of the same phases: fast toward either
     # limit, slow back toward zero, under its own EMA keys (see
     # _charge_control_view). The symmetric values above feed everything else.
@@ -1291,12 +1296,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         _smooth_directional(ema_inputs, f"grid_ctrl_{i}", r, fast_away=True)
         for i, r in enumerate(raw_phases)
     ]
-    ctrl_consumption_pv = PhaseValues(
-        *[max(0, r) if r is not None else None for r in ctrl_phases]
-    )
-    ctrl_export_pv = PhaseValues(
-        *[max(0, -r) if r is not None else None for r in ctrl_phases]
-    )
+    ctrl_consumption_pv, ctrl_export_pv = _split_grid(ctrl_phases)
 
     total_export_current = export_pv.total
     total_export_power = total_export_current * voltage if voltage > 0 else 0
@@ -1480,36 +1480,20 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         solar_production_total=solar_production_total,
         solar_is_derived=solar_is_derived,
         solar_is_metered=fleet.solar_is_metered(members),
-        battery_soc=float(battery_soc) if battery_soc is not None else None,
-        battery_power=float(battery_power) if battery_power is not None else None,
-        battery_soc_min=float(battery_soc_min) if battery_soc_min is not None else None,
-        battery_soc_target=float(battery_soc_target)
-        if battery_soc_target is not None
-        else None,
-        battery_soc_full=float(battery_soc_full)
-        if battery_soc_full is not None
-        else None,
-        battery_max_charge_power=float(battery_max_charge_power)
-        if battery_max_charge_power is not None
-        else None,
-        battery_max_discharge_power=float(battery_max_discharge_power)
-        if battery_max_discharge_power is not None
-        else None,
-        max_grid_import_power=float(max_grid_import_power)
-        if max_grid_import_power is not None
-        else None,
-        inverter_max_power=float(inverter_max_power)
-        if inverter_max_power is not None
-        else None,
-        inverter_max_power_per_phase=float(inverter_max_power_per_phase)
-        if inverter_max_power_per_phase is not None
-        else None,
+        battery_soc=_f(battery_soc),
+        battery_power=_f(battery_power),
+        battery_soc_min=_f(battery_soc_min),
+        battery_soc_target=_f(battery_soc_target),
+        battery_soc_full=_f(battery_soc_full),
+        battery_max_charge_power=_f(battery_max_charge_power),
+        battery_max_discharge_power=_f(battery_max_discharge_power),
+        max_grid_import_power=_f(max_grid_import_power),
+        inverter_max_power=_f(inverter_max_power),
+        inverter_max_power_per_phase=_f(inverter_max_power_per_phase),
         inverter_supports_asymmetric=inverter_supports_asymmetric,
         wiring_topology=wiring_topology,
         inverter_output_per_phase=inverter_output_per_phase,
-        inverter_output_total=float(inverter_output_total)
-        if inverter_output_total is not None
-        else None,
+        inverter_output_total=_f(inverter_output_total),
         net_grid_power=float(net_grid_power),
         excess_export_threshold=excess_threshold,
         allow_grid_charging=allow_grid_charging,
@@ -1558,7 +1542,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         site,
         ctrl_consumption_pv,
         ctrl_export_pv,
-        float(battery_power_ctrl) if battery_power_ctrl is not None else None,
+        _f(battery_power_ctrl),
         # Its phases come from the DIRECTIONAL smoothers, but the draw it
         # subtracts is the same smoothed term the site view used - one value,
         # so the two views cannot disagree about what our loads draw.
