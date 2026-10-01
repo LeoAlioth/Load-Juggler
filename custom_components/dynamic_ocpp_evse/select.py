@@ -63,10 +63,7 @@ class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
     }
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_name = f"{name} Operating Mode"
-        self._attr_unique_id = f"{entity_id}_operating_mode"
+        self._init_entity(hass, config_entry, f"{name} Operating Mode", f"{entity_id}_operating_mode")
 
         self._device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         modes, default = modes_for(self._device_type)
@@ -119,10 +116,7 @@ class LoadJugglerDistributionModeSelect(HubEntityMixin, SelectEntity, RestoreEnt
     _data_key = "distribution_mode"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_name = f"{name} Distribution Mode"
-        self._attr_unique_id = f"{entity_id}_distribution_mode"
+        self._init_entity(hass, config_entry, f"{name} Distribution Mode", f"{entity_id}_distribution_mode")
         self._attr_options = DISTRIBUTION_MODES
         self._attr_current_option = DEFAULT_DISTRIBUTION_MODE
 

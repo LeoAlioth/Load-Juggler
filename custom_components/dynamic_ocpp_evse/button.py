@@ -43,10 +43,7 @@ class ResetButton(LoadEntityMixin, ButtonEntity):
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_name = f"{name} Reset OCPP"
-        self._attr_unique_id = f"{entity_id}_reset_button"
+        self._init_entity(hass, config_entry, f"{name} Reset OCPP", f"{entity_id}_reset_button")
         self._attr_icon = "mdi:restart"
 
     async def async_press(self) -> None:
