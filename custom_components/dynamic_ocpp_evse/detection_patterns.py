@@ -1,0 +1,186 @@
+"""Auto-detection patterns for grid CTs and plug monitors.
+
+**GRID_CT**: per-brand entries in detection priority order, each a
+``patterns`` dict with keys phase_a / phase_b / phase_c and the ``unit`` the
+entities publish. Tried in order (watts first, see ``_power_first``) - the
+first complete 3-phase match wins.
+
+**PLUG_POWER_MONITOR**: a single ``pattern`` regex per entry. First match wins.
+
+To add a brand, add its entries to GRID_CT at its priority, its name first.
+"""
+
+GRID_CT = [
+    # SolarEdge - the SolarEdge Modbus Multi integration. Meter entities carry
+    # an 'm' prefix (m1_ac_current_a), the inverter's an 'i' prefix.
+    {
+        "name": "SolarEdge",
+        "patterns": {
+            "phase_a": r'sensor\..*m.*ac_current_a.*',
+            "phase_b": r'sensor\..*m.*ac_current_b.*',
+            "phase_c": r'sensor\..*m.*ac_current_c.*',
+        },
+        "unit": "A",
+    },
+    # Solarman / Deye - Deye, Sunsynk and others on the Solarman data logger;
+    # names come from the integration's inverter definition file. The CT
+    # POWER entities are signed (negative while exporting); the CT CURRENT
+    # entities of the same name are magnitude-only, so picking those makes
+    # export invisible - no Excess mode, and exported power counted as
+    # household consumption. Power first, current only as a fallback for
+    # definitions that don't publish it.
+    {
+        "name": "Solarman/Deye - external CTs (power)",
+        "patterns": {
+            "phase_a": r'sensor\..*_external_ct1_power.*',
+            "phase_b": r'sensor\..*_external_ct2_power.*',
+            "phase_c": r'sensor\..*_external_ct3_power.*',
+        },
+        "unit": "W",
+    },
+    {
+        "name": "Solarman/Deye - internal CTs (power)",
+        "patterns": {
+            "phase_a": r'sensor\..*_internal_ct1_power.*',
+            "phase_b": r'sensor\..*_internal_ct2_power.*',
+            "phase_c": r'sensor\..*_internal_ct3_power.*',
+        },
+        "unit": "W",
+    },
+    # "Grid L1 Power" in ha-solarman's deye_p3 / deye_hybrid definitions.
+    # Anchored on the power suffix: unanchored, and sorted first as a watts
+    # entry, it matched any "grid_l1" reading - sensor.victron_grid_l1_voltage
+    # on a Victron, sensor.sofar_voltage_grid_l1 on a Sofar.
+    {
+        "name": "Solarman/Deye - grid power (individual phases)",
+        "patterns": {
+            "phase_a": r'sensor\..*_grid_l1_power$',
+            "phase_b": r'sensor\..*_grid_l2_power$',
+            "phase_c": r'sensor\..*_grid_l3_power$',
+        },
+        "unit": "W",
+    },
+    {
+        "name": "Solarman/Deye - external CTs (current)",
+        "patterns": {
+            "phase_a": r'sensor\..*_external_ct1_current.*',
+            "phase_b": r'sensor\..*_external_ct2_current.*',
+            "phase_c": r'sensor\..*_external_ct3_current.*',
+        },
+        "unit": "A",
+    },
+    {
+        "name": "Solarman/Deye - internal CTs (current)",
+        "patterns": {
+            "phase_a": r'sensor\..*_internal_ct1_current.*',
+            "phase_b": r'sensor\..*_internal_ct2_current.*',
+            "phase_c": r'sensor\..*_internal_ct3_current.*',
+        },
+        "unit": "A",
+    },
+    # Fronius - HA core, Fronius Solar API; a SmartMeter is required for
+    # per-phase grid readings.
+    {
+        "name": "Fronius SmartMeter",
+        "patterns": {
+            "phase_a": r'sensor\..*_current_ac_phase_1$',
+            "phase_b": r'sensor\..*_current_ac_phase_2$',
+            "phase_c": r'sensor\..*_current_ac_phase_3$',
+        },
+        "unit": "A",
+    },
+    # Huawei Solar - wlcrs/huawei_solar over Modbus TCP; a power meter is
+    # required for per-phase grid readings.
+    {
+        "name": "Huawei - power meter",
+        "patterns": {
+            "phase_a": r'sensor\..*power_meter_phase_a_current$',
+            "phase_b": r'sensor\..*power_meter_phase_b_current$',
+            "phase_c": r'sensor\..*power_meter_phase_c_current$',
+        },
+        "unit": "A",
+    },
+    # Enphase Envoy - HA core, local gateway; per-phase sensors are disabled
+    # by default and need consumption CTs. The NET reading is what crosses
+    # the grid connection, signed; "current_power_consumption_l1" beside it is
+    # what the house draws, never negative. Core names the phases l1..l3.
+    {
+        "name": "Enphase Envoy - net consumption per phase",
+        "patterns": {
+            "phase_a": r'sensor\.envoy.*_current_net_power_consumption_l1$',
+            "phase_b": r'sensor\.envoy.*_current_net_power_consumption_l2$',
+            "phase_c": r'sensor\.envoy.*_current_net_power_consumption_l3$',
+        },
+        "unit": "W",
+    },
+    # Victron - sfstar/hass-victron over Modbus TCP (Cerbo GX / Venus GX).
+    {
+        "name": "Victron",
+        "patterns": {
+            "phase_a": r'sensor\..*_grid_l1_current$',
+            "phase_b": r'sensor\..*_grid_l2_current$',
+            "phase_c": r'sensor\..*_grid_l3_current$',
+        },
+        "unit": "A",
+    },
+    # Sofar Solar - on the Solarman integration, OEM platforms included
+    # (Turbo Energy, ...).
+    {
+        "name": "Sofar - grid current",
+        "patterns": {
+            "phase_a": r'sensor\..*_current_grid_l1$',
+            "phase_b": r'sensor\..*_current_grid_l2$',
+            "phase_c": r'sensor\..*_current_grid_l3$',
+        },
+        "unit": "A",
+    },
+    # Sungrow - mkaiser/Sungrow-SHx-Inverter-Modbus-Home-Assistant (SH hybrid
+    # series), per-phase grid readings from its meter.
+    {
+        "name": "Sungrow - meter current",
+        "patterns": {
+            "phase_a": r'sensor\..*meter_phase_a_current$',
+            "phase_b": r'sensor\..*meter_phase_b_current$',
+            "phase_c": r'sensor\..*meter_phase_c_current$',
+        },
+        "unit": "A",
+    },
+]
+
+# Smart plug / smart load power monitoring (typically in watts).
+PLUG_POWER_MONITOR = [
+    # Shelly plugs (shelly integration)
+    {"name": "Shelly Plug", "pattern": r'sensor\.shelly.*plug.*power$'},
+    {"name": "Shelly 1PM", "pattern": r'sensor\.shelly.*1pm.*power$'},
+    {"name": "Shelly PM Mini", "pattern": r'sensor\.shelly.*pm.*mini.*power$'},
+    # Sonoff plugs (eWeLink / SonoffLAN integration)
+    {"name": "Sonoff Plug", "pattern": r'sensor\.sonoff.*(?:pow|plug|s[234]0).*power$'},
+    # Tasmota plugs (tasmota integration)
+    {"name": "Tasmota Power", "pattern": r'sensor\.tasmota.*power$'},
+    # TP-Link Kasa plugs
+    {"name": "TP-Link Kasa", "pattern": r'sensor\..*kasa.*(?:current_consumption|power)$'},
+    # Tuya smart plugs
+    {"name": "Tuya Plug", "pattern": r'sensor\..*tuya.*plug.*(?:power|current_consumption)$'},
+    # Generic - match entity names with "plug" + "power" (broad fallback)
+    {"name": "Generic (plug power)", "pattern": r'sensor\..*plug.*power$'},
+]
+
+
+def _power_first(pattern_sets: list) -> list:
+    """Order watt-based pattern sets ahead of amp-based ones.
+
+    A grid CT's POWER entity is signed - negative while exporting - but the
+    CURRENT entity from the same meter is very often magnitude-only. Picking
+    the latter makes export structurally invisible: the export term is always
+    zero, so grid-side Excess can never trigger and exported power is counted
+    as household consumption. Neither is detectable at config time, which is
+    why the preference belongs here rather than in a warning.
+
+    A stable sort, so brand priority still decides within each group and a
+    current-only meter is still detected - just after every power option has
+    been ruled out.
+    """
+    return sorted(pattern_sets, key=lambda p: 0 if p.get("unit") == "W" else 1)
+
+
+PHASE_PATTERNS = _power_first(GRID_CT)
