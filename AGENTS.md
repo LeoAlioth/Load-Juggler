@@ -20,18 +20,14 @@ Load Juggler is a Home Assistant custom component for intelligent load managemen
 
 **Backwards compatibility** - stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 5); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API - keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
 
-**Bug tracking**: Open issues live in `dev/ISSUES.md`. Claude picks them up automatically at the start of each session.
-
 **Improvement Ideas** `dev/IMPROVEMENTS.md` List of ideas for future imporovements and changes. Developer will prompt Claude to discuss and refine them.
 
-**TODOs** Keep track of TODOs as an ordered numbered list with checkmarks in `dev/TODO.md`. Before and after making code changes, make sure that the TODO is up to date. Mark steps completed as soon as they are done. Split TODOs into 4 parts:
+**TODOs** Keep track of TODOs as a checkbox list in `dev/TODO.md`. Before and after making code changes, make sure that the TODO is up to date. Completed items are removed - history lives in `git log` and `RELEASE_NOTES.md`. Two parts:
 
-- **Completed**: Short one-liners (title only, no implementation details). Periodically consolidate related items and remove entries that are no longer useful context.
-- **In Progress**: Clearly defined tasks to finish before reaching out to the developer. Include enough detail to implement without ambiguity.
-- **Backlog**: Upcoming work. More general - make more detailed when transitioning to In Progress.
+- **Backlog**: Upcoming work.
 - **Other**: Non-code tasks (e.g., icon submissions, external PRs).
 
-Each In Progress and Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bugs are prioritized over features.
+Each Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bugs are prioritized over features.
 
 ## Architecture
 
@@ -274,7 +270,7 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 3. **Battery priority**: Battery charges BEFORE EVs when SOC < target (Standard mode being the exception)
 4. **Minimum current**: Loads need >= min_current or get 0 (can't run below minimum)
 5. **Phase assignment defaults**: Don't default to "A" - only set when explicitly specified
-6. **Legacy code**: This is version 2.0.0 - legacy compatibility should be removed as users are expected to reconfigure the integration
+6. **Legacy code**: legacy compatibility should be removed as users are expected to reconfigure the integration
 7. **Grid CT consumption includes load draws**: Grid current sensors measure TOTAL site import, which includes managed-load power. `engine/hub_calculation.py` (`_apply_feedback_loop()`) subtracts each load's l1/l2/l3_current from `site.consumption` before calling the engine (step 0). Without this, the engine double-counts load power as both "consumption" and "load demand", leading to under-allocation or false pauses. Hub sensor display values intentionally show the raw (unadjusted) grid readings.
 
 ## Testing and Debugging
@@ -356,16 +352,6 @@ pytest run as everything else. The one local way to run it is the uv venv in `de
   device pickers on both edit paths (create wizard and options charger page), and the runtime
   connector-status resolution
 - `test_sensor_update.py` - Sensor initialization, update cycle, OCPP calls, charge pause, profile formats
-
-### Linting and Type Checking
-
-```bash
-pip install -r requirements_dev.txt
-black custom_components/dynamic_ocpp_evse
-flake8 custom_components/dynamic_ocpp_evse
-pylint custom_components/dynamic_ocpp_evse
-mypy custom_components/dynamic_ocpp_evse
-```
 
 ### Debugging
 

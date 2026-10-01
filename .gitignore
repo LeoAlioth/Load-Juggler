@@ -8,3 +8,4 @@ dev/debug.log
 dev/tests/debug.log
 .github/instructions/Context.instructions.md
 /.venv
+.vscode/

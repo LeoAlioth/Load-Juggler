@@ -72,6 +72,7 @@ contains a `scenarios:` list with inputs and expected targets for loads.
 | `test_sensor_update.py` | Sensor init, update cycle, OCPP calls, charge pause, profiles |
 | `test_power_station_ha.py` | Power station builder (bounds, managed draw, status) and command module (what is written where) |
 | `conftest.py` | Shared fixtures (`mock_hub_entry`, `mock_charger_entry`, `mock_setup`) |
+| `closed_loop.py` | The closed-loop rigs the permit tests share: `close_loop` and `evse_entry` (site cycle + permit pipeline against a plant), `clocked` (the whole hub cycle on a fake monotonic clock) |
 
 ## Unit test files
 
