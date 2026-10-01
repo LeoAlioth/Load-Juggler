@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from homeassistant.config_entries import ConfigEntry
 
 from .const import (
@@ -37,6 +39,8 @@ from .const import (
     INVERTER_FEATURE_BATTERY_CONTROL,
     INVERTER_FEATURE_SOLAR,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def prettify_name(name: str) -> str:
@@ -114,6 +118,45 @@ def fleet_has_forecast_sources(hass, hub_entry: ConfigEntry) -> bool:
         or get_entry_value(entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None)
         for entry in entries
     )
+
+
+async def ocpp_config_value(hass, ocpp_device_id: str | None, key: str):
+    """One configuration key read from an OCPP charger, or None.
+
+    Asks through the ocpp integration's ``get_configuration`` service (absent
+    when that integration is not loaded) and accepts the three response shapes
+    seen in the wild: ``{key: value}``, ``{"value": value}`` and the protocol's
+    own ``{"configurationKey": [{"key": ..., "value": ...}]}``. Any failure is
+    None - every caller treats an unknown value as "not detected".
+    """
+    if not ocpp_device_id or not hass.services.has_service("ocpp", "get_configuration"):
+        return None
+    try:
+        response = await hass.services.async_call(
+            "ocpp",
+            "get_configuration",
+            {"devid": ocpp_device_id, "ocpp_key": key},
+            blocking=True,
+            return_response=True,
+        )
+        if not isinstance(response, dict):
+            return None
+        value = response.get(key)
+        if value is None:
+            value = response.get("value")
+        if value is None:
+            value = next(
+                (
+                    item.get("value")
+                    for item in response.get("configurationKey", [])
+                    if isinstance(item, dict) and item.get("key") == key
+                ),
+                None,
+            )
+        return value
+    except Exception as err:
+        _LOGGER.debug("Could not read OCPP %s from %s: %s", key, ocpp_device_id, err)
+        return None
 
 
 def validate_charger_settings(data: dict[str, any], errors: dict[str, str]) -> None:
