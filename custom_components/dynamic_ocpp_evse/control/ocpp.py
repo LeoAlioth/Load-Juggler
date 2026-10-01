@@ -19,7 +19,7 @@ from ..const import (
     EVSE_RT_COMMANDED_LIMIT,
     EVSE_RT_COMMANDED_RATE_UNIT,
 )
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, ocpp_config_value
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,46 +27,17 @@ _LOGGER = logging.getLogger(__name__)
 
 async def detect_charge_rate_unit(sensor, ocpp_device_id: str) -> str | None:
     """Query OCPP charger for ChargingScheduleAllowedChargingRateUnit."""
-    if not ocpp_device_id:
+    value = await ocpp_config_value(
+        sensor.hass, ocpp_device_id, "ChargingScheduleAllowedChargingRateUnit"
+    )
+    if not value:
         return None
-    if not sensor.hass.services.has_service("ocpp", "get_configuration"):
-        return None
-    try:
-        response = await sensor.hass.services.async_call(
-            "ocpp",
-            "get_configuration",
-            {
-                "devid": ocpp_device_id,
-                "ocpp_key": "ChargingScheduleAllowedChargingRateUnit",
-            },
-            blocking=True,
-            return_response=True,
-        )
-        if not response or not isinstance(response, dict):
-            return None
-        value = response.get("ChargingScheduleAllowedChargingRateUnit")
-        if value is None:
-            value = response.get("value")
-        if value is None:
-            for item in response.get("configurationKey", []):
-                if (
-                    isinstance(item, dict)
-                    and item.get("key") == "ChargingScheduleAllowedChargingRateUnit"
-                ):
-                    value = item.get("value")
-                    break
-        if not value:
-            return None
-        value = str(value).strip()
-        if "Current" in value and "Power" in value:
-            return CHARGE_RATE_UNIT_AMPS
-        elif "Power" in value:
-            return CHARGE_RATE_UNIT_WATTS
-        elif "Current" in value:
-            return CHARGE_RATE_UNIT_AMPS
-        return None
-    except Exception:
-        return None
+    value = str(value).strip()
+    if "Current" in value:
+        return CHARGE_RATE_UNIT_AMPS
+    if "Power" in value:
+        return CHARGE_RATE_UNIT_WATTS
+    return None
 
 
 async def send_ocpp_command(

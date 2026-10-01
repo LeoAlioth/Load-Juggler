@@ -64,7 +64,7 @@ from ..const import (
     INVERTER_FEATURE_BATTERY,
     INVERTER_FEATURE_BATTERY_CONTROL,
 )
-from ..helpers import get_entry_value, normalize_optional_entity
+from ..helpers import get_entry_value, normalize_optional_entity, ocpp_config_value
 from ..registry import get_inverters_for_hub
 
 _LOGGER = logging.getLogger(__name__)
@@ -419,141 +419,43 @@ def _apply_priority_order(hass, devices: list, chosen: list) -> None:
 
 
 async def _detect_charge_rate_unit(hass, ocpp_device_id: str) -> str | None:
+    """The charge rate unit the charger accepts: "A", "W", or None if unknown.
+
+    From its ChargingScheduleAllowedChargingRateUnit; a charger that takes
+    both is driven in amps.
     """
-    Detect the charge rate unit supported by the OCPP charger.
-
-    Queries the charger via OCPP GetConfiguration for the
-    ChargingScheduleAllowedChargingRateUnit key.
-
-    Returns:
-        "A" for Amperes, "W" for Watts, None if detection fails.
-    """
-    if not ocpp_device_id:
-        _LOGGER.debug("No OCPP device ID - cannot detect charge rate unit")
+    value = await ocpp_config_value(
+        hass, ocpp_device_id, "ChargingScheduleAllowedChargingRateUnit"
+    )
+    if not value:
         return None
-
-    if not hass.services.has_service("ocpp", "get_configuration"):
-        _LOGGER.debug("ocpp.get_configuration service not available")
-        return None
-
-    try:
-        response = await hass.services.async_call(
-            "ocpp",
-            "get_configuration",
-            {
-                "devid": ocpp_device_id,
-                "ocpp_key": "ChargingScheduleAllowedChargingRateUnit",
-            },
-            blocking=True,
-            return_response=True,
-        )
-
-        if not response:
-            _LOGGER.debug("Empty response from ocpp.get_configuration")
-            return None
-
-        # Parse the response - handle multiple possible formats
-        value = None
-        if isinstance(response, dict):
-            # Direct key-value: {"ChargingScheduleAllowedChargingRateUnit": "Current"}
-            value = response.get("ChargingScheduleAllowedChargingRateUnit")
-            # Or nested: {"value": "Current"}
-            if value is None:
-                value = response.get("value")
-            # Or list format: {"configurationKey": [{"key": ..., "value": ...}]}
-            if value is None:
-                for item in response.get("configurationKey", []):
-                    if (
-                        isinstance(item, dict)
-                        and item.get("key")
-                        == "ChargingScheduleAllowedChargingRateUnit"
-                    ):
-                        value = item.get("value")
-                        break
-
-        if not value:
-            _LOGGER.debug(
-                "Could not parse charge rate unit from OCPP response: %s", response
-            )
-            return None
-
-        value = str(value).strip()
-        value_lower = value.lower()
-        _LOGGER.info("OCPP ChargingScheduleAllowedChargingRateUnit = %s", value)
-
-        if "current" in value_lower and "power" in value_lower:
-            return CHARGE_RATE_UNIT_AMPS  # Both supported - prefer Amps
-        elif "power" in value_lower:
-            return CHARGE_RATE_UNIT_WATTS
-        elif "current" in value_lower:
-            return CHARGE_RATE_UNIT_AMPS
-        else:
-            _LOGGER.warning(
-                "Unrecognised ChargingScheduleAllowedChargingRateUnit value: %s",
-                value,
-            )
-            return None
-
-    except Exception as e:
-        _LOGGER.warning("Could not detect charge rate unit via OCPP: %s", e)
-        return None
+    value = str(value).strip()
+    _LOGGER.info("OCPP ChargingScheduleAllowedChargingRateUnit = %s", value)
+    if "current" in value.lower():
+        return CHARGE_RATE_UNIT_AMPS
+    if "power" in value.lower():
+        return CHARGE_RATE_UNIT_WATTS
+    _LOGGER.warning(
+        "Unrecognised ChargingScheduleAllowedChargingRateUnit value: %s", value
+    )
+    return None
 
 
 async def _detect_meter_value_interval(hass, ocpp_device_id: str) -> int | None:
-    """Detect the MeterValueSampleInterval from the OCPP charger.
+    """The charger's MeterValueSampleInterval in seconds, clamped to 5-300.
 
-    This tells us how often the charger reports meter values, which is the
-    practical minimum interval for sending charging profile updates.
-
-    Returns:
-        Interval in seconds, or None if detection fails.
+    How often it reports meter values - the practical minimum interval for
+    sending charging profile updates. None if detection fails.
     """
-    if not ocpp_device_id:
+    value = await ocpp_config_value(hass, ocpp_device_id, "MeterValueSampleInterval")
+    if value is None:
         return None
-
-    if not hass.services.has_service("ocpp", "get_configuration"):
-        return None
-
     try:
-        response = await hass.services.async_call(
-            "ocpp",
-            "get_configuration",
-            {
-                "devid": ocpp_device_id,
-                "ocpp_key": "MeterValueSampleInterval",
-            },
-            blocking=True,
-            return_response=True,
-        )
-
-        if not response:
-            return None
-
-        value = None
-        if isinstance(response, dict):
-            value = response.get("MeterValueSampleInterval")
-            if value is None:
-                value = response.get("value")
-            if value is None:
-                for item in response.get("configurationKey", []):
-                    if (
-                        isinstance(item, dict)
-                        and item.get("key") == "MeterValueSampleInterval"
-                    ):
-                        value = item.get("value")
-                        break
-
-        if value is None:
-            return None
-
         interval = int(value)
-        _LOGGER.info("OCPP MeterValueSampleInterval = %ds", interval)
-        # Clamp to our supported range (5–300s)
-        return max(5, min(300, interval))
-
-    except Exception as e:
-        _LOGGER.debug("Could not detect MeterValueSampleInterval via OCPP: %s", e)
+    except (TypeError, ValueError):
         return None
+    _LOGGER.info("OCPP MeterValueSampleInterval = %ds", interval)
+    return max(5, min(300, interval))
 
 
 def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
