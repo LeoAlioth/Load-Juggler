@@ -79,6 +79,7 @@ from ..calculations.utils import (
     hold_per_phase_floor,
 )
 from ..helpers import get_entry_value
+from .. import units
 from .auto_detect import check_inversion, check_phase_mapping
 from . import fleet
 from .hub_result import _build_hub_result, _compute_forecast_advice
@@ -90,10 +91,8 @@ from .load_builders import (
 from .readers import (
     _PHASE_LABELS,
     _check_entity_availability,
-    _coerce,
     _fv,
     _fv2,
-    _read_entity,
     _read_fleet_members,
     _read_grid_phases,
     _resolve_grid_phases,
@@ -471,9 +470,7 @@ def _read_max_import_power(hass, hub_entry):
         hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None
     )
     if max_import_power_entity:
-        return _coerce(
-            _read_entity(hass, max_import_power_entity, None, unit="W"), None
-        )  # Convert kW->W if needed
+        return units.read_number(hass, max_import_power_entity, units.DOMAIN_WATTS)
     if not get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True):
         return None
     hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})

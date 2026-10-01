@@ -133,7 +133,7 @@ def _offered_reading(hass, entry):
     for key in (CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, CONF_EVSE_POWER_OFFERED_ENTITY_ID):
         entity_id = get_entry_value(entry, key, None)
         if entity_id:
-            return _coerce(_read_entity(hass, entity_id, None), None)
+            return units.read_number(hass, entity_id)
     return None
 
 
@@ -861,6 +861,11 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
     return load
 
 
+def _read_opt(hass, entry, key):
+    """The number an optional entity of ``entry`` reads, or None (unset or unusable)."""
+    return units.read_number(hass, get_entry_value(entry, key, None))
+
+
 def _station_at_its_reserve(hass, entry, load_rt, soc) -> bool:
     """Whether the station's SOC has reached the backup reserve it is holding -
     the point where it stops drawing from the wall regardless of the commanded
@@ -868,12 +873,7 @@ def _station_at_its_reserve(hass, entry, load_rt, soc) -> bool:
     the control last wrote. Unknown SOC or reserve → not at it (the old behaviour)."""
     if soc is None:
         return False
-    reserve = _coerce(
-        _read_entity(
-            hass, get_entry_value(entry, CONF_STATION_RESERVE_ENTITY_ID, None), None
-        ),
-        None,
-    )
+    reserve = _read_opt(hass, entry, CONF_STATION_RESERVE_ENTITY_ID)
     written = load_rt.get("station_reserve")
     candidates = [r for r in (reserve, written) if r is not None]
     if not candidates:
@@ -923,18 +923,8 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     max_current = max_power / denom if denom > 0 else 0
 
     speed_entity = entry.data.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID)
-    soc = _coerce(
-        _read_entity(
-            hass, get_entry_value(entry, CONF_STATION_BATTERY_LEVEL_ENTITY_ID, None), None
-        ),
-        None,
-    )
-    charge_limit = _coerce(
-        _read_entity(
-            hass, get_entry_value(entry, CONF_STATION_CHARGE_LIMIT_ENTITY_ID, None), None
-        ),
-        None,
-    )
+    soc = _read_opt(hass, entry, CONF_STATION_BATTERY_LEVEL_ENTITY_ID)
+    charge_limit = _read_opt(hass, entry, CONF_STATION_CHARGE_LIMIT_ENTITY_ID)
     if charge_limit is None:
         charge_limit = DEFAULT_STATION_CHARGE_LIMIT
 
@@ -976,9 +966,7 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     elif load_rt.get("station_charging") and not _station_at_its_reserve(
         hass, entry, load_rt, soc
     ):
-        # _read_entity parses and unit-converts; _coerce only maps the
-        # unavailable sentinel, so the raw state string must not go through it.
-        actual_draw_w = _coerce(_read_entity(hass, speed_entity, 0, unit="W"), 0) or 0
+        actual_draw_w = units.read_number(hass, speed_entity, units.DOMAIN_WATTS) or 0
     else:
         # Idle - or commanded to charge but already at the reserve, where the
         # station's own gate stops the wall draw whatever speed we wrote. Adding

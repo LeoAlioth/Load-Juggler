@@ -208,29 +208,6 @@ INVERTER_RT_SOC_FLOOR_WARNED = "soc_control_floor_warned"
 SOC_NORMAL_WARN_INTERVAL = 300.0  # s between repeats of that warning
 
 
-def _read_number(hass, entity_id, unit=None):
-    """Current numeric state of ``entity_id``, or None if unusable.
-
-    ``unit`` converts through units.py - needed for the battery voltage, whose
-    sensor may publish millivolts. Left None for the target register itself: it
-    is read in whatever unit that register uses, both to compare against the
-    value we are about to write and to be republished as the charge-control
-    sensor's own measurement.
-    """
-    if not entity_id:
-        return None
-    state = hass.states.get(entity_id)
-    if units.is_unavailable(state):
-        return None
-    try:
-        value = float(state.state)
-    except (TypeError, ValueError):
-        return None
-    if unit == units.DOMAIN_VOLTS:
-        value = units.to_volts(value, state.attributes.get("unit_of_measurement"))
-    return None if units.is_unusable_number(value) else value
-
-
 def _entity_max(hass, entity_id):
     """The target number entity's own maximum, when it advertises one."""
     state = hass.states.get(entity_id) if entity_id else None
@@ -288,7 +265,7 @@ def battery_voltage(hass, entry) -> float:
         get_entry_value(entry, CONF_BATTERY_NOMINAL_VOLTAGE, None)
         or DEFAULT_BATTERY_NOMINAL_VOLTAGE
     )
-    live = _read_number(
+    live = units.read_number(
         hass,
         get_entry_value(entry, CONF_BATTERY_VOLTAGE_ENTITY_ID, None),
         unit=units.DOMAIN_VOLTS,
@@ -567,7 +544,7 @@ async def send_inverter_charge_limit(
     # that sensor a continuous graph instead of a value that only moves when we
     # happen to write. It is a hass.states lookup, not device traffic; the actual
     # Modbus polling belongs to whoever owns the number entity.
-    current = _read_number(hass, target_entity)
+    current = units.read_number(hass, target_entity)
     inverter_rt[INVERTER_RT_REGISTER] = current
     inverter_rt[INVERTER_RT_NORMAL] = normal
 
@@ -850,7 +827,7 @@ def resolve_normal_soc(hass, entry):
     normal_entity = get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
     if not normal_entity:
         return DEFAULT_SOC_LIMIT_NORMAL
-    return _read_number(hass, normal_entity)
+    return units.read_number(hass, normal_entity)
 
 
 def desired_soc(normal, advice_soc) -> float:
@@ -892,7 +869,7 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
     # One read per target per call, before any branch - same reasoning as the
     # charge-rate register above: these are hass.states lookups, and a value
     # that only refreshed when we wrote would make the sensor a step function.
-    slots = {entity_id: _read_number(hass, entity_id) for entity_id in targets}
+    slots = {entity_id: units.read_number(hass, entity_id) for entity_id in targets}
     inverter_rt[INVERTER_RT_SOC_SLOTS] = slots
     inverter_rt[INVERTER_RT_SOC_NORMAL] = normal
     inverter_rt[INVERTER_RT_SOC_RECOMMENDED] = advice_soc

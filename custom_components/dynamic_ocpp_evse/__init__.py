@@ -518,18 +518,6 @@ async def async_setup(hass: HomeAssistant, config: dict):
             platform, DOMAIN, f"{entry.data.get(CONF_ENTITY_ID)}{suffix}"
         )
 
-    def _read_number(entry_id: str, suffix: str):
-        """The float value of one of an entry's number entities, or None."""
-        eid = _own_entity(entry_id, "number", suffix)
-        state = hass.states.get(eid) if eid else None
-        if units.is_unavailable(state):
-            return None
-        try:
-            value = float(state.state)
-        except (ValueError, TypeError):
-            return None
-        return None if units.is_unusable_number(value) else value
-
     # How each platform's entity is set: its service, and that service's value key.
     setters = {"select": ("select_option", "option"), "number": ("set_value", "value")}
 
@@ -553,7 +541,9 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 return
             if sibling is not None:
                 other_suffix, crosses = sibling
-                other = _read_number(entry_id, other_suffix)
+                other = units.read_number(
+                    hass, _own_entity(entry_id, "number", other_suffix)
+                )
                 if other is not None and crosses(value, other):
                     _LOGGER.error(
                         "%s for %s rejected: %.1fA crosses %s %.1fA",

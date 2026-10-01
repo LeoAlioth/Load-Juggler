@@ -98,17 +98,7 @@ async def check_profile_compliance(
         sensor.config_entry, CONF_EVSE_POWER_OFFERED_ENTITY_ID, None
     )
 
-    current_offered = None
-
-    if current_offered_entity_id:
-        state = sensor.hass.states.get(current_offered_entity_id)
-        if not units.is_unavailable(state):
-            try:
-                current_offered = float(state.state)
-            except (ValueError, TypeError):
-                current_offered = None
-            if units.is_unusable_number(current_offered):
-                current_offered = None
+    current_offered = units.read_number(sensor.hass, current_offered_entity_id)
 
     if current_offered is None and power_offered_entity_id:
         state = sensor.hass.states.get(power_offered_entity_id)
