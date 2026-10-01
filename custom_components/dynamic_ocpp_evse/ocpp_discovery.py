@@ -151,15 +151,20 @@ def _split_ocpp_unique_id(unique_id) -> tuple[str, int | None, str] | None:
     parts = str(unique_id).split(".")
     if len(parts) < 4 or parts[0] != OCPP_INTEGRATION_DOMAIN or parts[-1] != "sensor":
         return None
-    head = parts[1:-2]
+    head = _split_head(parts[1:-2])
+    return None if head is None else (*head, parts[-2])
+
+
+def _split_head(head: list) -> tuple[str, int | None] | None:
+    """``(charge point id, connector number)`` from the dot-split parts between
+    an ocpp unique_id's prefix and its key: ``<cpid>[.conn<n>]``, the cpid
+    possibly dotted itself. None when no id is left."""
     connector = None
     if len(head) > 1 and head[-1].startswith("conn") and head[-1][4:].isdigit():
         connector = int(head[-1][4:])
         head = head[:-1]
     charge_point_id = ".".join(head)
-    if not charge_point_id:
-        return None
-    return charge_point_id, connector, parts[-2]
+    return (charge_point_id, connector) if charge_point_id else None
 
 
 def _ocpp_metric_of(entity) -> str | None:
@@ -587,24 +592,39 @@ def ocpp_connector_status_entity(hass, entry) -> str:
     keeps working exactly as before. Resolved once per entry setup and cached
     (see _RT_STATUS_ENTITY).
     """
-    load_rt = (hass.data.get(DOMAIN, {}).get("loads") or {}).get(entry.entry_id)
-    if load_rt is not None and _RT_STATUS_ENTITY in load_rt:
-        return load_rt[_RT_STATUS_ENTITY]
+    return _resolve_cached(
+        hass,
+        entry,
+        _RT_STATUS_ENTITY,
+        _ocpp_status_entity_for,
+        "sensor.{}" + OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR,
+    )
 
-    # The canonical charge point id for classification is the one every OCPP
-    # service call uses (options-first, so an options edit is honoured); the
-    # legacy fallback keeps composing off CONF_CHARGER_ID, byte-for-byte what
-    # this used to be, so no working site can shift underneath itself.
+
+def _resolve_cached(hass, entry, cache_key, resolver, fallback) -> str:
+    """``resolver(hass, charge point id)`` for one load entry, cached in its
+    runtime bucket under ``cache_key``, else ``fallback`` (a format string)
+    filled with the legacy id.
+
+    The canonical charge point id for classification is the one every OCPP
+    service call uses (options-first, so an options edit is honoured); the
+    legacy fallback keeps composing off CONF_CHARGER_ID, byte-for-byte what
+    this used to be, so no working site can shift underneath itself.
+    """
+    load_rt = (hass.data.get(DOMAIN, {}).get("loads") or {}).get(entry.entry_id)
+    if load_rt is not None and cache_key in load_rt:
+        return load_rt[cache_key]
+
     legacy_id = entry.data.get(CONF_CHARGER_ID) or entry.data.get(CONF_ENTITY_ID)
     charge_point_id = get_entry_value(entry, CONF_OCPP_DEVICE_ID, None) or legacy_id
-    resolved = _ocpp_status_entity_for(hass, charge_point_id)
+    resolved = resolver(hass, charge_point_id)
     if resolved is None and charge_point_id != legacy_id:
-        resolved = _ocpp_status_entity_for(hass, legacy_id)
+        resolved = resolver(hass, legacy_id)
     if resolved is None:
-        resolved = f"sensor.{legacy_id}{OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR}"
+        resolved = fallback.format(legacy_id)
 
     if load_rt is not None:
-        load_rt[_RT_STATUS_ENTITY] = resolved
+        load_rt[cache_key] = resolved
     return resolved
 
 
@@ -660,15 +680,8 @@ def _split_ocpp_switch_unique_id(unique_id) -> tuple[str, int | None, str] | Non
     parts = str(unique_id).split(".")
     if len(parts) < 4 or parts[0] != "switch" or parts[1] != OCPP_INTEGRATION_DOMAIN:
         return None
-    head = parts[2:-1]
-    connector = None
-    if len(head) > 1 and head[-1].startswith("conn") and head[-1][4:].isdigit():
-        connector = int(head[-1][4:])
-        head = head[:-1]
-    charge_point_id = ".".join(head)
-    if not charge_point_id:
-        return None
-    return charge_point_id, connector, parts[-1]
+    head = _split_head(parts[2:-1])
+    return None if head is None else (*head, parts[-1])
 
 
 def ocpp_charge_control_entity(hass, entry) -> str:
@@ -678,18 +691,10 @@ def ocpp_charge_control_entity(hass, entry) -> str:
     resolved from the registry, with the legacy composed name kept as the
     fallback so a template-sensor site is unchanged. Nothing new is stored.
     """
-    load_rt = (hass.data.get(DOMAIN, {}).get("loads") or {}).get(entry.entry_id)
-    if load_rt is not None and _RT_CHARGE_CONTROL_ENTITY in load_rt:
-        return load_rt[_RT_CHARGE_CONTROL_ENTITY]
-
-    legacy_id = entry.data.get(CONF_CHARGER_ID) or entry.data.get(CONF_ENTITY_ID)
-    charge_point_id = get_entry_value(entry, CONF_OCPP_DEVICE_ID, None) or legacy_id
-    resolved = _ocpp_charge_control_entity_for(hass, charge_point_id)
-    if resolved is None and charge_point_id != legacy_id:
-        resolved = _ocpp_charge_control_entity_for(hass, legacy_id)
-    if resolved is None:
-        resolved = f"switch.{legacy_id}_{_OCPP_CHARGE_CONTROL_KEY}"
-
-    if load_rt is not None:
-        load_rt[_RT_CHARGE_CONTROL_ENTITY] = resolved
-    return resolved
+    return _resolve_cached(
+        hass,
+        entry,
+        _RT_CHARGE_CONTROL_ENTITY,
+        _ocpp_charge_control_entity_for,
+        "switch.{}_" + _OCPP_CHARGE_CONTROL_KEY,
+    )
