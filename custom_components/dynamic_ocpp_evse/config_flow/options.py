@@ -19,9 +19,6 @@ from ..const import (
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
-    CONF_CHARGER_L1_PHASE,
-    CONF_CHARGER_L2_PHASE,
-    CONF_CHARGER_L3_PHASE,
     CONF_LOAD_PRIORITY,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
@@ -35,23 +32,17 @@ from ..const import (
     CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_SOC_LIMIT_ENTITY_IDS,
-    CONF_STATION_MAX_CHARGE_POWER,
-    CONF_STATION_MIN_CHARGE_POWER,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
-    DEFAULT_STATION_MAX_CHARGE_POWER,
-    DEFAULT_STATION_MIN_CHARGE_POWER,
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
-    DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
     ENTRY_TYPE_GROUP,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
     FIELD_OCPP_DEVICE,
-    OCPP_INTEGRATION_DOMAIN,
     CONF_INVERTER_FEATURES,
     INVERTER_FEATURE_BATTERY,
     INVERTER_FEATURE_BATTERY_CONTROL,
@@ -77,7 +68,10 @@ from .helpers import (
     _apply_priority_order,
     _controlled_devices,
     _detect_charge_rate_unit,
+    _check_power_window,
+    _fill_hidden_legs,
     _hub_phase_count,
+    _load_options,
     _normalize_list,
     _normalize_inverter_power_caps,
     _normalize_optional_inputs,
@@ -105,6 +99,8 @@ from .schemas import (
     _build_inverter_battery_schema,
     _build_inverter_control_schema,
     _hub_section_schema,
+    _num,
+    _ocpp_device_field,
     _hub_filters_schema,
     validate_hub_filters,
     HUB_CONNECTION_KEYS,
@@ -559,27 +555,20 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         """
 
         def _schema(defaults: dict[str, Any]) -> vol.Schema:
-            fields = {
-                vol.Required(
-                    CONF_LOAD_PRIORITY,
-                    default=defaults.get(
-                        CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
-                    ),
-                ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
-            }
-            # suggested_value, not default: a default would silently re-fill the
-            # picker after the user clears it (same reason charger_info uses it).
             picked = defaults.get(FIELD_OCPP_DEVICE) or ocpp_device_for_charge_point(
                 self.hass, get_entry_value(self.config_entry, CONF_OCPP_DEVICE_ID, None)
             )
-            fields[
-                vol.Optional(
-                    FIELD_OCPP_DEVICE, description={"suggested_value": picked}
+            return vol.Schema(
+                dict(
+                    [
+                        _num(
+                            CONF_LOAD_PRIORITY, defaults, DEFAULT_LOAD_PRIORITY,
+                            1, 10, 1, None, required=True,
+                        ),
+                        _ocpp_device_field({FIELD_OCPP_DEVICE: picked}),
+                    ]
                 )
-                if picked
-                else vol.Optional(FIELD_OCPP_DEVICE)
-            ] = selector({"device": {"integration": OCPP_INTEGRATION_DOMAIN}})
-            return vol.Schema(fields)
+            )
 
         def _charge_point_hint() -> dict[str, str]:
             """The stored charge point id, named in the page text.
@@ -632,12 +621,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         hub_phases = _hub_phase_count(self.hass, self._defaults.get(CONF_HUB_ENTRY_ID))
 
         def _validate(data: dict[str, Any], errors: dict[str, str]) -> None:
-            # Auto-fill hidden phase mappings to match L1
-            l1 = data.get(CONF_CHARGER_L1_PHASE, "A")
-            if hub_phases < 2:
-                data[CONF_CHARGER_L2_PHASE] = l1
-            if hub_phases < 3:
-                data[CONF_CHARGER_L3_PHASE] = l1
+            _fill_hidden_legs(data, hub_phases)
             validate_charger_settings(data, errors)
 
         return await self._async_wizard_page(
@@ -695,14 +679,6 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_power_station(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        def _check_power_window(data: dict[str, Any], errors: dict[str, str]) -> None:
-            if data.get(
-                CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
-            ) < data.get(
-                CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
-            ):
-                errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
-
         return await self._async_edit_page(
             user_input,
             step_id="power_station",
@@ -735,55 +711,34 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                     },
                 )
 
-        # Build list of loads on this hub for multi-select
-        hub_entry_id = self.config_entry.data.get(CONF_HUB_ENTRY_ID)
-        load_options = []
-        for entry in self.hass.config_entries.async_entries(DOMAIN):
-            if (
-                entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD
-                and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry_id
-            ):
-                load_options.append(
-                    {
-                        "value": entry.entry_id,
-                        "label": entry.title,
-                    }
-                )
-
-        current_members = defaults.get(CONF_CIRCUIT_GROUP_MEMBERS, [])
-
         data_schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
-                    default=defaults.get(
-                        CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
-                        DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
+            dict(
+                [
+                    _num(
+                        CONF_CIRCUIT_GROUP_CURRENT_LIMIT, defaults,
+                        DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT, 1, 100, 1, "A",
+                        required=True,
                     ),
-                ): selector(
-                    {
-                        "number": {
-                            "min": 1,
-                            "max": 100,
-                            "step": 1,
-                            "unit_of_measurement": "A",
-                            "mode": "box",
-                        }
-                    }
-                ),
-                vol.Required(
-                    CONF_CIRCUIT_GROUP_MEMBERS,
-                    default=current_members,
-                ): selector(
-                    {
-                        "select": {
-                            "options": load_options,
-                            "multiple": True,
-                            "mode": "list",
-                        }
-                    }
-                ),
-            }
+                    (
+                        vol.Required(
+                            CONF_CIRCUIT_GROUP_MEMBERS,
+                            default=defaults.get(CONF_CIRCUIT_GROUP_MEMBERS, []),
+                        ),
+                        selector(
+                            {
+                                "select": {
+                                    "options": _load_options(
+                                        self.hass,
+                                        self.config_entry.data.get(CONF_HUB_ENTRY_ID),
+                                    ),
+                                    "multiple": True,
+                                    "mode": "list",
+                                }
+                            }
+                        ),
+                    ),
+                ]
+            )
         )
 
         return self.async_show_form(
