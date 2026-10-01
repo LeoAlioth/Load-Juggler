@@ -15,6 +15,7 @@ import logging
 import math
 import time
 from datetime import datetime, timezone
+from functools import partial
 
 from ..calculations import LoadContext, CircuitGroup
 from ..calculations.models import INACTIVE_STATUSES
@@ -62,10 +63,6 @@ from ..const import (
     DEFAULT_HEATING_ELEMENT_POWER,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_MIN_CHARGE_CURRENT,
-    DEFAULT_OPERATING_MODE_EVSE,
-    DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
-    DEFAULT_OPERATING_MODE_PLUG,
-    DEFAULT_OPERATING_MODE_POWER_STATION,
     DEFAULT_PLUG_MAX_CURRENT,
     DEFAULT_PLUG_POWER_RATING,
     DEFAULT_STATION_CHARGE_LIMIT,
@@ -413,10 +410,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     l3_phase = get_entry_value(entry, CONF_CHARGER_L3_PHASE, "C")
 
     # Resolve the per-load operating mode from runtime data.
-    mode = resolve_operating_mode(
-        DEVICE_TYPE_EVSE,
-        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_EVSE.key),
-    )
+    mode = resolve_operating_mode(DEVICE_TYPE_EVSE, load_rt.get("operating_mode"))
 
     load = LoadContext(
         load_id=entry.entry_id,
@@ -816,10 +810,7 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
         actual_draw_w = power_rating if on else 0
 
     # Resolve the per-load operating mode from runtime data.
-    mode = resolve_operating_mode(
-        DEVICE_TYPE_PLUG,
-        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_PLUG.key),
-    )
+    mode = resolve_operating_mode(DEVICE_TYPE_PLUG, load_rt.get("operating_mode"))
 
     load = LoadContext(
         load_id=entry.entry_id,
@@ -969,10 +960,7 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
         # does not have (a full station kept the Excess verdict on, 2026-09-03).
         actual_draw_w = 0
 
-    mode = resolve_operating_mode(
-        DEVICE_TYPE_POWER_STATION,
-        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_POWER_STATION.key),
-    )
+    mode = resolve_operating_mode(DEVICE_TYPE_POWER_STATION, load_rt.get("operating_mode"))
     # Storm reserve overrides the mode: filling a backup reserve only from
     # surplus is not a reserve, so it competes as a must-run load.
     if load_rt.get("station_storm_reserve"):
@@ -1111,10 +1099,7 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     # of the mode (const/hot_water_tank.py). resolve_tank_setpoint() picks
     # *which* setpoint (away/normal/boost) to aim at - the mode behavior only
     # decides how the tank competes for power, not whether it runs.
-    mode = resolve_operating_mode(
-        DEVICE_TYPE_HOT_WATER_TANK,
-        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key),
-    )
+    mode = resolve_operating_mode(DEVICE_TYPE_HOT_WATER_TANK, load_rt.get("operating_mode"))
 
     # Cold-tank promotion: a Solar Priority tank below its normal temperature is
     # bumped to the Normal urgency tier so it beats other solar-priority loads
@@ -1233,30 +1218,22 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
     else:
         loads = load_entries
 
+    builders = {
+        DEVICE_TYPE_PLUG: _build_plug_load,
+        DEVICE_TYPE_HOT_WATER_TANK: _build_hot_water_tank_load,
+        DEVICE_TYPE_POWER_STATION: _build_power_station_load,
+    }
+    # Any other type is an EVSE, the integration's original device.
+    build_evse = partial(_build_evse_load, settle_seconds=settle_seconds)
     for entry in loads:
         device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         load_entity_id = entry.data.get(CONF_ENTITY_ID, f"load_{entry.entry_id}")
         priority = get_entry_value(
             entry, CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
         )
-
-        if device_type == DEVICE_TYPE_PLUG:
-            load = _build_plug_load(
-                hass, entry, site.voltage, load_entity_id, priority
-            )
-        elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
-            load = _build_hot_water_tank_load(
-                hass, entry, site.voltage, load_entity_id, priority
-            )
-        elif device_type == DEVICE_TYPE_POWER_STATION:
-            load = _build_power_station_load(
-                hass, entry, site.voltage, load_entity_id, priority
-            )
-        else:
-            load = _build_evse_load(
-                hass, entry, site.voltage, load_entity_id, priority,
-                settle_seconds=settle_seconds,
-            )
+        load = builders.get(device_type, build_evse)(
+            hass, entry, site.voltage, load_entity_id, priority
+        )
 
         # Clamp active_phases_mask to only include phases that exist on the site
         site_phases = {
