@@ -117,34 +117,20 @@ def test_config_flow_unit_validation_matches_the_declared_contracts():
 # hub_calculation.py, which is exactly where the forgotten conversion lived.
 # Counts may only go DOWN without editing this table.
 _RAW_PARSE_BUDGET = {
-    # Our own min/max-current number entities, in our own amps.
-    "__init__.py": 1,
+    # units.read_number: the one "state -> finite float" reader, converting
+    # through to_amps/to_watts/to_volts when a unit is asked for. _read_entity
+    # (engine/readers.py), the inverter and power-station controls, the station
+    # status sensor and the min/max-current services all read through it.
+    "units.py": 1,
     # _entry_sensor_value on the Overview page, which reads back this
     # integration's OWN sensors (our units by construction) for display only
     # and is unit-agnostic on purpose (also passes through status strings).
     "config_flow/pages.py": 1,
-    # The offered-current read (amps by OCPP definition) and the
-    # offered-power read, which converts through units.to_watts.
-    "control/compliance.py": 2,
-    # A shared reader: the charge-limit register read-back (same entity, same
-    # unit as what we write, by construction) and the battery-voltage read,
-    # which converts through units.to_volts right below the parse.
-    "control/inverter.py": 1,
-    # Same pattern for the station's charge-speed/reserve numbers.
-    "control/power_station.py": 1,
+    # The offered-power read, which converts through units.to_watts.
+    "control/compliance.py": 1,
     # The EVSE current-import total and power fallbacks (the latter via
     # units.to_watts), which moved here with the LoadContext builders.
     "engine/load_builders.py": 2,
-    # _read_entity (the one converting reader), which moved here with the rest
-    # of the sensor-reading layer. Was 4 when engine/hub_calculation.py still
-    # held all three: the grid staleness check used to re-parse the raw state
-    # string itself, and now reads the sentinel _read_grid_phases already
-    # resolved (ISSUES.md #31).
-    "engine/readers.py": 1,
-    # The station status sensor reading the power station's external battery
-    # SOC and charge-limit entities - both percentages, so no unit conversion
-    # applies.
-    "entities/load_sensors.py": 1,
     # RestoreEntity state restoration of values we published ourselves. Was 2
     # (one copy per mixin); the hub and load mixins now share the single
     # _apply_restored_number() reader, so the ratchet drops to 1.

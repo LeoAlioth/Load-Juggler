@@ -296,13 +296,13 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
     def _read_site_data(self):
         load_rt = self._runtime()
         speed_entity = self.config_entry.data.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID)
-        soc = _read_float(
+        soc = units.read_number(
             self.hass,
             get_entry_value(
                 self.config_entry, CONF_STATION_BATTERY_LEVEL_ENTITY_ID, None
             ),
         )
-        charge_limit = _read_float(
+        charge_limit = units.read_number(
             self.hass,
             get_entry_value(
                 self.config_entry, CONF_STATION_CHARGE_LIMIT_ENTITY_ID, None
@@ -338,20 +338,6 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
             "backup_reserve": load_rt.get("station_reserve"),
             "reserve_source": load_rt.get("station_reserve_label"),
         }
-
-
-def _read_float(hass, entity_id):
-    """Current numeric state of ``entity_id``, or None if unusable."""
-    if not entity_id:
-        return None
-    state = hass.states.get(entity_id)
-    if units.is_unavailable(state):
-        return None
-    try:
-        value = float(state.state)
-    except (TypeError, ValueError):
-        return None
-    return None if units.is_unusable_number(value) else value
 
 
 class LoadJugglerPhaseMaskSensor(LoadJugglerLoadSensor):

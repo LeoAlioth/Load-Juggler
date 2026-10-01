@@ -287,35 +287,17 @@ def _read_entity(hass, entity_id: str, default=0, unit: str = None, voltage: flo
         _UNAVAILABLE: The entity is configured but currently unavailable/unknown.
         default: The entity_id is not provided (not configured).
 
-    Conversion lives in units.py - every accepted unit is handled there, in
-    one place, so no caller has to remember a half-done conversion. So does the
-    availability predicate: ``units.is_unavailable`` is the one definition of
-    an unusable state, and ``units.is_unusable_number`` catches the readings
-    that parse but cannot be used (a "nan" state, or an Inf manufactured by the
-    conversion itself). Both resolve to the same sentinel, so a NaN sensor now
-    engages the caller's holdover and stale timeout exactly like a dead one
-    instead of feeding NaN into the arithmetic.
+    The read itself is ``units.read_number`` - conversion, the availability
+    predicate and the non-finite check in one place. Everything it rejects (a
+    dead sensor, a "nan" state, an Inf manufactured by the conversion) resolves
+    to the same sentinel, so a NaN sensor engages the caller's holdover and
+    stale timeout exactly like a dead one instead of feeding NaN into the
+    arithmetic.
     """
     if not entity_id:
         return default
-    state = hass.states.get(entity_id)
-    if units.is_unavailable(state):
-        return _UNAVAILABLE
-    try:
-        value = float(state.state)
-    except (ValueError, TypeError):
-        return _UNAVAILABLE
-
-    entity_unit = state.attributes.get("unit_of_measurement")
-    if unit == units.DOMAIN_AMPS:
-        value = units.to_amps(value, entity_unit, voltage)
-    elif unit == units.DOMAIN_WATTS:
-        value = units.to_watts(value, entity_unit, voltage)
-    elif unit == units.DOMAIN_VOLTS:
-        value = units.to_volts(value, entity_unit)
-    if units.is_unusable_number(value):
-        return _UNAVAILABLE
-    return value
+    value = units.read_number(hass, entity_id, unit, voltage)
+    return _UNAVAILABLE if value is None else value
 
 
 def _read_inverter_output(hass, entity_id, voltage):
@@ -749,9 +731,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
 
     soc_entity = get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
     power_entity = get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
-    battery_soc = (
-        _coerce(_read_entity(hass, soc_entity, None), None) if soc_entity else None
-    )
+    battery_soc = units.read_number(hass, soc_entity)
     power_key = "battery_power" if legacy else f"battery_power_{entry.entry_id}"
     raw_power = (
         _read_entity(hass, power_entity, None, unit="W") if power_entity else None
@@ -802,11 +782,10 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     soc_target = None
     if soc_target_entity:
         held = hub_runtime.setdefault("_soc_target_hold", {})
-        raw_target = _read_entity(hass, soc_target_entity, None)
-        if raw_target is _UNAVAILABLE or raw_target is None:
+        soc_target = units.read_number(hass, soc_target_entity)
+        if soc_target is None:
             soc_target = held.get(entry.entry_id)
         else:
-            soc_target = float(raw_target)
             held[entry.entry_id] = soc_target
 
     # A member with no battery entity has no battery, whatever its options
