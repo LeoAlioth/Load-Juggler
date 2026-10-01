@@ -1,38 +1,63 @@
-name: Create Release
+name: Release
+
+# Everything that differs between Load Juggler and Load Insights is in this
+# block. The rest of the file is the same in both repositories - a diff of the
+# two must show these lines and nothing else.
+env:
+  COMPONENT: dynamic_ocpp_evse        # custom_components/<this>, whose manifest.json has the version
+  ZIP: dynamic-ocpp-evse.zip          # the release asset - hacs.json's filename
+  GH_REPO: LeoAlioth/Load-Juggler     # the GitHub repository HACS reads
+  RELEASE_NAME: Load Juggler          # releases are titled "<this> <tag>"
+  PYTHON_VERSION: "3.13"
+  TEST_CMD: python -m pip install --upgrade pip && pip install -r requirements_dev.txt && pytest dev/tests/ -v
 
 on:
   push:
     branches:
       - main          # A merge to main releases the version in manifest.json
+      - dev           # A push to dev or dev-* builds a pre-release
+      - 'dev-*'
     tags:
       - 'v*'          # Only trigger on version tags like v1.0.0, v2.1.3
       - '[0-9]*'      # Or tags starting with numbers like 1.0.0, 2.1.3
-  workflow_dispatch:  # Enables manual trigger
+  workflow_dispatch:  # Enables manual trigger - always a release, whichever branch
 
 jobs:
   release:
-    name: Create Gitea Release
+    name: Release
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      # true for a push to dev / dev-*: a pre-release. false for a merge to
+      # main, a tag push and a manual run: a release.
+      PRE: ${{ github.event_name == 'push' && github.ref_name != 'main' && !startsWith(github.ref, 'refs/tags/') }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # a pre-release's notes are the commits since the last tag
 
-      - name: Set up variables
-        id: vars
+      - name: Determine tag name
         run: |
           echo "GITHUB_REF: $GITHUB_REF"
           echo "GITHUB_REF_NAME: $GITHUB_REF_NAME"
+          echo "Pre-release: $PRE"
+          VERSION=$(jq -r '.version' "custom_components/$COMPONENT/manifest.json")
 
-          if echo "$GITHUB_REF" | grep -q "^refs/tags/"; then
+          if [ "$PRE" = "true" ]; then
+            # The manifest's version, the branch and a UTC timestamp, so every
+            # push gets a new tag: 2.2.0-dev.20260217.2112 off dev,
+            # 2.2.0-dev-glm.20260217.2112 off dev-glm.
+            TAG_NAME="${VERSION}-${GITHUB_REF_NAME}.$(date -u +"%Y%m%d.%H%M")"
+          elif echo "$GITHUB_REF" | grep -q "^refs/tags/"; then
             # Triggered by tag push - use the tag name directly
             TAG_NAME="$GITHUB_REF_NAME"
           else
             # A branch run - a merge to main, or a manual dispatch. The version
             # to release is the one in the manifest.
-            TAG_NAME=$(jq -r '.version' custom_components/dynamic_ocpp_evse/manifest.json)
+            TAG_NAME="$VERSION"
             echo "Branch run on $GITHUB_REF_NAME: version '$TAG_NAME' from manifest.json"
             # A merge to main is not by itself a release. Most of them do not
             # touch the version, and releasing again would move the tag onto a
@@ -44,7 +69,7 @@ jobs:
             if [ "$GITHUB_EVENT_NAME" = "push" ] \
                && git ls-remote --exit-code --tags origin "refs/tags/$TAG_NAME" >/dev/null 2>&1; then
               echo "$TAG_NAME is already tagged - nothing to release."
-              echo "SKIP=true" >> $GITHUB_ENV
+              echo "SKIP=true" >> "$GITHUB_ENV"
               exit 0
             fi
           fi
@@ -56,46 +81,52 @@ jobs:
           fi
 
           echo "Using tag: $TAG_NAME"
-          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+          echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_ENV"
 
       - name: Set up Python
         if: env.SKIP != 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        if: env.SKIP != 'true'
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements_dev.txt
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Run test suite
         if: env.SKIP != 'true'
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: |
-          pytest dev/tests/ -v
+        run: ${{ env.TEST_CMD }}
 
       - name: Generate release notes
         if: env.SKIP != 'true'
         run: |
-          # Extract version from tag (strip leading 'v' if present)
-          VERSION=$(echo "$TAG_NAME" | sed 's/^v//')
+          if [ "$PRE" = "true" ]; then
+            # A pre-release lists the commit messages since the last tag. A
+            # build off a branch is for trying a change, so what it wants to
+            # say is which changes it has - curated notes belong to a release.
+            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -n "$LAST_TAG" ]; then
+              echo "Changes since $LAST_TAG:" > /tmp/release_body.md
+              echo "" >> /tmp/release_body.md
+              git log "$LAST_TAG..HEAD" --pretty=format:"- %s" >> /tmp/release_body.md
+            else
+              echo "All commits:" > /tmp/release_body.md
+              echo "" >> /tmp/release_body.md
+              git log --pretty=format:"- %s" -20 >> /tmp/release_body.md
+            fi
+          else
+            # A release takes its version's section of RELEASE_NOTES.md (the
+            # tag with any leading 'v' stripped).
+            VERSION=$(echo "$TAG_NAME" | sed 's/^v//')
+            awk -v ver="$VERSION" '
+              BEGIN { found=0 }
+              /^## / {
+                if (found) exit
+                if (index($0, "## " ver) == 1) { found=1; next }
+              }
+              /^---$/ { if (found) exit }
+              found { print }
+            ' RELEASE_NOTES.md > /tmp/release_body.md
 
-          # Extract matching version section from RELEASE_NOTES.md
-          awk -v ver="$VERSION" '
-            BEGIN { found=0 }
-            /^## / {
-              if (found) exit
-              if (index($0, "## " ver) == 1) { found=1; next }
-            }
-            /^---$/ { if (found) exit }
-            found { print }
-          ' RELEASE_NOTES.md > /tmp/release_body.md
-
-          if [ ! -s /tmp/release_body.md ]; then
-            echo "No matching section found for version $VERSION in RELEASE_NOTES.md" > /tmp/release_body.md
+            if [ ! -s /tmp/release_body.md ]; then
+              echo "No matching section found for version $VERSION in RELEASE_NOTES.md" > /tmp/release_body.md
+            fi
           fi
 
           echo "--- Release body ---"
@@ -107,29 +138,67 @@ jobs:
         run: |
           # Create zip with full path for HACS (content_in_root: false)
           # HACS expects: /manifest.json
-          cd custom_components/dynamic_ocpp_evse
-          zip -r dynamic-ocpp-evse.zip .
+          cd "custom_components/$COMPONENT"
+          zip -r "$ZIP" .
 
-      - name: Create Gitea Release
+      - name: Delete this branch's previous pre-releases
+        if: env.PRE == 'true'
+        run: |
+          # dev: both the old tag format (dev-*) and the new (*-dev.*).
+          # dev-*: that branch's own tags, *-<branch>.*
+          if [ "$GITHUB_REF_NAME" = "dev" ]; then
+            PATTERN='(^dev-|.*-dev\.)'
+          else
+            ESCAPED_BRANCH=$(echo "$GITHUB_REF_NAME" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
+            PATTERN=".*-${ESCAPED_BRANCH}\."
+          fi
+          echo "Deleting the releases and tags matching: $PATTERN"
+
+          # purge NAME API TAG_PATH CURL_HEADERS... - delete every release
+          # whose tag matches PATTERN, and the tag. The pattern goes to jq as
+          # an argument: spliced into the program, jq read "\." as a bad
+          # string escape, and a dev-* branch never deleted anything.
+          purge() {
+            NAME=$1; API=$2; TAG_PATH=$3; shift 3
+            echo "Fetching $NAME releases..."
+            curl -s "$@" "$API/releases" \
+              | jq -r --arg pat "$PATTERN" '.[] | select(.tag_name | test($pat)) | "\(.id) \(.tag_name)"' \
+              | while read -r RELEASE_ID RELEASE_TAG; do
+                  if [ -n "$RELEASE_ID" ] && [ "$RELEASE_ID" != "null" ]; then
+                    echo "Deleting $NAME release: $RELEASE_TAG (ID: $RELEASE_ID)"
+                    curl -s -X DELETE "$@" "$API/releases/$RELEASE_ID"
+                    echo "Deleting $NAME tag: $RELEASE_TAG"
+                    curl -s -X DELETE "$@" "$API/$TAG_PATH/$RELEASE_TAG"
+                  fi
+                done
+          }
+
+          purge Gitea "${{ github.server_url }}/api/v1/repos/${{ github.repository }}" tags \
+            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}"
+          purge GitHub "https://api.github.com/repos/$GH_REPO" git/refs/tags \
+            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28"
+
+          echo "Cleanup complete!"
+
+      - name: Create Gitea release
         if: env.SKIP != 'true'
         run: |
           echo "Creating Gitea release for tag: $TAG_NAME"
           GITEA_API="${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
+          AUTH="Authorization: token ${{ secrets.GITEA_TOKEN }}"
 
           # Check if release already exists for this tag
-          EXISTING=$(curl -s \
-            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
-            "${GITEA_API}/releases/tags/${TAG_NAME}")
+          EXISTING=$(curl -s -H "$AUTH" "${GITEA_API}/releases/tags/${TAG_NAME}")
           EXISTING_ID=$(echo "$EXISTING" | jq -r '.id // empty')
 
           if [ -n "$EXISTING_ID" ]; then
             echo "Deleting existing Gitea release $EXISTING_ID for tag $TAG_NAME"
-            curl -s -X DELETE \
-              -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
-              "${GITEA_API}/releases/$EXISTING_ID"
+            curl -s -X DELETE -H "$AUTH" "${GITEA_API}/releases/$EXISTING_ID"
           fi
 
-          # Ensure the tag exists (manual dispatch won't have created one)
+          # Ensure the tag exists (only a tag push has created one)
           git config user.name "Gitea Actions"
           git config user.email "actions@gitea.local"
           git tag -f "$TAG_NAME"
@@ -138,9 +207,9 @@ jobs:
           # Create the release
           BODY=$(jq -Rs '.' < /tmp/release_body.md)
           RELEASE_RESPONSE=$(curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+            -H "$AUTH" \
             -H "Content-Type: application/json" \
-            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Load Juggler $TAG_NAME\", \"body\": $BODY, \"prerelease\": false, \"draft\": false}" \
+            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"$RELEASE_NAME $TAG_NAME\", \"body\": $BODY, \"prerelease\": $PRE, \"draft\": false}" \
             "${GITEA_API}/releases")
 
           echo "Gitea Release response: $RELEASE_RESPONSE"
@@ -154,43 +223,44 @@ jobs:
 
           # Upload the asset
           curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GITEA_TOKEN }}" \
+            -H "$AUTH" \
             -H "Content-Type: application/zip" \
-            --data-binary @custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip \
-            "${GITEA_API}/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
+            --data-binary "@custom_components/$COMPONENT/$ZIP" \
+            "${GITEA_API}/releases/$RELEASE_ID/assets?name=$ZIP"
 
           echo "Gitea release created successfully!"
 
-      - name: Create GitHub Release
+      - name: Create GitHub release
         if: env.SKIP != 'true'
+        env:
+          GH_TOKEN_SET: ${{ secrets.CLASSIC_TOKEN_GITHUB != '' }}
         run: |
+          if [ "$GH_TOKEN_SET" != "true" ]; then
+            echo "CLASSIC_TOKEN_GITHUB secret not set - skipping the GitHub release (HACS will not see this build)."
+            exit 0
+          fi
           echo "Creating GitHub release for tag: $TAG_NAME"
-          GH_API="https://api.github.com/repos/LeoAlioth/Load-Juggler"
+          GH_API="https://api.github.com/repos/$GH_REPO"
+          GH=(-H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}"
+              -H "Accept: application/vnd.github+json"
+              -H "X-GitHub-Api-Version: 2022-11-28")
+
+          # Wait a moment for the tag to sync to GitHub mirror
+          sleep 5
 
           # Check if release already exists for this tag
-          EXISTING=$(curl -s \
-            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "${GH_API}/releases/tags/${TAG_NAME}")
+          EXISTING=$(curl -s "${GH[@]}" "${GH_API}/releases/tags/${TAG_NAME}")
           EXISTING_ID=$(echo "$EXISTING" | jq -r '.id // empty')
 
           if [ -n "$EXISTING_ID" ]; then
             echo "Deleting existing GitHub release $EXISTING_ID for tag $TAG_NAME"
-            curl -s -X DELETE \
-              -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "${GH_API}/releases/$EXISTING_ID"
+            curl -s -X DELETE "${GH[@]}" "${GH_API}/releases/$EXISTING_ID"
           fi
 
           # Create the release
           BODY=$(jq -Rs '.' < /tmp/release_body.md)
-          RELEASE_RESPONSE=$(curl -s -X POST \
-            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"Load Juggler $TAG_NAME\", \"body\": $BODY, \"prerelease\": false, \"draft\": false}" \
+          RELEASE_RESPONSE=$(curl -s -X POST "${GH[@]}" \
+            -d "{\"tag_name\": \"$TAG_NAME\", \"name\": \"$RELEASE_NAME $TAG_NAME\", \"body\": $BODY, \"prerelease\": $PRE, \"draft\": false}" \
             "${GH_API}/releases")
 
           echo "GitHub Release response: $RELEASE_RESPONSE"
@@ -203,13 +273,10 @@ jobs:
           fi
 
           # Upload the asset to GitHub
-          curl -s -X POST \
-            -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
+          curl -s -X POST "${GH[@]}" \
             -H "Content-Type: application/zip" \
-            --data-binary @custom_components/dynamic_ocpp_evse/dynamic-ocpp-evse.zip \
-            "https://uploads.github.com/repos/LeoAlioth/Load-Juggler/releases/$RELEASE_ID/assets?name=dynamic-ocpp-evse.zip"
+            --data-binary "@custom_components/$COMPONENT/$ZIP" \
+            "https://uploads.github.com/repos/$GH_REPO/releases/$RELEASE_ID/assets?name=$ZIP"
 
           echo "GitHub release created successfully!"
 
@@ -217,7 +284,8 @@ jobs:
         if: env.SKIP != 'true'
         # Optional - skipped unless a webhook is configured. Fires a webhook per
         # instance so HACS downloads this exact tag instead of waiting for its own
-        # update check. See dev/HA_AUTO_UPDATE.md for the receiving automation.
+        # update check. See Load Juggler's dev/HA_AUTO_UPDATE.md for the receiving
+        # automation.
         #
         # HA_WEBHOOK_URLS holds one URL per line (or space-separated) so several
         # test systems can be notified; HA_WEBHOOK_URL is still honoured for a
