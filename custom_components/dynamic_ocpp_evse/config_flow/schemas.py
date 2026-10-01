@@ -230,79 +230,79 @@ def _entity_ids_for(
     return result
 
 
-def _optional_entity_field(key: str, default_val):
-    """Create vol.Optional with suggested_value so the user can truly clear it.
+def _optional_entity_field(key: str, defaults: dict):
+    """vol.Optional with the stored value as suggested_value, so the user can
+    truly clear it.
 
-    Using suggested_value instead of default lets the entity selector
-    be cleared with X - vol.Optional(default=...) would silently
-    re-fill the default on clear.
+    Using suggested_value instead of default lets the selector be cleared
+    with X - vol.Optional(default=...) would silently re-fill the default on
+    clear.
     """
-    val = normalize_optional_entity(default_val)
+    val = normalize_optional_entity(defaults.get(key))
     if val:
         return vol.Optional(key, description={"suggested_value": val})
     return vol.Optional(key)
 
 
-def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
-    """Build grid/electrical fields as a reusable list."""
-    defaults = defaults or {}
-    entity_sel_current_power = selector(
+def _entity_sel(hass, device_classes: set, valid_units, domains=None):
+    """An entity selector offering what _entity_ids_for picks."""
+    return selector(
         {
             "entity": {
                 "include_entities": _entity_ids_for(
-                    hass,
-                    {None, "current", "power"},
-                    valid_units=_CURRENT_UNITS | _POWER_UNITS,
+                    hass, device_classes, valid_units, domains
                 ),
             }
         }
     )
 
+
+def _num(key, defaults, default, lo, hi, step, unit, mode="box", required=False):
+    """One number field: ``defaults.get(key, default)`` in a lo..hi selector.
+
+    ``unit`` None leaves the selector unitless; ``required`` makes the marker
+    vol.Required (vol.Optional otherwise).
+    """
+    number = {"min": lo, "max": hi, "step": step, "mode": mode}
+    if unit is not None:
+        number["unit_of_measurement"] = unit
+    marker = vol.Required if required else vol.Optional
+    return marker(key, default=defaults.get(key, default)), selector({"number": number})
+
+
+def _identity_fields(defaults: dict, name: str, entity_id: str) -> list[tuple]:
+    """The name and entity-id prefix every create page opens with."""
     return [
+        (vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, name)), str),
         (
-            _optional_entity_field(
+            vol.Required(CONF_ENTITY_ID, default=defaults.get(CONF_ENTITY_ID, entity_id)),
+            str,
+        ),
+    ]
+
+
+def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
+    """Build grid/electrical fields as a reusable list."""
+    defaults = defaults or {}
+    current_power = _entity_sel(
+        hass, {None, "current", "power"}, _CURRENT_UNITS | _POWER_UNITS
+    )
+    return [
+        *(
+            (_optional_entity_field(key, defaults), current_power)
+            for key in (
                 CONF_PHASE_A_CURRENT_ENTITY_ID,
-                defaults.get(CONF_PHASE_A_CURRENT_ENTITY_ID),
-            ),
-            entity_sel_current_power,
-        ),
-        (
-            _optional_entity_field(
                 CONF_PHASE_B_CURRENT_ENTITY_ID,
-                defaults.get(CONF_PHASE_B_CURRENT_ENTITY_ID),
-            ),
-            entity_sel_current_power,
-        ),
-        (
-            _optional_entity_field(
                 CONF_PHASE_C_CURRENT_ENTITY_ID,
-                defaults.get(CONF_PHASE_C_CURRENT_ENTITY_ID),
-            ),
-            entity_sel_current_power,
+            )
+        ),
+        _num(
+            CONF_MAIN_BREAKER_RATING, defaults, DEFAULT_MAIN_BREAKER_RATING,
+            1, 200, 1, "A", required=True,
         ),
         (
             vol.Required(
-                CONF_MAIN_BREAKER_RATING,
-                default=defaults.get(
-                    CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 1,
-                        "max": 200,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "A",
-                    }
-                }
-            ),
-        ),
-        (
-            vol.Required(
-                CONF_INVERT_PHASES,
-                default=defaults.get(CONF_INVERT_PHASES, False),
+                CONF_INVERT_PHASES, default=defaults.get(CONF_INVERT_PHASES, False)
             ),
             bool,
         ),
@@ -314,122 +314,31 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
             bool,
         ),
         (
-            _optional_entity_field(
-                CONF_MAX_IMPORT_POWER_ENTITY_ID,
-                defaults.get(CONF_MAX_IMPORT_POWER_ENTITY_ID),
-            ),
-            selector(
-                {
-                    "entity": {
-                        "include_entities": _entity_ids_for(
-                            hass,
-                            {None, "power"},
-                            valid_units=_POWER_UNITS,
-                            domains=["sensor", "input_number"],
-                        ),
-                    }
-                }
+            _optional_entity_field(CONF_MAX_IMPORT_POWER_ENTITY_ID, defaults),
+            _entity_sel(
+                hass, {None, "power"}, _POWER_UNITS, ["sensor", "input_number"]
             ),
         ),
-        (
-            vol.Required(
-                CONF_PHASE_VOLTAGE,
-                default=defaults.get(CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 100,
-                        "max": 400,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "V",
-                    }
-                }
-            ),
+        _num(
+            CONF_PHASE_VOLTAGE, defaults, DEFAULT_PHASE_VOLTAGE,
+            100, 400, 1, "V", required=True,
         ),
-        (
-            # The ONE export number: the site's physical/contract ceiling.
-            # The Excess trigger derives from it (limit − trigger margin)
-            # and the PV clipping forecast integrates above it. 0 = no
-            # limit: grid-side Excess never triggers, forecast off.
-            vol.Optional(
-                CONF_GRID_EXPORT_LIMIT,
-                default=defaults.get(
-                    CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 50000,
-                        "step": 100,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
+        # The ONE export number: the site's physical/contract ceiling.
+        # The Excess trigger derives from it (limit − trigger margin)
+        # and the PV clipping forecast integrates above it. 0 = no
+        # limit: grid-side Excess never triggers, forecast off.
+        _num(CONF_GRID_EXPORT_LIMIT, defaults, DEFAULT_GRID_EXPORT_LIMIT, 0, 50000, 100, "W"),
+        _num(
+            CONF_EXCESS_TRIGGER_MARGIN, defaults, DEFAULT_EXCESS_TRIGGER_MARGIN,
+            0, 5000, 50, "W",
         ),
-        (
-            vol.Optional(
-                CONF_EXCESS_TRIGGER_MARGIN,
-                default=defaults.get(
-                    CONF_EXCESS_TRIGGER_MARGIN, DEFAULT_EXCESS_TRIGGER_MARGIN
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 5000,
-                        "step": 50,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
-        ),
-        (
-            # The release band, not the trigger point: once Excess is
-            # engaged the surplus may fall this far below the trigger
-            # before an engaged load lets go.
-            vol.Optional(
-                CONF_EXCESS_HYSTERESIS,
-                default=defaults.get(
-                    CONF_EXCESS_HYSTERESIS, DEFAULT_EXCESS_HYSTERESIS
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 5000,
-                        "step": 50,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
-        ),
-        (
-            vol.Optional(
-                CONF_SITE_UPDATE_FREQUENCY,
-                default=defaults.get(
-                    CONF_SITE_UPDATE_FREQUENCY, DEFAULT_SITE_UPDATE_FREQUENCY
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 1,
-                        "max": 60,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "s",
-                    }
-                }
-            ),
+        # The release band, not the trigger point: once Excess is
+        # engaged the surplus may fall this far below the trigger
+        # before an engaged load lets go.
+        _num(CONF_EXCESS_HYSTERESIS, defaults, DEFAULT_EXCESS_HYSTERESIS, 0, 5000, 50, "W"),
+        _num(
+            CONF_SITE_UPDATE_FREQUENCY, defaults, DEFAULT_SITE_UPDATE_FREQUENCY,
+            1, 60, 1, "s",
         ),
         (
             vol.Required(
@@ -438,85 +347,22 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
             ),
             bool,
         ),
-        (
-            vol.Required(
-                CONF_SOLAR_GRACE_PERIOD,
-                default=defaults.get(
-                    CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 30,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "min",
-                    }
-                }
-            ),
+        _num(
+            CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
+            0, 30, 1, "min", required=True,
         ),
         # --- Site policy ---
         # Hardware (inverters, batteries, PV arrays and their forecasts)
         # lives on the inverter entries; what stays here is site-wide
         # policy applied to whatever fleet those entries form.
-        (
-            vol.Optional(
-                CONF_BATTERY_SOC_HYSTERESIS,
-                default=defaults.get(
-                    CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 1,
-                        "max": 10,
-                        "step": 1,
-                        "mode": "slider",
-                        "unit_of_measurement": "%",
-                    }
-                }
-            ),
+        _num(
+            CONF_BATTERY_SOC_HYSTERESIS, defaults, DEFAULT_BATTERY_SOC_HYSTERESIS,
+            1, 10, 1, "%", mode="slider",
         ),
-        (
-            vol.Optional(
-                CONF_BASE_CONSUMPTION,
-                default=defaults.get(
-                    CONF_BASE_CONSUMPTION, DEFAULT_BASE_CONSUMPTION
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 10000,
-                        "step": 50,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
-        ),
-        (
-            vol.Optional(
-                CONF_FORECAST_SOC_FLOOR,
-                default=defaults.get(
-                    CONF_FORECAST_SOC_FLOOR, DEFAULT_FORECAST_SOC_FLOOR
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 90,
-                        "step": 1,
-                        "mode": "slider",
-                        "unit_of_measurement": "%",
-                    }
-                }
-            ),
+        _num(CONF_BASE_CONSUMPTION, defaults, DEFAULT_BASE_CONSUMPTION, 0, 10000, 50, "W"),
+        _num(
+            CONF_FORECAST_SOC_FLOOR, defaults, DEFAULT_FORECAST_SOC_FLOOR,
+            0, 90, 1, "%", mode="slider",
         ),
     ]
 
@@ -533,20 +379,8 @@ def _build_inverter_solar_schema(hass, defaults: dict | None = None) -> list[tup
     defaults = defaults or {}
     return [
         (
-            _optional_entity_field(
-                CONF_SOLAR_PRODUCTION_ENTITY_ID,
-                defaults.get(CONF_SOLAR_PRODUCTION_ENTITY_ID),
-            ),
-            selector(
-                {
-                    "entity": {
-                        "include_entities": _entity_ids_for(
-                            hass,
-                            {None, "power"}, valid_units=_POWER_UNITS
-                        ),
-                    }
-                }
-            ),
+            _optional_entity_field(CONF_SOLAR_PRODUCTION_ENTITY_ID, defaults),
+            _entity_sel(hass, {None, "power"}, _POWER_UNITS),
         ),
         (
             # One forecast DEVICE per PV array - the Open-Meteo Solar
@@ -577,17 +411,18 @@ def _build_inverter_solar_schema(hass, defaults: dict | None = None) -> list[tup
 def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple]:
     """Build inverter configuration fields as a reusable list."""
     defaults = defaults or {}
-    entity_sel_current_power = selector(
-        {
-            "entity": {
-                "include_entities": _entity_ids_for(
-                    hass,
-                    {None, "current", "power"},
-                    valid_units=_CURRENT_UNITS | _POWER_UNITS,
-                ),
-            }
-        }
+    current_power = _entity_sel(
+        hass, {None, "current", "power"}, _CURRENT_UNITS | _POWER_UNITS
     )
+    # "0 means not configured" is STORED as None (_normalize_inverter_power_caps),
+    # and dict.get's fallback does not cover a key that exists holding None -
+    # while voluptuous validates defaults, so a None default fails the
+    # NumberSelector the moment the field is left empty. `or 0` restores the
+    # None↔0 round-trip.
+    caps = {
+        key: defaults.get(key) or 0
+        for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE)
+    }
     topology_options = [
         {
             "value": WIRING_TOPOLOGY_PARALLEL,
@@ -596,47 +431,8 @@ def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple
         {"value": WIRING_TOPOLOGY_SERIES, "label": "Series (Hybrid / battery)"},
     ]
     return [
-        (
-            vol.Optional(
-                CONF_INVERTER_MAX_POWER,
-                # "0 means not configured" is STORED as None
-                # (_normalize_inverter_power_caps), and dict.get's fallback
-                # does not cover a key that exists holding None - while
-                # voluptuous validates defaults, so a None default fails
-                # the NumberSelector the moment the field is left empty.
-                # `or 0` restores the None↔0 round-trip.
-                default=defaults.get(CONF_INVERTER_MAX_POWER) or 0,
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 50000,
-                        "step": 100,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
-        ),
-        (
-            vol.Optional(
-                CONF_INVERTER_MAX_POWER_PER_PHASE,
-                # Same None↔0 round-trip as CONF_INVERTER_MAX_POWER above.
-                default=defaults.get(CONF_INVERTER_MAX_POWER_PER_PHASE) or 0,
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 20000,
-                        "step": 100,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
-        ),
+        _num(CONF_INVERTER_MAX_POWER, caps, 0, 0, 50000, 100, "W"),
+        _num(CONF_INVERTER_MAX_POWER_PER_PHASE, caps, 0, 0, 20000, 100, "W"),
         (
             vol.Required(
                 CONF_INVERTER_SUPPORTS_ASYMMETRIC,
@@ -644,26 +440,13 @@ def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple
             ),
             bool,
         ),
-        (
-            _optional_entity_field(
+        *(
+            (_optional_entity_field(key, defaults), current_power)
+            for key in (
                 CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-                defaults.get(CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
-            ),
-            entity_sel_current_power,
-        ),
-        (
-            _optional_entity_field(
                 CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-                defaults.get(CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
-            ),
-            entity_sel_current_power,
-        ),
-        (
-            _optional_entity_field(
                 CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-                defaults.get(CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
-            ),
-            entity_sel_current_power,
+            )
         ),
         (
             vol.Required(
@@ -682,115 +465,30 @@ def _build_inverter_battery_schema(hass, defaults: dict | None = None) -> list[t
     (SOC target/min sliders, hysteresis) and the hub-scoped solar
     production / forecast inputs."""
     defaults = defaults or {}
-    entity_sel_power = selector(
-        {
-            "entity": {
-                "include_entities": _entity_ids_for(
-                    hass,
-                    {None, "power"}, valid_units=_POWER_UNITS
-                ),
-            }
-        }
-    )
     return [
         (
-            _optional_entity_field(
-                CONF_BATTERY_SOC_ENTITY_ID,
-                defaults.get(CONF_BATTERY_SOC_ENTITY_ID),
-            ),
-            selector(
-                {
-                    "entity": {
-                        "include_entities": _entity_ids_for(
-                            hass,
-                            {None, "battery"}, valid_units=_SOC_UNITS
-                        ),
-                    }
-                }
-            ),
+            _optional_entity_field(CONF_BATTERY_SOC_ENTITY_ID, defaults),
+            _entity_sel(hass, {None, "battery"}, _SOC_UNITS),
         ),
         (
-            _optional_entity_field(
-                CONF_BATTERY_POWER_ENTITY_ID,
-                defaults.get(CONF_BATTERY_POWER_ENTITY_ID),
-            ),
-            entity_sel_power,
+            _optional_entity_field(CONF_BATTERY_POWER_ENTITY_ID, defaults),
+            _entity_sel(hass, {None, "power"}, _POWER_UNITS),
         ),
-        (
-            vol.Optional(
-                CONF_BATTERY_MAX_CHARGE_POWER,
-                default=defaults.get(
-                    CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 50000,
-                        "step": 100,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
+        _num(
+            CONF_BATTERY_MAX_CHARGE_POWER, defaults, DEFAULT_BATTERY_MAX_POWER,
+            0, 50000, 100, "W",
         ),
-        (
-            vol.Optional(
-                CONF_BATTERY_MAX_DISCHARGE_POWER,
-                default=defaults.get(
-                    CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 50000,
-                        "step": 100,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
+        _num(
+            CONF_BATTERY_MAX_DISCHARGE_POWER, defaults, DEFAULT_BATTERY_MAX_POWER,
+            0, 50000, 100, "W",
         ),
-        (
-            vol.Optional(
-                CONF_BATTERY_SOC_FULL,
-                default=defaults.get(
-                    CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 50,
-                        "max": 100,
-                        "step": 1,
-                        "mode": "slider",
-                        "unit_of_measurement": "%",
-                    }
-                }
-            ),
+        _num(
+            CONF_BATTERY_SOC_FULL, defaults, DEFAULT_BATTERY_SOC_FULL,
+            50, 100, 1, "%", mode="slider",
         ),
-        (
-            vol.Optional(
-                CONF_BATTERY_CAPACITY_KWH,
-                default=defaults.get(
-                    CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 1000,
-                        "step": 0.1,
-                        "mode": "box",
-                        "unit_of_measurement": "kWh",
-                    }
-                }
-            ),
+        _num(
+            CONF_BATTERY_CAPACITY_KWH, defaults, DEFAULT_BATTERY_CAPACITY_KWH,
+            0, 1000, 0.1, "kWh",
         ),
     ]
 
@@ -809,10 +507,7 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
     defaults = defaults or {}
     return [
         (
-            _optional_entity_field(
-                CONF_CHARGE_LIMIT_ENTITY_ID,
-                defaults.get(CONF_CHARGE_LIMIT_ENTITY_ID),
-            ),
+            _optional_entity_field(CONF_CHARGE_LIMIT_ENTITY_ID, defaults),
             selector({"entity": {"domain": "number"}}),
         ),
         (
@@ -838,104 +533,32 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
             ),
         ),
         (
-            _optional_entity_field(
-                CONF_BATTERY_VOLTAGE_ENTITY_ID,
-                defaults.get(CONF_BATTERY_VOLTAGE_ENTITY_ID),
-            ),
-            selector(
-                {
-                    "entity": {
-                        "include_entities": _entity_ids_for(
-                            hass,
-                            {None, "voltage"}, valid_units=_VOLTAGE_UNITS
-                        ),
-                    }
-                }
-            ),
+            _optional_entity_field(CONF_BATTERY_VOLTAGE_ENTITY_ID, defaults),
+            _entity_sel(hass, {None, "voltage"}, _VOLTAGE_UNITS),
         ),
-        (
-            vol.Optional(
-                CONF_BATTERY_NOMINAL_VOLTAGE,
-                default=defaults.get(
-                    CONF_BATTERY_NOMINAL_VOLTAGE, DEFAULT_BATTERY_NOMINAL_VOLTAGE
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 12,
-                        "max": 1000,
-                        "step": 0.1,
-                        "mode": "box",
-                        "unit_of_measurement": "V",
-                    }
-                }
-            ),
+        _num(
+            CONF_BATTERY_NOMINAL_VOLTAGE, defaults, DEFAULT_BATTERY_NOMINAL_VOLTAGE,
+            12, 1000, 0.1, "V",
         ),
-        (
-            vol.Optional(
-                CONF_CHARGE_LIMIT_NORMAL,
-                default=defaults.get(
-                    CONF_CHARGE_LIMIT_NORMAL, DEFAULT_CHARGE_LIMIT_NORMAL
-                ),
-            ),
-            selector(
-                {"number": {"min": 0, "max": 1000, "step": 1, "mode": "box"}}
-            ),
+        _num(
+            CONF_CHARGE_LIMIT_NORMAL, defaults, DEFAULT_CHARGE_LIMIT_NORMAL,
+            0, 1000, 1, None,
         ),
-        (
-            # The floor under the ENGAGED limit, in the same own-units
-            # convention as the normal above: a plain number, not an entity, so
-            # no ENTITY_UNIT_CONTRACTS entry applies. 0 is "no floor" and is
-            # exactly the behaviour before this field existed.
-            vol.Optional(
-                CONF_CHARGE_LIMIT_MINIMUM,
-                default=defaults.get(
-                    CONF_CHARGE_LIMIT_MINIMUM, DEFAULT_CHARGE_LIMIT_MINIMUM
-                ),
-            ),
-            selector(
-                {"number": {"min": 0, "max": 1000, "step": 1, "mode": "box"}}
-            ),
+        # The floor under the ENGAGED limit, in the same own-units
+        # convention as the normal above: a plain number, not an entity, so
+        # no ENTITY_UNIT_CONTRACTS entry applies. 0 is "no floor" and is
+        # exactly the behaviour before this field existed.
+        _num(
+            CONF_CHARGE_LIMIT_MINIMUM, defaults, DEFAULT_CHARGE_LIMIT_MINIMUM,
+            0, 1000, 1, None,
         ),
-        (
-            vol.Optional(
-                CONF_CHARGE_CONTROL_INTERVAL,
-                default=defaults.get(
-                    CONF_CHARGE_CONTROL_INTERVAL, DEFAULT_CHARGE_CONTROL_INTERVAL
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 30,
-                        "max": 3600,
-                        "step": 30,
-                        "mode": "box",
-                        "unit_of_measurement": "s",
-                    }
-                }
-            ),
+        _num(
+            CONF_CHARGE_CONTROL_INTERVAL, defaults, DEFAULT_CHARGE_CONTROL_INTERVAL,
+            30, 3600, 30, "s",
         ),
-        (
-            vol.Optional(
-                CONF_CHARGE_CONTROL_DEADBAND_W,
-                default=defaults.get(
-                    CONF_CHARGE_CONTROL_DEADBAND_W,
-                    DEFAULT_CHARGE_CONTROL_DEADBAND_W,
-                ),
-            ),
-            selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 2000,
-                        "step": 10,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
+        _num(
+            CONF_CHARGE_CONTROL_DEADBAND_W, defaults, DEFAULT_CHARGE_CONTROL_DEADBAND_W,
+            0, 2000, 10, "W",
         ),
         (
             # MULTI-select on purpose: on a Deye the SOC ceiling is one
@@ -969,10 +592,7 @@ def _build_inverter_control_schema(hass, defaults: dict | None = None) -> list[t
             # whatever already owns the slots keeps owning them - we only
             # ever push below it. sensor is allowed too: a template sensor
             # deriving the ceiling from a schedule is a normal way to do it.
-            _optional_entity_field(
-                CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
-                defaults.get(CONF_SOC_LIMIT_NORMAL_ENTITY_ID),
-            ),
+            _optional_entity_field(CONF_SOC_LIMIT_NORMAL_ENTITY_ID, defaults),
             selector(
                 {"entity": {"domain": ["input_number", "number", "sensor"]}}
             ),
@@ -1113,34 +733,29 @@ def _hub_filters_schema(defaults: dict | None = None) -> vol.Schema:
     either flag that as invalid or nudge it to 1.2 on an open-and-save.
     """
     defaults = defaults or {}
-
-    def dial(key, const, lo, hi, step, unit):
-        return (
-            vol.Optional(key, default=defaults.get(key, const)),
-            selector(
-                {
-                    "number": {
-                        "min": lo,
-                        "max": hi,
-                        "step": step,
-                        "mode": "box",
-                        "unit_of_measurement": unit,
-                    }
-                }
-            ),
-        )
-
     return vol.Schema(
         dict(
             [
-                dial(CONF_FILTER_INPUT_TAU_S, EMA_TAU_S, 1, 60, 0.1, "s"),
-                dial(CONF_FILTER_PERMIT_TAU_S, PERMIT_TAU_S, 1, 60, 0.1, "s"),
-                dial(CONF_FILTER_RAMP_TAU_S, RAMP_TAU_S, 1, 60, 0.1, "s"),
-                dial(CONF_FILTER_CTRL_FAST_TAU_S, CTRL_FAST_TAU_S, 0.5, 60, "any", "s"),
-                dial(CONF_FILTER_SETTLE_SECONDS, SETTLE_DRAW_SECONDS, 5, 300, 1, "s"),
-                dial(CONF_FILTER_DEAD_BAND, DEAD_BAND, 0, 5, 0.1, "A"),
-                dial(CONF_FILTER_RAMP_UP_RATE, RAMP_UP_RATE, 0.05, 5, 0.05, "A/s"),
-                dial(CONF_FILTER_RAMP_DOWN_RATE, RAMP_DOWN_RATE, 0.05, 5, 0.05, "A/s"),
+                _num(CONF_FILTER_INPUT_TAU_S, defaults, EMA_TAU_S, 1, 60, 0.1, "s"),
+                _num(CONF_FILTER_PERMIT_TAU_S, defaults, PERMIT_TAU_S, 1, 60, 0.1, "s"),
+                _num(CONF_FILTER_RAMP_TAU_S, defaults, RAMP_TAU_S, 1, 60, 0.1, "s"),
+                _num(
+                    CONF_FILTER_CTRL_FAST_TAU_S, defaults, CTRL_FAST_TAU_S,
+                    0.5, 60, "any", "s",
+                ),
+                _num(
+                    CONF_FILTER_SETTLE_SECONDS, defaults, SETTLE_DRAW_SECONDS,
+                    5, 300, 1, "s",
+                ),
+                _num(CONF_FILTER_DEAD_BAND, defaults, DEAD_BAND, 0, 5, 0.1, "A"),
+                _num(
+                    CONF_FILTER_RAMP_UP_RATE, defaults, RAMP_UP_RATE,
+                    0.05, 5, 0.05, "A/s",
+                ),
+                _num(
+                    CONF_FILTER_RAMP_DOWN_RATE, defaults, RAMP_DOWN_RATE,
+                    0.05, 5, 0.05, "A/s",
+                ),
             ]
         )
     )
@@ -1157,48 +772,40 @@ def validate_hub_filters(data: dict, errors: dict) -> None:
         errors[CONF_FILTER_CTRL_FAST_TAU_S] = "fast_filter_not_below_input"
 
 
+def _ocpp_device_field(defaults: dict) -> tuple:
+    """The OCPP device picker both charger pages offer.
+
+    A device picker rather than the free-text charge point id it replaces:
+    the flow resolves the picked device back to the charge point id AND to the
+    charger's sensor entities through the same derivation the discovery scan
+    uses, so a charger matched to the wrong OCPP device is fixed by pointing
+    at the right one instead of by typing an id nobody can check. Optional,
+    and pre-filled through suggested_value (a default would silently re-fill
+    the picker after the user clears it). Filtered to the ocpp integration,
+    so it is empty (and skippable) when that integration is not the source -
+    OCPP-shaped template sensors have no device to offer.
+    """
+    return (
+        _optional_entity_field(FIELD_OCPP_DEVICE, defaults),
+        selector({"device": {"integration": OCPP_INTEGRATION_DOMAIN}}),
+    )
+
+
 def _charger_info_schema(defaults: dict | None = None) -> vol.Schema:
     """Build schema for charger info step (name, entity ID, priority, OCPP device)."""
     defaults = defaults or {}
-
-    # Build dynamic fields based on what was detected
-    fields = {
-        vol.Required(
-            CONF_NAME,
-            default=defaults.get(CONF_NAME, ""),
-        ): str,
-        vol.Required(
-            CONF_ENTITY_ID,
-            default=defaults.get(CONF_ENTITY_ID, ""),
-        ): str,
-        vol.Required(
-            CONF_LOAD_PRIORITY,
-            default=defaults.get(CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY),
-        ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
-    }
-
-    # A device picker rather than the free-text charge point id it replaces.
-    # The flow resolves the picked device back to the charge point id AND to
-    # the charger's sensor entities through the same derivation the discovery
-    # scan uses, so a charger matched to the wrong OCPP device is fixed by
-    # pointing at the right one instead of by typing an id nobody can check.
-    # Optional and pre-filled with the discovered device: leaving it alone
-    # keeps exactly what discovery found. Filtered to the ocpp integration, so
-    # it is empty (and skippable) when that integration is not the source -
-    # OCPP-shaped template sensors have no device to offer.
-    # suggested_value, not default, for the same reason the entity fields use
-    # it: a default would silently re-fill the picker when the user clears it.
-    device_default = defaults.get(FIELD_OCPP_DEVICE)
-    device_key = (
-        vol.Optional(
-            FIELD_OCPP_DEVICE, description={"suggested_value": device_default}
+    return vol.Schema(
+        dict(
+            [
+                *_identity_fields(defaults, "", ""),
+                _num(
+                    CONF_LOAD_PRIORITY, defaults, DEFAULT_LOAD_PRIORITY,
+                    1, 10, 1, None, required=True,
+                ),
+                _ocpp_device_field(defaults),
+            ]
         )
-        if device_default
-        else vol.Optional(FIELD_OCPP_DEVICE)
     )
-    fields[device_key] = selector({"device": {"integration": OCPP_INTEGRATION_DOMAIN}})
-
-    return vol.Schema(fields)
 
 
 def _charger_current_schema(
@@ -1212,64 +819,40 @@ def _charger_current_schema(
     # One site phase per charger LEG - not a phase mask. L1/L2/L3 each land on
     # exactly one phase, so the multi-phase combinations that the load pickers
     # offer (PHASE_MASK_OPTIONS) would be meaningless here.
-    leg_phase_options = [
-        {"value": "A", "label": "Phase A"},
-        {"value": "B", "label": "Phase B"},
-        {"value": "C", "label": "Phase C"},
-    ]
-    fields = {
-        vol.Required(
-            CONF_EVSE_MINIMUM_CHARGE_CURRENT,
-            default=defaults.get(
-                CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT
-            ),
-        ): selector(
-            {
-                "number": {
-                    "min": 6,
-                    "max": 80,
-                    "step": 1,
-                    "mode": "box",
-                    "unit_of_measurement": "A",
-                }
+    leg_phase = selector(
+        {
+            "select": {
+                "options": [
+                    {"value": phase, "label": f"Phase {phase}"}
+                    for phase in ("A", "B", "C")
+                ],
+                "mode": "dropdown",
             }
-        ),
-        vol.Required(
-            CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
-            default=defaults.get(
-                CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT
-            ),
-        ): selector(
-            {
-                "number": {
-                    "min": 6,
-                    "max": 80,
-                    "step": 1,
-                    "mode": "box",
-                    "unit_of_measurement": "A",
-                }
-            }
-        ),
-        vol.Required(
-            CONF_CHARGER_L1_PHASE,
-            default=defaults.get(CONF_CHARGER_L1_PHASE, "A"),
-        ): selector({"select": {"options": leg_phase_options, "mode": "dropdown"}}),
-    }
-    if hub_phases >= 2:
-        fields[
-            vol.Required(
-                CONF_CHARGER_L2_PHASE,
-                default=defaults.get(CONF_CHARGER_L2_PHASE, "B"),
-            )
-        ] = selector({"select": {"options": leg_phase_options, "mode": "dropdown"}})
-    if hub_phases >= 3:
-        fields[
-            vol.Required(
-                CONF_CHARGER_L3_PHASE,
-                default=defaults.get(CONF_CHARGER_L3_PHASE, "C"),
-            )
-        ] = selector({"select": {"options": leg_phase_options, "mode": "dropdown"}})
-    return vol.Schema(fields)
+        }
+    )
+    legs = (
+        (CONF_CHARGER_L1_PHASE, "A"),
+        (CONF_CHARGER_L2_PHASE, "B"),
+        (CONF_CHARGER_L3_PHASE, "C"),
+    )
+    return vol.Schema(
+        dict(
+            [
+                _num(
+                    CONF_EVSE_MINIMUM_CHARGE_CURRENT, defaults, DEFAULT_MIN_CHARGE_CURRENT,
+                    6, 80, 1, "A", required=True,
+                ),
+                _num(
+                    CONF_EVSE_MAXIMUM_CHARGE_CURRENT, defaults, DEFAULT_MAX_CHARGE_CURRENT,
+                    6, 80, 1, "A", required=True,
+                ),
+                *(
+                    (vol.Required(key, default=defaults.get(key, phase)), leg_phase)
+                    for key, phase in legs[: max(hub_phases, 1)]
+                ),
+            ]
+        )
+    )
 
 
 def _charger_timing_schema(
@@ -1282,120 +865,72 @@ def _charger_timing_schema(
         {"value": CHARGE_RATE_UNIT_WATTS, "label": "Watts (W)"},
     ]
 
-    # Determine default for charge rate unit
+    # A stored unit wins over the detected one; with neither, no default.
     stored_unit = defaults.get(CONF_CHARGE_RATE_UNIT)
     if stored_unit in (CHARGE_RATE_UNIT_AMPS, CHARGE_RATE_UNIT_WATTS):
         unit_default = stored_unit
-    elif detected_unit:
+    else:
         unit_default = detected_unit
-    else:
-        unit_default = None
-
-    if unit_default:
-        charge_rate_field = vol.Required(
-            CONF_CHARGE_RATE_UNIT, default=unit_default
-        )
-    else:
-        charge_rate_field = vol.Required(CONF_CHARGE_RATE_UNIT)
+    charge_rate_field = (
+        vol.Required(CONF_CHARGE_RATE_UNIT, default=unit_default)
+        if unit_default
+        else vol.Required(CONF_CHARGE_RATE_UNIT)
+    )
 
     return vol.Schema(
-        {
-            charge_rate_field: selector(
-                {"select": {"options": unit_options, "mode": "dropdown"}}
-            ),
-            vol.Required(
-                CONF_PROFILE_VALIDITY_MODE,
-                default=defaults.get(
-                    CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE
+        dict(
+            [
+                (
+                    charge_rate_field,
+                    selector({"select": {"options": unit_options, "mode": "dropdown"}}),
                 ),
-            ): selector(
-                {
-                    "select": {
-                        "options": [
-                            {
-                                "value": PROFILE_VALIDITY_MODE_RELATIVE,
-                                "label": "Relative (duration-based)",
-                            },
-                            {
-                                "value": PROFILE_VALIDITY_MODE_ABSOLUTE,
-                                "label": "Absolute (timestamp-based)",
-                            },
-                        ],
-                        "mode": "dropdown",
-                    }
-                }
-            ),
-            vol.Required(
-                CONF_UPDATE_FREQUENCY,
-                default=defaults.get(
-                    CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
+                (
+                    vol.Required(
+                        CONF_PROFILE_VALIDITY_MODE,
+                        default=defaults.get(
+                            CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE
+                        ),
+                    ),
+                    selector(
+                        {
+                            "select": {
+                                "options": [
+                                    {
+                                        "value": PROFILE_VALIDITY_MODE_RELATIVE,
+                                        "label": "Relative (duration-based)",
+                                    },
+                                    {
+                                        "value": PROFILE_VALIDITY_MODE_ABSOLUTE,
+                                        "label": "Absolute (timestamp-based)",
+                                    },
+                                ],
+                                "mode": "dropdown",
+                            }
+                        }
+                    ),
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 5,
-                        "max": 300,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "s",
-                    }
-                }
-            ),
-            vol.Required(
-                CONF_OCPP_PROFILE_TIMEOUT,
-                default=defaults.get(
-                    CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT
+                _num(
+                    CONF_UPDATE_FREQUENCY, defaults, DEFAULT_UPDATE_FREQUENCY,
+                    5, 300, 1, "s", required=True,
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 30,
-                        "max": 600,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "s",
-                    }
-                }
-            ),
-            vol.Required(
-                CONF_CHARGE_PAUSE_DURATION,
-                default=defaults.get(
-                    CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION
+                _num(
+                    CONF_OCPP_PROFILE_TIMEOUT, defaults, DEFAULT_OCPP_PROFILE_TIMEOUT,
+                    30, 600, 1, "s", required=True,
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 10,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "min",
-                    }
-                }
-            ),
-            vol.Required(
-                CONF_STACK_LEVEL,
-                default=defaults.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL),
-            ): selector(
-                {"number": {"min": 0, "max": 10, "step": 1, "mode": "box"}}
-            ),
-            vol.Required(
-                CONF_SOLAR_GRACE_PERIOD,
-                default=defaults.get(
-                    CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
+                _num(
+                    CONF_CHARGE_PAUSE_DURATION, defaults, DEFAULT_CHARGE_PAUSE_DURATION,
+                    0, 10, 1, "min", required=True,
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 30,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "min",
-                    }
-                }
-            ),
-        }
+                _num(
+                    CONF_STACK_LEVEL, defaults, DEFAULT_STACK_LEVEL,
+                    0, 10, 1, None, required=True,
+                ),
+                _num(
+                    CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
+                    0, 30, 1, "min", required=True,
+                ),
+            ]
+        )
     )
 
 
@@ -1403,217 +938,123 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
     """Build schema for smart load configuration."""
     defaults = defaults or {}
     return vol.Schema(
-        {
-            vol.Required(
-                CONF_PLUG_SWITCH_ENTITY_ID,
-                default=defaults.get(CONF_PLUG_SWITCH_ENTITY_ID),
-            ): selector({"entity": {"domain": "switch"}}),
-            vol.Required(
-                CONF_PLUG_POWER_RATING,
-                default=defaults.get(
-                    CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING
+        dict(
+            [
+                (
+                    vol.Required(
+                        CONF_PLUG_SWITCH_ENTITY_ID,
+                        default=defaults.get(CONF_PLUG_SWITCH_ENTITY_ID),
+                    ),
+                    selector({"entity": {"domain": "switch"}}),
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 100,
-                        "max": 25000,
-                        "step": 100,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
-            vol.Required(
-                CONF_PLUG_MAX_CURRENT,
-                default=defaults.get(
-                    CONF_PLUG_MAX_CURRENT, DEFAULT_PLUG_MAX_CURRENT
+                _num(
+                    CONF_PLUG_POWER_RATING, defaults, DEFAULT_PLUG_POWER_RATING,
+                    100, 25000, 100, "W", required=True,
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 6,
-                        "max": 63,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "A",
-                    }
-                }
-            ),
-            vol.Required(
-                CONF_CONNECTED_TO_PHASE,
-                default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
-            ): selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
-            vol.Required(
-                CONF_LOAD_PRIORITY,
-                default=defaults.get(
-                    CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
+                _num(
+                    CONF_PLUG_MAX_CURRENT, defaults, DEFAULT_PLUG_MAX_CURRENT,
+                    6, 63, 1, "A", required=True,
                 ),
-            ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
-            vol.Required(
-                CONF_BINARY_MIN_OFF_TIME,
-                default=defaults.get(
-                    CONF_BINARY_MIN_OFF_TIME, DEFAULT_BINARY_MIN_OFF_TIME
+                (
+                    vol.Required(
+                        CONF_CONNECTED_TO_PHASE,
+                        default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
+                    ),
+                    selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 60,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "min",
-                    }
-                }
-            ),
-            _optional_entity_field(
-                CONF_PLUG_POWER_MONITOR_ENTITY_ID,
-                defaults.get(CONF_PLUG_POWER_MONITOR_ENTITY_ID),
-            ): selector({"entity": {"domain": ["sensor", "input_number"]}}),
-            vol.Required(
-                CONF_UPDATE_FREQUENCY,
-                default=defaults.get(
-                    CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
+                _num(
+                    CONF_LOAD_PRIORITY, defaults, DEFAULT_LOAD_PRIORITY,
+                    1, 10, 1, None, required=True,
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 5,
-                        "max": 300,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "s",
-                    }
-                }
-            ),
-            vol.Required(
-                CONF_SOLAR_GRACE_PERIOD,
-                default=defaults.get(
-                    CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
+                _num(
+                    CONF_BINARY_MIN_OFF_TIME, defaults, DEFAULT_BINARY_MIN_OFF_TIME,
+                    0, 60, 1, "min", required=True,
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 30,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "min",
-                    }
-                }
-            ),
-        }
+                (
+                    _optional_entity_field(CONF_PLUG_POWER_MONITOR_ENTITY_ID, defaults),
+                    selector({"entity": {"domain": ["sensor", "input_number"]}}),
+                ),
+                _num(
+                    CONF_UPDATE_FREQUENCY, defaults, DEFAULT_UPDATE_FREQUENCY,
+                    5, 300, 1, "s", required=True,
+                ),
+                _num(
+                    CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
+                    0, 30, 1, "min", required=True,
+                ),
+            ]
+        )
     )
 
 
 def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
     """Build schema for hot water tank configuration."""
     defaults = defaults or {}
-
     return vol.Schema(
-        {
-            vol.Required(
-                CONF_CLIMATE_ENTITY_ID,
-                default=defaults.get(CONF_CLIMATE_ENTITY_ID),
-            ): selector({"entity": {"domain": ["climate", "water_heater"]}}),
-            vol.Required(
-                CONF_HEATING_ELEMENT_POWER,
-                default=defaults.get(
-                    CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER
+        dict(
+            [
+                (
+                    vol.Required(
+                        CONF_CLIMATE_ENTITY_ID,
+                        default=defaults.get(CONF_CLIMATE_ENTITY_ID),
+                    ),
+                    selector({"entity": {"domain": ["climate", "water_heater"]}}),
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 100,
-                        "max": 25000,
-                        "step": 100,
-                        "mode": "box",
-                        "unit_of_measurement": "W",
-                    }
-                }
-            ),
-            vol.Required(
-                CONF_TANK_PRIORITIZE_BELOW_NORMAL,
-                default=defaults.get(
-                    CONF_TANK_PRIORITIZE_BELOW_NORMAL,
-                    DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL,
+                _num(
+                    CONF_HEATING_ELEMENT_POWER, defaults, DEFAULT_HEATING_ELEMENT_POWER,
+                    100, 25000, 100, "W", required=True,
                 ),
-            ): selector({"boolean": {}}),
-            vol.Required(
-                CONF_CONNECTED_TO_PHASE,
-                default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
-            ): selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
-            vol.Required(
-                CONF_LOAD_PRIORITY,
-                default=defaults.get(
-                    CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
+                (
+                    vol.Required(
+                        CONF_TANK_PRIORITIZE_BELOW_NORMAL,
+                        default=defaults.get(
+                            CONF_TANK_PRIORITIZE_BELOW_NORMAL,
+                            DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL,
+                        ),
+                    ),
+                    selector({"boolean": {}}),
                 ),
-            ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
-            vol.Required(
-                CONF_BINARY_MIN_OFF_TIME,
-                default=defaults.get(
-                    CONF_BINARY_MIN_OFF_TIME, DEFAULT_BINARY_MIN_OFF_TIME
+                (
+                    vol.Required(
+                        CONF_CONNECTED_TO_PHASE,
+                        default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
+                    ),
+                    selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 60,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "min",
-                    }
-                }
-            ),
-            # Power-class sensors only (e.g. the smart relay feeding the
-            # element), plus any input_number standing in for one.
-            _optional_entity_field(
-                CONF_TANK_POWER_ENTITY_ID,
-                defaults.get(CONF_TANK_POWER_ENTITY_ID),
-            ): selector(
-                {
-                    "entity": {
-                        "domain": ["sensor", "input_number"],
-                        "filter": [
-                            {"domain": "sensor", "device_class": "power"},
-                            {"domain": "input_number"},
-                        ],
-                    }
-                }
-            ),
-            vol.Required(
-                CONF_UPDATE_FREQUENCY,
-                default=defaults.get(
-                    CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
+                _num(
+                    CONF_LOAD_PRIORITY, defaults, DEFAULT_LOAD_PRIORITY,
+                    1, 10, 1, None, required=True,
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 5,
-                        "max": 300,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "s",
-                    }
-                }
-            ),
-            vol.Required(
-                CONF_SOLAR_GRACE_PERIOD,
-                default=defaults.get(
-                    CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
+                _num(
+                    CONF_BINARY_MIN_OFF_TIME, defaults, DEFAULT_BINARY_MIN_OFF_TIME,
+                    0, 60, 1, "min", required=True,
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 30,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "min",
-                    }
-                }
-            ),
-        }
+                (
+                    # Power-class sensors only (e.g. the smart relay feeding the
+                    # element), plus any input_number standing in for one.
+                    _optional_entity_field(CONF_TANK_POWER_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": "power"},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                _num(
+                    CONF_UPDATE_FREQUENCY, defaults, DEFAULT_UPDATE_FREQUENCY,
+                    5, 300, 1, "s", required=True,
+                ),
+                _num(
+                    CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
+                    0, 30, 1, "min", required=True,
+                ),
+            ]
+        )
     )
 
 
@@ -1627,125 +1068,79 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
     are set here.
     """
     defaults = defaults or {}
-    def _power_selector():
-        return selector(
-            {
-                "number": {
-                    "min": 0,
-                    "max": STATION_CHARGE_POWER_MAX,
-                    "step": STATION_CHARGE_POWER_STEP,
-                    "mode": "box",
-                    "unit_of_measurement": "W",
-                }
-            }
-        )
-
-    def _percent_selector():
-        return selector(
-            {
-                "number": {
-                    "min": 0,
-                    "max": 100,
-                    "step": 1,
-                    "mode": "slider",
-                    "unit_of_measurement": "%",
-                }
-            }
-        )
-
     return vol.Schema(
-        {
-            vol.Required(
-                CONF_STATION_CHARGE_SPEED_ENTITY_ID,
-                default=defaults.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID),
-            ): selector({"entity": {"domain": "number"}}),
-            vol.Required(
-                CONF_STATION_RESERVE_ENTITY_ID,
-                default=defaults.get(CONF_STATION_RESERVE_ENTITY_ID),
-            ): selector({"entity": {"domain": "number"}}),
-            vol.Required(
-                CONF_STATION_BATTERY_LEVEL_ENTITY_ID,
-                default=defaults.get(CONF_STATION_BATTERY_LEVEL_ENTITY_ID),
-            ): selector({"entity": {"domain": ["sensor", "input_number"]}}),
-            _optional_entity_field(
-                CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
-                defaults.get(CONF_STATION_CHARGE_LIMIT_ENTITY_ID),
-            ): selector({"entity": {"domain": ["number", "sensor"]}}),
-            _optional_entity_field(
-                CONF_STATION_AC_INPUT_ENTITY_ID,
-                defaults.get(CONF_STATION_AC_INPUT_ENTITY_ID),
-            ): selector({"entity": {"domain": ["sensor", "input_number"]}}),
-            _optional_entity_field(
-                CONF_STATION_AC_OUTPUT_ENTITY_ID,
-                defaults.get(CONF_STATION_AC_OUTPUT_ENTITY_ID),
-            ): selector({"entity": {"domain": ["sensor", "input_number"]}}),
-            vol.Required(
-                CONF_STATION_MIN_CHARGE_POWER,
-                default=defaults.get(
-                    CONF_STATION_MIN_CHARGE_POWER,
-                    DEFAULT_STATION_MIN_CHARGE_POWER,
+        dict(
+            [
+                (
+                    vol.Required(
+                        CONF_STATION_CHARGE_SPEED_ENTITY_ID,
+                        default=defaults.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID),
+                    ),
+                    selector({"entity": {"domain": "number"}}),
                 ),
-            ): _power_selector(),
-            vol.Required(
-                CONF_STATION_MAX_CHARGE_POWER,
-                default=defaults.get(
-                    CONF_STATION_MAX_CHARGE_POWER,
-                    DEFAULT_STATION_MAX_CHARGE_POWER,
+                (
+                    vol.Required(
+                        CONF_STATION_RESERVE_ENTITY_ID,
+                        default=defaults.get(CONF_STATION_RESERVE_ENTITY_ID),
+                    ),
+                    selector({"entity": {"domain": "number"}}),
                 ),
-            ): _power_selector(),
-            vol.Required(
-                CONF_STATION_NORMAL_RESERVE,
-                default=defaults.get(
-                    CONF_STATION_NORMAL_RESERVE, DEFAULT_STATION_NORMAL_RESERVE
+                (
+                    vol.Required(
+                        CONF_STATION_BATTERY_LEVEL_ENTITY_ID,
+                        default=defaults.get(CONF_STATION_BATTERY_LEVEL_ENTITY_ID),
+                    ),
+                    selector({"entity": {"domain": ["sensor", "input_number"]}}),
                 ),
-            ): _percent_selector(),
-            vol.Required(
-                CONF_STATION_STORM_RESERVE,
-                default=defaults.get(
-                    CONF_STATION_STORM_RESERVE, DEFAULT_STATION_STORM_RESERVE
+                (
+                    _optional_entity_field(CONF_STATION_CHARGE_LIMIT_ENTITY_ID, defaults),
+                    selector({"entity": {"domain": ["number", "sensor"]}}),
                 ),
-            ): _percent_selector(),
-            vol.Required(
-                CONF_CONNECTED_TO_PHASE,
-                default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
-            ): selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
-            vol.Required(
-                CONF_LOAD_PRIORITY,
-                default=defaults.get(
-                    CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
+                (
+                    _optional_entity_field(CONF_STATION_AC_INPUT_ENTITY_ID, defaults),
+                    selector({"entity": {"domain": ["sensor", "input_number"]}}),
                 ),
-            ): selector({"number": {"min": 1, "max": 10, "mode": "box"}}),
-            vol.Required(
-                CONF_UPDATE_FREQUENCY,
-                default=defaults.get(
-                    CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
+                (
+                    _optional_entity_field(CONF_STATION_AC_OUTPUT_ENTITY_ID, defaults),
+                    selector({"entity": {"domain": ["sensor", "input_number"]}}),
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 5,
-                        "max": 300,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "s",
-                    }
-                }
-            ),
-            vol.Required(
-                CONF_SOLAR_GRACE_PERIOD,
-                default=defaults.get(
-                    CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
+                _num(
+                    CONF_STATION_MIN_CHARGE_POWER, defaults, DEFAULT_STATION_MIN_CHARGE_POWER,
+                    0, STATION_CHARGE_POWER_MAX, STATION_CHARGE_POWER_STEP, "W",
+                    required=True,
                 ),
-            ): selector(
-                {
-                    "number": {
-                        "min": 0,
-                        "max": 30,
-                        "step": 1,
-                        "mode": "box",
-                        "unit_of_measurement": "min",
-                    }
-                }
-            ),
-        }
+                _num(
+                    CONF_STATION_MAX_CHARGE_POWER, defaults, DEFAULT_STATION_MAX_CHARGE_POWER,
+                    0, STATION_CHARGE_POWER_MAX, STATION_CHARGE_POWER_STEP, "W",
+                    required=True,
+                ),
+                _num(
+                    CONF_STATION_NORMAL_RESERVE, defaults, DEFAULT_STATION_NORMAL_RESERVE,
+                    0, 100, 1, "%", mode="slider", required=True,
+                ),
+                _num(
+                    CONF_STATION_STORM_RESERVE, defaults, DEFAULT_STATION_STORM_RESERVE,
+                    0, 100, 1, "%", mode="slider", required=True,
+                ),
+                (
+                    vol.Required(
+                        CONF_CONNECTED_TO_PHASE,
+                        default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
+                    ),
+                    selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
+                ),
+                _num(
+                    CONF_LOAD_PRIORITY, defaults, DEFAULT_LOAD_PRIORITY,
+                    1, 10, 1, None, required=True,
+                ),
+                _num(
+                    CONF_UPDATE_FREQUENCY, defaults, DEFAULT_UPDATE_FREQUENCY,
+                    5, 300, 1, "s", required=True,
+                ),
+                _num(
+                    CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
+                    0, 30, 1, "min", required=True,
+                ),
+            ]
+        )
     )
