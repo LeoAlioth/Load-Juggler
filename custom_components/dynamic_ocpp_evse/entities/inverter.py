@@ -370,9 +370,8 @@ class LoadJugglerInverterChargeControlSensor(
         advice_w = section.get("forecast_charge_limit_w")
         # The forecast's charge GATE, which the control's downward persistence
         # window needs in order to tell the cap ENGAGING (protective, written at
-        # once) from a steady-state correction (paced). Missing means a hub that
-        # published no gate state, and the control degrades to writing
-        # reductions immediately - see ``send_inverter_charge_limit``.
+        # once) from a steady-state correction (paced) - see
+        # ``send_inverter_charge_limit``. The hub publishes it beside every advice.
         await send_inverter_charge_limit(
             self.hass,
             self.config_entry,
