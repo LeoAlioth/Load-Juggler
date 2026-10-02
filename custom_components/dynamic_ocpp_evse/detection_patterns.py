@@ -5,7 +5,10 @@
 entities publish. Tried in order (watts first, see ``_power_first``) - the
 first complete 3-phase match wins; the hub setup page then offers the
 meter's own watts in place of amps where its device publishes both
-(``config_flow/helpers.py`` ``_power_beside``).
+(``config_flow/helpers.py`` ``_power_beside``). An entry whose ids are also
+some other device's carries a ``device`` test: given the matched entity's
+device registry entry (None for an entity without a device), whether that
+device is the meter. The page drops a match whose device fails it.
 
 **PLUG_POWER_MONITOR**: a single ``pattern`` regex per entry. First match wins.
 
@@ -50,10 +53,14 @@ GRID_CT = [
         },
         "unit": "W",
     },
-    # "Grid L1 Power" in ha-solarman's deye_p3 / deye_hybrid definitions.
-    # Anchored on the power suffix: unanchored, and sorted first as a watts
-    # entry, it matched any "grid_l1" reading - sensor.victron_grid_l1_voltage
-    # on a Victron, sensor.sofar_voltage_grid_l1 on a Sofar.
+    # "Grid L1 Power" in ha-solarman: the grid meter's in deye_p3, deye_hybrid,
+    # kstar_hybrid, megarevo_r-3h and afore_hybrid, but afore_BNTxxxKTL-2mppt
+    # (Afore BNT T4, a string inverter with no meter) computes it from its own
+    # output current. ha-solarman names every definition's sensors <device> +
+    # name, so only the device's model - the definition's, else its file
+    # name's - tells them apart. Anchored on the power suffix: unanchored, and
+    # sorted first as a watts entry, it matched any "grid_l1" reading -
+    # sensor.victron_grid_l1_voltage on a Victron.
     {
         "name": "Solarman/Deye - grid power (individual phases)",
         "patterns": {
@@ -62,6 +69,7 @@ GRID_CT = [
             "phase_c": r'sensor\..*_grid_l3_power$',
         },
         "unit": "W",
+        "device": lambda device: device is None or device.model != "BNTXXXKTL-2MPPT",
     },
     {
         "name": "Solarman/Deye - external CTs (current)",

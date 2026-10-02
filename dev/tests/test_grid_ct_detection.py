@@ -6,7 +6,8 @@ siblings beside them - in registration order, which is the order detection
 scans them in. The patterns propose a triple (_auto_detect_phase_entities);
 the hub setup page then offers the meter's own watts in place of its amps
 (_power_beside), or, with no complete triple, the phases one meter has
-(_same_device_fill).
+(_same_device_fill) - leaving out ids a pattern's device test turns down,
+which only the device registry tells (_DEVICE_INFO).
 """
 
 import pytest
@@ -193,6 +194,62 @@ BRANDS = {
         None,
         None,
     ),
+    # ha-solarman kstar_hybrid: "Grid L1 Power" is KSTAR's "R Phase Meter
+    # Power" (3100); the inverter's own (3126) is "L1 Power"
+    "KStar hybrid": (
+        {"KStar": [("kstar_today_energy_import", "kWh")]
+            + _ph("kstar_grid_l{}_voltage", "V") + _ph("kstar_grid_l{}_frequency", "Hz")
+            + _ph("kstar_grid_l{}_current", "A") + _ph("kstar_grid_l{}_power", "W")
+            + [("kstar_grid_power", "W")] + _ph("kstar_l{}_voltage", "V") + _ph("kstar_l{}_current", "A")
+            + _ph("kstar_l{}_power", "W") + _ph("kstar_load_ups_l{}_power", "W")
+            + _ph("kstar_load_l{}_power", "W")},
+        ("kstar_grid_l{}_power", "123"),
+        ("kstar_grid_l{}_power", "123"),
+    ),
+    # ha-solarman megarevo_r-3h: "Grid L1 Power" is Megarevo's "Grid_A Power"
+    # (0x3112, its CT's); the inverter's own "INV_A Power" (0x3192) is not read
+    "MegaRevo R-3H": (
+        {"MegaRevo": [("megarevo_today_energy_export", "kWh"), ("megarevo_today_energy_import", "kWh")]
+            + _ph("megarevo_grid_l{}_voltage", "V") + _ph("megarevo_grid_l{}_current", "A")
+            + _ph("megarevo_grid_l{}_power", "W") + [("megarevo_grid_frequency", "Hz")]
+            + _ph("megarevo_load_l{}_voltage", "V") + _ph("megarevo_load_l{}_current", "A")
+            + _ph("megarevo_load_l{}_power", "W") + _ph("megarevo_load_l{}", "%")},
+        ("megarevo_grid_l{}_power", "123"),
+        ("megarevo_grid_l{}_power", "123"),
+    ),
+    # ha-solarman afore_hybrid: "Grid L1 Power" is Afore's "R-phase
+    # grid-connected power (meter)" (529); the inverter's is "Output L1 Power"
+    # (516). Its L3 output current is a second "Output L2 Current".
+    "Afore hybrid": (
+        {"Afore": _ph("afore_grid_l{}_voltage", "V") + _ph("afore_output_l{}_current", "A", "12")
+            + [("afore_output_l2_current_2", "A")] + _ph("afore_grid_l{}_frequency", "Hz")
+            + _ph("afore_output_l{}_power", "W") + [("afore_power", "W")]
+            + _ph("afore_grid_l{}_power", "W") + [("afore_grid_power", "W")]
+            + _ph("afore_load_l{}_power", "W") + [("afore_today_energy_import", "kWh")]},
+        ("afore_grid_l{}_power", "123"),
+        ("afore_grid_l{}_power", "123"),
+    ),
+    # ha-solarman afore_BNTxxxKTL-2mppt (Afore BNT T4 string inverter, no
+    # meter): its "Grid L1 Power" is line voltage x its own output current
+    # (input registers 1 and 4). The ids are a meter's; only the device's
+    # model tells them apart, so the patterns propose them and the page not.
+    "Afore BNT string inverter": (
+        {"Afore BNT": _ph("afore_bnt_grid_l{}_voltage", "V") + _ph("afore_bnt_grid_l{}_current", "A")
+            + _ph("afore_bnt_grid_l{}_power", "W") + [("afore_bnt_grid_frequency", "Hz")]
+            + [("afore_bnt_pv_power", "W"), ("afore_bnt_pv1_power", "W"), ("afore_bnt_pv1_voltage", "V"),
+               ("afore_bnt_pv1_current", "A"), ("afore_bnt_power", "W"),
+               ("afore_bnt_today_production", "kWh"), ("afore_bnt_total_production", "kWh")]},
+        ("afore_bnt_grid_l{}_power", "123"),
+        None,
+    ),
+    # ... on a Victron's AC output: the Victron's grid meter
+    "Afore BNT string inverter, Victron grid meter beside": (
+        {"Afore BNT": _ph("afore_bnt_grid_l{}_voltage", "V") + _ph("afore_bnt_grid_l{}_current", "A")
+            + _ph("afore_bnt_grid_l{}_power", "W"),
+         "grid": _ph("victrongrid_l{}_power30", "W") + _ph("victrongrid_l{}_current30", "A")},
+        ("afore_bnt_grid_l{}_power", "123"),
+        ("victrongrid_l{}_power30", "123"),
+    ),
     # mkaiser's Modbus YAML: registered, but no device
     "Sungrow": (
         {None: _ph("meter_phase_{}_voltage", "V", "abc") + _ph("meter_phase_{}_current", "A", "abc")
@@ -240,6 +297,29 @@ PARTIAL = {
         ("power_meter_phase_a_active_power", "power_meter_l2_active_power",
          "power_meter_l3_active_power"),
     ),
+    # ha-solarman deye_hybrid (SG0*LP1, split phase): "Grid L1 Power" is
+    # Deye's "Grid side L1 power" (167); the inverter's is "Output L1 Power"
+    "Deye hybrid, split phase": (
+        {"Deye LP1": [("deye_lp1_grid_frequency", "Hz")] + _ph("deye_lp1_grid_l{}_voltage", "V", "12")
+            + [("deye_lp1_grid_voltage", "V")] + _ph("deye_lp1_grid_l{}_current", "A", "12")
+            + _ph("deye_lp1_grid_l{}_power", "W", "12") + [("deye_lp1_grid_power", "W")]
+            + _ph("deye_lp1_external_ct{}_current", "A", "12")
+            + _ph("deye_lp1_external_ct{}_power", "W", "12") + [("deye_lp1_external_power", "W")]
+            + _ph("deye_lp1_load_l{}_voltage", "V", "12") + _ph("deye_lp1_load_l{}_power", "W", "12")
+            + _ph("deye_lp1_output_l{}_power", "W", "12")
+            + [("deye_lp1_today_energy_import", "kWh")]},
+        ("deye_lp1_grid_l1_power", "deye_lp1_grid_l2_power", None),
+    ),
+}
+
+# What the device registry holds beside a device's name: ha-solarman's model
+# is its definition's (info, else the file name's)
+_DEVICE_INFO = {
+    "KStar": {"model": "Hybrid Inverter"},
+    "MegaRevo": {"model": "R-3H"},
+    "Afore": {"model": "HYBRID"},
+    "Afore BNT": {"model": "BNTXXXKTL-2MPPT"},
+    "Deye LP1": {"model": "SG0*LP1"},
 }
 
 
@@ -249,7 +329,8 @@ async def _hub_grid_offers(hass: HomeAssistant, devices: dict, device_classes: b
     source.add_to_hass(hass)
     for name, rows in devices.items():
         device = name and dr.async_get(hass).async_get_or_create(
-            config_entry_id=source.entry_id, identifiers={("meter", name)}, name=name,
+            config_entry_id=source.entry_id, name=name,
+            **{"identifiers": {("meter", name)}} | _DEVICE_INFO.get(name, {}),
         )
         for object_id, unit in rows:
             dc = _DEVICE_CLASS.get(unit) if device_classes else None
