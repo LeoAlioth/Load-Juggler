@@ -488,7 +488,7 @@ def down_window_value(samples, now_mono, window_s):
 
 
 async def send_inverter_charge_limit(
-    hass, entry, hub_entry, advice_w, now_mono, limiting=None
+    hass, entry, hub_entry, advice_w, now_mono, limiting
 ) -> None:
     """Apply (or release) this inverter's battery charge limit.
 
@@ -501,10 +501,7 @@ async def send_inverter_charge_limit(
     (``forecast_charge_limiting``, published per inverter). It is not the value
     and it is not a duplicate of it: the downward persistence window has to tell
     a protective regime transition (the gate engaging) from a steady-state
-    correction, and only the second is made lazy. None means the caller has no
-    gate state to offer - a hub that publishes none, or a call from a test of
-    something else - and then every reduction is treated as protective and
-    written at once, which is the pre-window behaviour and errs toward writing.
+    correction, and only the second is made lazy.
     """
     target_entity = get_entry_value(entry, CONF_CHARGE_LIMIT_ENTITY_ID, None)
     if not target_entity:
@@ -716,22 +713,13 @@ async def send_inverter_charge_limit(
     # Where the reduction is measured from: the same reference the deadband uses,
     # so the two agree about what "the register already holds" means.
     reference = current if current is not None else applied
-    # A reduction to be persistent about: the gate is known, this is not the
-    # protective cycle the gate engaged on, and the value really is below what
-    # the register holds by more than the deadband.
+    # A reduction to be persistent about: this is not the protective cycle the
+    # gate engaged on, and the value really is below what the register holds by
+    # more than the deadband.
     reducing = (
-        limiting is not None
-        and not engaging
-        and reference is not None
-        and desired < reference - deadband
+        not engaging and reference is not None and desired < reference - deadband
     )
-    if limiting is None:
-        # No gate state to reason about (see the signature): the pre-window
-        # contract, one minimum interval between writes in either direction.
-        inverter_rt[INVERTER_RT_DOWN_SAMPLES] = []
-        if last_write is not None and (now_mono - last_write) < interval:
-            return
-    elif not reducing:
+    if not reducing:
         # A rise, a move inside the deadband, or a protective transition. The
         # window is about one standing reduction and this is not it - and a rise
         # is not paced at all: it is bounded by the slew step above, and the
