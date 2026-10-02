@@ -398,12 +398,15 @@ EMA), not the follower.
 whether it is the engine or the simulator:
 
 ```bash
-docker cp dev/ha-test/check_physics.py load-juggler-test:/tmp/
-docker exec load-juggler-test python3 /tmp/check_physics.py
+python3 dev/ha-test/check_physics.py
 ```
 
-It renders the templates against stubbed states and checks the arithmetic
-against hand-computed answers.
+It sets the site's knobs on the running instance, waits on the rig's 5-second
+samples, and checks the template sensors against hand-computed answers - so it
+is Home Assistant's own rendering and dependency tracking under test, not a
+copy of them. It takes about two minutes and the same token as `scenarios.py`,
+switches Load Juggler's dynamic control off on the three loads for the run, and
+puts every knob it touched back afterwards.
 
 **Resetting.** The account and the config entries live in `.storage`:
 
@@ -428,10 +431,13 @@ whatever happened to be drawing when HA booted; a tank that switched on later
 did not exist to the meter. They now name each source with `states('...')`,
 which is tracked. Adding a device means adding a line to `site.yaml`.
 
-`check_physics.py` could not catch that and still cannot: it renders the
-templates itself, so it verifies the *arithmetic* and never Home Assistant's
-reactivity. When a figure looks stale, compare `last_updated` on the sensor
-against `last_updated` on its source - that is what exposed it.
+`check_physics.py` catches that kind of bug: it reads the live instance, so a
+template that stops re-rendering shows a stale figure and fails. On Home
+Assistant 2026.9.1 the `selectattr` form above no longer reproduces it - put
+back, it re-rendered and passed - so it was shown on `Sim site load A` made
+render-once on purpose (moved into a trigger block that fires only on reload),
+where ten checks failed. By hand, compare `last_updated` on the sensor against
+`last_updated` on its source - that is what exposed it.
 
 **Renaming a template entity needs its `unique_id` changed too.** Home
 Assistant derives an `entity_id` from the name only at *first* registration and
