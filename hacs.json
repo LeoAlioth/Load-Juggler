@@ -2,7 +2,7 @@
     "name": "Load Juggler",
     "content_in_root": false,
     "domains": ["dynamic_ocpp_evse"],
-    "homeassistant": "2024.11.0",
+    "homeassistant": "2026.8.0",
     "render_readme": true,
     "icon": "mdi:lightning-bolt",
     "zip_release": true,
